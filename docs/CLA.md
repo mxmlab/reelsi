@@ -1,10 +1,5 @@
 # Contributor License Agreement
 
-> **Note for the project author:** this text is adapted from the Apache Individual
-> Contributor License Agreement v2.0 and is not legal advice. Have a lawyer review
-> it before you rely on it commercially. Sections 2 and 3 are the ones that matter —
-> they are what makes dual licensing possible.
-
 By contributing to Reelsi you accept the terms below. Contributions are accepted
 through pull requests, and the CLA is checked automatically before a pull request
 can be merged.

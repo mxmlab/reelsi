@@ -1,0 +1,839 @@
+/* Reelsi UI — стиль Hyperstudio: обсидиан, хеарлайн-границы 1px, вес 400,
+   белая пилюля = главное действие, Compass Gold только для контурных иконок,
+   Pulse Green — ТОЛЬКО статусы «готово/поработал» (просьба юзера — не трогать). */
+:root{--bg:#101010;--bg2:#080808;--panel:#101010;--panel2:#080808;--bd:#212121;--bd2:#2e2e2e;
+  --iron:#474747;--tx:#f3f3f3;--mut:#9c9c9c;--mut2:#6f6759;--acc:#ffffff;--ok:#98ff38;--dng:#f2637f;--yel:#f5c518;--blue:#6ea8ff;
+  /* янтарный — функциональный цвет данных «видео» (см. DESIGN). Был захардкожен в шести
+     местах CSS/JS, из-за чего сменить цвет типа «видео» значило править шесть строк. */
+  --amber:#e0a865;
+  /* Радиусы — ТОЛЬКО эти три. Было шесть значений вразнобой (3/5/6/7/10px), от чего
+     соседние контролы выглядели из разных наборов. --r-sm только для мелочи
+     (теги, чипы, превьюшки, блоки таймлайна), пилюля — только primary и .seg. */
+  --r:8px;--r-sm:4px;--r-pill:9999px;
+  /* Высоты контролов — ТОЛЬКО две. Было четыре (42/41/36/33), и в одном .row
+     кнопка «Выбрать…» не дотягивала до инпута рядом почти 9px. */
+  --h:40px;--h-sm:32px;
+  /* Кегль субтитров в предпросмотре: ставится из плана сцены (fsize/w), здесь — значение
+     на случай «плана нет». Держать в :root, а не только инлайном: иначе var() молча
+     работает на фолбэке, и разъехавшийся кегль не поймать (см. test_css_variables_all_declared). */
+   --subfs:7.7cqw;
+   /* Цвет базовых субтитров в предпросмотре: ставится из плана сцены (sub_fill, задание
+      CO), здесь — белый фолбэк «плана нет». */
+   --subfc:#fff;
+   /* Цвет выделения субтитров в предпросмотре (задание CV): ставится из плана сцены
+      (hl_fill), здесь — фолбэк «плана нет» (--yel). */
+    --subhl:#f5c518;
+    --subhl-tx:#111;
+    --introhl:var(--subhl);
+    --subhl3:#af1f1f;
+   /* Тень субтитров в предпросмотре (задание DK): снимается при sub_bg,
+      здесь — фолбэк по умолчанию. */
+   --subsh:0 2px 7px #000, 0 0 3px #000;
+   /* Кегль интро-строк в предпросмотре (задание AD): как --subfs, ставится из плана
+      (fsize/w — в AE у интро и субтитров один FONT_SIZE); здесь — фолбэк «плана нет». */
+   --introsfs:8.4cqw}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{font:14px/1.55 Inter,system-ui,Segoe UI,Roboto,sans-serif;color:var(--tx);background:var(--bg);min-height:100vh;
+  -webkit-font-smoothing:antialiased;font-feature-settings:'ss01' on,'cv11' on}
+.mono{font-family:"Geist Mono",ui-monospace,Consolas,monospace}
+.wrap{max-width:1200px;margin:0 auto;padding:0 28px 90px}
+/* header + stepper */
+header.top{position:sticky;top:0;z-index:30;background:var(--bg);border-bottom:1px solid var(--bd);
+  display:flex;flex-wrap:wrap;align-items:center;gap:14px 26px;padding:16px 28px;margin:0 0 26px}
+/* браузер в пол-экрана рядом с Premiere — типовой сценарий: без переноса шапка
+   вылезала за край и тянула горизонтальный скролл всей страницы */
+@media(max-width:760px){.stepsep{display:none}.stepitem{padding:8px 10px}}
+.brand{font-weight:400;letter-spacing:-.01em;font-size:18px;display:flex;align-items:center;gap:9px;margin:0}
+.brand .dot{width:9px;height:9px;border-radius:50%;background:var(--acc)}
+.brand .ver{font-size:11.5px;color:var(--mut);font-family:ui-monospace,monospace;margin-left:2px}
+.stepper{display:flex;gap:4px;flex:1}
+.stepitem{display:flex;align-items:center;gap:9px;padding:8px 15px;border-radius:var(--r);color:var(--mut);cursor:default;
+  font-size:13.5px;border:1px solid transparent;transition:color .12s,border-color .12s,background .12s;user-select:none}
+.stepitem .n{display:inline-grid;place-items:center;width:21px;height:21px;border-radius:50%;border:1px solid var(--bd2);
+  font-size:11.5px;color:var(--mut);font-family:ui-monospace,monospace}
+.stepitem.done{color:var(--tx);cursor:pointer}.stepitem.done .n{border-color:var(--iron);color:var(--tx)}
+.stepitem.done:hover{border-color:var(--bd2)}
+.stepitem.active{color:var(--tx);border-color:var(--iron)}
+.stepitem.active .n{border-color:var(--acc);color:#0b0b0b;background:var(--acc)}
+.stepitem:focus-visible{outline:1px solid var(--mut);outline-offset:2px}
+.stepsep{color:#333;align-self:center}
+/* .lnk — не только в шапке: тем же классом размечены «Модели нарезки/разметки»
+   внутри карточек. Пока селектор был «.top .lnk», они висели голым текстом без
+   рамки, паддинга и видимого фокуса — посреди ряда настоящих кнопок. */
+.lnk{color:var(--mut);cursor:pointer;border:1px solid var(--bd);border-radius:var(--r);
+  min-height:var(--h-sm);padding:0 13px;background:transparent;font:inherit;font-size:13px;
+  display:inline-flex;align-items:center;gap:6px}
+.lnk:hover{color:var(--tx);border-color:var(--iron)}
+.lnk:focus-visible{outline:1px solid var(--mut);outline-offset:2px}
+/* cards & controls */
+.card{background:var(--panel);border:1px solid var(--bd);border-radius:var(--r);padding:24px;margin-bottom:16px}
+.card h2{font-size:14px;font-weight:400;letter-spacing:.06em;text-transform:uppercase;color:var(--tx);margin:0 0 15px;
+  display:flex;align-items:center;gap:10px}
+.card h2 .k{font-family:ui-monospace,monospace;color:var(--mut2);font-size:12px}
+.sect{font-size:12px;font-weight:400;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);
+  border-bottom:1px solid var(--bd);padding-bottom:6px;margin:20px 0 12px}
+/* окна разделов панели стиля (задание AC2): не модалки — панель с полями раздела, в
+   предпросмотре живёт в правой колонке рядом с кадром, кадр не затемняется и играет.
+   Одно окно за раз; закрытие по Esc и клику мимо (кнопка «x» ушла вместе с заголовком,
+   задание CP1). */
+#stylebox{display:flex;flex-direction:column;max-height:70vh}
+#stylecustom{display:flex;flex-direction:column;flex:1;min-height:0}
+.stylebody{flex:1;min-height:220px;overflow-y:auto;padding-right:4px;margin-top:12px}
+.stylepart{border:1px solid var(--bd2);border-radius:var(--r);padding:14px;background:var(--bg2)}
+.stylegrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:end}
+.stylegrid .wide{grid-column:span 2}
+.stylemats{display:flex;flex-direction:column;gap:12px;margin-top:12px}
+.stylemats > div{width:100%}
+.stchkrow{grid-column:span 2;display:flex;flex-wrap:wrap;gap:12px;align-items:center;min-height:var(--h-sm);padding:4px 0}
+.stylepart .sect{grid-column:1/-1;margin:8px 0 0}
+.stylepart .sect:first-child{margin-top:0}
+.stylepart .wide{grid-column:span 2}
+/* подпись сверху, контрол на всю ширину ячейки (задание CP1): ширина живёт в ячейке
+   сетки, а не в инлайновых style=; у пар .tc/.pair свои фиксированные поля */
+/* Контрол занимает ячейку сетки целиком. ЧИСЛО из пары «слайдер + число» сюда не
+   входит: у него своя узкая ширина ниже, а это правило специфичнее (три :not
+   считаются как атрибуты) и перебивало её — число распирало на всю ячейку, слайдер
+   схлопывался в ноль (жалоба 2026-08-19, «слайдер шириной 1 пиксель»). */
+.stylepart select,.stylepart textarea,
+.stylepart input:not([type=checkbox]):not([type=color]):not([type=range]):not([type=number]){width:100%}
+.stylepart textarea{resize:vertical}
+.stylepart .sldnum{display:flex;gap:8px;align-items:center;width:100%;min-height:var(--h)}
+.stylepart .sldnum input[type=range]{flex:1;min-width:0;min-height:0;height:24px;padding:0;margin:0;
+  background:transparent;border:0;cursor:ew-resize;accent-color:var(--acc)}
+.stylepart .sldnum input[type=number]{width:64px;flex:none;min-height:var(--h);text-align:right;padding:8px 6px}
+.stylepart .pair{display:flex;gap:6px;align-items:center;width:100%}
+.stylepart .pair .sldnum{flex:1;min-width:0}
+.stylepart .pair .u{color:var(--mut);font-size:12px;flex:none}
+.stylepart .tc input:not([type=checkbox]):not([type=color]):not([type=range]){width:52px}
+.stylepart .pair input:not([type=color]):not([type=range]):not([type=number]){flex:1;min-width:0}
+.stylepart .filepick{display:flex;gap:8px;align-items:center}
+.stylepart .filepick input{flex:1;min-width:0}
+.stylepart label.chk{margin:0;justify-self:start}
+.stylepart button{justify-self:start}
+.stylepart details.stfold{margin-top:4px}
+.stylepart details.stfold summary{font-size:12px;color:var(--mut);cursor:pointer;user-select:none;padding:2px 0}
+.stylepart details.stfold summary:hover{color:var(--tx)}
+.stylepart details.stfold summary:focus-visible{outline:1px solid var(--mut);outline-offset:2px}
+.stylepart details.stfold .sldnum{margin-top:4px}
+/* Секции окна стиля (задание FG): сворачиваемые группы внутри вкладки. Заголовок на
+   всю ширину, шеврон — CSS-треугольник (эмодзи в интерфейсе запрещены), тело — та же
+   сетка, что у .stylegrid, чтобы существующие .wide/.stchkrow не поехали. */
+.stylepart details.stsec{grid-column:1/-1;margin:2px 0}
+.stylepart details.stsec summary{font-size:12px;color:var(--mut);cursor:pointer;user-select:none;padding:6px 0;
+  text-transform:uppercase;letter-spacing:.08em;display:flex;align-items:center;gap:7px}
+.stylepart details.stsec summary:hover{color:var(--tx)}
+.stylepart details.stsec summary:focus-visible{outline:1px solid var(--mut);outline-offset:2px}
+.stylepart details.stsec summary::-webkit-details-marker{display:none}
+.stylepart details.stsec summary::before{content:'';width:0;height:0;
+  border-left:5px solid currentColor;border-top:4px solid transparent;border-bottom:4px solid transparent;
+  transition:transform .15s}
+.stylepart details.stsec[open] summary::before{transform:rotate(90deg)}
+.stylepart details.stsec .stsec-b{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:end;padding-top:4px}
+.stylepart details.stsec .stsec-b .wide,.stylepart details.stsec .stsec-b .stchkrow{grid-column:span 2}
+/* Ряд сохранения стиля: прижат низом панели (sticky), виден всегда (задание CP3) */
+.stactbar{position:sticky;bottom:0;z-index:5;background:var(--panel);padding:10px 0 4px;margin-top:auto}
+#aewstyle .stactbar{background:var(--bg2)}
+/* зелёная точка на изменённом поле стиля и на сегменте вкладки (правило №1 DESIGN.md, задание CP3) */
+.st-changed > label::after, label.chk.st-changed::after, .seg label.st-changed::after, button.st-changed::after{
+  content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok);margin-left:6px;vertical-align:middle;flex:none}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
+label{display:block;font-size:12px;color:var(--mut);margin-bottom:6px;letter-spacing:.01em}
+select,input,textarea{background:var(--bg2);color:var(--tx);border:1px solid var(--bd2);border-radius:var(--r);
+  padding:8px 11px;font:inherit;transition:border-color .12s}
+/* полная высота — у всего, что стоит в .row рядом с кнопкой. Чекбокс/цвет/ползунок
+   и мелкий .qedit исключены: у них своя геометрия */
+select,textarea,input:not([type=checkbox]):not([type=color]):not([type=range]){min-height:var(--h)}
+select:focus,input:focus,textarea:focus{outline:0;border-color:var(--mut)}
+select:hover,input:hover{border-color:var(--iron)}
+select{min-width:170px}input[type=number]{width:88px}
+input[type=color]{padding:2px;width:44px;height:34px;cursor:pointer}
+/* нативный календарный виджет тянет поле до 42px — фиксируем высоту жёстко */
+input[type=date]{height:var(--h)}
+/* Галочки: свои, а не системные — в системные было трудно попасть (13px) и они выпадали
+   из стиля. Бокс 18px + рамка hairline, галка рисуется псевдоэлементом. */
+input[type=checkbox]{appearance:none;-webkit-appearance:none;flex:0 0 auto;width:18px;height:18px;padding:0;margin:0;
+  border:1px solid var(--bd2);border-radius:var(--r-sm);background:var(--bg2);cursor:pointer;position:relative;
+  display:inline-grid;place-content:center;vertical-align:-4px;transition:background .12s,border-color .12s}
+input[type=checkbox]:hover{border-color:var(--iron)}
+input[type=checkbox]::after{content:"";width:9px;height:5px;margin-top:-2px;
+  border-left:2px solid #0b0b0b;border-bottom:2px solid #0b0b0b;border-radius:1px;
+  transform:rotate(-45deg) scale(.6);opacity:0;transition:opacity .1s,transform .1s}
+input[type=checkbox]:checked{background:var(--acc);border-color:var(--acc)}
+input[type=checkbox]:checked::after{opacity:1;transform:rotate(-45deg) scale(1)}
+input[type=checkbox]:focus-visible{outline:1px solid var(--mut);outline-offset:2px}
+input[type=checkbox]:disabled{opacity:.4;cursor:default}
+/* подпись рядом с галкой — кликабельная «таблетка», а не голый текст: попасть проще */
+label.chk{display:inline-flex;align-items:center;gap:7px;min-height:var(--h-sm);padding:0 11px;
+  border:1px solid transparent;border-radius:var(--r);color:var(--tx);
+  font-size:13px;cursor:pointer;user-select:none;transition:background .12s,border-color .12s}
+label.chk:hover{border-color:var(--bd2);background:var(--panel2)}
+/* Кнопка — inline-flex + min-height, а не вертикальный паддинг: высота больше не
+   зависит от кегля, и иконка со словом центрируются сами (gap вместо пробела в разметке). */
+button{background:transparent;color:var(--tx);border:1px solid var(--bd2);border-radius:var(--r);
+  min-height:var(--h);padding:0 16px;display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  line-height:1.2;font:inherit;font-weight:400;cursor:pointer;transition:background .12s,border-color .12s,color .12s}
+button:hover{background:var(--panel2);border-color:var(--iron)}
+button:active{transform:translateY(.5px)}
+button.primary{background:var(--acc);color:#0b0b0b;border-color:var(--acc);font-weight:400;border-radius:var(--r-pill);
+  text-transform:uppercase;letter-spacing:.04em;padding:0 22px;font-size:13.5px}
+button.primary:hover{filter:brightness(.92);background:var(--acc)}
+/* радиус тут НЕ переопределять: правило идёт после .primary и при «primary sm»
+   перебивало пилюлю на 8px — белая главная кнопка становилась прямоугольной */
+button.sm{min-height:var(--h-sm);padding:0 12px;font-size:12.5px}
+button:disabled{opacity:.4;cursor:default}
+button.icon,a.icon{border:0;min-height:0;padding:5px 8px;color:var(--mut);background:transparent;border-radius:var(--r);display:inline-block}
+button.icon:hover,a.icon:hover{color:var(--tx);background:#141414}
+.seg{display:inline-flex;background:var(--bg2);border:1px solid var(--bd2);border-radius:var(--r-pill);padding:3px;gap:2px}
+.seg label{position:relative;margin:0;padding:7px 14px;cursor:pointer;color:var(--mut);font-size:13px;border-radius:var(--r-pill);transition:.12s}
+.seg label:hover{color:var(--tx)}
+.seg label.on{background:var(--acc);color:#0b0b0b;font-weight:400}
+/* Радио прячем ВИЗУАЛЬНО, но не из tab-порядка: с display:none браузер выкидывал их и из
+   фокуса, и из дерева доступности — число камер, режим сборки и вкладки панелей слов
+   вообще нельзя было переключить с клавиатуры (аудит 2026-07-23, A1). */
+.seg input{position:absolute;inset:auto auto 0 0;opacity:0;width:1px;height:1px;min-height:0;padding:0;
+  margin:0;border:0;pointer-events:none}
+.seg label:has(input:focus-visible){outline:1px solid var(--mut);outline-offset:2px}
+.muted{color:var(--mut)}.ok{color:var(--ok)}.err{color:var(--dng)}.grow{flex:1}
+.hint{color:var(--mut);font-size:12.5px}
+table{width:100%;border-collapse:collapse;margin-top:12px}
+td,th{text-align:left;padding:9px 8px;border-bottom:1px solid var(--bd);font-size:13px}
+/* длинные имена пар не должны растягивать карточку — как .clip .nm в списках клипов */
+#qt td:nth-child(2){max-width:0;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+th{color:var(--mut);font-weight:400;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em}
+.x{color:var(--mut);cursor:pointer}.x:hover{color:var(--dng)}
+details{border-top:1px solid var(--bd);padding-top:12px;margin-top:14px}
+summary{cursor:pointer;color:var(--mut);font-size:12.5px;font-weight:400;user-select:none}
+summary:hover{color:var(--tx)}
+/* «!»-тултипы: вся справка спрятана сюда (просьба юзера — мелкий текст не показывать),
+   работают и с клавиатуры (focus-visible) */
+.i{display:inline-grid;place-items:center;width:16px;height:16px;border-radius:50%;border:1px solid var(--bd2);
+  color:var(--mut);font-size:11px;cursor:help;position:relative;vertical-align:middle;font-weight:400}
+.i:hover,.i:focus-visible{color:var(--tx);border-color:var(--mut);outline:0}
+/* Карточка подсказки — ОДИН плавающий блок на всю страницу (position:fixed, координаты
+   считает tipShow в app.js), а не ::after внутри «!». Псевдоэлемент обрезался любым
+   скролл-контейнером (во вкладке «Стиль» предпросмотра были нечитаемы все подсказки
+   блока стиля) и уходил за правый край окна при ширине ~760px (аудит, D2/D3). */
+#tipbox{position:fixed;display:none;max-width:min(320px,70vw);white-space:normal;
+  background:var(--bg2);color:var(--tx);border:1px solid var(--iron);border-radius:var(--r);padding:9px 11px;
+  font:400 12.5px/1.5 inherit;font-family:inherit;letter-spacing:0;text-transform:none;z-index:120;pointer-events:none}
+#tipbox.on{display:block}
+/* steps */
+.step{display:none}.step.on{display:block;animation:fade .16s ease}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+/* flex-wrap обязателен: без него ряд «ИИ-нарезка + Классическая + три галки» не влезал
+   в окно ~760px (браузер в пол-экрана рядом с Premiere) и тянул горизонтальный скролл
+   ВСЕЙ страницы — 811px против 760 (аудит 2026-07-23, D1). */
+.navbar{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-top:22px}
+/* Ряд действий (.navbar — навигация по шагам, .actbar — «сохранить/сбросить» и т.п.).
+   Кнопки внутри — ПАРА: одна форма, одна высота, отличаются только заливкой
+   (белая = главное, ghost = остальное). До этого «← Назад» был 32px/8px вплотную
+   к белой пилюле 40px и читался как контрол из другого набора.
+   Правило только для рядов с главным действием: одиночные .sm в панелях
+   инструментов остаются прямоугольными — они не пара ничему. */
+.navbar button,.actbar button{min-height:var(--h);border-radius:var(--r-pill);padding:0 22px;font-size:13.5px}
+/* иконочные кнопки в таком ряду — не действия-пары, геометрия своя */
+.navbar button.icon,.actbar button.icon{min-height:0;border-radius:var(--r);padding:5px 8px;font-size:inherit}
+/* clip list */
+.clips{display:flex;flex-direction:column;gap:8px;margin-top:6px}
+.clip{display:flex;align-items:center;gap:14px;border:1px solid var(--bd);border-radius:var(--r);padding:13px 15px;background:transparent}
+.clip .idx{font-family:ui-monospace,monospace;color:var(--mut);font-size:12px;width:20px}
+.clip .nm{font-weight:400;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.clip .st{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.tag{font-size:11px;padding:3px 9px;border-radius:var(--r-sm);border:1px solid var(--bd2);color:var(--mut);white-space:nowrap;
+  background:#1a1a1a;text-transform:uppercase;letter-spacing:.03em;display:inline-flex;align-items:center;gap:5px}
+/* зелёное = «над этим уже поработал» (маркер юзера): точка-пульс + зелёный текст */
+.tag.ok{border-color:rgba(152,255,56,.35);color:var(--ok)}
+.tag.ok::before{content:'';width:6px;height:6px;border-radius:50%;background:var(--ok);flex:none}
+.tag.on{border-color:var(--iron);color:var(--tx)}
+/* крестик очистки внутри тега (шаг 2): виден по наведению на сам тег — точечно снести
+   субтитры / жёлтые / вставки, не трогая остальное */
+/* display:none, а не opacity:0 — у тега gap:5px, и «невидимый» крестик всё равно
+   раздвигал бы содержимое, дёргая ширину тега при наведении */
+/* :focus-within — крестик достижим и с клавиатуры: раньше он появлялся ТОЛЬКО по наведению
+   мышью, т.е. точечной очистки субтитров/жёлтых/вставок без мыши не существовало */
+/* Не display:none (тогда до крестика не добраться фокусом) и не голый opacity:0 (у тега
+   gap:5px — невидимый крестик раздвигал бы содержимое): схлопываем ширину и гасим gap
+   отрицательным margin, на hover/фокусе разворачиваем. */
+.tagx{cursor:pointer;color:var(--mut);font-size:12px;line-height:1;display:inline-flex;
+  width:0;margin-left:-5px;opacity:0;overflow:hidden;transition:opacity .12s}
+.tag:hover .tagx,.tag:focus-within .tagx{width:auto;margin-left:0;opacity:1}
+.tagx:hover{color:var(--dng)}
+.tagx:focus-visible{outline:1px solid var(--mut);outline-offset:2px;color:var(--dng)}
+.clip .acts{display:flex;gap:4px;align-items:center}
+.empty{color:var(--mut);font-size:13px;padding:20px;text-align:center;border:1px dashed var(--bd2);border-radius:var(--r);margin-top:6px}
+/* modal */
+.backdrop{position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;align-items:flex-start;justify-content:center;
+  z-index:80;padding:40px 20px;overflow:auto}
+.backdrop.on{display:flex}
+/* min(...,100%) — иначе при окне ~760px модалка вылезала за правый край вьюпорта */
+.modal{background:var(--bg2);border:1px solid var(--bd2);border-radius:var(--r);width:100%;max-width:min(860px,100%);margin:auto}
+.modal.wide{max-width:min(1560px,97vw,100%)}
+#mbLog{z-index:96}  /* логи ПОВЕРХ прогресс-оверлея (z-90), иначе открывались позади */
+/* Настройки ИИ-провайдеров: окно не меняет размер при смене вкладки. Шапка и
+   навигация остаются на месте, длинное содержимое прокручивается внутри панели. */
+#mbAISettings .modal{height:min(720px,calc(100vh - 80px));max-height:calc(100vh - 80px);
+  display:flex;flex-direction:column;overflow:hidden}
+#mbAISettings .mhead{flex:none}
+#mbAISettings .aislayout{flex:1;min-height:0;overflow:hidden}
+.aisItem{min-height:var(--h-sm);padding:0 11px;border:1px solid var(--bd);border-radius:var(--r);margin-bottom:6px;cursor:pointer;
+  font-size:13px;display:flex;align-items:center;gap:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.aisItem:hover{border-color:var(--iron)}
+.aisItem.on{border-color:var(--iron);color:var(--tx)}
+.aisItem:focus-visible{outline:1px solid var(--mut);outline-offset:1px}
+.aisItem .dot{color:var(--acc);font-size:11px}   /* активность — выбор, а не «поработал»: зелёный только у «готово» (правка юзера)
+/* вкладки настроек: список слева (колонка), панели справа */
+.aislayout{display:flex;align-items:stretch}
+.aispanes{flex:1;min-width:0;min-height:0;overflow:hidden;border-left:1px solid var(--bd)}
+#mbAISettings .aistab{height:100%;overflow-y:auto;overscroll-behavior:contain}
+/* вкладка «Слова»: словарь не должен задыхаться в 126px при пустом месте под ним.
+   Высота textarea считается от высоты модалки (та фиксирована по DESIGN.md):
+   flex-grow внутри <details> в Chrome не работает (слот details не участвует в
+   flex-раскладке), поэтому — явная height; flex:0 0 auto, чтобы flex-shrink
+   обёртки не сжал её обратно. Прокрутка внутри и уголок остаются. */
+#aistab_words details[name="aiswords"] textarea{height:calc(min(720px,100vh - 80px) - 240px);min-height:120px;flex:0 0 auto;resize:vertical}
+.ais-matrix{display:grid;gap:1px;min-width:0;border:1px solid var(--bd);border-radius:var(--r);overflow:hidden}
+.ais-matrix-row{display:grid;grid-template-columns:minmax(76px,.7fr) minmax(0,1.6fr) minmax(0,1fr);gap:8px;align-items:center;padding:7px 9px;background:var(--bg)}
+.ais-matrix-row select{min-width:0;width:100%}
+.ais-matrix-head{color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.06em;background:var(--panel2)}
+.ais-diagnostics{width:100%;min-width:0;border-top:1px solid var(--bd);padding-top:9px;margin-top:10px}
+.ais-diagnostics>summary{cursor:pointer;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+.ais-diagnostics #aistats_host{overflow-x:auto;max-width:100%;margin-top:9px}
+.ais-profile-row{flex:none}
+#aistab_words details[name="aiswords"]{border-top:1px solid var(--bd);padding-top:8px}
+#aistab_words details[name="aiswords"]>summary{cursor:pointer;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}
+/* колонка вкладок: индикатор активной — левая полоса, а не нижняя (список вертикальный) */
+.tabs{display:flex;flex-direction:column;gap:2px;padding:14px 10px;flex:0 0 190px}
+/* justify-content:flex-start — базовый button центрирует содержимое, из-за чего короткие
+   вкладки («Стр. 1 · Нарезка») выглядели сдвинутыми вправо, а длинные — нет */
+.tabs .tab{background:transparent;border:none;border-left:2px solid transparent;border-radius:0;
+  padding:9px 12px;justify-content:flex-start;text-align:left;color:var(--mut);font-size:12.5px;text-transform:uppercase;letter-spacing:.04em;cursor:pointer}
+.tabs .tab:hover{color:var(--tx)}
+.tabs .tab.on{color:var(--tx);border-left-color:var(--acc)}
+/* узкое окно: колонка вкладок ложится сверху строкой, индикатор снова снизу */
+@media(max-width:620px){
+  .aislayout{flex-direction:column}
+  #mbAISettings .aispanes{border-left:none;border-top:1px solid var(--bd);flex:1;min-height:0}
+  .tabs{flex-direction:row;flex:none;padding:0 12px;border-bottom:1px solid var(--bd);overflow-x:auto}
+  .tabs .tab{border-left:none;border-bottom:2px solid transparent;white-space:nowrap}
+  .tabs .tab.on{border-bottom-color:var(--acc)}
+  .ais-matrix-row{grid-template-columns:minmax(64px,.65fr) minmax(0,1.35fr) minmax(0,.9fr);gap:5px;padding:6px}
+}
+/* строка настройки: подпись слева фиксированной ширины, контрол справа */
+.setrow{display:flex;gap:12px;align-items:center}
+.setrow>label:first-child{margin:0;flex:0 0 176px;font-size:12px}
+.setrow>select,.setrow>input{flex:1;min-width:0}
+/* золото — только контуры иконок и «◆» (DESIGN): заголовок секции был им же, и это
+   3.9:1 текстом. Секции по стилю и так smoke — приводим к общему правилу. */
+.sethdr{margin-top:6px;padding-top:11px;border-top:1px solid var(--bd);font-size:11px;
+  text-transform:uppercase;letter-spacing:.06em;color:var(--mut)}
+/* пороги нарезки в профиле спикера: шестнадцать чисел строками .setrow дают простыню
+   на два экрана — кладём сеткой, подпись над полем. Серое значение в placeholder — то,
+   что подставится, если поле оставить пустым. */
+.spkgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(206px,1fr));gap:10px 12px}
+.spkgrid label{margin-bottom:4px}
+.spkgrid input{width:100%}
+/* чекбокс-порог не должен растягиваться на всю ячейку грида (задание V): ширина 100%
+   делала его высотой строки и «лапой» на всю колонку */
+.spkgrid label.chk{margin:0;width:auto;justify-self:start}
+.backdrop.on .modal{animation:pop .18s ease}
+@keyframes pop{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:none}}
+.mhead{display:flex;align-items:center;gap:12px;padding:16px 20px;border-bottom:1px solid var(--bd)}
+.mhead .t{font-weight:400;flex:0 1 auto;margin-right:auto;font-size:14px;text-transform:uppercase;letter-spacing:.05em}
+.mbody{padding:20px}
+/* preview + editor */
+/* container-type: субтитры и интро внутри кадра считаются в cqw — иначе на большом
+   предпросмотре (1440p) кегль оставался «телефонным» и пропорции кадра врали */
+.pvstage{position:relative;background:#000;border-radius:var(--r);overflow:hidden;width:100%;max-width:320px;margin:0 auto;aspect-ratio:9/16;
+  container-type:inline-size}
+.pvstage video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
+.pvstage.zoompick{cursor:crosshair}
+/* маркер точки наезда (задание Q, часть 4): перекрестие в долях кадра */
+.zoommark{position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;pointer-events:none;z-index:20;
+  border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,.8);background:
+    linear-gradient(var(--acc),var(--acc)) 50% 0/1px 100%,
+    linear-gradient(var(--acc),var(--acc)) 0 50%/100% 1px;background-repeat:no-repeat}
+.zoommark::after{content:'';position:absolute;inset:8px;border-radius:50%;background:var(--acc);box-shadow:0 0 0 1px rgba(0,0,0,.8)}
+.pvsub{position:absolute;left:0;right:0;bottom:11%;text-align:center;font-size:21px;font-size:7.7cqw;line-height:1.1;
+  color:#fff;text-shadow:var(--subsh,0 2px 7px #000,0 0 3px #000);padding:0 5.2cqw;z-index:5;pointer-events:none}
+/* стопка субтитров ПО ПЛАНУ (задание D): #ipvsub накрывает кадр целиком, слово — по своему
+   ряду (row*hl_step от posy). Позиции в %: стойка 9:16 == комп 9:16, проценты совпадают. */
+/* bottom:auto здесь БЫЛ и ломал всё: inset:0 задаёт четыре стороны, а bottom:auto тут же
+   снимал нижнюю — высота контейнера становилась авто, абсолютные слова в неё не считаются,
+   то есть НОЛЬ. Проценты внутри считались от нуля, и стопка прижималась к верху кадра
+   («субтитры очень высоко», сверка с AE 2026-08-11). Контейнер обязан быть во весь кадр. */
+#ipvsub.plan{inset:0;padding:0}
+/* Кегль и точка привязки — ИЗ ПЛАНА, а не на глаз. Было font-size:7.7cqw при том, что
+   план несёт fsize (140 на ширине 1080 = 12.96% ширины): превью рисовало текст почти
+   вдвое мельче, чем соберёт AE. --subfs ставит ipvSubs из плана, 7.7cqw остался только
+   фолбэком «плана нет».
+   Привязка — НИЗОМ строки, как у styleSubPos (`bottom:(1-sub_y)*100%`): в AE POSY это
+   базовая линия текстового слоя, текст растёт от неё ВВЕРХ. Центрировать по posy было
+   неверно — стопка уезжала. Повторяем ту привязку, которая уже сверена глазами, а не
+   подбираем em по метрикам шрифта. */
+#ipvsub .pvsubs_host{position:absolute;inset:0;pointer-events:none}
+#ipvsub .pvsub_bg{position:absolute;left:50%;transform:translate(-50%,50%);
+  box-shadow:0 0.463cqw 4.074cqw rgba(0,0,0,0.68);pointer-events:none;z-index:0;
+  transition:width .22s cubic-bezier(.165,.84,.44,1)}
+#ipvsub .pvsubw{position:absolute;left:0;right:0;text-align:center;z-index:1;
+  font-size:21px;font-size:var(--subfs,7.7cqw);line-height:1;color:var(--subfc,#fff);text-shadow:var(--subsh,0 2px 7px #000,0 0 3px #000);padding:0;white-space:nowrap}
+#ipvsub .pvsubw.yel{color:var(--subhl,var(--yel))}
+#ipvsub .pvsubw .yel{color:var(--subhl,var(--yel))}
+/* живая подсказка «Низ маски %» в редакторе стиля: полупрозрачная красная полоса
+   от низа кадра, пока поле рото крутится (см. rotoMask* в 95-styles.js).
+   z-index 4 — над кадром и вставками, под субтитрами (5).
+   .rotomask — РАМКА во весь кадр, и она несёт ТОТ ЖЕ transform, что видео камеры
+   (наезд/дрейф Кам1, см. ipvRotoMaskZoom): рото-маску ffmpeg заливает по низу
+   ИСХОДНИКА, а кадр двигает зум — полоса, прибитая к низу стойки, врала тем сильнее,
+   чем крупнее наезд. Красная полоса — вложенный .rmband, ему и задаётся высота в %. */
+.rotomask{position:absolute;inset:0;z-index:4;pointer-events:none}
+.rotomask .rmband{position:absolute;left:0;right:0;bottom:0;background:rgba(255,60,60,.32)}
+/* ползунки: у нативного input не читались ни начало, ни конец дорожки (жалоба
+   2026-08-12). Рисуем сами: hairline-граница по --bd2, без теней, радиусы из токенов.
+   Базовое «select, input, textarea» даёт range padding 8px 11px и рамку — их сбрасываем,
+   иначе дорожка рисуется внутри лишнего поля и высота раздувается. */
+input[type=range]{-webkit-appearance:none;appearance:none;background:transparent;height:14px;padding:0;border:0;cursor:pointer}
+input[type=range]::-webkit-slider-runnable-track{height:4px;background:var(--bg2);border:1px solid var(--bd2);border-radius:var(--r-sm)}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:12px;height:12px;border-radius:var(--r-pill);background:var(--acc);border:1px solid var(--bg2);margin-top:-5px}
+input[type=range]::-moz-range-track{height:4px;background:var(--bg2);border:1px solid var(--bd2);border-radius:var(--r-sm)}
+input[type=range]::-moz-range-thumb{width:12px;height:12px;border-radius:var(--r-pill);background:var(--acc);border:1px solid var(--bg2)}
+input[type=range]:focus-visible{outline:2px solid var(--acc);outline-offset:2px}
+/* words / chips / inserts (reuse) */
+.words{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px;max-height:280px;overflow:auto;align-items:center;
+  background:var(--bg2);border:1px solid var(--bd);border-radius:var(--r);padding:10px}
+/* был #3a3a3a — 1.8:1 на карбоне: кликабельный разделитель стопки просто не находился глазом */
+.brk{cursor:pointer;user-select:none;color:var(--mut);font-weight:700;padding:0 1px;font-size:16px;line-height:1}
+.brk.on{color:var(--subhl,var(--yel))}
+/* разрыв стоит между КАЖДОЙ парой слов и просто прячется — узлы вокруг чипа не должны
+   появляться/исчезать по клику, иначе браузер не считает второй клик двойным */
+.brk.hid{display:none}
+/* склейка в строку: символ убран, прозрачная зона кликабельна, зазор между чипами убран */
+.brk.jns{width:8px;margin:0 -10px;padding:0;display:inline-block;cursor:pointer;background:transparent;align-self:stretch;position:relative;z-index:1}
+.chip:has(+ .brk.jns){border-top-right-radius:0;border-bottom-right-radius:0;border-right-color:transparent;padding-right:4px}
+.brk.jns + .chip{border-top-left-radius:0;border-bottom-left-radius:0;border-left-color:transparent;padding-left:4px}
+.chip{background:#141414;border:1px solid var(--bd2);border-radius:var(--r-sm);padding:5px 10px;cursor:pointer;user-select:none;font-size:13px}
+.chip:hover{border-color:var(--mut)}
+.chip.on{background:var(--subhl,var(--yel));color:var(--subhl-tx,#111);border-color:var(--subhl,var(--yel));font-weight:700}
+.chip.cur{outline:2px solid var(--mut);outline-offset:1px}
+.chip-cnt{display:inline-block;margin-left:5px;padding:0 3px;font-size:11px;line-height:14px;
+  border-radius:var(--r-sm);border:1px solid var(--iron);vertical-align:middle;cursor:pointer;
+  font-family:monospace;font-weight:600;letter-spacing:-0.5px;user-select:none;
+  color:var(--mut);background:transparent}
+.chip-cnt:hover{color:var(--tx);border-color:var(--mut)}
+.chip-cnt.on{color:var(--subhl-tx,#111);background:var(--subhl,var(--yel));border-color:var(--subhl,var(--yel))}
+.chip.on .chip-cnt{color:var(--subhl-tx,#111);border-color:var(--subhl-tx,#111);opacity:0.75;background:transparent}
+.chip.on .chip-cnt:hover{color:var(--subhl-tx,#111);border-color:var(--subhl-tx,#111);opacity:1}
+.chip.on .chip-cnt.on{color:var(--subhl,var(--yel));background:#111;border-color:#111}
+.chip:focus-visible,.brk:focus-visible,.libopt:focus-visible,.chip-cnt:focus-visible,.icnt:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+.icnt{display:inline-block;margin-left:4px;padding:0 3px;font-size:11px;line-height:14px;
+  border-radius:var(--r-sm);border:1px solid var(--iron);vertical-align:middle;cursor:pointer;
+  font-family:monospace;font-weight:600;letter-spacing:-0.5px;user-select:none;
+  color:var(--mut);background:transparent}
+.icnt:hover{color:var(--tx);border-color:var(--mut)}
+.icnt.on{color:var(--subhl-tx,#111);background:var(--subhl,var(--yel));border-color:var(--subhl,var(--yel))}
+.pvwordsbox{margin-top:12px;border:1px solid var(--bd);border-radius:var(--r);padding:6px 12px;background:var(--bg2)}
+.pvwordsbox>summary{cursor:pointer;user-select:none;font-size:13px;color:var(--mut);padding:4px 0}
+.pvwordsbox .words{max-height:200px}
+.inscard{background:var(--bg2);border:1px solid var(--bd2);border-radius:var(--r);padding:12px 14px;margin-top:10px}
+/* скрабберов в шапке прибавилось (масштаб + маска, у видео ещё «файл с») — в узкой
+   панели строка переносится, а не выдавливает крестик удаления за край */
+.inscard .top{display:flex;flex-wrap:wrap;align-items:center;gap:10px;row-gap:8px;margin-bottom:8px}
+.inscard .fld{display:flex;flex-direction:column;gap:5px}
+.inscard .fld>label{font-size:11.5px;margin:0}
+.inscard .rowline{display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end;margin-top:10px}
+/* скраббер-число как в AE: тянешь мышкой — бежит, двойной клик — ввод с клавиатуры */
+.xy{display:inline-flex;align-items:center;gap:5px;font-size:12px}
+.xy>b{color:var(--mut);font-weight:600;font-size:11px}
+.scrub{display:inline-block;min-width:38px;padding:2px 6px;text-align:center;
+  background:#0a0a0a;border:1px solid var(--bd);border-radius:var(--r-sm);
+  color:var(--amber);font-family:"Geist Mono",ui-monospace,Consolas,monospace;font-size:12px;
+  cursor:ew-resize;user-select:none;-webkit-user-select:none}
+.scrub:hover{border-color:var(--amber)}
+.scrub input{width:52px;background:transparent;border:0;outline:0;color:var(--amber);
+  font-family:inherit;font-size:12px;text-align:center;cursor:text}
+.scrub input::-webkit-outer-spin-button,.scrub input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+/* описание вставки — правится прямо в карточке, но выглядит как код (было <code>) */
+.qedit{flex:1;min-width:0;background:#0a0a0a;border:1px solid var(--bd);border-radius:var(--r-sm);
+  min-height:0;padding:4px 8px;font-size:12px;font-family:"Geist Mono",ui-monospace,Consolas,monospace;color:var(--tx)}
+.qedit:hover{border-color:var(--bd2)}
+.qedit:focus{outline:none;border-color:var(--iron)}
+.qedit::placeholder{color:var(--mut)}
+.tc{display:inline-flex;align-items:center;gap:5px}.tc input{width:52px}.tc .u{color:var(--mut);font-size:12px}
+.media{display:flex;gap:8px;align-items:center}
+.media .name{flex:1;padding:7px 11px;background:var(--bg2);border:1px solid var(--bd2);border-radius:var(--r);font-size:12px;color:var(--tx);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.media .name.empty{color:var(--mut)}
+.badge{font-size:11px;padding:3px 9px;border-radius:var(--r-sm);font-weight:400;letter-spacing:.3px}
+.del{color:var(--mut);cursor:pointer;font-size:16px;line-height:1;padding:2px 4px}.del:hover{color:var(--dng)}
+.pcgroup{border:1px solid var(--bd2);border-radius:var(--r);padding:10px 12px;margin-top:10px;background:var(--bg2)}
+.pchdr{font-size:11.5px;font-weight:400;letter-spacing:.05em;text-transform:uppercase;color:var(--mut);margin-bottom:2px}
+.xfade{display:flex;align-items:center;gap:10px;justify-content:center;margin:8px 2px;color:var(--mut);font-size:12px;user-select:none}
+.xfade .bar{flex:1;height:1px;background:var(--bd2)}.xfade .rm{color:var(--dng);cursor:pointer}
+/* «разделить» был #5b5b5b (2.9:1) инлайном — кликабельная надпись, которую не видно */
+.xfade.sep{cursor:pointer}.xfade.sep:hover{color:var(--tx)}
+/* «+» стоит только у главной строки прекомпа; у остальных колонка пустая — строки не съезжают */
+.introar{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;min-width:26px}
+.introar button.icon{padding:2px 4px;line-height:0}
+.introar button.icon:hover{color:var(--tx)}
+/* «сейчас за спиной висит этот прекомп» — как .inscard.playing у вставок */
+.introrow{border-radius:var(--r);padding:3px 7px;margin-left:-7px;margin-right:-7px;
+  transition:background .12s,box-shadow .12s}
+.introrow.playing{background:rgba(224,168,101,.12);box-shadow:inset 0 0 0 1px rgba(224,168,101,.5)}
+.pchdr.playing{color:var(--amber)}
+/* тайминг строки интро — как на карточках вставок, колонка не пляшет */
+.introtb{font-size:12px;min-width:96px;flex:0 0 auto;white-space:nowrap}
+/* слова строки интро правятся кликом: в общем списке их уже нет, и текст было не поменять.
+   Пунктир снизу — единственный намёк, что это не подпись, а контрол (цвет слова задан
+   инлайном белым/жёлтым и перекрашивать его нельзя — это данные). */
+.iword{cursor:text;border-bottom:1px dashed var(--iron);border-radius:var(--r-sm);padding:0 1px}
+.iword:hover{border-bottom-color:var(--tx)}
+.iword:focus-visible{outline:2px solid var(--acc);outline-offset:1px}
+.iwordedit{min-height:0;padding:2px 7px;font-size:13px;vertical-align:-2px}
+/* progress overlay */
+.prog{position:fixed;inset:0;background:rgba(8,8,8,.82);display:none;align-items:center;justify-content:center;z-index:90}
+.prog.on{display:flex}
+.progcard{background:var(--bg2);border:1px solid var(--bd2);border-radius:var(--r);padding:28px 30px;width:100%;max-width:520px;text-align:center}
+.progcard .stage{font-size:15px;font-weight:400;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+.progcard .sub{color:var(--mut);font-size:13px;margin-bottom:18px;min-height:18px}
+.progbar{height:6px;border-radius:var(--r-sm);background:var(--bd);overflow:hidden}
+.progfill{height:100%;width:0;background:var(--acc);transition:width .3s ease,background .3s}
+.progfill.done{background:var(--ok)}
+.progfill.indet{width:35%;animation:indet 1.2s ease-in-out infinite}
+@keyframes indet{0%{margin-left:-35%}100%{margin-left:100%}}
+.progcard .pct{margin-top:12px;color:var(--mut);font-size:12px;font-family:ui-monospace,monospace}
+.progcard .foot{margin-top:18px;display:flex;gap:10px;justify-content:center}
+/* свёрнутый прогресс — плавающий чип справа внизу, клик = развернуть */
+.progmini{position:fixed;right:22px;bottom:22px;z-index:89;background:var(--bg2);border:1px solid var(--bd2);
+  border-radius:var(--r);padding:10px 14px;display:none;cursor:pointer;align-items:center;gap:10px;font-size:12.5px;max-width:420px}
+.progmini.on{display:flex}
+.progmini:hover{border-color:var(--iron)}
+.progmini .txt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--mut)}
+.progmini .bar{width:110px;height:5px;border-radius:var(--r-sm);background:var(--bd);overflow:hidden;flex:none}
+.progmini .fill{display:block;height:100%;width:0;background:var(--acc);transition:width .3s}
+.progmini .fill.done{background:var(--ok)}
+.progmini .fill.indet{width:35%;animation:indet 1.2s ease-in-out infinite}
+/* log modal */
+pre.log{background:var(--bg2);border:1px solid var(--bd);border-radius:var(--r);padding:14px;height:52vh;overflow:auto;
+  white-space:pre-wrap;font:12px/1.55 ui-monospace,Consolas,monospace;margin:0;color:var(--tx)}
+/* editor layout */
+.edcols{display:flex;gap:20px;align-items:stretch;margin-bottom:16px}
+.edcols .pvstage{margin:0;flex:0 0 250px}
+.edside{flex:1;min-width:0;display:flex;flex-direction:column;gap:14px}
+.edgrp{border:1px solid var(--bd);border-radius:var(--r);padding:14px 16px;background:var(--bg2)}
+.edgrp.grow2{flex:1}
+.edlbl{font-size:11.5px;font-weight:400;letter-spacing:.07em;text-transform:uppercase;color:var(--mut);margin-bottom:10px}
+.edtlbar{display:flex;gap:4px;align-items:center;margin:0 0 6px}
+/* margin-left убран: кнопка теперь flex с gap:6px, отступ шёл вторым слоем поверх него */
+.kbd{font:11px ui-monospace,monospace;border:1px solid var(--bd2);border-radius:var(--r-sm);padding:1px 5px;color:var(--mut)}
+@media(max-width:900px){.edcols{flex-direction:column}.edcols .pvstage{flex:none;max-width:280px;margin:0 auto}}
+/* site polish */
+*{scrollbar-width:thin;scrollbar-color:#2e2e2e var(--bg)}
+::selection{background:rgba(255,255,255,.18)}
+button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-visible,
+[role=button]:focus-visible,[tabindex]:focus-visible{outline:1px solid var(--mut);outline-offset:2px}
+tbody tr:hover td{background:rgba(255,255,255,.02)}
+.clip{transition:border-color .12s,background .12s}
+.clip:hover{border-color:var(--iron)}
+/* готовность клипа видна зелёными тегами; строка остаётся нейтральной */
+.clip.ready{border-color:var(--bd)}
+.clip.ready:hover{border-color:var(--iron)}
+/* шаг AE: прошёл предпросмотр и интро на месте — зелёным остаются только теги */
+.clip.done{border-color:var(--bd);background:transparent}
+.clip.done:hover{border-color:var(--iron);background:transparent}
+.clip.cur{box-shadow:none}
+/* строка-файл на шаге AE кликабельна целиком: курсор, подсказка «открыть →» на наведении */
+.clip.pick{cursor:pointer}
+.clip.pick .openhint{opacity:0;white-space:nowrap;transition:opacity .12s}
+.clip.pick:hover .openhint{opacity:1}
+.clip .pickbox{display:flex;align-items:center;justify-content:center;margin:0;padding:8px;
+  border-radius:var(--r);cursor:pointer;transition:background .12s}
+.clip .pickbox:hover{background:rgba(255,255,255,.06)}
+.clip.cur{border-left:2px solid var(--tx)}
+.spkpick{position:relative;min-width:116px;border-top:0;padding-top:0;margin-top:0}
+.spkpick summary{list-style:none;color:var(--mut);border:1px solid var(--bd2);border-radius:var(--r-sm);padding:2px 6px;cursor:pointer;white-space:nowrap}
+.spkpick summary::-webkit-details-marker{display:none}
+.spkpick summary span{margin-left:6px;color:var(--mut)}
+.spkpick .opts{display:none}
+.spkpick[open] .opts{position:absolute;z-index:5;top:100%;left:0;min-width:170px;display:flex;flex-direction:column;background:var(--panel2);border:1px solid var(--bd2);border-radius:var(--r-sm);padding:4px;max-height:260px;overflow:auto}
+.spkpick .opts button{border:0;background:transparent;color:var(--tx);text-align:left;padding:4px 8px;border-radius:var(--r-sm);white-space:nowrap}
+.spkpick .opts button:hover{background:var(--bg2)}
+.spkpick .opts button[aria-selected="true"]{color:var(--acc)}
+.howto{font-size:12px;color:var(--mut);border-top:0;padding-top:0;margin-top:0}
+.howto summary{cursor:pointer;color:var(--mut)}
+.howto div{padding:4px 0}
+.ae-buildbar{position:sticky;bottom:0;z-index:20;border-top:1px solid var(--bd);padding:12px 0;background:var(--panel)}
+.ae-buildbar .secondary{background:transparent;color:var(--tx);border-color:var(--bd2)}
+.ae-buildbar .secondary:hover{background:var(--panel2);color:var(--tx);border-color:var(--iron);filter:none}
+.gdrive-card{padding:0}
+.gdrive-card>summary{padding:24px;cursor:pointer;list-style:none}
+.gdrive-card>summary::-webkit-details-marker{display:none}
+.gdrive-card[open]>summary{border-bottom:1px solid var(--bd)}
+.gdrive-card[open]>:not(summary){margin-left:24px;margin-right:24px}
+.gdrive-card[open]>h2{margin-top:18px}
+.gdrive-card[open]>:last-child{margin-bottom:24px}
+/* карточки вставок: цвет по типу (фото/видео — функциональные данные), зелёная = файл выбран */
+.inscard{border-left:3px solid var(--bd2);transition:border-color .12s,background .12s}
+.inscard.tphoto{border-left-color:var(--blue)}
+.inscard.tvideo{border-left-color:var(--amber)}
+/* Зелёная = файл выбран ОСОЗНАННО (руками или через 📚). Автоподбор и генерация
+   зелёными НЕ помечаются: зелёный здесь значит «я это проверил», а автомат ничего не
+   проверял — у него свои теги «авто»/«ген». */
+.inscard.chosen{border-color:rgba(152,255,56,.4);background:rgba(152,255,56,.05);border-left-color:var(--ok)}
+/* «Сейчас в кадре» — жёлтый, и заметно: раньше был тонкий янтарный контур, который
+   на зелёной карточке почти не читался. Теперь толстая рамка + подсветка + жёлтая полоса слева. */
+.inscard.playing{outline:3px solid var(--yel);outline-offset:-1px;border-left-color:var(--yel)!important;
+  box-shadow:0 0 0 1px rgba(245,197,24,.35),0 0 18px rgba(245,197,24,.18);background:rgba(245,197,24,.07)}
+.librow{display:flex;gap:8px;margin-top:8px;overflow-x:auto;padding-bottom:4px}
+.libopt{flex:0 0 96px;cursor:pointer;border:1px solid var(--bd2);border-radius:var(--r);padding:5px;display:flex;flex-direction:column;gap:3px;background:var(--bg2)}
+.libopt:hover{border-color:var(--mut)}
+.libopt.cur{border-color:rgba(152,255,56,.5);background:rgba(152,255,56,.06)}
+.libopt img{width:100%;height:58px;object-fit:contain;background:#000;border-radius:var(--r-sm)}
+.libopt .vph{width:100%;height:58px;display:flex;align-items:center;justify-content:center;background:#000;border-radius:var(--r-sm)}
+.libopt .nm{font-size:11px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.libopt .sc{font-size:11px;color:var(--mut)}
+.illrow{display:flex;gap:10px;align-items:center;border:1px solid var(--bd);border-radius:var(--r);padding:6px 10px;background:var(--bg2)}
+.illrow img,.illrow .vph{width:58px;height:40px;object-fit:contain;background:#000;border-radius:var(--r-sm);flex:0 0 58px;display:flex;align-items:center;justify-content:center}
+.illrow .meta{flex:1;min-width:0}
+.illrow .nm{font-size:11.5px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.illrow .desc{width:100%;font-size:12px;margin-top:3px}
+/* предпросмотр вставок (окно «Вставки»): плеер слева, карточки справа */
+.inscols{display:flex;gap:18px;align-items:flex-start}
+/* Ширина плеера тянется по высоте окна: 272px на ноутбуке съедали кадр, а на 1440p
+   половина экрана простаивала — фото-вставки было не разглядеть. Вычитаемое = всё, что
+   в модалке стоит выше и ниже кадра (шапка, кнопки, таймлайн, отступы), 9/16 = 0.5625. */
+.inspv{flex:0 0 clamp(272px,calc((100vh - 420px) * 0.5625),480px);min-width:0}
+.inspv .pvstage{margin:0;max-width:100%}
+.insside{flex:1;min-width:0}
+.inshostscroll{max-height:calc(88vh - 150px);overflow:auto;padding-right:4px}
+.itlbar{display:flex;gap:8px;align-items:center;margin-top:14px}
+.itl{margin-top:6px;border:1px solid var(--bd);border-radius:var(--r);background:var(--bg2);overflow-x:auto;overflow-y:hidden;height:88px}
+.itlin{position:relative;height:100%;min-width:100%}
+.itlruler{position:absolute;top:0;left:0;right:0;height:16px;pointer-events:none}
+/* было 9px/#6f6f6f (4.0:1) — кегль ниже минимума DESIGN и нечитаемый тайм-код */
+.itlruler i{position:absolute;top:0;bottom:-72px;border-left:1px solid #1e1e1e;color:var(--mut);font-size:11px;font-style:normal;padding-left:3px;line-height:16px;white-space:nowrap}
+.itlblk{position:absolute;top:22px;height:56px;border-radius:var(--r-sm);border:1px solid rgba(0,0,0,.65);cursor:grab;
+  font-size:11px;color:#0d0d0d;font-weight:700;user-select:none;-webkit-user-select:none;touch-action:none;z-index:2}
+.itlblk:active{cursor:grabbing}
+.itlblk.photo{background:var(--blue)}
+.itlblk.video{background:var(--amber)}
+.itlblk.chosen{background:var(--ok)}
+.itlblk.cur{outline:2px solid #fff;z-index:3}
+.itlblk .lbl{position:absolute;inset:0 7px;display:flex;align-items:center;justify-content:center;text-align:center;
+  overflow:hidden;pointer-events:none;line-height:1.15}
+.itlblk .eh{position:absolute;top:0;bottom:0;width:7px;cursor:ew-resize;z-index:2}
+.itlblk .eh.l{left:0;border-radius:var(--r-sm) 0 0 var(--r-sm)}
+.itlblk .eh.r{right:0;border-radius:0 var(--r-sm) var(--r-sm) 0}
+.itlblk .eh:hover{background:rgba(255,255,255,.35)}
+.itlph{position:absolute;top:0;bottom:0;width:1px;background:var(--dng);pointer-events:none;z-index:4}
+.itlph::before{content:'';position:absolute;top:0;left:-4px;width:9px;height:11px;background:var(--dng);
+  clip-path:polygon(0 0,100% 0,50% 100%)}
+.itlin{cursor:text}
+.itlin:active{cursor:ew-resize}
+/* overflow:hidden — коробка ужатого видео может быть ШИРЕ кадра (16:9 ролик, вписанный по
+   высоте, вылезает по ширине втрое): в AE лишнее срезает композиция, в предпросмотре — рамка */
+.ipvins{position:absolute;inset:0;z-index:4;display:none;align-items:center;justify-content:center;pointer-events:none;overflow:hidden}
+.ipvins.on{display:block}
+/* обёртка одной вставки: каждая лежит поверх предыдущих (позже в DOM = выше в AE-стеке),
+   внутри — та же центровка по кадру, что была у прямых детей .ipvins */
+.ipvins .ipvwrap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
+.ipvins img,.ipvins video{max-width:72%;max-height:46%;object-fit:contain;filter:drop-shadow(0 6px 18px rgba(0,0,0,.6))}
+.ipvins .ipvwrap.full img,.ipvins .ipvwrap.full video{max-width:100%;max-height:100%;width:100%;height:100%;object-fit:cover;filter:none}
+.ipvins .ipvwrap.mosaic img,.ipvins .ipvwrap.mosaic video{filter:blur(10px)}
+.ipvins .ph{background:rgba(10,10,10,.85);border:1px dashed var(--bd2);border-radius:var(--r);padding:10px 12px;max-width:82%;text-align:center;font-size:12px;color:#eee}
+.ipvins .ph b{display:block;font-size:11px;letter-spacing:.08em;margin-bottom:4px;color:var(--amber)}
+/* фотовставка: обёртка = окно маски, фото внутри — во всю ширину композа и по центру.
+   Размеры обоих ставит ipvOverlay: «Ш»/«В» обрезают фото, а не масштабируют его. */
+.ipvins .insmask{position:relative;overflow:hidden;flex:none;filter:drop-shadow(0 6px 18px rgba(0,0,0,.6))}
+.ipvins .insmask img{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  max-width:none;max-height:none;object-fit:fill;filter:none}
+.ipvins .ipvwrap.mosaic .insmask img{filter:blur(10px)}
+#ipvsub{z-index:5}
+/* ===== Верхняя строка-прогресс (задание DF) ===== */
+.ipvtopline{position:absolute;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:6;overflow:hidden}
+.ipvtopline .pvtl_track{position:absolute;inset:0;pointer-events:none}
+.ipvtopline .pvtl_prog{position:absolute;left:0;top:0;bottom:0;pointer-events:none}
+/* ===== Подпись о ролике (задание DG) ===== */
+.ipvcaption{position:absolute;pointer-events:none;z-index:7;white-space:nowrap;line-height:1}
+.ipvcaption .pvcap_inner{position:absolute;box-sizing:border-box}
+.ipvcaption .pvcap_text{position:absolute;left:0;top:0;white-space:nowrap;line-height:1.4125}
+.ipvcaption .pvcap_strut{display:inline-block;width:0;height:0;vertical-align:baseline}
+/* интро-текст в предпросмотре AE: блок «за спиной» ~23% сверху, слова проявляются по таймингам.
+   Кегль — ИЗ ПЛАНА, как у субтитров (задание AD): в AE и интро, и субтитры используют один
+   FONT_SIZE, поэтому --introsfs ставит ipvIntro из plan.fsize; 8.4cqw — фолбэк «плана нет». */
+.ipvintro{position:absolute;inset:0;z-index:3;pointer-events:none;display:none;flex-direction:column;
+  align-items:center;justify-content:center}   /* база блока из плана (задание Q2): translate двигает центр от центра кадра */
+.ipvintro .iline{position:relative;font-size:23px;font-size:var(--introsfs,8.4cqw);line-height:1.45;color:#fff;text-align:center;
+  text-shadow:0 2px 10px rgba(0,0,0,.75);white-space:nowrap}
+.ipvintro .iline.yel{color:var(--introhl,var(--subhl,var(--yel)))}
+.ipvintro .iline.back{font-size:calc(var(--introsfs,8.4cqw) * 0.69);line-height:1.15}
+/* строка, посаженная базовой линией по готовым y из плана (задание A2): вне CSS-потока,
+   по центру блока; вертикаль (top) ставит ipvIntro из plan.intro[].ys */
+.ipvintro .iline.abs{position:absolute;left:50%;top:0;transform:translateX(-50%)}
+/* опора базовой линии для замера в ipvIntro — тот же приём, что у подписи (pvcap_strut) */
+.ipvintro .iline.abs .pvcap_strut{display:inline-block;width:0;height:0;vertical-align:baseline}
+.ipvintro span{display:inline-block;opacity:0}
+.ipvintro span.on{opacity:1}
+/* межсловный отступ — текстовый узел-пробел из ipvIntro, как пробел шрифта в AE
+   (template.py считает SPACE по метрике строки): margin-left:.32em давал +9 % на строке
+   из трёх слов. Анимации glitch/reveal раскладывают слово на span'ы букв .ich, поэтому
+   отступ задаётся только МЕЖДУ словами (прямыми детьми .iline), а не между буквами */
+/* перетаскивание в кадре (задание E, шаг 2): хватать вставки/интро/субтитры мышью и
+   пальцем (touch-action:none — иначе тач скроллит страницу вместо драга). Оверлей —
+   pointer-events:none, включаем приём ТОЛЬКО у перетаскиваемого содержимого. */
+.ipvins.ae .ipvwrap{pointer-events:auto;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none}
+.ipvins.ae .ipvwrap:active{cursor:grabbing}
+.ipvintro .iline{pointer-events:auto;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none}
+.ipvintro .iline:active{cursor:grabbing}
+.ipvintro .intro-scale-handle{position:absolute;left:50%;top:100%;width:32px;height:3px;border-radius:var(--r-sm);background:var(--mut);transform:translate(-50%,6px);cursor:ew-resize;pointer-events:auto;touch-action:none}
+#ipvsub .pvsubw{pointer-events:auto;cursor:ns-resize;touch-action:none;user-select:none;-webkit-user-select:none}
+/* режим AE-предпросмотра: модалка ограничена окном, скроллится только правая колонка (задание CW) */
+.modal.aemode{height:94vh;max-height:94vh;display:flex;flex-direction:column}
+.modal.aemode .mbody{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.modal.aemode .inscols{flex:1;min-height:0}
+.modal.aemode .itlbar,.modal.aemode .itl{flex:none}
+.modal.aemode .insside{display:none}
+.aewpanel{flex:1;min-width:0;display:none}
+.modal.aemode .aewpanel{display:flex;flex-direction:column;align-self:stretch;min-height:0}
+.aewpanel .words{flex:1;min-height:0;max-height:none;overflow:auto;margin-top:8px}
+/* вкладка «Стиль» в предпросмотре: занимает всю доступную высоту колонки (задание CP3) */
+#aewstyle{flex:1;min-height:0;overflow:hidden;margin-top:10px;padding-right:6px}
+#aewstyle #stylebox,#aewstyle #stylecustom{display:flex;flex-direction:column;max-height:100%;height:100%}
+#aewstyle .stylebody{max-height:none}
+/* в колонке предпросмотра сетка вкладки схлопывается в столбик (задание CP1) */
+#aewstyle .stylegrid{grid-template-columns:1fr}
+#aewstyle .stylegrid .wide,#aewstyle .stchkrow{grid-column:1/-1}
+#aewstyle .sect:first-child{margin-top:0}
+#aewstyle select,#aewstyle input[type=text],#aewstyle input:not([type]){max-width:100%}
+.aewintrolist{max-height:24vh;overflow:auto;border:1px solid var(--bd);border-radius:var(--r);padding:4px 10px 8px;background:var(--bg2)}
+.chip.sel{outline:2px solid var(--acc);outline-offset:1px}
+/* полосы таймлайна в AE-режиме: интро-группы тонкой серой полосой сверху, вставки ниже */
+.itlblk.intro{top:22px;height:16px;background:#8f8f8f;pointer-events:none;font-size:11px;border-radius:var(--r-sm)}
+/* рото-полоса — тонкая линия сразу под линейкой (масок в предпросмотре нет, только разметка).
+   pointer-events:none снято: иначе на полосу не наведёшься и не увидишь тултип «здесь
+   включён ротоскоп» (жалоба 2026-08-12), а клик по ней должен продолжать перематывать */
+.itlblk.roto{top:17px;height:5px;background:var(--amber);opacity:.7;border:none;border-radius:0}
+.itlblk.lo{top:42px;height:36px}
+@media(max-width:980px){.inscols{flex-direction:column}.inspv{flex:none;width:100%}
+  /* колонкой кадр иначе растянулся бы на всю модалку и ушёл под сгиб */
+  .inspv .pvstage{margin:0 auto;max-width:min(360px,calc((100vh - 420px) * 0.5625))}.inshostscroll{max-height:44vh}}
+.badge.photo{color:var(--blue)!important;border-color:rgba(110,168,255,.4)!important}
+.badge.video{color:var(--amber)!important;border-color:rgba(224,168,101,.4)!important}
+summary::marker{color:var(--mut2)}
+.toast{position:fixed;left:50%;bottom:34px;transform:translateX(-50%);background:var(--bg2);border:1px solid var(--bd2);
+  color:var(--tx);padding:10px 16px;border-radius:var(--r);z-index:100;font-size:13px;max-width:70vw;animation:toastin .18s ease}
+@keyframes toastin{from{opacity:0;transform:translateX(-50%) translateY(6px)}to{opacity:1;transform:translateX(-50%)}}
+/* SVG-иконки: контур 1.5px, currentColor (chalk), gold — акцент ИИ (Compass Gold из стиля) */
+.ic{width:15px;height:15px;vertical-align:-3px;flex:none}
+button.icon .ic{width:16px;height:16px;vertical-align:-3.5px}
+/* мелкие места, куда иконки въехали вместо символов (▶ ✕ ⇅ ⌖): свой размер, иначе
+   15px распирают нудж-кнопку и тег статуса */
+.tagx .ic,.xfade .ic{width:12px;height:12px;vertical-align:-2px}
+.tag .ic{width:12px;height:12px;vertical-align:-2px}
+.ic.gold{color:var(--mut2)}
+/* общий регулятор громкости превью (компактный, рядом с таймкодом) */
+.volctl{display:inline-flex;align-items:center;gap:6px;flex:none;color:var(--mut)}
+.volctl .ic{width:14px;height:14px;vertical-align:0}
+.volctl input[type=range]{width:64px;flex:none}
+/* стилевые уровни музыка/голос (dB): отдельный ряд и золотые иконки — чтобы не путать
+   с громкостью превью (та серая, в ряду с таймкодом). Цвет иконок берётся общим
+   классом .ic.gold (data-cls="gold" в разметке), своей копии цвета здесь нет. */
+.dbctl{display:inline-flex;align-items:center;gap:6px;flex:none;color:var(--mut);font-size:12px;white-space:nowrap}
+.dbctl .ic{width:14px;height:14px;vertical-align:0}
+.dbctl input[type=range]{width:90px;flex:none}
+.badge{display:inline-flex;align-items:center;gap:5px}
+.badge .ic{width:12px;height:12px;vertical-align:0}
+.badge.photo,.badge.video{background:transparent;border:1px solid var(--bd2);color:var(--mut);border-radius:var(--r-sm)}
+
+/* ===== Вкладка «Видео»: активная кнопка в шапке + карточки референсов =====
+   Вкладка писалась под другой набор переменных: --card2/--inp/--gold/--mono в :root
+   нет и не было, работали фолбэки — то есть цвета жили мимо палитры (аудит UI
+   2026-07-28). Свои правила для textarea убраны совсем: общее правило
+   select,input,textarea уже даёт фон, границу, радиус, паддинг и фокус. */
+.lnk.active{color:var(--tx);border-color:var(--iron);background:var(--panel2)}
+.vidrefs{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+.vidref{display:flex;gap:12px;border:1px solid var(--bd);border-radius:var(--r);padding:10px;align-items:flex-start}
+.vrprev{position:relative;width:88px;height:88px;flex:none;border-radius:var(--r-sm);overflow:hidden;
+  background:#000;display:flex;align-items:center;justify-content:center}
+.vrprev img,.vrprev video{width:100%;height:100%;object-fit:cover;display:block}
+/* был свой радиус 3px и кегль 10px — единственные во всём интерфейсе значения вне
+   токенов и ниже минимума 11px (DESIGN: радиусов три, кегль не ниже 11) */
+.vrkind{position:absolute;left:4px;bottom:4px;font-size:11px;padding:1px 5px;border-radius:var(--r-sm);
+  background:rgba(0,0,0,.65);color:var(--tx);letter-spacing:.03em}
+.vrbody{flex:1;min-width:0;display:flex;flex-direction:column;gap:8px}
+.vrtop{display:flex;align-items:center;gap:8px}
+.vrnum{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut2);flex:none}
+.vrurl{width:100%;font-size:13px;font-family:"Geist Mono",ui-monospace,Consolas,monospace}
+.vrcap{width:100%;font-size:13px}
+.vrph{font-size:11px;color:var(--mut);letter-spacing:.03em}
+/* ===== Задачи генерации видео (история сервера) =====
+   Строка в две полки: сверху статус и действия, снизу — запрос или текст ошибки.
+   Ошибку не прячем: в ней бывает ссылка на уже оплаченный ролик у провайдера. */
+.vhrow{display:flex;flex-direction:column;gap:7px;border:1px solid var(--bd);border-radius:var(--r);
+  padding:11px 13px;transition:border-color .12s}
+.vhrow:hover{border-color:var(--iron)}
+.vhrow+.vhrow{margin-top:8px}
+.vhtop{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.vhname{font-family:"Geist Mono",ui-monospace,Consolas,monospace;font-size:12px;color:var(--tx);
+  min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.vhtxt{font-size:12.5px;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* текст отказа НЕ обрезаем: в нём бывает прямая ссылка на уже оплаченный ролик
+   у провайдера (доступен ~48ч) — в многоточии её было бы не прочитать и не скопировать */
+.vhtxt.bad{color:var(--dng);white-space:normal;overflow-wrap:anywhere}
+.vhacts{display:flex;gap:6px;align-items:center;flex:none}
+/* статус задачи: ошибка — красным контуром, чтобы не путать с «поработал» (зелёный) */
+.tag.bad{border-color:rgba(242,99,127,.35);color:var(--dng)}
+
+/* ===== Селект формата скачивания (в шапке шагов 2 и 3) =====
+   Компактный: базовый select растягивается (min-width:170px) и раздувал строку
+   заголовка карточки. Формат один на обе страницы — два селекта синхронизируются
+   в app.js (dlFmtSet), значение переживает перезагрузку. */
+.dlfmt-wrap{display:inline-flex;align-items:center}
+.dlfmt-wrap .dlfmt{min-width:0;width:78px;min-height:var(--h-sm,26px);font-size:11.5px;
+  padding:2px 4px}
+
+/* ===== Вкладка «Сабы» на шаге 2 (задание CI) ===== */
+.subrowslist{max-height:48vh;overflow-y:auto;display:flex;flex-direction:column;gap:4px;padding-right:4px}
+.subrow-item{display:flex;align-items:baseline;gap:10px;padding:6px 10px;border:1px solid var(--bd2);border-radius:var(--r);background:var(--bg2);cursor:pointer;transition:border-color .12s,background .12s}
+.subrow-item:hover,.subrow-item:focus-visible{border-color:var(--mut);outline:none}
+.subrow-item.active{border-color:var(--iron);background:#1a1a1a}
+.subrow-item.subrow-r1{margin-left:14px;border-left:2px solid var(--mut2)}
+.subrow-time{font-size:11.5px;min-width:88px;flex:none;color:var(--mut)}
+.subrow-text{font-size:13px;color:var(--tx);flex:1;word-break:break-word}
+
+/* ===== Очередь этапов пофайловая (задания FA, FP) ===== */
+/* Один список items на нарезку/сборку/рендер прямо в оверлее прогресса.
+   Зелёный #98ff38 (--ok) — ТОЛЬКО у done, это статус «готово», а не украшение (правило DESIGN.md). */
+#qwrap{margin-top:14px;text-align:left}
+#qlist{display:flex;flex-direction:column;gap:5px;max-height:36vh;overflow-y:auto;text-align:left;padding-right:2px}
+.qrow{display:flex;align-items:baseline;gap:10px;padding:6px 10px;border:1px solid var(--bd2);
+  border-radius:var(--r-sm);background:var(--bg);font-size:12.5px;transition:border-color .12s,background .12s}
+.qrow.qcur{border-color:var(--iron);background:#181818}
+.qrow .qname{flex:1;word-break:break-word;color:var(--tx)}
+.qstage{flex:none;color:var(--mut)}
+.qstage.qdone{color:var(--ok)}
+.qstage.qerr{color:var(--dng)}
+.qpct{flex:none;font-variant-numeric:tabular-nums;color:var(--tx)}
+.qpath{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ok)}
+.qreason{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dng)}
+
+/* ===== Порядок слоёв в стиле (задание FM) ===== */
+.layer-order-list{display:flex;flex-direction:column;gap:6px;max-width:520px;margin-top:6px}
+.layer-order-item{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg2);
+  border:1px solid var(--bd2);border-radius:var(--r);user-select:none;-webkit-user-select:none;
+  transition:border-color .12s,background .12s,transform .12s,opacity .12s}
+.layer-order-item:hover{border-color:var(--iron);background:#1a1a1a}
+.layer-order-item.dragging{opacity:.4;border-color:var(--amber)}
+.layer-order-item.drag-over{border-color:var(--amber);background:rgba(235,185,55,.08)}
+.layer-order-grip{cursor:grab;color:var(--mut);display:flex;align-items:center;padding:2px 4px;touch-action:none}
+.layer-order-grip:active{cursor:grabbing}
+.layer-order-grip .ic{width:14px;height:14px}
+.layer-order-title{font-size:13px;color:var(--tx);flex:1;display:flex;align-items:center;gap:8px}
+.layer-order-desc{font-size:11.5px;color:var(--mut)}
+.layer-order-btns{display:flex;gap:4px;align-items:center;flex:none}
+.layer-order-btn{background:transparent;border:1px solid var(--bd2);border-radius:var(--r-sm);
+  color:var(--tx);padding:4px;display:inline-flex;align-items:center;justify-content:center;
+  cursor:pointer;min-width:28px;min-height:28px;transition:border-color .12s,color .12s}
+.layer-order-btn:hover:not(:disabled){border-color:var(--iron);color:var(--amber)}
+.layer-order-btn:disabled{opacity:.25;cursor:default;pointer-events:none}
+.layer-order-btn .ic{width:14px;height:14px}
+

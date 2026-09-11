@@ -1,0 +1,26 @@
+# Переносы строк для файлов, где они значимы.
+#
+# Правила намеренно точечные: общего `* text=auto` тут НЕТ. Репозиторий живёт с
+# core.autocrlf=true на Windows, остальные файлы нормализуются им, и включать
+# глобальное правило задним числом — значит перетряхнуть всё дерево разом.
+
+# Шелл-скрипты обязаны быть с LF. С CRLF Linux и macOS отвечают
+# «/usr/bin/env: bad interpreter» — установка падает на первой же строке.
+*.sh text eol=lf
+
+# PowerShell — наоборот, CRLF. Плюс он читается Windows PowerShell 5.1, который
+# без BOM считает файл ANSI: кириллица превращается в мусор и ломает разбор кавычек.
+# BOM хранится в самом файле, git его не трогает.
+*.ps1 text eol=crlf
+
+# ExtendScript уезжает в After Effects на Windows и Mac; CRLF безопаснее.
+*.jsx text eol=crlf
+
+# Бинарное — не трогать вовсе.
+*.gz binary
+*.npy binary
+*.mp4 binary
+*.mov binary
+*.png binary
+*.jpg binary
+*.gif binary

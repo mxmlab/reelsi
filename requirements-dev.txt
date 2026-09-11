@@ -1,0 +1,10 @@
+# Reelsi - development only. Not needed by users.
+#
+#   pip install -r requirements-dev.txt
+#   python -m pytest reelsi/tests -q
+#   ruff check .
+
+pytest>=8.0              # golden contract tests
+ruff>=0.6                # linter; same rule set as in CI (ruff.toml)
+scikit-learn>=1.3        # ONLY for retraining the breath detector (train_breath.py);
+                         # production ships the extracted breath_model.json

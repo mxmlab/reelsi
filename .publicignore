@@ -1,0 +1,10 @@
+# Что НЕ публикуется в открытый репозиторий (Фаза 7). По строке на glob, `#` — комментарий.
+# Единственный источник правды: его читают tests/test_public_clean.py и tools/public_slice.py.
+TASKS.md
+REMOTE_PLAN.md
+AGENTS.md
+CLAUDE.md
+OPENSOURCE_PLAN.md
+docs/archive/**
+tests/personal_words.txt
+

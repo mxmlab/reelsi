@@ -1,0 +1,75 @@
+Reelsi
+Copyright (c) 2026 Maxim Si
+
+This product is licensed under the GNU Affero General Public License v3.0
+or later (AGPL-3.0-or-later). See the LICENSE file for the full text.
+
+================================================================================
+Third-party components
+================================================================================
+
+Reelsi does not bundle any third-party code or model weights. Everything listed
+below is installed by the user via pip, downloaded at runtime, or invoked as a
+separate program. Licenses are those declared by each upstream project; verify
+them against upstream before redistributing a build.
+
+--- Runtime dependencies (pip) ---
+
+PyTorch, torchaudio, torchvision      BSD-3-Clause    https://pytorch.org
+Flask                                 BSD-3-Clause    https://flask.palletsprojects.com
+NumPy, SciPy                          BSD-3-Clause    https://numpy.org, https://scipy.org
+soundfile                             BSD-3-Clause    https://github.com/bastibe/python-soundfile
+librosa                               ISC             https://librosa.org
+questionary                           MIT             https://github.com/tmbo/questionary
+faster-whisper (CTranslate2)          MIT             https://github.com/SYSTRAN/faster-whisper
+transformers, accelerate              Apache-2.0      https://github.com/huggingface/transformers
+huggingface-hub                       Apache-2.0      https://github.com/huggingface/huggingface_hub
+qwen-omni-utils                       Apache-2.0      https://github.com/QwenLM/Qwen2.5-Omni
+Pillow                                MIT-CMU (HPND)  https://python-pillow.org
+fontTools                             MIT             https://github.com/fonttools/fonttools
+rembg                                 MIT             https://github.com/danielgatis/rembg
+anthropic (Python SDK)                MIT             https://github.com/anthropics/anthropic-sdk-python
+silero-vad                            MIT             https://github.com/snakers4/silero-vad
+scikit-learn                          BSD-3-Clause    https://scikit-learn.org
+pytest                                MIT             https://pytest.org
+
+--- Model weights (downloaded on demand, never bundled) ---
+
+Whisper large-v3 (OpenAI)             MIT
+Qwen2.5-Omni (Alibaba)                Apache-2.0      https://github.com/QwenLM/Qwen2.5-Omni
+GigaAM (Sber / salute-developers)     see upstream    https://github.com/salute-developers/GigaAM
+CED-tiny (mispeech/ced-tiny)          Apache-2.0      https://huggingface.co/mispeech/ced-tiny
+Robust Video Matting (PeterL1n)       GPL-3.0         https://github.com/PeterL1n/RobustVideoMatting
+
+Robust Video Matting is loaded through torch.hub, which fetches both weights and
+upstream code at runtime. GPL-3.0 is compatible with AGPL-3.0, so combining them
+is permitted; the resulting combined work is governed by the AGPL. If the
+roto feature is never used, nothing from RVM is downloaded or loaded.
+
+--- External programs (invoked as subprocesses, not linked) ---
+
+ffmpeg          LGPL-2.1+ or GPL-2+ depending on build   https://ffmpeg.org
+                Must be present in PATH; Reelsi does not ship it.
+yt-dlp          Unlicense                                https://github.com/yt-dlp/yt-dlp
+                Called as `python -m yt_dlp` for background music. Downloading
+                third-party content may violate a platform's terms of service and
+                copyright law; responsibility rests with the user.
+rclone          MIT                                      https://rclone.org
+                Must be installed separately (not pip); used to download material
+                from a Google Drive link. Credentials live in the user's own
+                rclone config (`REELSI_RCLONE_CONF`), never in Reelsi files.
+
+--- Trademarks and proprietary assets ---
+
+Adobe, After Effects, and Premiere Pro are trademarks of Adobe Inc. Reelsi is
+neither affiliated with nor endorsed by Adobe. Interoperability is achieved
+solely through published formats: FCP7 XML and ExtendScript.
+
+SF Pro is a proprietary Apple typeface. It is NOT distributed with Reelsi. The
+subtitle templates in refblobs.json reference the PostScript font name
+"SFPro-CondensedSemibold" so that Premiere resolves a locally installed copy; no
+font data is included. Users without SF Pro can rebuild the blobs against their
+own font (see README).
+
+"Reelsi" and the Reelsi logo are trademarks of the project author and are not
+licensed under the AGPL. See TRADEMARK.md.

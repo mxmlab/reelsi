@@ -1,0 +1,44 @@
+# Reelsi - core dependencies.
+#
+# Three files, so users don't have to pull what they don't need:
+#   requirements.txt           - this one: Reelsi won't work without it
+#   requirements-optional.txt  - individual features; everything else stays alive
+#   requirements-dev.txt       - tests and linter, not needed by users
+#
+# Check what is installed and what will fail:  python reelsi/doctor.py
+#
+# IMPORTANT: torch is installed SEPARATELY and FIRST - pick the build for your
+# GPU at https://pytorch.org/get-started/locally/ . Versions here are
+# intentionally unpinned: PyPI ships a CPU build, and everything GPU-bound
+# (Omni, GigaAM, roto, forced-align) would run tens of times slower. Tested:
+#   pip install torch==2.5.1 torchaudio==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+torch
+torchaudio
+torchvision>=0.20        # needed by rotoscoping (RVM via torch.hub)
+
+# --- core ---
+flask>=3.0               # web UI (webui.py) and /api/*
+numpy>=1.26
+scipy>=1.11              # camera sync (cross-correlation), VAD
+soundfile>=0.12
+librosa>=0.10            # SSM repeat detection
+questionary>=2.0         # interactive CLI (reelsi.py)
+
+# --- speech recognition ---
+faster-whisper>=1.0      # default subtitle engine
+transformers>=4.46       # Qwen2.5-Omni; if Omni fails to load, install from git:
+                         #   pip install git+https://github.com/huggingface/transformers
+accelerate>=1.0
+huggingface-hub>=0.26
+qwen-omni-utils>=0.0.9   # audio/video preprocessing for Qwen2.5-Omni
+
+# --- graphics and inserts ---
+pillow>=10.0
+fonttools>=4.50          # reading PostScript names of installed fonts
+zstandard>=0.22          # media pool records in .drp (DaVinci Resolve), see DRP_SPEC.md;
+                         # stdlib zstd only from Python 3.14, we use 3.10
+
+# --- outside pip ---
+# ffmpeg - must be on PATH (decode/encode; NVENC/VideoToolbox/AMF are picked up
+# automatically, see docs/PLATFORMS.md).
+# SF Pro font - needed by Premiere for subtitles from refblobs.json (see README).

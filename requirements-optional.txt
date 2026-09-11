@@ -1,0 +1,32 @@
+# Reelsi - optional dependencies.
+#
+# Each one enables EXACTLY ONE feature; everything else keeps working. They can
+# be installed one by one: if rotoscoping is not needed, there is no point in
+# pulling onnxruntime.
+#
+# What exactly fails without each one -  python reelsi/doctor.py
+#
+#   pip install -r requirements-optional.txt
+
+# Russian CTC model: word-level cuts in GigaAM mode and subtitles with its
+# timings. Without it Whisper and Omni are available.
+gigaam @ git+https://github.com/salute-developers/GigaAM.git
+
+# Breath and "khe" detector (breath.py). ~2 MB, runs on CPU.
+# Without it the detector silently disables, cutting works as before.
+# CED-tiny (mispeech/ced-tiny) is pulled via transformers with trust_remote_code, weights ~22 MB.
+silero-vad>=5.1
+
+# Background removal for generated insert images. Pulls onnxruntime (~200 MB).
+# Without it generation works, the background just stays.
+rembg>=2.0
+
+# Claude provider profile in AI settings. OpenRouter, LM Studio and any
+# OpenAI-compatible providers go through http directly and need no package.
+anthropic>=0.40
+
+# Background music from a link (ytmusic.py calls it as `python -m yt_dlp`).
+# WARNING: downloading someone else's content may violate platform terms and
+# copyright - the responsibility is on the user. That is why the package is
+# optional.
+yt-dlp>=2024.1

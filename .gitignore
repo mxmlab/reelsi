@@ -1,0 +1,90 @@
+# temp / working artifacts
+__pycache__/
+*.pyc
+*.bak
+_*.wav
+_*.xml
+_*.jsx
+_*.json
+_*.txt
+_*.srt
+# Черновые скрипты сваливаются в КОРЕНЬ, поэтому правило с ведущим слэшем — только
+# корень. Без него (`_*.py`) под нож попадали `api/__init__.py` и `api/_core.py`:
+# локально всё работало, а в git уезжал пакет без точки входа. Заводя пакет с
+# «подчёркнутым» модулем, проверяй `git check-ignore -v <файл>`.
+/_*.py
+.claude/
+_verify/
+# кэш обучения детектора вздохов (wav + слова GigaAM по роликам с ручной доводкой)
+_breath_cache/
+_mc/
+_lt/
+_batchtest/
+_webtest/
+_web2/
+_web3/
+_dl/
+_subtest/
+_nc/
+_single/
+_mtest/
+analyze_report.txt
+blob_selftest.txt
+# профили ИИ-провайдеров — содержит API-ключи, в гит НЕЛЬЗЯ
+ai_config.json
+# кэш каталога моделей (models.dev) — рядом с ai_config.json, у изолированного
+# профиля свой (models_dev.test.json)
+models_dev*.json
+*_models_dev.json
+# кэш каталога OpenRouter (supported_efforts/default_enabled) — рядом с ai_config.json,
+# у изолированного профиля свой (имя производное от конфига)
+*_openrouter_models.json
+# лог ИИ-вызовов: токены по шагам (REELSI_AI_LOG), своя копия для тестового профиля
+ai_calls.jsonl
+ai_calls.test.json
+# самообучающийся словарик фраз-галлюцинаций Omni (локальные данные)
+halluc_phrases.json
+# словарь трудных терминов (названия, которых не знает ASR) — правится из UI, у каждого свой
+terms.json
+terms.test.json
+# свои списки цензуры (⚙ → «Слова»): у каждого канала свои стоп-слова.
+# Общие списки badwords.txt/okwords.txt остаются в репозитории
+badwords.user.txt
+okwords.user.txt
+badwords.test.txt
+okwords.test.txt
+
+# keep: *.py, refblobs.json, sub_template.xml, README — these are the working data
+insertlib.json
+insertlib.json.tmp.*
+ui_state.json
+ui_state.json.tmp
+render_stats.json
+render_stats.test.json
+render_stats*.json
+# обвязка отдельной рабочей копии (tools/wt.ps1): абсолютные пути и порт этой сессии
+env.ps1
+_*.log
+
+# пользовательские пресеты стиля — создаются из UI, у каждого свои
+styles/*.json
+# профили спикеров — тоже личные: там абсолютные пути к папкам и калибровка
+# под конкретную студию (общая методика — в docstring speakers.py)
+speakers/*.json
+# кто есть кто: в публичных документах спикеры называются буквами (A/B/C), а тут
+# соответствие реальным людям. Данные третьих лиц, наружу нельзя
+docs/speakers-calibration.md
+# личные детекторы вздохов (train_breath.py --speaker); общий breath_model.json
+# в репозитории остаётся
+breath_model.*.json
+ui_state.test.json
+job.lock
+job.test.lock
+# копии рабочего состояния для тестового профиля (launch.json, порт 5098) — заводятся сами
+ai_config.test.json
+insertlib.test.json
+# генерация видео: залитые референсы, готовые mp4 и история задач (локальные медиа)
+_videogen/
+# то же у изолированного профиля (AUTOCUT_VIDEO_DIR в launch.json / webui_test.py)
+_videogen.test/
+scratch/

@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Один прогон на ветку: новый пуш отменяет предыдущий, чтобы очередь не копилась.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: pip
+
+      # Без него часть тестов сама себя пропускает (13 штук), а doctor честно
+      # ставит FAIL — то есть проверяется меньше, чем кажется по зелёной галочке.
+      - name: Install ffmpeg
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # CPU-сборка torch: она в разы легче CUDA-колеса, а тестам контрактов
+          # видеокарта не нужна — они проверяют разметку и XML, а не инференс.
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          # Импорта требуют только эти четыре; всё тяжёлое (transformers,
+          # faster-whisper, rembg) грузится лениво внутри функций и в тестах не
+          # выполняется. Ставить requirements.txt целиком — минуты ради ничего.
+          # fonttools — парсинг таблиц шрифтов, замер ширины строк и автофит интро (задания BO/BP/DA/DB).
+          pip install flask numpy scipy soundfile pytest ruff fonttools
+
+      # Отрендеренный .jsx (шаблон AE_FULL с подстановками) проверяет node
+      # (test_rendered_jsx_syntax.py): сам шаблон может быть валиден, а сборка —
+      # сломаться на тексте из XML. Битый .jsx роняет импорт и весь проект AE.
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Tests
+        run: python -m pytest tests -q
+
+  requirements:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      # 2026-08-09: pip 22.x читал requirements в системной кодировке (на
+      # Windows это cp1252) и падал UnicodeDecodeError на не-ASCII комментариях.
+      # Джоба повторяет тот прогон: файлы обязаны читаться и старым pip
+      # (system encoding), и современным (utf-8-sig), и парситься pip'ом без
+      # установки чего-либо (--dry-run --no-deps ничего не качает).
+      - name: Requirements must parse on Windows
+        shell: pwsh
+        run: |
+          python -m pip install --dry-run --no-deps -r requirements.txt -r requirements-optional.txt -r requirements-dev.txt
+          python -c "import locale; enc = locale.getpreferredencoding(False); files = ('requirements.txt','requirements-optional.txt','requirements-dev.txt'); [open(f, encoding=enc).read() for f in files]; [open(f, encoding='utf-8-sig').read() for f in files]"
+
+  jsx:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+
+      # ExtendScript, который уезжает в After Effects, синтаксически проверяем тем же
+      # способом, что и verify_jsx.py: node --check не принимает расширение .jsx,
+      # поэтому копируем в .js. Битый .jsx роняет импорт и весь проект AE, а узнать
+      # об этом иначе можно только открыв Adobe.
+      - name: Check ExtendScript syntax
+        run: |
+          status=0
+          for f in $(git ls-files '*.jsx'); do
+            cp "$f" "/tmp/$(basename "$f" .jsx).js"
+            if node --check "/tmp/$(basename "$f" .jsx).js"; then
+              echo "ok   $f"
+            else
+              echo "FAIL $f"
+              status=1
+            fi
+          done
+          exit $status

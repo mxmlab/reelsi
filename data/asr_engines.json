@@ -1,0 +1,18 @@
+[
+  {"_": "Движки CTC для других языков — тот же принцип, что GigaAM: одна акустическая модель даёт и текст, и тайминги, и вероятности слов (forced-align не нужен). Добавить язык = дописать сюда запись и обновить страницу (F5), перезапуск сервера не нужен. model — id на HuggingFace или локальная папка; при первом запуске модель скачается (~1.2 ГБ) в кэш HF. device: cuda | cpu."},
+
+  {"id": "ctc:ru", "lang": "ru", "label": "wav2vec2 XLSR-53 (RU, CTC)",
+   "model": "jonatasgrosman/wav2vec2-large-xlsr-53-russian"},
+
+  {"id": "ctc:en", "lang": "en", "label": "wav2vec2 XLSR-53 (EN, CTC)",
+   "model": "jonatasgrosman/wav2vec2-large-xlsr-53-english"},
+
+  {"id": "ctc:de", "lang": "de", "label": "wav2vec2 XLSR-53 (DE, CTC)",
+   "model": "jonatasgrosman/wav2vec2-large-xlsr-53-german"},
+
+  {"id": "ctc:es", "lang": "es", "label": "wav2vec2 XLSR-53 (ES, CTC)",
+   "model": "jonatasgrosman/wav2vec2-large-xlsr-53-spanish"},
+
+  {"id": "ctc:fr", "lang": "fr", "label": "wav2vec2 XLSR-53 (FR, CTC)",
+   "model": "jonatasgrosman/wav2vec2-large-xlsr-53-french"}
+]

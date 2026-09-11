@@ -1,0 +1,41 @@
+name: Feature request
+description: Suggest a change
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Reelsi is an opinionated tool built around one specific workflow. That means
+        some requests get declined not because they're bad, but because they pull the
+        project somewhere it isn't going. Describing the underlying problem — rather
+        than only the solution you have in mind — makes it much likelier something
+        useful comes out of this.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you hitting
+      description: What are you trying to do, and what makes it hard today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you'd like instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: How you work around it now
+      description: Even an ugly workaround tells us a lot about the real requirement.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: This works locally, without sending media to a cloud service
+        - label: I'd be willing to implement it (see CONTRIBUTING.md — a CLA is required)

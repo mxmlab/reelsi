@@ -85,6 +85,7 @@ python reelsi.py --no-cut     # только субтитры
 
 ## Документация
 
+- [docs/FEATURES.ru.md](docs/FEATURES.ru.md) — все возможности по шагам
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — подробная архитектура на русском языке.
 - [docs/ARCHITECTURE.en.md](docs/ARCHITECTURE.en.md) — обзор архитектуры на английском языке.
 - [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md) — руководство по участию в разработке.

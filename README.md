@@ -85,6 +85,7 @@ python reelsi.py --no-cut     # subtitles only
 
 ## Documentation
 
+- [docs/FEATURES.md](docs/FEATURES.md) — every feature, step by step
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — detailed architecture (Russian).
 - [docs/ARCHITECTURE.en.md](docs/ARCHITECTURE.en.md) — architecture overview (English).
 - [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md) — contribution guidelines.

@@ -26,6 +26,8 @@ DOCS = [
     "README.md",
     "README.ru.md",
     "CHANGELOG.md",
+    "docs/FEATURES.md",
+    "docs/FEATURES.ru.md",
     "docs/ARCHITECTURE.md",
     "docs/ARCHITECTURE.en.md",
     "docs/CUTTING_SPEC.md",

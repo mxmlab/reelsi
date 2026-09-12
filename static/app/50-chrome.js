@@ -68,7 +68,8 @@ async function cancelTask(){UICANCEL=true;const b=$('progStop');b.disabled=true;
 // Эмодзи и инлайновые подсказки запрещены.
 const QSTAGE={
   wait:t('в очереди'), cut:t('нарезка'), jsx:t('сборка скрипта'),
-  check:t('проверка файлов'), aep:t('сборка проекта в AE'), render:t('рендер'),
+  check:t('проверка файлов'), aep:t('сборка проекта в AE'),
+  built:t('собран, ждёт рендера'), render:t('рендер'),
   done:t('готово'), error:t('ошибка'), stopped:t('остановлено')};
 function queueRender(d){
   const items=(d&&d.items)||[];

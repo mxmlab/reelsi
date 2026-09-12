@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Added
+- **Feature guide**: `docs/FEATURES.md` and `docs/FEATURES.ru.md` describe every feature step by step: where it is, how to use it, settings, limits and cost.
+- **Glitch glow choice**: yellow intro words with the glitch animation glow with the built-in Gaussian Blur and Glow or with the third-party Deep Glow 2 plugin (⚙ › Tools › After Effects).
+- **Build progress for a multi-clip set**: the AE project build stage shows "N of M", the clip being built and the ETA; built clips are marked "built, waiting for render".
+
+### Changed
+- **CLA**: removed the internal author note from `docs/CLA.md`.
+
+### Fixed
+- **Language model calls**: a 400 error about `max_completion_tokens` or `stream_options` no longer loops the retry; the reasoning level on a retry is lowered from the previous attempt.
+- **Local API**: state-changing requests from other sites are rejected by `Sec-Fetch-Site` and `Origin` checks.
+- **Jobs**: render takes the shared job lock, so a cut can no longer start on top of a render.
+- **Saved files**: JSON files and word lists are written atomically, so a stop or crash mid-save no longer leaves an empty file; concurrent `ai_config.json` saves no longer overwrite each other.
+- **Premiere subtitle XML**: the subtitle track goes inside the sequence's video block, and the frame rate comes from the source XML.
+- **Multicam**: until a late camera starts, its segment is taken from camera 1.
+- **After Effects build**: an empty riser start time no longer breaks the script; a clip that fails in a batch build is reported as failed.
+- **Editor and inserts**: the intro line colour input no longer throws a syntax error; insert sound preview follows the chosen file; the right insert is picked when the plan list is filtered; malformed entries in the model's insert answer are skipped; long words can be renamed in subtitle graphics; draft render accepts clip names with commas, brackets and quotes.
+- **Build verification tools**: a one-`.jsx` build is checked against the selected timeline; empty middle intro groups are handled.
+
 ## 0.1.0-beta — 2026-09-12
 
 ### Added

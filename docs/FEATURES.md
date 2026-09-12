@@ -443,6 +443,14 @@ every file in the set that uses that style. Built-in styles cannot be deleted.
 **Code:** `core/styles.py:1`, `api/presets.py:15`, `templates/index.html:170`,
 `static/app/95-styles.js:496`
 
+### Glitch glow: built-in or Deep Glow 2
+
+**Where:** Settings (⚙) › **Tools** › the **After Effects** block › **Glitch glow**.
+**How:** 1. Open ⚙ › **Tools**. 2. Under **After Effects**, choose between **Built-in (Blur + Glow)** and **Deep Glow 2 (plugin)**. 3. Rebuild `.jsx` scripts for clips if already exported.
+**Settings:** controls how yellow intro words with the "glitch" animation glow in the generated After Effects project. Built-in uses Gaussian Blur and Glow available in every AE install (default). Deep Glow 2 replaces them with the third-party plugin using pre-tuned parameters; accent lines and other lines remain untouched. Saved under the `glitch_glow` key in `ai_config.json` (`builtin` or `deepglow2`) and takes effect on the next build; already built `.jsx` scripts need to be rebuilt.
+**Limitations / price:** if Deep Glow 2 is selected but the plugin is not installed in After Effects, manual build shows a single dialog per file reporting the number of unstyled words, while headless rendering writes an error line to the log; words remain without glow. There is no automated pre-flight check or fallback to built-in effects.
+**Code:** `core/aicut/config.py:441`, `api/ai.py:334`, `core/xml2ae/build.py:256`, `core/xml2ae/build.py:2726`, `templates/index.html:988`, `static/app/10-settings.js:431`
+
 ### Subtitle scale
 
 **Where:** step 3 › style › **Text** › **Subtitles** › **Subtitle scale, %**.
@@ -563,14 +571,17 @@ the XML copy — Resolve positions clips by timecode.
 ETA. 4. Press **Stop** to cancel.
 **Settings:** the **Render output folder** defaults to `exp` next to the repository and can
 come from the speaker profile. A set of several clips always becomes one AE project with
-one master script and one `aerender` run; a single clip keeps the plain path. Batch phase
-timings from previous runs are remembered and make the ETA better over time.
+one master script and one `aerender` run; a single clip keeps the plain path. During the
+**AE project build** stage of a multi-clip set, the progress display shows "N of M", which
+clip is currently building, and the ETA, while already built clips in the queue show "built,
+waiting for render". Batch phase timings from previous runs are remembered and make the ETA
+better over time.
 **Limitations / price:** After Effects must be closed: an open copy would swallow the
 headless run, so the job refuses to start. There is a stall watchdog, and an instant
 AfterFX exit is reported as a likely open AE copy. Rotoscoping runs during the build and is
 the longest stage.
-**Code:** `api/render.py:1943`, `api/render.py:1907`, `api/render.py:172`,
-`api/render.py:69`, `static/app/90-ae.js:176`
+**Code:** `api/render.py:1943`, `api/render.py:1907`, `api/render.py:1635`,
+`api/render.py:172`, `api/render.py:69`, `static/app/90-ae.js:176`
 
 ### Progress, queue and logs
 

@@ -984,6 +984,9 @@
         <div class="sethdr">Экспорт</div>
         <div class="setrow"><label for="dlfmt">Формат скачивания <span class="i" data-t="В чём скачивать таймлайн кнопкой «Скачать» у клипа на шаге 2: XML — откроется и в Premiere, и в DaVinci Resolve; .drp — родной проект Resolve со вставками и субтитрами (переживает перенос).">!</span></label>
           <select id="dlfmt" class="dlfmt" aria-label="Формат скачивания" onchange="dlFmtSet(this.value)"><option value="xml">XML</option><option value="drp">.drp</option></select></div>
+        <div class="sethdr">After Effects</div>
+        <div class="setrow"><label for="glitchglow">Свечение глитча <span class="i" data-t="Чем светятся жёлтые слова с анимацией «глитч» в собранном проекте After Effects. Встроенные — Gaussian Blur и Glow, есть в любом AE. Deep Glow 2 — сторонний плагин, он должен быть установлен: если его нет, After Effects сообщит об этом после сборки, а эти слова останутся без свечения. Действует на следующую сборку.">!</span></label>
+          <select id="glitchglow" aria-label="Свечение глитча" onchange="setGlitchGlow(this.value)"><option value="builtin">Встроенные (Blur + Glow)</option><option value="deepglow2">Deep Glow 2 (плагин)</option></select></div>
       </div>
     </div>
 

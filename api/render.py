@@ -1198,9 +1198,10 @@ def _run_render_combined(batch, outdir, render_dir):
     умеет разбирать «один .jsx на всё» по таймлайнам). Отсеять один непрошедший ролик
     нельзя — .jsx один на всех: ошибки предполёта останавливают весь набор (нужно
     исправить файл или убрать ролик из набора и запустить снова). Этап «сборка
-    проекта» неразложим по роликам (мастер выполняет один файл): показываем его одним
-    шагом (stage_total=1), а в конце этапа переводим все ролики набора дальше по
-    очереди этапов ровно так же, как это делает _run_render_batch."""
+    проекта» отслеживается по строкам «таймлайн ok:» журнала мастера (задание HC):
+    stage_total = total_n, собранные таймлайны переходят в стадию built, текущий
+    собираемый — в aep, остальные ждут в wait; в конце этапа переводим все ролики
+    набора дальше по очереди этапов ровно так же, как это делает _run_render_batch."""
     from core import verify_jsx
     from core import xml2ae
     from .inserts import _convert_inserts
@@ -1330,7 +1331,7 @@ def _run_render_combined(batch, outdir, render_dir):
         RJOB["out_dir"] = render_dir
         RJOB["stage_label"] = "сборка проекта"
         RJOB["stage_done"] = 0
-        RJOB["stage_total"] = 1        # один файл — один шаг (задание C)
+        RJOB["stage_total"] = total_n  # прогресс по таймлайнам набора (задания C, HC)
         RJOB["pct"] = max(RJOB.get("pct") or 0.0, p_jsx_end)
         if has_stats:
             RJOB["eta"] = t_aep_base
@@ -1370,9 +1371,13 @@ def _run_render_combined(batch, outdir, render_dir):
             item_fail(RJOB, RLOCK, stem,
                       "не удалить старый .aelog.txt (файл занят?)", bucket="failed")
         return
-    # стадия aep на время работы AfterFX: ролики «собираются в проект» (задание FJ)
-    for stem, _cn, _jp, _fr in good:
-        item_set(RJOB, RLOCK, stem, stage="aep")
+    # Стадии на время работы AfterFX (задание HC): первый ролик собирается (aep),
+    # остальные ждут очереди (wait); по мере готовности таймлайнов _tail_master_log
+    # переводит собранные в built, текущий в aep, остальные оставляет в wait.
+    for i, (stem, _cn, _jp, _fr) in enumerate(good):
+        item_set(RJOB, RLOCK, stem, stage="aep" if i == 0 else "wait")
+    with RLOCK:
+        RJOB["cur"] = good[0][0] if good else ""
     # .aep НЕ стираем (человек мог доработать его руками) — время ДО запуска мастера
     aep_mtime = os.path.getmtime(aep_path) if os.path.isfile(aep_path) else None
     t_aep_start = _time.time()
@@ -1455,9 +1460,9 @@ def _run_proc_master(afx, *args, good, render_dir, aelog_path,
     готовность к рендеру (stage=check — до предполёта уже пройден; ставим render позже)
     и пишем строку в общий лог интерфейса. evalFile ОШИБКА: — item_fail ролику.
     item_done остаётся один и только про рендер — второго источника «готово» нет.
-    whole_file (задание C) — мастер выполняет ОДИН .jsx на ВЕСЬ набор («Один на всё»):
-    ролики по журналу не различить, и этап «сборка проекта» показываем одним шагом
-    (stage_total=1), а не «0 из N», который не мог бы дойти до N."""
+    whole_file (задания C, HC) — мастер выполняет ОДИН .jsx на ВЕСЬ набор («Один на всё»):
+    прогресс сборки отслеживается по строкам «таймлайн ok:» в журнале мастера (k-я строка —
+    k-й ролик по порядку набора), stage_total = len(good), собранные ролики получают stage=built."""
     try:
         p = subprocess.Popen([afx] + list(args),
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -1471,7 +1476,7 @@ def _run_proc_master(afx, *args, good, render_dir, aelog_path,
         RPROC = p
         RJOB["stage_label"] = "сборка проекта"
         RJOB["stage_done"] = 0
-        RJOB["stage_total"] = 1 if whole_file else len(good)
+        RJOB["stage_total"] = len(good)
         RJOB["pct"] = max(RJOB.get("pct") or 0.0, p_jsx_end)
         if has_stats:
             RJOB["eta"] = t_aep_base
@@ -1490,6 +1495,7 @@ def _run_proc_master(afx, *args, good, render_dir, aelog_path,
     for stem, _cn, jp, _fr in good:
         by_jsx[os.path.abspath(jp).replace("\\", "/")] = stem
     aelog = aelog_path
+    timelines = {"stems": [stem for stem, _cn, _jp, _fr in good], "built": 0} if whole_file else None
     seen = set()
     t_build_start = _time.time()
     last_clip_time = t_build_start
@@ -1512,8 +1518,8 @@ def _run_proc_master(afx, *args, good, render_dir, aelog_path,
                 break
             now = _time.time()
             seen_n = len(seen)
-            new_n = _tail_master_log(aelog, seen, by_jsx)
-            if len(seen) != seen_n:
+            new_n = _tail_master_log(aelog, seen, by_jsx, timelines=timelines)
+            if len(seen) != seen_n or new_n:
                 last_activity = now       # любая новая строка лога — процесс жив
             while True:
                 try:
@@ -1527,54 +1533,42 @@ def _run_proc_master(afx, *args, good, render_dir, aelog_path,
                     last_activity = now
                     remit(line)
             if new_n:
-                if whole_file:
-                    # «Один на всё» (задание C): мастер выполнил ОДИН файл — ролики
-                    # внутри него по журналу не различить, и ETA «по собранным
-                    # роликам» не построить. Этап идёт одним шагом (stage_total=1):
-                    # evalFile дошёл до ok — шаг сделан.
-                    with RLOCK:
-                        RJOB["stage_done"] = 1
-                        RJOB["eta"] = None
-                        RJOB["eta_phase"] = None
-                        RJOB["eta_total"] = None
-                        RJOB["eta_preliminary"] = False
-                else:
-                    built_n += new_n
-                    clip_dur = (now - last_clip_time) / float(new_n)
-                    for _ in range(new_n):
-                        clip_durations.append(max(0.1, clip_dur))
-                    last_clip_time = now
-                    built_times.append((now - t_build_start, built_n))
+                built_n += new_n
+                clip_dur = (now - last_clip_time) / float(new_n)
+                for _ in range(new_n):
+                    clip_durations.append(max(0.1, clip_dur))
+                last_clip_time = now
+                built_times.append((now - t_build_start, built_n))
 
-                    weights = _predict_aep_times(clip_durations, len(good), default_per_clip=default_per)
-                    sum_done = sum(weights[:built_n])
-                    sum_tot = sum(weights)
-                    aep_frac = min(1.0, sum_done / sum_tot) if sum_tot > 0 else (built_n / float(len(good)))
-                    pct_calc = p_jsx_end + aep_frac * (p_aep_end - p_jsx_end)
+                weights = _predict_aep_times(clip_durations, len(good), default_per_clip=default_per)
+                sum_done = sum(weights[:built_n])
+                sum_tot = sum(weights)
+                aep_frac = min(1.0, sum_done / sum_tot) if sum_tot > 0 else (built_n / float(len(good)))
+                pct_calc = p_jsx_end + aep_frac * (p_aep_end - p_jsx_end)
 
-                    with RLOCK:
-                        RJOB["stage_done"] = built_n
-                        RJOB["pct"] = max(RJOB.get("pct") or 0.0, min(p_aep_end, pct_calc))
-                        if built_n < len(good):
-                            rem_phase = sum(weights[built_n:])
-                            rem_total = rem_phase + t_render_base
-                            if (now - t_build_start) >= 15.0 and len(built_times) >= 2:
-                                RJOB["eta"] = rem_phase
-                                RJOB["eta_phase"] = rem_phase
-                                RJOB["eta_total"] = rem_total
-                                RJOB["eta_preliminary"] = False
-                                RJOB["stage_label"] = "сборка проекта"
-                            elif has_stats:
-                                RJOB["eta"] = rem_phase
-                                RJOB["eta_phase"] = rem_phase
-                                RJOB["eta_total"] = rem_total
-                                RJOB["eta_preliminary"] = True
-                                RJOB["stage_label"] = "сборка проекта"
-                            else:
-                                RJOB["eta"] = None
-                                RJOB["eta_phase"] = None
-                                RJOB["eta_total"] = None
-                                RJOB["eta_preliminary"] = False
+                with RLOCK:
+                    RJOB["stage_done"] = built_n
+                    RJOB["pct"] = max(RJOB.get("pct") or 0.0, min(p_aep_end, pct_calc))
+                    if built_n < len(good):
+                        rem_phase = sum(weights[built_n:])
+                        rem_total = rem_phase + t_render_base
+                        if (now - t_build_start) >= 15.0 and len(built_times) >= 2:
+                            RJOB["eta"] = rem_phase
+                            RJOB["eta_phase"] = rem_phase
+                            RJOB["eta_total"] = rem_total
+                            RJOB["eta_preliminary"] = False
+                            RJOB["stage_label"] = "сборка проекта"
+                        elif has_stats:
+                            RJOB["eta"] = rem_phase
+                            RJOB["eta_phase"] = rem_phase
+                            RJOB["eta_total"] = rem_total
+                            RJOB["eta_preliminary"] = True
+                            RJOB["stage_label"] = "сборка проекта"
+                        else:
+                            RJOB["eta"] = None
+                            RJOB["eta_phase"] = None
+                            RJOB["eta_total"] = None
+                            RJOB["eta_preliminary"] = False
             # Сторож простоя: молчание дольше AE_STALL_KILL_SEC — снять процесс и
             # завершить прогон честной ошибкой, а не висеть вечно (задание AE-Hygiene).
             if now - last_activity >= AE_STALL_KILL_SEC:
@@ -1592,7 +1586,7 @@ def _run_proc_master(afx, *args, good, render_dir, aelog_path,
                 _kill_proc(p)
                 break
             _time.sleep(0.5)
-        _tail_master_log(aelog, seen, by_jsx)
+        _tail_master_log(aelog, seen, by_jsx, timelines=timelines)
     finally:
         rc = p.wait()
         while True:
@@ -1610,7 +1604,7 @@ def _run_proc_master(afx, *args, good, render_dir, aelog_path,
         RJOB["eta"] = None      # сборка кончилась — оценку гасим
         RJOB["eta_phase"] = None
         RJOB["eta_total"] = None
-        RJOB["stage_done"] = 1 if whole_file else len(good)
+        RJOB["stage_done"] = len(good)
         RJOB["pct"] = max(RJOB.get("pct") or 0.0, p_aep_end)
     # ролики, до которых мастер не дошёл (evalFile не случился) — item_fail
     fail_reason = ("мастер не выполнил evalFile этого ролика" if not stalled else
@@ -1621,10 +1615,12 @@ def _run_proc_master(afx, *args, good, render_dir, aelog_path,
     return rc
 
 
-def _tail_master_log(aelog, seen, by_jsx):
+def _tail_master_log(aelog, seen, by_jsx, timelines=None):
     """Дочитать файл-лог мастера с последнего места: evalFile ok/ОШИБКА -> живой прогресс
     этапа «AfterFX собирает проект» (задание FJ). seen — уже обработанные строки.
-    Возвращает число новых «evalFile ok» (для ETA сборки, задание FK)."""
+    timelines — словарь состояния {"stems": [...], "built": 0} для режима «Один на всё»
+    (задание HC). Возвращает число новых таймлайнов (при timelines) либо новых «evalFile ok»
+    (для ETA сборки, задание FK)."""
     try:
         if not os.path.isfile(aelog):
             return 0
@@ -1633,23 +1629,45 @@ def _tail_master_log(aelog, seen, by_jsx):
     except OSError:
         return 0
     new_ok = 0
+    new_tl = 0
+    if timelines is not None:
+        stems = timelines.get("stems", [])
+        total_tl = sum(1 for ln in lines if ln.rstrip("\r\n").startswith("таймлайн ok: "))
+        prev_tl = timelines.get("built", 0)
+        new_tl = max(0, total_tl - prev_tl)
+        if new_tl:
+            timelines["built"] = total_tl
+            b = total_tl
+            for idx, stem in enumerate(stems):
+                if idx < b:
+                    item_set(RJOB, RLOCK, stem, stage="built")
+                elif idx == b:
+                    item_set(RJOB, RLOCK, stem, stage="aep")
+                else:
+                    item_set(RJOB, RLOCK, stem, stage="wait")
+            with RLOCK:
+                if b < len(stems):
+                    RJOB["cur"] = stems[b]
+                else:
+                    RJOB["cur"] = ""
     for line in lines:
         line = line.rstrip("\r\n")
         if not line or line in seen:
             continue
         seen.add(line)
         if "evalFile ok: " in line:
-            new_ok += 1
             path = line.split("evalFile ok: ", 1)[1].strip()
             norm_p = os.path.abspath(path).replace("\\", "/")
             seen.add(norm_p)
-            stem = by_jsx.get(norm_p) or by_jsx.get(path.replace("\\", "/"))
-            if stem:
-                # ролик собран мастером — готов к рендеру; до aerender ставим aep
-                item_set(RJOB, RLOCK, stem, stage="aep")
-                with RLOCK:
-                    RJOB["cur"] = stem
-                remit("собран: {stem}", stem=stem)
+            if timelines is None:
+                new_ok += 1
+                stem = by_jsx.get(norm_p) or by_jsx.get(path.replace("\\", "/"))
+                if stem:
+                    # ролик собран мастером — готов к рендеру; до aerender ставим aep
+                    item_set(RJOB, RLOCK, stem, stage="aep")
+                    with RLOCK:
+                        RJOB["cur"] = stem
+                    remit("собран: {stem}", stem=stem)
         elif "evalFile ОШИБКА: " in line:
             path = line.split("evalFile ОШИБКА: ", 1)[1].split(" — ")[0].strip()
             stem = by_jsx.get(path.replace("\\", "/"))
@@ -1659,7 +1677,7 @@ def _tail_master_log(aelog, seen, by_jsx):
                           bucket="failed")
         elif line.startswith("REELSI-MASTER") or line.startswith("comp ok: ") or line.startswith("таймлайн ok: "):
             remit("  [aelog] " + line)
-    return new_ok
+    return new_tl if timelines is not None else new_ok
 
 
 def _comp_to_stem(name, comps):

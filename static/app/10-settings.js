@@ -427,6 +427,8 @@ function fillAIProfileSelects(){if(!AICFG)return;
   if(rb){rb.checked=(AICFG.image_rembg!==false);
     // снятие фона и «генерить при разметке» имеют смысл только при включённой генерации
     $('ais_rembgRow').style.display=imgGenOn()?'flex':'none';}
+  const gg=$('glitchglow');
+  if(gg)gg.value=AICFG.glitch_glow||'builtin';
   const gr=$('illgenRow');if(gr)gr.style.display=imgGenOn()?'flex':'none';
   fillVideoControls();
   cutSummary();markupSummary();
@@ -725,6 +727,13 @@ async function setImageRembg(on){
     body:JSON.stringify({action:'set_image_rembg',value:!!on})})).json();}
   catch(e){toast(t('Сервер не ответил: ')+e);fillAIProfileSelects();return;}
   if(d.error)toast('⚠ '+errText(d));else AICFG.image_rembg=d.image_rembg;}
+async function setGlitchGlow(v){
+  let d;
+  try{d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'set_glitch_glow',value:v})})).json();}
+  catch(e){toast(t('Сервер не ответил: ')+e);fillAIProfileSelects();return;}
+  if(d.error){toast('⚠ '+errText(d));fillAIProfileSelects();}
+  else AICFG.glitch_glow=d.glitch_glow;}
 // «Убрать фон» у уже выбранного файла (кнопка на карточке) — рядом ляжет <имя>-nobg.png
 async function insRembg(i){if(curIns<0)return;const x=CLIPS[curIns].inserts[i];if(!x||!x.media)return;
   if(x.genBusy)return;
@@ -935,13 +944,13 @@ async function aiSetSave(){
   const d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'save_profile',name,old_name:AIEDIT,profile:aiSetForm()})})).json();
   if(d.error){aiSetStatus('⚠ '+errText(d),'err');return;}
-  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;
+  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.glitch_glow=d.glitch_glow;
   fillAIProfileSelects();aiSetPick(name);aiSetStatus(t('сохранено'),'ok');}
 async function aiSetMakeActive(){if(!AIEDIT)return;
   const d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'set_active',name:AIEDIT})})).json();
   if(d.error){aiSetStatus('⚠ '+errText(d),'err');return;}
-  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;
+  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.glitch_glow=d.glitch_glow;
   fillAIProfileSelects();aiSetPick(AIEDIT);aiSetStatus(t('активный профиль: {n}',{n:AIEDIT}),'ok');}
 async function aiSetClone(){if(!AIEDIT)return;
   const baseName=AIEDIT;
@@ -957,14 +966,14 @@ async function aiSetClone(){if(!AIEDIT)return;
   const d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'clone_profile',name:baseName,new_name:newName})})).json();
   if(d.error){aiSetStatus('⚠ '+errText(d),'err');return;}
-  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;
+  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.glitch_glow=d.glitch_glow;
   fillAIProfileSelects();aiSetPick(newName);aiSetStatus(t('профиль продублирован'),'ok');}
 async function aiSetDelete(){if(!AIEDIT)return;
   if(!await askConfirm(t('Удалить профиль «{n}»?',{n:AIEDIT})))return;
   const d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'delete_profile',name:AIEDIT})})).json();
   if(d.error){aiSetStatus('⚠ '+errText(d),'err');return;}
-  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;
+  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.glitch_glow=d.glitch_glow;
   fillAIProfileSelects();aiSetPick(d.active);}
 async function aiSetTest(){aiSetStatus(t('проверяю…'));
   try{const d=await (await fetch('/api/ai_test',{method:'POST',headers:{'Content-Type':'application/json'},

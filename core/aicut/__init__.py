@@ -51,12 +51,12 @@
 # поэтому переэкспортируются отдельной строкой.
 from .config import DEFAULT_URL, DEFAULT_MODEL, HERE   # noqa: F401
 from .config import (   # noqa: F401
-                     AI_CONFIG_PATH, AI_LOG_PATH, CACHE_MODELS, KEY_ENV_PREFIX, OMNI_GIGAAM, OMNI_LOCAL,
+                     AI_CONFIG_PATH, AI_LOG_PATH, CACHE_MODELS, GLITCH_GLOW_MODES, KEY_ENV_PREFIX, OMNI_GIGAAM, OMNI_LOCAL,
                      OMNI_LOCAL_ENGINES,
                      PROVIDER_PRESETS, REASONING_BUDGET, REASONING_EXAMPLES, REASONING_LEVELS,
                      REASONING_MODELS, STEP_REASONING_DEFAULT, STEP_TITLES,
                      _default_ai_config, _profile_dict, _seed_ai_config,
-                     apply_profile_headers, cut_asr_engine, key_env_name, load_ai_config, model_supports_caching,
+                     apply_profile_headers, cut_asr_engine, glitch_glow_mode, key_env_name, load_ai_config, model_supports_caching,
                      normalize_base_url, omni_local_engine, parse_headers_text, reason_budget,
                      resolve_key, resolve_omni_profile, resolve_profile, save_ai_config, step_profile,
                      effective_step_reasoning, step_reasoning)

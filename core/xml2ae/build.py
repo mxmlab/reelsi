@@ -4,6 +4,7 @@
 
 Здесь же virtual_edl — тот же разбор, но для черновика ffmpeg, без AE.
 """
+import json
 import os
 import re
 from core import paths
@@ -248,6 +249,22 @@ def _has_valid_count(x):
     return _parse_intro_count(" ".join(wds).strip(), x.get("dec")) is not None
 
 
+# Настройки плагина Deep Glow 2 для слов жёлтого глитча интро (задание HD,
+# снято архитектором из MKnew13.aep пользователя, 2026-09-12, 30 потоков со значением,
+# одинаковые во всех 28 копиях; порядок — как в слое AE, чтобы списки вроде
+# пресета качества ставились раньше зависимых значений).
+DEEP_GLOW2_GLITCH = [
+    ("PEDG2-0017", 835), ("PEDG2-0018", 0.03), ("PEDG2-0107", 3), ("PEDG2-0118", 10),
+    ("PEDG2-0119", 90), ("PEDG2-0042", [1, 0, 0, 1]), ("PEDG2-1048", 3), ("PEDG2-0049", 75),
+    ("PEDG2-0050", 0.5), ("PEDG2-0051", 8), ("PEDG2-0053", 1), ("PEDG2-0155", 0),
+    ("PEDG2-0131", 50), ("PEDG2-0136", 3), ("PEDG2-0132", 0), ("PEDG2-0057", 0),
+    ("PEDG2-0114", 0), ("PEDG2-0115", 0), ("PEDG2-0137", 0), ("PEDG2-0058", 2),
+    ("PEDG2-0102", 1), ("PEDG2-0109", 0), ("PEDG2-0143", 1), ("PEDG2-0146", 1),
+    ("PEDG2-0059", 0), ("PEDG2-0060", 0), ("PEDG2-0061", 0), ("PEDG2-0062", 0),
+    ("PEDG2-0027", 0), ("PEDG2-1107", 6),
+]
+
+
 # Параметры анимаций интро (глитч, раскрытие): сборка .jsx берёт числа
 # из этого словаря, а план сцены (scene_plan) передаёт их в превью браузера.
 # Единый источник истины — вторая копия в JS не заводится.
@@ -303,7 +320,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
                roto=False, roto_bottom=0.0, roto_device=None, style=None,
                music_random=False, emit=None,
                include_xml_inserts=True, cancel=None, word_timings=None,
-               caption=None):
+               caption=None, glitch_glow="builtin"):
     """ПЛАН СЦЕНЫ (задание C): вся арифметика сборки, без записи .jsx и без GPU.
     to_ae_full рендерит из него шаблон после рото-масок; предпросмотр (задание D)
     читает план напрямую. Поля — контракты JSX-структур (CAM/SUBS/INSERTS/INTRO_GROUPS)
@@ -589,6 +606,10 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         return min(ts) if ts else 0.0
     _intro_groups.sort(key=_g_at)
     _any_glitch = any(x.get("anim") == "glitch" for g in _intro_groups for x in g)
+    _dg_on = glitch_glow == "deepglow2" and any(
+        x.get("anim") == "glitch" and x.get("color") == "yellow"
+        for g in _intro_groups for x in g
+    )
     # Строки «заднего плана» в ролике (задание A1): от этого зависит и ветка раскладки
     # строк в шаблоне, и то, считает ли Python шаги по высоте букв. Акцентная строка
     # задним планом не считается — у неё свой шрифт и свой регистр (тот же приоритет,
@@ -1926,8 +1947,34 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
                 '                var tt=addFX(L,"ADBE Tritone"); setP(tt,"ADBE Tritone-0002",%s);\n'
                 '            }\n' % _yellow_expr
             )
+        if _dg_on:
+            _dg_set_lines = ['var fxDg=addFX(L,"PEDG2"); if(!fxDg) DG_MISS++;']
+            for _mn, _val in DEEP_GLOW2_GLITCH:
+                _dg_set_lines.append(f'setP(fxDg,"{_mn}",{json.dumps(_val)});')
+            _dg_set_str = " ".join(_dg_set_lines)
+            _glitch_fx_code = (
+                '            if(anim=="glitch"){\n'
+                f'                if(col=="yellow"){{ {_dg_set_str} }} else {{\n'
+                f'                    var fxGb=addFX(L,"ADBE Gaussian Blur 2"); setP(fxGb,"ADBE Gaussian Blur 2-0001",{_g_an["blur"]:g});\n'
+                '                    var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",149); setP(fxGl,"ADBE Glo2-0003",77); setP(fxGl,"ADBE Glo2-0004",0.62);\n'
+                '                }\n'
+                '            } else if(fx=="glow"){\n'
+                '                var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",149); setP(fxGl,"ADBE Glo2-0003",77); setP(fxGl,"ADBE Glo2-0004",0.62);\n'
+                '            }\n'
+            )
+            _dg_miss_decl = 'var DG_MISS=0;\n        '
+        else:
+            _glitch_fx_code = (
+                '            if(anim=="glitch"){\n'
+                f'                var fxGb=addFX(L,"ADBE Gaussian Blur 2"); setP(fxGb,"ADBE Gaussian Blur 2-0001",{_g_an["blur"]:g});\n'
+                '                var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",149); setP(fxGl,"ADBE Glo2-0003",77); setP(fxGl,"ADBE Glo2-0004",0.62);\n'
+                '            } else if(fx=="glow"){\n'
+                '                var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",149); setP(fxGl,"ADBE Glo2-0003",77); setP(fxGl,"ADBE Glo2-0004",0.62);\n'
+                '            }\n'
+            )
+            _dg_miss_decl = ''
         _intro_anim_fx_fn = (
-            '\n        function introAnimFX(L, t0, anim, fx, w, target, expr, isBack, col){\n'
+            '\n        ' + _dg_miss_decl + 'function introAnimFX(L, t0, anim, fx, w, target, expr, isBack, col){\n'
             '            var hasCnt=(typeof target!=="undefined" && target!==null && !isNaN(target));\n'
             '            if(hasCnt){\n'
             '                try{\n'
@@ -1947,12 +1994,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             '                    }\n'
             '                }catch(e){}\n'
             '            }\n'
-            '            if(anim=="glitch"){\n'
-            f'                var fxGb=addFX(L,"ADBE Gaussian Blur 2"); setP(fxGb,"ADBE Gaussian Blur 2-0001",{_g_an["blur"]:g});\n'
-            '                var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",149); setP(fxGl,"ADBE Glo2-0003",77); setP(fxGl,"ADBE Glo2-0004",0.62);\n'
-            '            } else if(fx=="glow"){\n'
-            '                var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",149); setP(fxGl,"ADBE Glo2-0003",77); setP(fxGl,"ADBE Glo2-0004",0.62);\n'
-            '            }\n'
+            + _glitch_fx_code
             + _tt_yellow +
             '            if(anim=="glitch"){\n'
             '                try{\n'
@@ -2377,6 +2419,8 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         intro_word_shadow_line=_intro_word_shadow_line,
         intro_word_shadow_word=_intro_word_shadow_word,
         intro_anim_fx_fn=_intro_anim_fx_fn,
+        dg_on=_dg_on,
+        dg_report="",
         intro_hl_glow_fn=_intro_hl_glow_fn,
         intro_group_flags=_intro_group_flags,
         intro_line_anim=_intro_line_anim,
@@ -2603,9 +2647,12 @@ def to_ae_full(xml_path, jsx_path=None, return_source=False, emit=console_emit, 
     # .jsx прежний (golden).
     ae["binpfx_decl"] = ("var BIN_PFX = %s;\n    " % _js(binpfx)) if binpfx else ""
     ae["bin_name"] = "BIN_PFX+n" if binpfx else "n"
+    ae["dg_report"] = _dg_report(render_dir, comps_global, ae)
     jsx = AE_FULL % dict(ae, roto=roto_js,
                          tail=_render_tail(render_dir, aep_path, comps_global=comps_global),
                          imp_miss=_imp_miss(render_dir))
+    if render_dir is None and not comps_global and not return_source and ae.get("dg_on"):
+        jsx = _dg_wrap(jsx)
     nclips = sum(len(c["clips"]) for c in plan["cams"])
     if return_source:                          # для мультифайла «один .jsx на всё»
         return jsx, nclips, len(plan["subs"])
@@ -2674,6 +2721,48 @@ def virtual_edl(xml_path, ncams=None):
             "cams": [{"name": c.get("name"), "path": c.get("path")} for c in cams],
             "segs": segs, "audio": audio,
             "words": [{"s": s / fps, "e": e / fps, "w": w} for (s, e, w) in subs]}
+
+
+def _dg_report(render_dir=None, comps_global=False, ae=None):
+    """Сообщение внутри таймлайна при отсутствии Deep Glow 2 (matchName PEDG2, задание HD).
+    Только если в плане есть жёлтые слова глитча и выбран режим deepglow2 (ae.get('dg_on')).
+    Три режима:
+    - render_dir задан: _LOG('ОШИБКА: ' + ...) для слива в .aelog.txt;
+    - comps_global: дозапись в $.global.REELSI_MASTER_LOG под мастером набора;
+    - ручная сборка: суммирование в $.global.REELSI_DG_MISS (alert покажет _dg_wrap)."""
+    if not ae or not ae.get("dg_on"):
+        return ""
+    msg = (
+        '"Deep Glow 2 (PEDG2) не найден в After Effects: у " + DG_MISS + " слов глитча в «" '
+        '+ main.name + "» нет свечения. Установите плагин или в Reelsi выберите: Настройки → Инструменты → Свечение глитча → Встроенные."'
+    )
+    if render_dir:
+        return '    if(DG_MISS>0) _LOG("ОШИБКА: " + %s);\n' % msg
+    if comps_global:
+        return (
+            "    if(DG_MISS>0 && $.global.REELSI_MASTER_LOG){\n"
+            "        try{\n"
+            "            var _dglog = new File($.global.REELSI_MASTER_LOG);\n"
+            '            _dglog.encoding = "UTF-8";\n'
+            '            _dglog.open("a");\n'
+            '            _dglog.writeln("ОШИБКА: " + %s);\n'
+            "            _dglog.close();\n"
+            '        }catch(e){ _LOG("запись в REELSI_MASTER_LOG: " + e); }\n'
+            "    }\n" % msg
+        )
+    return "    if(DG_MISS>0) $.global.REELSI_DG_MISS=($.global.REELSI_DG_MISS||0)+DG_MISS;\n"
+
+
+def _dg_wrap(body):
+    """Оборачивает .jsx ручной сборки в объявление и проверку счётчика DG_MISS (задание HD).
+    В начало — сброс $.global.REELSI_DG_MISS=0;, в конец — alert и повторный сброс."""
+    alert_msg = (
+        '"Deep Glow 2 (PEDG2) не найден в After Effects: у " + $.global.REELSI_DG_MISS + '
+        '" слов глитча нет свечения. Установите плагин или в Reelsi выберите: Настройки → Инструменты → Свечение глитча → Встроенные."'
+    )
+    head = "$.global.REELSI_DG_MISS=0;\n"
+    tail = "\nif($.global.REELSI_DG_MISS){\n    alert(%s);\n}\n$.global.REELSI_DG_MISS=0;\n" % alert_msg
+    return head + body + tail
 
 
 def _imp_miss(render_dir=None):
@@ -2837,6 +2926,8 @@ def build_combined(jobs, out_jsx, emit=None, cancel=None, progress=None,
         emit("  готово: {clips} клипов, {subs} субтитров", clips=nc, subs=ns)
         parts.append(src)
     body = "\n\n// ===== следующий таймлайн =====\n\n".join(parts)
+    if not comps_global and "REELSI_DG_MISS" in body:
+        body = _dg_wrap(body)
     open(out_jsx, "w", encoding="utf-8-sig").write(body)
     return out_jsx, len(parts)
 

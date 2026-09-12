@@ -184,6 +184,8 @@ def _fake_popen_combined(monkeypatch, outdir, render_dir, mov1, mov2, combined_j
                 ok_path = combined_jp.replace("\\", "/")
                 with open(aelog_path, "w", encoding="utf-8") as f:
                     f.write("REELSI-MASTER: начат\n")
+                    f.write("таймлайн ok: C0233\n")
+                    f.write("таймлайн ok: C0234\n")
                     f.write(f"evalFile ok: {ok_path}\n")
                     f.write("comp ok: C0233\n")
                     f.write("comp ok: C0234\n")
@@ -291,9 +293,11 @@ def test_render_combined_collects_one_file_and_master_single_path(xmls, tmp_path
     assert master.count(combined_jp.replace("\\", "/")) == 1, (
         "мастер должен получить ровно один путь — Reelsi_all.jsx")
     assert "01_C0233.jsx" not in master and "02_C0234.jsx" not in master
-    # «сборка проекта» — один шаг (stage_total=1), а не «0 из N»
+    # «сборка проекта» — stage_total == 2 (по роликам набора), значения 1 нет (задание HC)
     project_steps = [st for _p, lbl, _sd, st in history if lbl == "сборка проекта"]
-    assert 1 in project_steps, f"нет этапа «сборка проекта» c stage_total=1: {history}"
+    assert project_steps and all(st == 2 for st in project_steps), (
+        f"на этапе «сборка проекта» stage_total обязан быть 2: {project_steps}")
+    assert 1 not in project_steps, f"значение 1 не должно появляться в stage_total: {project_steps}"
 
 
 def test_render_combined_preflight_fail_stops_whole_set(xmls, tmp_path, monkeypatch):

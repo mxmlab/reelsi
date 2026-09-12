@@ -182,6 +182,7 @@ def api_ai_config():
                        video_resolutions=list(aicut.VIDEO_RESOLUTIONS),
                        video_aspects=list(aicut.VIDEO_ASPECTS),
                        image_rembg=aicut.image_rembg_on(),
+                       glitch_glow=aicut.glitch_glow_mode(),
                        presets=aicut.PROVIDER_PRESETS,
                        reasoning_levels=list(aicut.REASONING_LEVELS),
                        reasoning_steps={k: aicut.step_reasoning(k)
@@ -330,6 +331,14 @@ def api_ai_config():
         elif act == "set_image_rembg":
             # убирать ли фон у сгенерённого (rembg): картинка ложится в базу уже с альфой
             cfg["image_rembg"] = bool(d.get("value"))
+        elif act == "set_glitch_glow":
+            val = d.get("value")
+            if val not in aicut.GLITCH_GLOW_MODES:
+                raise SystemExit(umsg("glitch_glow_mode_invalid",
+                    f"Недопустимый режим свечения глитча «{val}» — можно: "
+                    + ", ".join(aicut.GLITCH_GLOW_MODES),
+                    mode=val, list=", ".join(aicut.GLITCH_GLOW_MODES)))
+            cfg["glitch_glow"] = val
         elif act == "save_profile":
             name = (d.get("name") or "").strip()
             if not name:
@@ -407,6 +416,7 @@ def api_ai_config():
                        video_model=aicut.video_model_cfg(),
                        video_resolution=aicut.video_resolution_cfg(aicut.video_model_cfg()),
                        image_rembg=bool(cfg.get("image_rembg", True)),
+                       glitch_glow=cfg.get("glitch_glow") if cfg.get("glitch_glow") in aicut.GLITCH_GLOW_MODES else "builtin",
                        reasoning_steps={k: aicut.step_reasoning(k)
                                         for k in aicut.STEP_REASONING_DEFAULT},
                        # Что РЕАЛЬНО уйдёт в API (после понижения невалидного уровня

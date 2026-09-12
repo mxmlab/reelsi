@@ -433,3 +433,13 @@ def cut_asr_engine(emit=None):
         pass
     return "gigaam"
 
+
+# Свечение жёлтого глитча интро (задание HD): встроенные эффекты или Deep Glow 2
+GLITCH_GLOW_MODES = ("builtin", "deepglow2")
+
+
+def glitch_glow_mode():
+    """Режим свечения жёлтого глитча: 'builtin' (Blur + Glo2) | 'deepglow2' (сторонний плагин)."""
+    val = load_ai_config().get("glitch_glow")
+    return val if val in GLITCH_GLOW_MODES else "builtin"
+

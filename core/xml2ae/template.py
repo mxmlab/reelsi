@@ -770,5 +770,5 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
 
     try{ if (DISCLAIMER && dl) dl.moveToBeginning(); }catch(e){}   // дисклеймер поверх всего
 %(top_line_js)s%(caption_js)s%(disc_end_js)s%(blur_js)s
-%(tail)s})();
+%(dg_report)s%(tail)s})();
 """

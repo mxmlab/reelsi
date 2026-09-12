@@ -19,7 +19,8 @@ from .inserts import _adopt_inserts, _insert_dest
 
 def _norm_build_jobs(jobs_in):
     """Нормализация набора клипов для фонового джоба сборки (/api/build_run)."""
-    from core import styles  # локальный импорт, как в соседних модулях api/
+    from core import aicut, styles  # локальный импорт, как в соседних модулях api/
+    glitch_glow = aicut.glitch_glow_mode()
     norm = []
     for j in jobs_in:
         xml = (j.get("xml") or "").strip().strip('"')
@@ -55,6 +56,7 @@ def _norm_build_jobs(jobs_in):
             music_db=float(st.get("music_db") if st.get("music_db") is not None else -20.0),
             music_random=bool(j.get("music_random")),
             censor_audio=bool(j.get("censor", True)),
+            glitch_glow=glitch_glow,
             include_xml_inserts=False))
     return norm
 

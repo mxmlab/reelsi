@@ -144,3 +144,117 @@ def test_host_helper_rejects_empty():
     assert not api._host_is_local("")
     assert not api._host_is_local(None)
     assert api._host_is_local("127.0.0.1:5001")
+
+
+# --------------------------------------------------------------------------- #
+# CSRF: изменяющий запрос с чужого origin
+# --------------------------------------------------------------------------- #
+# Проверки Host мало: при атаке из браузера Host как раз 127.0.0.1:5001. Чужая
+# открытая страница может отправить «простой» POST (без preflight) на /api/cancel
+# или любой эндпоинт, терпящий пустое тело, — и он выполнится. Браузер сам ставит
+# Sec-Fetch-Site, а form/fetch из чужого origin несёт Origin.
+_LOCAL = {"Host": "127.0.0.1:5001"}
+
+
+@pytest.fixture(autouse=True)
+def _снять_отмену_после_теста():
+    """`POST /api/cancel` — им проверяются ЗАПУСКАЕМЫЕ случаи — ставит ОБЩИЙ флаг
+    `aicut.CANCEL`, а снимает его в бою только `job_start`. Без этого следующие
+    файлы падают «остановлено кнопкой «Стоп»»: поймано прогоном — сразу после этого
+    файла три теста `test_gb_provider_caps` и один `test_gd_headers_and_clone`."""
+    from core import aicut
+
+    yield
+    try:
+        aicut.clear_cancel()
+    except Exception:
+        pass
+
+
+def test_чужой_sec_fetch_site_отклоняется(client):
+    r = client.post("/api/cancel", headers={**_LOCAL, "Sec-Fetch-Site": "cross-site"})
+    assert r.status_code == 403
+    assert r.get_json()["err"] == "forbidden_origin"
+
+
+@pytest.mark.parametrize("site", ["cross-site", "same-site"])
+def test_не_свой_sec_fetch_site_отклоняется(client, site):
+    """same-site — тоже чужой сайт (поддомен атакующего), пускаем только свой."""
+    r = client.post("/api/cancel", headers={**_LOCAL, "Sec-Fetch-Site": site})
+    assert r.status_code == 403
+
+
+@pytest.mark.parametrize("site", ["same-origin", "none"])
+def test_свой_sec_fetch_site_пропускается(client, site):
+    """same-origin — наш интерфейс, none — переход по закладке/прямой ввод."""
+    r = client.post("/api/cancel", headers={**_LOCAL, "Sec-Fetch-Site": site})
+    assert r.status_code != 403
+
+
+@pytest.mark.parametrize("origin", ["http://evil.example", "https://evil.example:5001",
+                                    "http://192.168.1.50:5001"])
+def test_чужой_origin_отклоняется(client, origin):
+    r = client.post("/api/cancel", headers={**_LOCAL, "Origin": origin})
+    assert r.status_code == 403
+
+
+@pytest.mark.parametrize("origin", ["http://127.0.0.1:5001", "http://localhost:5001",
+                                    "http://[::1]:5001"])
+def test_свой_origin_пропускается(client, origin):
+    """Наш интерфейс ходит с localhost/127.0.0.1/[::1] — его не блокируем."""
+    r = client.post("/api/cancel", headers={**_LOCAL, "Origin": origin})
+    assert r.status_code != 403
+
+
+def test_без_заголовков_браузера_пропускается(client):
+    """curl, CLI и тестовый клиент Flask этих заголовков не шлют: пропускаем."""
+    r = client.post("/api/cancel", headers=_LOCAL)
+    assert r.status_code != 403
+
+
+def test_get_с_чужого_origin_не_заблокирован(client):
+    """Проверка только на изменяющих методах: чужой странице чтение ничего не даёт
+    (ответ ей не прочитать), а сломать GET ею легко."""
+    r = client.get("/api/status", headers={**_LOCAL, "Sec-Fetch-Site": "cross-site",
+                                           "Origin": "http://evil.example"})
+    assert r.status_code != 403
+
+
+def test_проверка_стоит_на_всех_роутах_а_не_на_одном(client):
+    """Проверка висит на Blueprint, а не на отдельных функциях: чужой origin обязан
+    получить 403 до кода ЛЮБОГО изменяющего роута."""
+    for path in ("/api/cancel", "/api/video_cancel", "/api/ai_stop", "/api/render_run"):
+        r = client.post(path, headers={**_LOCAL, "Sec-Fetch-Site": "cross-site"})
+        assert r.status_code == 403, f"{path} прошёл мимо проверки origin"
+
+
+def test_методы_put_patch_delete_тоже_проверяются():
+    """Роутов с этими методами пока нет, и роутер отдаёт 405 раньше хука (у запроса
+    без правила `request.blueprint` пуст) — поэтому зовём хук напрямую. Первый же
+    PUT-эндпоинт иначе оказался бы открытым."""
+    from flask import Flask
+
+    from api import _core
+
+    app = Flask(__name__)
+    for method in ("POST", "PUT", "PATCH", "DELETE"):
+        with app.test_request_context("/api/x", method=method,
+                                      headers={"Host": "127.0.0.1:5001",
+                                               "Origin": "http://evil.example"}):
+            r = _core._block_dns_rebinding()
+        assert r is not None and r[1] == 403, f"{method} прошёл мимо проверки origin"
+    with app.test_request_context("/api/x", method="GET",
+                                  headers={"Host": "127.0.0.1:5001",
+                                           "Origin": "http://evil.example"}):
+        assert _core._block_dns_rebinding() is None, "GET заблокирован чужому origin"
+
+
+def test_origin_helper_разбирает_хост():
+    """Сравниваем ХОСТ, а не строку целиком: порт и схема к локальности не относятся."""
+    assert api._origin_is_local("http://127.0.0.1:5001")
+    assert api._origin_is_local("https://localhost")
+    assert api._origin_is_local("http://[::1]:5098")
+    assert not api._origin_is_local("http://evil.example")
+    assert not api._origin_is_local("http://localhost.evil.example")
+    assert not api._origin_is_local("null")
+    assert not api._origin_is_local("")

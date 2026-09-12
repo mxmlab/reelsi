@@ -129,3 +129,21 @@ def test_manual_jsx_has_no_alert_but_keeps_viewer(xml_nosubs, tmp_path):
     assert "main.openInViewer()" in src
     assert "app.quit()" not in src                   # сохраняет пользователь сам
     assert "renderQueue" not in src
+
+
+def test_rendered_jsx_riser_custom_db_zero_offset_syntax(xml_subs, tmp_path):
+    """Стиль с ризером db != 0, но at == in: в сгенерированном тексте нет
+    startTime=;, есть rl.startTime=0;, и отрендеренный .jsx проходит node --check."""
+    out = str(tmp_path / "riser_db.jsx")
+    style = {
+        "intro_riser": True,
+        "intro_riser_db": -4.0,
+        "intro_riser_at": 0.0,
+        "intro_riser_in": 0.0,
+    }
+    xml2ae.to_ae_full(xml_subs, out, style=style, emit=lambda *a: None)
+    txt = open(out, encoding="utf-8-sig").read()
+    assert "startTime=;" not in txt
+    assert "rl.startTime=0;" in txt
+    _check_syntax(out)
+

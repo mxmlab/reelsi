@@ -488,3 +488,45 @@ def test_общий_jsx_собирается_когда_у_клипа_своя_�
     assert "ОШИБКА" not in log, log
     assert JOB["results"], "общий .jsx не собрался"
     assert os.path.isfile(os.path.join(dst, "Reelsi_all.jsx"))
+
+
+def test_clip_build_failure_recorded_in_failed_and_queue(xml_nosubs, tmp_path, monkeypatch):
+    """Сборка набора из двух клипов, xml2ae.to_ae_full для одного подменён на исключение:
+    в JOB['failed'] ровно один элемент с именем этого клипа, второй клип в results,
+    элемент очереди упавшего не на stage='jsx'."""
+    apibuild, JOB = _fresh_job()
+    dst = str(tmp_path / "out")
+    failing_xml = str(tmp_path / "01_fail.xml")
+    ok_xml = str(tmp_path / "02_ok.xml")
+    shutil.copy(xml_nosubs, failing_xml)
+    shutil.copy(xml_nosubs, ok_xml)
+
+    orig_to_ae_full = xml2ae.to_ae_full
+
+    def mock_to_ae_full(xml_path, *args, **kwargs):
+        if "01_fail" in xml_path:
+            raise RuntimeError("тестовая ошибка сборки клипа")
+        return orig_to_ae_full(xml_path, *args, **kwargs)
+
+    monkeypatch.setattr(xml2ae, "to_ae_full", mock_to_ae_full)
+    norm = [
+        {"xml_path": failing_xml},
+        {"xml_path": ok_xml},
+    ]
+    apibuild._run_build_job(norm, "separate", dst)
+
+    # в JOB["failed"] ровно один элемент с именем этого клипа
+    assert len(JOB["failed"]) == 1
+    assert JOB["failed"][0]["name"] == "01_fail"
+    assert "тестовая ошибка сборки клипа" in JOB["failed"][0]["reason"]
+
+    # второй клип в results
+    assert len(JOB["results"]) == 1
+    assert "02_ok.jsx" in JOB["results"][0]
+
+    # элемент очереди упавшего не на stage="jsx"
+    items_by_name = {it["name"]: it for it in JOB.get("items", [])}
+    assert "01_fail" in items_by_name
+    assert items_by_name["01_fail"]["stage"] != "jsx"
+    assert items_by_name["01_fail"]["stage"] == "error"
+

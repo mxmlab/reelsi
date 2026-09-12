@@ -9,7 +9,7 @@
 Порядок работы с VRAM здесь не косметика: на 16 ГБ держим ОДНУ тяжёлую модель за раз,
 поэтому GigaAM выгружается ДО обращения к 27b, а тот — до рендера.
 """
-import os, json, shutil, tempfile
+import os, shutil, tempfile
 import soundfile as sf
 from core import aicut
 from core import xmlbuild
@@ -19,6 +19,7 @@ from core import draftrender
 from core import cutstages
 from core.app_meta import env, wrap_emit
 from core.app_meta import console_emit
+from core.fileio import atomic_json_dump
 from . import tune
 from .asr import transcribe_words_for_cut, transcribe_words_whole
 _orig_transcribe_words_whole = transcribe_words_whole
@@ -270,11 +271,9 @@ def _run(wav_path, cams, offsets, out, scale, model=None,
             "scale": scale, "keep": [[round(s, 3), round(e, 3)] for s, e in keep]}
     if speaker:
         proj["speaker"] = speaker
-    json.dump(proj, open(os.path.splitext(out)[0] + ".project.json", "w", encoding="utf-8"),
-              ensure_ascii=False, indent=1)
+    atomic_json_dump(os.path.splitext(out)[0] + ".project.json", proj, indent=1)
     cutlog.sort(key=lambda c: c["t0"])
-    json.dump(cutlog, open(os.path.splitext(out)[0] + ".cuts.json", "w", encoding="utf-8"),
-              ensure_ascii=False, indent=1)
+    atomic_json_dump(os.path.splitext(out)[0] + ".cuts.json", cutlog, indent=1)
 
     # --- финальный черновик по итоговому keep (консистентно с XML) ---
     # draft_path возвращается всегда, а присваивался только при черновике: при

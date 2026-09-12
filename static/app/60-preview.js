@@ -808,7 +808,7 @@ function introRowHtml(cfg,r,i,idxs,gi){
     +'<option value="custom" '+(colVal==='custom'?'selected':'')+'>'+t('свой')+'</option>'
     +'</select>';
   const customColorInput = (colVal==='custom')
-    ?'<input type="color" style="width:24px;height:24px;min-height:0;padding:0;border:1px solid var(--bd2);border-radius:var(--r-sm);cursor:pointer;flex-shrink:0" aria-label="'+t('Свой цвет')+'" data-t="'+t('Свой цвет строки')+'" value="'+(typeof rgb2hex==='function'?rgb2hex(r.fill||[1,1,1]):'#ffffff')+'" oninput="'+A+'['+i+'].fill=(typeof hex2rgb===\\\'function\\\'?hex2rgb(this.value):[1,1,1]);'+S+'">'
+    ?'<input type="color" style="width:24px;height:24px;min-height:0;padding:0;border:1px solid var(--bd2);border-radius:var(--r-sm);cursor:pointer;flex-shrink:0" aria-label="'+t('Свой цвет')+'" data-t="'+t('Свой цвет строки')+'" value="'+(typeof rgb2hex==='function'?rgb2hex(r.fill||[1,1,1]):'#ffffff')+'" oninput="'+A+'['+i+'].fill=(typeof hex2rgb===\'function\'?hex2rgb(this.value):[1,1,1]);'+S+'">'
     :'';
   const animSelect = '<select style="min-width:0;width:84px;min-height:var(--h-sm);height:var(--h-sm);padding:2px 4px;font-size:12px;flex-shrink:0" aria-label="'+t('Появление')+'" data-t="'+t('Появление строки')+'" onchange="introRowSetAnim('+A+','+i+',this.value);this.blur();'+S+'">'
     +'<option value="" '+(animVal===''?'selected':'')+'>'+t('фейд')+'</option>'

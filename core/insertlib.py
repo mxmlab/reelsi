@@ -1292,7 +1292,7 @@ def adopt(items, dest_dir, emit=None):
         except Exception:
             old = {}
         old.update(transferred)
-        json.dump(old, open(logp, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        atomic_json_dump(logp, old, indent=1)
     if seen:
         _index_adopt(mapping, seen, emit, crops)
     if transferred:
@@ -1444,7 +1444,7 @@ def import_media(dirs, dest, since_ts=0.0, move=True, emit=None, recursive=False
         except Exception:
             old = {}
         old.update(mapping)
-        json.dump(old, open(logp, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        atomic_json_dump(logp, old, indent=1)
         # весь load-modify-save под локом (как reject/add_generated): _load() отдаёт
         # ОБЩИЙ закэшированный dict, и параллельная правка описания затиралась бы
         with _LOCK:

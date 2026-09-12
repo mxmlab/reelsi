@@ -43,7 +43,7 @@ except ImportError:
 bp = Blueprint("api", __name__)
 
 # --------------------------------------------------------------------------- #
-# Защита от DNS rebinding
+# Защита от DNS rebinding (Host) и CSRF (Origin/Sec-Fetch-Site)
 # --------------------------------------------------------------------------- #
 # Сервер слушает только 127.0.0.1 и авторизации не имеет — это осознанно, локальный
 # однопользовательский инструмент (см. SECURITY.md). Но одна дыра из этого всё же
@@ -65,11 +65,51 @@ def _host_is_local(host):
     return h.strip().lower() in _LOCAL_HOSTS
 
 
+# --------------------------------------------------------------------------- #
+# CSRF: изменяющий запрос с чужого origin
+# --------------------------------------------------------------------------- #
+# Проверки Host мало. При атаке из браузера Host как раз 127.0.0.1:5001, а «простой»
+# POST (без preflight) чужая открытая страница отправить может — и /api/cancel,
+# /api/video_cancel, /api/ai_stop или любой эндпоинт, терпящий пустое тело,
+# выполнится (SECURITY.md относит это к уязвимостям). Браузер САМ проставляет
+# Sec-Fetch-Site (страница его подделать не может), поэтому смотрим на него, а если
+# его нет — на Origin. У curl/CLI/тестового клиента Flask нет ни того, ни другого:
+# их не блокируем, иначе сломается весь внешний вызов API.
+_MUTATING_METHODS = ("POST", "PUT", "PATCH", "DELETE")
+_SITE_SAME = {"same-origin", "none"}
+
+
+def _origin_is_local(origin):
+    """Origin (`схема://хост:порт`) — наш интерфейс? Сравниваем ХОСТ: схема и порт
+    к локальности не относятся (тестовый профиль живёт на 5098)."""
+    if not origin:
+        return False
+    from urllib.parse import urlsplit
+    try:
+        h = urlsplit(origin).hostname
+    except ValueError:            # битый Origin (например «http://[») — не наш
+        return False
+    return bool(h) and h.strip().lower() in _LOCAL_HOSTS
+
+
+def _forbidden_origin():
+    r = umsg_err(SystemExit(umsg("forbidden_origin", "запрос пришёл с чужого сайта")))
+    return jsonify(**r), 403
+
+
 @bp.before_request
 def _block_dns_rebinding():
     if not _host_is_local(request.host):
         r = umsg_err(SystemExit(umsg("localhost_only", "только с localhost")))
         return jsonify(**r), 403
+    if request.method in _MUTATING_METHODS:
+        site = request.headers.get("Sec-Fetch-Site")
+        if site is None:                                 # curl, CLI, тестовый клиент
+            origin = request.headers.get("Origin")
+            if origin is not None and not _origin_is_local(origin):
+                return _forbidden_origin()
+        elif site.strip().lower() not in _SITE_SAME:
+            return _forbidden_origin()
 
 
 # Файлы, которые /api/media не отдаёт никогда. Он умеет отдать что угодно с диска —
@@ -167,8 +207,12 @@ _JOB_LOCK_FH = None
 
 def _cross_lock_acquire():
     global _JOB_LOCK_FH
-    if _JOB_LOCK_FH is not None:
-        return True
+    # Раньше здесь стоял короткий путь «лок уже наш (в этом процессе) — значит взяли».
+    # Он делал межпроцессный лок НЕВИДИМЫМ внутри процесса: рендер (api/render.py)
+    # держит его всё время работы, а параллельный job_start нарезки/сборки получал
+    # True и стартовал вторую тяжёлую задачу на той же видеокарте (задание GZ, п. C).
+    # ОС лок не реентерабелен и в одном процессе: второй хэндл на тот же файл
+    # получает отказ (замер на Windows: PermissionError), поэтому короткий путь не нужен.
     fh = None
     try:
         fh = open(JOB_LOCK_PATH, "a+b")

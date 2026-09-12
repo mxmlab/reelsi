@@ -336,7 +336,17 @@ def build(cam_paths, segments, offsets, out_path, assign=None,
             continue
         start, end = tl, tl + length
         active = assign[kept] if kept < len(assign) else 0
+        # Камера, назначенная куску, могла ещё не начать писать (кусок начинается раньше
+        # её сдвига): кусок берём с камеры 1 — её сдвиг 0, и материал там есть всегда.
+        # max(0, …) тут нельзя: он показал бы кадры не из того места и сломал синхрон.
+        if active and s < offsets[active]:
+            active = 0
         for k in range(N):
+            if k and s < offsets[k]:
+                # У камеры k в этот момент материала нет вовсе (её файл начинается позже):
+                # клип не пишем. Иначе <in> уходит отрицательным — и у видео, и у аудио,
+                # которое в XML включено всегда. Тишина честнее чужих кадров.
+                continue
             ink = round((s - offsets[k]) * FPS)   # camk_time = cam1_time - offset_k
             outk = ink + length
             if not fdefined[k]:

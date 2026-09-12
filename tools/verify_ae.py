@@ -26,7 +26,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from core.verify_jsx import Report, extract_structs, WANTED  # noqa: E402
+from core.verify_jsx import Report, extract_structs, WANTED, split_timelines  # noqa: E402
 
 SUBS_COMP = "Субтитры (текст)"
 SUBS_COMP_RE = re.compile(r"^Субтитры\s*(\(.*\))?$")
@@ -298,7 +298,16 @@ def main(argv=None):
 
     dump = _load(a.inspect)
     raw = open(a.jsx, encoding="utf-8-sig", errors="replace").read()
-    structs = extract_structs(raw)
+    blocks = split_timelines(raw)
+    idx = 0
+    if a.comp:
+        cands = main_comps(dump)
+        for i, c in enumerate(cands):
+            if c.get("name") == a.comp:
+                idx = i
+                break
+    idx = min(idx, len(blocks) - 1)
+    structs = extract_structs(blocks[idx])
     for name in WANTED:
         v = structs.get(name)
         if isinstance(v, tuple) and v and v[0] == "__BROKEN__":

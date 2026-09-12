@@ -11,10 +11,12 @@
 
 Запуск:  python -m pytest reelsi/tests -q
 """
+import io
 import json
 import os
 import sys
 import time
+import urllib.error
 
 import pytest
 
@@ -398,3 +400,81 @@ def test_ai_log_error_and_length(tmp_path, monkeypatch):
     r = _read_ai_log(logp)[0]
     assert r["ok"] is False and r["err"] == "провайдер вернул 402"
     assert r["step"] == "yellow"
+
+
+def test_max_completion_tokens_retry_and_success(monkeypatch):
+    """Провайдер отвечает 400 на max_tokens, требуя max_completion_tokens:
+    второй запрос несёт max_completion_tokens и не несёт max_tokens, итог успешен."""
+    calls = []
+
+    def fake_urlopen(req, timeout=None):
+        payload = json.loads(req.data.decode("utf-8"))
+        calls.append(payload)
+        if len(calls) == 1:
+            err_body = b'{"error": {"message": "Unsupported parameter: max_tokens. Please use max_completion_tokens instead."}}'
+            raise urllib.error.HTTPError(req.full_url if hasattr(req, "full_url") else str(req),
+                                         400, "Bad Request", {}, io.BytesIO(err_body))
+        return FakeResp([sse(content='{"ok": true}'), DONE])
+
+    monkeypatch.setattr(aicut.llm.urllib.request, "urlopen", fake_urlopen)
+    prof = {"provider": "openrouter", "base_url": "https://x/v1", "api_key": "k",
+            "model": "test/model", "reasoning": "medium", "name": "t"}
+    res = aicut._ask_openai(prof, "sys", "user", {"type": "object"},
+                            max_tokens=1000, emit=lambda *a, **k: None)
+    assert res == {"ok": True}
+    assert len(calls) == 2
+    assert "max_tokens" in calls[0] and "max_completion_tokens" not in calls[0]
+    assert "max_completion_tokens" in calls[1] and "max_tokens" not in calls[1]
+    assert calls[1]["max_completion_tokens"] == 1000
+
+
+def test_stream_options_rejection_does_not_infinite_loop(monkeypatch):
+    """Провайдер ВСЕГДА отвечает 400 про stream_options:
+    функция завершается (SystemExit по контракту), число вызовов urlopen <= retries + 3."""
+    calls = []
+
+    def fake_urlopen(req, timeout=None):
+        payload = json.loads(req.data.decode("utf-8"))
+        calls.append(payload)
+        if len(calls) > 10:
+            raise RuntimeError("бесконечный цикл: число вызовов urlopen превысило лимит")
+        err_body = b'{"error": {"message": "stream_options is not supported by this model"}}'
+        raise urllib.error.HTTPError(req.full_url if hasattr(req, "full_url") else str(req),
+                                     400, "Bad Request", {}, io.BytesIO(err_body))
+
+    monkeypatch.setattr(aicut.llm.urllib.request, "urlopen", fake_urlopen)
+    prof = {"provider": "openrouter", "base_url": "https://x/v1", "api_key": "k",
+            "model": "test/model", "reasoning": "off", "name": "t"}
+    with pytest.raises(SystemExit):
+        aicut._ask_openai(prof, "sys", "user", {"type": "object"},
+                          retries=1, emit=lambda *a, **k: None)
+    assert len(calls) <= 1 + 3  # retries + 3
+
+
+def test_reasoning_level_ladder_on_retry(monkeypatch):
+    """Модель поддерживает high/medium/low, ответ не разбирается на первых двух
+    попытках, retries=2 -> уровни трёх запросов high, medium, low."""
+    monkeypatch.setattr(aicut.llm.catalog, "caps", lambda prov, m, emit=None: {
+        "reasoning": True, "efforts": ["low", "medium", "high"],
+        "reasoning_kind": "effort", "structured_output": True, "temperature": True,
+        "out_limit": 2000, "ctx_limit": 1310720, "cache": True, "default": True,
+    })
+    calls = []
+
+    def fake_urlopen(req, timeout=None):
+        payload = json.loads(req.data.decode("utf-8"))
+        calls.append(payload)
+        if len(calls) < 3:
+            return FakeResp([sse(content="broken json"), DONE])
+        return FakeResp([sse(content='{"ok": true}'), DONE])
+
+    monkeypatch.setattr(aicut.llm.urllib.request, "urlopen", fake_urlopen)
+    prof = {"provider": "openrouter", "base_url": "https://x/v1", "api_key": "k",
+            "model": "test/model", "reasoning": "high", "name": "t"}
+    res = aicut._ask_openai(prof, "sys", "user", {"type": "object"},
+                            retries=2, emit=lambda *a, **k: None)
+    assert res == {"ok": True}
+    assert len(calls) == 3
+    efforts = [c["reasoning"]["effort"] for c in calls]
+    assert efforts == ["high", "medium", "low"]
+

@@ -134,6 +134,11 @@ def tmp_dir(out_xml_or_dir):
 
 
 PROXY_GLOB = "pv_*.mp4"          # превью-прокси камер (build_preview_proxy)
+# Имя файла субтитров черновика — ФИКСИРОВАННОЕ. В фильтрграфе имя идёт сырым
+# (`subtitles=<имя>`), а фильтр разбирается по запятым, `[ ]`, `;`, `:` и кавычкам:
+# стем ролика вида «C1,2[1];x'y» рвал `subtitles`, и черновик не собирался вовсе
+# (GZ, п. I; перепроверено на ffmpeg 8.0). Файл живёт в _tmp своего ролика.
+DRAFT_SUBS_NAME = "draft_subs.ass"
 
 
 def proxy_size(outdir):
@@ -523,10 +528,11 @@ def render_draft(xml_path, out_mp4=None, height=720, force_cpu=False, emit=conso
     flt.append(f"{vcat}concat=n={len(segs)}:v=1:a=0[vc]")
     if audio:
         flt.append(f"{acat}concat=n={len(audio)}:v=0:a=1[aout]")
-    # субтитры: относительный путь + cwd=_tmp — никакого экранирования путей Windows
+    # субтитры: относительный путь + cwd=_tmp — никакого экранирования путей Windows.
+    # Имя безопасное и постоянное (см. DRAFT_SUBS_NAME), а не стем ролика.
     ass_name = None
     if edl["words"]:
-        ass_name = f"{stem}.draft.ass"
+        ass_name = DRAFT_SUBS_NAME
         _ass_subs(edl["words"], tw, th, os.path.join(tdir, ass_name))
         flt.append(f"[vc]subtitles={ass_name}[vout]")
     else:

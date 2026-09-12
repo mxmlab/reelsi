@@ -12,6 +12,7 @@ from .llm import _ask_json
 from .prompts import (INSERTS_SCHEMA, INSERTS_SYSTEM, INTRO_SCHEMA, INTRO_SYSTEM,
                       YELLOW_SCHEMA, YELLOW_SYSTEM)
 from core.app_meta import console_emit
+from core.fileio import atomic_json_dump
 
 
 def _words_from_xml(xml_path):
@@ -68,7 +69,9 @@ def cmd_yellow(xml_path, system=None, dry=False, model=None, url=None, emit=cons
     colored = res["colored"]
     # сайдкар — фолбэк для слов, которые не удалось покрасить (слишком длинные и пр.)
     out = os.path.splitext(xml_path)[0] + ".yellow.json"
-    json.dump({"yellow": idx}, open(out, "w", encoding="utf-8"))
+    # atomic_json_dump: open(...,"w") усекал сайдкар ДО сериализации — «Стоп» или
+    # крах в этот момент оставлял пустой файл вместо набора жёлтых слов (GZ, п. A)
+    atomic_json_dump(out, {"yellow": idx})
     emit("жёлтых: {colored} покрашено в XML из {idx} выбранных ({words} слов)",
          colored=len(colored), idx=len(idx), words=len(words))
     emit("  " + " ".join(words[i][1] for i in colored))
@@ -310,6 +313,10 @@ def cmd_inserts(xml_path, system=None, dry=False, model=None, url=None, emit=con
     if data.get("analysis"):
         emit("анализ модели:\n{analysis}", analysis=str(data["analysis"]).strip())
     ins = data.get("inserts", [])
+    # Ответ модели — данные, а не гарантия: на фолбэке «схема в промпте» (провайдер
+    # ответил 400 на structured outputs) в списке бывают строки и null, и первый же
+    # it.get(...) ронял шаг AttributeError — уже после оплаченного вызова (GZ, п. G).
+    ins = [it for it in ins if isinstance(it, dict)]
     # 1) тайминг: прижать start_sec к началу цитируемой фразы (модель врёт «на глаз»)
     _snap_to_phrase(ins, words, emit=emit)
     # 2) query фото: голый предмет — чистим стилевые слова, если модель их всё же дописала
@@ -421,7 +428,7 @@ def cmd_inserts(xml_path, system=None, dry=False, model=None, url=None, emit=con
     ins = _cap_by_quota(ins, INS_PHOTO, INS_VIDEO)
     out = os.path.splitext(xml_path)[0] + ".inserts.json"
     if not count:                                   # полный набор -> обновляем сайдкар; добор -> нет
-        json.dump({"inserts": ins}, open(out, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        atomic_json_dump(out, {"inserts": ins}, indent=1)
     nv = sum(1 for x in ins if x.get("type") == "video")
     emit("вставок: {total} ({photo} фото + {video} видео) -> {file}",
          total=len(ins), photo=len(ins) - nv, video=nv, file=os.path.basename(out))
@@ -886,8 +893,7 @@ def cmd_intro(xml_path, system=None, dry=False, model=None, url=None, emit=conso
         emit("  акцентов {ngrp} при цели ~{want} (модель прислала {groups}, пустых окон {empty})",
              ngrp=ngrp, want=want, groups=len(groups), empty=len(empty))
     out = os.path.splitext(xml_path)[0] + ".intro.json"
-    json.dump({"intro_rows": rows, "mid_groups": mids},
-              open(out, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    atomic_json_dump(out, {"intro_rows": rows, "mid_groups": mids}, indent=1)
     emit("интро: {rows} строк ({words} слов) + {mids} акцентов посреди ролика",
          rows=len(rows), words=intro_len, mids=ngrp)
     return {"path": out, "intro_rows": rows, "mid_groups": mids}

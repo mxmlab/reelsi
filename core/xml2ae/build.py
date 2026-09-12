@@ -719,7 +719,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
                   if not wsfx_plain else "wl.startTime=cut-TR_IN-TR_SFX_LEAD;")
     wsfx_tail = (_sfx_tail(wsfx_cfg, "wl") if not wsfx_plain
                  else "try{ wl.property(\"ADBE Audio Group\").property(\"ADBE Audio Levels\").setValue([-10,-10]); }catch(e){}")
-    riser_place = ("rl.startTime=%s;" % _sfx_off(riser_cfg).lstrip("+") if not riser_plain else "rl.startTime=0;")
+    riser_place = ("rl.startTime=%s;" % (_sfx_off(riser_cfg).lstrip("+") or "0") if not riser_plain else "rl.startTime=0;")
     riser_tail = _sfx_tail(riser_cfg, "rl") if not riser_plain else ""
     trans_place = ("tl.startTime=cut-TR_IN%s;" % _sfx_off(trans_cfg)
                    if not trans_plain else "tl.startTime=cut-TR_IN;")

@@ -87,6 +87,28 @@ def pct(vals, p):
     return v[min(len(v) - 1, int(len(v) * p))]
 
 
+def split_mid_groups_precomps(mids, subs=()):
+    cur = []
+    all_pc = []          # прекомпы этого ролика: (fi, last_i, n_lines)
+    n_null = 0
+    for g in mids + [{"break": True}]:          # фиктивный break в конце закрывает последний
+        if g.get("break") and cur:
+            fi = next((x["from"] for x in cur if x.get("from") is not None), None)
+            li = next((x["from"] for x in reversed(cur) if x.get("from") is not None), None)
+            if fi is not None and li is not None and 0 <= fi <= li < len(subs):
+                for x in reversed(cur):
+                    if x.get("from") == li:
+                        li = min(li + max(0, int(x.get("count") or 1)) - 1, len(subs) - 1)
+                        break
+                all_pc.append((fi, li, len(cur)))
+            cur = []
+        if not (mids and g is mids[-1] and g.get("break")):
+            if g.get("from") is None:
+                n_null += 1
+            cur.append(g)
+    return all_pc, n_null
+
+
 def main():
     from fontTools.ttLib import TTFont
     tt = TTFont(FONT_FILE, lazy=True)
@@ -130,24 +152,7 @@ def main():
 
         # ---- 2. прекомпы по break: разбиение mid_groups ----
         mids = d.get("mid_groups", [])
-        cur = []
-        all_pc = []          # прекомпы этого ролика: (fi, last_i, n_lines)
-        n_null = 0
-        for g in mids + [{"break": True}]:          # фиктивный break в конце закрывает последний
-            if g.get("break") and cur:
-                fi = next((x["from"] for x in cur if x.get("from") is not None), None)
-                li = next((x["from"] for x in reversed(cur) if x.get("from") is not None), None)
-                if fi is not None and li is not None and 0 <= fi <= li < len(subs):
-                    for x in reversed(cur):
-                        if x.get("from") == li:
-                            li = min(li + max(0, int(x.get("count") or 1)) - 1, len(subs) - 1)
-                            break
-                    all_pc.append((fi, li, len(cur)))
-                cur = []
-            if not (g is mids[-1] and g.get("break")):
-                if g.get("from") is None:
-                    n_null += 1
-                cur.append(g)
+        all_pc, n_null = split_mid_groups_precomps(mids, subs)
         for fi, last_i, n_lines in all_pc:
             s0 = subs[fi][0]
             glen = (subs[last_i][1] - s0) / fps

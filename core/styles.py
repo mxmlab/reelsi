@@ -97,6 +97,7 @@
 import os, json, copy
 
 from core import paths
+from core.fileio import atomic_json_dump
 
 STYLE_DIR = paths.root("styles")
 
@@ -416,8 +417,7 @@ def save(name, data):
     data, _ = migrate_style_dict(data)
     safe = "".join(c for c in (name or "custom") if c.isalnum() or c in "-_ ").strip() or "custom"
     fname = safe + ".json"
-    json.dump(data, open(os.path.join(STYLE_DIR, fname), "w", encoding="utf-8"),
-              ensure_ascii=False, indent=1)
+    atomic_json_dump(os.path.join(STYLE_DIR, fname), data, indent=1)
     # ФС Windows регистронезависимая: файл мог сохранить прежний регистр имени —
     # вернуть РЕАЛЬНЫЙ стем с диска, чтобы ключ совпал с тем, что покажет all_styles().
     for f in os.listdir(STYLE_DIR):

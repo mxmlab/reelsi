@@ -19,19 +19,23 @@ from core.app_meta import console_emit, wrap_emit
 FPS = 60
 
 
-def map_words_to_clips(words, clips, min_frames=6, max_hold=0.5):
+def map_words_to_clips(words, clips, min_frames=6, max_hold=0.5, fps=FPS):
     """words: source-second timestamps. clips: (start,end,in,out,enabled,scale) frames.
     Map each word to its timeline position via the clip whose SOURCE range holds it.
-    Words in cut-out source regions are dropped. Returns [(w,start,end)] output frames."""
-    hold = round(max_hold * FPS)
+    Words in cut-out source regions are dropped. Returns [(w,start,end)] output frames.
+
+    fps — частота секвенции: кадры в clips посчитаны в НЕЙ, а не в 60. Константа
+    оставляла 25-кадровую секвенцию без субтитров вовсе: слово «не влезало» ни в один
+    клип (GZ, п. E). Дефолт прежний — вызовы без fps не меняются."""
+    hold = round(max_hold * fps)
     placed = []
     for wd in words:
         ts, te = wd["start"], wd["end"]
-        sf = round(0.5 * (ts + te) * FPS)          # source-frame midpoint
+        sf = round(0.5 * (ts + te) * fps)          # source-frame midpoint
         for (cs, ce, ci, co, en, sc) in clips:
             if ci <= sf < co:
-                a = cs + (round(ts * FPS) - ci)
-                b = cs + (round(te * FPS) - ci)
+                a = cs + (round(ts * fps) - ci)
+                b = cs + (round(te * fps) - ci)
                 a = max(cs, min(ce - 1, a)); b = max(a + 1, min(ce, b))
                 placed.append({"w": wd["w"], "start": a, "end": b, "_e0": b, "_ce": ce})
                 break
@@ -73,6 +77,29 @@ def _build_subtitle_track(sub_words, start_id):
     return xmlbuild._vtrack(clips, 0), n, longs
 
 
+def _sequence_video_close(txt):
+    """Индекс закрывающего `</video>` у sequence/media — дорожка вставляется ПЕРЕД ним.
+
+    `txt.index("</video>", <первое <media>>)` попадал в `<video>` внутри `<file>` первого
+    клипа: определение файла лежит в той же секвенции, и дорожка субтитров уезжала внутрь
+    `<file>` (проверено на tests/fixtures/timeline_nosubs.xml, GZ п. E). Поэтому ищем по
+    вложенности: нужное закрытие — то, где счётчик `<video>` обнулился."""
+    si = txt.index("<sequence")
+    m = re.search(r"<media(?:\s[^>]*)?>", txt[si:])
+    if not m:
+        raise ValueError("в XML не найден <media> секвенции")
+    v = re.search(r"<video(?:\s[^>]*)?>", txt[si + m.end():])
+    if not v:
+        raise ValueError("в XML не найден <video> секвенции")
+    start = si + m.end() + v.start()
+    depth = 0
+    for tag in re.finditer(r"<(/?)video(?:\s[^>]*)?>", txt[start:]):
+        depth += -1 if tag.group(1) else 1
+        if depth == 0:
+            return start + tag.start()
+    raise ValueError("в XML не найден закрывающий </video> секвенции")
+
+
 def add_subtitles(xml_path, out_xml=None, model=None, emit=console_emit):
     emit = wrap_emit(emit)
     meta, cams, _, _ = parse_full(xml_path)
@@ -111,15 +138,14 @@ def add_subtitles(xml_path, out_xml=None, model=None, emit=console_emit):
         emit("  {count} слов", count=len(words))
 
     words = align.clamp_word_times(words)
-    sub_words = map_words_to_clips(words, clips)
+    sub_words = map_words_to_clips(words, clips, fps=meta["fps"])
     emit("  субтитров на таймлайне: {count}", count=len(sub_words))
 
     # insert a subtitle track + write .srt
     txt = open(xml_path, encoding="utf-8").read()
     maxid = max([int(m) for m in re.findall(r'clipitem-(\d+)', txt)] + [1000]) + 1
     subtrack, n, longs = _build_subtitle_track(sub_words, maxid)
-    mi = txt.index("<media>")
-    vend = txt.index("</video>", mi)
+    vend = _sequence_video_close(txt)
     new = txt[:vend] + subtrack + txt[vend:]
     out_xml = out_xml or (os.path.splitext(xml_path)[0] + "_subs.xml")
     open(out_xml, "w", encoding="UTF-8").write(new)

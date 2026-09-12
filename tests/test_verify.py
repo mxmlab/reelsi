@@ -520,3 +520,42 @@ def test_combined_project_unknown_comp_name(parts):
     rep = verify_jsx.Report("dump")
     verify_ae.check(_combined(), _ae_structs(parts), rep, comp_name="ng9")
     assert has(rep.errors, "компа «ng9» в проекте нет")
+
+
+def test_verify_ae_combined_timeline_selection(tmp_path):
+    """Объединённый .jsx из двух таймлайнов с разным числом слов + дамп со вторым
+    компом -> проверка второго компа без ложной ошибки, число слов сверяется со вторым."""
+    jsx_content = (
+        'var CAM = [{path: "cam1.mov", clips: []}];\n'
+        'var SUBS = [[0, 10, "w1"], [10, 20, "w2"]];\n'
+        '// ========================================== следующий таймлайн ==========================================\n'
+        'var CAM = [{path: "cam1.mov", clips: []}];\n'
+        'var SUBS = [[0, 10, "w1"], [10, 20, "w2"], [20, 30, "w3"], [30, 40, "w4"]];\n'
+    )
+    jsx_file = tmp_path / "combined.jsx"
+    jsx_file.write_text(jsx_content, encoding="utf-8")
+
+    dump = {
+        "comps": [
+            {
+                "name": "Clip1",
+                "w": 1080, "h": 1920, "fps": 30,
+                "layers": [{"name": "Камера 1", "source": "cam1.mov"}],
+            },
+            {
+                "name": "Clip2",
+                "w": 1080, "h": 1920, "fps": 30,
+                "layers": [{"name": "Камера 1", "source": "cam1.mov"}],
+            },
+            {
+                "name": "Субтитры (Clip2)",
+                "layers": [{"name": "w1"}, {"name": "w2"}, {"name": "w3"}, {"name": "w4"}],
+            },
+        ]
+    }
+    dump_file = tmp_path / "project.inspect.json"
+    dump_file.write_text(json.dumps(dump, ensure_ascii=False), encoding="utf-8")
+
+    rc = verify_ae.main([str(dump_file), "--jsx", str(jsx_file), "--comp", "Clip2"])
+    assert rc == 0
+

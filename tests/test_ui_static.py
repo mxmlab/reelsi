@@ -2558,3 +2558,43 @@ def test_зеркало_состояния_успевает_между_тика�
     assert pos_last > pos_then, (
         "SRVST_LAST присваивается ДО проверки ответа (.then) — "
         "провал сохранения считается доставленным и не повторяется")
+
+
+def test_no_triple_backslash_quote_in_on_attributes():
+    """В static/app/*.js нет последовательности \\\' внутри строк, собирающих on…="…"-атрибуты,
+    а строка 811 в 60-preview.js содержит typeof hex2rgb===\\'function\\'."""
+    app_dir = os.path.join(ROOT, "static", "app")
+    for fname in sorted(os.listdir(app_dir)):
+        if not fname.endswith(".js"):
+            continue
+        fpath = os.path.join(app_dir, fname)
+        raw = open(fpath, "rb").read().decode("utf-8")
+        for line_no, line in enumerate(raw.splitlines(), 1):
+            if re.search(r'on[a-z]+="[^"]*\\{3}\'', line):
+                pytest.fail(f"Найдена последовательность \\\\\\' внутри on-атрибута в {fname}:{line_no}:\n{line.strip()}")
+
+    preview_lines = open(os.path.join(app_dir, "60-preview.js"), "rb").read().decode("utf-8").splitlines()
+    line_811 = preview_lines[810]
+    assert r"typeof hex2rgb===\'function\'" in line_811
+
+
+def test_sfx_ensure_updates_src_on_media_change(js):
+    """sfxEnsure переустанавливает src элемента звука при смене media."""
+    body = _func(js, "sfxEnsure")
+    assert "path:s.media" in body or "path: s.media" in body, (
+        "sfxEnsure обязан сохранять путь к медиа в записи эффекта (path: s.media)")
+    assert "st.path!==s.media" in body or "st.path !== s.media" in body, (
+        "sfxEnsure обязан проверять смену пути media эффекта")
+    assert "st.el.src" in body and "encodeURIComponent(s.media)" in body
+    assert "st.path=s.media" in body or "st.path = s.media" in body
+
+
+def test_ipv_drag_insert_index_matches_plan_filter(js):
+    """Индекс вставки при перетаскивании в предпросмотре сопоставляется с INS
+    через тот же фильтр, что в ipvPlanBody: INS.filter(r => (r.media || '').trim())[i]."""
+    ins = _fn_body(js, "$('ipvins').addEventListener('pointerdown'")
+    assert ("INS.indexOf(INS.filter(r => (r.media || '').trim())[i])" in ins or
+            "INS.indexOf(INS.filter(r=>(r.media||'').trim())[i])" in ins), (
+        "сопоставление индекса обязано опираться на тот же фильтр, что ipvPlanBody, "
+        "а не на findIndex по media")
+

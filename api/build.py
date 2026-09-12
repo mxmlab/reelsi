@@ -5,7 +5,7 @@
 import os, threading, traceback, urllib.parse
 from flask import request, jsonify, send_file, Response
 from core.fileio import atomic_json_dump
-from ._core import (JOB, LOCK, bp, emit, item_done, item_set, items_init, job_finish,
+from ._core import (JOB, LOCK, bp, emit, item_done, item_fail, item_set, items_init, job_finish,
                     job_start, set_progress, _never_serve, umsg_err)
 from core.umsg import umsg
 from .editor import _ensure_project, _sidecar_yellow, _sidecar_caption
@@ -162,7 +162,9 @@ def _run_build_job(norm, mode, outdir):
                     emit("  ⏹ Остановлено пользователем — файл не записан.")
                     break
                 except Exception:
-                    emit("  ОШИБКА:\n{tb}", tb=traceback.format_exc())
+                    tb = traceback.format_exc()
+                    emit("  ОШИБКА:\n{tb}", tb=tb)
+                    item_fail(JOB, LOCK, stem, tb.strip().splitlines()[-1])
         emit("\nСборка завершена.")
     except Exception:
         tb = traceback.format_exc()

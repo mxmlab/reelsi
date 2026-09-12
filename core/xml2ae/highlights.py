@@ -270,12 +270,14 @@ def edit_word(xml_path, index, text, out_path=None):
         coloured = False
     lib = sb.colour_library() if coloured else sb.library()
     wb = len(text.encode("utf-8"))
-    if wb > lib.max_len:
-        return dict(error=f"слишком длинное слово ({wb}B > {lib.max_len}B)")
-    try:
-        ve.text = lib.make(text)
-    except Exception as e:
-        return dict(error=str(e))
+    # Собираем через _make_blob (как set_highlights): библиотека умеет РАСТИТЬ блоб
+    # (_grow), а слепой гард по lib.max_len резал «ОТВЕТСТВЕННОСТЬ» (30 байт против
+    # 28 у цветной библиотеки) — слово не переименовывалось вовсе (GZ, п. H).
+    # Вместо доверия длине блоб проверяется чтением обратно.
+    blob = _make_blob(lib, text, want_col=coloured)
+    if blob is None:
+        return dict(error=f"блоб не собрался ({wb}B)")
+    ve.text = blob
     en = eff.find("name")                                 # <name> эффекта — источник слова для parse_full
     if en is not None:
         en.text = text

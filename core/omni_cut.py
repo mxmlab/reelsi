@@ -21,7 +21,8 @@ from core import align
 from core import xmlbuild
 from core import aicut
 from core import paths
-from core.app_meta import child_env, console_emit, module_cmd
+from core.app_meta import child_env, console_emit, module_cmd, wrap_emit
+from core.fileio import atomic_json_dump
 
 
 DECIDE_SYS = (
@@ -739,12 +740,11 @@ def main(work):
                 "scale": a.scale, "keep": [[round(s, 3), round(e, 3)] for s, e in keep]}
         if a.speaker:
             proj["speaker"] = a.speaker
-        json.dump(proj, open(os.path.splitext(a.out)[0] + ".project.json", "w", encoding="utf-8"),
-                  ensure_ascii=False, indent=1)
+        atomic_json_dump(os.path.splitext(a.out)[0] + ".project.json", proj, indent=1)
         # cut-log: что именно и почему убрано
         cutlog.sort(key=lambda c: c["t0"])
         logf = os.path.splitext(a.out)[0] + ".cuts.json"
-        json.dump(cutlog, open(logf, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+        atomic_json_dump(logf, cutlog, indent=1)
         print(f"\n=== ЧТО УБРАНО ({len(cutlog)}) — решения ИИ ===", flush=True)
         for c in cutlog:
             print(f"  {c['t0']:6.1f}-{c['t1']:6.1f}  [{c['source']}]  «{c['text'][:70]}»  — {c['reason'][:70]}", flush=True)
@@ -758,7 +758,11 @@ def main(work):
     # full-режим добавляет ОТДЕЛЬНЫЙ слой понимания, а не подменяет нарезку.
     full_map = None
     if a.full_audio:
-        full_map = _full_pass(wavs[0], a, work, emit=lambda *x: print(*x, flush=True))
+        # wrap_emit: _full_pass зовёт emit шаблоном (`emit("…{path}", path=dst)`), а
+        # голая лямбда `lambda *x: print(*x)` именованных аргументов не принимает —
+        # TypeError ронял весь прогон с --full-audio (GZ, п. B).
+        full_map = _full_pass(wavs[0], a, work,
+                              emit=wrap_emit(lambda m: print(m, flush=True)))
 
     omf = os.path.splitext(a.out)[0] + ".omni.json"     # кэш рядом с выходом (не гонять Omni повторно)
     texts = _load_omni_cache(omf, intervals)
@@ -890,7 +894,10 @@ def main(work):
         # речек склеек по факту звука. Слушает OMNI (дословный слух, повторы не
         # причёсывает — Whisper'у считать повторы нельзя, он их склеивает);
         # Whisper-речек — только фолбэк, если omni_asr упал.
-        _emit = lambda m: print(m, flush=True)
+        # wrap_emit: и Omni-речек, и Whisper-фолбэк зовут emit с i/j/cnt, а голая
+        # лямбда `lambda m: print(m)` падала TypeError — исключение глоталось, и
+        # проверка склеек в --mode old не работала никогда (GZ, п. B).
+        _emit = wrap_emit(lambda m: print(m, flush=True))
         keep_pre = align.subtract_ranges(
             [intervals[k] for k in range(len(intervals))
              if k not in (auto_drop | llm_drop)], tail_cuts)
@@ -1049,13 +1056,15 @@ def main(work):
         proj["selfcheck"] = screport
     if prev_overrides:
         proj["user_overrides"] = prev_overrides   # память правок переживает пере-нарезку
-    json.dump(proj, open(os.path.splitext(a.out)[0] + ".project.json", "w", encoding="utf-8"),
-              ensure_ascii=False, indent=1)
+    # Повторная запись тех же сайдкаров, что уже положил pipeline (он пишет их до
+    # чернового рендера): здесь они дополняются selfcheck/user_overrides. Пишем тем же
+    # атомарным способом — open(...,"w") усекал готовую разметку до сериализации (GZ, п. A).
+    atomic_json_dump(os.path.splitext(a.out)[0] + ".project.json", proj, indent=1)
 
     # cut-log: что именно и почему убрано (ничего молча) — рядом с XML + на экран
     cutlog.sort(key=lambda c: c["t0"])
     logf = os.path.splitext(a.out)[0] + ".cuts.json"
-    json.dump(cutlog, open(logf, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+    atomic_json_dump(logf, cutlog, indent=1)
     print(f"\n=== ЧТО УБРАНО ({len(cutlog)}) — решения ИИ ===", flush=True)
     for c in cutlog:
         print(f"  {c['t0']:6.1f}-{c['t1']:6.1f}  [{c['source']}]  «{c['text'][:70]}»  — {c['reason'][:70]}", flush=True)

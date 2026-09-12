@@ -80,7 +80,8 @@ function sfxEnsure(plan){
     let st=SFX_ELS[s.kind];
     if(!st){const el=document.createElement('audio');el.preload='auto';
       el.src='/api/media?path='+encodeURIComponent(s.media);document.body.appendChild(el);
-      st=SFX_ELS[s.kind]={el,vol:1};}
+      st=SFX_ELS[s.kind]={el,vol:1,path:s.media};}
+    if(st&&st.path!==s.media){st.el.src='/api/media?path='+encodeURIComponent(s.media);st.path=s.media;}
     st.vol=dbToGain((s.base||0)+(s.db||0));});
   sfxSyncApply();}
 function sfxSyncApply(){for(const k in SFX_ELS){try{SFX_ELS[k].el.volume=SFX_ELS[k].vol*MEDIA_VOL;}catch(e){}}}
@@ -1548,8 +1549,7 @@ $('ipvins').addEventListener('pointerdown',e=>{
   const wr=e.target.closest('.ipvwrap');if(!wr)return;
   const i=+wr.dataset.ins;if(!(i>=0))return;
   const x=IPV.plan.inserts[i];if(!x)return;
-  // план — подмножество INS (без «файл не выбран»): индекс может не совпасть, ищем по файлу
-  const real=INS.findIndex(z=>z.media===x.media);if(real<0)return;
+  const real=INS.indexOf(INS.filter(r=>(r.media||'').trim())[i]);if(real<0)return;
   e.preventDefault();e.stopPropagation();
   const pl=IPV.plan,W=pl.w||1080;
   const k=(wr.clientWidth||W)/W;

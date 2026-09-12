@@ -11,7 +11,8 @@
 import os, re, threading, queue, subprocess, shutil, hashlib, json, time as _time
 from flask import request, jsonify
 from core.fileio import atomic_json_dump
-from ._core import bp, item_done, item_fail, item_set, items_init, umsg_err
+from ._core import (JOB, LOCK, bp, _cross_lock_acquire, _cross_lock_release,
+                    item_done, item_fail, item_set, items_init, umsg_err)
 from core.umsg import umsg
 from core import paths
 from core.app_meta import env
@@ -1934,12 +1935,16 @@ def _run_render_job(jobs, outdir, render_dir):
         with RLOCK:
             RJOB.update(running=False, done=True, cur="",
                         pct=(1.0 if RJOB["result"] and not RJOB["failed"] else (RJOB["pct"] or 0)))
+        # Лок задач держим до самого конца рендера — включая «Стоп» и ошибку
+        # (задание GZ, п. C: без него поверх рендера стартовала нарезка).
+        _cross_lock_release()
 
 
 @bp.route("/api/render_run", methods=["POST"])
 def api_render_run():
     """Запустить безголовый рендер. body: {jobs, outdir?, render_dir}.
-    Свой RJOB, не общий JOB: нарезка и сборка .jsx не блокируются рендером."""
+    Свой RJOB, но ОБЩИЙ лок задач с нарезкой и сборкой .jsx (задание GZ, п. C):
+    две тяжёлые задачи на одной видеокарте одновременно не идут."""
     d = request.get_json() or {}
     jobs = d.get("jobs") or []
     try:
@@ -1956,13 +1961,29 @@ def api_render_run():
             if RJOB["running"]:
                 raise SystemExit(umsg("render_busy",
                                       "Рендер уже идёт — дождись конца или нажми «Остановить»"))
-            RJOB.update(running=True, done=False, log=[], pct=None, cur="", ae="",
-                        out_dir=render_dir, result=[], failed=[], cancel=False,
-                        items=[], eta=None, eta_phase=None, eta_total=None,
-                        eta_preliminary=False, stage_label=None, stage_done=0, stage_total=0)
-        threading.Thread(target=_run_render_job,
-                         args=(jobs, (d.get("outdir") or "").strip().strip('"'), render_dir),
-                         daemon=True).start()
+        # Общий лок задач (тот же, что берёт job_start у нарезки и сборки): без него
+        # рендер стартовал поверх идущего джоба — две тяжёлые задачи на одной
+        # видеокарте, да ещё обе пишут <outdir>/<stem>.jsx. JOB["running"] проверяем
+        # отдельно: между «занял JOB» и «взял лок» у job_start есть окно.
+        with LOCK:
+            job_busy = JOB["running"]
+        if job_busy or not _cross_lock_acquire():
+            raise SystemExit(umsg("busy_wait",
+                                  "Уже выполняется другая задача — дождись или смотри Логи"))
+        try:
+            with RLOCK:
+                RJOB.update(running=True, done=False, log=[], pct=None, cur="", ae="",
+                            out_dir=render_dir, result=[], failed=[], cancel=False,
+                            items=[], eta=None, eta_phase=None, eta_total=None,
+                            eta_preliminary=False, stage_label=None, stage_done=0,
+                            stage_total=0)
+            threading.Thread(target=_run_render_job,
+                             args=(jobs, (d.get("outdir") or "").strip().strip('"'),
+                                   render_dir),
+                             daemon=True).start()
+        except Exception:
+            _cross_lock_release()          # поток не родился — лок не оставляем занятым
+            raise
         return jsonify(ok=True)
     except SystemExit as e:
         return jsonify(**umsg_err(e))

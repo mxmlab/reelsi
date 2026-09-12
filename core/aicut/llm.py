@@ -511,6 +511,8 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
     # каталоге false — 0.8 молча не действовал). Не принимает — не шлём и пишем
     # строку в лог: молча потерянная ручка это ровно то, на чём мы уже попались.
     send_temp = c["temperature"] is not False
+    use_max_completion = False
+    send_stream_options = True
     if c["temperature"] is False:
         emit("! модель {model} не принимает temperature — {temp} не действует",
              model=model, temp=temperature)
@@ -530,6 +532,7 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
     supported = c["efforts"] or []         # уровни effort-модели (порядок провайдера)
     last_err, attempt, busy, stalled = None, 0, 0, 0
     lvl_base = prof.get("reasoning") or "off"
+    lvl_prev = lvl_base
     while attempt <= retries:
         if cancelled():
             raise SystemExit(cancel_reason())
@@ -545,7 +548,7 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
         # второй раз жечь нельзя, иначе и повтор утонет в том же размышлении (BW).
         # Потом проверяем уровень по каталогу: невалидный провайдер молча мапит в
         # свой default_effort, и это уже стоило пользователю дня.
-        lvl = lvl_base
+        lvl = lvl_prev if attempt else lvl_base
         if attempt and lvl != "off":
             lv = _downgrade_level(lvl, supported, prof["provider"], model)
             if lv != lvl:
@@ -618,7 +621,8 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
                 mt = max_tokens
                 if c.get("out_limit"):
                     mt = min(mt, c["out_limit"])
-                payload["max_tokens"] = mt
+                tok_key = "max_completion_tokens" if use_max_completion else "max_tokens"
+                payload[tok_key] = mt
                 emit("[max_tokens] model={model} -> max_tokens={mt} (ум {lvl}, бюджет размышлений {budget})",
                      model=model, mt=mt, lvl=lvl, budget=REASONING_BUDGET.get(lvl, 0))
         elif use_effort and (lvl == "off" or lvl in REASONING_LEVELS or supported):
@@ -638,7 +642,8 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
                 mt = max_tokens
                 if c.get("out_limit"):
                     mt = min(mt, c["out_limit"])
-                payload["max_tokens"] = mt
+                tok_key = "max_completion_tokens" if use_max_completion else "max_tokens"
+                payload[tok_key] = mt
                 emit("[max_tokens] model={model} -> max_tokens={mt} (ум {lvl}, бюджет размышлений {budget})",
                      model=model, mt=mt, lvl=lvl, budget=REASONING_BUDGET.get(lvl, 0))
         if use_cache:
@@ -651,7 +656,8 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
             headers["X-Title"] = APP_NAME
         headers = apply_profile_headers(headers, prof)
         payload["stream"] = True                     # прогресс в UI + «Стоп» рвёт соединение
-        payload["stream_options"] = {"include_usage": True}
+        if send_stream_options:
+            payload["stream_options"] = {"include_usage": True}
         req = http_req(url + "/chat/completions",
                        data=json.dumps(payload).encode("utf-8"), headers=headers)
         try:
@@ -671,15 +677,16 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
                     continue
                 # 2. max_tokens vs max_completion_tokens (o1, o3, gpt-4o свежие)
                 if "max_completion_tokens" in detail_low or ("max_tokens" in detail_low and any(w in detail_low for w in ("supported", "use", "instead", "parameter"))):
-                    if "max_tokens" in payload:
-                        payload["max_completion_tokens"] = payload.pop("max_tokens")
+                    if not use_max_completion:
+                        use_max_completion = True
                         emit("! провайдер требует max_completion_tokens — повторяю с ним")
                         continue
                 # 3. stream_options не принят
                 if "stream_options" in detail_low:
-                    payload.pop("stream_options", None)
-                    emit("! провайдер не принял stream_options — повторяю без них")
-                    continue
+                    if send_stream_options:
+                        send_stream_options = False
+                        emit("! провайдер не принял stream_options — повторяю без них")
+                        continue
                 # 4. reasoning не принят провайдером
                 if (use_effort or use_reasoning) and "reason" in detail_low:
                     use_reasoning = False
@@ -811,6 +818,7 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
                 data = json.loads(_extract_json_obj(raw))
             except json.JSONDecodeError as e:
                 last_err = e
+                lvl_prev = lvl
                 attempt += 1
                 continue
         # Схема могла не примениться (фолбэк use_rf=False) — проверяем, что пришёл
@@ -818,6 +826,7 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
         need = [k for k in (schema.get("required") or []) if not isinstance(data, dict) or k not in data]
         if need:
             last_err = "в ответе нет обязательных полей: " + ", ".join(need)
+            lvl_prev = lvl
             attempt += 1
             continue
         return data

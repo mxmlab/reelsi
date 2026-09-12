@@ -450,6 +450,7 @@
   "ERR_file_missing": "File not found",
   "ERR_file_not_found": "File not found: {path}",
   "ERR_forbidden": "Anthropic refused access (403): {err}",
+  "ERR_forbidden_origin": "The request came from another site — rejected",
   "ERR_gen_failed": "Image generation failed after {tries} attempts: {last}",
   "ERR_gen_subs_failed": "Failed to generate subtitles: {err}",
   "ERR_genimage_failed": "Failed to generate the image: {err}",

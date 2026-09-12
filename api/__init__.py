@@ -48,7 +48,7 @@ from . import ai, build, jobs                         # noqa: F401
 from ._core import (                                  # noqa: F401
     bp, DEFAULT_BASE, HERE, UI_STATE_PATH, JOB, LOCK, emit,
     job_start, job_finish, set_progress,
-    _host_is_local, _block_dns_rebinding,
+    _host_is_local, _origin_is_local, _block_dns_rebinding,
 )
 from .editor import _ensure_project                   # noqa: F401
 from .inserts import _adopt_inserts                   # noqa: F401

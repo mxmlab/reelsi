@@ -6,9 +6,14 @@
 в каталоге models.dev (aicut/catalog.py); здесь остались только ФОЛБЭК-таблицы
 подстрок на случай «каталога нет и кэша нет» (см. шапку секции с таблицами).
 """
-import os, json
+import os, json, threading
 
 from core.app_meta import APP_REFERER, APP_NAME, env   # noqa: F401  (переэкспорт)
+from core.fileio import atomic_json_dump
+
+# Конфиг пишут два потока (api/ai.py и core/aicut/video.py): уникальный tmp спасает
+# от перемешивания половин, но не от двух os.replace по одному пути на Windows.
+_SAVE_LOCK = threading.Lock()
 
 # HERE — корень репозитория, а НЕ папка пакета: ai_config.json всегда лежал
 # рядом с aicut.py, и пакет не должен этого менять.
@@ -260,12 +265,12 @@ def save_ai_config(cfg):
     # Атомарно: прямой open(...,"w") усекал файл ДО сериализации, и любое падение
     # в этот момент оставляло пустой конфиг -> load_ai_config молча уходил на дефолт,
     # а все API-ключи пропадали (файл в .gitignore, восстановить неоткуда).
-    tmp = AI_CONFIG_PATH + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False, indent=1)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, AI_CONFIG_PATH)
+    # Имя tmp уникально (mkstemp внутри atomic_json_dump): конфиг пишут ДВА потока —
+    # api/ai.py и core/aicut/video.py. Уникального tmp мало: два одновременных
+    # os.replace по ОДНОМУ пути на Windows дают WinError 5 «Access is denied»
+    # (замер: 6 потоков по 30 записей — 36 падений), поэтому запись сериализуем.
+    with _SAVE_LOCK:
+        atomic_json_dump(AI_CONFIG_PATH, cfg, indent=1)
 
 
 # ---- Ключи из переменных окружения (env:VAR_NAME) -------------------------

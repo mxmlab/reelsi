@@ -256,6 +256,7 @@ ADDITIONS = {
     "ERR_empty_query": "Empty request — the insert has no query",
     "ERR_export_drp_failed": "Failed to build the .drp: {err}",
     "ERR_file_missing": "File not found",
+    "ERR_forbidden_origin": "The request came from another site — rejected",
     "ERR_gen_subs_failed": "Failed to generate subtitles: {err}",
     "ERR_genimage_failed": "Failed to generate the image: {err}",
     "ERR_insertlib_desc_failed": "Failed to save the description: {err}",

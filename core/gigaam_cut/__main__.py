@@ -24,7 +24,7 @@ if __name__ == "__main__":
     ap.add_argument("--no-refine", action="store_true", help="без подгона резов")
     ap.add_argument("--no-breath", action="store_true", help="без вырезания вздохов")
     ap.add_argument("--no-pauses", action="store_true", help="без вырезания пауз")
-    ap.add_argument("--dedupe", "--no-dedupe", dest="dedupe", action=argparse.BooleanOptionalAction,
+    ap.add_argument("--dedupe", dest="dedupe", action=argparse.BooleanOptionalAction,
                     default=None, help="чистка дублей")
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding="utf-8")

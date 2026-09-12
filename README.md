@@ -4,7 +4,7 @@ Reelsi is a local editing assistant for talking-head video. AI cuts footage by c
 
 > Russian version: [README.ru.md](README.ru.md).
 
-![Reelsi in action](docs/img/demo.gif)
+![Reelsi in action](docs/img/demo.webp)
 
 ## What it does
 

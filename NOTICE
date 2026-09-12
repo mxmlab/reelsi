@@ -32,6 +32,7 @@ anthropic (Python SDK)                MIT             https://github.com/anthrop
 silero-vad                            MIT             https://github.com/snakers4/silero-vad
 scikit-learn                          BSD-3-Clause    https://scikit-learn.org
 pytest                                MIT             https://pytest.org
+zstandard                             BSD-3-Clause    https://github.com/indygreg/python-zstandard
 
 --- Model weights (downloaded on demand, never bundled) ---
 

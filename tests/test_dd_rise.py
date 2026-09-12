@@ -33,7 +33,7 @@ def test_styles_insert_anim_default():
 
 
 def test_rise_first_insert_img_2420(xml_subs):
-    """Сверка первой вставки 01_IMG_2420 с таблицей из TASKS.md."""
+    """Сверка первой вставки 01_IMG_2420 с эталонной таблицей."""
     st = {
         "insert_anim": "rise",
         "insert_c2_y": 0.6,

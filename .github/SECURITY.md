@@ -30,6 +30,13 @@ not vulnerabilities:
 - **API keys live in plaintext** in `ai_config.json`, protected by the operating
   system's file permissions. The file is in `.gitignore` and keys are masked in
   the UI as `•••xxxx`.
+- **The breath detector model executes remote code.** The breath detector
+  (`core/breath.py`) loads `mispeech/ced-tiny` from Hugging Face with
+  `trust_remote_code=True`, meaning Python code from the model repository
+  executes upon loading; the revision is not pinned. The model is loaded only by
+  the **Breaths** cutting stage and by `tools/train_breath.py`. To run without it,
+  use Custom cutting with **Breaths** unticked (⚙ › Cut › Cutting stages) or pass
+  `--no-breath` to `core.omni_cut` / `core.gigaam_cut`.
 
 What *is* in scope, and worth reporting:
 

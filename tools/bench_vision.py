@@ -51,7 +51,7 @@ EXCLUDE_WORDS = frozenset(
 )
 MIN_KEYWORD_LEN = 8
 
-# Промпт «только предмет» — дословно из TASKS.md
+# Промпт «только предмет»
 NEW_PROMPT = (
     "Name the MAIN OBJECT in this image as precisely as you can, in 4-10 English words.\n"
     "Be specific: \"glucometer\", not \"device\"; \"anastrozole tablet box\", not \"packaging\".\n"

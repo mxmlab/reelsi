@@ -11,11 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Feature guide**: `docs/FEATURES.md` and `docs/FEATURES.ru.md` describe every feature step by step: where it is, how to use it, settings, limits and cost.
 - **Glitch glow choice**: yellow intro words with the glitch animation glow with the built-in Gaussian Blur and Glow or with the third-party Deep Glow 2 plugin (⚙ › Tools › After Effects).
 - **Build progress for a multi-clip set**: the AE project build stage shows "N of M", the clip being built and the ETA; built clips are marked "built, waiting for render".
+- **Package metadata**: `pyproject.toml` declares the name, the version and `requires-python >= 3.10`.
 
 ### Changed
 - **CLA**: removed the internal author note from `docs/CLA.md`.
+- **Demo**: the README demo is an animated WebP, 3.8 MB instead of the 8.4 MB GIF.
+- **CI**: tests that need Pillow, pyarrow and zstandard run instead of being skipped; the workflow token is read-only; Python 3.12 and 3.13 byte-compile the code and check `--help` of the command-line entry points.
+- **Security policy**: `.github/SECURITY.md` states that the breath detector loads its model with `trust_remote_code=True` and how to run without it.
 
 ### Fixed
+- **Provider errors in the API**: an unreachable or failing provider returns a JSON error with its hint instead of an HTTP 500 page, so the connection check in AI provider profiles no longer shows a syntax error.
+- **Command line**: `--help` of `core.omni_cut` and `core.gigaam_cut` no longer lists `--no-dedupe` twice and a `--no-no-dedupe` option.
+- **NOTICE**: lists zstandard.
 - **Language model calls**: a 400 error about `max_completion_tokens` or `stream_options` no longer loops the retry; the reasoning level on a retry is lowered from the previous attempt.
 - **Local API**: state-changing requests from other sites are rejected by `Sec-Fetch-Site` and `Origin` checks.
 - **Jobs**: render takes the shared job lock, so a cut can no longer start on top of a render.

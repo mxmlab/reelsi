@@ -676,7 +676,7 @@ def main(work):
     ap.add_argument("--speaker", default=None,
                     help="профиль спикера (speakers/*.json): пороги нарезки под "
                          "его студию и говор; работает в режиме gigaam")
-    ap.add_argument("--dedupe", "--no-dedupe", dest="dedupe", action=argparse.BooleanOptionalAction,
+    ap.add_argument("--dedupe", dest="dedupe", action=argparse.BooleanOptionalAction,
                     default=None,
                     help="чистка дублей кодом (задание CA). Явный флаг (пришёл с галки "
                          "шага 1) перекрывает профиль спикера; без флага — профиль "

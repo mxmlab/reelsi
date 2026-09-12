@@ -2175,4 +2175,3 @@ Enter/уходу фокуса: сбрасывает `libOpts` (старые ва
 - `docs/ROADMAP.md` — открытые направления (`geologica`, этапы video-use) и история решений.
 - `docs/CUTTING_SPEC.md` — ПОЛНАЯ архитектура нарезки (оба движка, все ступени, VRAM, память правок).
 - `docs/HIGHLIGHT_SPEC.md`, `docs/INSERTS_SPEC.md`, `docs/INTRO_SPEC.md` — точечные спеки блоков.
-- `docs/archive/` — закрытые аудиты и уже реализованные планы (для истории, не для работы).

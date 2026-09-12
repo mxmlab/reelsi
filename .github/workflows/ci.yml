@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -37,7 +40,9 @@ jobs:
           # faster-whisper, rembg) грузится лениво внутри функций и в тестах не
           # выполняется. Ставить requirements.txt целиком — минуты ради ничего.
           # fonttools — парсинг таблиц шрифтов, замер ширины строк и автофит интро (задания BO/BP/DA/DB).
-          pip install flask numpy scipy soundfile pytest ruff fonttools
+          # Pillow, pyarrow, zstandard — тесты drp, verify, boundaries, arrowfix (задание HG).
+          # Спецификаторы в кавычках: без них `>=` в bash — перенаправление вывода в файл «=10.0».
+          pip install flask numpy scipy soundfile pytest ruff fonttools "pillow>=10.0" pyarrow "zstandard>=0.22"
 
       # Отрендеренный .jsx (шаблон AE_FULL с подстановками) проверяет node
       # (test_rendered_jsx_syntax.py): сам шаблон может быть валиден, а сборка —
@@ -51,6 +56,38 @@ jobs:
 
       - name: Tests
         run: python -m pytest tests -q
+
+  smoke:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      # Минимальные зависимости верхнеуровневых импортов для --help точек входа:
+      # sync/vad (numpy, scipy), gigaam_cut.pipeline/tune (soundfile).
+      # compileall зависимостей не требует (проверяет только синтаксис).
+      - name: Install minimal dependencies for CLI smoke
+        run: |
+          python -m pip install --upgrade pip
+          pip install numpy scipy soundfile
+
+      - name: Byte-compile all modules
+        run: python -m compileall -q api core tools tests webui.py reelsi.py doctor.py
+
+      - name: Check CLI entry points help
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python reelsi.py --help
+          python -m core.omni_cut --help
+          python -m core.gigaam_cut --help
 
   requirements:
     runs-on: windows-latest

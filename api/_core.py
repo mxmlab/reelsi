@@ -5,7 +5,7 @@
 Всё, что нужно ВСЕМ группам роутов и не относится ни к одной из них. Модули роутов
 импортируют отсюда `bp` и вешают на него свои @bp.route.
 """
-import os, threading, time
+import json, os, threading, time
 from core import paths
 
 # HERE — корень репозитория: личные файлы пользователя (job.lock, ui_state.json)
@@ -19,6 +19,22 @@ from core.umsg import UMsg, umsg
 DEFAULT_BASE = reelsi.DEFAULT_BASE
 
 
+def _json_safe(obj):
+    """Приводит структуру к JSON-сериализуемому виду (задание HF).
+
+    Объекты, которые json.dumps не умеет сериализовать (URLError, Exception,
+    Path и т. п.), заменяются на str(значение)."""
+    if isinstance(obj, dict):
+        return {k: _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe(x) for x in obj]
+    try:
+        json.dumps(obj)
+        return obj
+    except (TypeError, ValueError, OverflowError):
+        return str(obj)
+
+
 def umsg_err(e):
     """SystemExit из aicut/omni_asr/insertlib в ответ API.
 
@@ -28,7 +44,8 @@ def umsg_err(e):
     как раньше — одним текстом."""
     a = e.args[0] if e.args else None
     if isinstance(a, UMsg):
-        return {"error": a.msg, "err": a.code, "err_vars": a.vars or {}}
+        safe_vars = _json_safe(a.vars) if a.vars else {}
+        return {"error": a.msg, "err": a.code, "err_vars": safe_vars}
     return {"error": str(e), "err": None, "err_vars": None}
 
 # APP_NAME / APP_REFERER / app_out_dir самому _core не нужны — он их ПЕРЕЭКСПОРТИРУЕТ
@@ -294,7 +311,7 @@ def set_progress(i, n):
 # Механика ОДНА на нарезку, сборку .jsx и рендер (JOB и RJOB). У джоба появляется
 # список items — по одному элементу на файл набора, в порядке набора:
 #   {"name": "<стем>", "stage": <код>, "pct": null, "path": "", "reason": ""}
-# Коды: wait|cut|jsx|check|aep|render|done|error|stopped (см. TASKS.md).
+# Коды: wait|cut|jsx|check|aep|render|done|error|stopped.
 # ГЛАВНЫЙ ИНВАРИАНТ — ОДНО МЕСТО ЗАПИСИ: «готово/ошибка» решается ТОЛЬКО в
 # item_done/item_fail, ровно там, где УЖЕ пишутся results/failed, тем же локом.
 # Джоб и лок передаются аргументами, имя списка результатов — параметром:

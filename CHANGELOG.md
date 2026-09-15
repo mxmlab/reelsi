@@ -38,6 +38,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Two AI calls at once**: the wait for the previous AI call and taking the slot are one atomic step; insert description can no longer be started twice.
 - **Orphan processes on exit**: stopping the web UI kills the running cut process and the After Effects render.
 - **Tests in CI**: the breath detector revision test no longer needs `transformers`, and the environment check test passes in any interface language.
+- **Tests without torch**: the pinned-revision tests for RVM and CED-tiny and the "healthy environment" checks of `doctor.py` are skipped when torch is not installed, instead of failing; a healthy environment includes torch by definition, so these checks are not weakened.
 - **Unhandled errors in API routes**: they return JSON with an error code instead of an HTML page, so the interface shows the error instead of staying silent.
 - **Thread start failure**: if a cut or build thread cannot start, the job lock is released instead of leaving the app "busy" until restart.
 - **Model answer with junk indices**: a malformed `drop` list from the model no longer crashes the Omni cut after the paid call.

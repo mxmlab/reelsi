@@ -52,6 +52,12 @@ def healthy(monkeypatch):
 
     То же и с `subprocess.run`: не трогаем. Если ffmpeg по подделанному пути не
     запустится, doctor поставит WARN («найден, но не отвечает»), а не FAIL.
+
+    «Здоровое окружение» включает torch (обязательная зависимость). Ослаблять
+    ожидание code == 0 нельзя — иначе тест разрешает doctor молчать на битой
+    машине. Поэтому тесты, которые ждут здорового исхода (code == 0 на фикстуре
+    healthy), без torch пропускаются с явной причиной (pytest.importorskip), а
+    тесты на отказ (code == 1) не ослабляются и проверяются всегда.
     """
     monkeypatch.setattr(doctor, "_which",
                         lambda n: "/usr/bin/" + n if n in ("ffmpeg", "node") else None)
@@ -78,6 +84,7 @@ def _run(capsys, hide=()):
 def test_healthy_environment_exits_zero(capsys, healthy):
     """На машине, где всё стоит, doctor не должен считать себя вправе ругаться:
     код 0, иначе им нельзя пользоваться в скриптах установки."""
+    pytest.importorskip("torch", reason="здоровое окружение включает torch (обязательная зависимость)")
     code, out = _run(capsys)
     bad = "\n".join(x for x in out.splitlines() if "FAIL" in x)
     assert code == 0, f"doctor ругается на здоровом окружении:\n{bad}"
@@ -95,6 +102,7 @@ def test_missing_core_dependency_fails(capsys, healthy):
 def test_missing_optional_is_a_warning_not_a_failure(capsys, healthy):
     """Нет опционального — работать всё равно можно, код 0. И обязательно сказано,
     ЧТО именно отключится, а не просто «пакет не найден»."""
+    pytest.importorskip("torch", reason="здоровое окружение включает torch (обязательная зависимость)")
     code, out = _run(capsys, hide=["silero_vad"])
     assert code == 0
     assert "silero_vad" in out

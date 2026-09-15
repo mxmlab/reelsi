@@ -179,6 +179,7 @@ def test_whisper_cpp_installs_valid_archive(tmp_path, monkeypatch):
 
 def test_rvm_pinned_commit_and_skip_validation(monkeypatch):
     """RVM загружается из строго закреплённого коммита с skip_validation=True."""
+    pytest.importorskip("torch")
     monkeypatch.setattr(roto, "_MODEL", None)
     expected_repo = "PeterL1n/RobustVideoMatting:53d74c6826735f01f4406b5ca9075eee27bec094"
 
@@ -209,6 +210,7 @@ def test_rvm_pinned_commit_and_skip_validation(monkeypatch):
 
 def test_breath_ced_pinned_revision(monkeypatch):
     """ced-tiny загружается со строго закреплённой ревизией."""
+    pytest.importorskip("torch")
     monkeypatch.setattr(breath, "_CED", None)
     expected_rev = "ace276d29dd0bb3f3517b0fa8cf300738c409019"
 

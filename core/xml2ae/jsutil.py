@@ -5,20 +5,34 @@
 Мелко, но критично: невалидный литерал роняет импорт .jsx и весь проект AE целиком,
 а узнать об этом иначе можно только открыв Adobe.
 """
-import os, json
+import os, json, re
+
+# Символы, требующие явного экранирования в JS-литералах:
+# - U+2028 (Line Separator), U+2029 (Paragraph Separator): ExtendScript (ES3)
+#   считает их переводом строки, ломая строковый литерал; node --check (ES2019+) этого не видит.
+# - Одиночные суррогаты U+D800..U+DFFF: имена файлов с нечитаемыми байтами (surrogateescape
+#   на Linux) при записи .jsx в utf-8-sig вызывают UnicodeEncodeError.
+# - U+FFFE, U+FFFF: noncharacters Юникода, недопустимые в XML и проблемные для парсеров.
+_JS_UNSAFE_PAT = re.compile(r"[\u2028\u2029\ud800-\udfff\ufffe\uffff]")
 
 
 def _js(s):
-    """JS-литерал строки: кавычки, слэши и управляющие символы снимает json.dumps
-    (целый класс escape-багов закрыт по построению), а U+2028/U+2029 — отдельно.
-    ExtendScript (ES3) считает их переводом строки: сырой символ рвёт литерал и
-    валит импорт всего .jsx, а `node --check` (ES2019) этого не видит.
+    """JS-литерал строки: кавычки, слэши и управляющие символы экранирует json.dumps.
+    Явно в \\uXXXX экранируются:
+    - U+2028/U+2029: ExtendScript (ES3) считает их переводом строки: сырой символ
+      рвёт литерал и валит импорт всего .jsx, а `node --check` (ES2019) этого не видит.
+    - Одиночные суррогаты \\ud800-\\udfff: возникают при нечитаемых байтах в именах файлов
+      (os.listdir с surrogateescape на Linux); сырой суррогат роняет запись файла в utf-8-sig
+      (UnicodeEncodeError: surrogates not allowed).
+    - U+FFFE/U+FFFF: несимволы (noncharacters) Юникода, проблемные для парсеров и XML.
 
     ensure_ascii=True тут НЕ используется намеренно: кириллица уехала бы в \\uXXXX
     и поехал бы эталон tests/fixtures/golden_geometry.jsx (задание HT: эталоны не
-    перегенерируются)."""
-    return (json.dumps(str(s), ensure_ascii=False, separators=(",", ":"))
-            .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
+    перегенерируются). Вся кириллица и прочий валидный юникод остаются сырыми."""
+    return _JS_UNSAFE_PAT.sub(
+        lambda m: f"\\u{ord(m.group()):04x}",
+        json.dumps(str(s), ensure_ascii=False, separators=(",", ":")),
+    )
 
 
 def _jd(obj):

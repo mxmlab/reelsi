@@ -6,7 +6,7 @@ import os, threading, traceback, urllib.parse
 from flask import request, jsonify, send_file, Response
 from core.fileio import atomic_json_dump
 from ._core import (JOB, LOCK, bp, emit, item_done, item_fail, item_set, items_init, job_finish,
-                    job_start, set_progress, _never_serve, umsg_err, _cross_lock_release)
+                    job_start, set_progress, _never_serve, umsg_err, _cross_lock_release, jstr)
 from core.umsg import umsg
 from .editor import _ensure_project, _sidecar_yellow, _sidecar_caption
 from .inserts import _adopt_inserts, _insert_dest
@@ -220,7 +220,7 @@ def api_cams_load():
     project.json['assign'] если валидна, иначе авто assign_cameras). Аудио всегда cam1."""
     from core import align
     d = request.get_json() or {}
-    xml = (d.get("xml") or "").strip().strip('"')
+    xml = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
@@ -315,9 +315,13 @@ def api_swap_cam():
     from core import xml2ae
     from core import align
     d = request.get_json() or {}
-    xml = (d.get("xml") or "").strip().strip('"')
-    k = int(d.get("cam") if d.get("cam") is not None else 1)   # 0 — валидный индекс (guard ниже отклонит)
-    new_path = (d.get("path") or "").strip().strip('"')
+    xml = jstr(d, "xml").strip().strip('"')
+    try:
+        cam_raw = d.get("cam")
+        k = int(cam_raw if cam_raw is not None else 1)   # 0 — валидный индекс (guard ниже отклонит)
+    except (TypeError, ValueError):
+        k = -1
+    new_path = jstr(d, "path").strip().strip('"')
     try:
         if not os.path.isfile(xml):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
@@ -421,7 +425,7 @@ def api_export_drp():
     без media в сборку не уйдут.
     """
     d = request.get_json() or {}
-    xml = (d.get("xml") or "").strip().strip('"')
+    xml = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",

@@ -5,7 +5,7 @@
 import os, json
 from flask import request, jsonify
 from core.fileio import atomic_json_dump, json_load_soft
-from ._core import bp, emit, umsg_err
+from ._core import bp, emit, umsg_err, jstr
 from core.umsg import umsg
 
 
@@ -98,7 +98,7 @@ def api_xml_state():
     subs = число слов-субтитров, colored = число НЕ-белых слов (цвет из Премьера,
     как их видит AE-парсер auto_highlights). НЕ учитывает сайдкар .yellow.json —
     только реальную разметку цветом в самом XML."""
-    xml = ((request.get_json() or {}).get("xml") or "").strip().strip('"')
+    xml = jstr(request.get_json() or {}, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
@@ -119,7 +119,7 @@ def api_xml_state():
 @bp.route("/api/omnicut_cuts", methods=["POST"])
 def api_omnicut_cuts():
     """Вернуть cut-log (<stem>.cuts.json рядом с XML) — что и почему вырезано Omni-нарезкой."""
-    xml_path = ((request.get_json() or {}).get("xml") or "").strip().strip('"')
+    xml_path = jstr(request.get_json() or {}, "xml").strip().strip('"')
     p = os.path.splitext(xml_path)[0] + ".cuts.json"
     if not os.path.isfile(p):
         return jsonify(ok=True, cuts=[])
@@ -156,7 +156,7 @@ def api_breaths():
 def api_editor_load():
     """Блоки нарезки для редактора: оставленные куски исходника (камера 1) в секундах.
     Из сайдкара <stem>.project.json (есть offsets/cams для пересборки) или из XML."""
-    xml = ((request.get_json() or {}).get("xml") or "").strip().strip('"')
+    xml = jstr(request.get_json() or {}, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
@@ -432,7 +432,7 @@ def api_aicut_preview():
     """Parse a produced timeline XML into a virtual timeline the browser can play
     straight from the source camera files (no rendering). Returns the ordered list
     of enabled cut segments (which camera + source time) plus subtitle words."""
-    xml_path = ((request.get_json() or {}).get("xml") or "").strip().strip('"')
+    xml_path = jstr(request.get_json() or {}, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml_path):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml_path}",
@@ -453,7 +453,7 @@ def api_scanxml():
     """Все .xml в папке (для «подхватить клипы из папки выхода» — список клипов живёт
     в localStorage и в другом браузере/после чистки пустой)."""
     d = request.get_json() or {}
-    dir_ = (d.get("dir") or "").strip().strip('"')
+    dir_ = jstr(d, "dir").strip().strip('"')
     try:
         if not os.path.isdir(dir_):
             raise SystemExit(umsg("no_folder", f"Нет папки: {dir_}", path=dir_))

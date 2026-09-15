@@ -8,7 +8,7 @@
 import os, json, threading, time
 import urllib.request
 from flask import request, jsonify
-from ._core import APP_NAME, APP_REFERER, _ai_begin, _ai_end, bp, emit, umsg_err
+from ._core import APP_NAME, APP_REFERER, _ai_begin, _ai_end, bp, emit, umsg_err, jstr
 from .inserts import _insert_dest
 from core.umsg import umsg
 from core.app_meta import http_req, t
@@ -52,7 +52,7 @@ def api_ai_inserts():
     """Local LLM предлагает вставки (10 фото + 3 видео) по субтитрам XML. Выгружает
     модель после. Возвращает список для меню вставок."""
     d = request.get_json() or {}
-    xml_path = (d.get("xml") or "").strip().strip('"')
+    xml_path = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml_path):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml_path}",

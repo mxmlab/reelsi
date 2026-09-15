@@ -7,7 +7,7 @@
 """
 import os
 from flask import request, jsonify
-from ._core import bp, umsg_err
+from ._core import bp, umsg_err, jstr
 from core.umsg import umsg
 
 
@@ -28,7 +28,7 @@ def api_styles():
 def api_savestyle():
     """Сохранить пользовательский пресет стиля как reelsi/styles/<name>.json."""
     d = request.get_json() or {}
-    name = (d.get("name") or "").strip()
+    name = jstr(d, "name").strip()
     data = d.get("data") or {}
     try:
         if not name:
@@ -176,7 +176,7 @@ def api_censor_words():
 def api_delstyle():
     """Удалить пользовательский пресет стиля (файл reelsi/styles/<name>.json).
     Встроенные (base/geologica — в коде styles.py) удалить нельзя."""
-    name = ((request.get_json() or {}).get("name") or "").strip()
+    name = jstr(request.get_json() or {}, "name").strip()
     try:
         if not name:
             raise SystemExit(umsg("style_name_missing", "Не указано имя стиля"))

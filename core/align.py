@@ -3,7 +3,7 @@
 """Map transcript words onto the edited (silence-removed) timeline, and detect
 repeated phrases for optional removal.
 
-All source times are in cam1 seconds; output positions are 60fps frames.
+All source times are in cam1 seconds; output positions are frames at the sequence rate (`fps`, default 60).
 """
 import re
 from core import subs

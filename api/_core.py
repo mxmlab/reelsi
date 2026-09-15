@@ -64,6 +64,22 @@ def umsg_err(e):
         return {"error": a.msg, "err": a.code, "err_vars": safe_vars}
     return {"error": str(e), "err": None, "err_vars": None}
 
+
+def jstr(d, key, default=""):
+    """Строковое значение поля JSON-тела запроса (задание HY).
+
+    Если d — словарь и значение по ключу key является строкой (str), возвращает
+    его. В противном случае (ключа нет, значение None, число, список, словарь
+    или d не dict) возвращает default (пустую строку). Защищает роуты от
+    AttributeError при вызове .strip() на нестроковых типах.
+    """
+    if isinstance(d, dict):
+        v = d.get(key)
+        if isinstance(v, str):
+            return v
+    return default
+
+
 # APP_NAME / APP_REFERER / app_out_dir самому _core не нужны — он их ПЕРЕЭКСПОРТИРУЕТ
 # модулям роутов, чтобы у тех не расползался этот try/except по всему пакету.
 try:

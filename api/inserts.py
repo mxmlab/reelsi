@@ -4,7 +4,7 @@
 """
 import os, threading
 from flask import request, jsonify
-from ._core import bp, umsg_err
+from ._core import bp, umsg_err, jstr
 from core import paths
 from core.umsg import umsg
 
@@ -87,7 +87,8 @@ def api_insertlib_scan():
     """Построить/обновить индекс базы вставок по списку папок (XML прошлых проектов +
     просто медиа). Эмбеддинги — LM Studio (если поднят), иначе токенный матч."""
     d = request.get_json() or {}
-    dirs = [x for x in (d.get("dirs") or []) if (x or "").strip()]
+    raw_dirs = d.get("dirs") if isinstance(d.get("dirs"), list) else []
+    dirs = [x.strip() for x in raw_dirs if isinstance(x, str) and x.strip()]
     log = []
     try:
         if not dirs:
@@ -110,7 +111,7 @@ def api_insertlib_reject():
     """«Не предлагать этот файл под этот запрос» — ставится, когда юзер перегенеривает
     поверх автоподбора/генерации. Файл остаётся в базе (руками через 📚 доступен)."""
     d = request.get_json() or {}
-    path, query = (d.get("path") or "").strip(), (d.get("query") or "").strip()
+    path, query = jstr(d, "path").strip(), jstr(d, "query").strip()
     try:
         if not path or not query:
             raise SystemExit(umsg("need_path_query", "Нужны path и query"))
@@ -171,8 +172,9 @@ ILL_LOCK = threading.Lock()
 def api_insertlib_import():
     """Перенести медиа из папок-источников в СВОЮ папку базы (photos/videos), с даты."""
     d = request.get_json() or {}
-    dirs = [x for x in (d.get("dirs") or []) if (x or "").strip()]
-    dest = (d.get("dest") or "").strip().strip('"')
+    raw_dirs = d.get("dirs") if isinstance(d.get("dirs"), list) else []
+    dirs = [x.strip() for x in raw_dirs if isinstance(x, str) and x.strip()]
+    dest = jstr(d, "dest").strip().strip('"')
     log = []
     try:
         if not dirs or not dest:
@@ -180,12 +182,14 @@ def api_insertlib_import():
         try:
             import datetime as _dt
             since = 0.0
-            if (d.get("since") or "").strip():
-                since = _dt.datetime.strptime(d["since"].strip(), "%Y-%m-%d").timestamp()
+            since_str = jstr(d, "since").strip()
+            if since_str:
+                since = _dt.datetime.strptime(since_str, "%Y-%m-%d").timestamp()
             from core import insertlib
             res = insertlib.import_media(dirs, dest, since_ts=since,
                                          emit=lambda *a: log.append(" ".join(str(x) for x in a)))
-            return jsonify(ok=True, log=log, **res)
+            return jsonify(ok=True, log=log, count=res["count"], dest=res["dest"],
+                           log_file=res.get("log"))
         except Exception as e:
             raise SystemExit(umsg("insertlib_import_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))

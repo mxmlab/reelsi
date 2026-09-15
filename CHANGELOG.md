@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Package metadata**: `pyproject.toml` declares the name, the version and `requires-python >= 3.10`.
 - **Install from a clone**: `pip install -e .` installs dependencies from `requirements*.txt` and registers `reelsi`, `reelsi-webui` and `reelsi-doctor`; a plain `pip install .` is not supported and the commands say so.
 - **`--forced-align` in the CLI**: `reelsi.py` accepts the flag the web job already passed.
+- **API route tests**: contract tests cover 19 more routes (camera loading and swap, `.drp` export, editor state, insert library, style presets and censor word lists, AI inserts, temp info, video probe): bad input, the response contract and that writing routes change only what they promise.
 - **Log file**: the web UI writes a rotating log (`reelsi.log`, or the path in `REELSI_LOG`) with the startup line and the causes of failures that used to be swallowed silently.
 
 ### Changed
@@ -43,6 +44,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Two AI calls at once**: the wait for the previous AI call and taking the slot are one atomic step; insert description can no longer be started twice.
 - **Orphan processes on exit**: stopping the web UI kills the running cut process and the After Effects render.
 - **Tests in CI**: the breath detector revision test no longer needs `transformers`, and the environment check test passes in any interface language.
+- **Media import into the insert library**: a successful import no longer reports "Failed to import media"; the answer carries the import log lines, the file count and the path of the import log file.
+- **Wrong field types in API requests**: a number or list where a route expects a text field returns that route's usual error instead of an HTTP 500 "internal error" (camera loading and swap, `.drp` export, editor and XML state routes, insert library, style presets, AI inserts).
+- **Unreadable file names in After Effects scripts**: lone surrogates (file names with undecodable bytes) and U+FFFE/U+FFFF are escaped in `.jsx` string literals, so writing the script no longer fails with `UnicodeEncodeError`.
 - **Line separators in After Effects scripts**: U+2028 and U+2029 inside text are escaped, so a subtitle or intro word containing them no longer breaks the whole `.jsx` in ExtendScript; `verify_jsx` reports raw ones.
 - **Control characters in XML**: characters that XML 1.0 forbids are removed from file names and text in Premiere XML, subtitle templates and `.drp`, so one such character no longer makes the whole file unreadable.
 - **59.94 fps drop-frame timecode**: four frames per minute are dropped (not two), so a one-hour clip no longer drifts by 1.8 seconds in the `.drp` export.

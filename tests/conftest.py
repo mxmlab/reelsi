@@ -7,7 +7,23 @@
 job.lock, ai_calls.jsonl, models_dev.json, _videogen), чтобы тесты не писали
 в боевые файлы рабочей копии.
 """
+import os
+
 import pytest
+
+
+@pytest.fixture
+def case_insensitive_fs(tmp_path):
+    """Пропустить тест, если файловая система чувствительна к регистру (пробник на tmp_path).
+
+    Пробник, а не sys.platform: на macOS ФС по умолчанию без учёта регистра.
+    """
+    probe = tmp_path / "Probe.txt"
+    probe.write_text("probe", encoding="utf-8")
+    is_insensitive = os.path.exists(tmp_path / "probe.txt")
+    probe.unlink(missing_ok=True)
+    if not is_insensitive:
+        pytest.skip("ФС чувствительна к регистру — тест рассчитан на case-insensitive ФС")
 
 
 @pytest.fixture(autouse=True)

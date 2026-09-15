@@ -12,7 +12,8 @@
 Изоляция — жёсткая: боевой `insertlib.json` (личный файл, ~1500 записей) не читается и
 не пишется. `insertlib.INDEX_PATH` подменяется на файл в tmp_path, кэш индекса — на
 пустой, `_seed_index()` — на пустышку: иначе `_save()` затёр бы рабочий индекс, а
-`_seed_index()` снял бы с него копию во временный. Эмбеддер (LM Studio) подменён на «нет» — сети и моделей в тестах нет.
+`_seed_index()` снял бы с него копию во временный. Эмбеддер (LM Studio) подменён на
+«нет» — сети и моделей в тестах нет.
 
 Запуск (только новые файлы): py -3.10 -m pytest tests/test_routes_*.py -q -p no:cacheprovider
 """
@@ -106,6 +107,10 @@ def test_insertlib_info_empty_and_filled(client, index, tmp_path):
 
     with open(index, "w", encoding="utf-8") as f:
         f.write("{рваный json")
+    # Тест моделирует внешнюю запись (мимо _save); кэш индекса ключуется по mtime,
+    # поэтому сдвигаем mtime вперёд, чтобы тест не зависел от тика таймера ФС.
+    st = os.stat(index)
+    os.utime(index, (st.st_atime, st.st_mtime + 2))
     d = _get(client, "/api/insertlib_info")              # не 500: база просто «не собрана»
     assert d["ok"] is True and d["built"] is False and d["count"] == 0
 

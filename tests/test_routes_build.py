@@ -11,7 +11,7 @@
 путь на КОПИИ эталона `tests/fixtures/timeline_nosubs.xml` в tmp_path — проверяется
 контракт ответа и побочные эффекты (сайдкар `project.json`, сам XML, мусор в %TEMP%).
 
-Изоляция: медиа фикстуры (`C:/footage/...`) на диске не лежит, поэтому ffprobe
+Изоляция: медиа фикстуры (`<tmp_path>/footage/...`) на диске не лежит, поэтому ffprobe
 (`xmlbuild.probe`) и синхрон камер (`sync.extract_audio`/`find_offset`) подменены —
 реального ffmpeg, GPU и сети нет. Эталон не перегенерируется: он копируется.
 
@@ -50,8 +50,18 @@ def client():
 @pytest.fixture
 def xml_nosubs(tmp_path):
     """Копия эталона: роуты пишут сайдкар И ПЕРЕСОБИРАЮТ XML рядом с файлом."""
+    from core import xmlbuild
     dst = str(tmp_path / "timeline_nosubs.xml")
     shutil.copy(os.path.join(HERE, "fixtures", "timeline_nosubs.xml"), dst)
+    # Медиа — в путях ОС: пересборка пишет пути через pathurl = os.path.abspath, и на Linux
+    # `C:/footage/…` из эталона превращался в `<cwd>/C:/footage/…` (публичный CI, круг 7).
+    c1 = str(tmp_path / "footage" / "cam1" / "CLIP-030.MP4")
+    c2 = str(tmp_path / "footage" / "cam2" / "CLIP-031.MP4")
+    text = open(dst, encoding="utf-8").read()
+    text = text.replace("file://localhost/C%3a/footage/cam1/CLIP-030.MP4", xmlbuild.pathurl(c1))
+    text = text.replace("file://localhost/C%3a/footage/cam2/CLIP-031.MP4", xmlbuild.pathurl(c2))
+    with open(dst, "w", encoding="utf-8", newline="") as f:
+        f.write(text)
     return dst
 
 

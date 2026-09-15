@@ -103,6 +103,7 @@ def test_savestyle_writes_template_and_keeps_neighbours(client, style_dir):
     assert "Мой стиль" in styles.all_styles()
 
 
+@pytest.mark.usefixtures("case_insensitive_fs")
 def test_savestyle_overwrites_same_name(client, style_dir):
     """Повторное сохранение того же имени не плодит файлов: правка ложится в тот же файл.
 

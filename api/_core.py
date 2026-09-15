@@ -161,13 +161,13 @@ def _block_dns_rebinding():
     if not _host_is_local(request.host):
         r = umsg_err(SystemExit(umsg("localhost_only", "только с localhost")))
         return jsonify(**r), 403
-    if request.method in _MUTATING_METHODS:
-        site = request.headers.get("Sec-Fetch-Site")
-        if site is None:                                 # curl, CLI, тестовый клиент
-            origin = request.headers.get("Origin")
-            if origin is not None and not _origin_is_local(origin):
-                return _forbidden_origin()
-        elif site.strip().lower() not in _SITE_SAME:
+    site = request.headers.get("Sec-Fetch-Site")
+    if site is not None:
+        if site.strip().lower() not in _SITE_SAME:
+            return _forbidden_origin()
+    elif request.method in _MUTATING_METHODS:
+        origin = request.headers.get("Origin")
+        if origin is not None and not _origin_is_local(origin):
             return _forbidden_origin()
 
 

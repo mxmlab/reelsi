@@ -301,3 +301,21 @@ def test_api_fontfile_refuses_forbidden_files(tmp_path, monkeypatch):
     assert r.status_code == 403
 
 
+def test_fonts_recursive_search_and_cross_platform_dirs(tmp_path, monkeypatch):
+    """Задание HV: шрифты во вложенных папках находятся рекурсивно, _FONT_DIRS знает macOS и Linux."""
+    # 1. Проверяем наличие путей macOS и Linux в _FONT_DIRS
+    expected_mac = ["/Library/Fonts", "/System/Library/Fonts", os.path.expanduser("~/Library/Fonts")]
+    expected_linux = ["/usr/share/fonts", "/usr/local/share/fonts", os.path.expanduser("~/.local/share/fonts"), os.path.expanduser("~/.fonts")]
+    for p in expected_mac + expected_linux:
+        assert p in fonts._FONT_DIRS, f"Путь {p} отсутствует в _FONT_DIRS"
+
+    # 2. Рекурсивный обход вложенной папки
+    nested = tmp_path / "nested" / "subdir"
+    nested.mkdir(parents=True)
+    _build_var_font(nested, postscript_nameid=19)
+
+    monkeypatch.setattr(fonts, "_CACHE", None)
+    monkeypatch.setattr(fonts, "_FONT_DIRS", [str(tmp_path)])
+    fs = fonts.list_fonts(refresh=True)
+    by_ps = {x["ps"]: x for x in fs}
+    assert "TestSans-Regular" in by_ps, f"Шрифт из вложенной папки не найден: {list(by_ps.keys())}"

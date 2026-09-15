@@ -187,27 +187,79 @@ _TS = re.compile(r"^\d{4}/\d\d/\d\d \d\d:\d\d:\d\d\s+"
                  r"(?:DEBUG|INFO|NOTICE|WARNING|ERROR)\s*:\s*")
 
 
+# Сторож простоя rclone: 10 минут тишины в stdout -> принудительное завершение (задание HU)
+RCLONE_STALL_SEC = 10 * 60
+_RCLONE_STALLED = -137
+
+GDPROC = None  # Текущий процесс rclone — для отмены через /api/cancel и сторожа простоя
+
+
+def _kill_proc(p):
+    """taskkill /T /F — дерево: rclone с дочерними процессами снимается полностью."""
+    for _ in range(2):                       # taskkill /T бывает таймаутит — вторая попытка
+        try:
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)],
+                           capture_output=True, timeout=15)
+            if p.poll() is not None:
+                break
+        except Exception:
+            pass
+    else:
+        try:
+            p.kill()
+        except Exception:
+            pass
+
+
+def gdrive_kill():
+    """«Стоп» из интерфейса (/api/cancel зовёт): флаг джобу + реально убить
+    текущий subprocess rclone с деревом."""
+    with GDLOCK:
+        GDJOB["cancel"] = True
+        p = GDPROC
+    if p and p.poll() is None:
+        _kill_proc(p)
+
+
 def _clean_line(line):
     return _TS.sub("", line.strip())
 
 
 def _run_rclone(args, emit, stat=None):
-    """rclone копией сабпроцессом. Статистика уходит в `stat` (живой статус
-    страницы), события — в `emit` (лог джоба).
+    """rclone копией сабпроцессом со сторожем простоя и поддержкой отмены.
+    Статистика уходит в `stat` (живой статус страницы), события — в `emit` (лог джоба).
 
     В лог прогресс дублируется раз в 10%: лог — это след событий, по которому
     потом видно, докуда дошло, а не лента процентов (наружу отдаются последние
     строки, и при статистике раз в 2 секунды в них не осталось бы ничего).
+
+    Вывод читает ФОНОВЫЙ поток (образец — `_run_proc_afx` в api/render.py): пока
+    главный поток сидит в `for line in p.stdout`, он не может ни заметить простой,
+    ни снять зависший процесс — а зависшая сеть держала «Скачивание уже идёт»
+    до перезапуска сервера. Все строки разбирает ОДИН обработчик `_handle`: если
+    разбирать хвост вывода второй копией (после выхода процесса), прогресс уедет
+    только в статус, а из лога конец передачи пропадёт.
     """
+    global GDPROC
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                          text=True, encoding="utf-8", errors="replace",
                          bufsize=1, creationflags=flags)
+    with GDLOCK:
+        GDPROC = p
+    if GDJOB.get("cancel"):
+        _kill_proc(p)
+
     logged = -10          # -10, а не 0: первый же блок (0%) отмечает в логе старт передачи
-    for line in p.stdout:
-        line = line.rstrip()
+    # Время последней НОВОЙ строки: от него, а не от старта, считаем простой —
+    # большая папка качается минутами, и рубить её нельзя.
+    activity = [time.time()]
+
+    def _handle(raw):
+        nonlocal logged
+        line = raw.rstrip()
         if not line.strip():
-            continue
+            return
         f = _stats_fields(line)
         if f:
             if stat:
@@ -216,10 +268,44 @@ def _run_rclone(args, emit, stat=None):
             if pct is not None and pct >= logged + 10:
                 logged = pct - pct % 10
                 emit(_progress_line(line))
-            continue
+            return
         if not _is_noise(line):
             emit(_clean_line(line))
-    return p.wait()
+
+    def _pump():
+        try:
+            for line in p.stdout:
+                activity[0] = time.time()
+                _handle(line)
+        except Exception:
+            pass
+
+    pump = threading.Thread(target=_pump, daemon=True)
+    pump.start()
+
+    stalled = False
+    try:
+        while p.poll() is None:
+            now = time.time()
+            if now - activity[0] >= RCLONE_STALL_SEC:
+                emit(f"⚠ rclone не отвечает {int(RCLONE_STALL_SEC // 60)} минут — "
+                     f"скачивание снято (сторож простоя)")
+                _kill_proc(p)
+                stalled = True
+                break
+            if GDJOB.get("cancel"):
+                _kill_proc(p)
+                break
+            time.sleep(0.5)
+        rc = p.wait()
+        # Хвост вывода (последние строки rclone) читается ещё мгновение после выхода;
+        # ждём его, но не бесконечно: насос — демон и не должен держать джоб.
+        pump.join(timeout=10.0)
+    finally:
+        with GDLOCK:
+            if GDPROC is p:
+                GDPROC = None
+    return _RCLONE_STALLED if stalled else rc
 
 
 # failed: None пока идём, True/False по итогу — страница показывала «скачивание
@@ -227,7 +313,7 @@ def _run_rclone(args, emit, stat=None):
 # ответ и так завёрнут в ok=True («запрос принят»), и два разных смысла у одного
 # ключа — это 500 на ровном месте.
 GDFRESH = {"cur": "запуск rclone…", "i": 0, "n": 0, "pct": None, "bytes": "", "total": "",
-           "speed": "", "eta": "", "file": "", "file_pct": None}
+           "speed": "", "eta": "", "file": "", "file_pct": None, "cancel": False}
 GDJOB = dict(GDFRESH, running=False, done=False, failed=None, log=[], log_base=0,
              url="", started=0)
 GDLOCK = threading.Lock()
@@ -254,7 +340,14 @@ def _download_job(cmd, url):
         _gemit(f"качаю {url}")
         code = _run_rclone(cmd, _gemit, _gstat)
         ok = code == 0
-        cur = "скачивание завершено" if ok else f"rclone упал с кодом {code}"
+        if GDJOB.get("cancel"):
+            cur = "скачивание остановлено"
+        elif code == _RCLONE_STALLED:
+            cur = f"нет данных {int(RCLONE_STALL_SEC // 60)} минут"
+        elif ok:
+            cur = "скачивание завершено"
+        else:
+            cur = f"rclone упал с кодом {code}"
         with GDLOCK:
             GDJOB["cur"] = cur
         _gemit(cur)          # чем кончилось — видно и в логе, не только в статусе

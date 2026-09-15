@@ -9,8 +9,16 @@ import os, json
 
 
 def _js(s):
-    return ('"' + str(s).replace("\\", "\\\\").replace('"', '\\"')
-            .replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t") + '"')
+    """JS-литерал строки: кавычки, слэши и управляющие символы снимает json.dumps
+    (целый класс escape-багов закрыт по построению), а U+2028/U+2029 — отдельно.
+    ExtendScript (ES3) считает их переводом строки: сырой символ рвёт литерал и
+    валит импорт всего .jsx, а `node --check` (ES2019) этого не видит.
+
+    ensure_ascii=True тут НЕ используется намеренно: кириллица уехала бы в \\uXXXX
+    и поехал бы эталон tests/fixtures/golden_geometry.jsx (задание HT: эталоны не
+    перегенерируются)."""
+    return (json.dumps(str(s), ensure_ascii=False, separators=(",", ":"))
+            .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
 
 
 def _jd(obj):
@@ -49,6 +57,6 @@ def _asset_or(override, default_key, aset):
 
 
 def _js_multiline(s):
-    """JS string literal where Python newlines become AE line breaks (\\r)."""
-    return ('"' + s.replace("\\", "\\\\").replace('"', '\\"')
-            .replace("\r", "").replace("\n", "\\r") + '"')
+    """JS string literal where Python newlines become AE line breaks (\\r):
+    \\n -> \\r, \\r из входа выбрасываем — до экранирования."""
+    return _js(str(s).replace("\r", "").replace("\n", "\r"))

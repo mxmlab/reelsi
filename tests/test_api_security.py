@@ -97,7 +97,7 @@ def test_media_refuses_test_profile_config(client, tmp_path):
 
 def test_media_still_serves_normal_files(client, tmp_path):
     """Запрет не должен превратиться в «ничего не отдаём»: превью обязано работать."""
-    f = tmp_path / "clip.txt"
+    f = tmp_path / "clip.mp4"
     f.write_bytes(b"video-bytes")
     r = client.get(f"/api/media?path={f}", headers={"Host": "127.0.0.1:5001"})
     assert r.status_code == 200
@@ -212,11 +212,31 @@ def test_без_заголовков_браузера_пропускается(c
     assert r.status_code != 403
 
 
-def test_get_с_чужого_origin_не_заблокирован(client):
-    """Проверка только на изменяющих методах: чужой странице чтение ничего не даёт
-    (ответ ей не прочитать), а сломать GET ею легко."""
-    r = client.get("/api/status", headers={**_LOCAL, "Sec-Fetch-Site": "cross-site",
-                                           "Origin": "http://evil.example"})
+def test_get_с_чужого_origin_без_sec_fetch_site_не_заблокирован(client):
+    """Origin сам по себе — проверка ТОЛЬКО изменяющих методов: заголовка Sec-Fetch-Site
+    у такого запроса нет, а GET чужой странице чтение ничего не даёт (ответ ей не
+    прочитать), сломать GET ею легко."""
+    r = client.get("/api/status", headers={**_LOCAL, "Origin": "http://evil.example"})
+    assert r.status_code != 403
+
+
+def test_get_с_чужого_сайта_заблокирован(client):
+    """Sec-Fetch-Site чужого сайта закрывает ЛЮБОЙ метод, а не только изменяющий
+    (задание HU): GET с побочным действием — /api/pick* открывает диалоги Tk,
+    /api/waveform пишет кэш рядом с файлом, — и чужой странице хватало <img src>,
+    чтобы их дёрнуть. Браузер ставит этот заголовок сам, подделать его нельзя."""
+    for path in ("/api/status", "/api/media?path=x"):
+        r = client.get(path, headers={**_LOCAL, "Sec-Fetch-Site": "cross-site"})
+        assert r.status_code == 403, f"{path} доступен чужому сайту через GET"
+        assert r.get_json()["err"] == "forbidden_origin"
+    r = client.get("/api/status", headers={**_LOCAL, "Sec-Fetch-Site": "same-site"})
+    assert r.status_code == 403
+
+
+@pytest.mark.parametrize("site", ["same-origin", "none"])
+def test_get_с_своего_сайта_пропускается(client, site):
+    """Наш интерфейс (same-origin) и прямой ввод адреса/закладка (none) — не чужие."""
+    r = client.get("/api/status", headers={**_LOCAL, "Sec-Fetch-Site": site})
     assert r.status_code != 403
 
 

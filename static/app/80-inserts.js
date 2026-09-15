@@ -307,17 +307,6 @@ function aewEditChip(o,wi,el){if(el.tagName==='INPUT')return;
   inp.onblur=commit;                               // клик мимо = закрыть и сохранить
   inp.onclick=(e)=>e.stopPropagation();
   el.replaceWith(inp);inp.focus();inp.select();}
-async function aewSaveWord(o,text){text=(text||'').trim();if(!text||text===o.w){aewRender();return;}
-  const xml=CLIPS[curAE].xml;$('aewres').className='muted';$('aewres').textContent=t('сохраняю…');
-  try{const d=await (await fetch('/api/edit_word',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml,index:o.i,text,was:o.w})})).json();
-    if(d.error){$('aewres').className='err';$('aewres').textContent='⚠ '+errText(d);aewRender();return;}
-    const was=o.w;
-    o.w=d.word;                                    // WORDS правится по месту → вкладка AE тоже увидит
-    const iw=IPV.words.find(w=>Math.abs(w.s-o.start)<0.05);if(iw)iw.w=d.word;
-    $('aewres').className='ok';$('aewres').textContent=t('слово изменено');
-    renderIntro();aewRender();uiLog(t('правка слова (AE-превью): «{t}»',{t:text}));
-    if(d.learned)uiLog(t('словарь терминов: запомнил «{w}» → «{l}»',{w:was,l:d.learned}));
-  }catch(e){$('aewres').className='err';$('aewres').textContent='⚠ '+e;aewRender();}}
 function aewAddLine(){INTRO.push({count:1,color:'white'});AEW_TOEND=true;aewSync();}
 let AEW_TOEND=false;   // к низу списка крутим только когда строку реально добавили в конец
 function aewRenderIntro(){const host=$('aewintro');if(!host)return;

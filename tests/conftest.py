@@ -21,3 +21,35 @@ def isolate_state_files(tmp_path, monkeypatch):
     video_dir = tmp_path / "_videogen"
     monkeypatch.setenv("REELSI_VIDEO_DIR", str(video_dir))
     monkeypatch.setenv("REELSI_VIDEO_HISTORY", str(video_dir / "history.json"))
+
+
+@pytest.fixture(autouse=True)
+def clear_cancel_flags():
+    """Убрать за `POST /api/cancel`: он ставит ОБЩИЕ на процесс флаги отмены, а снимает
+    их в бою только старт следующей задачи (job_start и api_*_run), — в тестах же
+    между файлами не снимает никто. Поймано прогоном HU (2026-09-15):
+
+    * `JOB["cancel"]` — `run_omnicut_job` выходит по нему ДО запуска процесса, и
+      `test_pipeline_stages::test_run_omnicut_job_builds_correct_cli_flags` падал
+      IndexError'ом после `test_api_security` (`pytest tests/test_api_security.py
+      tests/test_pipeline_stages.py` — падение воспроизводится и без правок HU);
+    * `GDJOB["cancel"]` — `test_gdrive::test_упавший_rclone_не_считается_успехом`
+      видел чужую отмену и вместо кода возврата получал «скачивание остановлено».
+
+    Флаг `aicut.CANCEL` тут же: раньше его снимала своя фикстура в test_api_security.
+    """
+    yield
+    try:
+        from core import aicut
+        aicut.clear_cancel()
+    except Exception:
+        pass
+    from api import _core, gdrive, render, videogen
+    with _core.LOCK:
+        _core.JOB["cancel"] = False
+    with render.RLOCK:
+        render.RJOB["cancel"] = False
+    with gdrive.GDLOCK:
+        gdrive.GDJOB["cancel"] = False
+    with videogen.VLOCK:
+        videogen.VJOB["cancel"] = False

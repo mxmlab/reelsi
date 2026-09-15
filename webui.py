@@ -23,6 +23,11 @@ from api import bp, DEFAULT_BASE
 from core.app_meta import app_js_files, APP_VERSION, ui_lang, dict_en_json, I18N_FILE
 
 app = Flask(__name__)
+# Защита от исчерпания памяти при отправке гигантских тел (задание HU).
+# Загрузок файлов нет — только JSON. Крупнейшие реальные JSON-тела (ui_state, наборы
+# рендера) занимают не более нескольких мегабайт, ссылки в генерации видео — URL,
+# поэтому 32 МБ даёт надёжный запас. 413 отдаёт JSON через @bp.errorhandler(Exception).
+app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024
 app.register_blueprint(bp)
 
 _TPL = os.path.join(HERE, "templates", "index.html")

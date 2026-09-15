@@ -198,14 +198,32 @@ def test_дата_и_уровень_из_строки_убираются():
 
 
 class _FakeProc:
-    """Подставной rclone: отдаёт заготовленные строки и код возврата."""
+    """Подставной rclone: отдаёт заготовленные строки и код возврата.
+
+    `poll()` обязателен: сторож простоя (задание HU) опрашивает процесс, и без
+    него `_run_rclone` падал AttributeError. Код возврата показывается ТОЛЬКО
+    когда строки кончились — иначе цикл вышел бы, не прочитав ни одной."""
 
     def __init__(self, lines, code=0):
-        self.stdout = iter(lines)
+        self._lines = list(lines)
         self._code = code
+        self._done = False
+        self.pid = 4242
+        self.stdout = self._stream()
+
+    def _stream(self):
+        for ln in self._lines:
+            yield ln
+        self._done = True
+
+    def poll(self):
+        return self._code if self._done else None
 
     def wait(self):
         return self._code
+
+    def kill(self):
+        self._done = True
 
 
 def test_прогресс_в_статус_каждый_блок_а_в_лог_раз_в_10_процентов(monkeypatch):

@@ -12,7 +12,7 @@ Timeline model (validated against the real Timeline 2.xml):
   * cam2 source time = cam1 source time + delta, delta = -sync_offset.
 """
 import os, re, urllib.parse, subprocess, json
-from xml.sax.saxutils import escape as _esc
+from core.xmltext import xml_text as _esc
 
 FPS = 60
 TICKS_PER_FRAME = 4233600000          # ppro ticks per 60fps frame
@@ -353,8 +353,7 @@ def build(cam_paths, segments, offsets, out_path, assign=None,
     names = [os.path.basename(p) for p in cam_paths]
     urls = [pathurl(p) for p in cam_paths]
     durfs = [round(pr["dur_s"] * FPS) for pr in probes]
-    seq_name = name or os.path.splitext(names[0])[0]
-    seq_name = seq_name.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    seq_name = _esc(name or os.path.splitext(names[0])[0])
 
     vclips = ["" for _ in range(N)]
     aclips = ["" for _ in range(N)]

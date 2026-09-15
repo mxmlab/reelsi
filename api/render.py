@@ -429,82 +429,6 @@ def render_kill():
         _kill_proc(p)
 
 
-def _run_proc(cmd, total_frames=None, item_name=None, pct_base=0.0, pct_span=1.0):
-    """Запустить процесс, стримить вывод в лог рендера, парсить прогресс.
-    Возвращает код выхода. item_name — элемент очереди (задание FA), которому
-    дублируется доля рендера (aerender — единственный этап с честным процентом).
-    pct_base и pct_span задают долю шкалы (например 0.35..1.0 на фазе рендера)."""
-    global RPROC
-    try:
-        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                             text=True, encoding="utf-8", errors="replace",
-                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except FileNotFoundError as e:
-        remit("не найден исполняемый файл: {err}", err=str(e))
-        return -1
-    with RLOCK:
-        RPROC = p
-    if RJOB["cancel"]:
-        _kill_proc(p)
-    hdr_dur, hdr_fps, hdr_start, hdr_end = None, None, None, None
-    try:
-        for line in p.stdout:
-            line = line.rstrip("\r\n")
-            if not line.strip():
-                continue
-            remit(line)
-
-            # Заголовок AE (задание FL): кадры композиции и имя из Output To:
-            m_dur = _TC_DUR.search(line)
-            if m_dur:
-                hdr_dur = m_dur.group(1)
-            fps_val = _parse_frame_rate(line)
-            if fps_val is not None:
-                hdr_fps = fps_val
-            m_start = _TC_START.search(line)
-            if m_start:
-                hdr_start = m_start.group(1)
-            m_end = _TC_END.search(line)
-            if m_end:
-                hdr_end = m_end.group(1)
-
-            if hdr_dur and hdr_fps:
-                ae_fr = _parse_timecode(hdr_dur, hdr_fps)
-                if ae_fr:
-                    total_frames = ae_fr
-            elif hdr_start and hdr_end and hdr_fps:
-                sf = _parse_timecode(hdr_start, hdr_fps)
-                ef = _parse_timecode(hdr_end, hdr_fps)
-                if sf is not None and ef is not None and ef >= sf:
-                    total_frames = ef - sf + 1
-
-            out_to = _parse_output_to(line)
-            if out_to:
-                with RLOCK:
-                    RJOB["cur"] = out_to
-
-            pr = _parse_progress(line, total_frames) if total_frames else None
-            if pr is not None:
-                with RLOCK:
-                    pct_calc = min(1.0, pct_base + pr * pct_span)
-                    RJOB["pct"] = max(RJOB.get("pct") or 0.0, pct_calc)
-                    if item_name:
-                        for it in RJOB.get("items", []):
-                            if it.get("name") == item_name:
-                                it["pct"] = pr          # доля и в очередь (задание FA)
-                                break
-            if "Finished composition" in line or "Total Time Elapsed" in line:
-                with RLOCK:
-                    pct_calc = min(1.0, pct_base + pct_span)
-                    RJOB["pct"] = max(RJOB.get("pct") or 0.0, pct_calc)
-    finally:
-        rc = p.wait()
-        with RLOCK:
-            if RPROC is p:
-                RPROC = None
-    return rc
-
-
 def _pump_stdout(p):
     """Фоновый поток чтения stdout процесса в queue.Queue (задания AE-Hygiene, GN).
     Предотвращает переполнение OS-буфера трубы при обильном выводе процесса (напр. AfterFX -noui)
@@ -522,6 +446,139 @@ def _pump_stdout(p):
 
     threading.Thread(target=_pump, daemon=True).start()
     return q
+
+
+def _run_proc(cmd, total_frames=None, item_name=None, pct_base=0.0, pct_span=1.0):
+    """Запустить процесс (aerender), стримить вывод в лог рендера со сторожем простоя.
+    Возвращает код выхода или _AE_STALLED. item_name — элемент очереди (задание FA), которому
+    дублируется доля рендера (aerender — единственный этап с честным процентом).
+    pct_base и pct_span задают долю шкалы (например 0.35..1.0 на фазе рендера).
+    Сторож простоя aerender (задание HU): молчание AE_STALL_WARN_SEC — предупреждение,
+    AE_STALL_KILL_SEC — снятие. Константы те же, что у AfterFX (5 и 20 мин): рендер даже
+    тяжёлых кадров даёт строки прогресса чаще, а молчание означает зависание или окно ошибки."""
+    global RPROC
+    try:
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             text=True, encoding="utf-8", errors="replace",
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except FileNotFoundError as e:
+        remit("не найден исполняемый файл: {err}", err=str(e))
+        return -1
+    with RLOCK:
+        RPROC = p
+    if RJOB["cancel"]:
+        _kill_proc(p)
+    q = _pump_stdout(p)
+    last_activity = _time.time()
+    warned = False
+    stalled = False
+    hdr_dur, hdr_fps, hdr_start, hdr_end = None, None, None, None
+
+    def _handle(raw):
+        """Разбор одной строки aerender: лог, заголовок AE (задание FL), прогресс,
+        Output To. Обработчик ОДИН и на живой цикл, и на добирание хвоста после выхода
+        процесса: во второй копии (только remit) у конца прогона терялся разбор
+        «Finished composition» и «Total Time Elapsed», а по ним ставится 100% шкалы."""
+        nonlocal total_frames, last_activity, hdr_dur, hdr_fps, hdr_start, hdr_end
+        line = raw.rstrip("\r\n")
+        if not line.strip():
+            return
+        last_activity = _time.time()
+        remit(line)
+
+        # Заголовок AE (задание FL): кадры композиции и имя из Output To:
+        m_dur = _TC_DUR.search(line)
+        if m_dur:
+            hdr_dur = m_dur.group(1)
+        fps_val = _parse_frame_rate(line)
+        if fps_val is not None:
+            hdr_fps = fps_val
+        m_start = _TC_START.search(line)
+        if m_start:
+            hdr_start = m_start.group(1)
+        m_end = _TC_END.search(line)
+        if m_end:
+            hdr_end = m_end.group(1)
+
+        if hdr_dur and hdr_fps:
+            ae_fr = _parse_timecode(hdr_dur, hdr_fps)
+            if ae_fr:
+                total_frames = ae_fr
+        elif hdr_start and hdr_end and hdr_fps:
+            sf = _parse_timecode(hdr_start, hdr_fps)
+            ef = _parse_timecode(hdr_end, hdr_fps)
+            if sf is not None and ef is not None and ef >= sf:
+                total_frames = ef - sf + 1
+
+        out_to = _parse_output_to(line)
+        if out_to:
+            with RLOCK:
+                RJOB["cur"] = out_to
+
+        pr = _parse_progress(line, total_frames) if total_frames else None
+        if pr is not None:
+            with RLOCK:
+                pct_calc = min(1.0, pct_base + pr * pct_span)
+                RJOB["pct"] = max(RJOB.get("pct") or 0.0, pct_calc)
+                if item_name:
+                    for it in RJOB.get("items", []):
+                        if it.get("name") == item_name:
+                            it["pct"] = pr          # доля и в очередь (задание FA)
+                            break
+        if "Finished composition" in line or "Total Time Elapsed" in line:
+            with RLOCK:
+                pct_calc = min(1.0, pct_base + pct_span)
+                RJOB["pct"] = max(RJOB.get("pct") or 0.0, pct_calc)
+
+    def _drain(tail=False):
+        """Дочитать то, что насос уже положил в очередь. tail=True — после выхода
+        процесса подождать метку конца stdout (хвост ещё в трубе), но не дольше двух
+        секунд: застрявший на закрытии трубы насос-демон не должен держать джоб."""
+        deadline = _time.time() + 2.0
+        while True:
+            try:
+                ln = q.get(timeout=0.1) if tail and _time.time() < deadline else q.get_nowait()
+            except queue.Empty:
+                return
+            if ln is None:
+                tail = False            # stdout закрыт — дальше только остатки очереди
+                continue
+            _handle(ln)
+
+    try:
+        while True:
+            if p.poll() is not None:
+                break
+            now = _time.time()
+            if now - last_activity >= AE_STALL_KILL_SEC:
+                remit("⚠ aerender не отвечает {min} минут — прогон снят (сторож простоя)",
+                      min=int(AE_STALL_KILL_SEC // 60))
+                _kill_proc(p)
+                stalled = True
+                break
+            if not warned and now - last_activity >= AE_STALL_WARN_SEC:
+                warned = True
+                remit("⚠ aerender молчит {min} минут — обычно рендер столько "
+                      "не длится; сниму процесс через {kill} минут простоя",
+                      min=int(AE_STALL_WARN_SEC // 60), kill=int(AE_STALL_KILL_SEC // 60))
+            if RJOB["cancel"]:
+                _kill_proc(p)
+                break
+            _time.sleep(0.5)
+            _drain()
+    finally:
+        rc = p.wait()
+        _drain(tail=True)          # процесс умер — добираем и РАЗБИРАЕМ остаток stdout
+        with RLOCK:
+            if RPROC is p:
+                RPROC = None
+    if stalled and item_name:
+        # Причина снятия — и в логе, и в failed, ровно там, где сработал сторож: элемент
+        # очереди этому вызову уже передан (item_name), второй копии текста не заводим.
+        item_fail(RJOB, RLOCK, item_name,
+                  "aerender не отвечает %d минут — прогон снят" % (AE_STALL_KILL_SEC // 60),
+                  bucket="failed")
+    return _AE_STALLED if stalled else rc
 
 
 def _run_proc_afx(cmd):
@@ -875,6 +932,10 @@ def _run_render_single(norm, outdir, render_dir):
             if RJOB["cancel"]:
                 break
             if rc != 0:
+                if rc == _AE_STALLED:
+                    # снял сторож простоя: сообщение в логе и пометка ролика — внутри
+                    # _run_proc, второй раз то же самое не пишем
+                    continue
                 remit("  aerender завершился с кодом {code} — смотри вывод выше", code=rc)
                 item_fail(RJOB, RLOCK, stem, f"aerender rc={rc}", bucket="failed")
                 continue
@@ -1644,14 +1705,12 @@ def _run_proc_batch(aer, aep_call, comps, render_dir,
     return rc
 
 
-def _run_render_job(jobs, outdir, render_dir):
+def _run_render_job(norm, outdir, render_dir):
     """Диспетчер рендера. Набор из ОДНОГО ролика — ровно прежний путь
     (_run_render_single: безголовый .jsx, AfterFX, aerender). Набор из нескольких —
     ВСЕГДА _run_render_combined: один проект AE и один общий Reelsi_all.jsx
     (решение пользователя 2026-09-11; радио multimode на рендер не влияет)."""
     try:
-        from .build import _norm_build_jobs
-        norm = _norm_build_jobs(jobs)
         if not norm:
             remit("Набор пуст")
             return
@@ -1687,9 +1746,15 @@ def api_render_run():
     Свой RJOB, но ОБЩИЙ лок задач с нарезкой и сборкой .jsx (задание GZ, п. C):
     две тяжёлые задачи на одной видеокарте одновременно не идут."""
     d = request.get_json() or {}
-    jobs = d.get("jobs") or []
     try:
-        if not jobs:
+        from .build import _norm_build_jobs
+        try:
+            norm = _norm_build_jobs(d.get("jobs") or [])
+        except ValueError as e:
+            msg = str(e)
+            path = msg.split("Файл не найден: ", 1)[-1] if msg.startswith("Файл не найден: ") else msg
+            raise SystemExit(umsg("file_not_found", msg, path=path, err=msg))
+        if not norm:
             raise SystemExit(umsg("set_empty", "Набор пуст"))
         render_dir = (d.get("render_dir") or "").strip().strip('"') or default_render_dir()
         try:
@@ -1719,7 +1784,7 @@ def api_render_run():
                             eta_preliminary=False, stage_label=None, stage_done=0,
                             stage_total=0)
             threading.Thread(target=_run_render_job,
-                             args=(jobs, (d.get("outdir") or "").strip().strip('"'),
+                             args=(norm, (d.get("outdir") or "").strip().strip('"'),
                                    render_dir),
                              daemon=True).start()
         except Exception:

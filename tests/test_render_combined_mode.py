@@ -70,6 +70,14 @@ def _jobs(xmls, outdir):
             {"xml": xmls["xml2"], "outdir": outdir, "roto": False}]
 
 
+def _norm(jobs):
+    """api_render_run нормализует набор ДО ответа, а в поток отдаёт уже готовый
+    (задание HU), поэтому и прямой вызов диспетчера в тесте получает тот же вид,
+    что в бою, — нормализованный."""
+    from api.build import _norm_build_jobs
+    return _norm_build_jobs(jobs)
+
+
 def _reset_job(names):
     render.RJOB.update(running=True, done=False, log=[], pct=None, cur="", ae="",
                        out_dir="", result=[], failed=[], cancel=False, items=[])
@@ -277,7 +285,7 @@ def test_render_combined_collects_one_file_and_master_single_path(xmls, tmp_path
     monkeypatch.setattr(render, "remit", hooked_remit)
 
     _reset_job(["01_C0233", "02_C0234"])
-    render._run_render_job(_jobs(xmls, outdir), outdir, render_dir)
+    render._run_render_job(_norm(_jobs(xmls, outdir)), outdir, render_dir)
 
     assert not render.RJOB["failed"], f"Рендер упал: {render.RJOB['failed']}"
     assert render.RJOB["result"] == [mov1, mov2], render.RJOB["result"]
@@ -345,7 +353,7 @@ def test_render_combined_preflight_fail_stops_whole_set(xmls, tmp_path, monkeypa
     os.remove(xmls["cam1"])      # файл камеры пропал — предполёт обязан это поймать
 
     _reset_job(["01_C0233", "02_C0234"])
-    render._run_render_job(_jobs(xmls, outdir), outdir, render_dir)
+    render._run_render_job(_norm(_jobs(xmls, outdir)), outdir, render_dir)
 
     assert launched == [], "AfterFX/aerender запущены при непройденном предполёте"
     assert not render.RJOB["result"], "непрошедший предполёт набор отрендерился"
@@ -394,7 +402,7 @@ def test_run_render_job_multiple_clips_always_calls_combined(tmp_path, monkeypat
     monkeypatch.setattr(render, "_run_render_single", lambda norm, outdir, rdir: called.append("single"))
 
     _reset_job(["01", "02"])
-    render._run_render_job(jobs, str(tmp_path), str(tmp_path / "render"))
+    render._run_render_job(_norm(jobs), str(tmp_path), str(tmp_path / "render"))
     assert called == ["combined"], f"Ожидался только вызов combined, получено: {called}"
 
 

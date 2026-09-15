@@ -103,12 +103,16 @@ def _fileurl(p):
 
 def _preflight(jobs, tmp_path, monkeypatch):
     """Прогнать _run_render_job ровно до порога запуска AE (find_ae подменён, чтобы
-    не искать After Effects на этой машине). Возвращает (find_ae_вызван, RJOB)."""
+    не искать After Effects на этой машине). Возвращает (find_ae_вызван, RJOB).
+
+    Набор нормализуем сами: в бою это делает api_render_run ДО ответа (задание HU),
+    а в поток уходит уже готовый набор — прямой вызов диспетчера обязан получить тот же."""
+    from api.build import _norm_build_jobs
     render.RJOB.update(running=True, done=False, log=[], pct=None, cur="", ae="",
                        out_dir="", result=[], failed=[], cancel=False)
     reached = []
     monkeypatch.setattr(render, "_find_ae", lambda: reached.append(1) or None)
-    render._run_render_job(jobs, "", str(tmp_path / "exp"))
+    render._run_render_job(_norm_build_jobs(jobs), "", str(tmp_path / "exp"))
     return bool(reached), render.RJOB
 
 

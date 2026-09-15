@@ -6,6 +6,7 @@ repeated phrases for optional removal.
 All source times are in cam1 seconds; output positions are 60fps frames.
 """
 import re
+from core import subs
 FPS = 60
 
 
@@ -349,17 +350,18 @@ def find_restarts(words, min_span=2, max_span=10, max_gap=6, keep="last"):
     return ranges, log
 
 
-def _ts(frames):
-    t = frames / FPS
-    h = int(t // 3600); m = int(t % 3600 // 60); s = int(t % 60); ms = int(round((t - int(t)) * 1000))
-    if ms == 1000:
-        s += 1; ms = 0
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+def _ts(frames, fps=FPS):
+    """Кадры -> время SRT. fps — частота, В КОТОРОЙ посчитаны кадры, а не всегда 60:
+    у 25-кадровой секвенции деление на константу давало время в 2.4 раза меньше
+    реального (subtitle_xml отдаёт сюда meta["fps"]). Перевод — общий, в
+    core/subs.format_srt_time, своей копии с переносами тут нет."""
+    return subs.format_srt_time(frames / fps)
 
 
-def make_srt(sub_words, path, max_chars=42, max_gap_frames=36, min_cue_frames=18):
+def make_srt(sub_words, path, max_chars=42, max_gap_frames=36, min_cue_frames=18, fps=FPS):
     """Group output-timeline words (frames) into readable cues and write .srt.
-    Keeps original case/punctuation. Timings match the edited timeline."""
+    Keeps original case/punctuation. Timings match the edited timeline.
+    fps — частота таймлайна, в кадрах которой пришли sub_words (дефолт прежний)."""
     cues = []
     cur = []
     for wd in sub_words:
@@ -376,7 +378,7 @@ def make_srt(sub_words, path, max_chars=42, max_gap_frames=36, min_cue_frames=18
     for i, c in enumerate(cues, 1):
         start = c[0]["start"]; end = max(c[-1]["end"], start + min_cue_frames)
         text = " ".join(x["w"] for x in c).strip()
-        lines.append(f"{i}\n{_ts(start)} --> {_ts(end)}\n{text}\n")
+        lines.append(f"{i}\n{_ts(start, fps)} --> {_ts(end, fps)}\n{text}\n")
     open(path, "w", encoding="utf-8").write("\n".join(lines))
     return len(cues)
 

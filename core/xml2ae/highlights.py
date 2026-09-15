@@ -8,7 +8,11 @@
 """
 import os, html, base64
 import xml.etree.ElementTree as ET
+from core.applog import get_logger
+from core.fileio import atomic_text_write
 from .parse import _b64decode, _txt
+
+log = get_logger("reelsi.xml2ae.highlights")
 
 
 
@@ -132,12 +136,7 @@ def write_highlights(xml_path, indices, out_path=None):
             skipped.append((k, word, str(e))); continue
         colored.append(k)
     # запись с сохранением пролога (<?xml?> + <!DOCTYPE xmeml>) — ET их не пишет
-    _backup_once(xml_path, out_path)
-    raw = open(xml_path, encoding="utf-8").read()
-    cut = raw.find("<xmeml")
-    prolog = raw[:cut] if cut > 0 else '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE xmeml>\n'
-    body = ET.tostring(root, encoding="unicode")
-    open(out_path or xml_path, "w", encoding="utf-8").write(prolog + body)
+    _write_xml_prolog(root, xml_path, out_path)
     return dict(colored=colored, skipped=skipped)
 
 
@@ -172,17 +171,24 @@ def _backup_once(xml_path, out_path=None):
         if not os.path.isfile(bak):
             import shutil
             shutil.copy2(xml_path, bak)
-    except Exception:
-        pass                                              # бэкап — страховка, не повод падать
+    except Exception as e:
+        # Бэкап — страховка, не повод падать. Но и молчать нельзя: пользователь
+        # должен знать, что копии оригинала рядом нет (от пустого файла спасает
+        # атомарная запись, от «правки не туда» — уже нет).
+        log.warning("ошибка создания бэкапа %s: %s", bak, e)
 
 
 def _write_xml_prolog(root, xml_path, out_path=None):
+    """Записать XML с прологом (<?xml?> + <!DOCTYPE xmeml>) — ET их не пишет.
+
+    Запись атомарная (core/fileio.atomic_text_write): «Стоп» или сбой в момент
+    прямой записи оставлял на месте XML пользователя пустой файл."""
     _backup_once(xml_path, out_path)
     raw = open(xml_path, encoding="utf-8").read()
     cut = raw.find("<xmeml")
     prolog = raw[:cut] if cut > 0 else '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE xmeml>\n'
     body = ET.tostring(root, encoding="unicode")
-    open(out_path or xml_path, "w", encoding="utf-8").write(prolog + body)
+    atomic_text_write(out_path or xml_path, prolog + body)
 
 
 def set_highlights(xml_path, indices, out_path=None):

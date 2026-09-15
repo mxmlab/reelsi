@@ -93,7 +93,11 @@ def test_render_run_thread_fail_resets_running(client, tmp_path, clean_state, no
     from api.render import RJOB, RLOCK
 
     render_dir = tmp_path / "renders"
-    body = {"jobs": [{"xml": str(tmp_path / "clip.xml")}], "render_dir": str(render_dir)}
+    # Файл набора обязан существовать: api_render_run нормализует набор ДО старта
+    # потока и на пропаже отвечает внятной ошибкой, не доходя до рождения потока (HU).
+    xml = tmp_path / "clip.xml"
+    xml.write_text("<xml/>", encoding="utf-8")
+    body = {"jobs": [{"xml": str(xml)}], "render_dir": str(render_dir)}
 
     r = client.post("/api/render_run", json=body)
     assert r.status_code == 500

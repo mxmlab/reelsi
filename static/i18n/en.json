@@ -2275,6 +2275,8 @@
   "⚠ After Effects молчит {min} минут — обычно сборка проекта столько не длится; сниму процесс через {kill} минут простоя": "⚠ After Effects is silent for {min} minutes — a project build usually does not take that long; I will kill the process after {kill} minutes of silence",
   "⚠ After Effects не отвечает {min} минут — прогон снят (сторож простоя)": "⚠ After Effects has not responded for {min} minutes — run cancelled (idle watchdog)",
   "⚠ CUDA недоступна (torch.cuda.is_available()=False) — считаю на CPU, медленно. Нужна CUDA-сборка torch: pip uninstall -y torch torchvision, затем установка с --index-url .../cu121": "⚠ CUDA is unavailable (torch.cuda.is_available()=False) — running on CPU, slowly. CUDA build of torch required: pip uninstall -y torch torchvision, then install with --index-url .../cu121",
+  "⚠ aerender молчит {min} минут — обычно рендер столько не длится; сниму процесс через {kill} минут простоя": "⚠ aerender has been silent for {min} minutes — a render usually does not take that long; I will kill the process after {kill} minutes of silence",
+  "⚠ aerender не отвечает {min} минут — прогон снят (сторож простоя)": "⚠ aerender has not responded for {min} minutes — run cancelled (idle watchdog)",
   "⚠ localStorage переполнен — состояние хранится только на сервере (это ок)": "⚠ localStorage is full — the state is kept only on the server (that's fine)",
   "⚠ vision-модель не найдена в LM Studio (нужна qwen-vl или похожая)": "⚠ vision model not found in LM Studio (qwen-vl or similar required)",
   "⚠ {name}: {err}": "⚠ {name}: {err}",

@@ -302,6 +302,10 @@ def test_render_job_batch_dispatcher(batch_fixture, tmp_path, monkeypatch):
         {"xml": batch_fixture["xml1"], "outdir": outdir, "roto": False},
         {"xml": batch_fixture["xml2"], "outdir": outdir, "roto": False},
     ]
+    # api_render_run нормализует набор ДО старта потока (задание HU), поэтому прямой
+    # вызов диспетчера получает тот же вид, что в бою, — нормализованный.
+    from api.build import _norm_build_jobs
+    jobs = _norm_build_jobs(jobs)
 
     render.RJOB.update(
         running=True, done=False, log=[], pct=None, cur="", ae="",

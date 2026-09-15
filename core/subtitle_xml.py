@@ -106,7 +106,7 @@ def add_subtitles(xml_path, out_xml=None, model=None, emit=console_emit):
     new = txt[:vend] + subtrack + txt[vend:]
     out_xml = out_xml or (os.path.splitext(xml_path)[0] + "_subs.xml")
     open(out_xml, "w", encoding="UTF-8").write(new)
-    nsrt = align.make_srt(sub_words, os.path.splitext(out_xml)[0] + ".srt")
+    nsrt = align.make_srt(sub_words, os.path.splitext(out_xml)[0] + ".srt", fps=meta["fps"])
     if longs:
         emit("  ⚠ слишком длинные (без титра): {words}", words=", ".join(longs))
     emit("  -> {name}  ({subs} субтитров) + .srt ({nsrt})",

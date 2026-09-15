@@ -201,11 +201,11 @@ def test_render_exception_logged(tmp_path, monkeypatch):
     def fake_render_single(*args, **kwargs):
         raise RuntimeError("AE render pipeline crashed unexpectedly")
 
-    monkeypatch.setattr("api.build._norm_build_jobs", lambda jobs: jobs)
     monkeypatch.setattr(render, "_run_render_single", fake_render_single)
 
     batch = [{"xml_path": "clip1.xml"}]
-    # Вызываем _run_render_batch / ветку с одиночным рендером в потоке
+    # Вызываем ветку с одиночным рендером в потоке (набор — уже нормализованный,
+    # как его отдаёт api_render_run, задание HU)
     render._run_render_job(batch, str(tmp_path), str(tmp_path / "out"))
 
     for h in logging.getLogger("reelsi").handlers:

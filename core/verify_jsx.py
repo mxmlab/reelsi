@@ -222,6 +222,17 @@ def check_undeclared(raw, rep):
                 % (name, name))
 
 
+def check_line_separators(raw, rep):
+    """Сырые U+2028 (Line Separator) и U+2029 (Paragraph Separator).
+
+    В ES3 (ExtendScript в AE) они считаются переводом строки: строковый литерал
+    рвётся и падает импорт всего .jsx. `node --check` этого не видит — в ES2019+
+    они в строках легальны. Экранирует их `core/xml2ae/jsutil._js`."""
+    if "\u2028" in raw or "\u2029" in raw:
+        rep.err("сырые U+2028/U+2029 в тексте .jsx — ExtendScript (ES3) считает их "
+                "переводом строки и упадёт при импорте")
+
+
 def check_bom(path, rep):
     """.jsx пишется с BOM (utf-8-sig) — ExtendScript иначе читает кириллицу мусором."""
     with open(path, "rb") as f:
@@ -498,6 +509,7 @@ def verify(path, xml_path=None, ncams=None):
     raw = open(path, encoding="utf-8-sig", errors="replace").read()
 
     check_bom(path, rep)
+    check_line_separators(raw, rep)
     check_syntax(path, raw, rep)
     check_undeclared(raw, rep)
 

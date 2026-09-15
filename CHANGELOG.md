@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Removed**: the unused per-clip batch render path (`_run_render_batch`, `build_render_batch`).
 - **Subtitles**: one function builds the Premiere subtitle track, so long words are font-scaled on every route; one rule (word midpoint) places words on the timeline for both the web route and the CLI. Two SRT writers remain on purpose: each mirrors the rows of its own output (After Effects scene rows, Premiere word grouping).
 - **Preview proxy and GPU**: building camera proxies takes the shared GPU job lock, so it no longer runs on top of a cut or render.
+- **Media endpoint**: `/api/media` serves only video, image and audio files; any other extension is refused, so copies of config files can no longer be read through it.
+- **Cross-site requests**: a request with `Sec-Fetch-Site: cross-site` or `same-site` is refused for every method, not only for state-changing ones; request bodies are limited to 32 MB.
+- **Fonts on macOS and Linux**: font lookup also searches the standard macOS and Linux font folders, including subfolders.
+- **CI on Windows**: the test suite also runs on `windows-latest`.
+- **GigaAM pinned**: the optional GigaAM dependency is installed from a fixed commit.
 
 ### Fixed
 - **Stop could delete an arbitrary folder**: a `WORK_DIR=` line printed inside a model's answer was trusted as the job's temp folder and removed on Stop; only the engine's own temp folder is accepted now.
@@ -38,6 +43,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Two AI calls at once**: the wait for the previous AI call and taking the slot are one atomic step; insert description can no longer be started twice.
 - **Orphan processes on exit**: stopping the web UI kills the running cut process and the After Effects render.
 - **Tests in CI**: the breath detector revision test no longer needs `transformers`, and the environment check test passes in any interface language.
+- **Line separators in After Effects scripts**: U+2028 and U+2029 inside text are escaped, so a subtitle or intro word containing them no longer breaks the whole `.jsx` in ExtendScript; `verify_jsx` reports raw ones.
+- **Control characters in XML**: characters that XML 1.0 forbids are removed from file names and text in Premiere XML, subtitle templates and `.drp`, so one such character no longer makes the whole file unreadable.
+- **59.94 fps drop-frame timecode**: four frames per minute are dropped (not two), so a one-hour clip no longer drifts by 1.8 seconds in the `.drp` export.
+- **SRT timing**: Premiere-route SRT uses the sequence frame rate instead of a fixed 60 fps, and times like 59.9996 s round to `00:01:00,000` instead of the invalid `00:00:60,000`.
+- **Word highlight edits**: the Premiere XML is rewritten atomically, so a crash or Stop during the write no longer leaves an empty file; a failed backup is logged.
+- **Render set validation**: `/api/render_run` checks the set before answering, so a broken set shows a clear error instead of "internal error".
+- **Stuck downloads and renders**: a Google Drive download can be stopped with Stop and is killed after 10 minutes without output; `aerender` gets the same stall watchdog as After Effects.
+- **Waveform cache**: `pps` is clamped to 10–1000, so an extreme value no longer writes a huge cache file.
+- **Sound effect roles**: a malformed `assets/assets.json` or a path leaving the `assets` folder no longer breaks the script build; problems are logged.
+- **Word editing in the interface**: a dead duplicate of the word save function was removed; which copy wins no longer depends on script file order.
+- **Forced alignment**: word boundaries no longer shift by one letter after each word separator.
+- **Tests**: subtitle width checks skip explicitly when the font is missing instead of passing silently.
 - **Tests without torch**: the pinned-revision tests for RVM and CED-tiny and the "healthy environment" checks of `doctor.py` are skipped when torch is not installed, instead of failing; a healthy environment includes torch by definition, so these checks are not weakened.
 - **Unhandled errors in API routes**: they return JSON with an error code instead of an HTML page, so the interface shows the error instead of staying silent.
 - **Thread start failure**: if a cut or build thread cannot start, the job lock is released instead of leaving the app "busy" until restart.

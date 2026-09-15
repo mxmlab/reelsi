@@ -24,6 +24,7 @@ import zipfile
 import zlib
 
 from core import paths
+from core.xmltext import xml_text as _esc
 
 SRC_FPS = 30000 / 1001                 # NTSC — в каком темпе считаются таймкоды камер
 
@@ -93,8 +94,10 @@ def _drop_frame_fps(fps):
 
 
 def timecode_frames(tc, fps=None):
-    """Таймкод -> номер кадра. `;` = drop-frame: счётчик пропускает по 2 кадра в
-    минуту, кроме каждой десятой. Без fps — legacy-NTSC (счёт на 30, drop при
+    """Таймкод -> номер кадра. `;` = drop-frame: счётчик пропускает кадры в начале
+    каждой минуты, кроме каждой десятой. Пропуск на минуту = 2 * round(номинал/30):
+    у 29.97 это 2, у 59.94 — 4 (жёсткая двойка давала 59.94-часу 3601.8 с вместо
+    3600 и уезжающий на 1.8 с клип). Без fps — legacy-NTSC (счёт на 30, drop при
     `;`). С fps — счёт в номинале этой частоты (round), drop только у 29.97/59.94:
     для камер PAL 25 счёт идёт на 25 без пропусков."""
     parts = [int(x) for x in tc.replace(";", ":").split(":")]
@@ -106,8 +109,9 @@ def timecode_frames(tc, fps=None):
         drop = ";" in tc and _drop_frame_fps(fps)
     frames = (h * 3600 + m * 60 + s) * nominal + f
     if drop:
+        drop_per_min = 2 * round(nominal / 30)
         total_min = h * 60 + m
-        frames -= 2 * (total_min - total_min // 10)
+        frames -= drop_per_min * (total_min - total_min // 10)
     return frames
 
 
@@ -487,15 +491,10 @@ def _section(text, tag):
     return (m.group(1), m.start(1), m.end(1)) if m else ("", -1, -1)
 
 
-def _esc(value):
-    """Экранировать XML-спецсимволы в текстовых узлах: путь/имя с «&» ломал структуру .drp."""
-    return str(value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-
 def _set(el, tag, value):
     """Подстановка через лямбду: в путях Windows есть \\U и прочее, что re.sub
     в строке-замене принимает за escape-последовательность и падает. Текст
-    экранируем _esc — см. _esc."""
+    экранируем через core.xmltext.xml_text."""
     new = f"<{tag}>{_esc(value)}</{tag}>"
     return re.sub(r"<" + tag + r">[^<]*</" + tag + r">|<" + tag + r"/>",
                   lambda m: new, el, count=1)

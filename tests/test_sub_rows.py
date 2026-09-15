@@ -200,14 +200,16 @@ def test_two_rows_wrapping_vs_font_shrinking(xml_subs, tmp_path):
     for s in p_wrap2["subs"]:
         fs = s.get("fsize", p_wrap2["fsize"])
         tw = _fonts.text_width("SFPro-CondensedSemibold", s["w"], fs)
-        if tw is not None:
-            assert tw <= max_w + 1.0, f"Line too wide: {s['w']} ({tw} > {max_w})"
+        if tw is None:
+            pytest.skip("нет шрифта SFPro-CondensedSemibold")
+        assert tw <= max_w + 1.0, f"Line too wide: {s['w']} ({tw} > {max_w})"
 
     for s in p_wrap1["subs"]:
         fs = s.get("fsize", p_wrap1["fsize"])
         tw = _fonts.text_width("SFPro-CondensedSemibold", s["w"], fs)
-        if tw is not None:
-            assert tw <= max_w + 1.0, f"Line too wide: {s['w']} ({tw} > {max_w})"
+        if tw is None:
+            pytest.skip("нет шрифта SFPro-CondensedSemibold")
+        assert tw <= max_w + 1.0, f"Line too wide: {s['w']} ({tw} > {max_w})"
 
     # sub_step в плане равен 1.18 * fsize, у отдельных строк fsize и sub_step отсутствуют (задание CK)
     assert "sub_step" in p_wrap2
@@ -296,8 +298,9 @@ def test_single_fsize_and_step_per_video(xml_subs):
             assert "fsize" not in s
             assert "sub_step" not in s
             tw = _fonts.text_width("SFPro-CondensedSemibold", s["w"], plan["fsize"])
-            if tw is not None:
-                assert tw <= max_w + 1.0, f"Line too wide at w={w_count}: {s['w']} ({tw} > {max_w})"
+            if tw is None:
+                pytest.skip("нет шрифта SFPro-CondensedSemibold")
+            assert tw <= max_w + 1.0, f"Line too wide at w={w_count}: {s['w']} ({tw} > {max_w})"
 
 
 def test_font_change_changes_fsize(xml_subs):
@@ -373,8 +376,9 @@ def test_single_word_sub_shrinking(xml_subs):
     for s in plan["subs"]:
         fs = s.get("fsize", plan["fsize"])
         tw = _fonts.text_width("SFPro-CondensedSemibold", s["w"], fs)
-        if tw is not None:
-            assert tw <= max_w + 1.0, f"Single word too wide: {s['w']} ({tw} > {max_w})"
+        if tw is None:
+            pytest.skip("нет шрифта SFPro-CondensedSemibold")
+        assert tw <= max_w + 1.0, f"Single word too wide: {s['w']} ({tw} > {max_w})"
 
     # Проверяем, что длинные слова действительно получили индивидуальный fsize < 140
     shrunk_subs = [s for s in plan["subs"] if "fsize" in s]

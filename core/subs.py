@@ -6,12 +6,9 @@ import os, re
 
 from core import paths
 from core.subtitle_blobs import BlobLibrary
+from core.xmltext import xml_text as _xml_escape
 TICKS_PER_FRAME = 4233600000
 GFX_IN = 216000  # fixed in-point into the graphic media (mirrors reference)
-
-
-def _xml_escape(s):
-    return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
 
 
 PHRASE_GAP = 0.30  # сек: пауза между словами, закрывающая строку субтитров раньше лимита
@@ -209,14 +206,15 @@ def build_sub_rows(words, per_row=1, max_rows=1, cut_bounds=None, word_timings=N
 
 
 def format_srt_time(sec):
-    sec = max(0.0, float(sec))
-    h = int(sec // 3600)
-    m = int(sec % 3600 // 60)
-    s = int(sec % 60)
-    ms = int(round((sec - int(sec)) * 1000))
-    if ms >= 1000:
-        s += 1
-        ms = 0
+    """Секунды -> время SRT `ЧЧ:ММ:СС,ммм`. Единственная точка перевода времени в
+    SRT на весь проект (её же берёт core/align._ts).
+
+    Через целые миллисекунды и divmod: ручной перенос `ms >= 1000 -> s += 1` не
+    переносился дальше, и 59.9996 давало «00:00:60,000» — невалидный SRT."""
+    total_ms = round(max(0.0, float(sec)) * 1000)
+    h, rem = divmod(total_ms, 3600 * 1000)
+    m, rem = divmod(rem, 60 * 1000)
+    s, ms = divmod(rem, 1000)
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 

@@ -338,6 +338,19 @@ def api_pickdir():
         return jsonify(**umsg_err(SystemExit(umsg("pickdir_failed", str(e)))))
 
 
+# Allowlist расширений для /api/media: видео, картинки, звук (задание HU).
+# Фронт использует /api/media для стриминга видео (в т.ч. прокси pv_*.mp4),
+# показа картинок-вставок и воспроизведения музыки/SFX.
+ALLOWED_MEDIA_EXTS = {
+    # Видео
+    "mp4", "mov", "m4v", "mkv", "webm", "avi", "mxf", "mts", "m2ts",
+    # Картинки
+    "png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "tif", "tiff", "heic",
+    # Звук
+    "wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "aif", "aiff",
+}
+
+
 @bp.route("/api/media")
 def api_media():
     """Serve a local media file with HTTP Range support so the browser <video> in
@@ -345,6 +358,9 @@ def api_media():
     path = (request.args.get("path") or "").strip().strip('"')
     if not path or not os.path.isfile(path):
         return ("not found", 404)
+    ext = os.path.splitext(path)[1].lower().lstrip(".")
+    if ext not in ALLOWED_MEDIA_EXTS:
+        return ("forbidden", 403)
     if _never_serve(path):
         return ("forbidden", 403)
     if request.args.get("dl"):
@@ -374,6 +390,7 @@ def api_waveform():
         pps = int(request.args.get("pps") or 80)
     except (TypeError, ValueError):
         pps = 80                     # ?pps=abc роняло роут в HTML-500 (задание HL)
+    pps = max(10, min(1000, pps))    # ограничение [10, 1000] от раздувания кэша (задание HU)
     if not os.path.isfile(path):
         return jsonify(**umsg_err(SystemExit(umsg("no_file", "нет файла"))))
     cache = path + f".peaks{pps}.json"

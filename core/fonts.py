@@ -22,8 +22,18 @@ _GS_CACHE = {}
 _GB_CACHE = {}
 
 _FONT_DIRS = [
+    # Windows
     os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts"),
     os.path.join(os.environ.get("LOCALAPPDATA", ""), "Microsoft", "Windows", "Fonts"),
+    # macOS
+    "/Library/Fonts",
+    "/System/Library/Fonts",
+    os.path.expanduser("~/Library/Fonts"),
+    # Linux
+    "/usr/share/fonts",
+    "/usr/local/share/fonts",
+    os.path.expanduser("~/.local/share/fonts"),
+    os.path.expanduser("~/.fonts"),
 ]
 _EXT = (".ttf", ".otf", ".ttc")
 
@@ -235,13 +245,14 @@ def list_fonts(refresh=False):
     for d in _FONT_DIRS:
         if not os.path.isdir(d):
             continue
-        for f in os.listdir(d):
-            if os.path.splitext(f)[1].lower() not in _EXT:
-                continue
-            for rec in _read_file(os.path.join(d, f)):
-                if rec["ps"] and rec["ps"] not in seen:
-                    seen.add(rec["ps"])
-                    items.append(rec)
+        for root, _dirs, files in os.walk(d):
+            for f in files:
+                if os.path.splitext(f)[1].lower() not in _EXT:
+                    continue
+                for rec in _read_file(os.path.join(root, f)):
+                    if rec["ps"] and rec["ps"] not in seen:
+                        seen.add(rec["ps"])
+                        items.append(rec)
     items.sort(key=lambda x: (x["family"].lower(), x["ps"].lower()))
     _CACHE = items
     return items

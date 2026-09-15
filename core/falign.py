@@ -13,6 +13,9 @@ Whisper даёт ТЕКСТ, но его тайминги приблизител
 """
 import os, re
 from core.app_meta import console_emit, wrap_emit
+from core.applog import get_logger
+
+log = get_logger("reelsi.falign")
 
 # ВНИМАНИЕ: НЕ звать cuda_env.setup() — он ставит в PATH cuDNN от ctranslate2 (faster-whisper),
 # а torch/wav2vec2 нужен свой встроенный cuDNN → иначе краш cudnnGetLibConfig (EXIT 127).
@@ -99,19 +102,34 @@ def align_text(audio_f32, text, device="cuda", sr=16000):
         spans = torchaudio.functional.merge_tokens(aln[0], sc[0])
     except Exception:
         return []
-    wf, ti = {}, 0
-    for sp in spans:
-        if sp.token == blank:
-            continue
-        while ti < len(meta) and meta[ti] == -1:
-            ti += 1
-        if ti >= len(meta):
-            break
-        wk = meta[ti]; ti += 1
-        if wk in wf:
-            wf[wk][0] = min(wf[wk][0], sp.start); wf[wk][1] = max(wf[wk][1], sp.end)
-        else:
-            wf[wk] = [sp.start, sp.end]
+    # merge_tokens склеивает подряд идущие одинаковые токены: на удвоенной букве
+    # («класс») два таргета сливаются в один спан, и спанов становится меньше целей.
+    # Тогда пара «спан i ↔ meta[i]» рвётся — уходим на прежний путь, но с логом.
+    wf = {}
+    if len(spans) == len(meta):
+        for sp, wk in zip(spans, meta):
+            if wk == -1 or sp.token == blank:
+                continue
+            if wk in wf:
+                wf[wk][0] = min(wf[wk][0], sp.start)
+                wf[wk][1] = max(wf[wk][1], sp.end)
+            else:
+                wf[wk] = [sp.start, sp.end]
+    else:
+        log.warning("forced align: spans count (%d) != meta count (%d), fallback to legacy mapping", len(spans), len(meta))
+        ti = 0
+        for sp in spans:
+            if sp.token == blank:
+                continue
+            while ti < len(meta) and meta[ti] == -1:
+                ti += 1
+            if ti >= len(meta):
+                break
+            wk = meta[ti]; ti += 1
+            if wk in wf:
+                wf[wk][0] = min(wf[wk][0], sp.start); wf[wk][1] = max(wf[wk][1], sp.end)
+            else:
+                wf[wk] = [sp.start, sp.end]
     out = []
     for k, w in enumerate(words):
         if k in wf:
@@ -182,19 +200,33 @@ def align_words(wav_path, words, device="cuda", emit=console_emit):
             spans = torchaudio.functional.merge_tokens(aln[0], sc[0])
         except Exception:
             continue
-        wf, ti = {}, 0
-        for sp in spans:
-            if sp.token == blank:
-                continue
-            while ti < len(meta) and meta[ti] == -1:
-                ti += 1
-            if ti >= len(meta):
-                break
-            wk = meta[ti]; ti += 1
-            if wk in wf:
-                wf[wk][0] = min(wf[wk][0], sp.start); wf[wk][1] = max(wf[wk][1], sp.end)
-            else:
-                wf[wk] = [sp.start, sp.end]
+        # Соответствие «спан i ↔ meta[i]» — то же самое, что в align_text
+        # (там же разбор случая «спанов меньше целей»: удвоенная буква).
+        wf = {}
+        if len(spans) == len(meta):
+            for sp, wk in zip(spans, meta):
+                if wk == -1 or sp.token == blank:
+                    continue
+                if wk in wf:
+                    wf[wk][0] = min(wf[wk][0], sp.start)
+                    wf[wk][1] = max(wf[wk][1], sp.end)
+                else:
+                    wf[wk] = [sp.start, sp.end]
+        else:
+            log.warning("forced align: spans count (%d) != meta count (%d), fallback to legacy mapping", len(spans), len(meta))
+            ti = 0
+            for sp in spans:
+                if sp.token == blank:
+                    continue
+                while ti < len(meta) and meta[ti] == -1:
+                    ti += 1
+                if ti >= len(meta):
+                    break
+                wk = meta[ti]; ti += 1
+                if wk in wf:
+                    wf[wk][0] = min(wf[wk][0], sp.start); wf[wk][1] = max(wf[wk][1], sp.end)
+                else:
+                    wf[wk] = [sp.start, sp.end]
         for wk, (fs, fe) in wf.items():
             out[wk]["start"] = round(a0 + fs * fd, 3)
             out[wk]["end"] = round(a0 + fe * fd, 3)

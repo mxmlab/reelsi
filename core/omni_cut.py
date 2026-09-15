@@ -583,7 +583,9 @@ def decide(texts, emit=console_emit, model=None, ssm_flags=None, overrides=None,
                            temperature=0.2, reasoning=_lvl,
                            profile=aicut.step_profile("cut"), step="cut")   # модель шага
     idxset = {i for i, _ in content}
-    llm_drop = {int(i) for i in data.get("drop", []) if int(i) in idxset}
+    # Ответ модели — недоверенный: `{"drop": ["a"]}` или `[{}]` роняли джоб трейсбеком уже
+    # ПОСЛЕ оплаченного вызова, поэтому разбираем через as_ints, а не голым int().
+    llm_drop = set(aicut.as_ints(data.get("drop"), lo=0)) & idxset
     # Защита от «схлопывания куска таймлайна»: длинный содержательный интервал НЕ выкидываем,
     # если он не дубль соседа (±2). Короткие (<2.5с, брошенные заходы) LLM резать разрешаем.
     # Для GigaAM (allow_long_drop=True) эту защиту ОТКЛЮЧАЕМ — там фразы режутся по паузам

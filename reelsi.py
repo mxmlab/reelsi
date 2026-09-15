@@ -275,7 +275,7 @@ def process_pair(cams, out_xml, args, model=None, emit=console_emit, music_path=
     return info
 
 
-def main():
+def build_parser():
     ap = argparse.ArgumentParser()
     ap.add_argument("--base", default=DEFAULT_BASE)
     ap.add_argument("--cam1"); ap.add_argument("--cam2")
@@ -300,6 +300,15 @@ def main():
     ap.add_argument("--no-cut", action="store_true", help="только субтитры, без нарезки")
     ap.add_argument("--aggressive", action="store_true", help="агрессивная нарезка (режет филлеры и паузы)")
     ap.add_argument("--pause-max", type=float, default=1.0, help="макс. пауза между словами (агрессивный режим)")
+    ap.add_argument("--forced-align", action="store_true",
+                    help="принудительное выравнивание границ слов (forced alignment)")
+    return ap
+
+
+def main():
+    from core.paths import require_source_tree
+    require_source_tree()
+    ap = build_parser()
     args = ap.parse_args()
     n_cams = 1 if args.single else args.cams
 

@@ -15,7 +15,7 @@ Reelsi is a local editing assistant for talking-head video. AI cuts footage by c
 - **Word highlights and intro**: detects key phrases for emphasis and creates animated intro title cards.
 - **In-browser preview**: renders the full scene layout before export with direct drag-and-drop adjustments.
 - **Premiere and After Effects export**: generates Premiere XML and After Effects scripts, with batch rendering without opening AE.
-- **DaVinci Resolve export**: exports timeline projects to `.drp` format.
+- **DaVinci Resolve export**: exports timeline projects to `.drp` format. The only path verified end to end is After Effects; the Premiere and Resolve exports work but are tested less (see Known limitations).
 - **Google Drive download**: fetches footage directly from shared links via `rclone`.
 
 ## Requirements
@@ -31,7 +31,9 @@ Tested only on Windows 11 with an NVIDIA GPU and Adobe After Effects / Premiere 
 
 ## Installation
 
-Run all commands from the `reelsi/` folder.
+Run all commands from the `reelsi/` clone folder.
+
+Non-editable installation (`pip install .` or `pipx`) is not supported because templates, static assets, and user configuration files live inside the repository clone folder.
 
 Run the automated installer:
 
@@ -47,7 +49,15 @@ pip install -r requirements.txt
 pip install -r requirements-optional.txt
 ```
 
-Verify your environment with `python doctor.py`, which checks installed tools, GPU acceleration, and missing components.
+Editable installation from clone (registers CLI commands `reelsi`, `reelsi-webui`, `reelsi-doctor`):
+
+```bash
+pip install -e .
+# with optional dependencies:
+pip install -e ".[optional]"
+```
+
+Verify your environment with `python doctor.py` (or `reelsi-doctor`), which checks installed tools, GPU acceleration, and missing components.
 
 ## Quick start
 
@@ -64,7 +74,7 @@ my_workspace/
 Start the web interface:
 
 ```bash
-python webui.py
+python webui.py          # or: reelsi-webui
 ```
 
 Open http://127.0.0.1:5001 to run the three-step wizard (Cut, Markup, After Effects). On first run, `webui.py` creates `insertlib.json`, `styles/`, and `speakers/` from `examples/*.example.json`. Configure AI keys via ⚙ in the UI (stored in gitignored `ai_config.json`).
@@ -72,7 +82,7 @@ Open http://127.0.0.1:5001 to run the three-step wizard (Cut, Markup, After Effe
 CLI commands:
 
 ```bash
-python reelsi.py --cams 2     # two cameras
+python reelsi.py --cams 2     # two cameras (after pip install -e .: reelsi --cams 2)
 python reelsi.py --single     # single camera
 python reelsi.py --no-cut     # subtitles only
 ```

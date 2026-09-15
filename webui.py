@@ -78,13 +78,45 @@ def index():
     return _page()
 
 
-if __name__ == "__main__":
+def _cleanup_on_exit():
+    """Завершение дочерних процессов при выходе сервера (atexit).
+
+    Освобождает VRAM: процессы нарезки (omni_cut/ASR) и aerender/After Effects.
+    Хук безопасен и не падает, если активных процессов нет.
+    """
+    try:
+        from api.jobs import _kill_curproc
+        _kill_curproc()
+    except Exception:
+        pass
+    try:
+        from api.render import RPROC, RLOCK, _kill_proc
+        with RLOCK:
+            p = RPROC
+        if p and getattr(p, "poll", lambda: None)() is None:
+            _kill_proc(p)
+    except Exception:
+        pass
+
+
+def main():
+    import atexit
+    from core.applog import get_logger
+    from core.paths import require_source_tree
+    require_source_tree()
+    atexit.register(_cleanup_on_exit)
     from core import bootstrap
     for _msg in bootstrap.ensure_user_files():
         print(f"  + {_msg}")
     port = int(os.environ.get("PORT") or 5001)
     url = f"http://127.0.0.1:{port}"
     print(f"Reelsi Web UI v{APP_VERSION} -> {url}")
+    log = get_logger("reelsi")
+    log.info(f"Reelsi Web UI v{APP_VERSION} -> {url} (port {port})")
     if not (os.environ.get("REELSI_NO_BROWSER") or os.environ.get("AUTOCUT_NO_BROWSER")):
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     app.run(port=port, threaded=True, use_reloader=False)
+
+
+if __name__ == "__main__":
+    main()

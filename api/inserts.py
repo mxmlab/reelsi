@@ -164,6 +164,7 @@ def api_insertlib_match():
 
 
 ILL_JOB = {"running": False, "done": 0, "total": 0, "log": [], "error": ""}
+ILL_LOCK = threading.Lock()
 
 
 @bp.route("/api/insertlib_import", methods=["POST"])
@@ -198,28 +199,42 @@ def api_insertlib_import():
 def api_insertlib_describe():
     """Vision-описания всех файлов базы (фоновый тред — vision по каждому файлу долгий)."""
     try:
-        if ILL_JOB["running"]:
-            raise SystemExit(umsg("describe_busy", "Описание уже идёт"))
-        only_missing = bool((request.get_json() or {}).get("only_missing", True))
-        ILL_JOB.update(running=True, done=0, total=0, log=[], error="")
+        with ILL_LOCK:
+            if ILL_JOB["running"]:
+                raise SystemExit(umsg("describe_busy", "Описание уже идёт"))
+            only_missing = bool((request.get_json() or {}).get("only_missing", True))
+            ILL_JOB.update(running=True, done=0, total=0, log=[], error="")
 
         def _run():
             try:
                 from core import insertlib
 
                 def prog(done, total):
-                    ILL_JOB["done"], ILL_JOB["total"] = done, total
+                    with ILL_LOCK:
+                        ILL_JOB["done"], ILL_JOB["total"] = done, total
 
-                r = insertlib.auto_describe(emit=lambda *a: ILL_JOB["log"].append(" ".join(str(x) for x in a)),
+                def _emit(*a):
+                    with ILL_LOCK:
+                        ILL_JOB["log"].append(" ".join(str(x) for x in a))
+
+                r = insertlib.auto_describe(emit=_emit,
                                             only_missing=only_missing, progress=prog)
                 if r.get("error"):
-                    ILL_JOB["error"] = r["error"]
+                    with ILL_LOCK:
+                        ILL_JOB["error"] = r["error"]
             except Exception as e:
-                ILL_JOB["error"] = f"{type(e).__name__}: {e}"
+                with ILL_LOCK:
+                    ILL_JOB["error"] = f"{type(e).__name__}: {e}"
             finally:
-                ILL_JOB["running"] = False
+                with ILL_LOCK:
+                    ILL_JOB["running"] = False
 
-        threading.Thread(target=_run, daemon=True).start()
+        try:
+            threading.Thread(target=_run, daemon=True).start()
+        except Exception:
+            with ILL_LOCK:
+                ILL_JOB["running"] = False
+            raise
         return jsonify(ok=True)
     except SystemExit as e:
         return jsonify(**umsg_err(e))
@@ -227,9 +242,13 @@ def api_insertlib_describe():
 
 @bp.route("/api/insertlib_describe_status")
 def api_insertlib_describe_status():
-    since = int(request.args.get("since") or 0)
-    return jsonify(running=ILL_JOB["running"], done=ILL_JOB["done"], total=ILL_JOB["total"],
-                   error=ILL_JOB["error"], log=ILL_JOB["log"][since:], log_total=len(ILL_JOB["log"]))
+    try:
+        since = int(request.args.get("since") or 0)
+    except (TypeError, ValueError):
+        since = 0                    # ?since=abc роняло роут в HTML-500 (задание HL)
+    with ILL_LOCK:
+        return jsonify(running=ILL_JOB["running"], done=ILL_JOB["done"], total=ILL_JOB["total"],
+                       error=ILL_JOB["error"], log=ILL_JOB["log"][since:], log_total=len(ILL_JOB["log"]))
 
 
 @bp.route("/api/insertlib_desc", methods=["POST"])

@@ -98,7 +98,7 @@ def test_missing_optional_is_a_warning_not_a_failure(capsys, healthy):
     code, out = _run(capsys, hide=["silero_vad"])
     assert code == 0
     assert "silero_vad" in out
-    assert "детектор вздохов" in out, "не сказано, какая функция отключится"
+    assert doctor.t("детектор вздохов и «кхе»") in out, "не сказано, какая функция отключится"
 
 
 def test_every_optional_package_names_its_feature():

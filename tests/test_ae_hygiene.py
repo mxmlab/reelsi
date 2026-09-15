@@ -135,9 +135,9 @@ def _env(monkeypatch, tmp_path):
 
 # --- (a) гигиена журнала: старый .aelog.txt удаляется ДО запуска AfterFX -----------
 
-def test_batch_deletes_stale_aelog_before_master(clips, tmp_path, monkeypatch):
-    """Набор: .aelog.txt прошлого прогона (с «evalFile ok:») удаляется до запуска
-    мастера, и ни одной строки «собран:» из старого лога в журнал джоба не попадает."""
+def test_combined_deletes_stale_aelog_before_master(clips, tmp_path, monkeypatch):
+    """Набор «Один на всё»: .aelog.txt прошлого прогона (с «evalFile ok:») удаляется до
+    запуска мастера, и ни одной строки старого лога в журнал джоба не попадает."""
     outdir = str(tmp_path / "jsx")
     render_dir = str(tmp_path / "exp")
     os.makedirs(outdir)
@@ -162,12 +162,12 @@ def test_batch_deletes_stale_aelog_before_master(clips, tmp_path, monkeypatch):
     batch = [{"xml_path": clips["xml1"], "outdir": outdir, "roto": False},
              {"xml_path": clips["xml2"], "outdir": outdir, "roto": False}]
     _reset_job(["01_C0233", "02_C0234"])
-    render._run_render_batch(batch, outdir, render_dir)
+    render._run_render_combined(batch, outdir, render_dir)
 
     assert launched == ["fake_afterfx.exe"], launched
     assert seen_at_launch == [False], "старый .aelog.txt не удалён до запуска AfterFX"
     text = _log_text(render.RJOB)
-    assert "собран:" not in text, "строки старого лога попали в журнал джоба:\n" + text
+    assert "[aelog]" not in text, "строки старого лога попали в журнал джоба:\n" + text
     assert any(f["name"] in ("01_C0233", "02_C0234") for f in render.RJOB["failed"])
 
 
@@ -202,9 +202,9 @@ def test_single_deletes_stale_aelog_before_afterfx(clips, tmp_path, monkeypatch)
 
 # --- (b) .aep от прошлого прогона, не обновлённый этим, успехом НЕ считается ---------
 
-def test_batch_stale_aep_not_updated_fails(clips, tmp_path, monkeypatch):
-    """Набор: .aep остался от прошлого прогона и не пересохранён мастером — ролики в
-    failed, aerender не запускается, в логе прямо сказано про прошлый прогон."""
+def test_combined_stale_aep_not_updated_fails(clips, tmp_path, monkeypatch):
+    """Набор «Один на всё»: .aep остался от прошлого прогона и не пересохранён мастером —
+    ролики в failed, aerender не запускается, в логе прямо сказано про прошлый прогон."""
     outdir = str(tmp_path / "jsx")
     render_dir = str(tmp_path / "exp")
     os.makedirs(outdir)
@@ -215,16 +215,14 @@ def test_batch_stale_aep_not_updated_fails(clips, tmp_path, monkeypatch):
         f.write(b"old_project")
     past = 1000000000.0                      # время «прошлого прогона»
     os.utime(aep, (past, past))
-    jsx1 = os.path.abspath(os.path.join(outdir, "01_C0233.jsx"))
-    jsx2 = os.path.abspath(os.path.join(outdir, "02_C0234.jsx"))
 
     def on_afterfx(cmd):
         # мастер идёт и пишет журнал, но проект НЕ пересохраняет — .aep остаётся старым
+        combined_jsx = os.path.abspath(os.path.join(outdir, "Reelsi_all.jsx")).replace("\\", "/")
         with open(os.path.join(outdir, "reelsi_batch.aelog.txt"), "w",
                   encoding="utf-8") as f:
             f.write("REELSI-MASTER: начат\n")
-            f.write("evalFile ok: %s\n" % jsx1)
-            f.write("evalFile ok: %s\n" % jsx2)
+            f.write("evalFile ok: %s\n" % combined_jsx)
             f.write("REELSI-MASTER: готово\n")
 
     launched = []
@@ -232,7 +230,7 @@ def test_batch_stale_aep_not_updated_fails(clips, tmp_path, monkeypatch):
     batch = [{"xml_path": clips["xml1"], "outdir": outdir, "roto": False},
              {"xml_path": clips["xml2"], "outdir": outdir, "roto": False}]
     _reset_job(["01_C0233", "02_C0234"])
-    render._run_render_batch(batch, outdir, render_dir)
+    render._run_render_combined(batch, outdir, render_dir)
 
     assert launched == ["fake_afterfx.exe"], "aerender запустился по старому .aep: %r" % launched
     reasons = [f["reason"] for f in render.RJOB["failed"]]
@@ -278,9 +276,9 @@ def test_single_stale_aep_not_updated_fails(clips, tmp_path, monkeypatch):
 
 # --- (c) открытый After Effects — стоп ДО запуска ----------------------------------
 
-def test_batch_open_afterfx_stops_before_launch(clips, tmp_path, monkeypatch):
-    """Набор: AfterFX.exe уже запущен — прогон не начинается, AfterFX не вызывается,
-    в журнале требование закрыть After Effects."""
+def test_combined_open_afterfx_stops_before_launch(clips, tmp_path, monkeypatch):
+    """Набор «Один на всё»: AfterFX.exe уже запущен — прогон не начинается, AfterFX не
+    вызывается, в журнале требование закрыть After Effects."""
     outdir = str(tmp_path / "jsx")
     render_dir = str(tmp_path / "exp")
     os.makedirs(outdir)
@@ -292,7 +290,7 @@ def test_batch_open_afterfx_stops_before_launch(clips, tmp_path, monkeypatch):
     batch = [{"xml_path": clips["xml1"], "outdir": outdir, "roto": False},
              {"xml_path": clips["xml2"], "outdir": outdir, "roto": False}]
     _reset_job(["01_C0233", "02_C0234"])
-    render._run_render_batch(batch, outdir, render_dir)
+    render._run_render_combined(batch, outdir, render_dir)
 
     assert launched == [], "AfterFX запущен при открытой копии AE: %r" % launched
     reasons = [f["reason"] for f in render.RJOB["failed"]]

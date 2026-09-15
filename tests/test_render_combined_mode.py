@@ -380,8 +380,9 @@ def test_start_render_does_not_send_mode_and_build_multi_reads_radio():
 # ---------------- (f) Задание GQ: рендер всегда combined ---------------------
 
 def test_run_render_job_multiple_clips_always_calls_combined(tmp_path, monkeypatch):
-    """_run_render_job с двумя роликами уходит в _run_render_combined и НЕ зовёт
-    _run_render_batch (задание GQ: решение пользователя 2026-09-11)."""
+    """_run_render_job с двумя роликами уходит в _run_render_combined и ни в какой
+    другой путь (задание GQ: решение пользователя 2026-09-11; клипового пути
+    _run_render_batch в коде нет — задание HO)."""
     f1 = tmp_path / "01.xml"
     f2 = tmp_path / "02.xml"
     f1.write_text("<xml/>", encoding="utf-8")
@@ -390,7 +391,6 @@ def test_run_render_job_multiple_clips_always_calls_combined(tmp_path, monkeypat
 
     called = []
     monkeypatch.setattr(render, "_run_render_combined", lambda norm, outdir, rdir: called.append("combined"))
-    monkeypatch.setattr(render, "_run_render_batch", lambda batch, outdir, rdir: called.append("batch"))
     monkeypatch.setattr(render, "_run_render_single", lambda norm, outdir, rdir: called.append("single"))
 
     _reset_job(["01", "02"])
@@ -411,7 +411,6 @@ def test_api_render_run_mode_separate_leads_to_combined(tmp_path, monkeypatch):
 
     called = []
     monkeypatch.setattr(render, "_run_render_combined", lambda norm, outdir, rdir: called.append("combined"))
-    monkeypatch.setattr(render, "_run_render_batch", lambda batch, outdir, rdir: called.append("batch"))
 
     # Синхронно запускаем таргет треда, чтобы избежать гонок в тесте
     def fake_thread(target, args=(), daemon=True):

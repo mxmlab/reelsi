@@ -43,7 +43,7 @@ DOCS = [
     "docs/KNOWN_ISSUES.md",
 ]
 
-_PY_RE = re.compile(r"`([\w./\\]+\.py)`")
+_PY_RE = re.compile(r"`([\w./\\]+\.py)(?::\d+(?:[,\s]*\d+)*(?:[–—-]\d+)?)?`")
 _ROUTE_RE = re.compile(r"(?<![\w.])/api/([a-z_][\w]*)")
 
 # OPENSOURCE_PLAN — план с историей переименований: он по-русски ссылается на
@@ -134,3 +134,57 @@ def test_dynamic_route_normalization():
     defined = {r.removeprefix("/api/").split("/")[0] for r in _defined_routes() if r.startswith("/api/")}
     assert "fontfile" in defined
     assert "<path:ps_name>" not in defined
+
+
+# --------------------------------------------------------------------------- #
+# Та же свежесть, но по СМЫСЛУ: регэксп ловит пропавший файл, а не разъехавшееся
+# значение. Оба дрейфа ниже нашлись заданием HM: `_PY_RE` не видел ссылок вида
+# `file.py:123`, и потому никто не замечал, что таблица ступеней в CUTTING_SPEC
+# обещает не то, что лежит в cutstages.STAGES.
+# --------------------------------------------------------------------------- #
+def test_cutting_spec_stage_table_matches_code():
+    """Спека ступеней нарезки обязана совпадать с `core/cutstages.py` — по названию
+    и дефолту каждой ступени. Проверяются именно эти колонки: их читает человек,
+    выбирая ступень в модалке «Кастом», и по ним же решается, что включено «как
+    раньше». `dedupe` стоял в спеке как «Чистка дублей» с дефолтом `True`, хотя в
+    коде это «Правка нарезки кодом» с `False`."""
+    from core import cutstages
+
+    text = _doc_texts()["docs/CUTTING_SPEC.md"]
+    rows = {}
+    for line in text.splitlines():
+        m = re.match(r"\|\s*`(\w+)`\s*\|([^|]*)\|([^|]*)\|([^|]*)\|", line)
+        if m:
+            rows[m.group(1)] = {"label": m.group(2).strip(), "default": m.group(4).strip()}
+
+    missing = [s["key"] for s in cutstages.STAGES if s["key"] not in rows]
+    assert not missing, f"ступеней нет в таблице CUTTING_SPEC.md: {missing}"
+    for s in cutstages.STAGES:
+        d = s["default"]
+        want = f'`"{d}"`' if isinstance(d, str) else f"`{d}`"
+        assert rows[s["key"]]["label"] == s["label"], (
+            f"ступень {s['key']}: в спеке «{rows[s['key']]['label']}», "
+            f"в cutstages.py «{s['label']}»")
+        assert rows[s["key"]]["default"] == want, (
+            f"ступень {s['key']}: в спеке {rows[s['key']]['default']}, "
+            f"в cutstages.py {want}")
+
+
+def test_documented_ui_checkboxes_exist():
+    """Галки `chk_*`, названные в доках, обязаны существовать в шаблоне.
+
+    Спека обещала чекбокс «черновик mp4» (`chk_draft`, «вкл по умолчанию») в
+    карточке шага 1 — такого id нет ни в `templates/index.html`, ни в
+    `static/app/*.js`: ступени `draft`/`dedupe` живут в модалке «Кастом», а
+    черновик включается вместе с Omni-ревью. Документ врал механически
+    проверяемым способом, а поймать это было нечем."""
+    html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
+    html += "".join(p.read_text(encoding="utf-8")
+                    for p in (ROOT / "static" / "app").glob("*.js"))
+    known = set(re.findall(r"""id=["'](chk_\w+)["']""", html))
+    bad = {}
+    for rel, text in _doc_texts().items():
+        for name in re.findall(r"`(chk_\w+)`", text):
+            if name not in known:
+                bad.setdefault(name, rel)
+    assert not bad, f"галок из доков нет ни в шаблоне, ни в скриптах: {bad}"

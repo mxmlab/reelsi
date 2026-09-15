@@ -16,6 +16,9 @@ from ._core import (JOB, LOCK, bp, _cross_lock_acquire, _cross_lock_release,
 from core.umsg import umsg
 from core import paths
 from core.app_meta import env
+from core.applog import get_logger
+
+log = get_logger("reelsi.render")
 
 RJOB = {"running": False, "done": False, "log": [], "pct": None, "cur": "",
         "ae": "", "out_dir": "", "result": [], "failed": [], "cancel": False,
@@ -897,6 +900,7 @@ def _run_render_single(norm, outdir, render_dir):
             remit("Готово: {path}", path=mov)
             _save_render_stats(1, jsx_dur, aep_dur, render_dur)
     except Exception:
+        log.exception("Сбой процесса рендера")
         import traceback
         remit("ОШИБКА:\n{tb}", tb=traceback.format_exc().strip().splitlines()[-1])
         # ГЛОБАЛЬНОЕ падение (внутренняя ошибка рендера) БЕЗ конкретного клипа — прямой
@@ -909,288 +913,6 @@ def _run_render_single(norm, outdir, render_dir):
                         pct=(1.0 if RJOB["result"] and not RJOB["failed"] else (RJOB["pct"] or 0)))
 
 
-def _run_render_batch(batch, outdir, render_dir):
-    """Набор роликов в ОДИН проект AE (задание FH): обычные .jsx (без безголового хвоста)
-    + мастер-скрипт (evalFile каждого в своём try/catch, одна очередь, один .aep) ->
-    verify_jsx по каждому -> один AfterFX -noui -r мастера -> один aerender -project."""
-    from core import verify_jsx
-    from core import xml2ae
-    from .inserts import _convert_inserts
-    total_n = len(batch)
-    t_jsx_base, t_aep_base, t_rnd_base, has_stats = _get_baseline_phase_durations(total_n)
-    p_jsx_end, p_aep_end = _calc_phase_bounds(t_jsx_base, t_aep_base, t_rnd_base)
-    with RLOCK:
-        RJOB["stage_label"] = "сборка таймлайнов"
-        RJOB["stage_done"] = 0
-        RJOB["stage_total"] = total_n
-        RJOB["pct"] = 0.0
-        if has_stats:
-            RJOB["eta"] = t_jsx_base
-            RJOB["eta_phase"] = t_jsx_base
-            RJOB["eta_total"] = t_jsx_base + t_aep_base + t_rnd_base
-            RJOB["eta_preliminary"] = True
-        else:
-            RJOB["eta"] = None
-            RJOB["eta_phase"] = None
-            RJOB["eta_total"] = None
-            RJOB["eta_preliminary"] = False
-    jsx_list = []
-    comps = []   # (стем .jsx, имя главной композиции) — .mov ждём по имени (задание FJ)
-    t_jsx_start = _time.time()
-    jsx_times = []
-    for i, j in enumerate(batch):
-        if RJOB["cancel"]:
-            remit("⏹ Остановлено")
-            _mark_stopped_waits()
-            return
-        stem = os.path.splitext(os.path.basename(j["xml_path"]))[0]
-        with RLOCK:
-            RJOB["cur"] = stem
-            RJOB["stage_done"] = i
-            pct_step = (i / total_n) * p_jsx_end
-            RJOB["pct"] = max(RJOB.get("pct") or 0.0, min(p_jsx_end, pct_step))
-        item_set(RJOB, RLOCK, stem, stage="jsx")   # этап 1: сборка .jsx
-        od = j.get("outdir") or outdir or os.path.dirname(j["xml_path"])
-        os.makedirs(od, exist_ok=True)
-        jp = os.path.abspath(os.path.join(od, stem + ".jsx"))
-        _convert_inserts(j.get("inserts") or [], emit=remit)
-        kw = {k: v for k, v in j.items() if k not in ("xml_path", "outdir")}
-        remit("  {stem}: сборка .jsx…", stem=stem)
-        try:
-            comp_name_out = []
-            xml2ae.to_ae_full(j["xml_path"], jp, binpfx=stem + " — ", comps_global=True,
-                              emit=remit, cancel=lambda: RJOB["cancel"],
-                              comp_name_out=comp_name_out, **kw)
-            jsx_list.append(jp)
-            comps.append((stem, comp_name_out[0] if comp_name_out else stem))
-            now = _time.time()
-            built_jsx_n = i + 1
-            jsx_times.append((now - t_jsx_start, built_jsx_n))
-            with RLOCK:
-                RJOB["stage_done"] = built_jsx_n
-                pct_step = (built_jsx_n / total_n) * p_jsx_end
-                RJOB["pct"] = max(RJOB.get("pct") or 0.0, min(p_jsx_end, pct_step))
-                # ETA на фазе 1 (задание FK, FQ):
-                if built_jsx_n < total_n:
-                    elapsed = now - t_jsx_start
-                    if elapsed >= 15.0 and len(jsx_times) >= 2:
-                        _dt = jsx_times[-1][0] - jsx_times[0][0]
-                        _dn = jsx_times[-1][1] - jsx_times[0][1]
-                        if _dt > 0 and _dn > 0:
-                            per_clip = _dt / _dn
-                            rem_phase = per_clip * (total_n - built_jsx_n)
-                            RJOB["eta"] = rem_phase
-                            RJOB["eta_phase"] = rem_phase
-                            RJOB["eta_total"] = rem_phase + t_aep_base + t_rnd_base
-                            RJOB["eta_preliminary"] = False
-                            RJOB["stage_label"] = "сборка таймлайнов"
-                    elif has_stats:
-                        rem_phase = (t_jsx_base / total_n) * (total_n - built_jsx_n)
-                        RJOB["eta"] = rem_phase
-                        RJOB["eta_phase"] = rem_phase
-                        RJOB["eta_total"] = rem_phase + t_aep_base + t_rnd_base
-                        RJOB["eta_preliminary"] = True
-                        RJOB["stage_label"] = "сборка таймлайнов"
-                    else:
-                        RJOB["eta"] = None
-                        RJOB["eta_phase"] = None
-                        RJOB["eta_total"] = None
-                        RJOB["eta_preliminary"] = False
-            remit("  -> {path}", path=jp)
-        except xml2ae.Cancelled:
-            remit("⏹ Остановлено — рендер не запускался")
-            return
-        except Exception as e:
-            remit("  ОШИБКА сборки: {err}", err=str(e))
-            item_fail(RJOB, RLOCK, stem, str(e), bucket="failed")
-    if not jsx_list:
-        remit("Ничего не собралось — рендер не запускался")
-        return
-    jsx_dur = _time.time() - t_jsx_start
-    with RLOCK:
-        RJOB["pct"] = max(RJOB.get("pct") or 0.0, p_jsx_end)
-        RJOB["eta"] = None
-        RJOB["eta_phase"] = None
-        RJOB["eta_total"] = None
-    # 2) предполётная проверка — ПОКЛИПОВО, до AE: ролик, не прошедший проверку,
-    # в мастер-скрипт не попадает, остальные едут дальше (задание FH)
-    with RLOCK:
-        RJOB["cur"] = ""
-        RJOB["stage_label"] = "проверка файлов"
-    good, bad = [], []
-    for stem, comp_name in comps:
-        jp = os.path.join(os.path.dirname(jsx_list[0]), stem + ".jsx")
-        item_set(RJOB, RLOCK, stem, stage="check")   # этап 2: предполётная проверка
-        rep = verify_jsx.verify(jp)
-        errs = [str(e) for e in rep.errors]
-        if errs:
-            bad.append((stem, errs))
-            for e in errs:
-                remit("  ✗ {name}: {err}", name=stem, err=e)
-            item_fail(RJOB, RLOCK, stem, errs[0], bucket="failed")
-        else:
-            # кадры композиции — по её .jsx (задание FK): M для процента текущей
-            # композиции, когда aerender его не печатает, и для ETA в кадрах
-            frames = _comp_frames(open(jp, encoding="utf-8-sig").read())
-            good.append((stem, comp_name, jp, frames))
-    if bad:
-        remit("Часть набора не прошла предполёт — эти ролики не поедут в общий проект")
-    if not good:
-        remit("Ни один ролик не прошёл предполёт — рендер не запущен")
-        return
-
-    # Пересчитываем границы, если часть роликов отсеялась
-    if len(good) < total_n and len(good) > 0:
-        t_aep_base = (t_aep_base / total_n) * len(good)
-        t_rnd_base = (t_rnd_base / total_n) * len(good)
-        p_jsx_end, p_aep_end = _calc_phase_bounds(jsx_dur, t_aep_base, t_rnd_base)
-
-    # 3) мастер-скрипт из ПРОШЕДШИХ проверку .jsx. Мастер и .aep — В ПАПКУ НАБОРА
-    # (где лежат .jsx роликов), а не в render_dir: в render_dir уезжает только готовое
-    # видео (задание FK). .aelog.txt едет за .aep, как в одиночном пути.
-    batch_dir = os.path.dirname(jsx_list[0])
-    aep_path = os.path.join(batch_dir, "reelsi_batch.aep")
-    master_path = os.path.join(batch_dir, "render_master.jsx")
-    from core.xml2ae.build import _write_master
-    # render_dir остаётся для om.file — видео в папке вывода рендера
-    _write_master([g[2] for g in good], master_path, aep_path, render_dir)
-    remit("Мастер-скрипт: {path} ({n} роликов)", path=master_path, n=len(good))
-    # 4) найти AE
-    ae = _find_ae()
-    if not ae:
-        remit("After Effects не найден (искал в «C:\\Program Files\\Adobe\\Adobe After Effects *»). "
-              "Проверь установку и запусти снова.")
-        with RLOCK:
-            RJOB["failed"].append({"name": "AE", "reason": "After Effects не найден"})
-        return
-    afx, aer, aename = ae
-    with RLOCK:
-        RJOB["ae"] = aename
-        RJOB["out_dir"] = render_dir
-        RJOB["stage_label"] = "сборка проекта"
-        RJOB["stage_done"] = 0
-        RJOB["stage_total"] = len(good)
-        RJOB["pct"] = max(RJOB.get("pct") or 0.0, p_jsx_end)
-        if has_stats:
-            RJOB["eta"] = t_aep_base
-            RJOB["eta_phase"] = t_aep_base
-            RJOB["eta_total"] = t_aep_base + t_rnd_base
-            RJOB["eta_preliminary"] = True
-        else:
-            RJOB["eta"] = None
-            RJOB["eta_phase"] = None
-            RJOB["eta_total"] = None
-            RJOB["eta_preliminary"] = False
-        RJOB["cur"] = ""
-    remit("AE: {name}", name=aename)
-    # 5) один AfterFX -noui -r мастера -> один .aep
-    master_call, why = _jsx_call_path(master_path)
-    if why:
-        remit("  короткое имя для {name} не вышло (том без 8.3-имён) — выполняю копию {alt_name}",
-              name=os.path.basename(master_path), alt_name=os.path.basename(master_call))
-    remit("--- сборка общего проекта (AfterFX -noui, мастер) ---")
-    aelog = re.sub(r"\.aep$", ".aelog.txt", aep_path)
-    # Открытая копия AE перехватывает наш AfterFX -noui (задание AE-Hygiene): он
-    # возвращает код 0 за 0 секунд, а мастер уезжает в НЕЁ — переписывает её проект
-    # и закрывает её без вопроса о сохранении. Такой запуск — стоп ДО старта партии.
-    if _ae_running():
-        remit("After Effects ОТКРЫТ — прогон набора не начинаю. Закрой After Effects и "
-              "запусти рендер снова: иначе мастер уйдёт в открытую копию, перепишет её "
-              "проект и закроет её без вопроса о сохранении.")
-        for stem, _cn, _jp, _fr in good:
-            item_fail(RJOB, RLOCK, stem,
-                      "After Effects открыт — закрой его и запусти рендер снова",
-                      bucket="failed")
-        return
-    # Гигиена журнала (задание AE-Hygiene): .aelog.txt прошлого прогона удаляем ДО
-    # запуска мастера — иначе «нет файла = скрипт не запустился» проходит по старому,
-    # а _tail_master_log печатает «собран:» за ролики, которые ещё не строились.
-    # Не смогли удалить (файл занят) — ошибка прогона с текстом, не продолжение.
-    rm_err = _remove_stale_aelog(aelog)
-    if rm_err:
-        remit("не удалить старый журнал {log}: {err} — файл занят? Прогон остановлен.",
-              log=aelog, err=rm_err)
-        for stem, _cn, _jp, _fr in good:
-            item_fail(RJOB, RLOCK, stem,
-                      "не удалить старый .aelog.txt (файл занят?)", bucket="failed")
-        return
-    # стадия aep на время работы AfterFX (задание FJ): интерфейс показывает
-    # «собираю проект», а не «0/12» без объяснения; в render переводятся только
-    # перед aerender
-    for stem, _cn, _jp, _fr in good:
-        item_set(RJOB, RLOCK, stem, stage="aep")
-    # .aep НЕ стираем (человек мог доработать его руками) — время ДО запуска мастера,
-    # после прогона проверяем «обновлён этим прогоном» (задание AE-Hygiene).
-    aep_mtime = os.path.getmtime(aep_path) if os.path.isfile(aep_path) else None
-    t_aep_start = _time.time()
-    rc = _run_proc_master(afx, "-noui", "-r", master_call,
-                          good=good, render_dir=render_dir, aelog_path=aelog,
-                          p_jsx_end=p_jsx_end, p_aep_end=p_aep_end,
-                          t_aep_base=t_aep_base, t_render_base=t_rnd_base,
-                          has_stats=has_stats)
-    aep_dur = _time.time() - t_aep_start
-    if RJOB["cancel"]:
-        return
-    if not os.path.isfile(aelog):
-        if aep_dur < AE_FAST_EXIT_SEC:
-            remit("AfterFX вышел мгновенно (за {sec:.1f} с) — обычно это значит, что "
-                  "мастер-скрипт ушёл в УЖЕ ОТКРЫТУЮ копию After Effects, а не поднял "
-                  "свой экземпляр.", sec=aep_dur)
-        remit("  НЕТ {log} — AE не выполнил мастер-скрипт. Проверь путь: пробел в имени рвёт "
-              "аргумент -r, и скрипт не запускается вовсе. Рендер пропущен.", log=aelog)
-        for stem, _cn, _jp, _fr in good:
-            item_fail(RJOB, RLOCK, stem,
-                      "AE не выполнил мастер-скрипт (.aelog.txt не появился)", bucket="failed")
-        return
-    with open(aelog, encoding="utf-8-sig", errors="replace") as fh:
-        for line in fh:
-            line = line.rstrip("\r\n")
-            if line:
-                remit("  [aelog] " + line)
-    if rc != 0:
-        remit("  AfterFX завершился с кодом {code} — смотри вывод выше", code=rc)
-    if not _aep_updated_by_run(aep_path, aep_mtime):
-        if os.path.isfile(aep_path):
-            remit("  {path} остался от прошлого прогона — мастер не пересохранил проект "
-                  "этим прогоном (см. строки [aelog] выше).", path=aep_path)
-        remit("  НЕТ {path} — мастер шёл, но споткнулся (см. строки [aelog] выше). "
-              "Рендер пропущен.", path=aep_path)
-        for stem, _cn, _jp, _fr in good:
-            item_fail(RJOB, RLOCK, stem,
-                      "AfterFX не сохранил .aep (смотри .aelog.txt)", bucket="failed")
-        return
-    # 6) один aerender -project: рендерит всю очередь; по мере Finished composition —
-    #    соответствующий элемент в done по ИМЕНИ КОМПОЗИЦИИ (задание FH/FJ)
-    with RLOCK:
-        RJOB["cur"] = ""
-        RJOB["stage_label"] = "рендер"
-        RJOB["stage_done"] = 0
-        RJOB["stage_total"] = len(good)
-        RJOB["pct"] = max(RJOB.get("pct") or 0.0, p_aep_end)
-        for it in RJOB.get("items", []):
-            if it.get("stage") != "error":
-                it["stage"] = "wait"
-    remit("--- рендер набора (aerender -project), композиций: {n} ---", n=len(good))
-    aep_call, aep_why = _aep_call_path(aep_path)
-    if aep_why:
-        remit("  короткое имя для {name} не вышло (том без 8.3-имён) — рендерю копию {alt_name}",
-              name=os.path.basename(aep_path), alt_name=os.path.basename(aep_call))
-    t_rnd_start = _time.time()
-    rc = _run_proc_batch(aer, aep_call, [(s, cn, fr) for s, cn, _j, fr in good], render_dir,
-                         p_aep_end=p_aep_end, t_render_base=t_rnd_base, has_stats=has_stats)
-    render_dur = _time.time() - t_rnd_start
-    if aep_why:
-        try:
-            os.remove(aep_call)
-        except OSError:
-            pass
-    if RJOB["cancel"]:
-        _mark_stopped_waits()
-        return
-    if RJOB["result"] and not RJOB["failed"]:
-        _save_render_stats(len(good), jsx_dur, aep_dur, render_dur)
-
-
 def _run_render_combined(batch, outdir, render_dir):
     """Рендер набора «Один на всё» (задание C, решение 2026-09-11): вместо N клиповых .jsx —
     ОДИН файл Reelsi_all.jsx (build_combined с comps_global=True и префиксами бинов), мастер
@@ -1201,7 +923,7 @@ def _run_render_combined(batch, outdir, render_dir):
     проекта» отслеживается по строкам «таймлайн ok:» журнала мастера (задание HC):
     stage_total = total_n, собранные таймлайны переходят в стадию built, текущий
     собираемый — в aep, остальные ждут в wait; в конце этапа переводим все ролики
-    набора дальше по очереди этапов ровно так же, как это делает _run_render_batch."""
+    набора дальше по очереди этапов."""
     from core import verify_jsx
     from core import xml2ae
     from .inserts import _convert_inserts
@@ -1223,7 +945,7 @@ def _run_render_combined(batch, outdir, render_dir):
             RJOB["eta_phase"] = None
             RJOB["eta_total"] = None
             RJOB["eta_preliminary"] = False
-    # Вставки конвертим ДО сборки (как _run_build_job и _run_render_batch): иначе
+    # Вставки конвертим ДО сборки (как _run_build_job): иначе
     # webp-вставка дошла бы до AE и уронила предполёт (задание BS).
     for j in batch:
         _convert_inserts(j.get("inserts") or [], emit=remit)
@@ -1945,6 +1667,7 @@ def _run_render_job(jobs, outdir, render_dir):
             return
         _run_render_combined(norm, outdir, render_dir)
     except Exception:
+        log.exception("Сбой в потоке рендера")
         import traceback
         remit("ОШИБКА:\n{tb}", tb=traceback.format_exc().strip().splitlines()[-1])
         with RLOCK:
@@ -2000,6 +1723,8 @@ def api_render_run():
                                    render_dir),
                              daemon=True).start()
         except Exception:
+            with RLOCK:
+                RJOB["running"] = False
             _cross_lock_release()          # поток не родился — лок не оставляем занятым
             raise
         return jsonify(ok=True)

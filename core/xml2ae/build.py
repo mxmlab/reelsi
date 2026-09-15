@@ -2932,43 +2932,6 @@ def build_combined(jobs, out_jsx, emit=None, cancel=None, progress=None,
     return out_jsx, len(parts)
 
 
-def build_render_batch(jobs, outdir, render_dir, emit=None, cancel=None):
-    """Сборка НАБОРА для одного проекта AE (задание FH): N обычных .jsx (без безголового
-    хвоста) + один мастер-скрипт, который evalFile'ит каждый ролик в своём try/catch,
-    собирает главные композиции из $.global.REELSI_COMPS в одну очередь рендера и
-    сохраняет один .aep. Возвращает (jsx_list, master_path, aep_path).
-
-    Каждый ролик собирается с binpfx="<стем> — " (имена бинов в общем проекте не
-    перемешиваются) и comps_global=True (main кладётся в $.global.REELSI_COMPS).
-    Одиночная сборка идёт мимо этой функции — там binpfx пуст и .jsx прежний (golden).
-
-    Мастер-скрипт повторяет правила сегодняшнего безголового хвоста дословно:
-    лог файлом ПЕРВЫМ делом, om.file ПОСЛЕ applyTemplate (пресет несёт свой путь),
-    save проекта ДО очереди и ещё раз ПОСЛЕ (иначе aerender рендерит пустоту)."""
-    emit = wrap_emit(emit)
-    cancel = cancel or (lambda: False)
-    jsx_list = []
-    for i, j in enumerate(jobs, 1):
-        if cancel():
-            raise Cancelled()
-        stem = os.path.splitext(os.path.basename(j["xml_path"]))[0]
-        emit("[{cur}/{total}] {stem} — сборка таймлайна…", cur=i, total=len(jobs), stem=stem)
-        kw = {k: v for k, v in j.items() if k != "xml_path"}
-        kw.setdefault("emit", emit)
-        kw["cancel"] = cancel
-        # обычный .jsx (БЕЗ render_dir — безголовый хвост не нужен, его заменит мастер),
-        # с префиксом бинов и сборкой композиций в глобальный массив
-        jp = os.path.join(outdir, stem + ".jsx")
-        p, nc, ns = to_ae_full(j["xml_path"], jp, binpfx=stem + " — ",
-                               comps_global=True, **kw)
-        emit("  готово: {clips} клипов, {subs} субтитров", clips=nc, subs=ns)
-        jsx_list.append(p)
-    aep_path = os.path.join(render_dir, "reelsi_batch.aep")
-    master_path = os.path.join(render_dir, "render_master.jsx")
-    _write_master(jsx_list, master_path, aep_path, render_dir)
-    return jsx_list, master_path, aep_path
-
-
 def _write_master(jsx_list, master_path, aep_path, render_dir):
     """Мастер-скрипт набора: лог первым делом, evalFile каждого ролика в своём try/catch,
     очередь из всех композиций, save ДО и ПОСЛЕ, quit в finally."""

@@ -367,6 +367,7 @@ def _flush(title=None):
 
 
 def main():
+    paths.require_source_tree()
     print(t("Reelsi v{ver} — проверка окружения ({sys} {rel}, {arch})",
             ver=APP_VERSION, sys=platform.system(), rel=platform.release(),
             arch=platform.machine()))

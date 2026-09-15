@@ -51,7 +51,7 @@ function patchSubStyleSoon(sw, sr){
     const styleKey=spk.style;
     if(typeof BUILTIN_STYLES!=='undefined'&&BUILTIN_STYLES[styleKey]){
       const sLabel=(typeof STYLES!=='undefined'&&STYLES[styleKey]&&STYLES[styleKey].label)||styleKey;
-      uiLog(t('настройки сабов не сохранены в файл: стиль «{s}» встроенный',{s:sLabel}));
+      uiLog(t('настройки сабов не сохранены в файл: стиль «{s}» встроенный',{s:t(sLabel)}));
       return;
     }
     const patch={sub_words_per_row:sw,sub_rows_max:sr};

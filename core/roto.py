@@ -39,6 +39,8 @@ from core.device import pick_device, autocast_dtype
 
 _MODEL = None          # (model, dev, dtype) кэш
 _VARIANT = "mobilenetv3"   # быстрее; "resnet50" — качественнее/медленнее
+# Фиксация коммита (голова master от 2023-03-13) для воспроизводимости и безопасности
+RVM_REPO = "PeterL1n/RobustVideoMatting:53d74c6826735f01f4406b5ca9075eee27bec094"
 # seq_chunk = сколько кадров прогоняем через модель разом. В fp16 на половинном
 # разрешении 8 кадров ~ 2 ГБ VRAM; на CPU/fp32 движок сам ужмёт до 2.
 SEQ_CHUNK = 8
@@ -99,7 +101,14 @@ def _load(force_device=None):
         import torch
     except Exception as e:
         raise RuntimeError("Нужен PyTorch: pip install torch torchvision (CUDA). " + str(e))
-    model = torch.hub.load("PeterL1n/RobustVideoMatting", _VARIANT)
+    # RVM грузим с закреплённого коммита (голова master от 2023-03-13): ветка — это
+    # «какой код попадёт к нам сегодня», у чужого репозитория так нельзя.
+    # skip_validation=True — нарочно. В torch/hub.py (2.5.1) ref без этого флага уходит в
+    # _validate_not_a_forked_repo, а та принимает его, только если он совпал с именем
+    # ветки/тега или с sha ИХ вершины (br["commit"]["sha"].startswith(ref)), иначе
+    # ValueError: проверка сломала бы загрузку, как только в master появится новый коммит.
+    # Плюс это два неавторизованных запроса к api.github.com (лимит 60/час на IP).
+    model = torch.hub.load(RVM_REPO, _VARIANT, skip_validation=True)
     dtype = autocast_dtype(dev)
     model = model.to(dev, dtype).eval()
     _MODEL = (model, dev, dtype)

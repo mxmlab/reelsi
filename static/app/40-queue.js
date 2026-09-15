@@ -20,7 +20,7 @@ async function loadCams(){
     // Нет папок камер — на чистой установке не ошибка, а первый шаг: предложи их
     // создать. Голую ошибку не показываем: человек просто не знал, что нужно создать.
     if(d.err==='no_cam_folders'){
-      $('caminfo').innerHTML='⚠ '+errText(d)+' <button class="sm" onclick="makeCams()">'+t('Создать папки камер')+'</button>';
+      $('caminfo').innerHTML='⚠ '+esc(errText(d))+' <button class="sm" onclick="makeCams()">'+t('Создать папки камер')+'</button>';
       return;
     }
     $('caminfo').textContent='⚠ '+errText(d);return;
@@ -614,7 +614,7 @@ function spkSelHTML(i,c){const k=(c.job||{}).speaker||'';
 function spkTagHTML(c,withName){const k=(c.job||{}).speaker||'';
   const sp=SPEAKERS[k];
   let out='';
-  if(withName!==false&&sp)out+='<span class="tag" data-t="'+t('Спикер: {n}',{n:sp.label||k})+'">'+esc(sp.label||k)+'</span>';
+  if(withName!==false&&sp)out+='<span class="tag" data-t="'+esc(t('Спикер: {n}',{n:sp.label||k}))+'">'+esc(sp.label||k)+'</span>';
   return out;}
 // Смена тега у клипа на шаге 3: переезжают стиль (кроме «свой стиль»), папки и пороги
 // нового спикера. Тег без профиля или снятие тега — запасной путь «не выбран» не ломаем.
@@ -717,7 +717,9 @@ async function delClipDiskPrepare(){
       $('delClipList').innerHTML=d.files.map(f=>{
         const name=f.path.split(/[/\\]/).pop();
         const sz=(f.size>1048576?(f.size/1048576).toFixed(2)+t(' МБ'):(f.size/1024).toFixed(1)+t(' КБ'));
-        return '<div style="display:flex;justify-content:space-between;gap:8px"><span>'+name+'</span><span style="flex:none;color:var(--tx)">'+sz+'</span></div>';
+        // имя файла приходит с диска (материал мог приехать с гугл-диска) — в разметку
+        // только через esc(): кавычка или «<» в имени иначе станут тегом (задание HL)
+        return '<div style="display:flex;justify-content:space-between;gap:8px"><span>'+esc(name)+'</span><span style="flex:none;color:var(--tx)">'+sz+'</span></div>';
       }).join('');
       $('delClipDiskConfirmBtn').disabled=false;
     }else{

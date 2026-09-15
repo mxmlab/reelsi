@@ -13,7 +13,7 @@ mediaCapabilities отвечает powerEfficient=false, и 4K декодиру�
 """
 import os, threading
 from flask import request, jsonify
-from ._core import bp, log_entry, umsg_err
+from ._core import bp, log_entry, umsg_err, _cross_lock_acquire, _cross_lock_release
 from core.umsg import umsg
 
 PXJOB = {"running": False, "done": False, "log": [], "cur": "", "i": 0, "n": 0}
@@ -61,8 +61,11 @@ def _run_preview_proxy(plan, height):
         with PXLOCK:
             PXJOB["log"].append(traceback.format_exc().strip().splitlines()[-1])
     finally:
-        with PXLOCK:
-            PXJOB.update(running=False, done=True, cur="")
+        try:
+            _cross_lock_release()
+        finally:
+            with PXLOCK:
+                PXJOB.update(running=False, done=True, cur="")
 
 
 @bp.route("/api/preview_proxy", methods=["POST"])
@@ -73,6 +76,7 @@ def api_preview_proxy():
     фоновую сборку недостающих. Пока прокси нет, интерфейс играет исходник (как раньше)."""
     d = request.get_json() or {}
     xml_path = (d.get("xml") or "").strip().strip('"')
+    start = False
     try:
         if not os.path.isfile(xml_path):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml_path}",
@@ -83,22 +87,30 @@ def api_preview_proxy():
         except Exception as e:
             raise SystemExit(umsg("preview_plan_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
+
+        # Два одновременных запроса (два таба) не должны запустить ДВА сборщика в один
+        # детерминированный dst (pv_<sha1>.part.mp4): перемешанные потоки кадров уехали
+        # бы в кэш насовсем. Проверка И пометка «running» — под одним PXLOCK, поток — после.
+        with PXLOCK:
+            busy = PXJOB["running"]
+            if d.get("build") and not busy and any(not ok for (_s, _d, ok) in plan):
+                if not _cross_lock_acquire():
+                    raise SystemExit(umsg("busy", "Уже выполняется"))
+                PXJOB.update(running=True, done=False, log=[], i=0, n=0, cur="")
+                busy = True
+                start = True
+        if start:
+            try:
+                threading.Thread(target=_run_preview_proxy, args=(plan, height), daemon=True).start()
+            except Exception:
+                _cross_lock_release()
+                with PXLOCK:
+                    PXJOB["running"] = False
+                raise
+        return jsonify(ok=True, dir=tdir, building=busy,
+                       cams=[{"path": s, "proxy": p, "ready": ok} for (s, p, ok) in plan])
     except SystemExit as e:
         return jsonify(**umsg_err(e))
-    # Два одновременных запроса (два таба) не должны запустить ДВА сборщика в один
-    # детерминированный dst (pv_<sha1>.part.mp4): перемешанные потоки кадров уехали
-    # бы в кэш насовсем. Проверка И пометка «running» — под одним PXLOCK, поток — после.
-    start = False
-    with PXLOCK:
-        busy = PXJOB["running"]
-        if d.get("build") and not busy and any(not ok for (_s, _d, ok) in plan):
-            PXJOB.update(running=True, done=False, log=[], i=0, n=0, cur="")
-            busy = True
-            start = True
-    if start:
-        threading.Thread(target=_run_preview_proxy, args=(plan, height), daemon=True).start()
-    return jsonify(ok=True, dir=tdir, building=busy,
-                   cams=[{"path": s, "proxy": p, "ready": ok} for (s, p, ok) in plan])
 
 
 @bp.route("/api/preview_proxy_status")

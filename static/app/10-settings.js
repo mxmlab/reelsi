@@ -119,7 +119,9 @@ function fillStepReasoning(){if(!AICFG)return;
     sel.innerHTML=lvs.map(l=>{
       let cap=REAS_TITLES[l]||l;
       if(l==='off'&&thinks)cap='Off — думает сама, выключаем явно';
-      return '<option value="'+l+'"'+(l===cur?' selected':'')+'>'
+      // уровень приезжает из каталога models.dev: в разметку — через esc(), как любое
+      // значение не из кода (задание HL)
+      return '<option value="'+esc(l)+'"'+(l===cur?' selected':'')+'>'
         +esc(t(cap))+'</option>';
     }).join('');
     // Если текущий уровень модель не поддерживает — не оставлять «невидимое
@@ -596,7 +598,7 @@ function cutSummary(){const el=$('cutsum');if(!el||!AICFG)return;
         +(sp.breath_p_cut?t(' + вздохи с {p}',{p:sp.breath_p_cut}):'')
         +((sp.hint||'').trim()?t(' + своя поправка ИИ'):'')
         // стиль AE зависит от спикера, но живёт на шаге 3 — на первом экране его иначе не видно
-        +(sp.style?t(' · стиль AE: {s}',{s:(stylesMap()[sp.style]||{}).label||sp.style}):'')):'');}
+        +(sp.style?t(' · стиль AE: {s}',{s:t((stylesMap()[sp.style]||{}).label||sp.style)}):'')):'');}
 // STYLES объявлен ниже по файлу — на момент разбора cutSummary его ещё нет
 function stylesMap(){return (typeof STYLES!=='undefined'&&STYLES)||{};}
 // В шапке разметки строка живёт рядом с кнопками — длинной она распирала ряд.
@@ -637,7 +639,7 @@ function renderTermVariants(){const el=$('terms_var');if(!el)return;
   el.innerHTML=items.map((it,ti)=>'<div style="display:flex;gap:6px;align-items:flex-start;flex-wrap:wrap">'
     +'<span class="muted" style="font-size:12px;min-width:96px;line-height:20px;text-transform:uppercase">'+esc(it.term)+'</span>'
     +(it.variants||[]).map((v,vi)=>'<span class="tag" style="text-transform:none;letter-spacing:0">'+esc(v)
-      +'<span class="tagx" tabindex="0" role="button" aria-label="'+t('Убрать вариант')+'" data-t="'+t('Убрать запомненный вариант «{v}»',{v:v})+'" onclick="event.stopPropagation();delTermVariant('+ti+','+vi+')">'+ico('x')+'</span></span>').join('')
+      +'<span class="tagx" tabindex="0" role="button" aria-label="'+t('Убрать вариант')+'" data-t="'+esc(t('Убрать запомненный вариант «{v}»',{v:v}))+'" onclick="event.stopPropagation();delTermVariant('+ti+','+vi+')">'+ico('x')+'</span></span>').join('')
     +'</div>').join('');}
 async function delTermVariant(ti,vi){const it=(TERMS||[])[ti];if(!it||!(it.variants||[])[vi])return;
   const terms=TERMS.map(x=>({term:x.term,variants:(x.variants||[]).slice()}));

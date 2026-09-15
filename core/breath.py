@@ -42,6 +42,7 @@ P_MARK = 0.50         # вероятность, с которой помечае
 SPEECH_MAX = 0.25     # выше этой вероятности речи не режем НИКОГДА (страховка)
 AIR = 0.03            # сек: воздух, который оставляем у речи при резе
 CED_ID = "mispeech/ced-tiny"
+CED_REVISION = "ace276d29dd0bb3f3517b0fa8cf300738c409019"
 MODEL_JSON = paths.data("breath_model.json")
 
 # AudioSet: что считаем событием (не речью) и что речью
@@ -127,9 +128,10 @@ def _ced(y, spans, batch=32):
     from transformers import AutoModelForAudioClassification, AutoFeatureExtractor
     if _CED is None:
         dev = pick_device()
-        fe = AutoFeatureExtractor.from_pretrained(CED_ID, trust_remote_code=True)
+        fe = AutoFeatureExtractor.from_pretrained(
+            CED_ID, revision=CED_REVISION, trust_remote_code=True)
         m = AutoModelForAudioClassification.from_pretrained(
-            CED_ID, trust_remote_code=True).to(dev).eval()
+            CED_ID, revision=CED_REVISION, trust_remote_code=True).to(dev).eval()
         _CED = (fe, m, dev)
     fe, m, dev = _CED
     n = int(10.0 * SR)

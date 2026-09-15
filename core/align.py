@@ -98,13 +98,13 @@ def _assign_many(segments, n, return_every, big_chunk_sec):
     return out
 
 
-def timeline_map(segments):
+def timeline_map(segments, fps=FPS):
     """segments: list of (s,e) seconds kept. Return list of
     (s, e, out_start_frame, out_end_frame) and total frames."""
     rows = []
     tl = 0
     for s, e in segments:
-        length = round(e * FPS) - round(s * FPS)
+        length = round(e * fps) - round(s * fps)
         if length <= 0:
             continue
         rows.append((s, e, tl, tl + length))
@@ -112,36 +112,30 @@ def timeline_map(segments):
     return rows, tl
 
 
-def map_words(words, segments, min_frames=6, gap_fill=True, max_hold=0.5):
-    """Place each word on the output timeline. Assignment is by OVERLAP (so a word
-    at a cut boundary is not lost); a word holds until the next word but NO MORE than
-    max_hold seconds past its own end — so a breath/pause doesn't stretch it. Titles
-    are never shorter than min_frames. Consecutive identical words are merged.
-    Returns list of dict(w, start, end) in OUTPUT frames."""
-    rows, total = timeline_map(segments)
-    hold = round(max_hold * FPS)
+def map_words_to_clips(words, clips, min_frames=6, max_hold=0.5, fps=FPS, gap_fill=True):
+    """words: source-second timestamps. clips: (start,end,in,out,...) frames.
+    Map each word to its timeline position via the clip whose SOURCE range holds it.
+    Assignment is strictly by midpoint of the word in source frames (ci <= sf < co).
+    Words in cut-out source regions are dropped. Returns [(w,start,end)] output frames.
+
+    fps — частота секвенции: кадры в clips посчитаны в НЕЙ, а не в 60. Константа
+    оставляла 25-кадровую секвенцию без субтитров вовсе: слово «не влезало» ни в один
+    клип (GZ, п. E). Дефолт прежний — вызовы без fps не меняются."""
+    hold = round(max_hold * fps)
     placed = []
     for wd in words:
-        t0, t1 = wd["start"], wd["end"]
-        mid = 0.5 * (t0 + t1)
-        seg = None
-        for r in rows:                      # prefer the segment the word overlaps
-            s, e, fs, fe = r
-            if t0 < e and t1 > s:
-                seg = r; break
-        if seg is None:                     # fallback: by midpoint
-            for r in rows:
-                if r[0] <= mid < r[1]:
-                    seg = r; break
-        if seg is None:
-            continue
-        s, e, fs, fe = seg
-        a = fs + (round(max(t0, s) * FPS) - round(s * FPS))
-        b = fs + (round(min(t1, e) * FPS) - round(s * FPS))
-        a = max(fs, min(fe - 1, a)); b = max(a + 1, min(fe, b))
-        placed.append({"w": wd["w"], "start": a, "end": b, "_e0": b, "_fe": fe})
-
-    # merge consecutive identical words (re-take stutters in the subtitle stream)
+        ts, te = wd["start"], wd["end"]
+        sf = round(0.5 * (ts + te) * fps)          # source-frame midpoint
+        for clip in clips:
+            cs, ce, ci, co = clip[0], clip[1], clip[2], clip[3]
+            if ci <= sf < co:
+                a = cs + (round(ts * fps) - ci)
+                b = cs + (round(te * fps) - ci)
+                a = max(cs, min(ce - 1, a)); b = max(a + 1, min(ce, b))
+                placed.append({"w": wd["w"], "start": a, "end": b, "_e0": b, "_ce": ce})
+                break
+    placed.sort(key=lambda p: p["start"])
+    # merge consecutive identical words
     merged = []
     for p in placed:
         if merged and _norm(p["w"]) == _norm(merged[-1]["w"]) and p["start"] <= merged[-1]["end"] + 2:
@@ -149,17 +143,28 @@ def map_words(words, segments, min_frames=6, gap_fill=True, max_hold=0.5):
             merged[-1]["_e0"] = max(merged[-1]["_e0"], p["_e0"])
         else:
             merged.append(p)
-
-    # gap-fill: hold until the next word, but at most max_hold past the spoken end
+    # gap-fill capped at max_hold, but not past the clip end
     if gap_fill:
         for i, p in enumerate(merged):
-            limit = p["_fe"]
-            if i + 1 < len(merged) and merged[i + 1]["start"] <= p["_fe"]:
+            limit = p["_ce"]
+            if i + 1 < len(merged) and merged[i + 1]["start"] <= p["_ce"]:
                 limit = merged[i + 1]["start"]
-            p["end"] = max(p["start"] + min_frames, min(limit, p["_e0"] + hold, p["_fe"]))
+            p["end"] = max(p["start"] + min_frames, min(limit, p["_e0"] + hold, p["_ce"]))
     for p in merged:
-        p.pop("_fe", None); p.pop("_e0", None)
+        p.pop("_e0", None); p.pop("_ce", None)
     return merged
+
+
+def map_words(words, segments, min_frames=6, gap_fill=True, max_hold=0.5, fps=FPS):
+    """Place each word on the output timeline using map_words_to_clips.
+    Segments (s, e) in seconds are converted to clips frames.
+    Assignment is strictly by word midpoint (dropped if midpoint is cut out).
+    Titles are never shorter than min_frames. Consecutive identical words are merged.
+    Returns list of dict(w, start, end) in OUTPUT frames."""
+    rows, _ = timeline_map(segments, fps=fps)
+    clips = [(fs, fe, round(s * fps), round(e * fps)) for (s, e, fs, fe) in rows]
+    return map_words_to_clips(words, clips, min_frames=min_frames, max_hold=max_hold,
+                               fps=fps, gap_fill=gap_fill)
 
 
 _norm_re = re.compile(r"[^\w]+", re.UNICODE)

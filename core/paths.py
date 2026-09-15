@@ -32,3 +32,18 @@ def root(*parts):
 def data(*parts):
     """Путь к данным, которые лежат в репозитории (data/)."""
     return os.path.join(DATA, *parts)
+
+
+def require_source_tree():
+    """Проверяет, что Reelsi запущен из клона репозитория (editable install).
+
+    Обычный `pip install .` в site-packages не поддерживается: templates/, static/
+    и личные файлы пользователя живут в корне клона.
+    """
+    missing = [d for d in ("templates", "static", "data") if not os.path.isdir(os.path.join(ROOT, d))]
+    if missing:
+        raise SystemExit(
+            f"Error: Reelsi must be run from a git clone repository (editable install).\n"
+            f"Please run 'pip install -e .' from the repository root.\n"
+            f"Missing required source directories in {ROOT}: {', '.join(missing)}."
+        )

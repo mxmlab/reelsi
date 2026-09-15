@@ -77,6 +77,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install numpy scipy soundfile
+          pip install -e . --no-deps
 
       - name: Byte-compile all modules
         run: python -m compileall -q api core tools tests webui.py reelsi.py doctor.py
@@ -85,6 +86,8 @@ jobs:
         env:
           PYTHONIOENCODING: utf-8
         run: |
+          reelsi --help
+          python -c 'import importlib.metadata as im; eps = {e.name: e.value for e in im.entry_points(group="console_scripts")}; assert "reelsi-webui" in eps and eps["reelsi-webui"] == "webui:main", f"reelsi-webui: {eps}"; assert "reelsi-doctor" in eps and eps["reelsi-doctor"] == "doctor:main", f"reelsi-doctor: {eps}"'
           python reelsi.py --help
           python -m core.omni_cut --help
           python -m core.gigaam_cut --help

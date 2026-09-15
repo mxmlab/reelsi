@@ -370,7 +370,10 @@ def api_music_random():
 def api_waveform():
     """Пики амплитуды исходника (для рисования волны на блоках). Кэш рядом с файлом."""
     path = (request.args.get("path") or "").strip().strip('"')
-    pps = int(request.args.get("pps") or 80)
+    try:
+        pps = int(request.args.get("pps") or 80)
+    except (TypeError, ValueError):
+        pps = 80                     # ?pps=abc роняло роут в HTML-500 (задание HL)
     if not os.path.isfile(path):
         return jsonify(**umsg_err(SystemExit(umsg("no_file", "нет файла"))))
     cache = path + f".peaks{pps}.json"

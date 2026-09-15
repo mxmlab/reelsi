@@ -1,20 +1,20 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Сквозной тест рендера набора роликов (_run_render_batch в api/render.py).
+"""Сквозной тест рендера набора роликов (_run_render_combined в api/render.py — живой путь).
 
 ПОЧЕМУ этот тест существует:
 В задании FJ функция _run_proc_master была объявлена с keyword-only параметрами:
     def _run_proc_master(afx, *args, good, render_dir, aelog_path):
 но вызов на строке 624 передавал good, render_dir и aelog позиционно.
-Из-за отсутствия сквозного теста на _run_render_batch (проверялись только отдельные
+Из-за отсутствия сквозного теста на путь рендера набора (проверялись только отдельные
 функции парсинга и одиночный рендер) TypeError: _run_proc_master() missing 3 required
 keyword-only arguments доехал до пользователя.
 
-Этот тест прогоняет _run_render_batch целиком на наборе из двух роликов с подменой
+Этот тест прогоняет _run_render_combined целиком на наборе из двух роликов с подменой
 subprocess.Popen (AfterFX и aerender не запускаются) и проверяет:
 1) правильность вызова _run_proc_master и _run_proc_batch;
-2) сборку .jsx и мастер-скрипта;
+2) сборку общего .jsx (Reelsi_all.jsx) и мастер-скрипта;
 3) прохождение стадий очереди до 'done' с корректными путями .mov по имени композиций.
 """
 import gzip
@@ -69,9 +69,9 @@ def batch_fixture(tmp_path):
     }
 
 
-def test_batch_render_e2e_two_clips(batch_fixture, tmp_path, monkeypatch):
-    """Сквозной прогон _run_render_batch на наборе из двух роликов:
-    сборка .jsx -> предполёт -> _run_proc_master -> _run_proc_batch -> done для каждого .mov."""
+def test_combined_render_e2e_two_clips(batch_fixture, tmp_path, monkeypatch):
+    """Сквозной прогон _run_render_combined на наборе из двух роликов:
+    сборка общего .jsx -> предполёт -> _run_proc_master -> _run_proc_batch -> done для каждого .mov."""
     outdir = str(tmp_path / "jsx_out")
     render_dir = str(tmp_path / "exp")
     os.makedirs(outdir, exist_ok=True)
@@ -108,14 +108,12 @@ def test_batch_render_e2e_two_clips(batch_fixture, tmp_path, monkeypatch):
                 aelog_path = os.path.join(outdir, "reelsi_batch.aelog.txt")
                 with open(aep_path, "wb") as f:
                     f.write(b"fake_aep")
-                jsx1 = os.path.abspath(os.path.join(outdir, "01_C0233.jsx"))
-                jsx2 = os.path.abspath(os.path.join(outdir, "02_C0234.jsx"))
+                combined_jsx = os.path.abspath(os.path.join(outdir, "Reelsi_all.jsx")).replace("\\", "/")
                 with open(aelog_path, "w", encoding="utf-8") as f:
                     f.write("REELSI-MASTER: начат\n")
-                    f.write(f"evalFile ok: {jsx1}\n")
-                    f.write(f"evalFile ok: {jsx2}\n")
-                    f.write("comp ok: C0233\n")
-                    f.write("comp ok: C0234\n")
+                    f.write(f"evalFile ok: {combined_jsx}\n")
+                    f.write("таймлайн ok: C0233\n")
+                    f.write("таймлайн ok: C0234\n")
                     f.write("REELSI-MASTER: готово\n")
                 self.stdout = iter(["AfterFX master execution finished"])
             elif "aerender" in exe:
@@ -185,7 +183,7 @@ def test_batch_render_e2e_two_clips(batch_fixture, tmp_path, monkeypatch):
         ]
     )
 
-    render._run_render_batch(batch, outdir, render_dir)
+    render._run_render_combined(batch, outdir, render_dir)
 
     assert not render.RJOB["failed"], f"Рендер упал с ошибками: {render.RJOB['failed']}"
     assert len(render.RJOB["result"]) == 2

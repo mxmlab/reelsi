@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "reelsi"
 version = "0.1.0b0"
@@ -5,3 +9,20 @@ description = "AI video editor on top of Premiere and After Effects: multicam cu
 readme = "README.md"
 license = "AGPL-3.0-or-later"
 requires-python = ">=3.10"
+dynamic = ["dependencies", "optional-dependencies"]
+
+[project.scripts]
+reelsi = "reelsi:main"
+reelsi-webui = "webui:main"
+reelsi-doctor = "doctor:main"
+
+[tool.setuptools]
+py-modules = ["webui", "reelsi", "doctor"]
+
+[tool.setuptools.packages.find]
+include = ["core*", "api*"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
+optional-dependencies.optional = {file = ["requirements-optional.txt"]}
+optional-dependencies.dev = {file = ["requirements-dev.txt"]}

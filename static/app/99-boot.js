@@ -81,7 +81,10 @@ function applyState(s){try{
     if(Array.isArray(s.VID.refs))VREFS=s.VID.refs;
     const tp=$('vid_prompt');if(tp&&s.VID.prompt!=null)tp.value=s.VID.prompt;}
   buildCamRows();renderQueue();renderAeDirField();renderCutStagesUI();cutSummary();
-}catch(e){}}
+}catch(e){
+  uiLog(t('⚠ состояние интерфейса не восстановлено: ')+e);
+  console.error(e);
+}}
 function restoreState(){let s=null;
   try{s=JSON.parse(localStorage.getItem(LSKEY)||'null');}catch(e){}
   if(s){applyState(s);return;}

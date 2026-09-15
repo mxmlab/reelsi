@@ -6,7 +6,7 @@ import os, threading, traceback, urllib.parse
 from flask import request, jsonify, send_file, Response
 from core.fileio import atomic_json_dump
 from ._core import (JOB, LOCK, bp, emit, item_done, item_fail, item_set, items_init, job_finish,
-                    job_start, set_progress, _never_serve, umsg_err)
+                    job_start, set_progress, _never_serve, umsg_err, _cross_lock_release)
 from core.umsg import umsg
 from .editor import _ensure_project, _sidecar_yellow, _sidecar_caption
 from .inserts import _adopt_inserts, _insert_dest
@@ -195,10 +195,19 @@ def api_build_run():
             j["insdest"] = _insert_dest(d)     # куда прибирать вставки (снимается в _run_build_job)
         if not job_start(kind="build", label="Сборка .jsx"):
             raise SystemExit(umsg("busy_wait", "Уже выполняется другая задача — дождись или смотри Логи"))
-        threading.Thread(target=_run_build_job,
-                         args=(norm, d.get("mode") or "separate",
-                               (d.get("outdir") or "").strip().strip('"')),
-                         daemon=True).start()
+        try:
+            threading.Thread(target=_run_build_job,
+                             args=(norm, d.get("mode") or "separate",
+                                   (d.get("outdir") or "").strip().strip('"')),
+                             daemon=True).start()
+        except Exception:
+            # Поток не родился (RuntimeError: can't start new thread) — отпускаем ровно
+            # то, что занял job_start: иначе лок и JOB["running"] висели бы до перезапуска
+            # сервера, и сборка не запускалась бы вовсе. Образец — api/render.py.
+            with LOCK:
+                JOB["running"] = False
+            _cross_lock_release()
+            raise
         return jsonify(ok=True)
     except SystemExit as e:
         return jsonify(**umsg_err(e))

@@ -314,7 +314,7 @@ from the XML that `core/xmlbuild.py` writes (full-resolution, 60fps, one frame =
 subtitle sample), they build `.subs.json` + `.ttf` → Premiere Essential Graphics
 text objects. `core/subtitle_xml.py` — word-level subtitles INTO an already-edited
 Premiere sequence. `subengine` selector: `autocut` (blobs) vs `pr` (classic
-Premiere captions).
+Premiere captions). Timeline alignment uses a unified rule (strictly by word midpoint `align.map_words_to_clips`), and the Premiere subtitle track is assembled via a single function (`xmlbuild.build_subtitle_track` with `SUB_FIT_CHARS = 14` font scaling). Two SRT writers (`core/subs.py` `write_srt` for AE scene plan rows and `core/align.py` `make_srt` for Premiere word grouping) are kept intentionally: each mirrors the structure of its own pipeline.
 
 **Speaker profiles** `speakers/*.json` — a set of thresholds and a style for a
 specific studio/voice; defaults are constants in `core/gigaam_cut/tune.py`
@@ -738,7 +738,9 @@ replace), see `core/fileio.py`.
 - `active` — active profile (fallback),
 - `step_profiles` — profile per step (cut/yellow/inserts/intro).
 
-**`ui_state` contracts** — localStorage, interface state, NOT project:
+**`ui_state` contracts** — localStorage is primary, `/api/ui_state` →
+`ui_state.json` is server-side mirror (survives browser change/clearing/quota);
+interface state, NOT project:
 - `speaker`, `style`, `subengine`, `selfcheck_model`, `media_vol`, `ins_slots`.
 
 **`xml_state` contracts** — XML data (server-side, reassemblable):
@@ -780,7 +782,11 @@ folder).
 
 **GENERAL** — the only interface is `webui.py` (port 5001). Front — 
 `templates/index.html` + `static/app.css` + `static/app/*.js` (ES modules? — no,
-plain `<script>`). UI stack: pure JS, no frameworks.
+plain `<script>`). UI stack: pure JS, no frameworks. The translation dictionary
+(`static/i18n/en.json`) is inlined into the page unconditionally (~300 KB per page
+load, including Russian UI), because manual language selection in localStorage
+overrides server default `ui_lang()`, and loading via fetch caused a race condition
+with camera strings.
 
 **FRONT STRUCTURE** — `static/app/`:
 - `00-core.js` — localStorage migration to Reelsi keys, i18n, common helpers.
@@ -971,8 +977,9 @@ traces of past edits (the code works but reads hard). Don't touch without need.
 **GOTCHA 3 — GigaAM and VRAM.** GigaAM and 27b can't live in VRAM simultaneously
 (16 GB) — the "holds/unloads" scheme (see above).
 
-**GOTCHA 4 — UI state.** `ui_state` is localStorage, not server-side — survives
-F5 but not a browser change (see `tools/webui_test.py`).
+**GOTCHA 4 — UI state.** localStorage is primary, `/api/ui_state` →
+`ui_state.json` is the server-side mirror that survives browser change, cache
+clearing, and quota limits (see `tools/webui_test.py`).
 
 **GOTCHA 5 — `insertlib`.** Indexes only `Reelsi_out/`.
 

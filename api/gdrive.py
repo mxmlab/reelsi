@@ -302,7 +302,12 @@ def api_gdrive_download():
         with GDLOCK:
             GDJOB.update(GDFRESH, running=True, done=False, failed=None, log=[], log_base=0,
                          url=url, started=int(time.time()))
-        threading.Thread(target=_download_job, args=(cmd, url), daemon=True).start()
+        try:
+            threading.Thread(target=_download_job, args=(cmd, url), daemon=True).start()
+        except Exception:
+            with GDLOCK:
+                GDJOB["running"] = False
+            raise
         return jsonify(ok=True, remote=remote, kind=spec["kind"], dest=dest)
     except SystemExit as e:
         return jsonify(**umsg_err(e))

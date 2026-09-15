@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Glitch glow choice**: yellow intro words with the glitch animation glow with the built-in Gaussian Blur and Glow or with the third-party Deep Glow 2 plugin (⚙ › Tools › After Effects).
 - **Build progress for a multi-clip set**: the AE project build stage shows "N of M", the clip being built and the ETA; built clips are marked "built, waiting for render".
 - **Package metadata**: `pyproject.toml` declares the name, the version and `requires-python >= 3.10`.
+- **Install from a clone**: `pip install -e .` installs dependencies from `requirements*.txt` and registers `reelsi`, `reelsi-webui` and `reelsi-doctor`; a plain `pip install .` is not supported and the commands say so.
+- **`--forced-align` in the CLI**: `reelsi.py` accepts the flag the web job already passed.
+- **Log file**: the web UI writes a rotating log (`reelsi.log`, or the path in `REELSI_LOG`) with the startup line and the causes of failures that used to be swallowed silently.
 
 ### Changed
 - **CLA**: removed the internal author note from `docs/CLA.md`; `docs/CLA.md` and `.github/CONTRIBUTING.md` link CLA Assistant, which checks pull requests.
@@ -19,8 +22,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Demo**: the README demo is an animated WebP, 3.8 MB instead of the 8.4 MB GIF.
 - **CI**: tests that need Pillow, pyarrow and zstandard run instead of being skipped; the workflow token is read-only; Python 3.12 and 3.13 byte-compile the code and check `--help` of the command-line entry points.
 - **Security policy**: `.github/SECURITY.md` states that the breath detector loads its model with `trust_remote_code=True` and how to run without it.
+- **Pinned downloads**: whisper.cpp is fetched as `v1.9.2` with a SHA-256 check and archive path validation; Robust Video Matting is loaded from a fixed commit and CED-tiny from a fixed revision.
+- **Docs**: `docs/ARCHITECTURE.en.md` describes `ui_state` as localStorage with a server-side mirror, as the code does; both architecture docs note why the translation dictionary is always inlined; README says the fully verified path is After Effects.
+- **Interface language**: style names, the camera folder placeholder and the sound effect caption are translated.
+- **Removed**: the unused per-clip batch render path (`_run_render_batch`, `build_render_batch`).
+- **Subtitles**: one function builds the Premiere subtitle track, so long words are font-scaled on every route; one rule (word midpoint) places words on the timeline for both the web route and the CLI. Two SRT writers remain on purpose: each mirrors the rows of its own output (After Effects scene rows, Premiere word grouping).
+- **Preview proxy and GPU**: building camera proxies takes the shared GPU job lock, so it no longer runs on top of a cut or render.
 
 ### Fixed
+- **Stop could delete an arbitrary folder**: a `WORK_DIR=` line printed inside a model's answer was trusted as the job's temp folder and removed on Stop; only the engine's own temp folder is accepted now.
+- **Escaping in the interface**: file names and error texts are escaped before they go into HTML, and video history actions pass their keys through `data-*` attributes instead of inline JavaScript.
+- **Saved API key and foreign address**: when the key field holds the mask, the connection check and model list use the saved profile's address and headers, not the ones from the request.
+- **Malformed query parameters**: `pps` and `since` that are not numbers no longer return an HTTP 500 page.
+- **Jobs stuck "busy"**: if the render, insert description, video generation or Google Drive download thread fails to start, its "running" flag and lock are released.
+- **Two AI calls at once**: the wait for the previous AI call and taking the slot are one atomic step; insert description can no longer be started twice.
+- **Orphan processes on exit**: stopping the web UI kills the running cut process and the After Effects render.
+- **Tests in CI**: the breath detector revision test no longer needs `transformers`, and the environment check test passes in any interface language.
+- **Unhandled errors in API routes**: they return JSON with an error code instead of an HTML page, so the interface shows the error instead of staying silent.
+- **Thread start failure**: if a cut or build thread cannot start, the job lock is released instead of leaving the app "busy" until restart.
+- **Model answer with junk indices**: a malformed `drop` list from the model no longer crashes the Omni cut after the paid call.
+- **Tests and docs**: a test that always passed now checks the SRT time format; the torch device test skips without torch; the docs freshness check sees `file.py:NNN` references and caught stale stage descriptions in `docs/CUTTING_SPEC.md`.
 - **Provider errors in the API**: an unreachable or failing provider returns a JSON error with its hint instead of an HTTP 500 page, so the connection check in AI provider profiles no longer shows a syntax error.
 - **Job status**: an exception passed into a log line no longer turns job, render and preview proxy status into an HTTP 500 page, so the interface keeps receiving progress.
 - **Tests on Linux**: DaVinci Resolve export tests build media paths native to the OS, so CI on Ubuntu passes; the glitch glow API test no longer reads the local `ai_config.json`.

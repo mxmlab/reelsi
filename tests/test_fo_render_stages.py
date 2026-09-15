@@ -5,7 +5,7 @@
 
 ПОЧЕМУ этот тест существует:
 Рендер набора имеет три фазы:
-1) сборка .jsx таймлайнов силами Python (_run_render_batch);
+1) сборка .jsx таймлайнов силами Python (_run_render_combined -> build_combined);
 2) сборка общего проекта AfterFX -noui (_run_proc_master);
 3) рендер композиций aerender -project (_run_proc_batch).
 Ранее на фазе 1 RJOB["pct"] не двигался, RJOB["stage_label"] не выставлялся,
@@ -70,9 +70,9 @@ def batch_fixture(tmp_path):
     }
 
 
-def test_batch_render_stages_and_monotonicity(batch_fixture, tmp_path, monkeypatch):
-    """Проверка всех трех фаз рендера набора:
-    1) сборка .jsx (0..15%): stage_label='сборка таймлайнов', stage_done=1,2;
+def test_combined_render_stages_and_monotonicity(batch_fixture, tmp_path, monkeypatch):
+    """Проверка всех трех фаз рендера набора «Один на всё»:
+    1) сборка таймлайнов (0..15%): stage_label='сборка таймлайнов';
     2) сборка проекта (15..35%): stage_label='сборка проекта', stage_done=1,2;
     3) рендер (35..100%): stage_label='рендер', stage_done=1,2;
     4) строгая монотонность: RJOB['pct'] ни разу не уменьшается."""
@@ -130,14 +130,12 @@ def test_batch_render_stages_and_monotonicity(batch_fixture, tmp_path, monkeypat
                 aelog_path = os.path.join(outdir, "reelsi_batch.aelog.txt")
                 with open(aep_path, "wb") as f:
                     f.write(b"fake_aep")
-                jsx1 = os.path.abspath(os.path.join(outdir, "01_C0233.jsx"))
-                jsx2 = os.path.abspath(os.path.join(outdir, "02_C0234.jsx"))
+                combined_jsx = os.path.abspath(os.path.join(outdir, "Reelsi_all.jsx")).replace("\\", "/")
                 with open(aelog_path, "w", encoding="utf-8") as f:
                     f.write("REELSI-MASTER: начат\n")
-                    f.write(f"evalFile ok: {jsx1}\n")
-                    f.write(f"evalFile ok: {jsx2}\n")
-                    f.write("comp ok: C0233\n")
-                    f.write("comp ok: C0234\n")
+                    f.write(f"evalFile ok: {combined_jsx}\n")
+                    f.write("таймлайн ok: C0233\n")
+                    f.write("таймлайн ok: C0234\n")
                     f.write("REELSI-MASTER: готово\n")
                 self.stdout = iter(["AfterFX master execution finished"])
             elif "aerender" in exe:
@@ -194,7 +192,7 @@ def test_batch_render_stages_and_monotonicity(batch_fixture, tmp_path, monkeypat
     )
 
     record_state()
-    render._run_render_batch(batch, outdir, render_dir)
+    render._run_render_combined(batch, outdir, render_dir)
     record_state()
 
     assert not render.RJOB["failed"], f"Рендер упал: {render.RJOB['failed']}"
@@ -380,85 +378,50 @@ def test_i18n_intro_text_and_stage_labels():
     assert d["сборка таймлайнов"] == "timeline build"
 
 
-def test_phase1_eta_procherk_and_calculation(batch_fixture, tmp_path, monkeypatch):
-    """Проверка правила ETA на фазе 1 (задание FK, FO):
-    - пока замеров < 15с — ETA=None (прочерк);
-    - когда замеров >= 15с и >= 2 точек — ETA вычисляется честно."""
+def test_combined_phase1_eta_baseline_or_blank(batch_fixture, tmp_path, monkeypatch):
+    """Правило ETA на фазе 1 живого пути «Один на всё» (задания FK, FO): без статистики
+    прошлых прогонов — ETA=None (прочерк); со статистикой — базовая оценка фазы и
+    eta_preliminary=True. Сборку таймлайнов подменяем: проверяется состояние интерфейса
+    в начале фазы, а у самой сборки свои тесты."""
+    from core import xml2ae
+
+    stats = tmp_path / "stats_eta.json"
+    monkeypatch.setenv("REELSI_RENDER_STATS", str(stats))
     outdir = str(tmp_path / "jsx_out_eta")
     render_dir = str(tmp_path / "exp_eta")
-    os.makedirs(outdir, exist_ok=True)
-    os.makedirs(render_dir, exist_ok=True)
-
-    monkeypatch.setenv("REELSI_RENDER_STATS", str(tmp_path / "stats.json"))
-    monkeypatch.setattr(
-        render, "_find_ae",
-        lambda: ("fake_AfterFX.exe", "fake_aerender.exe", "Adobe After Effects 2026")
-    )
-    # Открытая копия After Effects останавливает прогон ДО запуска AfterFX (задание
-    # AE-Hygiene) — в тесте AE «закрыт», иначе результат зависел бы от машины.
-    monkeypatch.setattr(render, "_ae_running", lambda: False)
-
-    class FakePopenMasterOnly:
-        def __init__(self, *args, **kwargs):
-            self.pid = 99999
-            self.returncode = 0
-            self.stdout = iter([])
-
-        def poll(self):
-            return 0
-
-        def wait(self):
-            return 0
-
-    monkeypatch.setattr(render.subprocess, "Popen", FakePopenMasterOnly)
-
-    # Имитируем время: старт t=100.0, после клипа 1 t=105.0 (<15s -> ETA None),
-    # после клипа 2 t=120.0 (>=15s -> ETA = (20 / 2) * (3 - 2) = 10.0)
-    simulated_times = [100.0, 105.0, 120.0, 130.0]
-    time_iter = iter(simulated_times)
-
-    def fake_time():
-        try:
-            return next(time_iter)
-        except StopIteration:
-            return 130.0
-
-    monkeypatch.setattr("time.time", fake_time)
-
-    etas_recorded = []
-    orig_remit = render.remit
-
-    def hooked_remit(line, **vars):
-        orig_remit(line, **vars)
-        if "  -> " in line:
-            with render.RLOCK:
-                etas_recorded.append((render.RJOB.get("stage_done"), render.RJOB.get("eta")))
-
-    monkeypatch.setattr(render, "remit", hooked_remit)
-
     batch = [
         {"xml_path": batch_fixture["xml1"], "outdir": outdir, "roto": False},
         {"xml_path": batch_fixture["xml2"], "outdir": outdir, "roto": False},
-        {"xml_path": batch_fixture["xml1"], "outdir": outdir, "roto": False},
     ]
+    starts = []
 
-    render.RJOB.update(
-        running=True, done=False, log=[], pct=None, cur="", ae="",
-        out_dir=render_dir, result=[], failed=[], cancel=False,
-        stage_label=None, stage_done=0, stage_total=3,
-        items=[
-            {"name": "01_C0233", "stage": "wait", "pct": None, "path": "", "reason": ""},
-            {"name": "02_C0234", "stage": "wait", "pct": None, "path": "", "reason": ""},
-            {"name": "03_C0233", "stage": "wait", "pct": None, "path": "", "reason": ""},
-        ]
-    )
+    def fake_build_combined(jobs, out_jsx, **kw):
+        with render.RLOCK:
+            starts.append((render.RJOB.get("stage_label"), render.RJOB.get("eta"),
+                           render.RJOB.get("eta_phase"), render.RJOB.get("eta_total"),
+                           render.RJOB.get("eta_preliminary")))
+        raise xml2ae.Cancelled()      # до AE этот тест не доходит: он про фазу 1
 
-    render._run_render_batch(batch, outdir, render_dir)
+    monkeypatch.setattr(xml2ae, "build_combined", fake_build_combined)
 
-    # После клипа 1 (t=105.0 - 100.0 = 5.0с < 15с) -> ETA None (прочерк)
-    assert etas_recorded[0] == (1, None), f"После 1 клипа ETA должно быть None: {etas_recorded[0]}"
+    def run():
+        render.RJOB.update(
+            running=True, done=False, log=[], pct=None, cur="", ae="",
+            out_dir=render_dir, result=[], failed=[], cancel=False,
+            stage_label=None, stage_done=0, stage_total=len(batch),
+            eta=None, eta_phase=None, eta_total=None, eta_preliminary=False,
+            items=[
+                {"name": "01_C0233", "stage": "wait", "pct": None, "path": "", "reason": ""},
+                {"name": "02_C0234", "stage": "wait", "pct": None, "path": "", "reason": ""},
+            ]
+        )
+        render._run_render_combined(batch, outdir, render_dir)
 
-    # После клипа 2 (t=120.0 - 100.0 = 20.0с >= 15с, dt=15с на 1 клип) -> ETA = 15.0с
-    assert etas_recorded[1][0] == 2
-    assert etas_recorded[1][1] is not None
-    assert abs(etas_recorded[1][1] - 15.0) < 0.1, f"ETA должно быть 15.0: {etas_recorded[1]}"
+    # 1) Статистики нет — ETA не выдумывается, в интерфейсе прочерк
+    run()
+    assert starts == [("сборка таймлайнов", None, None, None, False)], starts
+
+    # 2) Статистика есть (5 с / 36 с / 83 с на ролик) — оценка на 2 ролика, preliminary
+    render._save_render_stats(10, 50.0, 360.0, 830.0)
+    run()
+    assert starts[1] == ("сборка таймлайнов", 10.0, 10.0, 248.0, True), starts[1]

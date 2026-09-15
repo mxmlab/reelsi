@@ -109,8 +109,10 @@ def test_ct2_respects_explicit_compute_type(fake_torch):
 
 def test_fp16_only_on_cuda():
     """fp16 на MPS не включаем: проверить на живом железе нечем, а тихо испорченная
-    альфа-маска рото видна только рендером в AE."""
-    import torch
+    альфа-маска рото видна только рендером в AE.
+    torch может быть не установлен (установка без GPU, CI) — тогда пропускаем:
+    голый import ронял весь набор, и в отчёте это выглядело как красный тест."""
+    torch = pytest.importorskip("torch")
     assert device.autocast_dtype("cuda") is torch.float16
     assert device.autocast_dtype("mps") is torch.float32
     assert device.autocast_dtype("cpu") is torch.float32

@@ -302,6 +302,39 @@ def _atrack(clips_xml, outidx):
             f"{clips_xml}\t\t\t\t\t<enabled>TRUE</enabled>\n\t\t\t\t\t<locked>FALSE</locked>\n"
             f"\t\t\t\t\t<outputchannelindex>{outidx}</outputchannelindex>\n\t\t\t\t</track>\n")
 
+def build_subtitle_track(sub_words, start_id=1):
+    """Сборка видеодорожки с клипами субтитров для Premiere XML.
+
+    sub_words: список словарей {'w': text, 'start': frame, 'end': frame}
+    start_id: начальный числовой id клипа (clipitem-id)
+
+    Возвращает (vtrack_xml, n_subs, long_words, next_id).
+    Слова длиннее SUB_FIT_CHARS масштабируются (scale < 100.0),
+    не влезающие в шаблон даже с масштабом попадают в long_words.
+    """
+    v3track = ""
+    n_subs = 0
+    long_words = []
+    cid = start_id
+    if sub_words:
+        from core.subs import SubtitleBuilder
+        sb = SubtitleBuilder()
+        v3 = ""
+        for wd in sub_words:
+            st, en = int(wd["start"]), int(wd["end"])
+            text = clean_sub_text(wd["w"])
+            if en <= st or not text:
+                continue
+            chars = len(text)
+            scale = 100.0 if chars <= SUB_FIT_CHARS else round(SUB_FIT_CHARS / chars * 100, 1)
+            try:
+                v3 += sb.clip(text, st, en, cid, cid, scale=scale); cid += 1
+                n_subs += 1
+            except ValueError:
+                long_words.append(text)   # too long for a template -> skip, report
+        v3track = _vtrack(v3, 0)
+    return v3track, n_subs, long_words, cid
+
 
 def build(cam_paths, segments, offsets, out_path, assign=None,
           seq_w=1080, seq_h=1920, scale=50.4, sub_words=None, name=None,
@@ -365,26 +398,7 @@ def build(cam_paths, segments, offsets, out_path, assign=None,
         kept += 1
     total = tl
 
-    v3track = ""
-    n_subs = 0
-    long_words = []
-    if sub_words:
-        from core.subs import SubtitleBuilder
-        sb = SubtitleBuilder()
-        v3 = ""
-        for wd in sub_words:
-            st, en = int(wd["start"]), int(wd["end"])
-            text = clean_sub_text(wd["w"])
-            if en <= st or not text:
-                continue
-            chars = len(text)
-            scale = 100.0 if chars <= SUB_FIT_CHARS else round(SUB_FIT_CHARS / chars * 100, 1)
-            try:
-                v3 += sb.clip(text, st, en, cid, cid, scale=scale); cid += 1
-                n_subs += 1
-            except ValueError:
-                long_words.append(text)   # too long for a template -> skip, report
-        v3track = _vtrack(v3, 0)
+    v3track, n_subs, long_words, cid = build_subtitle_track(sub_words, cid)
 
     # optional music bed (downloaded track) on two audio tracks (L/R)
     music_tracks = ""

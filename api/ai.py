@@ -119,6 +119,21 @@ def _unmask_ai_key(key, saved_name):
     return key
 
 
+def _saved_profile_for_masked(p, name):
+    """Профиль из формы с ключом-маской: отдать СОХРАНЁННЫЙ профиль целиком, иначе None.
+
+    Маска значит «ключ не менял», но base_url и headers из тела запроса — это данные
+    запроса, их подставляет кто угодно, а ключ к ним подставлялся настоящий. Снаружи
+    это закрыто гвардом Sec-Fetch-Site, но вместе с XSS в интерфейсе (задание HL)
+    давало увод сохранённого ключа на чужой адрес: /api/ai_test и /api/ai_models ходят
+    туда, куда сказано в теле. Профиля нет — None, поведение как раньше.
+    """
+    if not (p.get("api_key") or "").strip().startswith("•••"):
+        return None
+    from core import aicut
+    return aicut.load_ai_config()["profiles"].get(name or "") or None
+
+
 def _omni_audio_check(prof):
     """Умеет ли модель профиля СЛУШАТЬ звук — проверка ПРИ ВЫБОРЕ Omni-профиля, а не
     через 5 минут нарезки. Для OpenRouter модальности берём из их публичного /models
@@ -442,10 +457,22 @@ def api_ai_test():
     p = d.get("profile")
     try:
         if p:
-            raw_key = _unmask_ai_key(p.get("api_key"), d.get("name"))
-            hdrs = p.get("headers") if isinstance(p.get("headers"), dict) else aicut.parse_headers_text(p.get("headers_text"))
+            # Ключ-маска: ключ, адрес и заголовки берём из сохранённого профиля ЦЕЛИКОМ,
+            # значения формы для них игнорируем (см. _saved_profile_for_masked) — иначе
+            # чужой base_url в теле уводил настоящий ключ на свой адрес.
+            saved = _saved_profile_for_masked(p, d.get("name"))
+            if saved:
+                raw_key = saved.get("api_key")
+                raw_base = saved.get("base_url")
+                hdrs = saved.get("headers") if isinstance(saved.get("headers"), dict) else None
+            else:
+                # профиля нет (маска при чужом имени) — прежнее поведение: ключ из формы,
+                # а маска остаётся пустым ключом, а не уезжает провайдеру как есть
+                raw_key = _unmask_ai_key(p.get("api_key"), d.get("name"))
+                raw_base = p.get("base_url")
+                hdrs = p.get("headers") if isinstance(p.get("headers"), dict) else aicut.parse_headers_text(p.get("headers_text"))
             prof = {"provider": p.get("provider") or "lmstudio",
-                    "base_url": aicut.normalize_base_url(p.get("base_url") or ""),
+                    "base_url": aicut.normalize_base_url(raw_base or ""),
                     "api_key": aicut.resolve_key(raw_key),
                     "model": (p.get("model") or "").strip(),
                     "reasoning": (p.get("reasoning") or "off"),
@@ -479,11 +506,21 @@ def api_ai_models():
     d = request.get_json() or {}
     p = d.get("profile") or {}
     provider = p.get("provider") or "lmstudio"
-    key = aicut.resolve_key(_unmask_ai_key(p.get("api_key"), d.get("name")))
-    raw_base = ((p.get("base_url") or "").strip()
-            or aicut.PROVIDER_PRESETS.get(provider, {}).get("base_url") or "")
+    # Ключ-маска: адрес и заголовки — тоже из сохранённого профиля (см.
+    # _saved_profile_for_masked): иначе запрос со НАСТОЯЩИМ ключом уходил на
+    # base_url из тела.
+    saved = _saved_profile_for_masked(p, d.get("name"))
+    if saved:
+        key = aicut.resolve_key(saved.get("api_key"))
+        raw_base = ((saved.get("base_url") or "").strip()
+                or aicut.PROVIDER_PRESETS.get(provider, {}).get("base_url") or "")
+        hdrs = saved.get("headers") if isinstance(saved.get("headers"), dict) else None
+    else:
+        key = aicut.resolve_key(_unmask_ai_key(p.get("api_key"), d.get("name")))
+        raw_base = ((p.get("base_url") or "").strip()
+                or aicut.PROVIDER_PRESETS.get(provider, {}).get("base_url") or "")
+        hdrs = p.get("headers") if isinstance(p.get("headers"), dict) else aicut.parse_headers_text(p.get("headers_text"))
     base = aicut.normalize_base_url(raw_base)
-    hdrs = p.get("headers") if isinstance(p.get("headers"), dict) else aicut.parse_headers_text(p.get("headers_text"))
     try:
         if not base:
             raise SystemExit(umsg("base_url_not_set", "Не задан Base URL"))

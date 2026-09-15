@@ -221,7 +221,7 @@ function spkCamDirFill(cds){
   for(let k=0;k<nCams();k++){
     const row=document.createElement('div');row.className='setrow';
     row.innerHTML='<label>'+t('Папка камеры {n}',{n:k+1})+'</label>'
-      +'<input id="spk_camdir'+k+'" placeholder="пусто — автоподбор">'
+      +'<input id="spk_camdir'+k+'" placeholder="'+t('пусто — автоподбор')+'">'
       +'<button class="sm" onclick="pickdir(\'spk_camdir'+k+'\')">'+t('Выбрать…')+'</button>';
     host.appendChild(row);$('spk_camdir'+k).value=(cds&&cds[k])||'';}}
 // Смена спикера подставляет ЕГО папки и стиль.
@@ -277,7 +277,7 @@ function openSpeaker(key){
   $('spk_video_pos_b').value=(vps.b&&vps.b.pos==='prefix')?'prefix':'suffix';
   const ss=$('spk_style');ss.innerHTML='<option value="">'+t('не задан')+'</option>';
   Object.keys(STYLES).forEach(k=>{const o=document.createElement('option');
-    o.value=k;o.textContent=STYLES[k].label||k;ss.appendChild(o);});
+    o.value=k;o.textContent=t(STYLES[k].label||k);ss.appendChild(o);});
   ss.value=(p.style&&STYLES[p.style])?p.style:'';
   spkGrid(p.cut||{});
   $('spk_del').style.display=SPKEDIT?'':'none';
@@ -397,7 +397,7 @@ async function loadStyles(){let d;
   try{STYLES=d.styles||{};
     migrateClipStyles();
     const sel=$('style');const want=STYLESAVED||'base';sel.innerHTML='';
-    Object.keys(STYLES).forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=STYLES[k].label||k;sel.appendChild(o);});
+    Object.keys(STYLES).forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=t(STYLES[k].label||k);sel.appendChild(o);});
     if(want==='__custom__')ensureCustomOption();sel.value=(want==='__custom__')?'__custom__':(STYLES[want]?want:'base');onStyleChange();}
   catch(e){toast(t('Стили пришли, но не применились — смотри журнал'));uiLog(t('loadStyles(применение): ')+e);}}
 // Миграция состояния: раньше задание клипа хранило РАЗВЁРНУТУЮ КОПИЮ стиля плюс свои
@@ -437,7 +437,7 @@ function ensureCustomOption(){const sel=$('style');if(!sel.querySelector('option
 function ensureEditOption(key,label){const sel=$('style');
   let o=sel.querySelector('option[value="__edit__"]');
   if(!o){o=document.createElement('option');o.value='__edit__';sel.appendChild(o);}
-  o.textContent=label+t(' — правится');}
+  o.textContent=t(label)+t(' — правится');}
 function addCustomStyle(){const src=CURSTYLE||STYLES.base||{};CURSTYLE=JSON.parse(JSON.stringify(src));CURSTYLE.label='кастом';ensureCustomOption();$('style').value='__custom__';
   STYLE_EDITING=null;STYLE_EDIT_ORIG=null;STYLE_TOUCHED=false;
   if($('st_name'))$('st_name').value='';onStyleChange();}
@@ -463,8 +463,8 @@ function editStyle(){
   const el=$('st_saved');if(el){el.className='ok';el.textContent='';}
   fillStyleFields();
   renderStyleInfo();
-  if(BUILTIN_STYLES[key])toast(t('«{n}» — встроенный шаблон: сохрани правки под своим именем',{n:src.label||key}));
-  else if($('stylehint'))$('stylehint').textContent=t('правится шаблон «{n}» — «Сохранить» перезапишет его',{n:src.label||key});}
+  if(BUILTIN_STYLES[key])toast(t('«{n}» — встроенный шаблон: сохрани правки под своим именем',{n:t(src.label||key)}));
+  else if($('stylehint'))$('stylehint').textContent=t('правится шаблон «{n}» — «Сохранить» перезапишет его',{n:t(src.label||key)});}
 async function delStyle(){let name=$('style').value;
   // В режиме правки шаблона (задание AC2) в селекторе стоит служебный `__edit__`, а корзина
   // рядом с карандашом — про ТОТ шаблон, который сейчас правится. Без этой строки окно
@@ -473,10 +473,10 @@ async function delStyle(){let name=$('style').value;
   if(!name){toast(t('Нечего удалять — стиль не выбран'));return;}
   if(name==='__custom__'){toast(t('Это несохранённый кастом — просто выбери другой стиль'));return;}
   const label=(STYLES[name]&&STYLES[name].label)||name;
-  if(!await askConfirm(t('Удалить шаблон стиля «{n}»? (файл styles/{f}.json)',{n:label,f:name})))return;
+  if(!await askConfirm(t('Удалить шаблон стиля «{n}»? (файл styles/{f}.json)',{n:t(label),f:name})))return;
   const d=await (await fetch('/api/delstyle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})})).json();
   if(d.error){toast(errText(d));return;}
-  toast(t('Шаблон «{n}» удалён',{n:label}));uiLog(t('стиль удалён: ')+name);
+  toast(t('Шаблон «{n}» удалён',{n:t(label)}));uiLog(t('стиль удалён: ')+name);
   STYLESAVED='base';await loadStyles();}
 // Окна разделов панели стиля (задание AC2): не модалки — панель с полями раздела, в
 // предпросмотре живёт в правой колонке рядом с кадром (панель целиком переезжает в
@@ -671,7 +671,7 @@ function styleSpeakerNote(){const sp=(typeof SPEAKERS!=='undefined')?SPEAKERS[va
   if(!sp||!sp.style)return '';
   return (val('style')===sp.style)
     ? t(' · стиль спикера «{n}»',{n:sp.label||''})
-    : t(' · у спикера «{n}» по умолчанию: {s}',{n:sp.label||'',s:(stylesMap()[sp.style]||{}).label||sp.style});}
+    : t(' · у спикера «{n}» по умолчанию: {s}',{n:sp.label||'',s:t((stylesMap()[sp.style]||{}).label||sp.style)});}
 async function loadFonts(){try{const d=await (await fetch('/api/fonts')).json();FONTS=d.fonts||[];
   const dl=$('fontlist');if(dl)dl.innerHTML=FONTS.map(f=>'<option value="'+esc(f.ps)+'">'+esc(f.family)+'</option>').join('');updateHlFontList();}
   catch(e){uiLog(t('список шрифтов не загружен: ')+e);}}
@@ -1371,7 +1371,7 @@ async function saveStyle(){
   if(!target){
     const k=val('style');
     if(k&&BUILTIN_STYLES[k]){
-      toast(t('«{n}» — встроенный шаблон: сохрани правки под своим именем',{n:(STYLES[k]||{}).label||k}));
+      toast(t('«{n}» — встроенный шаблон: сохрани правки под своим именем',{n:t((STYLES[k]||{}).label||k)}));
       if($('st_name'))$('st_name').focus();
       return;
     }
@@ -1379,7 +1379,7 @@ async function saveStyle(){
     return;
   }
   if(BUILTIN_STYLES[target]){
-    toast(t('«{n}» — встроенный шаблон: сохрани правки под своим именем',{n:(STYLES[target]||{}).label||target}));
+    toast(t('«{n}» — встроенный шаблон: сохрани правки под своим именем',{n:t((STYLES[target]||{}).label||target)}));
     if($('st_name'))$('st_name').focus();
     return;
   }
@@ -1533,8 +1533,8 @@ function sfxDraw(){
   mk(SFX.at,"#f5c518","!");
 }
 function sfxMarkInfo(){
-  const o=SFX.in.toFixed(2)+"с →"+(SFX.out!=null?SFX.out.toFixed(2)+"с":" конец")
-    +" · удар "+SFX.at.toFixed(2)+"с";
+  const o=SFX.in.toFixed(2)+t('с')+' → '+(SFX.out!=null?SFX.out.toFixed(2)+t('с'):t('конец'))
+    +' · '+t('удар')+' '+SFX.at.toFixed(2)+t('с');
   $("sfxinfo").textContent=o;}
 function sfxDragStart(x){
   const dpr=devicePixelRatio||1;

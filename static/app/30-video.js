@@ -326,13 +326,16 @@ function renderVidHist(runKey){
     const err=it.error?errText(it):'';
     const note=(it.status==='done'||run)?(it.prompt||'')
       :(err+((it.task&&err.indexOf(it.task)<0)?('  ·  '+t('задача ')+it.task):''));
+    // Ключ задачи — в data-k, а не внутрь JS-строки обработчика: браузер раскодирует
+    // &#39; в атрибуте ДО компиляции JS, поэтому esc() внутри onclick не спасал —
+    // кавычка в ключе ломала атрибут и выполняла чужой код (задание HL).
     const k=esc(it.key);
     const acts=[];
     if(it.exists){
-      acts.push('<button class="sm" onclick="vidHistShow(\''+k+'\')" data-t="'+t('Показать в плеере выше')+'">'+ico('play')+t(' Показать')+'</button>');
+      acts.push('<button class="sm" data-k="'+k+'" onclick="vidHistShow(this.dataset.k)" data-t="'+t('Показать в плеере выше')+'">'+ico('play')+t(' Показать')+'</button>');
       acts.push('<a class="lnk" href="'+esc(it.url)+'&dl=1" download style="text-decoration:none">'+ico('dl')+t(' Скачать')+'</a>');}
-    if(it.prompt)acts.push('<button class="sm" onclick="vidHistReuse(\''+k+'\')" data-t="'+t('Подставить запрос, референсы и настройки этой задачи в поля выше')+'">'+ico('undo')+t(' Повторить')+'</button>');
-    if(!run)acts.push('<button class="icon" aria-label="'+t('Убрать задачу и файл')+'" data-t="'+t('Убрать запись и удалить файл ролика')+'" onclick="vidHistDel(\''+k+'\')">'+ico('trash')+'</button>');
+    if(it.prompt)acts.push('<button class="sm" data-k="'+k+'" onclick="vidHistReuse(this.dataset.k)" data-t="'+t('Подставить запрос, референсы и настройки этой задачи в поля выше')+'">'+ico('undo')+t(' Повторить')+'</button>');
+    if(!run)acts.push('<button class="icon" data-k="'+k+'" aria-label="'+t('Убрать задачу и файл')+'" data-t="'+t('Убрать запись и удалить файл ролика')+'" onclick="vidHistDel(this.dataset.k)">'+ico('trash')+'</button>');
     return '<div class="vhrow">'
       +'<div class="vhtop">'+vhTag(it,run)
       +'<span class="vhname grow" title="'+esc(it.path||'')+'">'+esc(it.name||t('без файла'))+'</span>'

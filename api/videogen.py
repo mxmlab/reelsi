@@ -321,8 +321,13 @@ def api_video_gen():
         # должна остаться видимой во вкладке — вместе с запросом и референсами
         vhist_put(key, ts=now, status="running", model=model, prompt=prompt,
                   opts=opts, refs=refs, path="", cost=None, ms=None, error="", task="")
-        threading.Thread(target=_video_worker, args=(prompt, refs, opts, key),
-                         daemon=True).start()
+        try:
+            threading.Thread(target=_video_worker, args=(prompt, refs, opts, key),
+                             daemon=True).start()
+        except Exception:
+            with VLOCK:
+                VJOB["running"] = False
+            raise
         return jsonify(ok=True, model=model, key=key, prompt=prompt,
                        duration=opts.get("duration"),
                        aspect_ratio=opts.get("aspect_ratio"),

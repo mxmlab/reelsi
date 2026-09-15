@@ -5,7 +5,7 @@
 Всё, что нужно ВСЕМ группам роутов и не относится ни к одной из них. Модули роутов
 импортируют отсюда `bp` и вешают на него свои @bp.route.
 """
-import json, os, threading, time
+import json, os, threading, time, traceback
 from core import paths
 
 # HERE — корень репозитория: личные файлы пользователя (job.lock, ui_state.json)
@@ -13,6 +13,7 @@ from core import paths
 # поэтому и sys.path тут больше не правится: пакет импортируется из корня.
 HERE = paths.ROOT
 from flask import Blueprint, request, jsonify
+from werkzeug.exceptions import HTTPException
 import reelsi
 from core.umsg import UMsg, umsg
 
@@ -73,6 +74,32 @@ except ImportError:
                                  out_dir as app_out_dir)
 
 bp = Blueprint("api", __name__)
+
+
+# --------------------------------------------------------------------------- #
+# Необработанное исключение в роуте — JSON, а не HTML-страница
+# --------------------------------------------------------------------------- #
+@bp.errorhandler(Exception)
+def _json_error(e):
+    """Роут упал необработанным исключением — отдать JSON в форме umsg_err.
+
+    Фронт на любой ответ делает `.json()` и читает {error, err, err_vars}
+    (static/app/00-core.js, errText): на HTML-500 разбор падал исключением, и
+    пользователь не видел НИЧЕГО — ни текста, ни кода. HTTPException (404/405 из
+    недр роута) сохраняет свой код, всё остальное — 500 с кодом internal_error.
+    Причина по-прежнему печатается в stderr сервера: кроме трейсбека её видеть
+    негде (в лог джоба исключение роута не попадает).
+    """
+    if isinstance(e, HTTPException):
+        code = getattr(e, "code", None) or 500
+        return jsonify(**umsg_err(SystemExit(umsg("http_error", f"Ошибка запроса ({code})",
+                                                  code=code)))), code
+    traceback.print_exc()
+    err = f"{type(e).__name__}: {e}"
+    return jsonify(**umsg_err(SystemExit(umsg("internal_error",
+                                              f"Внутренняя ошибка сервера: {err}",
+                                              err=err)))), 500
+
 
 # --------------------------------------------------------------------------- #
 # Защита от DNS rebinding (Host) и CSRF (Origin/Sec-Fetch-Site)
@@ -199,7 +226,14 @@ def _ai_begin(label=""):
     ep = aicut.begin_call()          # старый поток увидит чужой epoch и выйдет сам
     t0 = time.time()
     warned = False
-    while AI_ACTIVE > 0 and time.time() - t0 < AI_WAIT_SEC:
+    while True:
+        with LOCK:
+            if AI_ACTIVE == 0:
+                AI_ACTIVE += 1
+                return ep
+            if time.time() - t0 >= AI_WAIT_SEC:
+                AI_ACTIVE += 1
+                break
         if not warned:
             warned = True
             if label:
@@ -207,10 +241,7 @@ def _ai_begin(label=""):
             else:
                 emit("⏳ жду завершения предыдущего ИИ-вызова…")
         time.sleep(0.25)
-    if AI_ACTIVE > 0:
-        emit("! предыдущий ИИ-вызов не отпустил провайдера за {sec}с — стартую поверх него", sec=AI_WAIT_SEC)
-    with LOCK:
-        AI_ACTIVE += 1
+    emit("! предыдущий ИИ-вызов не отпустил провайдера за {sec}с — стартую поверх него", sec=AI_WAIT_SEC)
     return ep
 
 

@@ -59,6 +59,10 @@ rclone          MIT                                      https://rclone.org
                 Must be installed separately (not pip); used to download material
                 from a Google Drive link. Credentials live in the user's own
                 rclone config (`REELSI_RCLONE_CONF`), never in Reelsi files.
+whisper.cpp     MIT                                      https://github.com/ggml-org/whisper.cpp
+                Optional ASR backend for non-NVIDIA hardware (Metal/Vulkan).
+                Downloaded on explicit request via `python -m core.whisper_cpp install`
+                or installed externally via package manager.
 
 --- Trademarks and proprietary assets ---
 

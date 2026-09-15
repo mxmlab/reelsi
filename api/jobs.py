@@ -7,19 +7,24 @@ CURPROC ПЕРЕПРИСВАИВАЕТСЯ (global), а `from ._core import CURP
 раз, и «Стоп» убивал бы None вместо процесса. Читают его только run_omnicut_job и
 _kill_curproc — оба здесь.
 """
-import os, threading, argparse, traceback, subprocess, shutil
+import os, threading, argparse, traceback, subprocess, shutil, tempfile
 from flask import request, jsonify
 import reelsi
 from core import cutstages
 from ._core import (DEFAULT_BASE, JOB, LOCK, bp, emit, item_done, item_fail,
-                    item_set, items_init, job_finish, job_start, set_progress, umsg_err)
+                    item_set, items_init, job_finish, job_start, set_progress, umsg_err,
+                    _cross_lock_release)
 from core.umsg import umsg
 from core.app_meta import child_env, module_cmd
+from core.applog import get_logger
 from .videogen import VJOB, VLOCK
+
+log = get_logger("reelsi.jobs")
 CURPROC = None          # текущий subprocess задачи (omni_cut) — чтобы «Стоп» мог убить дерево
 CURWORK = []            # рабочие каталоги задачи (omnicut_*, gigaamcut_*): omni_cut печатает
                         # их маркером WORK_DIR= в stdout, а _kill_curproc удаляет — иначе
-                        # WAV камер (сотни МБ) переживают «Стоп» в %TEMP%
+                        # WAV камер (сотни МБ) переживают «Стоп» в %TEMP%. Путь проверяется
+                        # is_safe_work_dir: ту же строку печатает ответ модели — см. там
 
 
 def build_pairs(camdirs, names_list):
@@ -44,6 +49,29 @@ def build_pairs(camdirs, names_list):
             f"Файла из очереди нет в папке камеры: {lst}. "
             "Очередь хранит только имена — проверьте папки камер.", path=lst))
     return pairs
+
+
+def is_safe_work_dir(path):
+    """Похож ли путь из строки `WORK_DIR=` на рабочий каталог нарезки.
+
+    Маркер печатают свои же движки (core/omni_cut.py, core/gigaam_cut/pipeline.py),
+    но в тот же stdout уходит и СЫРОЙ ответ модели: перевод строки в `notes` давал
+    строку «WORK_DIR=<любой путь>», она попадала в CURWORK, и «Стоп» сносил этот
+    путь целиком через shutil.rmtree (п. 1 задания HL). Поэтому пускаем дальше
+    только каталог, который движок реально создаёт: tempfile.mkdtemp(prefix=…) —
+    realpath лежит ПРЯМО в temp (никаких «..» и симлинков наружу) и имя начинается
+    с omnicut_ или gigaamcut_. Всё прочее — обычная строка лога.
+    """
+    if not isinstance(path, str) or not path.strip():
+        return False
+    try:
+        real = os.path.realpath(path.strip())
+        tmp = os.path.realpath(tempfile.gettempdir())
+    except (OSError, ValueError):
+        return False
+    if os.path.dirname(real) != tmp:
+        return False
+    return os.path.basename(real).startswith(("omnicut_", "gigaamcut_"))
 
 
 def _kill_curproc():
@@ -105,7 +133,7 @@ def run_job(base, outdir, pairs, opts):
                 aicut.unload_ours(emit=emit)        # чтобы Whisper влез (16 ГБ впритык)
                 aicut.warn_foreign_models(emit=emit)  # предупредить, если висит чужая модель
             except Exception:
-                pass
+                log.warning("Не удалось выгрузить модели aicut перед Whisper", exc_info=True)
             emit("Гружу модель Whisper {model} (один раз)...", model=opts["model"])
             from core import transcribe
             model = transcribe.get_model(opts["model"])
@@ -155,7 +183,7 @@ def run_job(base, outdir, pairs, opts):
             try:
                 aicut.unload_ours(emit=emit)         # освободить VRAM после ИИ-шагов
             except Exception:
-                pass
+                log.warning("Не удалось выгрузить модели aicut после ИИ-шагов", exc_info=True)
         if JOB["cancel"]:
             _mark_stopped_waits()          # «Стоп»: до чего не дошло — «остановлено» (задание FA)
         fails = JOB["failed"]
@@ -290,9 +318,14 @@ def run_omnicut_job(outdir, pairs, model=None, draft=True, selfcheck=False, revi
                         # omni_cut печатает свой temp-каталог: «Стоп» (taskkill /F,
                         # без атекситов) оставлял WAV камер в %TEMP% — чистим по
                         # этому пути в _kill_curproc. Строка служебная, в лог не идёт.
-                        with LOCK:
-                            CURWORK.append(line[len("WORK_DIR="):].strip())
-                        continue
+                        work = line[len("WORK_DIR="):].strip()
+                        if is_safe_work_dir(work):
+                            with LOCK:
+                                CURWORK.append(work)
+                            continue
+                        # Не наш каталог — значит, строку напечатал не движок, а
+                        # ответ модели (см. is_safe_work_dir). В CURWORK не пускаем
+                        # и показываем как обычную строку лога.
                     tail.append(line)
                     del tail[:-5]
                     if any(s in line for s in ERRSIG):
@@ -362,15 +395,24 @@ def api_omnicut_run():
                 raw_stages["draft"] = d.get("draft", False)
             if "dedupe" in d and d.get("dedupe") is not None:
                 raw_stages["dedupe"] = d.get("dedupe")
-        threading.Thread(target=run_omnicut_job,
-                         args=(outdir, pairs, d.get("model"),
-                               raw_stages.get("draft", False), d.get("selfcheck", False),
-                               bool(d.get("review")), "gigaam",
-                               d.get("selfcheck_model") or "whisper:large-v3",
-                               (d.get("speaker") or "").strip() or None,
-                               raw_stages.get("dedupe"),
-                               raw_stages),
-                         daemon=True).start()
+        try:
+            threading.Thread(target=run_omnicut_job,
+                             args=(outdir, pairs, d.get("model"),
+                                   raw_stages.get("draft", False), d.get("selfcheck", False),
+                                   bool(d.get("review")), "gigaam",
+                                   d.get("selfcheck_model") or "whisper:large-v3",
+                                   (d.get("speaker") or "").strip() or None,
+                                   raw_stages.get("dedupe"),
+                                   raw_stages),
+                             daemon=True).start()
+        except Exception:
+            # Поток не родился (RuntimeError: can't start new thread) — отпускаем ровно
+            # то, что занял job_start: иначе лок и JOB["running"] висели бы до перезапуска
+            # сервера, и нарезка не запускалась бы вовсе. Образец — api/render.py.
+            with LOCK:
+                JOB["running"] = False
+            _cross_lock_release()
+            raise
         return jsonify(ok=True)
     except SystemExit as e:
         return jsonify(**umsg_err(e))
@@ -406,7 +448,15 @@ def api_draft_render():
             emit("ОШИБКА:\n{tb}", tb=traceback.format_exc())
         finally:
             job_finish()
-    threading.Thread(target=_run, daemon=True).start()
+
+    try:
+        threading.Thread(target=_run, daemon=True).start()
+    except Exception:
+        # см. api_omnicut_run: поток не родился — отдаём лок и JOB["running"] обратно
+        with LOCK:
+            JOB["running"] = False
+        _cross_lock_release()
+        raise
     return jsonify(ok=True)
 
 
@@ -507,11 +557,14 @@ def api_cancel():
         ep = aicut.cancel_call()   # CANCEL рвёт ретраи _ask_json (иначе он перезагрузит
                                    # выгруженную модель) + смена epoch убивает старый поток
         def _unload():             # не выгружать, если поверх уже стартовал новый ИИ-вызов
-            if aicut.is_current(ep):
-                aicut.unload_ours()
+            try:
+                if aicut.is_current(ep):
+                    aicut.unload_ours()
+            except Exception:
+                log.warning("Не удалось выгрузить модели aicut при отмене", exc_info=True)
         threading.Thread(target=_unload, daemon=True).start()  # освободить VRAM LM Studio
     except Exception:
-        pass
+        log.warning("Сбой отмены вызова aicut при cancel", exc_info=True)
     return jsonify(ok=True)
 
 
@@ -538,8 +591,15 @@ def api_run():
                 raise SystemExit(umsg("no_opts", "Нет параметров нарезки (opts)"))
         if not job_start(kind="cut", label="Классическая нарезка"):
             raise SystemExit(umsg("busy", "Уже выполняется"))
-        threading.Thread(target=run_job, args=(base, d["outdir"], pairs, opts),
-                         daemon=True).start()
+        try:
+            threading.Thread(target=run_job, args=(base, d["outdir"], pairs, opts),
+                             daemon=True).start()
+        except Exception:
+            # см. api_omnicut_run: поток не родился — отдаём лок и JOB["running"] обратно
+            with LOCK:
+                JOB["running"] = False
+            _cross_lock_release()
+            raise
         return jsonify(ok=True)
     except SystemExit as e:
         return jsonify(**umsg_err(e))

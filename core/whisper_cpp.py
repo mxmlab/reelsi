@@ -11,6 +11,7 @@ Silicon и Radeon транскрипция всегда идёт на CPU. whisp
 остальные движки работают как работали. Диспетчер и реестр движков —
 в asr_backends.py.
 """
+import hashlib
 import io
 import json
 import os
@@ -228,31 +229,85 @@ def transcribe(wav_path, size="large-v3"):
 # Ничего не качается само собой: пользователь может жить на GigaAM и не знать
 # о whisper.cpp вовсе. Даже моделей — они тянутся только при первом прогоне
 # движка (ensure_model), т.е. когда человек САМ выбрал whisper.cpp в селекторе.
-# Имена ассетов — из официальных релизов ggerganov/whisper.cpp (v1.9.2):
-# для macOS CLI-сборок в релизах нет вовсе — там brew install whisper-cpp.
+# Имена ассетов и хеши — из официального релиза ggml-org/whisper.cpp (репозиторий
+# переехал с ggerganov/whisper.cpp). Версия закреплена нарочно: v1.9.2 проверена
+# вживую, v1.9.4 не берём. Для macOS CLI-сборок в релизах нет вовсе — там
+# brew install whisper-cpp.
 ASSET_PLAN = {
     ("win32", "amd64"): "whisper-bin-Win32.zip",
     ("linux", "x86_64"): "whisper-bin-ubuntu-x64.tar.gz",
     ("linux", "aarch64"): "whisper-bin-ubuntu-arm64.tar.gz",
 }
-RELEASES_URL = "https://github.com/ggerganov/whisper.cpp/releases"
-GH_API = "https://api.github.com/repos/ggerganov/whisper.cpp/releases/latest"
+WHISPER_CPP_VERSION = "v1.9.2"
+RELEASES_URL = "https://github.com/ggml-org/whisper.cpp/releases"
+ASSET_SHA256 = {
+    "whisper-bin-Win32.zip": "de170719aebcb4794d695d449e179002db1fe03b862f21f5c34b2909a7cf8f22",
+    "whisper-bin-ubuntu-x64.tar.gz": "46811a3ecf584307480a220b9ef5ff81b7b22dc41577cbc274ce3afc61f753b1",
+    "whisper-bin-ubuntu-arm64.tar.gz": "7e26fa6a36d9174d5c0bf033ccbc026c3b5e569e2ee787058241346ef5392719",
+}
 
 
 def _pick_asset(assets, names):
-    """Выбрать URL ассета по имени из JSON-ответа GitHub API. Чистая функция:
-    в тестах вместо сети подкладывается готовый список."""
+    """Выбрать URL ассета по имени из JSON-ответа GitHub API (сохранено для тестов)."""
     for a in assets or []:
         if (a.get("name") or "") in names:
             return a.get("browser_download_url")
     return None
 
 
+def _is_safe_member_path(base_dir, member_path):
+    """Проверить, что путь внутри архива не выходит за пределы base_dir."""
+    if not member_path:
+        return False
+    # Запрет абсолютных путей (включая /foo, \foo, C:\foo)
+    if os.path.isabs(member_path) or member_path.startswith(("/", "\\")):
+        return False
+    if len(member_path) >= 2 and member_path[1] == ":":
+        return False
+    # Запрет .. в компонентах пути
+    parts = [p for p in member_path.replace("\\", "/").split("/") if p]
+    if ".." in parts:
+        return False
+    real_base = os.path.realpath(base_dir)
+    target = os.path.realpath(os.path.join(base_dir, member_path))
+    return target == real_base or target.startswith(real_base + os.sep)
+
+
+def _safe_extract_zip(z, target_dir):
+    """Безопасная распаковка zip: проверка всех путей до извлечения."""
+    for info in z.infolist():
+        if not _is_safe_member_path(target_dir, info.filename):
+            raise RuntimeError(
+                f"whisper.cpp: небезопасный путь в архиве {info.filename!r} — "
+                f"попытка выхода за пределы {target_dir}"
+            )
+    z.extractall(target_dir)
+
+
+def _safe_extract_tar(t, target_dir):
+    """Безопасная распаковка tar: проверка путей, запрет symlink/hardlink и спецфайлов."""
+    for member in t.getmembers():
+        if not _is_safe_member_path(target_dir, member.name):
+            raise RuntimeError(
+                f"whisper.cpp: небезопасный путь в архиве {member.name!r} — "
+                f"попытка выхода за пределы {target_dir}"
+            )
+        if member.issym() or member.islnk():
+            raise RuntimeError(
+                f"whisper.cpp: ссылки запрещены в архиве ({member.name!r})"
+            )
+        if member.ischr() or member.isblk() or member.isfifo():
+            raise RuntimeError(
+                f"whisper.cpp: спецфайлы устройств запрещены в архиве ({member.name!r})"
+            )
+    t.extractall(target_dir)
+
+
 def install_cli(emit=console_emit):
     """Скачать whisper-cli под платформу и распаковать в BIN_DIR.
 
-    Только по явному запросу (CLI). При недоступном GitHub API не выдумывает
-    URL, а честно говорит, что скачать руками, — репо/версия могут разъехаться."""
+    Только по явному запросу (CLI). Скачивает строго закреплённую версию v1.9.2
+    по прямому адресу релиза с проверкой SHA-256 и безопасной распаковкой."""
     existing = whisper_cli_path()
     if existing:
         emit("whisper.cpp: бинарник уже установлен: {path}", path=existing)
@@ -264,24 +319,31 @@ def install_cli(emit=console_emit):
                            "релизах нет. macOS: brew install whisper-cpp; "
                            "остальное — сборка из исходников (README whisper.cpp)"
                            % key)
+    url = f"https://github.com/ggml-org/whisper.cpp/releases/download/{WHISPER_CPP_VERSION}/{asset}"
+    emit("whisper.cpp: скачиваю {name} ...", name=asset)
     try:
-        d = json.load(urllib.request.urlopen(GH_API, timeout=30))
-        url = _pick_asset(d.get("assets") or [], (asset,))
-    except Exception:
-        raise RuntimeError("whisper.cpp: не удалось достучаться до GitHub API — "
-                           "скачайте %s вручную: %s" % (asset, RELEASES_URL))
-    if not url:
-        raise RuntimeError("whisper.cpp: ассет %s не найден в последнем релизе — "
-                           "проверьте: %s" % (asset, RELEASES_URL))
-    emit("whisper.cpp: скачиваю {name} ...", name=url.split("/")[-1])
-    data = urllib.request.urlopen(url, timeout=600).read()
+        data = urllib.request.urlopen(url, timeout=600).read()
+    except Exception as e:
+        raise RuntimeError("whisper.cpp: не удалось скачать %s — "
+                           "скачайте вручную: %s (%s)" % (asset, RELEASES_URL, e))
+
+    expected_sha = ASSET_SHA256.get(asset)
+    if not expected_sha:
+        raise RuntimeError(f"whisper.cpp: нет эталонного sha256 для {asset}")
+    actual_sha = hashlib.sha256(data).hexdigest()
+    if actual_sha != expected_sha:
+        raise RuntimeError(
+            f"whisper.cpp: контрольная сумма ассета {asset} не совпала "
+            f"(ожидалось {expected_sha}, получено {actual_sha})"
+        )
+
     os.makedirs(BIN_DIR, exist_ok=True)
     if asset.endswith(".zip"):
         with zipfile.ZipFile(io.BytesIO(data)) as z:
-            z.extractall(BIN_DIR)
+            _safe_extract_zip(z, BIN_DIR)
     else:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as t:
-            t.extractall(BIN_DIR)
+            _safe_extract_tar(t, BIN_DIR)
     path = whisper_cli_path()
     if not path:
         raise RuntimeError("whisper.cpp: архив распакован, но whisper-cli внутри "

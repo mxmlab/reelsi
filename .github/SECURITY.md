@@ -30,11 +30,19 @@ not vulnerabilities:
 - **API keys live in plaintext** in `ai_config.json`, protected by the operating
   system's file permissions. The file is in `.gitignore` and keys are masked in
   the UI as `•••xxxx`.
+- **Remote downloads and code execution are pinned.** Third-party code and binaries
+  downloaded at runtime are locked to immutable references:
+  - `whisper.cpp` (`core/whisper_cpp.py`) is pinned to version `v1.9.2` with SHA-256
+    integrity checks and strict archive path validation before extraction;
+  - Robust Video Matting (`core/roto.py`) is loaded via `torch.hub` (which executes
+    `hubconf.py` from the upstream repository) pinned to commit `53d74c6826735f01f4406b5ca9075eee27bec094`;
+  - The breath detector (`core/breath.py`) loads `mispeech/ced-tiny` from Hugging Face with
+    `trust_remote_code=True` pinned to revision `ace276d29dd0bb3f3517b0fa8cf300738c409019`.
 - **The breath detector model executes remote code.** The breath detector
   (`core/breath.py`) loads `mispeech/ced-tiny` from Hugging Face with
-  `trust_remote_code=True`, meaning Python code from the model repository
-  executes upon loading; the revision is not pinned. The model is loaded only by
-  the **Breaths** cutting stage and by `tools/train_breath.py`. To run without it,
+  `trust_remote_code=True` pinned to revision `ace276d29dd0bb3f3517b0fa8cf300738c409019`,
+  meaning Python code from the model repository executes upon loading. The model is loaded
+  only by the **Breaths** cutting stage and by `tools/train_breath.py`. To run without it,
   use Custom cutting with **Breaths** unticked (⚙ › Cut › Cutting stages) or pass
   `--no-breath` to `core.omni_cut` / `core.gigaam_cut`.
 

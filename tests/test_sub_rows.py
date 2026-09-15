@@ -66,7 +66,7 @@ def test_build_sub_rows_cut_bounds():
 def test_srt_formatting_and_writing(tmp_path):
     assert subs.format_srt_time(0.0) == "00:00:00,000"
     assert subs.format_srt_time(1.5) == "00:00:01,500"
-    assert subs.format_srt_time(65.123) == "01:05,123" if False else "00:01:05,123"
+    assert subs.format_srt_time(65.123) == "00:01:05,123"
     assert subs.format_srt_time(3661.05) == "01:01:01,050"
 
     srt_path = str(tmp_path / "test.srt")

@@ -14,29 +14,39 @@
 #   pip install torch==2.5.1 torchaudio==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
 torch
 torchaudio
-torchvision>=0.20        # needed by rotoscoping (RVM via torch.hub)
+# needed by rotoscoping (RVM via torch.hub)
+torchvision>=0.20
 
 # --- core ---
-flask>=3.0               # web UI (webui.py) and /api/*
+# web UI (webui.py) and /api/*
+flask>=3.0
 numpy>=1.26
-scipy>=1.11              # camera sync (cross-correlation), VAD
+# camera sync (cross-correlation), VAD
+scipy>=1.11
 soundfile>=0.12
-librosa>=0.10            # SSM repeat detection
-questionary>=2.0         # interactive CLI (reelsi.py)
+# SSM repeat detection
+librosa>=0.10
+# interactive CLI (reelsi.py)
+questionary>=2.0
 
 # --- speech recognition ---
-faster-whisper>=1.0      # default subtitle engine
-transformers>=4.46       # Qwen2.5-Omni; if Omni fails to load, install from git:
-                         #   pip install git+https://github.com/huggingface/transformers
+# default subtitle engine
+faster-whisper>=1.0
+# Qwen2.5-Omni; if Omni fails to load, install from git:
+#   pip install git+https://github.com/huggingface/transformers
+transformers>=4.46
 accelerate>=1.0
 huggingface-hub>=0.26
-qwen-omni-utils>=0.0.9   # audio/video preprocessing for Qwen2.5-Omni
+# audio/video preprocessing for Qwen2.5-Omni
+qwen-omni-utils>=0.0.9
 
 # --- graphics and inserts ---
 pillow>=10.0
-fonttools>=4.50          # reading PostScript names of installed fonts
-zstandard>=0.22          # media pool records in .drp (DaVinci Resolve), see DRP_SPEC.md;
-                         # stdlib zstd only from Python 3.14, we use 3.10
+# reading PostScript names of installed fonts
+fonttools>=4.50
+# media pool records in .drp (DaVinci Resolve), see DRP_SPEC.md;
+# stdlib zstd only from Python 3.14, we use 3.10
+zstandard>=0.22
 
 # --- outside pip ---
 # ffmpeg - must be on PATH (decode/encode; NVENC/VideoToolbox/AMF are picked up

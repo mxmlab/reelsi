@@ -1,8 +1,8 @@
 # Contributor License Agreement
 
 By contributing to Reelsi you accept the terms below. Contributions are accepted
-through pull requests, and the CLA is checked automatically before a pull request
-can be merged.
+through pull requests, and the CLA is checked automatically by
+[CLA Assistant](https://cla-assistant.io/mxmlab/reelsi) before a pull request can be merged.
 
 ## Why this exists
 

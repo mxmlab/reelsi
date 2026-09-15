@@ -13,11 +13,17 @@ mediaCapabilities отвечает powerEfficient=false, и 4K декодиру�
 """
 import os, threading
 from flask import request, jsonify
-from ._core import bp, umsg_err
+from ._core import bp, log_entry, umsg_err
 from core.umsg import umsg
 
 PXJOB = {"running": False, "done": False, "log": [], "cur": "", "i": 0, "n": 0}
 PXLOCK = threading.Lock()
+
+
+def _emit(line, **vars):
+    with PXLOCK:
+        entry = log_entry(line, vars)
+        PXJOB["log"].append(entry)
 
 
 def _preview_proxy_plan(xml_path, height=720):
@@ -47,10 +53,6 @@ def _run_preview_proxy(plan, height):
         for k, (src, dst) in enumerate(todo, 1):
             with PXLOCK:
                 PXJOB.update(i=k, cur=os.path.basename(src))
-            def _emit(line, **vars):
-                with PXLOCK:
-                    entry = {"t": str(line), "v": vars} if vars else str(line)
-                    PXJOB["log"].append(entry)
             _emit("превью-прокси {cur}/{total}: {name}",
                   cur=k, total=len(todo), name=os.path.basename(src))
             draftrender.build_preview_proxy(src, dst, height=height, emit=_emit)

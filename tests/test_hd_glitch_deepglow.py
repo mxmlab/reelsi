@@ -282,7 +282,9 @@ def test_5_api_roundtrip_invalid_and_get_default(client, monkeypatch):
         client.post("/api/ai_config", json={"action": "set_glitch_glow", "value": old})
 
     # GET при отсутствии ключа — "builtin"
-    monkeypatch.setattr(aicut, "load_ai_config", lambda: {"active": "LM Studio", "profiles": {}})
+    dummy_cfg = {"active": "LM Studio", "profiles": {}}
+    monkeypatch.setattr("core.aicut.config.load_ai_config", lambda: dummy_cfg)
+    monkeypatch.setattr(aicut, "load_ai_config", lambda: dummy_cfg)
     assert client.get("/api/ai_config").get_json()["glitch_glow"] == "builtin"
 
 

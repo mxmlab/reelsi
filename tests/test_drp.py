@@ -32,6 +32,10 @@ NODES = ('{ Text1 = TextPlus { Inputs = { StyledText = Input { Value = "СЛОВ
 COMP = b'nComposition { CurrentTime = 158, RenderRange = { 0, 299 }, ' \
        b'GlobalRange = { 0, 299 }, Unsorted = { GlobalEnd = 299 }, Compressed = true, }\x00'
 
+def _p(*parts):
+    r"""Путь к медиа, родной для текущей ОС (C:\... на Windows, /... на Linux)."""
+    return os.path.join(os.path.abspath(os.sep), *parts)
+
 
 def make_blob(comp=COMP, nodes=NODES):
     """Собрать контейнер той же формы, что пишет Resolve."""
@@ -158,7 +162,7 @@ def test_pal_25fps_framerate_в_пуле_и_клипе(tmp_path):
     out = str(tmp_path / "pal.drp")
     pr = {"dur_s": 139.68, "timecode": "00;38;52;08", "width": 1920, "height": 1080,
           "fps": 25.0}
-    drp.build(out, [r"C:\m\a\A.MP4"], [(0.0, 1.0)], [0.0], probe=lambda p: dict(pr))
+    drp.build(out, [_p("m", "a", "A.MP4")], [(0.0, 1.0)], [0.0], probe=lambda p: dict(pr))
     files = drp.read(out)
     seq = files[drp.seq_name(files)].decode("utf-8")
     mp = files["MediaPool/Master/MpFolder.xml"].decode("utf-8")
@@ -177,7 +181,7 @@ def test_раскладка_мультикама_во_флагах(tmp_path):
     первую на всём ролике (симптом: «застывшая картинка»)."""
     pytest.importorskip("zstandard")
     out = str(tmp_path / "mc.drp")
-    drp.build(out, [r"C:\m\a.MP4", r"C:\m\b.MP4"],
+    drp.build(out, [_p("m", "a.MP4"), _p("m", "b.MP4")],
               [(0.0, 1.0), (1.0, 2.0), (2.0, 3.0), (3.0, 4.0)], [0.0, 0.0],
               assign=[0, 1, 1, 0], probe=lambda p: dict(FAKE))
     files = drp.read(out)
@@ -299,7 +303,7 @@ def built(tmp_path):
     не нужен ни ffprobe, ни настоящее медиа."""
     pytest.importorskip("zstandard")
     out = str(tmp_path / "out.drp")
-    info = drp.build(out, [r"C:\media\a\A.MP4", r"C:\media\b\B.MP4"],
+    info = drp.build(out, [_p("media", "a", "A.MP4"), _p("media", "b", "B.MP4")],
                      [(0.0, 1.0), (2.0, 3.0), (4.0, 6.0)], [0.0, 0.5],
                      sub_words=[(0, 10, "РАЗ"), (12, 20, "ДВА"), (24, 40, "ТРИ")],
                      yellow=[1], name="TEST", probe=lambda p: dict(FAKE))
@@ -358,10 +362,10 @@ def test_дескриптор_описывает_свой_файл(tmp_path):
     и Resolve сочтёт две камеры одним медиа."""
     pytest.importorskip("zstandard")
     out = str(tmp_path / "d.drp")
-    probes = {r"C:\m\a\A.MP4": {"dur_s": 163.165, "timecode": "01;57;31;11",
-                                "width": 3840, "height": 2160},
-              r"C:\m\b\B.MP4": {"dur_s": 100.0, "timecode": "22;02;16;19",
-                                "width": 1920, "height": 1080}}
+    probes = {_p("m", "a", "A.MP4"): {"dur_s": 163.165, "timecode": "01;57;31;11",
+                                       "width": 3840, "height": 2160},
+              _p("m", "b", "B.MP4"): {"dur_s": 100.0, "timecode": "22;02;16;19",
+                                       "width": 1920, "height": 1080}}
     drp.build(out, list(probes), [(0.0, 1.0)], [0.0, 0.0],
               probe=lambda p: dict(probes[p]))
     mp = drp.read(out)["MediaPool/Master/MpFolder.xml"].decode("utf-8")
@@ -374,16 +378,16 @@ def test_дескриптор_описывает_свой_файл(tmp_path):
             drp.pb_get_str(d, 1),
             drp.kv_get(t, "Timecode").decode("utf-16-be"),
             int.from_bytes(drp.kv_get(t, "NumFrames"), "big"))
-    assert got["A.MP4"] == (r"C:\m\a", "01:57:31:11", 4890)
-    assert got["B.MP4"] == (r"C:\m\b", "22:02:16:19", 2997)
+    assert got["A.MP4"] == (_p("m", "a"), "01:57:31:11", 4890)
+    assert got["B.MP4"] == (_p("m", "b"), "22:02:16:19", 2997)
 
 
 def test_дескрипторы_не_копируют_друг_друга(tmp_path):
     """Прямая ловушка на прошлый баг: у двух камер всё внутри должно различаться."""
     pytest.importorskip("zstandard")
     out = str(tmp_path / "d2.drp")
-    probes = {r"C:\m\a\A.MP4": dict(FAKE),
-              r"C:\m\b\B.MP4": {**FAKE, "timecode": "22;02;16;19"}}
+    probes = {_p("m", "a", "A.MP4"): dict(FAKE),
+              _p("m", "b", "B.MP4"): {**FAKE, "timecode": "22;02;16;19"}}
     drp.build(out, list(probes), [(0.0, 1.0)], [0.0, 0.0], probe=lambda p: dict(probes[p]))
     mp = drp.read(out)["MediaPool/Master/MpFolder.xml"].decode("utf-8")
     paths = []
@@ -426,7 +430,7 @@ def test_пути_в_клипах_таймлайна(built):
     _, _, files = built
     seq = files[drp.seq_name(files)].decode("utf-8")
     paths = set(re.findall(r"<MediaFilePath>([^<]+)</MediaFilePath>", seq))
-    assert paths == {r"C:\media\a\A.MP4", r"C:\media\b\B.MP4"}
+    assert paths == {_p("media", "a", "A.MP4"), _p("media", "b", "B.MP4")}
 
 
 def test_в_медиапуле_длительность_из_probe(built):
@@ -480,9 +484,9 @@ def test_сдвиг_синхрона_учтён(built):
 def test_вставки_ложатся_на_свои_дорожки(tmp_path):
     pytest.importorskip("zstandard")
     out = str(tmp_path / "ins.drp")
-    info = drp.build(out, [r"C:\media\a\A.MP4"], [(0.0, 2.0)], [0.0],
-                     inserts=[{"type": "photo", "media": r"C:\media\p.jpg", "start": 0, "end": 30},
-                              {"type": "video", "media": r"C:\media\v.mp4", "start": 30, "end": 60}],
+    info = drp.build(out, [_p("media", "a", "A.MP4")], [(0.0, 2.0)], [0.0],
+                     inserts=[{"type": "photo", "media": _p("media", "p.jpg"), "start": 0, "end": 30},
+                              {"type": "video", "media": _p("media", "v.mp4"), "start": 30, "end": 60}],
                      probe=lambda p: dict(FAKE))
     assert info["inserts"] == 2
     files = drp.read(out)
@@ -499,8 +503,8 @@ def test_фото_запись_без_звука_и_с_плоским_полям
     иначе Resolve падал бы на чужой структуре. Снято с реального экспорта."""
     pytest.importorskip("zstandard")
     out = str(tmp_path / "photo.drp")
-    drp.build(out, [r"C:\media\a\A.MP4"], [(0.0, 2.0)], [0.0],
-              inserts=[{"type": "photo", "media": r"C:\media\p.jpg", "start": 0, "end": 30}],
+    drp.build(out, [_p("media", "a", "A.MP4")], [(0.0, 2.0)], [0.0],
+              inserts=[{"type": "photo", "media": _p("media", "p.jpg"), "start": 0, "end": 30}],
               probe=lambda p: dict(FAKE))
     mp = drp.read(out)["MediaPool/Master/MpFolder.xml"].decode("utf-8")
     blocks = re.findall(r"<Sm2MpVideoClip\b.*?</Sm2MpVideoClip>", mp, re.S)
@@ -520,8 +524,8 @@ def test_фото_клип_несёт_контейнерную_карту(tmp_pa
     build() его не трогает."""
     pytest.importorskip("zstandard")
     out = str(tmp_path / "ph.drp")
-    drp.build(out, [r"C:\media\a\A.MP4"], [(0.0, 2.0)], [0.0],
-              inserts=[{"type": "photo", "media": r"C:\media\p.jpg", "start": 0, "end": 30}],
+    drp.build(out, [_p("media", "a", "A.MP4")], [(0.0, 2.0)], [0.0],
+              inserts=[{"type": "photo", "media": _p("media", "p.jpg"), "start": 0, "end": 30}],
               probe=lambda p: dict(FAKE))
     files = drp.read(out)
     seq = files[drp.seq_name(files)].decode("utf-8")

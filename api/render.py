@@ -12,7 +12,7 @@ import os, re, threading, queue, subprocess, shutil, hashlib, json, time as _tim
 from flask import request, jsonify
 from core.fileio import atomic_json_dump
 from ._core import (JOB, LOCK, bp, _cross_lock_acquire, _cross_lock_release,
-                    item_done, item_fail, item_set, items_init, umsg_err)
+                    item_done, item_fail, item_set, items_init, log_entry, umsg_err)
 from core.umsg import umsg
 from core import paths
 from core.app_meta import env
@@ -156,7 +156,7 @@ def _predict_aep_times(measured_durations, total_n, default_per_clip=DEFAULT_AEP
 def remit(line, **vars):
     """Строка в лог рендера (свой лог, не общий JOB)."""
     with RLOCK:
-        entry = {"t": str(line), "v": vars} if vars else str(line)
+        entry = log_entry(line, vars)
         RJOB["log"].append(entry)
         if len(RJOB["log"]) > 2000:
             del RJOB["log"][:len(RJOB["log"]) - 2000]

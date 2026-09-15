@@ -1,6 +1,8 @@
 # Contributing to Reelsi
 
-All pull requests require signing the [CLA](../docs/CLA.md).
+All pull requests require signing the [CLA](../docs/CLA.md). [CLA Assistant](https://cla-assistant.io/mxmlab/reelsi) checks every pull request and asks you to sign once.
+
+[![CLA assistant](https://cla-assistant.io/readme/badge/mxmlab/reelsi)](https://cla-assistant.io/mxmlab/reelsi)
 
 ## Language policy
 
@@ -10,6 +12,9 @@ All pull requests require signing the [CLA](../docs/CLA.md).
 | `README.md`, UI strings | English (`README.ru.md` in Russian) |
 | Code comments | Russian or English (do not translate existing) |
 | Internal specs in `docs/` | Russian |
+
+Comments and specs often cite task codes such as «задание GZ». They point to the maintainer's
+private task log and are kept as history; you do not need them to work on the code.
 
 ## Before writing code
 

@@ -35,6 +35,21 @@ def _json_safe(obj):
         return str(obj)
 
 
+def log_entry(line, vars=None, **extra):
+    """Сборка записи лога со структурными переменными (задание HH).
+
+    Возвращает dict(t=str(line), v=_json_safe(vars)) при непустых vars,
+    иначе str(line). Не-JSON объекты (Exception, Path и т. п.) приводятся
+    к str через _json_safe, защищая роуты статуса от падения в 500 при jsonify.
+    """
+    v = dict(vars) if isinstance(vars, dict) else (dict(extra) if extra else None)
+    if extra and vars and isinstance(vars, dict):
+        v = {**vars, **extra}
+    if v:
+        return {"t": str(line), "v": _json_safe(v)}
+    return str(line)
+
+
 def umsg_err(e):
     """SystemExit из aicut/omni_asr/insertlib в ответ API.
 
@@ -159,7 +174,7 @@ LOG_CAP = 4000          # ИИ-нарезка стримит тысячи стр
 
 def emit(line, **vars):
     with LOCK:
-        entry = {"t": str(line), "v": vars} if vars else str(line)
+        entry = log_entry(line, vars)
         JOB["log"].append(entry)
         over = len(JOB["log"]) - LOG_CAP
         if over > 0:

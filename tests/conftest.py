@@ -8,8 +8,19 @@ job.lock, ai_calls.jsonl, models_dev.json, _videogen), чтобы тесты н�
 в боевые файлы рабочей копии.
 """
 import os
+import tempfile
 
 import pytest
+
+# Изоляция файлового лога сессии тестов ДО любых импортов проекта.
+# Модули бэкенда (api.gdrive, api.render и др.) запрашивают логгер прямо на уровне модуля
+# при импорте (get_logger("reelsi.*")). Фикстура pytest опоздает, и RotatingFileHandler
+# базового логгера успеет привязаться к боевому reelsi.log в корне репозитория.
+_TEST_LOG_DIR = tempfile.mkdtemp(prefix="reelsi-tests-")
+_TEST_LOG_FILE = os.path.join(_TEST_LOG_DIR, "reelsi.log")
+os.environ["REELSI_LOG"] = _TEST_LOG_FILE
+os.environ["AUTOCUT_LOG"] = _TEST_LOG_FILE
+
 
 
 @pytest.fixture
@@ -40,33 +51,72 @@ def isolate_state_files(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def clear_cancel_flags():
-    """Убрать за `POST /api/cancel`: он ставит ОБЩИЕ на процесс флаги отмены, а снимает
-    их в бою только старт следующей задачи (job_start и api_*_run), — в тестах же
-    между файлами не снимает никто. Поймано прогоном HU (2026-09-15):
+def reset_job_state():
+    """Сбросить флаги отмены, статус running и состояние джобов между тестами.
 
-    * `JOB["cancel"]` — `run_omnicut_job` выходит по нему ДО запуска процесса, и
-      `test_pipeline_stages::test_run_omnicut_job_builds_correct_cli_flags` падал
-      IndexError'ом после `test_api_security` (`pytest tests/test_api_security.py
-      tests/test_pipeline_stages.py` — падение воспроизводится и без правок HU);
-    * `GDJOB["cancel"]` — `test_gdrive::test_упавший_rclone_не_считается_успехом`
-      видел чужую отмену и вместо кода возврата получал «скачивание остановлено».
-
-    Флаг `aicut.CANCEL` тут же: раньше его снимала своя фикстура в test_api_security.
+    Тесты вызывают `POST /api/cancel`, хелперы тестов (например `test_render.py`
+    `_preflight`) ставят `running=True`, или джобы падают без снятия флагов. В бою
+    их сбрасывает старт следующей задачи, а в тестах между файлами — никто.
+    Сбрасываем `cancel` и `running` у всех шести словарей джобов процесса
+    (`JOB`, `RJOB`, `GDJOB`, `VJOB`, `PXJOB`, `ILL_JOB`), а также `_LOCAL.epoch`
+    и флаг отмены в `core.aicut.llm`.
     """
+    try:
+        from core import applog
+        applog.get_logger()
+    except Exception:
+        pass
     yield
+
     try:
         from core.aicut import llm
         llm._LOCAL.__dict__.pop("epoch", None)
         llm.clear_cancel()
     except Exception:
         pass
-    from api import _core, gdrive, render, videogen
-    with _core.LOCK:
-        _core.JOB["cancel"] = False
-    with render.RLOCK:
-        render.RJOB["cancel"] = False
-    with gdrive.GDLOCK:
-        gdrive.GDJOB["cancel"] = False
-    with videogen.VLOCK:
-        videogen.VJOB["cancel"] = False
+    try:
+        from api import _core
+        with _core.LOCK:
+            _core.JOB["cancel"] = False
+            _core.JOB["running"] = False
+    except Exception:
+        pass
+    try:
+        from api import render
+        with render.RLOCK:
+            render.RJOB["cancel"] = False
+            render.RJOB["running"] = False
+    except Exception:
+        pass
+    try:
+        from api import gdrive
+        with gdrive.GDLOCK:
+            gdrive.GDJOB["cancel"] = False
+            gdrive.GDJOB["running"] = False
+    except Exception:
+        pass
+    try:
+        from api import videogen
+        with videogen.VLOCK:
+            videogen.VJOB["cancel"] = False
+            videogen.VJOB["running"] = False
+    except Exception:
+        pass
+    try:
+        from api import previewproxy
+        with previewproxy.PXLOCK:
+            previewproxy.PXJOB["running"] = False
+    except Exception:
+        pass
+    try:
+        from api import inserts
+        with inserts.ILL_LOCK:
+            inserts.ILL_JOB["running"] = False
+    except Exception:
+        pass
+    try:
+        from core import applog
+        applog.get_logger()
+    except Exception:
+        pass
+

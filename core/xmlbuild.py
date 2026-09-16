@@ -12,6 +12,7 @@ Timeline model (validated against the real Timeline 2.xml):
   * cam2 source time = cam1 source time + delta, delta = -sync_offset.
 """
 import os, re, urllib.parse, subprocess, json
+from core import fileio
 from core.xmltext import xml_text as _esc
 
 FPS = 60
@@ -447,7 +448,7 @@ def build(cam_paths, segments, offsets, out_path, assign=None,
 \t</sequence>
 </xmeml>
 """
-    open(out_path, "w", encoding="UTF-8").write(seq)
+    fileio.atomic_text_write(out_path, seq, encoding="UTF-8")
     return {"segments": len([1 for s, e in segments if round(e*FPS) > round(s*FPS)]),
             "total_frames": total, "total_s": total / FPS, "cameras": N,
             "subtitles": n_subs, "long_words": long_words}

@@ -730,9 +730,10 @@ the full list of files and JSON schemas, from `Reelsi_out/` to `ai_config.json`.
   cut).
 
 **JSON schemas** — user data and user files (sidecars, `ai_config.json`, style and
-speaker presets, user XML, `.jsx`, `.srt`) are written atomically (tmp + fsync +
-replace), see `core/fileio.py`; regenerable temporary artifacts (transcript caches,
-`_tmp/` intervals, proxy cache) are written directly — losing them costs nothing.
+speaker presets, Premiere XML (cut output), user XML, `.jsx`, `.srt`, `.drp`) are
+written atomically (tmp + fsync + replace), see `core/fileio.py`; regenerable
+temporary artifacts (transcript caches, `_tmp/` intervals, proxy cache) are written
+directly — losing them costs nothing.
 
 **`ai_config.json` contracts** — server-side, not localStorage:
 - LLM profiles (LM Studio / Claude / OpenRouter / OpenAI-compatible),

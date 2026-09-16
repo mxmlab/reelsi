@@ -16,6 +16,7 @@ FCP7 XML, ни FCPXML, ни AAF/OTIO. Родной формат Resolve — ед
 Формат приватный и недокументированный. При обновлении Resolve сверять заново —
 проще всего экспортом того же таймлайна из Resolve и построчным сравнением.
 """
+import io
 import os
 import re
 import struct
@@ -23,7 +24,7 @@ import uuid
 import zipfile
 import zlib
 
-from core import paths
+from core import fileio, paths
 from core.xmltext import xml_text as _esc
 
 SRC_FPS = 30000 / 1001                 # NTSC — в каком темпе считаются таймкоды камер
@@ -296,9 +297,11 @@ def read(path):
 
 
 def write(path, files):
-    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for name, data in files.items():
             z.writestr(name, data)
+    fileio.atomic_bytes_write(path, buf.getvalue())
 
 
 def seq_name(files):

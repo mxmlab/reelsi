@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Атомарная запись JSON- и текстовых файлов состояния (tmp + fsync + os.replace).
+"""Атомарная запись JSON-, текстовых и бинарных файлов состояния (tmp + fsync + os.replace).
 
 Прямой open(path, "w") усекает файл ДО сериализации: отбой питания или крах в
 этот момент оставляет пустой/битый файл на месте живых данных (project.json,
@@ -45,18 +45,23 @@ def _carry_mode(path, tmp):
             pass
 
 
-def _atomic_write(path, write, encoding="utf-8", newline=None):
-    """Одна точка записи для обеих функций модуля: tmp рядом с целью + fsync + replace.
+def _atomic_write(path, write, mode="w", encoding="utf-8", newline=None):
+    """Одна точка записи для функций модуля: tmp рядом с целью + fsync + replace.
 
     Имя tmp уникально (mkstemp): два одновременных писателя в один файл не
     перемешают половины — кто последним сделал os.replace, того данные и остались,
-    а битого файла не бывает. newline=None (как у open по умолчанию) — переводы
-    строк не трогаем: вызывающий сам решает, нужен ли ему CRLF."""
+    а битого файла не бывает. mode="w" или "wb". Для текстового режима newline=None
+    (как у open по умолчанию) — переводы строк не трогаем: вызывающий сам решает,
+    нужен ли ему CRLF."""
     path = os.path.realpath(path)
     d = os.path.dirname(path) or "."
     fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".tmp.", dir=d)
     try:
-        with os.fdopen(fd, "w", encoding=encoding, newline=newline) as f:
+        open_kw = {"mode": mode}
+        if "b" not in mode:
+            open_kw["encoding"] = encoding
+            open_kw["newline"] = newline
+        with os.fdopen(fd, **open_kw) as f:
             write(f)
             f.flush()
             os.fsync(f.fileno())
@@ -82,7 +87,15 @@ def atomic_text_write(path, text, encoding="utf-8", newline=None):
     сборка `.jsx`, субтитры): сбой или «Стоп» между усечением и записью оставлял
     пустой файл вместо живого. newline — как у open: профили спикеров пишутся с
     newline="\\r\\n", чтобы байты совпадали с прежней прямой записью."""
-    _atomic_write(path, lambda f: f.write(text), encoding=encoding, newline=newline)
+    _atomic_write(path, lambda f: f.write(text), mode="w", encoding=encoding, newline=newline)
+
+
+def atomic_bytes_write(path, data):
+    """Записать байты атомарно: tmp рядом + fsync + os.replace.
+
+    Нужна для бинарных файлов пользователя (DaVinci Resolve `.drp`), чтобы
+    сбой питания или «Стоп» не оставляли пустой или недописанный архив."""
+    _atomic_write(path, lambda f: f.write(data), mode="wb")
 
 
 def json_load_soft(path, default=None):

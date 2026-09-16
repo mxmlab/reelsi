@@ -184,6 +184,23 @@ def _stats_fields(line):
     return None
 
 
+_CHECKS = re.compile(r"^Checks:\s*(\d+)\s*/\s*(\d+)", re.I)
+
+
+def _checks_fields(line):
+    """Строка проверок rclone (Checks: i / n) → поля прогресса или None.
+
+    В статус страницы (stat) идти не обязан, но считается живым прогрессом
+    для сторожа простоя (задание IX): когда байты дошли до 100%, rclone
+    проверяет хеши файлов, и здоровая проверка не должна сниматься сторожем.
+    """
+    s = line.strip()
+    m = _CHECKS.match(s)
+    if m:
+        return {"ci": int(m.group(1)), "cn": int(m.group(2))}
+    return None
+
+
 # Дата и уровень в начале строки rclone: в узком логе страницы это половина
 # ширины, а время там своё.
 _TS = re.compile(r"^\d{4}/\d\d/\d\d \d\d:\d\d:\d\d\s+"
@@ -194,9 +211,9 @@ _TS = re.compile(r"^\d{4}/\d\d/\d\d \d\d:\d\d:\d\d\s+"
 RCLONE_STALL_SEC = 10 * 60
 _RCLONE_STALLED = -137
 # Поля разобранного прогресса, по изменению которых видно, что передача идёт
-# (задание IC, п. 4). `speed`/`eta` сюда не входят намеренно: они меняются и у блока
-# статистики, напечатанного по таймеру `--stats 2s`, когда передача уже встала.
-_PROGRESS_KEYS = ("bytes", "pct", "file", "file_pct", "i", "n")
+# (задание IC, п. 4; задание IX). `speed`/`eta` сюда не входят намеренно: они меняются
+# и у блока статистики, напечатанного по таймеру `--stats 2s`, когда передача уже встала.
+_PROGRESS_KEYS = ("bytes", "pct", "file", "file_pct", "i", "n", "ci", "cn")
 
 GDPROC = None  # Текущий процесс rclone — для отмены через /api/cancel и сторожа простоя
 
@@ -257,10 +274,12 @@ def _run_rclone(args, emit, stat=None):
     # Время последней РЕАЛЬНОЙ активности: от него, а не от старта, считаем простой —
     # большая папка качается минутами, и рубить её нельзя.
     activity = [time.time()]
-    # Последний разобранный прогресс: `--stats 2s` печатает блок статистики ПО ТАЙМЕРУ,
-    # даже когда передача встала, поэтому «пришла строка» ≠ «что-то происходит»
-    # (задание IC, п. 4). Активность — только ИЗМЕНЕНИЕ разобранных полей.
-    last_stat = [None]
+    # Последний разобранный прогресс по полям: активность — изменение значения
+    # ЛЮБОГО поля прогресса относительно его прежнего значения (словарь last_stat[k]),
+    # а не кортежа строки (задание IX). Строки блока статистики (--stats 2s) имеют
+    # разную форму и чередуются; раньше кортеж строки «менялся» на каждой строке
+    # при полностью замороженных значениях, и вставшая передача не снималась.
+    last_stat = {}
 
     def _handle(raw):
         nonlocal logged
@@ -268,20 +287,27 @@ def _run_rclone(args, emit, stat=None):
         if not line.strip():
             return
         f = _stats_fields(line)
-        if f:
-            if stat:
+        chk = None if f else _checks_fields(line)
+        prog = f or chk
+        if prog:
+            if f and stat:
                 stat(f)
-            # Прогресс изменился (байты/проценты/имя файла, счётчик файлов) — передача
-            # жива. Скорость и ETA в ключ НЕ входят: они меняются у блока статистики
+            # Прогресс изменился (байты/проценты/имя файла, счётчик файлов, проверки) —
+            # передача жива. Скорость и ETA в ключ НЕ входят: они меняются у блока статистики
             # сами по себе и «оживили» бы вставшую передачу.
-            key = tuple(f.get(k) for k in _PROGRESS_KEYS if k in f)
-            if key != last_stat[0]:
-                last_stat[0] = key
+            changed = False
+            for k in _PROGRESS_KEYS:
+                if k in prog:
+                    if k not in last_stat or last_stat[k] != prog[k]:
+                        last_stat[k] = prog[k]
+                        changed = True
+            if changed:
                 activity[0] = time.time()
-            pct = f.get("pct")
-            if pct is not None and pct >= logged + 10:
-                logged = pct - pct % 10
-                emit(_progress_line(line))
+            if f:
+                pct = f.get("pct")
+                if pct is not None and pct >= logged + 10:
+                    logged = pct - pct % 10
+                    emit(_progress_line(line))
             return
         if _is_noise(line):
             return                       # остальные строки блока статистики — не активность

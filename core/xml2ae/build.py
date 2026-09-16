@@ -17,6 +17,8 @@ from .layout import (DEFAULT_DISCLAIMER, DISC_FIT_W, EASE_DEFAULT, HL_EASE_IN, H
                      INS_C1_HIGH, INS_C2_BASE, INS_C2_PEAK, INS_C2_Y_FR, INS_EXIT,
                      INS_RISE_DY, INS_RISE_S0, INS_RISE_ENTER, INTRO_BASE_Y,
                      INTRO_F_DUR, INTRO_F_OUT, INTRO_FIT_W, INTRO_HOLD, INTRO_SCALE,
+                     SHADE_BLUR, SHADE_DY, SHADE_H, SHADE_OX, SHADE_OY, SHADE_SCALE,
+                     SHADE_W, SHADE_X,
                      SUB_BG_SH_DIR, SUB_BG_SH_DIST,
                      SUB_BG_SH_OP, SUB_BG_SH_SOFT, ZOOM_BIG,
                      cover_sweep,
@@ -573,10 +575,8 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     # не меньше «хвост вниз верхней строки + высота букв нижней + back_gap». Числа даёт
     # fonts.ink_extent; зазор стиля — дефолт 4 px, как раздвинул строки пользователь в AE.
     back_gap = float(st.get("back_gap") if st.get("back_gap") is not None else 4.0)
-    # Спад и полка прекомпов интро с эффектами (ПРАВКА 4): ключи стиля рядом с back_step.
-    # Дефолты совпадают с эталоном 1421 — встроенные стили без правок их не меняют.
-    intro_fx_fade = float(st.get("intro_fx_fade") if st.get("intro_fx_fade") is not None else 0.45)
-    intro_fx_fade_last = float(st.get("intro_fx_fade_last") if st.get("intro_fx_fade_last") is not None else 0.35)
+    # Фейд-аут прекомпа интро (задание IK): единый ключ стиля intro_fade (дефолт 0.35).
+    intro_fade = float(st.get("intro_fade") if st.get("intro_fade") is not None else 0.35)
     intro_fx_hold_add = float(st.get("intro_fx_hold_add") if st.get("intro_fx_hold_add") is not None else 0.3)
     # Размытие на старте и хвостовой дисклеймер (задание S): дефолты = выключено,
     # при них плейсхолдеры шаблона пусты и .jsx не меняется ни на байт (golden).
@@ -1293,26 +1293,24 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         _out_js = (_gmax + INTRO_F_DUR + INTRO_HOLD) if _g == _ng - 1 \
             else max(_gmax, _in_at + INTRO_F_DUR)
         _out_s = max(_out_js, _gl_end)
-        # ПРАВКА 4: последний прекомп либо следующий начинается позже, чем через 2 с
-        # после конца этого, — полка дополнительно держится на intro_fx_hold_add,
-        # а спад ещё короче (intro_fx_fade_last вместо intro_fx_fade).
+        # ПРАВКА 4 / IK: последний прекомп либо следующий начинается позже, чем через 2 с
+        # после конца этого, — полка дополнительно держится на intro_fx_hold_add;
+        # спад везде intro_fade (задание IK).
         _far = _g == _ng - 1
         if not _far and _g + 1 < _ng:
             _nx_tms = _grp_stats[_g + 1][1]
             _nx_in = min(_nx_tms) if _nx_tms else 0.0
-            if _nx_in - (_out_s + intro_fx_fade) > 2.0:
+            if _nx_in - (_out_s + intro_fade) > 2.0:
                 _far = True
         if _far:
             _out_s += intro_fx_hold_add
-            _fx_fade[_g] = intro_fx_fade_last
-        else:
-            _fx_fade[_g] = intro_fx_fade
+        _fx_fade[_g] = intro_fade
         _fx_os[_g] = _r(_out_s)
         _fx_oe[_g] = _r(_out_s + _fx_fade[_g])
 
     for _g, (_grp, (_lines, _tms, _l_gl)) in enumerate(zip(_intro_groups, _grp_stats)):
         _ts, _te = _intro_group_window(_tms, _g, len(_intro_groups))
-        _fade = INTRO_F_OUT
+        _fade = min(intro_fade, INTRO_F_OUT)
         if _fx_fade[_g] is not None:
             _fade, _te = _fx_fade[_g], _fx_oe[_g]
         # окно (ts/te) уже посчитано — камера группы по большинству этого окна (BR),
@@ -1435,7 +1433,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     # уход субтитров на вставках rise (задание DD): для каждой rise-вставки
     # субтитры скрываются [[t0,100],[t0+en,0],[t1-ex,0],[t1,100]]; окна внахлёст объединяются
     sub_hide = []
-    if _insert_anim == "rise":
+    if _insert_anim == "rise" and bool(st.get("insert_sub_swap", True)):
         rise_windows = []
         for xi in inserts_plan:
             if (xi.get("t") or "photo") == "photo" and xi.get("style") == "cam2":
@@ -1673,6 +1671,65 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
                 + ('    try{ capBg.moveToBeginning(); }catch(e){}\n' if caption_bg else '')
                 + '    try{ capLayer.moveToBeginning(); }catch(e){}\n'
             )
+    # Затемнение под интро (задание IL): единственный источник чисел — этот план, из него
+    # их берут и шаблон (.jsx), и предпросмотр. Выключенная галка = None: подстановка в
+    # шаблоне пустая, .jsx не меняется ни на байт (golden). Координаты — в системе нула
+    # «Камера 1» (та же, в которой стоит нул «интро»: [0, INTRO_Y], template.py): позиция
+    # слоя следует за высотой интро, «y = INTRO_Y − 215» по ручным роликам amdi1.aep.
+    shade_plan = None
+    if bool(st.get("intro_shade")):
+        shade_plan = {
+            "x": SHADE_X, "y": _r(float(st.get("intro_y") or 0) + SHADE_DY),
+            "scale": SHADE_SCALE, "w": SHADE_W, "h": SHADE_H,
+            "ox": SHADE_OX, "oy": SHADE_OY, "blur": SHADE_BLUR,
+            "op": float(st.get("intro_shade_op") if st.get("intro_shade_op") is not None else 100.0),
+        }
+    # JS слоя затемнения: собирается ТОЛЬКО при включённой галке — при выключенной
+    # подстановка пустая, и .jsx остаётся прежним байт в байт (golden). Слой — фигура
+    # (прямоугольник с чёрной заливкой) с Box Blur; числа берутся из INTRO_SHADE, то есть
+    # из плана: второй копии формул нет ни в ExtendScript, ни в превью.
+    _intro_shade_js = ""
+    if shade_plan is not None:
+        _intro_shade_js = (
+            "\n    // ---- затемнение под интро (задание IL): фигура + Box Blur, числа из плана ----\n"
+            "    var INTRO_SHADE=" + _jd(shade_plan) + ";\n"
+            "    var shadeLayer = main.layers.addShape();\n"
+            '    shadeLayer.name = "Затемнение интро";\n'
+            "    shadeLayer.inPoint = 0; shadeLayer.outPoint = DUR;\n"
+            '    var shadeRoot = shadeLayer.property("ADBE Root Vectors Group");\n'
+            '    var shadeGrp = shadeRoot.addProperty("ADBE Vector Group");\n'
+            '    var shadeCtx = shadeGrp.property("ADBE Vectors Group");\n'
+            '    try{ shadeCtx.addProperty("ADBE Vector Shape - Rect").property("ADBE Vector Rect Size")'
+            '.setValue([INTRO_SHADE.w, INTRO_SHADE.h]); }catch(e){}\n'
+            '    try{ shadeCtx.addProperty("ADBE Vector Graphic - Fill").property("ADBE Vector Fill Color")'
+            '.setValue([0,0,0,1]); }catch(e){}\n'
+            '    try{ shadeGrp.property("ADBE Vector Transform Group").property("ADBE Vector Position")'
+            '.setValue([INTRO_SHADE.ox, INTRO_SHADE.oy]); }catch(e){}\n'
+            "    // обводку не добавляем: в amdi1.aep её нет\n"
+            "    var shadeBlur = null;\n"
+            '    try{ shadeBlur = shadeLayer.property("ADBE Effect Parade").addProperty("ADBE Box Blur2"); }catch(e){}\n'
+            "    if (shadeBlur){\n"
+            "        var shadeRad = false;\n"
+            '        try{ shadeBlur.property("Blur Radius").setValue(INTRO_SHADE.blur); shadeRad = true; }catch(e){}\n'
+            "        // запасное имя параметра радиуса: в локализованном AE «Blur Radius» не найдётся\n"
+            '        if (!shadeRad){ try{ shadeBlur.property("ADBE Box Blur2-0001").setValue(INTRO_SHADE.blur); }catch(e){} }\n'
+            "    }\n"
+            '    try{ shadeLayer.property("ADBE Transform Group").property("ADBE Opacity")'
+            '.setValue(INTRO_SHADE.op); }catch(e){}\n'
+            "    // порядок как у рото: сначала parent, ПОТОМ позиция и масштаб — AE при привязке\n"
+            "    // пересчитывает локальную позицию ребёнка под трансформ нула (задание BK)\n"
+            "    if (cam1null){ shadeLayer.parent=cam1null;\n"
+            '        try{ shadeLayer.property("ADBE Transform Group").property("ADBE Position")'
+            '.setValue([INTRO_SHADE.x, INTRO_SHADE.y]); }catch(e){}\n'
+            '        try{ shadeLayer.property("ADBE Transform Group").property("ADBE Scale")'
+            '.setValue([INTRO_SHADE.scale, INTRO_SHADE.scale]); }catch(e){}\n'
+            "    } else {\n"
+            '        try{ shadeLayer.property("ADBE Transform Group").property("ADBE Position")'
+            '.setValue([W/2+INTRO_SHADE.x, H/2+INTRO_SHADE.y]); }catch(e){}\n'
+            '        try{ shadeLayer.property("ADBE Transform Group").property("ADBE Scale")'
+            '.setValue([INTRO_SHADE.scale, INTRO_SHADE.scale]); }catch(e){}\n'
+            "    }\n"
+        )
     plan = {
         "fps": meta["fps"], "w": meta["w"], "h": meta["h"], "name": meta["name"],
         "dur": meta["dur"] / meta["fps"],
@@ -1685,6 +1742,9 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
                  "cx": cam1_cx, "cy": cam1_cy,
                  "keys": cam1_scale or [], "ease": _zoom_key_eases(cam1_scale or [])},
         "intro": intro_plan,
+        # затемнение под интро (задание IL): None при выключенной галке, иначе готовые
+        # числа слоя-фигуры (x/y/scale/w/h/ox/oy/blur/op) — их же рисует предпросмотр
+        "shade": shade_plan,
         # общий масштаб интро, в процентах как в стиле (задание BG): превью множит на него
         # положение и размер блока; поля групп (dx/dy/ds/y) читает оно же — не переименовывать
         "intro_scale": float(st.get("intro_scale") or 100),
@@ -2358,10 +2418,17 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         # под INTRO_SAFE_TOP сам — берёт число, как берёт INS_C2_Y. Превью читает то же
         # из plan.intro[].y, поэтому база интро живёт в одном месте.
         intro_idy=_jd(intro_idy),
+        # Длительность фейд-аута прекомпов интро (задание IK)
+        intro_fade=intro_fade,
         # Окна фейд-аута прекомпов с глитчем (ПРАВКА 3/4): подстановки непустые только
         # при глитче в ролике, иначе .jsx прежний (golden).
         intro_fx_decl=_intro_fx_decl,
         intro_fx_out=_intro_fx_out,
+        # Затемнение под интро (задание IL): непусто только при галке стиля, иначе .jsx
+        # прежний байт в байт (golden). Слой создаётся сразу после камер — значит выше
+        # клипов камер, а всё добавленное позже (вставки, интро, рото, субтитры, нулы)
+        # встаёт выше него; блок LAYER_ORDER группы не трогает.
+        intro_shade_js=_intro_shade_js,
         # Макет спикера (задание Q): точка наезда Камеры 1 и точка покоя вставок Кам2,
         # сдвиг интро по X. Дефолты пустые подстановки — .jsx прежний (golden).
         # Камера 1: якорь и позиция нула считаются от точки наезда (cx/cy доли кадра).

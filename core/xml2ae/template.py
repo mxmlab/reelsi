@@ -349,7 +349,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     var nulls = [];
     for (var ci=0; ci<CAM.length; ci++)
         nulls[ci] = addCam(CAM[ci], ci>0, "Камера "+(ci+1));
-    var cam1null = nulls[0];%(cam1_anchor)s
+    var cam1null = nulls[0];%(cam1_anchor)s%(intro_shade_js)s
     // камера «первого кадра» в момент t: верхний включённый клип, покрывающий t (верхняя дорожка побеждает)
     function camAt(t){ var f=t*FPS+1e-4, best=0;
         for (var c=0;c<CAM.length;c++){ var cls=CAM[c].clips||[];
@@ -578,7 +578,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     // ---- интро-текст: по прекомпу на группу строк; между группами кросс-фейд по opacity ----
     var introLayers = [];%(intro_front_arr_decl)s%(intro_above_roto_arr_decl)s%(intro_fx_decl)s
     if (INTRO_GROUPS.length){
-        var LINE_STEP=160, F_DUR=0.3, HOLD=1.0, F_OUT=0.75;
+        var LINE_STEP=160, F_DUR=0.3, HOLD=1.0, F_OUT=0.75, F_FADE=%(intro_fade)g;
         function introDoc(tl, txt, col%(accent_params)s%(fill_params)s){
             var sp=tl.property("ADBE Text Properties").property("ADBE Text Document");
             var dd=sp.value; dd.resetCharStyle(); dd.resetParagraphStyle(); dd.text=""+txt;
@@ -667,7 +667,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             var iLop=iL.property("ADBE Transform Group").property("ADBE Opacity");
             if(gI==0&&inAt==0){ iLop.setValueAtTime(0,100); }
             else { iLop.setValueAtTime(inAt,0); iLop.setValueAtTime(inAt+F_DUR,100); easePair(iLop); }
-            iLop.setValueAtTime(outStart,100); iLop.setValueAtTime(outEnd,0);
+            iLop.setValueAtTime(Math.max(outStart,outEnd-F_FADE),100); iLop.setValueAtTime(outEnd,0);
             %(intro_comp_glow)s
             %(intro_comp_shadow)s
         }

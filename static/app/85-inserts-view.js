@@ -149,6 +149,7 @@ async function ipvOpen(xml){
     segs:[],audio:[],words:[],dur:0,fps:60,aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,defAt:0,stats:{styk:0,swap:0,seek:0,cam:0,stale:0,back:0},playing:false,raf:0,xml:xml||'',cur:-1,intro:[],introCur:-1,plan:null,insShift:null};
   const stage=$('ipvstage');[...stage.querySelectorAll('video')].forEach(v=>v.remove());
   const oldCv=$('ipvcam');if(oldCv)oldCv.remove();   // старый canvas кадра мог остаться от прошлого клипа
+  const oldSh=$('ipvshade');if(oldSh)oldSh.remove(); // затемнение под интро — тоже от прошлого клипа (IL)
   const ov=$('ipvins');ov.className='ipvins';ov.innerHTML='';
   const sb=$('ipvsub');sb.textContent='';sb.classList.remove('plan');
   sb.style.opacity='';sb.style.removeProperty('--subfs');sb.style.removeProperty('--subfc');sb.style.removeProperty('--subhl');sb.style.removeProperty('--subsh');
@@ -467,6 +468,41 @@ function ipvCaption(tm){
     inner.style.display='none';
   }
 }
+// ---- затемнение под интро по плану (задание IL) ----
+// Мягкое чёрное затемнение снизу кадра под текстом интро — пользователь клал его руками в
+// каждом ролике (Shape Layer в amdi1.aep). Числа (позиция, размер, размытие, прозрачность)
+// считает Python в плане сцены: здесь только отрисовка, второй копии формул нет, как у тени
+// прекомпа (plan.intro[].shadow). Слой висит на нуле Камеры 1 — значит едет и масштабируется
+// вместе с её зумом (ipvCamChild, та же машина, что у блока интро), но лежит НИЖЕ интро и
+// вставок: затемнение обязано гасить кадр камеры, а не текст поверх него. План без ключа
+// (галка выключена) — элемента нет вовсе.
+function ipvShade(){
+  const pl=IPV.plan,sh=pl&&pl.shade,st=$('ipvstage');
+  let el=$('ipvshade');
+  if(!sh||!st){if(el)el.remove();return;}
+  if(!el){
+    el=document.createElement('div');el.id='ipvshade';el.className='ipvshade';
+    el.dataset.noi18n='1';
+    const io=$('ipvintro');                    // в DOM перед интро: при равном z-index ниже его
+    if(io)st.insertBefore(el,io);else st.appendChild(el);
+  }
+  const w=pl.w||1080;
+  const k=(st.clientWidth||w)/w;               // пиксели превью на пиксель кадра
+  const sc=(sh.scale!=null?sh.scale:100)/100;
+  const s=ipvZoomAt(ipvNow());                 // зум Камеры 1 — тот же, что у интро
+  const bw=sh.w*k, bh=sh.h*k;
+  // Центр прямоугольника в системе нула Камеры 1: Position слоя + масштаб × смещение
+  // фигуры внутри группы. margin'ы сдвигают коробку её центром в центр кадра — дальше
+  // работает тот же ipvCamChild, что у интро.
+  const cc=ipvCamChild((sh.x||0)+(sh.ox||0)*sc,(sh.y||0)+(sh.oy||0)*sc,s);
+  el.style.width=bw+'px';el.style.height=bh+'px';
+  el.style.marginLeft=(-bw/2)+'px';el.style.marginTop=(-bh/2)+'px';
+  el.style.transform='translate('+(cc[0]*k)+'px,'+(cc[1]*k)+'px) scale('+(sc*s)+')';
+  // размытие — в пикселях превью тем же масштабом кадр→превью, что R у тени интро; transform
+  // идёт ПОСЛЕ фильтра, как в AE (эффект на источнике, потом Scale слоя)
+  el.style.filter='blur('+((sh.blur||0)*k).toFixed(1)+'px)';
+  el.style.opacity=String((sh.op!=null?sh.op:100)/100);
+}
 // ---- субтитры по плану: стопка по row, цвет по color, исчезновение группы по gend ----
 function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
   const pl=IPV.plan;const subs=(pl&&pl.subs)||[];
@@ -673,6 +709,7 @@ function ipvUI(tm){const seek=$('ipvseek');if(seek&&document.activeElement!==see
     sb.textContent=cur;sb.style.color=yel?'var(--subhl,var(--yel))':'';sb.classList.remove('plan');
   }
   ipvZoom(tm);                                    // наезд/дрейф Камеры 1 по плану
+  ipvShade();                                     // затемнение под интро (задание IL) — из плана
   ipvStartBlur(tm);                               // размытие на старте (задание S) — CSS-фильтр на кадре
   itlPh(tm);ipvIntro(tm);ipvOverlay(tm);aewHighlight(tm);
   if(typeof subrowHighlight==='function')subrowHighlight(tm);

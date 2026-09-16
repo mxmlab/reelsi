@@ -478,9 +478,11 @@ def api_set_yellow():
         if not os.path.isfile(xml):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
                                   path=xml))
+        if "indices" not in d or not isinstance(d["indices"], list):
+            raise SystemExit(umsg("bad_indices", "Поле indices должно быть списком"))
         try:
             from core import xml2ae
-            idx = [int(i) for i in ((d.get("indices") if isinstance(d.get("indices"), list) else []) or [])]
+            idx = [int(i) for i in d["indices"]]
             res = xml2ae.set_highlights(xml, idx)
             try:                                             # сайдкар .yellow.json — фолбэк для /api/words
                 atomic_json_dump(os.path.splitext(xml)[0] + ".yellow.json",

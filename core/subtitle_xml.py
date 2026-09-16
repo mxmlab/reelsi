@@ -30,8 +30,8 @@ def map_words_to_clips(words, clips, min_frames=6, max_hold=0.5, fps=FPS):
     return align.map_words_to_clips(words, clips, min_frames=min_frames, max_hold=max_hold, fps=fps)
 
 
-def _build_subtitle_track(sub_words, start_id):
-    vtrack, n, longs, _ = xmlbuild.build_subtitle_track(sub_words, start_id)
+def _build_subtitle_track(sub_words, start_id, fps=60):
+    vtrack, n, longs, _ = xmlbuild.build_subtitle_track(sub_words, start_id, fps=fps)
     return vtrack, n, longs
 
 
@@ -102,7 +102,7 @@ def add_subtitles(xml_path, out_xml=None, model=None, emit=console_emit):
     # insert a subtitle track + write .srt
     txt = open(xml_path, encoding="utf-8").read()
     maxid = max([int(m) for m in re.findall(r'clipitem-(\d+)', txt)] + [1000]) + 1
-    subtrack, n, longs = _build_subtitle_track(sub_words, maxid)
+    subtrack, n, longs = _build_subtitle_track(sub_words, maxid, fps=meta["fps"])
     vend = _sequence_video_close(txt)
     new = txt[:vend] + subtrack + txt[vend:]
     out_xml = out_xml or (os.path.splitext(xml_path)[0] + "_subs.xml")

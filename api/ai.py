@@ -371,9 +371,10 @@ def api_ai_config():
             saved_prof = cfg["profiles"].get(old_name or name) or {}
             provider = jstr(p, "provider") or "lmstudio"
             base_url = aicut.normalize_base_url(jstr(p, "base_url"))
+            saved_url = aicut.normalize_base_url(jstr(saved_prof, "base_url"))
             key_in = jstr(p, "api_key").strip()
             if (key_in.startswith("•••") and saved_prof
-                    and (base_url != (saved_prof.get("base_url") or "")
+                    and (base_url != saved_url
                          or provider != (saved_prof.get("provider") or "lmstudio"))):
                 raise SystemExit(umsg("key_mask_address_changed",
                     "Сменился адрес или провайдер — введи ключ заново: сохранённый ключ "

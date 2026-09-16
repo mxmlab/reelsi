@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-# Reelsi — Windows installation.
+# Reelsi - Windows installation.
 #
 #   powershell -ExecutionPolicy Bypass -File reelsi\install.ps1
 #
@@ -9,7 +9,7 @@
 #
 # The main reason this script exists: correct torch build. If you install torch
 # with a plain `pip install torch`, you get the CPU build, and all GPU
-# computation becomes orders of magnitude slower — silently, with no errors.
+# computation becomes orders of magnitude slower - silently, with no errors.
 
 param(
     [switch]$Cpu,          # force CPU torch build (skip GPU detection)
@@ -57,10 +57,41 @@ try {
 }
 Say "Python 3.10: $py"
 
+if (-not $env:REELSI_NO_VENV) {
+    $inVenv = $false
+    try {
+        & $py -c "import sys; sys.exit(0 if sys.prefix != sys.base_prefix else 1)" 2>$null
+        if ($LASTEXITCODE -eq 0) { $inVenv = $true }
+    } catch {
+    }
+    if (-not $inVenv) {
+        $venvOk = $false
+        try {
+            & $py -c "import venv, ensurepip" 2>$null
+            if ($LASTEXITCODE -eq 0) { $venvOk = $true }
+        } catch {
+        }
+        if (-not $venvOk) {
+            Bad "Python venv or ensurepip module is missing. Install Python with venv support or run with `$env:REELSI_NO_VENV=1"
+            exit 1
+        }
+        $venvDir = Join-Path $here ".venv"
+        Say "Creating virtual environment in $venvDir"
+        & $py -m venv $venvDir
+        $venvPy = Join-Path $venvDir "Scripts\python.exe"
+        if (-not (Test-Path $venvPy)) {
+            $venvPy = Join-Path $venvDir "bin\python.exe"
+        }
+        if (Test-Path $venvPy) {
+            $py = $venvPy
+        }
+    }
+}
+
 if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
     Say "ffmpeg found"
 } else {
-    Bad "ffmpeg not found in PATH — no audio or rendering without it."
+    Bad "ffmpeg not found in PATH - no audio or rendering without it."
     Say "Install: winget install Gyan.FFmpeg  (then open a new terminal window)"
     exit 1
 }
@@ -77,13 +108,13 @@ if (-not $Cpu) {
 }
 
 if ($cuda) {
-    Say "NVIDIA detected — installing CUDA 12.1 build"
+    Say "NVIDIA detected - installing CUDA 12.1 build"
     & $py -m pip install torch==2.5.1 torchaudio==2.5.1 torchvision==0.20.1 `
         --index-url https://download.pytorch.org/whl/cu121
 } else {
     if ($Cpu) { Say "CPU build (forced via -Cpu flag)" }
     else {
-        Say "NVIDIA not detected — installing CPU build."
+        Say "NVIDIA not detected - installing CPU build."
         Say "If you have an AMD GPU: there is a separate ROCm build, see docs/PLATFORMS.md"
     }
     & $py -m pip install torch torchaudio torchvision

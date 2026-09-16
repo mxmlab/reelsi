@@ -472,7 +472,7 @@
     // ---- интро-текст: по прекомпу на группу строк; между группами кросс-фейд по opacity ----
     var introLayers = [];
     if (INTRO_GROUPS.length){
-        var LINE_STEP=160, F_DUR=0.3, HOLD=1.0, F_OUT=0.75;
+        var LINE_STEP=160, F_DUR=0.3, HOLD=1.0, F_OUT=0.75, F_FADE=0.35;
         function introDoc(tl, txt, col){
             var sp=tl.property("ADBE Text Properties").property("ADBE Text Document");
             var dd=sp.value; dd.resetCharStyle(); dd.resetParagraphStyle(); dd.text=""+txt;
@@ -566,7 +566,7 @@
             var iLop=iL.property("ADBE Transform Group").property("ADBE Opacity");
             if(gI==0&&inAt==0){ iLop.setValueAtTime(0,100); }
             else { iLop.setValueAtTime(inAt,0); iLop.setValueAtTime(inAt+F_DUR,100); easePair(iLop); }
-            iLop.setValueAtTime(outStart,100); iLop.setValueAtTime(outEnd,0);
+            iLop.setValueAtTime(Math.max(outStart,outEnd-F_FADE),100); iLop.setValueAtTime(outEnd,0);
             try{ var igl=iL.property("ADBE Effect Parade").addProperty("ADBE Glo2");
                  try{ igl.property("Glow Radius").setValue(42); }catch(e){}
                  try{ igl.property("Glow Intensity").setValue(INTRO_GLOW); }catch(e){} }catch(e){}

@@ -40,6 +40,15 @@ say "Python $PYVER ($OS)"
 [ "$PYVER" = "3.10" ] || say "WARNING: project targets 3.10; some wheels may not be available for other versions."
 
 if [ -z "${REELSI_NO_VENV:-}" ] && "$PY" -c 'import sys; sys.exit(0 if sys.prefix == sys.base_prefix else 1)'; then
+  if ! "$PY" -c "import venv, ensurepip" >/dev/null 2>&1; then
+    bad "Python venv or ensurepip module is missing."
+    if [ "$OS" = "Darwin" ]; then
+      say "Install python3-venv or re-run with REELSI_NO_VENV=1"
+    else
+      say "Install: sudo apt install python3-venv  (or run with REELSI_NO_VENV=1)"
+    fi
+    exit 1
+  fi
   say "Creating virtual environment in $HERE/.venv"
   "$PY" -m venv "$HERE/.venv"
   if [ -f "$HERE/.venv/bin/python" ]; then

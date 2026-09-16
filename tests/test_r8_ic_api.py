@@ -8,8 +8,8 @@
 1. `/api/render_run` и `/api/build_run`: кривой набор — внятный `umsg` и НИКОГДА
    не 500; «файл не найден» — только про пропавший файл.
 2. Сторож-тест: ЛЮБОЙ POST-роут `/api/*` (кроме `/api/pick*`) на тело из чисел
-   вместо строк отвечает не 500. `Thread.start` и `Popen` подменены — ни один
-   процесс и ни один поток не запускается.
+   вместо строк и тела не-объекты ([1, 2], "x", 5) отвечает не 500. `Thread.start` и `Popen`
+   подменены — ни один процесс и ни один поток не запускается.
 3. Отмена скачивания с гугл-диска: `failed=False`, `cancelled=True`.
 4. Сторож rclone: активность — только ИЗМЕНЕНИЕ прогресса; строка, роняющая
    разбор, не убивает поток чтения.
@@ -129,17 +129,16 @@ def test_build_run_bad_set_is_not_file_not_found(client, monkeypatch, xml_file):
     assert "exposure" in d["error"], d
 
 
-@pytest.mark.parametrize("url,code", [("/api/render_run", "render_set_invalid"),
-                                      ("/api/build_run", "build_set_invalid")])
-def test_render_and_build_survive_non_object_body(client, monkeypatch, url, code):
-    """Тело-массив (не объект) — тоже внятная ошибка набора, а не 500."""
+@pytest.mark.parametrize("url", ["/api/render_run", "/api/build_run"])
+def test_render_and_build_survive_non_object_body(client, monkeypatch, url):
+    """Тело-массив (не объект) — 400 bad_body на границе Blueprint."""
     monkeypatch.setattr("threading.Thread.start", lambda self: None)
     r = client.post(url, json=[1, 2], headers=H)
-    assert r.status_code == 200 and r.get_json().get("err") == code, r.get_json()
+    assert r.status_code == 400 and r.get_json().get("err") == "bad_body", r.get_json()
 
 
 # --------------------------------------------------------------------------- #
-# 2. Сторож: ни один POST-роут не отвечает 500 на числа в строковых полях
+# 2. Сторож: ни один POST-роут не отвечает 500 на числа и тела не-объекты
 # --------------------------------------------------------------------------- #
 NUMBERS = {"xml": 123, "name": 123, "path": 123, "dir": 123, "dest": 123, "url": 123,
            "query": 123, "outdir": 123, "text": 123, "model": 123}
@@ -193,6 +192,37 @@ def test_all_post_routes_survive_numeric_body(monkeypatch):
             if r.status_code >= 500:
                 bad.append((url, r.status_code, r.get_data(as_text=True)[:200]))
     assert not bad, f"500 на числах в теле: {bad}"
+
+
+@pytest.mark.parametrize("bad_body", [[1, 2], "x", 5])
+def test_all_post_routes_survive_non_object_body(monkeypatch, bad_body):
+    """Тело не объект (`[1, 2]`, `"x"`, `5`) — ни одного 500: граница Blueprint отдаёт 400."""
+    import urllib.error
+    import urllib.request
+    from webui import app
+    from core import aicut
+    app.config["TESTING"] = True
+
+    monkeypatch.setattr("threading.Thread.start", lambda self: None)
+    monkeypatch.setattr("subprocess.Popen",
+                        lambda *a, **k: pytest.fail("на кривом теле запущен процесс"))
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: None)
+    monkeypatch.setattr(urllib.request, "urlopen",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            urllib.error.URLError("сеть в тестах запрещена")))
+    monkeypatch.setattr(aicut, "resolve_video_profile", lambda *a, **k: None)
+    monkeypatch.setattr(aicut, "_ask_openai", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(aicut, "_ask_anthropic", lambda *a, **k: {"ok": True})
+
+    routes = _post_routes()
+    assert len(routes) >= 40, f"роутов подозрительно мало: {routes}"
+    bad = []
+    with app.test_client() as c:
+        for url in routes:
+            r = c.post(url, json=bad_body, headers=H)
+            if r.status_code >= 500:
+                bad.append((url, r.status_code, r.get_data(as_text=True)[:200]))
+    assert not bad, f"500 на теле {bad_body!r}: {bad}"
 
 
 # --------------------------------------------------------------------------- #

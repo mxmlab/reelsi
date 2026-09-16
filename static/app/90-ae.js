@@ -315,6 +315,9 @@ async function loadWordsFor(xml){const info=$('wordsinfo');
   if(d.error){info.textContent='⚠ '+errText(d);return;}
   WORDS=d.words;if(HLXML!==xml){HL=new Set();BRK=new Set();CNT=new Set();JNS=new Set();HLXML=xml;
     if(Array.isArray(d.yellow)&&d.yellow.length){HL=new Set(d.yellow);if(Array.isArray(d.breaks))BRK=new Set(d.breaks);}}
+  else if(HL.size===0&&Array.isArray(d.yellow)&&d.yellow.length){
+    // Ролик открыт до разметки ИИ — HLXML уже совпал, но набор пуст: берём жёлтые из .yellow.json (задание II)
+    HL=new Set(d.yellow);if(Array.isArray(d.breaks))BRK=new Set(d.breaks);captureAE();}
   wordsInfo();renderIntro();aewRender();}
 // ---- группы интро: главная строка + продолжение ----
 // Прекомп = «главная» строка (первая в списке, либо с break, либо якорь-акцент с `from`) плюс идущие

@@ -7,9 +7,11 @@
 указания, а техчасть у них одна и та же.
 """
 import json
+import socket
+import time
 import urllib.request, urllib.error
 from .config import APP_NAME, APP_REFERER, _profile_dict, apply_profile_headers, load_ai_config
-from .llm import cancel_reason, cancelled
+from .llm import ai_log_append, cancel_reason, cancelled
 from core.umsg import umsg
 from core.app_meta import console_emit, http_req
 
@@ -17,6 +19,11 @@ from core.app_meta import console_emit, http_req
 
 # ---- Генерация картинок-вставок (Nano Banana и т.п.) ------------------------
 IMAGE_OFF = "__off__"           # значение active_image «генерация выключена» (дефолт)
+# Обычная картинка 4–5 с, 90 — запас; мёртвое соединение не должно держать слот браузера 5–10 минут
+IMAGE_TIMEOUT_S = 90
+# OpenRouter /images у части промптов («large water bottles row») виснет наглухо (150с+),
+# тогда как /chat/completions отдаёт ту же картинку за 4.8с. 40с — запас для Image API до отката на чат.
+IMAGES_API_TIMEOUT_S = 40
 IMAGE_MODEL_HINTS = ["google/gemini-3.1-flash-lite-image",   # ~$0.04/картинка (рекоменд.)
                      "google/gemini-3.1-flash-image",        # ~$0.08
                      "google/gemini-2.5-flash-image"]        # ~$0.04, прошлое поколение
@@ -106,6 +113,26 @@ def _img_http_error(e, prof):
     return f"{e.code}: {detail}"
 
 
+def _is_timeout(e):
+    if isinstance(e, (TimeoutError, socket.timeout)):
+        return True
+    if isinstance(e, urllib.error.URLError):
+        reason = getattr(e, "reason", None)
+        if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in str(reason).lower():
+            return True
+    return False
+
+
+def _check_img_timeout(e):
+    """Истечение таймаута без повтора: мёртвое соединение не должно удваивать ожидание."""
+    if _is_timeout(e):
+        raise SystemExit(umsg("img_timeout", f"провайдер не ответил за {IMAGE_TIMEOUT_S} с — повтори генерацию", s=IMAGE_TIMEOUT_S))
+
+
+class _ImageTimeoutError(Exception):
+    """Сбой провайдера: Image API (/images) не ответил вовремя — откат на /chat/completions."""
+
+
 class _Image404Error(Exception):
     pass
 
@@ -115,7 +142,8 @@ def gen_image(prompt, prof=None, emit=console_emit, retries=1):
 
     Модель в IMAGE_MODELS или каталог пуст -> Image API (POST /images).
     Если модели нет в каталоге и Image API ответил 404 -> откат на
-    /chat/completions с modalities:["image"] (Nano Banana и др.)."""
+    /chat/completions с modalities:["image"] (Nano Banana и др.).
+    Если Image API не ответил за IMAGES_API_TIMEOUT_S (40с) — также откат на чат."""
     prof = prof or resolve_image_profile()
     if prof is None:
         raise SystemExit(umsg("images_disabled", "генерация картинок выключена — выбери профиль «Картинки» в настройках ⚙"))
@@ -124,10 +152,24 @@ def gen_image(prompt, prof=None, emit=console_emit, retries=1):
                               f"провайдер «{prof['provider']}» не генерит картинки — нужен "
                               f"OpenRouter/OpenAI-совместимый с image-моделью (FLUX, Nano Banana)",
                               provider=prof["provider"]))
+    t0 = time.time()
     try:
-        return _gen_image_openrouter(prompt, prof, emit=emit, retries=retries)
-    except _Image404Error:
-        return _gen_image_chat(prompt, prof, emit=emit, retries=retries)
+        try:
+            res = _gen_image_openrouter(prompt, prof, emit=emit, retries=retries)
+        except _ImageTimeoutError:
+            # Сбой провайдера: OpenRouter /images у gemini-3.1-flash-lite-image на части промптов
+            # («large water bottles row») виснет наглухо (150 с и повторно 60 с — TimeoutError),
+            # а тот же промпт через /chat/completions даёт картинку за 4.8 с («a red apple on
+            # white background» через /images — 4.5 с). Откатываемся на чат.
+            emit("! Image API не ответил за {s} с — пробую через чат", s=IMAGES_API_TIMEOUT_S)
+            res = _gen_image_chat(prompt, prof, emit=emit, retries=retries)
+        except _Image404Error:
+            res = _gen_image_chat(prompt, prof, emit=emit, retries=retries)
+        ai_log_append("image", prof, ok=True, ms=(time.time() - t0) * 1000, err=None)
+        return res
+    except (Exception, SystemExit) as e:
+        ai_log_append("image", prof, ok=False, ms=(time.time() - t0) * 1000, err=str(e))
+        raise
 
 
 def _gen_image_openrouter(prompt, prof, emit=console_emit, retries=1):
@@ -158,8 +200,12 @@ def _gen_image_openrouter(prompt, prof, emit=console_emit, retries=1):
         req = http_req(url, data=json.dumps(payload).encode("utf-8"),
                        headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=300) as r:
+            with urllib.request.urlopen(req, timeout=IMAGES_API_TIMEOUT_S) as r:
                 resp = json.load(r)
+        except (TimeoutError, socket.timeout):
+            # OpenRouter /images у gemini-3.1-flash-lite-image на части промптов («large water bottles row»)
+            # виснет (150с), тогда как /chat/completions отдаёт за 4.8с. Без повтора — сразу откат на чат.
+            raise _ImageTimeoutError()
         except urllib.error.HTTPError as e:
             if e.code == 404:                   # модель не картиночная / не в Image API
                 if in_catalog:
@@ -170,6 +216,8 @@ def _gen_image_openrouter(prompt, prof, emit=console_emit, retries=1):
                 raise _Image404Error()
             last = _img_http_error(e, prof)
         except urllib.error.URLError as e:
+            if _is_timeout(e):
+                raise _ImageTimeoutError()
             last = str(e)
         else:
             item = ((resp.get("data") or [{}])[0]) or {}
@@ -208,11 +256,14 @@ def _gen_image_chat(prompt, prof, emit=console_emit, retries=1):
         req = http_req(url, data=json.dumps(payload).encode("utf-8"),
                        headers=headers)
         try:
-            with urllib.request.urlopen(req, timeout=180) as r:
+            with urllib.request.urlopen(req, timeout=IMAGE_TIMEOUT_S) as r:
                 resp = json.load(r)
+        except (TimeoutError, socket.timeout) as e:
+            _check_img_timeout(e)
         except urllib.error.HTTPError as e:
             last = _img_http_error(e, prof)
         except urllib.error.URLError as e:
+            _check_img_timeout(e)
             last = str(e)
         else:
             imgs = ((resp.get("choices") or [{}])[0].get("message") or {}).get("images") or []

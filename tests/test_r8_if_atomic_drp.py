@@ -159,68 +159,97 @@ def test_drp_write_сбой_не_трогает_старый_файл(tmp_path, 
 def test_xmlbuild_пишет_через_atomic_text_write(tmp_path, monkeypatch):
     """xmlbuild.build использует fileio.atomic_text_write: при сбое старый XML цел."""
     out_xml = tmp_path / "output.xml"
-    out_xml.write_text("<old_xml/>", encoding="utf-8")
+    original_xml = "<old_xml/>"
+    out_xml.write_text(original_xml, encoding="utf-8")
 
-    called = []
-    real_atomic_text_write = getattr(fileio, "atomic_text_write", None)
+    def boom(*a, **k):
+        raise OSError("сбой на подмене файла")
 
-    def mock_atomic(path, text, encoding="utf-8", newline=None):
-        called.append((path, encoding))
-        if real_atomic_text_write:
-            return real_atomic_text_write(path, text, encoding=encoding, newline=newline)
-
-    if real_atomic_text_write:
-        monkeypatch.setattr(fileio, "atomic_text_write", mock_atomic)
-
+    monkeypatch.setattr(fileio.os, "replace", boom)
     monkeypatch.setattr(xmlbuild, "probe",
                         lambda p, still_ok=True: {"width": 1080, "height": 1920, "dur_s": 10.0, "fps": 60, "timecode": "00:00:00:00"})
 
     segments = [(0.0, 1.0)]
-    xmlbuild.build(
-        cam_paths=["cam1.mp4"],
-        segments=segments,
-        offsets=[0.0],
-        out_path=str(out_xml),
-    )
+    with pytest.raises(OSError):
+        xmlbuild.build(
+            cam_paths=["cam1.mp4"],
+            segments=segments,
+            offsets=[0.0],
+            out_path=str(out_xml),
+        )
 
-    assert any(c[0] == str(out_xml) and c[1].upper() == "UTF-8" for c in called), \
-        "xmlbuild.build не вызвал fileio.atomic_text_write"
+    assert out_xml.exists(), "файл должен остаться на месте"
+    assert out_xml.read_text(encoding="utf-8") == original_xml, "содержимое старого XML повреждено"
+    assert [p.name for p in tmp_path.iterdir() if ".tmp." in p.name] == [], "временный файл остался"
 
 
-def test_reset_job_state_выставляет_грязные_джобы():
-    """Тест 1/2: пачкает флаги running и cancel у всех 6 словарей джобов."""
+def test_reset_job_state_полный_сброс():
+    """Прямой вызов reset_all_job_state из conftest: очищает флаги, списки, результаты и кэши."""
+    from conftest import reset_all_job_state
     from api import _core, gdrive, inserts, previewproxy, render, videogen
+    from core import app_meta, insertlib
+
     with _core.LOCK:
         _core.JOB["running"] = True
         _core.JOB["cancel"] = True
+        _core.JOB["log"].append("dirty")
+        _core.JOB["results"].append("dirty_result")
+        _core.JOB["custom_key"] = "leak"
     with render.RLOCK:
         render.RJOB["running"] = True
         render.RJOB["cancel"] = True
+        render.RJOB["result"] = {"out": "leaked"}
+        render.RJOB["items"] = [1, 2, 3]
+        render.RJOB["log"].append("render_log")
+        render.RJOB["out_dir"] = "leaked_dir"
     with gdrive.GDLOCK:
         gdrive.GDJOB["running"] = True
         gdrive.GDJOB["cancel"] = True
+        gdrive.GDJOB["log"].append("gd_log")
     with videogen.VLOCK:
         videogen.VJOB["running"] = True
         videogen.VJOB["cancel"] = True
+        videogen.VJOB["log"].append("vg_log")
     with previewproxy.PXLOCK:
         previewproxy.PXJOB["running"] = True
+        previewproxy.PXJOB["cur"] = "dirty"
     with inserts.ILL_LOCK:
         inserts.ILL_JOB["running"] = True
+        inserts.ILL_JOB["error"] = "dirty_error"
 
-    assert render.RJOB["running"] is True
+    app_meta._UI_LANG_CACHED = "dirty_lang"
+    insertlib._CACHE["data"] = {"leaked": True}
+    insertlib._CACHE["mtime"] = 999999
 
+    reset_all_job_state()
 
-def test_reset_job_state_проверяет_очистку_после_прошлого_теста():
-    """Тест 2/2: проверяет, что autouse-фикстура conftest.py сбросила running и cancel."""
-    from api import _core, gdrive, inserts, previewproxy, render, videogen
-    assert _core.JOB["running"] is False, "_core.JOB['running'] не сброшен"
-    assert render.RJOB["running"] is False, "render.RJOB['running'] не сброшен"
-    assert gdrive.GDJOB["running"] is False, "gdrive.GDJOB['running'] не сброшен"
-    assert videogen.VJOB["running"] is False, "videogen.VJOB['running'] не сброшен"
-    assert previewproxy.PXJOB["running"] is False, "previewproxy.PXJOB['running'] не сброшен"
-    assert inserts.ILL_JOB["running"] is False, "inserts.ILL_JOB['running'] не сброшен"
-
+    assert _core.JOB["running"] is False
     assert _core.JOB["cancel"] is False
+    assert _core.JOB["log"] == []
+    assert _core.JOB["results"] == []
+    assert "custom_key" not in _core.JOB
+
+    assert render.RJOB["running"] is False
     assert render.RJOB["cancel"] is False
+    assert render.RJOB["result"] == []
+    assert "items" not in render.RJOB
+    assert render.RJOB["out_dir"] == ""
+    assert render.RJOB["log"] == []
+
+    assert gdrive.GDJOB["running"] is False
     assert gdrive.GDJOB["cancel"] is False
+    assert gdrive.GDJOB["log"] == []
+
+    assert videogen.VJOB["running"] is False
     assert videogen.VJOB["cancel"] is False
+    assert videogen.VJOB["log"] == []
+
+    assert previewproxy.PXJOB["running"] is False
+    assert previewproxy.PXJOB["cur"] == ""
+
+    assert inserts.ILL_JOB["running"] is False
+    assert inserts.ILL_JOB["error"] == ""
+
+    assert app_meta._UI_LANG_CACHED is None
+    assert insertlib._CACHE["data"] is None
+    assert insertlib._CACHE["mtime"] == 0

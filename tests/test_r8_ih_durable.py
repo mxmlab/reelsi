@@ -198,12 +198,3 @@ def test_windows_does_not_open_directory(tmp_path, monkeypatch):
     target = tmp_path / "win.json"
     fileio.atomic_json_dump(str(target), {"win": True})
     assert opened_dirs == [], "На Windows каталог не должен открываться"
-
-
-def test_atomic_write_docstring_durability():
-    """Докстринг _atomic_write содержит обещания целостности и долговечности (NTFS/POSIX)."""
-    doc = fileio._atomic_write.__doc__
-    assert doc is not None
-    assert "целостность" in doc.lower(), "докстринг должен упоминать гарантию целостности"
-    assert "долговечность" in doc.lower(), "докстринг должен упоминать долговечность"
-    assert "ntfs" in doc.lower(), "докстринг должен упоминать NTFS"

@@ -648,6 +648,12 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
   max-width:none;max-height:none;object-fit:fill;filter:none}
 .ipvins .ipvwrap.mosaic .insmask img{filter:blur(10px)}
 #ipvsub{z-index:5}
+/* ===== Затемнение под интро (задание IL) =====
+   Слой-фигура из .jsx: мягкое чёрное затемнение снизу кадра под текстом интро. Живёт в
+   системе координат нула Камеры 1 и едет с её зумом, но НИЖЕ интро (z-index 6+ из
+   layer_order) и вставок и ВЫШЕ картинки камеры (canvas — 3): затемнять надо кадр, а не
+   текст. Размер, позицию, размытие и прозрачность ставит ipvShade из plan.shade. */
+.ipvshade{position:absolute;left:50%;top:50%;background:#000;pointer-events:none;z-index:4}
 /* ===== Верхняя строка-прогресс (задание DF) ===== */
 .ipvtopline{position:absolute;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:6;overflow:hidden}
 .ipvtopline .pvtl_track{position:absolute;inset:0;pointer-events:none}

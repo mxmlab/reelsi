@@ -324,7 +324,8 @@ async function markupAllRun(subeng,list,phases,ask){
     if(d.error)throw errText(d);c.status.subs=d.subs;uiLog(t('  субтитры: ')+d.subs+subSkipped(d));});
   if(phases.includes('yellow'))await phase(phases.indexOf('yellow')+1,t('жёлтые (ИИ)'),c=>!(c.status.subs>0),c=>c.status.colored>0,async c=>{
     const d=await aiPost('/api/ai_yellow',{xml:c.xml},t('жёлтые (ИИ)'));
-    if(d.error)throw errText(d);c.status.colored=(d.colored||d.yellow||[]).length;uiLog(t('  жёлтых: ')+c.status.colored);});
+    if(d.error)throw errText(d);c.status.colored=(d.colored||d.yellow||[]).length;uiLog(t('  жёлтых: ')+c.status.colored);
+    clearHl(c);if(curAE>=0&&CLIPS[curAE]===c)loadWordsFor(c.xml);});
   if(phases.includes('inserts'))await phase(phases.indexOf('inserts')+1,t('вставки (ИИ)'),c=>!(c.status.subs>0),c=>(c.inserts||[]).length>0,async c=>{
     const d=await aiPost('/api/ai_inserts',{xml:c.xml,rejected:c.ins_rejected||[]},t('вставки (ИИ)'));
     if(d.error)throw errText(d);c.inserts=(d.inserts||[]).map(x=>({...x,media:''}));c.insTarget=Math.max(d.insTarget||0,c.inserts.length);insLog(d);uiLog(t('  вставок: ')+c.inserts.length);
@@ -353,7 +354,8 @@ async function markupClip(c){const xml=c.xml;const subeng=val('subengine')||'whi
   if(!(c.status.colored>0)){progUpdate(null,t('жёлтые слова (ИИ)…'));uiLog(t('  жёлтые (ИИ)…'));
     const d=await aiPost('/api/ai_yellow',{xml},t('жёлтые (ИИ)'));
     if(d.error){toast(t('жёлтые: ')+errText(d));uiLog(t('  жёлтые: ОШИБКА — ')+d.error);return false;}
-    c.status.colored=(d.colored||d.yellow||[]).length;uiLog(t('  жёлтых: ')+c.status.colored);await sleep(700);}
+    c.status.colored=(d.colored||d.yellow||[]).length;uiLog(t('  жёлтых: ')+c.status.colored);
+    clearHl(c);if(curAE>=0&&CLIPS[curAE]===c)loadWordsFor(c.xml);await sleep(700);}
   else uiLog(t('  жёлтые уже есть ({n}) — пропуск',{n:c.status.colored}));
   if(stop())return false;
   // 3. вставки (если уже есть — не перегенерируем, выбранные файлы не теряем)

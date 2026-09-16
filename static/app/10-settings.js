@@ -910,16 +910,17 @@ function aiSetNew(){AIEDIT=null;
   const cl=$('aisClone');if(cl)cl.style.display='none';
   const ab=$('aisActive');if(ab)ab.style.display='none';
   aiSetHints();aiSetModelInput();aiSetStatus('');aiSetList();}
-function aiSetProv(){const pre=(AICFG.presets||{})[$('ais_provider').value]||{};
-  $('ais_url').value=pre.base_url||'';    // автозаполнение по провайдеру, поле редактируемое
-  // Ключ-маска от ПРЕЖНЕГО провайдера к новому адресу не подставляется (задание IC, п. 10):
-  // сервер такую пару отклоняет, поэтому поле чистим сразу и говорим, что делать.
+function aiClearMaskKeyOnUrlChange(){
   const k=$('ais_key');
   if(k&&(k.value||'').trim().startsWith('•••')){
     k.value='';aiSyncKeyType('');
     const kw=$('ais_key_warn');
     if(kw){kw.textContent=t('Сменился адрес или провайдер — введи ключ заново: сохранённый ключ к новому адресу не подставляется');kw.style.display='';}
   }
+}
+function aiSetProv(){const pre=(AICFG.presets||{})[$('ais_provider').value]||{};
+  $('ais_url').value=pre.base_url||'';    // автозаполнение по провайдеру, поле редактируемое
+  aiClearMaskKeyOnUrlChange();
   $('ais_model').value='';aiSetHints();aiSetModelInput();}
 function aiSetHints(models){const pre=(AICFG.presets||{})[$('ais_provider').value]||{};
   let ms=models||pre.models||[];
@@ -1012,4 +1013,11 @@ async function aiSetModels(){aiSetStatus(t('запрашиваю список м
       +((d.image_models||[]).length?t(' · картинки: {n}',{n:d.image_models.length}):'')
       +t(' — открой подсказки в поле «Модель»'),'ok');}
   catch(e){aiSetStatus('✗ '+e,'err');}}
+
+function _bindAisUrl(){
+  const u=$('ais_url');
+  if(u)u.addEventListener('input',aiClearMaskKeyOnUrlChange);
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_bindAisUrl);
+else _bindAisUrl();
 

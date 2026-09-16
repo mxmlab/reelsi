@@ -1805,24 +1805,8 @@ def api_render_run():
     две тяжёлые задачи на одной видеокарте одновременно не идут."""
     d = request.get_json() or {}
     try:
-        from .build import _norm_build_jobs
-        try:
-            norm = _norm_build_jobs(d.get("jobs") or [])
-        except ValueError as e:
-            msg = str(e)
-            # file_not_found — ТОЛЬКО про пропавший файл. Раньше сюда попадал любой
-            # ValueError из нормализации, и «exposure: "abc"» превращалось в «файл
-            # не найден» с путём «could not convert string to float…» (задание IC, п. 1).
-            if msg.startswith("Файл не найден: "):
-                raise SystemExit(umsg("file_not_found", msg,
-                                      path=msg.split("Файл не найден: ", 1)[-1], err=msg))
-            raise SystemExit(umsg("render_set_invalid", msg, err=msg))
-        except (TypeError, AttributeError) as e:
-            # Нормализация спотыкается и о нечисловой тип (`{"jobs": [123]}`,
-            # `"style": 5`): это по-прежнему ошибка НАБОРА, а не падение роута в 500.
-            err = f"{type(e).__name__}: {e}"
-            raise SystemExit(umsg("render_set_invalid",
-                                  f"Некорректный набор для рендера: {err}", err=err))
+        from .build import _norm_or_error
+        norm = _norm_or_error(d.get("jobs") or [], "render_set_invalid")
         if not norm:
             raise SystemExit(umsg("set_empty", "Набор пуст"))
         render_dir = jstr(d, "render_dir").strip().strip('"') or default_render_dir()

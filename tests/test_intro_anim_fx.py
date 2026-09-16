@@ -699,11 +699,11 @@ def test_сборка_jsx_со_счетчиком_и_глитчем_проход
     assert rep.ok, f"verify_jsx failed: {rep.errors}"
 
 
-# ---- ПРАВКА 3/4: окна фейд-аута прекомпов с глитчем ----
+# ---- ПРАВКА 3/4 / IK: окна фейд-аута прекомпов с глитчем ----
 # Полка прекомпа (момент начала фейд-аута) не наступает раньше конца анимации последнего
-# глитч-слова (слово + 0.44 из INTRO_ANIMS); спад короче: 0.45 (intro_fx_fade), у
+# глитч-слова (слово + 0.44 из INTRO_ANIMS); спад единый: 0.35 (intro_fade), у
 # последнего прекомпа или при следующем дальше 2 с — полка +0.3 (intro_fx_hold_add) и спад
-# 0.35 (intro_fx_fade_last). Прекомп без глитча не меняется. Числа живут в плане сцены
+# 0.35 (intro_fade). Прекомп без глитча не меняется. Числа живут в плане сцены
 # (превью) и в .jsx через INTRO_FX — вторая копия не заводится.
 
 
@@ -723,14 +723,14 @@ def test_прекомп_с_глитчем_полка_не_раньше_конц�
     g0, g1 = plan["intro"][0], plan["intro"][1]
 
     # по обычной формуле outStart = gMax = 2.45 — раньше конца анимации глитча (2.89);
-    # прекомп продлевается: te − fade = 2.45 + 0.44 = 2.89, спад 0.45
+    # прекомп продлевается: te − fade = 2.45 + 0.44 = 2.89, спад 0.35 (intro_fade)
     assert g0["ts"] == 0
     assert abs((g0["te"] - g0["fade"]) - (2.45 + 0.44)) < 1e-9
-    assert g0["fade"] == 0.45
-    assert g0["te"] == 3.34
-    # следующий близко (5.0 − 3.34 < 2 с) — полка без добавки, обычный для fx спад
-    # прекомп БЕЗ глитча не изменился: последний держит HOLD, te = gMax+1.3+0.75 = 7.05
-    assert g1["te"] == 7.05 and g1["fade"] == 0.75
+    assert g0["fade"] == 0.35
+    assert g0["te"] == 3.24
+    # следующий близко (5.0 − 3.24 < 2 с) — полка без добавки, единый спад intro_fade
+    # прекомп БЕЗ глитча: окно te прежнее (7.05), фейд 0.35 (intro_fade)
+    assert g1["te"] == 7.05 and g1["fade"] == 0.35
 
 
 def test_прекомп_с_глитчем_следующий_далеко_полка_дольше_спад_короче(xml_subs):
@@ -763,7 +763,7 @@ def test_последний_прекомп_с_глитчем_полка_доль
 
 
 def test_прекомп_без_глитча_не_изменился(xml_subs, tmp_path):
-    """Без глитча: окна прекомпов и .jsx прежние (INTRO_FX в шаблон не уезжает)."""
+    """Без глитча: окно te прежнее, fade 0.35, .jsx прежний (INTRO_FX в шаблон не уезжает)."""
     intro = [
         dict(words=["ПЕРВОЕ"], color="white", times=[2.0]),
         dict(words=["ВТОРОЕ"], color="white", times=[8.3]),
@@ -771,8 +771,8 @@ def test_прекомп_без_глитча_не_изменился(xml_subs, tm
     plan = _scene_plan(xml_subs, intro, splits=[1])
     g0, g1 = plan["intro"][0], plan["intro"][1]
     # РОВНО формула inAt/outEnd из AE_FULL (см. xml2ae.layout._intro_group_window)
-    assert g0["ts"] == 0 and g0["te"] == 2.75 and g0["fade"] == 0.75
-    assert g1["ts"] == 8.3 and g1["te"] == 10.35 and g1["fade"] == 0.75
+    assert g0["ts"] == 0 and g0["te"] == 2.75 and g0["fade"] == 0.35
+    assert g1["ts"] == 8.3 and g1["te"] == 10.35 and g1["fade"] == 0.35
 
     jsx, _ = _build(xml_subs, tmp_path, intro)
     assert "var INTRO_FX=" not in jsx
@@ -786,6 +786,6 @@ def test_прекомп_с_глитчем_окна_уезжают_в_jsx(xml_sub
         dict(words=["БЛИЗКО"], color="white", times=[5.0]),
     ]
     jsx, _ = _build(xml_subs, tmp_path, intro)
-    # из test_прекомп_с_глитчем_полка_не_раньше_конца_анимации: [[2.89, 3.34], null]
-    assert "var INTRO_FX=[[2.89,3.34],null];" in jsx
+    # из test_прекомп_с_глитчем_полка_не_раньше_конца_анимации: [[2.89, 3.24], null]
+    assert "var INTRO_FX=[[2.89,3.24],null];" in jsx
     assert "if (INTRO_FX[gI]){ outStart=INTRO_FX[gI][0]; outEnd=INTRO_FX[gI][1]; }" in jsx

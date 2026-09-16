@@ -785,9 +785,11 @@ function fillStyleFields(){const s=CURSTYLE||{};
   if($('st_introanchor'))$('st_introanchor').value=s.intro_anchor||'center';
   if($('st_introanchor2'))$('st_introanchor2').value=s.intro_anchor2||'center';
   if($('st_introrotopos'))$('st_introrotopos').checked=!!s.intro_roto_by_pos;
-  if($('st_introfxfade'))$('st_introfxfade').value=(s.intro_fx_fade!=null?s.intro_fx_fade:0.45);
-  if($('st_introfxfadelast'))$('st_introfxfadelast').value=(s.intro_fx_fade_last!=null?s.intro_fx_fade_last:0.35);
+  if($('st_introfade'))$('st_introfade').value=(s.intro_fade!=null?s.intro_fade:0.35);
   if($('st_introfxholdadd'))$('st_introfxholdadd').value=(s.intro_fx_hold_add!=null?s.intro_fx_hold_add:0.3);
+  // затемнение под интро (задание IL): галка + непрозрачность слоя
+  if($('st_introshade'))$('st_introshade').checked=!!s.intro_shade;
+  if($('st_introshadeop'))$('st_introshadeop').value=(s.intro_shade_op!=null?s.intro_shade_op:100);
   $('st_hlcolor').value=rgb2hex(s.hl_fill);$('st_hlhex').value=rgb2hex(s.hl_fill).toUpperCase();
   $('st_subcolor').value=rgb2hex(s.sub_fill||[1,1,1]);$('st_subhex').value=rgb2hex(s.sub_fill||[1,1,1]).toUpperCase();
   $('st_subcase').value=s.sub_case||'upper';
@@ -838,6 +840,7 @@ function fillStyleFields(){const s=CURSTYLE||{};
   $('st_insc1x').value=pxToPctX(s.insert_c1_x!=null?s.insert_c1_x:0);$('st_insc1y').value=pxToPctY(s.insert_c1_y!=null?s.insert_c1_y:0);
   insC1On2UI();
   $('st_snapcut').checked=(s.insert_snap_cut!==false);
+  $('st_subswap').checked=(s.insert_sub_swap!==false);
   renderLayerOrderUI();
   $('st_cam1zoom').value=s.cam1_zoom||'pulse';
   $('st_cam1zoomstart').checked=(s.cam1_zoom_start!==false);
@@ -953,9 +956,10 @@ function updateStyleDiffDots(){
   const d_introanchor=(s.intro_anchor||'center')!==(orig.intro_anchor||'center');
   const d_introanchor2=(s.intro_anchor2||'center')!==(orig.intro_anchor2||'center');
   const d_introrotopos=(!!s.intro_roto_by_pos)!==(!!orig.intro_roto_by_pos);
-  const d_introfxfade=(s.intro_fx_fade!=null?s.intro_fx_fade:0.45)!==(orig.intro_fx_fade!=null?orig.intro_fx_fade:0.45);
-  const d_introfxfadelast=(s.intro_fx_fade_last!=null?s.intro_fx_fade_last:0.35)!==(orig.intro_fx_fade_last!=null?orig.intro_fx_fade_last:0.35);
+  const d_introfade=(s.intro_fade!=null?s.intro_fade:0.35)!==(orig.intro_fade!=null?orig.intro_fade:0.35);
   const d_introfxholdadd=(s.intro_fx_hold_add!=null?s.intro_fx_hold_add:0.3)!==(orig.intro_fx_hold_add!=null?orig.intro_fx_hold_add:0.3);
+  const d_introshade=(!!s.intro_shade)!==(!!orig.intro_shade);
+  const d_introshadeop=(s.intro_shade_op!=null?s.intro_shade_op:100)!==(orig.intro_shade_op!=null?orig.intro_shade_op:100);
   const d_introglow=(s.intro_glow!=null?s.intro_glow:1)!==(orig.intro_glow!=null?orig.intro_glow:1);
   const d_hl3color=rgb2hex(s.hl_fill3||[0.6863,0.1216,0.1216])!==rgb2hex(orig.hl_fill3||[0.6863,0.1216,0.1216]);
   const d_introfill=!!s.intro_fill!==!!orig.intro_fill||(!!s.intro_fill&&rgb2hex(s.intro_fill)!==rgb2hex(orig.intro_fill));
@@ -1012,6 +1016,7 @@ function updateStyleDiffDots(){
                 ||pxToPctY(s.insert_c1on2_y!=null?s.insert_c1on2_y:0)!==pxToPctY(orig.insert_c1on2_y!=null?orig.insert_c1on2_y:0);
   const d_rotodev=(s.roto_device||'')!==(orig.roto_device||'');
   const d_snapcut=(s.insert_snap_cut!==false)!==(orig.insert_snap_cut!==false);
+  const d_subswap=(s.insert_sub_swap!==false)!==(orig.insert_sub_swap!==false);
   const d_insc2y=Math.round((s.insert_c2_y!=null?s.insert_c2_y:0.172)*1000)/10!==Math.round((orig.insert_c2_y!=null?orig.insert_c2_y:0.172)*1000)/10;
   const d_insc2x=Math.round((s.insert_c2_x!=null?s.insert_c2_x:0.5)*1000)/10!==Math.round((orig.insert_c2_x!=null?orig.insert_c2_x:0.5)*1000)/10;
   const d_insc1=pxToPctX(s.insert_c1_x!=null?s.insert_c1_x:0)!==pxToPctX(orig.insert_c1_x!=null?orig.insert_c1_x:0)
@@ -1079,9 +1084,10 @@ function updateStyleDiffDots(){
   setParentDot('st_introanchor', d_introanchor);
   setParentDot('st_introanchor2', d_introanchor2);
   setDot($('st_introrotopos')&&$('st_introrotopos').closest('label'), d_introrotopos);
-  setParentDot('st_introfxfade', d_introfxfade);
-  setParentDot('st_introfxfadelast', d_introfxfadelast);
+  setParentDot('st_introfade', d_introfade);
   setParentDot('st_introfxholdadd', d_introfxholdadd);
+  setDot($('st_introshade')&&$('st_introshade').closest('label'), d_introshade);
+  setParentDot('st_introshadeop', d_introshadeop);
   setParentDot('st_introglow', d_introglow);
   setParentDot('st_hl3color', d_hl3color);
   setParentDot('st_introfillcolor', d_introfill);
@@ -1132,6 +1138,7 @@ function updateStyleDiffDots(){
   setDot($('insc1on2wrap'), d_insc1on2);
   setParentDot('st_rotodev', d_rotodev);
   setDot($('st_snapcut')&&$('st_snapcut').closest('label'), d_snapcut);
+  setDot($('st_subswap')&&$('st_subswap').closest('label'), d_subswap);
   setParentDot('st_insc2y', d_insc2y);
   setParentDot('st_insc2x', d_insc2x);
   setParentDot('st_insc1y', d_insc1);
@@ -1152,7 +1159,7 @@ function updateStyleDiffDots(){
   setParentDot('st_glitch', d_glitch);
 
   // Tab segment dots (green dot on tab if any field inside is modified)
-  const hasTextDiff=d_font||d_hlcolor||d_hlbold||d_subcolor||d_subcase||d_suby||d_subscale||d_subwords||d_subrows||d_hlfont||d_introfont||d_introhlfont||d_accentfont||d_accentcase||d_backfont||d_backcase||d_backstep||d_backscale||d_backgap||d_introanchor||d_introanchor2||d_introfxfade||d_introfxfadelast||d_introfxholdadd||d_introglow||d_hl3color||d_introfill||d_introhlfill||d_introshadow||d_introshadowop||d_introshadowdir||d_introshadowdist||d_introshadowsoft||d_backshadowop||d_backshadowsoft||d_icshadow1fill||d_icshadow1op||d_icshadow2fill||d_icshadow2op||d_introrotopos||d_introscale||d_introy||d_introy2||d_introx||d_subbgpadmin||d_subbganim||d_discshow||d_discend||d_disctext||d_subbg||d_subbgcolor||d_subbgop||d_subbgh||d_subbground||d_subbgpad||d_subbgdy||d_caption||d_captionfont||d_captionsize||d_captioncase||d_captionfill||d_captionx||d_captiony||d_captionbg||d_captionbgcolor||d_captionbgop||d_captionbground||d_captionkx||d_captionky;
+  const hasTextDiff=d_font||d_hlcolor||d_hlbold||d_subcolor||d_subcase||d_suby||d_subscale||d_subwords||d_subrows||d_hlfont||d_introfont||d_introhlfont||d_accentfont||d_accentcase||d_backfont||d_backcase||d_backstep||d_backscale||d_backgap||d_introanchor||d_introanchor2||d_introfade||d_introfxholdadd||d_introshade||d_introshadeop||d_introglow||d_hl3color||d_introfill||d_introhlfill||d_introshadow||d_introshadowop||d_introshadowdir||d_introshadowdist||d_introshadowsoft||d_backshadowop||d_backshadowsoft||d_icshadow1fill||d_icshadow1op||d_icshadow2fill||d_icshadow2op||d_introrotopos||d_introscale||d_introy||d_introy2||d_introx||d_subbgpadmin||d_subbganim||d_discshow||d_discend||d_disctext||d_subbg||d_subbgcolor||d_subbgop||d_subbgh||d_subbground||d_subbgpad||d_subbgdy||d_caption||d_captionfont||d_captionsize||d_captioncase||d_captionfill||d_captionx||d_captiony||d_captionbg||d_captionbgcolor||d_captionbgop||d_captionbground||d_captionkx||d_captionky;
   const hasFrameDiff=d_cam1zoom||d_zoombig||d_zoomret||d_cam1zoomstart||d_topline||d_topliney||d_toplinew||d_toplineth||d_toplinetrackop||d_toplinetrackfill||d_toplinefrom||d_toplineto||d_pickzoom||d_drift||d_cam1fit||d_startblur||d_startblurdur;
   const hasInsertsDiff=d_insstyle||d_insfx||d_insanim||d_insc1on2||d_rotodev||d_snapcut||d_insc2y||d_insc2x||d_insc1;
   const hasLayersDiff=d_layer_order;
@@ -1181,9 +1188,11 @@ function stEdit(){CURSTYLE=CURSTYLE||{};STYLE_TOUCHED=true;const g=id=>val(id);
   CURSTYLE.intro_anchor=g('st_introanchor')||'center';
   CURSTYLE.intro_anchor2=g('st_introanchor2')||'center';
   CURSTYLE.intro_roto_by_pos=$('st_introrotopos')&&$('st_introrotopos').checked;
-  let fxfade=parseFloat(g('st_introfxfade'));CURSTYLE.intro_fx_fade=isNaN(fxfade)?0.45:fxfade;
-  let fxfadelast=parseFloat(g('st_introfxfadelast'));CURSTYLE.intro_fx_fade_last=isNaN(fxfadelast)?0.35:fxfadelast;
+  let fade=parseFloat(g('st_introfade'));CURSTYLE.intro_fade=isNaN(fade)?0.35:fade;
   let fxholdadd=parseFloat(g('st_introfxholdadd'));CURSTYLE.intro_fx_hold_add=isNaN(fxholdadd)?0.3:fxholdadd;
+  // затемнение под интро (задание IL): галка и непрозрачность слоя-фигуры
+  CURSTYLE.intro_shade=$('st_introshade')&&$('st_introshade').checked;
+  let ishop=parseFloat(g('st_introshadeop'));CURSTYLE.intro_shade_op=isNaN(ishop)?100:ishop;
   CURSTYLE.hl_fill=hex2rgb(g('st_hlcolor'));let mdb=parseFloat(g('st_musicdb'));CURSTYLE.music_db=isNaN(mdb)?-20:mdb;
   CURSTYLE.sub_fill=hex2rgb(g('st_subcolor'));CURSTYLE.sub_case=g('st_subcase')||'upper';
   let sy=parseFloat(g('st_suby'));CURSTYLE.sub_y=isNaN(sy)?0.5964:Math.min(0.98,Math.max(0.05,1-sy/100));
@@ -1237,6 +1246,7 @@ function stEdit(){CURSTYLE=CURSTYLE||{};STYLE_TOUCHED=true;const g=id=>val(id);
   let ic1y=parseFloat(g('st_insc1y'));CURSTYLE.insert_c1_y=isNaN(ic1y)?0:pctToPxY(ic1y);
   insC1On2UI();
   CURSTYLE.insert_snap_cut=$('st_snapcut').checked;
+  CURSTYLE.insert_sub_swap=$('st_subswap').checked;
   CURSTYLE.layer_order=Array.isArray(CURSTYLE.layer_order)?[...CURSTYLE.layer_order]:[...DEFAULT_LAYER_ORDER];
   CURSTYLE.cam1_zoom=g('st_cam1zoom')||'pulse';
   let zb=parseFloat(g('st_cam1zoombig'));CURSTYLE.cam1_zoom_big=isNaN(zb)?182:zb;

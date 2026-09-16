@@ -1,4 +1,5 @@
 # temp / working artifacts
+.venv/
 __pycache__/
 *.pyc
 *.bak

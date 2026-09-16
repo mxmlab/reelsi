@@ -57,6 +57,11 @@ def _norm_build_jobs(jobs_in):
         if style is not None and not isinstance(style, (str, dict)):
             raise ValueError(f"Поле style должно быть именем стиля или объектом, "
                              f"получено: {style!r}")
+        for fld in ("inserts", "intro", "intro_remove", "intro_splits",
+                    "hl_breaks", "hl_count", "hl_joins"):
+            v = j.get(fld)
+            if v is not None and not isinstance(v, list):
+                raise ValueError(f"Поле {fld} должно быть списком, получено: {v!r}")
         st = styles.resolve(style)
         norm.append(dict(
             xml_path=xml,
@@ -88,6 +93,25 @@ def _norm_build_jobs(jobs_in):
             glitch_glow=glitch_glow,
             include_xml_inserts=False))
     return norm
+
+
+def _norm_or_error(jobs, code):
+    """Нормализация набора клипов с единой обработкой ошибок для build_run и render_run (задание IW, п. 2)."""
+    try:
+        return _norm_build_jobs(jobs)
+    except ValueError as e:
+        msg = str(e)
+        if msg.startswith("Файл не найден: "):
+            raise SystemExit(umsg("file_not_found", msg,
+                                  path=msg.split("Файл не найден: ", 1)[-1], err=msg))
+        if code == "render_set_invalid":
+            raise SystemExit(umsg("render_set_invalid", msg, err=msg))
+        raise SystemExit(umsg("build_set_invalid", msg, err=msg))
+    except (TypeError, AttributeError) as e:
+        err = f"{type(e).__name__}: {e}"
+        if code == "render_set_invalid":
+            raise SystemExit(umsg("render_set_invalid", f"Некорректный набор: {err}", err=err))
+        raise SystemExit(umsg("build_set_invalid", f"Некорректный набор: {err}", err=err))
 
 
 def _run_build_job(norm, mode, outdir):
@@ -217,16 +241,7 @@ def api_build_run():
         return jsonify(**umsg_err(SystemExit(umsg("build_set_invalid",
             "Тело запроса должно быть объектом с полем jobs"))))
     try:
-        try:
-            norm = _norm_build_jobs(d.get("jobs") or [])
-        except ValueError as e:
-            msg = str(e)
-            # file_not_found — только про пропавший файл: нечисловое поле набора
-            # («exposure»: «abc») раньше называлось «файл не найден» (задание IC, п. 1).
-            if msg.startswith("Файл не найден: "):
-                raise SystemExit(umsg("file_not_found", msg,
-                                      path=msg.split("Файл не найден: ", 1)[-1], err=msg))
-            raise SystemExit(umsg("build_set_invalid", msg, err=msg))
+        norm = _norm_or_error(d.get("jobs") or [], "build_set_invalid")
         if not norm:
             raise SystemExit(umsg("set_empty", "Набор пуст"))
         for j in norm:

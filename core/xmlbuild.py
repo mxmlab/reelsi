@@ -314,11 +314,12 @@ def _atrack(clips_xml, outidx):
             f"{clips_xml}\t\t\t\t\t<enabled>TRUE</enabled>\n\t\t\t\t\t<locked>FALSE</locked>\n"
             f"\t\t\t\t\t<outputchannelindex>{outidx}</outputchannelindex>\n\t\t\t\t</track>\n")
 
-def build_subtitle_track(sub_words, start_id=1):
+def build_subtitle_track(sub_words, start_id=1, fps=60):
     """Сборка видеодорожки с клипами субтитров для Premiere XML.
 
     sub_words: список словарей {'w': text, 'start': frame, 'end': frame}
     start_id: начальный числовой id клипа (clipitem-id)
+    fps: частота секвенции (для расчёта тактов pproTicks)
 
     Возвращает (vtrack_xml, n_subs, long_words, next_id).
     Слова длиннее SUB_FIT_CHARS масштабируются (scale < 100.0),
@@ -340,7 +341,7 @@ def build_subtitle_track(sub_words, start_id=1):
             chars = len(text)
             scale = 100.0 if chars <= SUB_FIT_CHARS else round(SUB_FIT_CHARS / chars * 100, 1)
             try:
-                v3 += sb.clip(text, st, en, cid, cid, scale=scale); cid += 1
+                v3 += sb.clip(text, st, en, cid, cid, scale=scale, fps=fps); cid += 1
                 n_subs += 1
             except ValueError:
                 long_words.append(text)   # too long for a template -> skip, report
@@ -409,7 +410,7 @@ def build(cam_paths, segments, offsets, out_path, assign=None,
         kept += 1
     total = tl
 
-    v3track, n_subs, long_words, cid = build_subtitle_track(sub_words, cid)
+    v3track, n_subs, long_words, cid = build_subtitle_track(sub_words, cid, fps=FPS)
 
     # optional music bed (downloaded track) on two audio tracks (L/R)
     music_tracks = ""

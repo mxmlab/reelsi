@@ -37,7 +37,7 @@ def as_ints(seq, lo=None, hi=None):
     for x in (seq or []):
         try:
             v = int(x)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
         if lo is not None and v < lo:
             continue
@@ -331,21 +331,25 @@ def cmd_inserts(xml_path, system=None, dry=False, model=None, url=None, emit=con
     # it.get(...) ронял шаг AttributeError — уже после оплаченного вызова (GZ, п. G).
     ins = [it for it in ins if isinstance(it, dict)]
     # Числа из ответа модели — такие же данные, а не гарантия, как и типы: `NaN` и
-    # `Infinity` проходят и `float()`, и сортировку ниже. Вставку без числового
-    # старта честнее выбросить (и сказать об этом), чем поставить её в начало
-    # таймлайна; нечисловая длительность — 0, дальше штатный кламп (IB, п. 4).
+    # `Infinity` проходят и `float()`, и сортировку ниже. Не-числовой start_sec сбрасываем
+    # в None до привязки: _snap_to_phrase получает шанс привязать вставку к цитате.
+    # Вставку, чей старт и после привязки не стал конечным числом, отбрасываем (IY, п. 1).
+    # Нечисловая длительность — 0, дальше штатный кламп (IB, п. 4).
+    for it in ins:
+        if _finite_float(it.get("start_sec")) is None:
+            it["start_sec"] = None
+        if _finite_float(it.get("duration_sec")) is None:
+            it["duration_sec"] = 0
+    # 1) тайминг: прижать start_sec к началу цитируемой фразы (модель врёт «на глаз»)
+    _snap_to_phrase(ins, words, emit=emit)
     dated = []
     for it in ins:
         if _finite_float(it.get("start_sec")) is None:
             emit("  ! вставка отброшена: start_sec не число ({raw})",
                  raw=repr(it.get("start_sec"))[:40])
             continue
-        if _finite_float(it.get("duration_sec")) is None:
-            it["duration_sec"] = 0
         dated.append(it)
     ins = dated
-    # 1) тайминг: прижать start_sec к началу цитируемой фразы (модель врёт «на глаз»)
-    _snap_to_phrase(ins, words, emit=emit)
     # 2) query фото: голый предмет — чистим стилевые слова, если модель их всё же дописала
     for it in ins:
         if it.get("type") != "video":
@@ -852,7 +856,7 @@ def cmd_intro(xml_path, system=None, dry=False, model=None, url=None, emit=conso
             continue                                   # без structured outputs прилетает что угодно
         try:
             n = int(r.get("count") or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
         if n > 0:
             c = r.get("color")
@@ -901,7 +905,7 @@ def cmd_intro(xml_path, system=None, dry=False, model=None, url=None, emit=conso
             color = c if c in ("white", "yellow", "accent") else "white"
             groups.append((int(g.get("from") or 0), max(1, int(g.get("count") or 1)),
                            color, bool(g.get("back"))))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             continue
     mids = _place_mids(groups, words, intro_len, busy, emit=emit)
     for r in rows + mids:

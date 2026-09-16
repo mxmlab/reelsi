@@ -57,6 +57,10 @@ def _atomic_write(path, write, mode="w", encoding="utf-8", newline=None):
     сам решает, нужен ли ему CRLF."""
     path = os.path.realpath(path)
     d = os.path.dirname(path) or "."
+    # Цель только для чтения: прямой open(path, "w") отказал бы, а os.replace молча
+    # подменил бы файл. Проверяем ДО mkstemp — tmp и дескриптор ещё не созданы.
+    if os.path.exists(path) and not os.access(path, os.W_OK):
+        raise PermissionError(13, "Permission denied", path)
     fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".tmp.", dir=d)
     try:
         open_kw = {"mode": mode}
@@ -69,21 +73,22 @@ def _atomic_write(path, write, mode="w", encoding="utf-8", newline=None):
             os.fsync(f.fileno())
         _carry_mode(path, tmp)
         os.replace(tmp, path)
-        if os.name == "posix":
-            try:
-                dfd = os.open(d, os.O_RDONLY)
-                try:
-                    os.fsync(dfd)
-                finally:
-                    os.close(dfd)
-            except OSError:
-                pass
     except Exception:
         try:
             os.remove(tmp)
         except OSError:
             pass
         raise
+
+    if os.name == "posix":
+        try:
+            dfd = os.open(d, os.O_RDONLY)
+            try:
+                os.fsync(dfd)
+            finally:
+                os.close(dfd)
+        except Exception:
+            pass
 
 
 def atomic_json_dump(path, obj, **kw):

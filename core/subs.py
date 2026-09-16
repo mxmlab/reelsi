@@ -275,8 +275,8 @@ class SubtitleBuilder:
             ref_xml = ref_xml or os.path.join(os.path.dirname(paths.ROOT), "Timeline 2.xml")
             self.lib = BlobLibrary.from_reference(ref_xml)
 
-    def clip(self, word, start, end, cid, uid, scale=100.0):
-        """Return one subtitle <clipitem> xml. start/end are 60fps output frames.
+    def clip(self, word, start, end, cid, uid, scale=100.0, fps=60.0):
+        """Return one subtitle <clipitem> xml. start/end are sequence output frames.
         scale (%) shrinks the whole graphic so long words fit with margins."""
         length = max(1, end - start)
         out = GFX_IN + length
@@ -297,10 +297,11 @@ class SubtitleBuilder:
         s = re.sub(r"<end>-?\d+</end>", f"<end>{end}</end>", s, count=1)
         s = re.sub(r"<in>-?\d+</in>", f"<in>{GFX_IN}</in>", s, count=1)
         s = re.sub(r"<out>-?\d+</out>", f"<out>{out}</out>", s, count=1)
+        tpf = int(round(254016000000 / (fps or 60.0)))
         s = re.sub(r"<pproTicksIn>-?\d+</pproTicksIn>",
-                   f"<pproTicksIn>{GFX_IN*TICKS_PER_FRAME}</pproTicksIn>", s, count=1)
+                   f"<pproTicksIn>{GFX_IN*tpf}</pproTicksIn>", s, count=1)
         s = re.sub(r"<pproTicksOut>-?\d+</pproTicksOut>",
-                   f"<pproTicksOut>{out*TICKS_PER_FRAME}</pproTicksOut>", s, count=1)
+                   f"<pproTicksOut>{out*tpf}</pproTicksOut>", s, count=1)
         # the word (effect name) + its Source Text blob
         s = s.replace(f"<name>{self.tmpl_word}</name>", f"<name>{_xml_escape(word)}</name>", 1)
         s = s.replace(self.tmpl_blob, blob, 1)

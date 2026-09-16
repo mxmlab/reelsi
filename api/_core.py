@@ -210,6 +210,29 @@ def _block_dns_rebinding():
             return _forbidden_origin()
 
 
+@bp.before_request
+def _check_json_body():
+    """Тело запроса обязано быть JSON-объектом (задание IW, п. 1).
+
+    Тела-массивы (`[1, 2]`), строки (`"x"`), числа (`5`) роняли 18 роутов в 500:
+    каждый роут ждёт словарь и делает `d.get(...)`. Пустые тела и не-JSON не
+    трогаем — роуты сами решают, допускать ли их.
+    """
+    if request.method in ("POST", "PUT", "PATCH") and request.path.startswith("/api/"):
+        data = None
+        if request.is_json:
+            data = request.get_json(silent=True)
+        elif request.data and request.data.strip():
+            try:
+                import json
+                data = json.loads(request.data)
+            except Exception:
+                data = None
+        if data is not None and not isinstance(data, dict):
+            r = umsg_err(SystemExit(umsg("bad_body", "Тело запроса должно быть JSON-объектом")))
+            return jsonify(**r), 400
+
+
 # Файлы, которые /api/media не отдаёт никогда. Он умеет отдать что угодно с диска —
 # это нужно для превью материала, лежащего где попало, — но секреты через него утекать
 # не должны ни при каком стечении обстоятельств. Список — только УЧЁТНЫЕ ДАННЫЕ: медиа

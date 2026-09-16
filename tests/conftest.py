@@ -26,6 +26,26 @@ os.environ["AUTOCUT_LOG"] = _TEST_LOG_FILE
 
 
 
+import copy
+
+from api import _core, gdrive, inserts, previewproxy, render, videogen
+from core import app_meta, applog, insertlib
+from core.aicut import llm
+
+_INITIAL_JOB = copy.deepcopy(_core.JOB)
+_INITIAL_RJOB = copy.deepcopy(render.RJOB)
+_INITIAL_GDJOB = copy.deepcopy(gdrive.GDJOB)
+_INITIAL_VJOB = copy.deepcopy(videogen.VJOB)
+_INITIAL_PXJOB = copy.deepcopy(previewproxy.PXJOB)
+_INITIAL_ILL_JOB = copy.deepcopy(inserts.ILL_JOB)
+_INITIAL_INSERTLIB_CACHE = copy.deepcopy(insertlib._CACHE)
+
+try:
+    applog.get_logger()
+except Exception:
+    pass
+
+
 @pytest.fixture
 def case_insensitive_fs(tmp_path):
     """Пропустить тест, если файловая система чувствительна к регистру (пробник на tmp_path).
@@ -53,72 +73,72 @@ def isolate_state_files(tmp_path, monkeypatch):
     monkeypatch.setenv("REELSI_VIDEO_HISTORY", str(video_dir / "history.json"))
 
 
-@pytest.fixture(autouse=True)
-def reset_job_state():
-    """Сбросить флаги отмены, статус running и состояние джобов между тестами.
-
-    Тесты вызывают `POST /api/cancel`, хелперы тестов (например `test_render.py`
-    `_preflight`) ставят `running=True`, или джобы падают без снятия флагов. В бою
-    их сбрасывает старт следующей задачи, а в тестах между файлами — никто.
-    Сбрасываем `cancel` и `running` у всех шести словарей джобов процесса
-    (`JOB`, `RJOB`, `GDJOB`, `VJOB`, `PXJOB`, `ILL_JOB`), а также `_LOCAL.epoch`
-    и флаг отмены в `core.aicut.llm`.
-    """
+def reset_all_job_state():
+    """Сбросить флаги отмены, статус running и полное состояние джобов и кэшей в начальное состояние."""
     try:
-        from core import applog
-        applog.get_logger()
-    except Exception:
-        pass
-    yield
-
-    try:
-        from core.aicut import llm
         llm._LOCAL.__dict__.pop("epoch", None)
         llm.clear_cancel()
     except Exception:
         pass
     try:
-        from api import _core
         with _core.LOCK:
-            _core.JOB["cancel"] = False
-            _core.JOB["running"] = False
+            _core.JOB.clear()
+            _core.JOB.update(copy.deepcopy(_INITIAL_JOB))
     except Exception:
         pass
     try:
-        from api import render
         with render.RLOCK:
-            render.RJOB["cancel"] = False
-            render.RJOB["running"] = False
+            render.RJOB.clear()
+            render.RJOB.update(copy.deepcopy(_INITIAL_RJOB))
     except Exception:
         pass
     try:
-        from api import gdrive
         with gdrive.GDLOCK:
-            gdrive.GDJOB["cancel"] = False
-            gdrive.GDJOB["running"] = False
+            gdrive.GDJOB.clear()
+            gdrive.GDJOB.update(copy.deepcopy(_INITIAL_GDJOB))
     except Exception:
         pass
     try:
-        from api import videogen
         with videogen.VLOCK:
-            videogen.VJOB["cancel"] = False
-            videogen.VJOB["running"] = False
+            videogen.VJOB.clear()
+            videogen.VJOB.update(copy.deepcopy(_INITIAL_VJOB))
     except Exception:
         pass
     try:
-        from api import previewproxy
         with previewproxy.PXLOCK:
-            previewproxy.PXJOB["running"] = False
+            previewproxy.PXJOB.clear()
+            previewproxy.PXJOB.update(copy.deepcopy(_INITIAL_PXJOB))
     except Exception:
         pass
     try:
-        from api import inserts
         with inserts.ILL_LOCK:
-            inserts.ILL_JOB["running"] = False
+            inserts.ILL_JOB.clear()
+            inserts.ILL_JOB.update(copy.deepcopy(_INITIAL_ILL_JOB))
     except Exception:
         pass
     try:
-        from core import applog
+        app_meta._UI_LANG_CACHED = None
+    except Exception:
+        pass
+    try:
+        insertlib._CACHE.clear()
+        insertlib._CACHE.update(copy.deepcopy(_INITIAL_INSERTLIB_CACHE))
+    except Exception:
+        pass
+
+
+@pytest.fixture(autouse=True)
+def reset_job_state():
+    """Сбросить состояние джобов и кэшей между тестами."""
+    yield
+    reset_all_job_state()
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_teardown(item, nextitem):
+    """Переармирование логгера ПОСЛЕ завершения всех фикстур теста (включая monkeypatch)."""
+    yield
+    try:
         applog.get_logger()
     except Exception:
         pass

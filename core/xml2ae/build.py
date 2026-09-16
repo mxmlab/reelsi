@@ -10,6 +10,7 @@ import re
 from core import paths
 from core.app_meta import console_emit, wrap_emit
 from core import fonts as _fonts
+from core.fileio import atomic_text_write
 
 from .jsutil import _asset_or, _fill_js, _jd, _js, _js_multiline, _r
 from .layout import (DEFAULT_DISCLAIMER, DISC_FIT_W, EASE_DEFAULT, HL_EASE_IN, HL_EASE_OUT,
@@ -29,6 +30,15 @@ from .layout import (DEFAULT_DISCLAIMER, DISC_FIT_W, EASE_DEFAULT, HL_EASE_IN, H
                      intro_line_ys)
 from .parse import Cancelled, HERE, _is_image, parse_full
 from .template import AE_FULL, SUBS_LOOP_WORDS, SUBS_LOOP_ROWS, SUBS_LOOP_WORDS_JOINED
+
+
+def _fps_js(fps):
+    """Частота для строки `FPS=` в шаблоне. В шаблоне стояло `%d`, и NTSC-частота
+    29.97 усекалась до 29 — кадры XML делились бы на 29, то есть на 3.2% быстрее
+    реального времени. Целая частота печатается ровно как раньше (`60`, эталон .jsx
+    не меняется), дробная — числом с 6 знаками после запятой (`29.97003`)."""
+    f = float(fps)
+    return ("%d" % f) if f.is_integer() else str(round(f, 6))
 
 
 def _sub_bg_expr(st, sub_layer_name="Субтитры (текст)"):
@@ -2321,7 +2331,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     disc_lead_js_tail = ("" if disc_lead is None else "\n    " + _disc_lead_code)
     # служебное для сборки: готовые токены шаблона (не входят в контракт плана)
     plan["_ae"] = dict(
-        w=meta["w"], h=meta["h"], fps=meta["fps"], dur=meta["dur"] / meta["fps"],
+        w=meta["w"], h=meta["h"], fps=_fps_js(meta["fps"]), dur=meta["dur"] / meta["fps"],
         name=_js(meta["name"]), cams=cams_js, subs=subs_js, cam1scale=cam1scale_js,
         cam1_ease=cam1_ease_js,
         cam1hold="true" if _c1zoom == "jump" else "false",
@@ -2657,8 +2667,10 @@ def to_ae_full(xml_path, jsx_path=None, return_source=False, emit=console_emit, 
     if return_source:                          # для мультифайла «один .jsx на всё»
         return jsx, nclips, len(plan["subs"])
     jsx_path = jsx_path or (os.path.splitext(xml_path)[0] + ".jsx")
-    # utf-8-sig: ExtendScript без BOM может прочитать файл в системной кодировке (cp1251)
-    open(jsx_path, "w", encoding="utf-8-sig").write(jsx)
+    # utf-8-sig: ExtendScript без BOM может прочитать файл в системной кодировке (cp1251).
+    # Атомарно: «Стоп»/сбой между усечением и записью оставлял пустой .jsx на месте
+    # собранного — AE открывал ноль клипов, а пересобрать его было уже нечем (IB, п. 2).
+    atomic_text_write(jsx_path, jsx, encoding="utf-8-sig")
     if not return_source and plan.get("subs"):
         from core.subs import write_srt
         srt_path = os.path.splitext(jsx_path)[0] + ".srt"
@@ -2928,7 +2940,7 @@ def build_combined(jobs, out_jsx, emit=None, cancel=None, progress=None,
     body = "\n\n// ===== следующий таймлайн =====\n\n".join(parts)
     if not comps_global and "REELSI_DG_MISS" in body:
         body = _dg_wrap(body)
-    open(out_jsx, "w", encoding="utf-8-sig").write(body)
+    atomic_text_write(out_jsx, body, encoding="utf-8-sig")
     return out_jsx, len(parts)
 
 
@@ -3028,5 +3040,5 @@ def _write_master(jsx_list, master_path, aep_path, render_dir):
         "    app.quit();\n"
         "}\n" % (_js(aelog), files, _js(aep), _js(render_dir))
     )
-    open(master_path, "w", encoding="utf-8-sig").write(jsx)
+    atomic_text_write(master_path, jsx, encoding="utf-8-sig")
     return master_path

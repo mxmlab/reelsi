@@ -11,7 +11,7 @@ from core.umsg import umsg
 
 def _insert_dest(d):
     """Папка базы вставок: из тела запроса («Папка базы» в модалке 📚) или дефолт."""
-    return ((d.get("dest") or "").strip().strip('"')
+    return (jstr(d, "dest").strip().strip('"')
             or os.path.join(os.path.dirname(paths.ROOT), "insert_library"))
 
 
@@ -25,7 +25,9 @@ def _convert_inserts(inserts, emit=None):
     from core import insertlib
     conv = {}
     for x in inserts:
-        m = (x.get("media") or "").strip()
+        if not isinstance(x, dict):      # элемент списка не объект — пропуск (задание IC, п. 2)
+            continue
+        m = jstr(x, "media").strip()
         if m and os.path.exists(m):
             new = insertlib.to_ae_media(m, emit=emit)
             if os.path.abspath(new) != os.path.abspath(m):
@@ -47,10 +49,10 @@ def _adopt_inserts(inserts, dest, emit=None):
     # mw/mh едут вместе с описанием: сборка — единственный момент, когда точно известна
     # форма маски, на которой юзер остановился. В следующих роликах match_many вернёт её
     # вместе с путём, и картинка приедет из базы уже с нужным кропом.
-    items = [{"path": (x.get("media") or ""), "desc": (x.get("query") or ""),
-              "ru": (x.get("prompt") or ""),
+    items = [{"path": jstr(x, "media"), "desc": jstr(x, "query"),
+              "ru": jstr(x, "prompt"),
               "mw": x.get("mw"), "mh": x.get("mh")}
-             for x in inserts if (x.get("media") or "").strip()]
+             for x in inserts if isinstance(x, dict) and jstr(x, "media").strip()]
     if not items:
         return conv
     try:
@@ -59,7 +61,9 @@ def _adopt_inserts(inserts, dest, emit=None):
         (emit or (lambda *a: None))(f"⚠ прибрать в базу не вышло: {e}")
         return conv
     for x in inserts:
-        m = os.path.abspath(x["media"]) if (x.get("media") or "").strip() else ""
+        if not isinstance(x, dict):      # элемент списка не объект — пропуск (задание IC, п. 2)
+            continue
+        m = os.path.abspath(x["media"]) if jstr(x, "media").strip() else ""
         if m in moved:
             x["media"] = moved[m]
     # маппинг для фронта: старый webp -> его PNG -> куда PNG переехал в базе
@@ -131,7 +135,7 @@ def api_insertlib_match():
     Один batch-вызов эмбеддера на все запросы. type ('photo'|'video') — жёсткий фильтр:
     под фото-вставку видео не предлагаем (см. match_many)."""
     d = request.get_json() or {}
-    qs = d.get("queries") or []
+    qs = d.get("queries") if isinstance(d.get("queries"), list) else []
     if not qs:
         return jsonify(results=[])
     try:
@@ -141,12 +145,14 @@ def api_insertlib_match():
             # про спикеров знать не должен. Пустой спикер/приписка -> None (поведение
             # прежнее — стиль в подборе не участвует).
             look = None
-            if (d.get("speaker") or "").strip():
+            if jstr(d, "speaker").strip():
                 from core import aicut
-                extra = aicut.resolve_image_prompt_cfg("a", speaker=d["speaker"])["extra"]
+                extra = aicut.resolve_image_prompt_cfg("a", speaker=jstr(d, "speaker"))["extra"]
                 look = insertlib._norm_look(extra) or None
-            texts = [(x.get("q") or "") for x in qs]
-            hints = [(x.get("type") or None) for x in qs]
+            # Индексы results/texts/hints обязаны совпадать с порядком qs, поэтому
+            # не-объекты не выбрасываем, а читаем как пустые (задание IC, п. 2).
+            texts = [jstr(x, "q") if isinstance(x, dict) else "" for x in qs]
+            hints = [(x.get("type") or None) if isinstance(x, dict) else None for x in qs]
             k = int(d.get("k") or 5)
             # match_many батчит эмбеддинги, но type_hint у каждого свой — группируем по hint
             results = [None] * len(qs)
@@ -261,7 +267,7 @@ def api_insertlib_desc():
     try:
         try:
             from core import insertlib
-            return jsonify(**insertlib.set_desc((d.get("path") or ""), d.get("desc") or ""))
+            return jsonify(**insertlib.set_desc(jstr(d, "path"), jstr(d, "desc")))
         except Exception as e:
             raise SystemExit(umsg("insertlib_desc_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
@@ -275,7 +281,7 @@ def api_insertlib_items():
     try:
         try:
             from core import insertlib
-            return jsonify(ok=True, **insertlib.items_list(q=d.get("q") or "",
+            return jsonify(ok=True, **insertlib.items_list(q=jstr(d, "q"),
                                                            offset=int(d.get("offset") or 0),
                                                            limit=int(d.get("limit") or 50)))
         except Exception as e:

@@ -56,8 +56,9 @@ def clear_cancel_flags():
     """
     yield
     try:
-        from core import aicut
-        aicut.clear_cancel()
+        from core.aicut import llm
+        llm._LOCAL.__dict__.pop("epoch", None)
+        llm.clear_cancel()
     except Exception:
         pass
     from api import _core, gdrive, render, videogen

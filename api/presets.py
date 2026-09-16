@@ -47,7 +47,7 @@ def api_savestyle():
 def api_style_patch():
     """Точечно обновить поля пользовательского пресета стиля reelsi/styles/<name>.json."""
     d = request.get_json() or {}
-    name = (d.get("name") or "").strip()
+    name = jstr(d, "name").strip()
     patch = d.get("patch") or {}
     try:
         if not name:
@@ -86,7 +86,7 @@ def api_speakers():
 def api_savespeaker():
     """Сохранить профиль спикера как reelsi/speakers/<name>.json."""
     d = request.get_json() or {}
-    name = (d.get("name") or "").strip()
+    name = jstr(d, "name").strip()
     data = d.get("data") or {}
     try:
         if not name:
@@ -105,7 +105,7 @@ def api_savespeaker():
 @bp.route("/api/delspeaker", methods=["POST"])
 def api_delspeaker():
     """Удалить профиль спикера."""
-    name = ((request.get_json() or {}).get("name") or "").strip()
+    name = jstr(request.get_json() or {}, "name").strip()
     try:
         if not name:
             raise SystemExit(umsg("speaker_name_missing", "Не указано имя спикера"))
@@ -154,7 +154,7 @@ def api_censor_words():
     d = request.get_json() or {}
     try:
         try:
-            rst = (d.get("reset") or "").strip()
+            rst = jstr(d, "reset").strip()
             if rst:
                 for k in (("bad", "ok") if rst == "all" else (rst,)):
                     if k not in ("bad", "ok"):

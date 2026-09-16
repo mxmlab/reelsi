@@ -23,7 +23,7 @@ sys.path.insert(0, ROOT)
 from core import falign  # noqa: E402
 
 
-def test_forced_align_token_spans_synthetic_emissions():
+def test_forced_align_token_spans_synthetic_emissions(monkeypatch):
     """Синтетические эмиссии: границы каждого из трёх слов совпадают с пиками своих букв, а не сдвигаются на разделитель."""
     vocab = {"<pad>": 0, "|": 1, "а": 2, "б": 3, "в": 4, "г": 5, "д": 6, "е": 7}
     proc = MagicMock()
@@ -47,7 +47,7 @@ def test_forced_align_token_spans_synthetic_emissions():
             out.logits = logits
             return out
 
-    falign._MODEL = (proc, DummyModel(), "cpu")
+    monkeypatch.setattr(falign, "_MODEL", (proc, DummyModel(), "cpu"))
 
     # Длина клипа 8 секунд при sr=16000 -> длительность одного фрейма fd = 1.0 с
     sr = 16000
@@ -71,7 +71,7 @@ def test_forced_align_token_spans_synthetic_emissions():
     assert res[2]["end"] == 8.0, f"Слово 2 должно заканчиваться на фрейме 8: {res[2]}"
 
 
-def test_forced_align_spans_count_mismatch_fallback(caplog):
+def test_forced_align_spans_count_mismatch_fallback(caplog, monkeypatch):
     """Если torchaudio вернул не то же число спанов, что targets, срабатывает fallback с предупреждением в лог."""
     vocab = {"<pad>": 0, "|": 1, "а": 2}
     proc = MagicMock()
@@ -89,7 +89,7 @@ def test_forced_align_spans_count_mismatch_fallback(caplog):
             out.logits = logits
             return out
 
-    falign._MODEL = (proc, DummyModel(), "cpu")
+    monkeypatch.setattr(falign, "_MODEL", (proc, DummyModel(), "cpu"))
 
     # Подменим merge_tokens, чтобы он вернул неожиданное число спанов
     from collections import namedtuple
@@ -126,7 +126,7 @@ def test_forced_align_words_uses_same_mapping(monkeypatch):
             out.logits = logits
             return out
 
-    falign._MODEL = (proc, DummyModel(), "cpu")
+    monkeypatch.setattr(falign, "_MODEL", (proc, DummyModel(), "cpu"))
     # 8 секунд аудио и клип ровно 8 секунд (слова кончаются в 7.75) → кадр эмиссии = 1.0 с
     monkeypatch.setattr(torchaudio, "load", lambda p: (torch.zeros(1, 16000 * 8), 16000))
     words = [{"w": "аб", "start": 0.0, "end": 5.0},

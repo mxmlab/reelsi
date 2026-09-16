@@ -227,10 +227,11 @@ async function gdTick(){
   clearInterval(GDN);GDN=0;
   // упавший rclone не выдаём за успех: раньше «скачивание завершено» писалось
   // на любом исходе, а следом список файлов затирал и это
-  const bad=!!(s.done&&s.failed);
-  if(bad){st.textContent='✗ '+t(s.cur||'скачивание не удалось');toast('⚠ '+t('Скачивание не удалось — смотри лог'));}
+  const bad=!!(s.done&&s.failed), stopped=!!(s.done&&s.cancelled);
+  if(stopped){st.textContent=t('скачивание остановлено');}   // «Стоп» нажал человек — это не ошибка (задание IC, п. 3)
+  else if(bad){st.textContent='✗ '+t(s.cur||'скачивание не удалось');toast('⚠ '+t('Скачивание не удалось — смотри лог'));}
   else st.textContent=s.done?t('скачивание завершено'):'';
-  gdFiles(bad);
+  gdFiles(bad||stopped);      // при отмене и ошибке список файлов статус не перебивает
 }
 function gdPoll(){clearInterval(GDN);gdTick();GDN=setInterval(gdTick,1000);}
 // После F5 скачивание продолжает идти на сервере — страница должна к нему вернуться,

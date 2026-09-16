@@ -144,8 +144,19 @@ def set_input(nodes, key, value):
 
 
 def set_text(nodes, text):
+    """Подставить текст в `StyledText` титра.
+
+    Значение в композиции Fusion — ЛИТЕРАЛ Lua, а не XML-строка: обратный слеш и
+    перевод строки рвут композицию (`\\` начинает escape-последовательность, голый
+    перевод строки закрывает литерал). Экранируем их ДО кавычек: порядок важен,
+    иначе слеши, добавленные переводами строк, удвоятся. Кавычка по-прежнему
+    заменяется апострофом — так было и так задумано (`"` внутри `"…"` не escape)."""
+    def esc(t):
+        return (t.replace("\\", "\\\\").replace("\r\n", "\\n").replace("\r", "\\n")
+                 .replace("\n", "\\n").replace('"', "'"))
+
     return re.sub(r'(StyledText = Input \{ Value = ")[^"]*(")',
-                  lambda m: m.group(1) + text.replace('"', "'") + m.group(2),
+                  lambda m: m.group(1) + esc(text) + m.group(2),
                   nodes, count=1)
 
 

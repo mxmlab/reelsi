@@ -13,7 +13,7 @@ mediaCapabilities отвечает powerEfficient=false, и 4K декодиру�
 """
 import os, threading
 from flask import request, jsonify
-from ._core import bp, log_entry, umsg_err, _cross_lock_acquire, _cross_lock_release
+from ._core import bp, jstr, log_entry, umsg_err, _cross_lock_acquire, _cross_lock_release
 from core.umsg import umsg
 
 PXJOB = {"running": False, "done": False, "log": [], "cur": "", "i": 0, "n": 0}
@@ -75,7 +75,7 @@ def api_preview_proxy():
     Возвращает по каждой камере путь к прокси и готов ли он. build=true — запустить
     фоновую сборку недостающих. Пока прокси нет, интерфейс играет исходник (как раньше)."""
     d = request.get_json() or {}
-    xml_path = (d.get("xml") or "").strip().strip('"')
+    xml_path = jstr(d, "xml").strip().strip('"')
     start = False
     try:
         if not os.path.isfile(xml_path):

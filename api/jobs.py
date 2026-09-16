@@ -12,8 +12,8 @@ from flask import request, jsonify
 import reelsi
 from core import cutstages
 from ._core import (DEFAULT_BASE, JOB, LOCK, bp, emit, item_done, item_fail,
-                    item_set, items_init, job_finish, job_start, set_progress, umsg_err,
-                    _cross_lock_release)
+                    item_set, items_init, job_finish, job_start, jstr, kill_tree,
+                    set_progress, umsg_err, _cross_lock_release)
 from core.umsg import umsg
 from core.app_meta import child_env, module_cmd
 from core.applog import get_logger
@@ -76,24 +76,13 @@ def is_safe_work_dir(path):
 
 def _kill_curproc():
     """Убить текущий subprocess вместе с детьми (omni_cut порождает omni_asr — им VRAM),
-    и убрать его рабочие каталоги (см. CURWORK)."""
+    и убрать его рабочие каталоги (см. CURWORK). Дерево убивает общая `_core.kill_tree`
+    (задание IC, п. 6): раньше та же функция была скопирована здесь третьим экземпляром."""
     with LOCK:
         p = CURPROC
         works = list(CURWORK)
     if p and p.poll() is None:
-        for _ in range(2):                   # taskkill /T бывает таймаутит — вторая попытка
-            try:
-                subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)],
-                               capture_output=True, timeout=15)
-                if p.poll() is not None:
-                    break
-            except Exception:
-                pass
-        else:
-            try:
-                p.kill()                     # последний шанс: хотя бы родителя
-            except Exception:
-                pass
+        kill_tree(p)
     for w in works:                          # temp-каталоги задачи (WAV камер и вырезок)
         shutil.rmtree(w, ignore_errors=True)
 
@@ -381,7 +370,7 @@ def run_omnicut_job(outdir, pairs, model=None, draft=True, selfcheck=False, revi
 @bp.route("/api/omnicut_run", methods=["POST"])
 def api_omnicut_run():
     d = request.get_json() or {}
-    outdir = (d.get("outdir") or "").strip().strip('"')
+    outdir = jstr(d, "outdir").strip().strip('"')
     try:
         if not outdir:
             raise SystemExit(umsg("no_result_dir", "Не задана папка результата"))
@@ -395,13 +384,15 @@ def api_omnicut_run():
                 raw_stages["draft"] = d.get("draft", False)
             if "dedupe" in d and d.get("dedupe") is not None:
                 raw_stages["dedupe"] = d.get("dedupe")
+        if not isinstance(raw_stages, dict):     # `"stages": 5` — не TypeError ниже
+            raw_stages = {}
         try:
             threading.Thread(target=run_omnicut_job,
-                             args=(outdir, pairs, d.get("model"),
+                             args=(outdir, pairs, jstr(d, "model") or None,
                                    raw_stages.get("draft", False), d.get("selfcheck", False),
                                    bool(d.get("review")), "gigaam",
-                                   d.get("selfcheck_model") or "whisper:large-v3",
-                                   (d.get("speaker") or "").strip() or None,
+                                   jstr(d, "selfcheck_model") or "whisper:large-v3",
+                                   jstr(d, "speaker").strip() or None,
                                    raw_stages.get("dedupe"),
                                    raw_stages),
                              daemon=True).start()
@@ -423,7 +414,7 @@ def api_draft_render():
     """Черновой .draft.mp4 по готовому XML (ручной перерендер после правок в редакторе).
     Фоновый JOB (рендер ~1-2 мин), лог в /api/status; NVENC с фолбэком на CPU."""
     d = request.get_json() or {}
-    xml_path = (d.get("xml") or "").strip().strip('"')
+    xml_path = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml_path):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml_path}",
@@ -467,7 +458,7 @@ def api_clean_tmp():
     удаление = пересчёт RVM) и превью-прокси камер (proxies=true — тоже КЭШ, удаление =
     пересборка по десятку секунд на файл камеры при следующем открытии предпросмотра)."""
     d = request.get_json() or {}
-    outdir = (d.get("outdir") or "").strip().strip('"')
+    outdir = jstr(d, "outdir").strip().strip('"')
     try:
         if not os.path.isdir(outdir):
             raise SystemExit(umsg("no_folder", f"Нет папки: {outdir}", path=outdir))
@@ -574,9 +565,10 @@ def api_cancel():
 @bp.route("/api/run", methods=["POST"])
 def api_run():
     d = request.get_json(silent=True) or {}
-    base = d.get("base") or DEFAULT_BASE
+    base = jstr(d, "base") or DEFAULT_BASE
+    outdir = jstr(d, "outdir").strip().strip('"')
     try:
-        if not (d.get("outdir") or "").strip():
+        if not outdir:
             raise SystemExit(umsg("no_result_dir", "Не задана папка результата"))
         camdirs = d.get("camdirs") or []
         if not camdirs:
@@ -595,7 +587,7 @@ def api_run():
         if not job_start(kind="cut", label="Классическая нарезка"):
             raise SystemExit(umsg("busy", "Уже выполняется"))
         try:
-            threading.Thread(target=run_job, args=(base, d["outdir"], pairs, opts),
+            threading.Thread(target=run_job, args=(base, outdir, pairs, opts),
                              daemon=True).start()
         except Exception:
             # см. api_omnicut_run: поток не родился — отдаём лок и JOB["running"] обратно

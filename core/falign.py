@@ -67,6 +67,16 @@ def release_model():
     return True
 
 
+def _blank_kw(blank):
+    """Аргументы `merge_tokens` для того же blank, что ушёл в `forced_align`.
+
+    Дефолт merge_tokens — `blank=0`, и при модели с `pad_token_id != 0` (например 5)
+    функция ищет нули: спаны blank-токенов попадают в спаны букв и границы слов
+    врут. Ноль передавать явно не нужно (это и есть дефолт), поэтому kwargs пустые —
+    заодно не ломаются подделки merge_tokens со старой сигнатурой в тестах."""
+    return {} if blank == 0 else {"blank": blank}
+
+
 def align_text(audio_f32, text, device="cuda", sr=16000):
     """Выровнять сырой ТЕКСТ (без исходных времён) по короткому аудио-клипу (float32 16k).
     Вернуть [{w,start,end}] в секундах ОТ НАЧАЛА клипа. Слова без кириллицы пропускаются."""
@@ -99,7 +109,7 @@ def align_text(audio_f32, text, device="cuda", sr=16000):
     try:
         aln, sc = torchaudio.functional.forced_align(
             em, torch.tensor([targets], device=dev), blank=blank)
-        spans = torchaudio.functional.merge_tokens(aln[0], sc[0])
+        spans = torchaudio.functional.merge_tokens(aln[0], sc[0], **_blank_kw(blank))
     except Exception:
         return []
     # merge_tokens склеивает подряд идущие одинаковые токены: на удвоенной букве
@@ -197,7 +207,7 @@ def align_words(wav_path, words, device="cuda", emit=console_emit):
         try:
             aln, sc = torchaudio.functional.forced_align(
                 em, torch.tensor([targets], device=dev), blank=blank)
-            spans = torchaudio.functional.merge_tokens(aln[0], sc[0])
+            spans = torchaudio.functional.merge_tokens(aln[0], sc[0], **_blank_kw(blank))
         except Exception:
             continue
         # Соответствие «спан i ↔ meta[i]» — то же самое, что в align_text

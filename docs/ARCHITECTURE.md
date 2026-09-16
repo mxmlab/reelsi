@@ -881,7 +881,7 @@ floor + 18 дБ.
 | `tools/webui_test.py` | изолированный профиль UI на порту 5098 (`REELSI_*`-переменные) для отладки |
 | `core/umsg.py` | коды ошибок для перевода: любая ошибка `/api/*` уходит машинным кодом `umsg(...)` + переменными, фронт переводит по `ERR_*`-ключу из `static/i18n/en.json`; словарь собирается `tools/i18n_merge.py`, сверяет `tests/test_i18n.py` |
 | `core/app_meta.py`, `core/device.py` | пути/окружение (ядро-хаб), выбор устройства (cuda → mps → cpu) |
-| `core/fileio.py` | атомарная запись JSON (tmp + fsync + replace) |
+| `core/fileio.py` | атомарная запись JSON и текстовых файлов (tmp + fsync + replace; права и ссылки цели сохраняются) |
 | `doctor.py` | диагностика окружения: что стоит, что отвалится, как чинить; отдельно проверяет внешние опциональные бинарники — `rclone` (скачивание с гугл-диска) и After Effects (безголовый рендер, поиском `api.render._find_ae` — один источник на doctor и рендер) |
 | `tools/` | i18n-утилиты (`i18n_extract.py` / `i18n_js_keys.py` / `i18n_merge.py`), исследование интро (`intro_rules.py` / `intro_hook_rules.py` / `intro_hook_check.py`), рабочая копия на сессию (`wt.ps1`) |
 
@@ -922,6 +922,12 @@ floor + 18 дБ.
 
 **Путь вывода** — `Reelsi_out/` (папка уровнем выше `reelsi/`), имена `NN_stem.xml`,
 сайдкары (`.project.json`, `.cuts.json`, `.omni.json`...).
+
+**Что пишется атомарно** — данные и файлы пользователя (сайдкары, `ai_config.json`,
+пресеты стилей и профили спикеров, XML пользователя, `.jsx`, `.srt`) идут через
+`core/fileio.py` (tmp + fsync + replace, с переносом прав и записью в цель ссылки);
+пересоздаваемые временные артефакты (кэши расшифровки, интервалы в `_tmp/`, кэш
+прокси) пишутся напрямую — их потеря ничего не стоит.
 
 **Запуск** — `python reelsi/omni_cut.py --out Reelsi_out/NN.xml -cam1 ... --cam2 ...`
 **Запуск (webui)** — вкладка «Нарезка» → `python -m webui` — нет, `webui.py`.

@@ -385,8 +385,9 @@ def _files():
                     data, changed = migrate_style_dict(raw)
                     if changed:
                         try:
-                            with open(p, "w", encoding="utf-8") as fh:
-                                json.dump(data, fh, ensure_ascii=False, indent=1)
+                            # атомарно: пресет — данные пользователя, усечённый файл
+                            # не пересобирается ниоткуда (IB, п. 2)
+                            atomic_json_dump(p, data, indent=1)
                         except Exception:
                             pass
                     out[os.path.splitext(f)[0]] = data
@@ -453,7 +454,6 @@ def patch(name, patch_dict):
         data = {}
     data.update(patch_dict)
     data, _ = migrate_style_dict(data)
-    with open(target, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=1)
+    atomic_json_dump(target, data, indent=1)
     return target_name, target
 

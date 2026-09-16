@@ -17,42 +17,71 @@ from .inserts import _adopt_inserts, _insert_dest
 # слов в XML, база вставок, раскладка камер. Перенесены сюда 1:1.
 # ==========================================================================
 
+def _num_field(d, key, default=0.0):
+    """Числовое поле тела запроса (задание IC, п. 1).
+
+    Нечисловое значение раньше доезжало до `float()` и падало ValueError'ом с
+    текстом питона («could not convert string to float: 'abc'»), который роут
+    называл «файл не найден». Теперь ошибка называет ПОЛЕ — по ней и отвечаем
+    `render_set_invalid`, а не «файла нет»."""
+    v = d.get(key)
+    if v is None or (isinstance(v, str) and not v.strip()):
+        return float(default)
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        raise ValueError(f"Поле {key} должно быть числом, получено: {v!r}")
+
+
 def _norm_build_jobs(jobs_in):
     """Нормализация набора клипов для фонового джоба сборки (/api/build_run)."""
     from core import aicut, styles  # локальный импорт, как в соседних модулях api/
+    if jobs_in is None:
+        jobs_in = []
+    if not isinstance(jobs_in, list):
+        raise ValueError(f"Поле jobs должно быть списком, получено: {type(jobs_in).__name__}")
     glitch_glow = aicut.glitch_glow_mode()
     norm = []
     for j in jobs_in:
-        xml = (j.get("xml") or "").strip().strip('"')
+        if not isinstance(j, dict):
+            # {"jobs": [123]}: раньше это был AttributeError и 500 у роута (задание IC, п. 1)
+            raise ValueError(f"Элемент набора должен быть объектом, получено: {j!r}")
+        xml = jstr(j, "xml").strip().strip('"')
         if not os.path.isfile(xml):
             raise ValueError(f"Файл не найден: {xml}")
         # Рото и громкость музыки — параметры СТИЛЯ, а не клипа (решение 2026-08-22):
         # клип хранит ИМЯ стиля, стиль живёт отдельно. Клиповые roto/roto_bottom
         # раньше всегда перебивали правку стиля, поэтому стиль резолвим ОДИН раз
         # на клип и из результата берём всё, что стилю принадлежит.
-        st = styles.resolve(j.get("style"))
+        style = j.get("style")
+        if style is not None and not isinstance(style, (str, dict)):
+            raise ValueError(f"Поле style должно быть именем стиля или объектом, "
+                             f"получено: {style!r}")
+        st = styles.resolve(style)
         norm.append(dict(
             xml_path=xml,
             # Папка для .jsx ИМЕННО этого клипа (задание N): тег спикера определяет
             # её у клипа, и каждый собирается в свою. Пусто = глобальное поле.
-            outdir=(j.get("outdir") or "").strip().strip('"') or None,
-            music=(j.get("music") or "").strip() or None,
-            music_dir=(j.get("music_dir") or "").strip().strip('"') or None,
+            outdir=jstr(j, "outdir").strip().strip('"') or None,
+            music=jstr(j, "music").strip() or None,
+            music_dir=jstr(j, "music_dir").strip().strip('"') or None,
             highlights=(j.get("highlights") or _sidecar_yellow(xml)),
             caption=(j.get("caption") or _sidecar_caption(xml)),
             hl_breaks=j.get("hl_breaks") or [],
             hl_count=j.get("hl_count") or [],
             hl_joins=j.get("hl_joins") or [],
-            inserts=j.get("inserts") or [],
+            # Элемент списка вставок не объект — пропускаем: дальше по коду у каждой
+            # вставки читаются поля (задание IC, п. 2), и на числе это был бы 500.
+            inserts=[x for x in (j.get("inserts") or []) if isinstance(x, dict)],
             intro=j.get("intro") or [],
             intro_remove=j.get("intro_remove") or [],
             intro_splits=j.get("intro_splits") or [],
             ncams=j.get("cams") or None,
-            exposure=float(j.get("exposure") or 0),
-            intro_mode=j.get("intro_mode") or "word",
+            exposure=_num_field(j, "exposure", 0),
+            intro_mode=jstr(j, "intro_mode") or "word",
             roto=bool(st.get("roto")), roto_bottom=float(st.get("roto_bottom") or 0),
-            roto_device=(j.get("roto_device") or "").strip().lower() or None,
-            style=j.get("style") or None,
+            roto_device=jstr(j, "roto_device").strip().lower() or None,
+            style=style or None,
             music_db=float(st.get("music_db") if st.get("music_db") is not None else -20.0),
             music_random=bool(j.get("music_random")),
             censor_audio=bool(j.get("censor", True)),
@@ -182,13 +211,22 @@ def api_build_run():
     """Асинхронная сборка .jsx (набор или один файл): лог стримится в /api/status,
     результат — пути .jsx в results. Общий JOB с нарезкой (VRAM всё равно один)."""
     d = request.get_json() or {}
+    if not isinstance(d, dict):
+        # Тело-массив или строка: `d.get` упал бы AttributeError'ом (500). Набор
+        # приходит объектом — всё прочее это «набор не передан» (задание IC, п. 1).
+        return jsonify(**umsg_err(SystemExit(umsg("build_set_invalid",
+            "Тело запроса должно быть объектом с полем jobs"))))
     try:
         try:
             norm = _norm_build_jobs(d.get("jobs") or [])
         except ValueError as e:
             msg = str(e)
-            path = msg.split("Файл не найден: ", 1)[-1] if msg.startswith("Файл не найден: ") else msg
-            raise SystemExit(umsg("file_not_found", msg, path=path, err=msg))
+            # file_not_found — только про пропавший файл: нечисловое поле набора
+            # («exposure»: «abc») раньше называлось «файл не найден» (задание IC, п. 1).
+            if msg.startswith("Файл не найден: "):
+                raise SystemExit(umsg("file_not_found", msg,
+                                      path=msg.split("Файл не найден: ", 1)[-1], err=msg))
+            raise SystemExit(umsg("build_set_invalid", msg, err=msg))
         if not norm:
             raise SystemExit(umsg("set_empty", "Набор пуст"))
         for j in norm:
@@ -197,8 +235,8 @@ def api_build_run():
             raise SystemExit(umsg("busy_wait", "Уже выполняется другая задача — дождись или смотри Логи"))
         try:
             threading.Thread(target=_run_build_job,
-                             args=(norm, d.get("mode") or "separate",
-                                   (d.get("outdir") or "").strip().strip('"')),
+                             args=(norm, jstr(d, "mode") or "separate",
+                                   jstr(d, "outdir").strip().strip('"')),
                              daemon=True).start()
         except Exception:
             # Поток не родился (RuntimeError: can't start new thread) — отпускаем ровно
@@ -265,8 +303,11 @@ def api_cams_save():
     from core import xmlbuild
     from core import xml2ae
     d = request.get_json() or {}
-    xml = (d.get("xml") or "").strip().strip('"')
-    assign_in = d.get("assign") or []
+    xml = jstr(d, "xml").strip().strip('"')
+    # Не список (число, строка, объект) — это «ничего не пришло», а не TypeError
+    # на len(): до правки `{"assign": 5}` роняло роут в 500 (задание IC, п. 2).
+    raw_assign = d.get("assign")
+    assign_in = raw_assign if isinstance(raw_assign, list) else []
     try:
         if not os.path.isfile(xml):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
@@ -303,6 +344,29 @@ def api_cams_save():
         return jsonify(**umsg_err(e))
 
 
+def _int_body_field(d, key, default):
+    """Целое из тела запроса. Нечисловое и нецелое («abc», 1.5, [], true) — None.
+
+    Нужно там, где раньше битое значение подменялось на «-1» и роут отвечал
+    посторонней ошибкой: `/api/swap_cam` с `cam: "abc"` говорил «Камеру 1 менять
+    нельзя» (задание IC, п. 7)."""
+    v = d.get(key)
+    if v is None:
+        return default
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, int):
+        return v
+    if isinstance(v, float):
+        return int(v) if v.is_integer() else None
+    if isinstance(v, str):
+        try:
+            return int(v.strip())
+        except ValueError:
+            return None
+    return None
+
+
 @bp.route("/api/swap_cam", methods=["POST"])
 def api_swap_cam():
     """Заменить файл камеры (обычно вторую) на другой и заново свести под Камеру 1:
@@ -316,11 +380,10 @@ def api_swap_cam():
     from core import align
     d = request.get_json() or {}
     xml = jstr(d, "xml").strip().strip('"')
-    try:
-        cam_raw = d.get("cam")
-        k = int(cam_raw if cam_raw is not None else 1)   # 0 — валидный индекс (guard ниже отклонит)
-    except (TypeError, ValueError):
-        k = -1
+    k = _int_body_field(d, "cam", 1)     # 0 — валидный индекс (guard ниже отклонит)
+    if k is None:
+        return jsonify(**umsg_err(SystemExit(umsg("bad_cam",
+                                                  "Номер камеры должен быть целым числом"))))
     new_path = jstr(d, "path").strip().strip('"')
     try:
         if not os.path.isfile(xml):
@@ -398,7 +461,14 @@ def api_export_xml():
     сверено с экспортом самого Премьера, отличий больше нет ни одного.
     """
     path = (request.args.get("path") or "").strip().strip('"')
-    if not path or not os.path.isfile(path):
+    # Расширение — ДО чтения файла (задание IC, п. 9): роут читал ЛЮБОЙ файл по пути
+    # (`/proc/self/environ` на Linux), а при сбое разбора отдавал его вложением.
+    # Теперь .xml (без учёта регистра) — условие входа, остальное 403 как у /api/media.
+    if not path:
+        return ("not found", 404)
+    if os.path.splitext(path)[1].lower() != ".xml":
+        return ("forbidden", 403)
+    if not os.path.isfile(path):
         return ("not found", 404)
     if _never_serve(path):
         return ("forbidden", 403)
@@ -439,7 +509,14 @@ def api_export_drp():
             cams = p.get("cams") or []
             if not cams:
                 raise SystemExit(umsg("no_cams_sidebar", "В сайдбаре нет камер — нарезку не собрать"))
-            fps = int(p.get("fps") or 60)
+            # Частота проекта. Раньше стоял int(...): NTSC 29.97 усекался до 29, а
+            # шаблон .drp — таймлайн 60 fps (docs/DRP_SPEC.md), и кадры в него уезжали
+            # посчитанными в чужой частоте. Молча собирать неверный .drp нельзя.
+            fps = float(p.get("fps") or 60)
+            if abs(fps - 60) > 1e-6:
+                raise SystemExit(umsg("drp_fps_unsupported",
+                                      f"Экспорт в DaVinci Resolve пока только для таймлайна 60 fps (у клипа {fps:g})",
+                                      fps=fps))
             keep = [(float(s), float(e)) for s, e in (p.get("keep") or [])]
             offsets = [float(x) for x in (p.get("offsets") or [0.0] * len(cams))]
             if len(cams) != len(offsets):
@@ -459,7 +536,9 @@ def api_export_drp():
             yellow = _sidecar_yellow(xml)
             inserts = []
             for x in (d.get("inserts") or []):
-                media = (x.get("media") or "").strip().strip('"')
+                if not isinstance(x, dict):     # элемент не объект — пропуск (задание IC, п. 2)
+                    continue
+                media = jstr(x, "media").strip().strip('"')
                 if not media or not os.path.isfile(media):
                     continue
                 st = float(x.get("start_sec") or 0)
@@ -503,7 +582,7 @@ def api_scene():
     Вход — те же поля, что у фоновой сборки (/api/build_run), напр. {"xml": ...,
     "inserts": [...]}; «roto» принято, но маски не строятся (это этап to_ae_full)."""
     d = request.get_json() or {}
-    xml = (d.get("xml") or "").strip().strip('"')
+    xml = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",

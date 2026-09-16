@@ -29,6 +29,7 @@ def resolver(base):
             log.warning("Не удалось прочитать файл ассетов %s: %s", cfg, e)
 
     assets_dir_real = os.path.realpath(d)
+    warned = set()               # роль, о которой уже предупредили: путь зовут на каждую сборку
 
     def path(role):
         val = m.get(role)
@@ -46,6 +47,12 @@ def resolver(base):
         except ValueError:       # другой диск — общего пути нет
             inside = False
         if not inside or p_real == assets_dir_real:
+            # Молчание тут стоило вечера отладки: «звук пропал», а в логе ни строчки —
+            # роль просто не находилась. Пишем раз на роль, а не на каждый вызов.
+            if role not in warned:
+                warned.add(role)
+                log.warning("Роль ассета «%s» указывает за папку assets/ (%s) — пропускаю",
+                            role, fn)
             return ""
         return p if os.path.isfile(p) else ""
 

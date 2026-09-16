@@ -5,6 +5,7 @@ swapping the word text, its Source Text FlatBuffer blob, ids and timing."""
 import os, re
 
 from core import paths
+from core.fileio import atomic_text_write
 from core.subtitle_blobs import BlobLibrary
 from core.xmltext import xml_text as _xml_escape
 TICKS_PER_FRAME = 4233600000
@@ -248,9 +249,8 @@ def write_srt(rows, srt_path):
     content = "\n".join(lines)
     if content and not content.endswith("\n"):
         content += "\n"
-    with open(srt_path, "w", encoding="utf-8") as f:
-        f.write(content)
-
+    # атомарно: SRT — результат шага, пустой файл на месте живого хуже отсутствия (IB, п. 2)
+    atomic_text_write(srt_path, content)
 
 
 class SubtitleBuilder:

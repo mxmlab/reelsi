@@ -194,23 +194,6 @@ def test_two_rows_wrapping_vs_font_shrinking(xml_subs, tmp_path):
     assert any(s.get("row") == 1 for s in p_wrap2["subs"])
     assert all(s.get("row") == 0 for s in p_wrap1["subs"])
 
-    # Ни одна строка плана не шире 0.92 кадра
-    from core import fonts as _fonts
-    max_w = 0.92 * meta["w"]
-    for s in p_wrap2["subs"]:
-        fs = s.get("fsize", p_wrap2["fsize"])
-        tw = _fonts.text_width("SFPro-CondensedSemibold", s["w"], fs)
-        if tw is None:
-            pytest.skip("нет шрифта SFPro-CondensedSemibold")
-        assert tw <= max_w + 1.0, f"Line too wide: {s['w']} ({tw} > {max_w})"
-
-    for s in p_wrap1["subs"]:
-        fs = s.get("fsize", p_wrap1["fsize"])
-        tw = _fonts.text_width("SFPro-CondensedSemibold", s["w"], fs)
-        if tw is None:
-            pytest.skip("нет шрифта SFPro-CondensedSemibold")
-        assert tw <= max_w + 1.0, f"Line too wide: {s['w']} ({tw} > {max_w})"
-
     # sub_step в плане равен 1.18 * fsize, у отдельных строк fsize и sub_step отсутствуют (задание CK)
     assert "sub_step" in p_wrap2
     assert p_wrap2["sub_step"] == round(p_wrap2["fsize"] * 1.18, 2)
@@ -236,6 +219,33 @@ def test_two_rows_wrapping_vs_font_shrinking(xml_subs, tmp_path):
     srt1_text = open(srt1_path, encoding="utf-8").read()
     cues1 = [c.strip() for c in srt1_text.strip().split("\n\n") if c.strip()]
     assert len(cues1) == len(p_wrap1["subs"])
+
+
+def test_two_rows_wrapping_line_widths(xml_subs):
+    """Ни одна строка плана не шире 0.92 кадра (требует шрифт SFPro-CondensedSemibold)."""
+    from core import fonts as _fonts
+    if _fonts.text_width("SFPro-CondensedSemibold", "probe", 60) is None:
+        pytest.skip("нет шрифта SFPro-CondensedSemibold")
+
+    meta, cams, subs_list, xml_inserts = xml2ae.parse_full(xml_subs)
+    st_wrap2 = {"sub_words_per_row": 6, "sub_rows_max": 2}
+    st_wrap1 = {"sub_words_per_row": 6, "sub_rows_max": 1}
+
+    p_wrap2 = xml2ae.scene_plan(xml_subs, style=st_wrap2)
+    p_wrap1 = xml2ae.scene_plan(xml_subs, style=st_wrap1)
+
+    max_w = 0.92 * meta["w"]
+    for s in p_wrap2["subs"]:
+        fs = s.get("fsize", p_wrap2["fsize"])
+        tw = _fonts.text_width("SFPro-CondensedSemibold", s["w"], fs)
+        assert tw is not None
+        assert tw <= max_w + 1.0, f"Line too wide: {s['w']} ({tw} > {max_w})"
+
+    for s in p_wrap1["subs"]:
+        fs = s.get("fsize", p_wrap1["fsize"])
+        tw = _fonts.text_width("SFPro-CondensedSemibold", s["w"], fs)
+        assert tw is not None
+        assert tw <= max_w + 1.0, f"Line too wide: {s['w']} ({tw} > {max_w})"
 
 
 def test_build_sub_rows_multiword_elements():

@@ -493,7 +493,7 @@ async function pickIns(i){try{const d=await (await fetch('/api/pickmedia')).json
     renderIns();captureAE();}}
   catch(e){toast(t('Не открылся выбор файла — сервер не ответил'));uiLog('pickmedia: '+e);}}
 
-// Правка / удаление слова в AE-панели (переопределяет aewSaveWord из 80-inserts.js):
+// Правка / удаление слова в AE-панели:
 // пустое поле удаляет слово через /api/delete_word, сдвигает наборы и вызывает captureAE.
 async function aewDeleteWord(o){
   const xml=CLIPS[curAE]?CLIPS[curAE].xml:HLXML;

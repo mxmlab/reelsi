@@ -51,8 +51,9 @@ CACHE_WRITES = {
             "кэш расшифровки Omni рядом с роликом",
     },
     "core/omni_cut.py": {
-        'json.dump(sorted(new), open(HALLUC_PHRASES_PATH, "w", encoding="utf-8"),':
-            "выученный список фраз-галлюцинаций — набирается заново прогонами",
+        # выученные фразы-галлюцинации (HALLUC_PHRASES_PATH) ушли из этого списка:
+        # задание IB перевело их на atomic_json_dump — файл рядом с копией, его терять
+        # нельзя, он набирается прогонами.
         'json.dump([list(s) for s in spans if s], open(ivp, "w"))':
             "временный файл интервалов речека в рабочем каталоге нарезки",
         'json.dump([[s, e] for s, e in wins], open(ivf, "w"))':

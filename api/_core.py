@@ -5,7 +5,7 @@
 Всё, что нужно ВСЕМ группам роутов и не относится ни к одной из них. Модули роутов
 импортируют отсюда `bp` и вешают на него свои @bp.route.
 """
-import json, os, threading, time, traceback
+import json, os, subprocess, threading, time, traceback
 from core import paths
 
 # HERE — корень репозитория: личные файлы пользователя (job.lock, ui_state.json)
@@ -78,6 +78,29 @@ def jstr(d, key, default=""):
         if isinstance(v, str):
             return v
     return default
+
+
+def kill_tree(p):
+    """Убить процесс ВМЕСТЕ С ДЕТЬМИ (задание IC, п. 6).
+
+    Раньше эта функция была скопирована в трёх местах (api/gdrive.py, api/render.py,
+    api/jobs.py) и копии разъезжались. Windows: `taskkill /F /T /PID` (две попытки —
+    `/T` иногда таймаутит), затем `p.kill()` как последний шанс хотя бы за родителя.
+    Вне Windows taskkill нет вовсе: сразу `p.kill()`.
+    """
+    if os.name == "nt":
+        for _ in range(2):
+            try:
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)],
+                               capture_output=True, timeout=15)
+                if p.poll() is not None:
+                    return
+            except Exception:
+                pass
+    try:
+        p.kill()
+    except Exception:
+        pass
 
 
 # APP_NAME / APP_REFERER / app_out_dir самому _core не нужны — он их ПЕРЕЭКСПОРТИРУЕТ

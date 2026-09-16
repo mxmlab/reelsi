@@ -912,6 +912,14 @@ function aiSetNew(){AIEDIT=null;
   aiSetHints();aiSetModelInput();aiSetStatus('');aiSetList();}
 function aiSetProv(){const pre=(AICFG.presets||{})[$('ais_provider').value]||{};
   $('ais_url').value=pre.base_url||'';    // автозаполнение по провайдеру, поле редактируемое
+  // Ключ-маска от ПРЕЖНЕГО провайдера к новому адресу не подставляется (задание IC, п. 10):
+  // сервер такую пару отклоняет, поэтому поле чистим сразу и говорим, что делать.
+  const k=$('ais_key');
+  if(k&&(k.value||'').trim().startsWith('•••')){
+    k.value='';aiSyncKeyType('');
+    const kw=$('ais_key_warn');
+    if(kw){kw.textContent=t('Сменился адрес или провайдер — введи ключ заново: сохранённый ключ к новому адресу не подставляется');kw.style.display='';}
+  }
   $('ais_model').value='';aiSetHints();aiSetModelInput();}
 function aiSetHints(models){const pre=(AICFG.presets||{})[$('ais_provider').value]||{};
   let ms=models||pre.models||[];

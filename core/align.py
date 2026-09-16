@@ -7,6 +7,7 @@ All source times are in cam1 seconds; output positions are frames at the sequenc
 """
 import re
 from core import subs
+from core.fileio import atomic_text_write
 FPS = 60
 
 
@@ -379,7 +380,8 @@ def make_srt(sub_words, path, max_chars=42, max_gap_frames=36, min_cue_frames=18
         start = c[0]["start"]; end = max(c[-1]["end"], start + min_cue_frames)
         text = " ".join(x["w"] for x in c).strip()
         lines.append(f"{i}\n{_ts(start, fps)} --> {_ts(end, fps)}\n{text}\n")
-    open(path, "w", encoding="utf-8").write("\n".join(lines))
+    # атомарно: .srt — результат шага; пустой файл на месте живого вводит в заблуждение (IB, п. 2)
+    atomic_text_write(path, "\n".join(lines))
     return len(cues)
 
 

@@ -24,7 +24,7 @@ def api_ai_yellow():
     sequence XML. Writes <stem>.yellow.json next to it and returns the indices so
     the UI can load them into the highlight chips right away."""
     d = request.get_json() or {}
-    xml_path = (d.get("xml") or "").strip().strip('"')
+    xml_path = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml_path):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml_path}",
@@ -32,8 +32,8 @@ def api_ai_yellow():
         ep = _ai_begin("жёлтые")
         try:
             from core import aicut
-            res = aicut.cmd_yellow(xml_path, model=(d.get("model") or None),
-                                   url=(d.get("url") or None), emit=emit)
+            res = aicut.cmd_yellow(xml_path, model=(jstr(d, "model") or None),
+                                   url=(jstr(d, "url") or None), emit=emit)
             return jsonify(ok=True, yellow=res["yellow"], colored=res.get("colored", []),
                            total=res["total"])
         except SystemExit as e:      # LM Studio недоступен / отказ модели
@@ -67,7 +67,7 @@ def api_ai_inserts():
                 notes.append(s)
                 emit(line, **vars)         # дублируем в JOB-лог (серверный прогресс стриминга)
 
-            res = aicut.cmd_inserts(xml_path, model=(d.get("model") or None),
+            res = aicut.cmd_inserts(xml_path, model=(jstr(d, "model") or None),
                                     count=d.get("count"), avoid=d.get("avoid"),
                                     rejected=d.get("rejected"),
                                     emit=_emit)
@@ -224,7 +224,7 @@ def api_ai_config():
             # вставкам/интро — нет (там reasoning жёг весь бюджет впустую). Принимаем
             # и уровни из каталога (max/xhigh/minimal у разных моделей), иначе выбор
             # «max» в селекте упал бы на валидации.
-            step, lvl = d.get("step"), d.get("level")
+            step, lvl = jstr(d, "step"), jstr(d, "level")
             if step not in aicut.STEP_REASONING_DEFAULT:
                 raise SystemExit(umsg("unknown_step", f"Неизвестный шаг «{step}»", step=step))
             valid = lvl in aicut.REASONING_LEVELS
@@ -246,7 +246,7 @@ def api_ai_config():
         elif act == "set_step_profile":
             # МОДЕЛЬ (ИИ-профиль) ОТДЕЛЬНО на каждый шаг (нарезка/жёлтые/вставки/интро):
             # шагам нужны разные модели. Пустое имя = «как общий active» (сброс).
-            step, name = d.get("step"), d.get("name") or ""
+            step, name = jstr(d, "step"), jstr(d, "name")
             if step not in aicut.STEP_REASONING_DEFAULT:
                 raise SystemExit(umsg("unknown_step", f"Неизвестный шаг «{step}»", step=step))
             sp = cfg.setdefault("step_profiles", {})
@@ -257,14 +257,14 @@ def api_ai_config():
             else:
                 sp.pop(step, None)          # сброс на общий active
         elif act == "set_active":
-            name = d.get("name")
+            name = jstr(d, "name")
             if name not in cfg["profiles"]:
                 raise SystemExit(umsg("no_profile", f"Нет профиля «{name}»", name=name))
             cfg["active"] = name
         elif act == "set_active_omni":
             # кто СЛУШАЕТ звук: "__local__" = локальная Qwen2.5-Omni, иначе имя профиля
             # (облачный = аудио-чанки уходят провайдеру; anthropic звук не принимает)
-            name = d.get("name") or aicut.OMNI_LOCAL
+            name = jstr(d, "name") or aicut.OMNI_LOCAL
             if name not in aicut.OMNI_LOCAL_ENGINES:      # локальные движки (qwen/gigaam) — ок
                 if name not in cfg["profiles"]:
                     raise SystemExit(umsg("no_profile", f"Нет профиля «{name}»", name=name))
@@ -280,7 +280,7 @@ def api_ai_config():
         elif act == "set_active_cut_asr":
             # кто СЛУШАЕТ звук при нарезке (пословные тайминги): дефолт "gigaam",
             # валидируется по флагу cut в каталоге asr_backends
-            name = d.get("name") or "gigaam"
+            name = jstr(d, "name") or "gigaam"
             from core import asr_backends
             meta = asr_backends.engine_meta(name)
             if not meta or not meta.get("cut"):
@@ -289,7 +289,7 @@ def api_ai_config():
         elif act == "set_active_image":
             # кто ГЕНЕРИТ картинки-вставки: "__off__" = выключено, иначе имя профиля
             # с image-моделью (Nano Banana); anthropic/lmstudio не умеют
-            name = d.get("name") or aicut.IMAGE_OFF
+            name = jstr(d, "name") or aicut.IMAGE_OFF
             if name != aicut.IMAGE_OFF:
                 if name not in cfg["profiles"]:
                     raise SystemExit(umsg("no_profile", f"Нет профиля «{name}»", name=name))
@@ -301,7 +301,7 @@ def api_ai_config():
         elif act == "set_active_video":
             # кто ГЕНЕРИТ видео: "__off__" = выключено, иначе имя профиля с видео-
             # моделью (Seedance 2 на OpenRouter); anthropic/lmstudio не умеют
-            name = d.get("name") or aicut.VIDEO_OFF
+            name = jstr(d, "name") or aicut.VIDEO_OFF
             if name != aicut.VIDEO_OFF:
                 if name not in cfg["profiles"]:
                     raise SystemExit(umsg("no_profile", f"Нет профиля «{name}»", name=name))
@@ -318,7 +318,7 @@ def api_ai_config():
             # оказаться несовместимым с возможностями новой (известной) модели, и
             # иначе запрос улетел бы с невалидным size. Неизвестную модель не
             # трогаем — провайдер сам решит.
-            new_model = str(d.get("model") or "").strip()
+            new_model = jstr(d, "model").strip()
             old_model = aicut.video_model_cfg()
             cfg["video_model"] = new_model
             saved = str(cfg.get("video_resolution") or "").strip()
@@ -332,7 +332,7 @@ def api_ai_config():
             # решает сам. Для известной модели с caps непустое значение проверяем на
             # поддержку ДО записи: устаревшее/несуществующее не сохраняем (structured
             # error), иначе оно разъехалось бы с резолвером и молча не отправилось бы.
-            res = str(d.get("resolution") or "").strip()
+            res = jstr(d, "resolution").strip()
             model = aicut.video_model_cfg()
             caps = aicut.video_caps(model)
             if res and caps is not None and caps.get("resolutions"):
@@ -355,16 +355,35 @@ def api_ai_config():
                     mode=val, list=", ".join(aicut.GLITCH_GLOW_MODES)))
             cfg["glitch_glow"] = val
         elif act == "save_profile":
-            name = (d.get("name") or "").strip()
+            name = jstr(d, "name").strip()
             if not name:
                 raise SystemExit(umsg("empty_profile_name", "Пустое имя профиля"))
-            p = d.get("profile") or {}
-            old_name = d.get("old_name")
-            newp = {"provider": p.get("provider") or "lmstudio",
-                    "base_url": aicut.normalize_base_url(p.get("base_url") or ""),
-                    "api_key": _unmask_ai_key(p.get("api_key"), old_name or name),
-                    "model": (p.get("model") or "").strip()}
-            hdrs = p.get("headers") if isinstance(p.get("headers"), dict) else aicut.parse_headers_text(p.get("headers_text"))
+            p = d.get("profile")
+            if p is not None and not isinstance(p, dict):
+                raise SystemExit(umsg("bad_profile", "Поле profile должно быть объектом"))
+            p = p or {}
+            old_name = jstr(d, "old_name") or None
+            # Ключ-маска «•••…» значит «ключ не менял». Но base_url и provider приходят
+            # из ТЕЛА запроса: подставить к ним настоящий сохранённый ключ — это увести
+            # ключ прежнего провайдера на чужой адрес (задание IC, п. 10). Штатный
+            # сценарий был именно такой: сменил провайдера в списке (aiSetProv меняет
+            # URL, маска остаётся), сохранил — и ключ уехал на новый адрес.
+            saved_prof = cfg["profiles"].get(old_name or name) or {}
+            provider = jstr(p, "provider") or "lmstudio"
+            base_url = aicut.normalize_base_url(jstr(p, "base_url"))
+            key_in = jstr(p, "api_key").strip()
+            if (key_in.startswith("•••") and saved_prof
+                    and (base_url != (saved_prof.get("base_url") or "")
+                         or provider != (saved_prof.get("provider") or "lmstudio"))):
+                raise SystemExit(umsg("key_mask_address_changed",
+                    "Сменился адрес или провайдер — введи ключ заново: сохранённый ключ "
+                    "к новому адресу не подставляется"))
+            newp = {"provider": provider,
+                    "base_url": base_url,
+                    "api_key": _unmask_ai_key(key_in, old_name or name),
+                    "model": jstr(p, "model").strip()}
+            hdrs = (p.get("headers") if isinstance(p.get("headers"), dict)
+                    else aicut.parse_headers_text(jstr(p, "headers_text")))
             if hdrs:
                 newp["headers"] = hdrs
             # «Ум» в профиле больше не редактируется (переехал на страницы, по шагам),
@@ -390,8 +409,8 @@ def api_ai_config():
             if d.get("set_active") or cfg.get("active") not in cfg["profiles"]:
                 cfg["active"] = name
         elif act == "clone_profile":
-            name = (d.get("name") or "").strip()
-            new_name = (d.get("new_name") or "").strip()
+            name = jstr(d, "name").strip()
+            new_name = jstr(d, "new_name").strip()
             if not name:
                 raise SystemExit(umsg("empty_profile_name", "Пустое имя профиля"))
             if not new_name:
@@ -403,7 +422,7 @@ def api_ai_config():
             import copy
             cfg["profiles"][new_name] = copy.deepcopy(cfg["profiles"][name])
         elif act == "delete_profile":
-            name = d.get("name")
+            name = jstr(d, "name")
             if name not in cfg["profiles"]:
                 raise SystemExit(umsg("no_profile", f"Нет профиля «{name}»", name=name))
             if len(cfg["profiles"]) <= 1:
@@ -455,12 +474,15 @@ def api_ai_test():
     import time as _t
     d = request.get_json() or {}
     p = d.get("profile")
+    if p is not None and not isinstance(p, dict):
+        return jsonify(**umsg_err(SystemExit(umsg("bad_profile",
+                                                  "Поле profile должно быть объектом"))))
     try:
         if p:
             # Ключ-маска: ключ, адрес и заголовки берём из сохранённого профиля ЦЕЛИКОМ,
             # значения формы для них игнорируем (см. _saved_profile_for_masked) — иначе
             # чужой base_url в теле уводил настоящий ключ на свой адрес.
-            saved = _saved_profile_for_masked(p, d.get("name"))
+            saved = _saved_profile_for_masked(p, jstr(d, "name"))
             if saved:
                 raw_key = saved.get("api_key")
                 raw_base = saved.get("base_url")
@@ -468,7 +490,7 @@ def api_ai_test():
             else:
                 # профиля нет (маска при чужом имени) — прежнее поведение: ключ из формы,
                 # а маска остаётся пустым ключом, а не уезжает провайдеру как есть
-                raw_key = _unmask_ai_key(p.get("api_key"), d.get("name"))
+                raw_key = _unmask_ai_key(p.get("api_key"), jstr(d, "name"))
                 raw_base = p.get("base_url")
                 hdrs = p.get("headers") if isinstance(p.get("headers"), dict) else aicut.parse_headers_text(p.get("headers_text"))
             prof = {"provider": p.get("provider") or "lmstudio",
@@ -476,7 +498,7 @@ def api_ai_test():
                     "api_key": aicut.resolve_key(raw_key),
                     "model": (p.get("model") or "").strip(),
                     "reasoning": (p.get("reasoning") or "off"),
-                    "name": d.get("name") or "(тест)"}
+                    "name": jstr(d, "name") or "(тест)"}
             if hdrs:
                 prof["headers"] = hdrs
         else:
@@ -504,19 +526,23 @@ def api_ai_models():
     {base}/models (работает у LM Studio и OpenRouter); Anthropic — Models API."""
     from core import aicut
     d = request.get_json() or {}
-    p = d.get("profile") or {}
-    provider = p.get("provider") or "lmstudio"
+    p = d.get("profile")
+    if p is not None and not isinstance(p, dict):
+        return jsonify(**umsg_err(SystemExit(umsg("bad_profile",
+                                                  "Поле profile должно быть объектом"))))
+    p = p or {}
+    provider = jstr(p, "provider") or "lmstudio"
     # Ключ-маска: адрес и заголовки — тоже из сохранённого профиля (см.
     # _saved_profile_for_masked): иначе запрос со НАСТОЯЩИМ ключом уходил на
     # base_url из тела.
-    saved = _saved_profile_for_masked(p, d.get("name"))
+    saved = _saved_profile_for_masked(p, jstr(d, "name"))
     if saved:
         key = aicut.resolve_key(saved.get("api_key"))
         raw_base = ((saved.get("base_url") or "").strip()
                 or aicut.PROVIDER_PRESETS.get(provider, {}).get("base_url") or "")
         hdrs = saved.get("headers") if isinstance(saved.get("headers"), dict) else None
     else:
-        key = aicut.resolve_key(_unmask_ai_key(p.get("api_key"), d.get("name")))
+        key = aicut.resolve_key(_unmask_ai_key(p.get("api_key"), jstr(d, "name")))
         raw_base = ((p.get("base_url") or "").strip()
                 or aicut.PROVIDER_PRESETS.get(provider, {}).get("base_url") or "")
         hdrs = p.get("headers") if isinstance(p.get("headers"), dict) else aicut.parse_headers_text(p.get("headers_text"))
@@ -633,10 +659,10 @@ def api_ai_genimage():
     from core import aicut
     from core import insertlib
     d = request.get_json() or {}
-    query = (d.get("query") or "").strip()
+    query = jstr(d, "query").strip()
     dest = _insert_dest(d)
-    slot = d.get("slot") or "a"                          # какая из двух приписок (кнопки 1/2)
-    speaker = d.get("speaker") or None                   # профиль спикера (задание CQ)
+    slot = jstr(d, "slot") or "a"                        # какая из двух приписок (кнопки 1/2)
+    speaker = jstr(d, "speaker") or None                 # профиль спикера (задание CQ)
     try:
         if not query:
             raise SystemExit(umsg("empty_query", "Пустой запрос — у вставки нет query"))
@@ -669,7 +695,7 @@ def api_ai_genimage():
             else:
                 nobg = False
             _t = time.time()
-            path = insertlib.add_generated(png, query, dest, ru=(d.get("prompt") or ""),
+            path = insertlib.add_generated(png, query, dest, ru=jstr(d, "prompt"),
                                            look=look)
             _dt_add = time.time() - _t
             thumb = insertlib._thumb_b64(path)
@@ -692,7 +718,7 @@ def api_rembg():
     (<dest>/photos) и вносим в индекс с описанием=запрос; исходник цел."""
     from core import insertlib
     d = request.get_json() or {}
-    path = (d.get("path") or "").strip()
+    path = jstr(d, "path").strip()
     dest = _insert_dest(d)
     try:
         if not path or not os.path.exists(path):
@@ -701,8 +727,8 @@ def api_rembg():
             out = insertlib.strip_bg_file(path, dest_dir=dest)
             changed = os.path.abspath(out) != os.path.abspath(path)
             if changed:                                  # в индекс, чтобы нашлась в след. роликах
-                insertlib.adopt([{"path": out, "desc": (d.get("query") or ""),
-                                  "ru": (d.get("prompt") or "")}], dest)
+                insertlib.adopt([{"path": out, "desc": jstr(d, "query"),
+                                  "ru": jstr(d, "prompt")}], dest)
             return jsonify(ok=True, path=out, changed=changed)
         except SystemExit as e:
             return jsonify(**umsg_err(e))
@@ -717,7 +743,7 @@ def api_rembg():
 def api_ai_intro():
     """ИИ-разметка интро + акценты посреди ролика (local LM Studio). Выгружает модель после."""
     d = request.get_json() or {}
-    xml_path = (d.get("xml") or "").strip().strip('"')
+    xml_path = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml_path):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml_path}",
@@ -734,7 +760,7 @@ def api_ai_intro():
 
             # inserts из UI (если фронт держит актуальный список) — акценты встанут туда,
             # где вставок нет; иначе cmd_intro подхватит сайдкар .inserts.json
-            res = aicut.cmd_intro(xml_path, model=(d.get("model") or None), emit=_emit,
+            res = aicut.cmd_intro(xml_path, model=(jstr(d, "model") or None), emit=_emit,
                                   inserts=(d.get("inserts") if isinstance(d.get("inserts"), list)
                                            else None))
             unload = True

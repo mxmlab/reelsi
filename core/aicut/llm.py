@@ -937,23 +937,41 @@ def _ask_anthropic_impl(prof, system, user, schema, max_tokens=4096, emit=consol
             raise SystemExit(umsg("anthropic_no_connection", f"нет связи с Anthropic API: {e}", err=e))
         if resp.stop_reason == "refusal":
             raise SystemExit(umsg("safety", "Anthropic отклонил запрос (safety) — попробуй другой профиль"))
-        if resp.stop_reason == "max_tokens":
-            emit("! ответ обрезан по max_tokens — результат может быть неполным")
         raw = next((b.text for b in resp.content if b.type == "text"), "")
         u = resp.usage
         emit("  модель: {model}  токены: in={in_tok} out={out_tok}",
              model=model, in_tok=u.input_tokens, out_tok=u.output_tokens)
+        # Обрезанный ответ парсить нельзя (см. _ask_openai): _extract_json_obj берёт
+        # последний сбалансированный {...}, у оборванного массива объектов это
+        # последний ЦЕЛЫЙ элемент — json.loads проходит, обязательного поля нет, и шаг
+        # молча отдавал пустой результат. У OpenAI тут отказ, у Claude была строка в лог.
+        if resp.stop_reason == "max_tokens":
+            raise SystemExit(umsg("output_cut",
+                                  f"провайдер оборвал ответ по своему лимиту вывода "
+                                  f"({u.output_tokens} токенов). "
+                                  "Понизь уровень «ума» на этом шаге или возьми модель "
+                                  "с большим выводом.",
+                                  tokens=u.output_tokens))
         ai_log_append(step, prof, ok=True,
                       in_t=u.input_tokens, out_t=u.output_tokens,
                       finish=resp.stop_reason,
                       ms=(time.time() - (_t0 or time.time())) * 1000)
         try:
-            return json.loads(raw)
+            data = json.loads(raw)
         except json.JSONDecodeError:
             try:
-                return json.loads(_extract_json_obj(raw))
+                data = json.loads(_extract_json_obj(raw))
             except json.JSONDecodeError as e:
                 last_err = e
+                continue
+        # Схема могла не примениться (провайдер игнорирует output_config) — проверяем
+        # обязательные поля с повтором, ровно как на пути OpenAI (IB, п. 5).
+        need = [k for k in (schema.get("required") or [])
+                if not isinstance(data, dict) or k not in data]
+        if need:
+            last_err = "в ответе нет обязательных полей: " + ", ".join(need)
+            continue
+        return data
     raise SystemExit(umsg("bad_json",
                           f"Claude вернул битый JSON после {retries + 1} попыток — "
                           f"запусти шаг ещё раз",

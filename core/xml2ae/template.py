@@ -168,7 +168,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     // не досчитываем: превью читает те же ключи из плана сцены (задание C)
     var TR_IN = 0.386, TR_SFX_LEAD = 0.083;    // Quick2 до стыка / whoosh ещё раньше
     // ====================================
-    var W=%(w)d, H=%(h)d, FPS=%(fps)d, DUR=%(dur).4f;
+    var W=%(w)d, H=%(h)d, FPS=%(fps)s, DUR=%(dur).4f;
     var CAM=%(cams)s;        // [{path, clips:[[start,end,in,out,enabled,scale],...]}, ...]
     var SUBS=%(subs)s;       // [[start,end,"WORD",hl,row,gend], ...] hl=1 жёлтое, row=ряд стопки, gend=общий конец
     var POP=%(pop)s;         // SFX «поп» для жёлтых слов или ""

@@ -12,7 +12,8 @@ import os, re, threading, queue, subprocess, shutil, hashlib, json, time as _tim
 from flask import request, jsonify
 from core.fileio import atomic_json_dump
 from ._core import (JOB, LOCK, bp, _cross_lock_acquire, _cross_lock_release,
-                    item_done, item_fail, item_set, items_init, log_entry, umsg_err)
+                    item_done, item_fail, item_set, items_init, jstr, kill_tree,
+                    log_entry, umsg_err)
 from core.umsg import umsg
 from core import paths
 from core.app_meta import env
@@ -302,10 +303,13 @@ def _comp_frames(jsx):
     """Общее число кадров композиции — честное, из плана (.jsx несёт FPS/DUR и
     удлинение под хвостовой дисклеймер). Рендер-процент = кадр / это число, без
     эвристик. Не прочиталось — None (тогда процент только по (N/M) из вывода)."""
-    m = re.search(r"FPS=(\d+), DUR=([\d.]+)", jsx)
+    # FPS в .jsx бывает дробным: NTSC-секвенция 29.97 печатается как 29.97003
+    # (задание IE). С `(\d+)` такой план не читался вовсе, и процент рендера уходил
+    # на запасной путь «N из M» — без потери данных, но грубее.
+    m = re.search(r"FPS=([\d.]+), DUR=([\d.]+)", jsx)
     if not m:
         return None
-    fps, dur = int(m.group(1)), float(m.group(2))
+    fps, dur = float(m.group(1)), float(m.group(2))
     extra = re.search(r"Math\.max\(DUR,1\)(\+[\d.]+)?, FPS", jsx)
     add = float(extra.group(1)) if extra and extra.group(1) else 0.0
     total = round((max(dur, 1.0) + add) * fps)
@@ -403,20 +407,11 @@ def _parse_progress(line, total):
 
 def _kill_proc(p):
     """taskkill /T /F — дерево: aerender сам по себе не всегда держит детей,
-    но после убийства не должен остаться ни один процесс рендера."""
-    for _ in range(2):                       # taskkill /T бывает таймаутит — вторая попытка
-        try:
-            subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)],
-                           capture_output=True, timeout=15)
-            if p.poll() is not None:
-                break
-        except Exception:
-            pass
-    else:
-        try:
-            p.kill()
-        except Exception:
-            pass
+    но после убийства не должен остаться ни один процесс рендера.
+
+    Имя оставлено ради тестов и `webui._cleanup_on_exit`: реализация теперь одна
+    на весь пакет — `_core.kill_tree` (задание IC, п. 6)."""
+    kill_tree(p)
 
 
 def render_kill():
@@ -1515,7 +1510,9 @@ def _run_proc_batch(aer, aep_call, comps, render_dir,
     - RJOB["pct"]: общий по набору = (готовых + доля текущей) / всего — монотонно,
       без прыжка к 1.0 на «Finished composition» (это конец ОДНОЙ, а не всего);
     - RJOB["cur"]: имя текущей композиции;
-    - RJOB["eta"]: ETA рендера в секундах (скользящая скорость за 30-60 с)."""
+    - RJOB["eta"]: ETA рендера в секундах (скользящая скорость за 30-60 с);
+    - сторож простоя — те же константы и та же схема, что у одиночного `_run_proc`
+      (задание IC, п. 5): молчащий aerender снимается, причина идёт в лог и в failed."""
     try:
         p = subprocess.Popen([aer, "-project", aep_call],
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -1552,137 +1549,194 @@ def _run_proc_batch(aer, aep_call, comps, render_dir,
     hdr_dur, hdr_fps, hdr_start, hdr_end = None, None, None, None
     t_start = _time.time()
     samples = []             # (сек от старта, суммарно отрендеренных кадров)
-    try:
-        for line in p.stdout:
-            line = line.rstrip("\r\n")
-            if not line.strip():
-                continue
-            remit(line)
+    # Вывод читает ФОНОВЫЙ поток (`_pump_stdout`), а главный цикл сторожит простой
+    # (задание IC, п. 5). Пока главный поток сидел в `for line in p.stdout`, молчащий
+    # aerender — окно ошибки, зависший плагин, недоступный сетевой диск — держал джоб
+    # «рендер идёт» неограниченно долго: сторож был только у одиночного `_run_proc`,
+    # хотя CHANGELOG обещает его и `aerender` на наборе.
+    q = _pump_stdout(p)
+    last_activity = _time.time()
+    warned = False
+    stalled = False
 
-            # Блок параметров композиции от AE (задание FL)
-            m_dur = _TC_DUR.search(line)
-            if m_dur:
-                hdr_dur = m_dur.group(1)
-            fps_val = _parse_frame_rate(line)
-            if fps_val is not None:
-                hdr_fps = fps_val
-            m_start = _TC_START.search(line)
-            if m_start:
-                hdr_start = m_start.group(1)
-            m_end = _TC_END.search(line)
-            if m_end:
-                hdr_end = m_end.group(1)
+    def _handle(line):
+        """Разбор одной строки aerender — ровно прежнее тело цикла. Обработчик ОДИН и
+        на живой цикл, и на добирание хвоста после выхода/снятия процесса."""
+        nonlocal total_frames, done_frames, cur_stem, next_idx, last_activity
+        nonlocal hdr_dur, hdr_fps, hdr_start, hdr_end
+        line = line.rstrip("\r\n")
+        if not line.strip():
+            return
+        last_activity = _time.time()
+        remit(line)
 
-            ae_frames = None
-            if hdr_dur and hdr_fps:
-                ae_frames = _parse_timecode(hdr_dur, hdr_fps)
-            elif hdr_start and hdr_end and hdr_fps:
-                sf = _parse_timecode(hdr_start, hdr_fps)
-                ef = _parse_timecode(hdr_end, hdr_fps)
-                if sf is not None and ef is not None and ef >= sf:
-                    ae_frames = ef - sf + 1
+        # Блок параметров композиции от AE (задание FL)
+        m_dur = _TC_DUR.search(line)
+        if m_dur:
+            hdr_dur = m_dur.group(1)
+        fps_val = _parse_frame_rate(line)
+        if fps_val is not None:
+            hdr_fps = fps_val
+        m_start = _TC_START.search(line)
+        if m_start:
+            hdr_start = m_start.group(1)
+        m_end = _TC_END.search(line)
+        if m_end:
+            hdr_end = m_end.group(1)
 
-            # Имя текущей композиции — из «Output To:» (задание FL)
-            out_to = _parse_output_to(line)
-            if out_to:
-                stem = _comp_to_stem(out_to, comps)
-                if stem is not None and stem not in done_names:
-                    cur_stem = stem
-                    comp_name = next((_cn for _s, _cn, _fr in comps if _s == cur_stem), cur_stem)
-                    with RLOCK:
-                        RJOB["cur"] = comp_name
-                    item_set(RJOB, RLOCK, cur_stem, stage="render")
-                    if ae_frames:
-                        comp_frames[cur_stem] = ae_frames
-                        total_frames = sum(comp_frames.values()) or 0
+        ae_frames = None
+        if hdr_dur and hdr_fps:
+            ae_frames = _parse_timecode(hdr_dur, hdr_fps)
+        elif hdr_start and hdr_end and hdr_fps:
+            sf = _parse_timecode(hdr_start, hdr_fps)
+            ef = _parse_timecode(hdr_end, hdr_fps)
+            if sf is not None and ef is not None and ef >= sf:
+                ae_frames = ef - sf + 1
 
-            if "Finished composition" in line or "Total Time Elapsed" in line:
-                # имя композиции из маркера — в кавычках с точкой, см. _finished_comp_name
-                # (задание FJ/FK/FL); ищем по нему ролик — это meta["name"], а НЕ стем .jsx
-                name = _finished_comp_name(line)
-                stem = _comp_to_stem(name, comps) if name else None
-                if stem is None:
-                    stem = cur_stem
-                if stem is None:
-                    # иначе — следующий по порядку очереди
-                    if next_idx < len(comps):
-                        stem = comps[next_idx][0]
-                        next_idx += 1
-                if stem:
-                    comp_name = next((_cn for _s, _cn, _fr in comps if _s == stem), stem)
-                    frames = comp_frames.get(stem, 0)
-                    done_names.append(stem)
-                    done_frames += frames or 0
-                    mov = os.path.join(render_dir, comp_name + ".mov")
-                    item_done(RJOB, RLOCK, stem, mov, bucket="result")
-                    item_set(RJOB, RLOCK, stem, pct=1.0)
-                    remit("Готово: {path}", path=mov)
-                    # общий прогресс: готовых (включая только что) / всего — монотонно в диапазоне фазы 3
-                    with RLOCK:
-                        RJOB["stage_done"] = len(done_names)
-                        RJOB["stage_total"] = len(comps)
-                        render_frac = min(1.0, len(done_names) / float(len(comps)))
-                        pct_step = p_aep_end + render_frac * (1.0 - p_aep_end)
-                        RJOB["pct"] = max(RJOB.get("pct") or 0.0, min(1.0, pct_step))
-                        RJOB["stage_label"] = "рендер"
-                        RJOB["cur"] = ""
-                    cur_stem = None
-                    hdr_dur, hdr_fps, hdr_start, hdr_end = None, None, None, None
-                    continue
-
-            # Если cur_stem еще не определен по Output To: — запасной вариант по порядку
-            if cur_stem is None:
-                for _s, _cn, _fr in comps:
-                    if _s not in done_names:
-                        cur_stem = _s
-                        break
-                if cur_stem:
-                    comp_name = next((_cn for _s, _cn, _fr in comps if _s == cur_stem), cur_stem)
-                    with RLOCK:
-                        RJOB["cur"] = comp_name
-                    item_set(RJOB, RLOCK, cur_stem, stage="render")
-
-            if cur_stem:
-                if ae_frames and comp_frames.get(cur_stem) != ae_frames:
+        # Имя текущей композиции — из «Output To:» (задание FL)
+        out_to = _parse_output_to(line)
+        if out_to:
+            stem = _comp_to_stem(out_to, comps)
+            if stem is not None and stem not in done_names:
+                cur_stem = stem
+                comp_name = next((_cn for _s, _cn, _fr in comps if _s == cur_stem), cur_stem)
+                with RLOCK:
+                    RJOB["cur"] = comp_name
+                item_set(RJOB, RLOCK, cur_stem, stage="render")
+                if ae_frames:
                     comp_frames[cur_stem] = ae_frames
                     total_frames = sum(comp_frames.values()) or 0
 
-                cur_frames = comp_frames.get(cur_stem)
+        if "Finished composition" in line or "Total Time Elapsed" in line:
+            # имя композиции из маркера — в кавычках с точкой, см. _finished_comp_name
+            # (задание FJ/FK/FL); ищем по нему ролик — это meta["name"], а НЕ стем .jsx
+            name = _finished_comp_name(line)
+            stem = _comp_to_stem(name, comps) if name else None
+            if stem is None:
+                stem = cur_stem
+            if stem is None:
+                # иначе — следующий по порядку очереди
+                if next_idx < len(comps):
+                    stem = comps[next_idx][0]
+                    next_idx += 1
+            if stem:
+                comp_name = next((_cn for _s, _cn, _fr in comps if _s == stem), stem)
+                frames = comp_frames.get(stem, 0)
+                done_names.append(stem)
+                done_frames += frames or 0
+                mov = os.path.join(render_dir, comp_name + ".mov")
+                item_done(RJOB, RLOCK, stem, mov, bucket="result")
+                item_set(RJOB, RLOCK, stem, pct=1.0)
+                remit("Готово: {path}", path=mov)
+                # общий прогресс: готовых (включая только что) / всего — монотонно в диапазоне фазы 3
+                with RLOCK:
+                    RJOB["stage_done"] = len(done_names)
+                    RJOB["stage_total"] = len(comps)
+                    render_frac = min(1.0, len(done_names) / float(len(comps)))
+                    pct_step = p_aep_end + render_frac * (1.0 - p_aep_end)
+                    RJOB["pct"] = max(RJOB.get("pct") or 0.0, min(1.0, pct_step))
+                    RJOB["stage_label"] = "рендер"
+                    RJOB["cur"] = ""
+                cur_stem = None
+                hdr_dur, hdr_fps, hdr_start, hdr_end = None, None, None, None
+                return
+
+        # Если cur_stem еще не определен по Output To: — запасной вариант по порядку
+        if cur_stem is None:
+            for _s, _cn, _fr in comps:
+                if _s not in done_names:
+                    cur_stem = _s
+                    break
+            if cur_stem:
                 comp_name = next((_cn for _s, _cn, _fr in comps if _s == cur_stem), cur_stem)
-                pr = _parse_progress(line, cur_frames)
-                if pr is not None:
-                    item_set(RJOB, RLOCK, cur_stem, pct=pr)
-                    with RLOCK:
-                        RJOB["cur"] = comp_name
-                        RJOB["stage_done"] = len(done_names)
-                        RJOB["stage_total"] = len(comps)
-                        render_frac = min(1.0, (len(done_names) + pr) / float(len(comps)))
-                        pct_step = p_aep_end + render_frac * (1.0 - p_aep_end)
-                        RJOB["pct"] = max(RJOB.get("pct") or 0.0, min(1.0, pct_step))
-                        RJOB["stage_label"] = "рендер"
-                        # ETA: скользящая скорость кадров/с за последние 30-60 с
-                        if cur_frames:
-                            now = _time.time()
-                            rendered = done_frames + int(round((pr or 0) * cur_frames))
-                            samples.append((now - t_start, rendered))
-                            if len(samples) > 1:
-                                while samples and (now - t_start) - samples[0][0] > _ETA_WINDOW:
-                                    samples.pop(0)
-                            if (now - t_start) >= 15.0 and len(samples) > 1:
-                                eta_calc = _eta_secs(samples, total_frames, rendered)
-                                if eta_calc is not None:
-                                    RJOB["eta"] = eta_calc
-                                    RJOB["eta_phase"] = eta_calc
-                                    RJOB["eta_total"] = eta_calc
-                                    RJOB["eta_preliminary"] = False
-                            elif has_stats:
-                                rem_frac = max(0.0, 1.0 - render_frac)
-                                RJOB["eta"] = rem_frac * t_render_base
-                                RJOB["eta_phase"] = rem_frac * t_render_base
-                                RJOB["eta_total"] = rem_frac * t_render_base
-                                RJOB["eta_preliminary"] = True
+                with RLOCK:
+                    RJOB["cur"] = comp_name
+                item_set(RJOB, RLOCK, cur_stem, stage="render")
+
+        if cur_stem:
+            if ae_frames and comp_frames.get(cur_stem) != ae_frames:
+                comp_frames[cur_stem] = ae_frames
+                total_frames = sum(comp_frames.values()) or 0
+
+            cur_frames = comp_frames.get(cur_stem)
+            comp_name = next((_cn for _s, _cn, _fr in comps if _s == cur_stem), cur_stem)
+            pr = _parse_progress(line, cur_frames)
+            if pr is not None:
+                item_set(RJOB, RLOCK, cur_stem, pct=pr)
+                with RLOCK:
+                    RJOB["cur"] = comp_name
+                    RJOB["stage_done"] = len(done_names)
+                    RJOB["stage_total"] = len(comps)
+                    render_frac = min(1.0, (len(done_names) + pr) / float(len(comps)))
+                    pct_step = p_aep_end + render_frac * (1.0 - p_aep_end)
+                    RJOB["pct"] = max(RJOB.get("pct") or 0.0, min(1.0, pct_step))
+                    RJOB["stage_label"] = "рендер"
+                    # ETA: скользящая скорость кадров/с за последние 30-60 с
+                    if cur_frames:
+                        now = _time.time()
+                        rendered = done_frames + int(round((pr or 0) * cur_frames))
+                        samples.append((now - t_start, rendered))
+                        if len(samples) > 1:
+                            while samples and (now - t_start) - samples[0][0] > _ETA_WINDOW:
+                                samples.pop(0)
+                        if (now - t_start) >= 15.0 and len(samples) > 1:
+                            eta_calc = _eta_secs(samples, total_frames, rendered)
+                            if eta_calc is not None:
+                                RJOB["eta"] = eta_calc
+                                RJOB["eta_phase"] = eta_calc
+                                RJOB["eta_total"] = eta_calc
+                                RJOB["eta_preliminary"] = False
+                        elif has_stats:
+                            rem_frac = max(0.0, 1.0 - render_frac)
+                            RJOB["eta"] = rem_frac * t_render_base
+                            RJOB["eta_phase"] = rem_frac * t_render_base
+                            RJOB["eta_total"] = rem_frac * t_render_base
+                            RJOB["eta_preliminary"] = True
+
+    try:
+        while True:
+            got = True
+            try:
+                ln = q.get(timeout=0.5)
+            except queue.Empty:
+                got = False          # тишина в очереди — простой проверяем ниже, не выходим
+                ln = None
+            now = _time.time()
+            if now - last_activity >= AE_STALL_KILL_SEC:
+                remit("⚠ aerender не отвечает {min} минут — прогон снят (сторож простоя)",
+                      min=int(AE_STALL_KILL_SEC // 60))
+                _kill_proc(p)
+                stalled = True
+                break
+            if not warned and now - last_activity >= AE_STALL_WARN_SEC:
+                warned = True
+                remit("⚠ aerender молчит {min} минут — обычно рендер столько "
+                      "не длится; сниму процесс через {kill} минут простоя",
+                      min=int(AE_STALL_WARN_SEC // 60), kill=int(AE_STALL_KILL_SEC // 60))
+            if RJOB["cancel"]:
+                _kill_proc(p)
+                break
+            if not got:
+                continue             # строк не было — простой уже проверен
+            if ln is None:
+                break                # метка конца stdout: процесс отработал — ждём выход
+            _handle(ln)
     finally:
         rc = p.wait()
+        # Хвост вывода: после снятия по простою или «Стопу» последние строки aerender
+        # (в том числе «Finished composition») ещё лежат в трубе и в очереди насоса.
+        # Ждём метку конца stdout, но не дольше двух секунд: насос-демон не должен
+        # держать джоб.
+        deadline = _time.time() + 2.0
+        while True:
+            try:
+                ln = q.get(timeout=0.1) if _time.time() < deadline else q.get_nowait()
+            except queue.Empty:
+                break
+            if ln is None:
+                deadline = 0.0      # stdout закрыт — дальше только остаток очереди
+                continue
+            _handle(ln)
         with RLOCK:
             if RPROC is p:
                 RPROC = None
@@ -1694,6 +1748,8 @@ def _run_proc_batch(aer, aep_call, comps, render_dir,
         if done_names and len(done_names) == len(comps):
             RJOB["pct"] = 1.0
     # композиции, чей .mov так и не появился — item_fail (aerender мог споткнуться)
+    stall_reason = ("aerender не отвечает %d минут — прогон снят (сторож простоя)"
+                    % (AE_STALL_KILL_SEC // 60))
     for stem, comp_name, _fr in comps:
         if stem not in done_names:
             mov = os.path.join(render_dir, comp_name + ".mov")
@@ -1701,8 +1757,10 @@ def _run_proc_batch(aer, aep_call, comps, render_dir,
                 item_done(RJOB, RLOCK, stem, mov, bucket="result")
             else:
                 item_fail(RJOB, RLOCK, stem,
-                          "aerender не отрендерил (см. вывод aerender выше)", bucket="failed")
-    return rc
+                          stall_reason if stalled
+                          else "aerender не отрендерил (см. вывод aerender выше)",
+                          bucket="failed")
+    return _AE_STALLED if stalled else rc
 
 
 def _run_render_job(norm, outdir, render_dir):
@@ -1752,11 +1810,22 @@ def api_render_run():
             norm = _norm_build_jobs(d.get("jobs") or [])
         except ValueError as e:
             msg = str(e)
-            path = msg.split("Файл не найден: ", 1)[-1] if msg.startswith("Файл не найден: ") else msg
-            raise SystemExit(umsg("file_not_found", msg, path=path, err=msg))
+            # file_not_found — ТОЛЬКО про пропавший файл. Раньше сюда попадал любой
+            # ValueError из нормализации, и «exposure: "abc"» превращалось в «файл
+            # не найден» с путём «could not convert string to float…» (задание IC, п. 1).
+            if msg.startswith("Файл не найден: "):
+                raise SystemExit(umsg("file_not_found", msg,
+                                      path=msg.split("Файл не найден: ", 1)[-1], err=msg))
+            raise SystemExit(umsg("render_set_invalid", msg, err=msg))
+        except (TypeError, AttributeError) as e:
+            # Нормализация спотыкается и о нечисловой тип (`{"jobs": [123]}`,
+            # `"style": 5`): это по-прежнему ошибка НАБОРА, а не падение роута в 500.
+            err = f"{type(e).__name__}: {e}"
+            raise SystemExit(umsg("render_set_invalid",
+                                  f"Некорректный набор для рендера: {err}", err=err))
         if not norm:
             raise SystemExit(umsg("set_empty", "Набор пуст"))
-        render_dir = (d.get("render_dir") or "").strip().strip('"') or default_render_dir()
+        render_dir = jstr(d, "render_dir").strip().strip('"') or default_render_dir()
         try:
             os.makedirs(render_dir, exist_ok=True)
         except OSError as e:
@@ -1784,7 +1853,7 @@ def api_render_run():
                             eta_preliminary=False, stage_label=None, stage_done=0,
                             stage_total=0)
             threading.Thread(target=_run_render_job,
-                             args=(norm, (d.get("outdir") or "").strip().strip('"'),
+                             args=(norm, jstr(d, "outdir").strip().strip('"'),
                                    render_dir),
                              daemon=True).start()
         except Exception:

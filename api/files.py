@@ -9,7 +9,8 @@ from core.fileio import atomic_json_dump, json_load_soft
 import reelsi
 from core import sync
 from core import xmlbuild
-from ._core import DEFAULT_BASE, UI_STATE_PATH, _never_serve, app_out_dir, bp, umsg_err
+from ._core import (DEFAULT_BASE, UI_STATE_PATH, _never_serve, app_out_dir, bp, jstr,
+                    umsg_err)
 from core.umsg import umsg
 
 
@@ -41,9 +42,9 @@ def api_cams_make():
     Только по явной кнопке в интерфейсе: молча создавать папки в чужой папке
     нельзя — пользователь мог указать не ту base."""
     d = request.get_json(silent=True) or {}
-    base = d.get("base") or DEFAULT_BASE
+    base = jstr(d, "base") or DEFAULT_BASE
     n = max(1, min(4, int(d.get("n") or 1)))
-    lang = (d.get("lang") or "ru").lower()
+    lang = jstr(d, "lang").lower() or "ru"
     prefix = "camera" if lang == "en" else "камера"
     try:
         for k in range(1, n + 1):
@@ -68,11 +69,12 @@ def api_cammatch():
     камеры 1» (поймано 2026-08-11). Целый путь в cam1 тоже принимаем — так звали
     роут до этой правки."""
     d = request.get_json(silent=True) or {}
-    cam1 = (d.get("cam1") or "").strip().strip('"')
-    cam1dir = (d.get("cam1dir") or "").strip().strip('"')
+    cam1 = jstr(d, "cam1").strip().strip('"')
+    cam1dir = jstr(d, "cam1dir").strip().strip('"')
     if cam1dir and cam1:
         cam1 = os.path.join(cam1dir, os.path.basename(cam1))
-    dirs = [x.strip().strip('"') for x in (d.get("dirs") or []) if x and str(x).strip()]
+    dirs = [x.strip().strip('"') for x in (d.get("dirs") or [])
+            if isinstance(x, str) and x.strip()]
     if not cam1 or not os.path.isfile(cam1):
         return jsonify(**umsg_err(SystemExit(umsg("cam1_not_found", "нет видео камеры 1"))))
     if not dirs:
@@ -172,10 +174,10 @@ def api_newtakes():
     Нет папки результата (первый прогон) — новые все, это не ошибка.
     """
     d = request.get_json(silent=True) or {}
-    outdir = (d.get("outdir") or "").strip().strip('"')
+    outdir = jstr(d, "outdir").strip().strip('"')
     files = [str(x) for x in (d.get("files") or []) if str(x).strip()]
     if not files:
-        dir_ = (d.get("dir") or "").strip().strip('"')
+        dir_ = jstr(d, "dir").strip().strip('"')
         if not os.path.isdir(dir_):
             return jsonify(**umsg_err(SystemExit(umsg("no_folder", f"Нет папки: {dir_}", path=dir_))))
         files = reelsi.list_videos(dir_)
@@ -342,8 +344,8 @@ def api_pickdir():
 # Фронт использует /api/media для стриминга видео (в т.ч. прокси pv_*.mp4),
 # показа картинок-вставок и воспроизведения музыки/SFX.
 ALLOWED_MEDIA_EXTS = {
-    # Видео
-    "mp4", "mov", "m4v", "mkv", "webm", "avi", "mxf", "mts", "m2ts",
+    # Видео (mpg/mpeg — проект считает их видео, см. core/verify_jsx.py VIDEO_EXT)
+    "mp4", "mov", "m4v", "mkv", "webm", "avi", "mxf", "mts", "m2ts", "mpg", "mpeg",
     # Картинки
     "png", "jpg", "jpeg", "gif", "webp", "avif", "bmp", "tif", "tiff", "heic",
     # Звук
@@ -356,13 +358,20 @@ def api_media():
     """Serve a local media file with HTTP Range support so the browser <video> in
     the AI-cut preview can seek/stream. Local app — only serves existing files."""
     path = (request.args.get("path") or "").strip().strip('"')
-    if not path or not os.path.isfile(path):
+    if not path:
         return ("not found", 404)
+    # Порядок проверок — расширение, секрет, существование (задание IC, п. 8).
+    # Раньше `isfile` стоял ПЕРВЫМ и отвечал 404/403 в зависимости от того, есть ли
+    # файл на диске: посторонний клиент узнавал про существование любого файла, а
+    # `_never_serve` для СВОИХ имён (`ai_config.json` без расширения из allowlist)
+    # был недостижим — до него просто не доходили.
     ext = os.path.splitext(path)[1].lower().lstrip(".")
     if ext not in ALLOWED_MEDIA_EXTS:
         return ("forbidden", 403)
     if _never_serve(path):
         return ("forbidden", 403)
+    if not os.path.isfile(path):
+        return ("not found", 404)
     if request.args.get("dl"):
         return send_file(path, as_attachment=True, download_name=os.path.basename(path))
     return send_file(path, conditional=True)
@@ -373,11 +382,12 @@ def api_music_random():
     """Случайный аудиофайл из папки музыки — ТОТ ЖЕ выбор, что на сборке
     (ytmusic.random_track в xml2ae/build.py). Превью так слушает ползунок «Музыка»
     в режиме «случайно»; сборка всё равно выберет трек заново, уровень тот же."""
-    d = (request.get_json(silent=True) or {}).get("dir") or ""
-    seed = (request.get_json(silent=True) or {}).get("seed")
+    d = request.get_json(silent=True) or {}
+    dir_ = jstr(d, "dir")
+    seed = d.get("seed")
     try:
         from core import ytmusic
-        return jsonify(path=ytmusic.random_track(d, seed=seed) or "")
+        return jsonify(path=ytmusic.random_track(dir_, seed=seed) or "")
     except Exception as e:
         return jsonify(path="", **umsg_err(SystemExit(umsg("music_random_failed", f"{type(e).__name__}: {e}"))))
 
@@ -421,7 +431,7 @@ def api_clip_delete():
     dry: true — только проверка и список файлов на удаление без реального удаления.
     """
     d = request.get_json(silent=True) or {}
-    xml = (d.get("xml") or "").strip().strip('"')
+    xml = jstr(d, "xml").strip().strip('"')
     if not xml:
         return jsonify(**umsg_err(SystemExit(umsg("no_xml", "не указан путь к XML"))))
 
@@ -433,7 +443,7 @@ def api_clip_delete():
     if not os.path.isdir(xml_dir):
         return jsonify(**umsg_err(SystemExit(umsg("no_folder", f"Нет папки: {xml_dir}", path=xml_dir))))
 
-    jsxdir = (d.get("jsxdir") or "").strip().strip('"')
+    jsxdir = jstr(d, "jsxdir").strip().strip('"')
     dry = True if d.get("dry") is True or str(d.get("dry")).lower() in ("true", "1") else False
 
     # Читаем project.json или сам XML, чтобы узнать исходные камеры

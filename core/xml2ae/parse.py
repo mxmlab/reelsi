@@ -89,7 +89,17 @@ def parse_full(xml_path, ncams=None):
     When ncams is None, fall back to a heuristic (one file cut into many clips = camera)."""
     root = ET.parse(xml_path).getroot()
     seq = root.find(".//sequence")
-    fps = int(_txt(seq.find("rate"), "timebase", "60"))
+    # Частота секвенции. <timebase> — НОМИНАЛ (30 у NTSC), реальную частоту задаёт
+    # <ntsc>TRUE</ntsc>: 29.97 = 30*1000/1001. Пока читался один <timebase>, секвенция
+    # 29.97 (так её пишут и Премьер, и наш xmlbuild для исходников) считалась 30-й, а
+    # кадры XML — они в единицах timebase — делились на 30: за час монтажа импорт
+    # уезжал на 3.6 с. timebase 0 (пустой <rate>) ронял всё деление ZeroDivisionError'ом
+    # в align.py — пустая частота трактуется как 60. Свои секвенции — 60 без NTSC,
+    # для них fps остаётся целым 60 (эталоны не меняются).
+    rate = seq.find("rate")
+    timebase = int(_txt(rate, "timebase", "60") or 60) or 60
+    ntsc = (_txt(rate, "ntsc", "FALSE") or "").strip().upper() == "TRUE"
+    fps = timebase * 1000 / 1001 if ntsc else timebase
     fmt = seq.find(".//media/video/format/samplecharacteristics")
     w = int(_txt(fmt, "width", "1080")); h = int(_txt(fmt, "height", "1920"))
     dur = int(_txt(seq, "duration", "0"))
@@ -180,5 +190,9 @@ def parse_full(xml_path, ncams=None):
 
     subs.sort(key=lambda x: x[0])
     insert_clips.sort(key=lambda x: x["start"])
-    result = dict(w=w, h=h, fps=fps, dur=dur, name=_txt(seq, "name", "Reelsi")), cam_tracks, subs, insert_clips
+    # timebase/ntsc — рядом с fps: кадры XML остаются в единицах timebase, а секунды
+    # получаются делением на fps. Кому нужно писать частоту ОБРАТНО в XML (кто не
+    # делит, а форматирует), берёт номинал отсюда, а не округлённый fps.
+    result = dict(w=w, h=h, fps=fps, timebase=timebase, ntsc=ntsc,
+                  dur=dur, name=_txt(seq, "name", "Reelsi")), cam_tracks, subs, insert_clips
     return result

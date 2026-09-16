@@ -13,8 +13,11 @@ rclone. Секреты живут в конфиге rclone, в наши файл
 """
 import os, re, shutil, subprocess, threading, time
 from flask import request, jsonify
-from ._core import LOG_CAP, bp, umsg_err
+from ._core import LOG_CAP, bp, jstr, kill_tree, umsg_err
+from core.applog import get_logger
 from core.umsg import umsg
+
+log = get_logger("reelsi.gdrive")
 
 # Путь к конфигу rclone. По умолчанию — стандартное место rclone на платформе;
 # REELSI_RCLONE_CONF (старое имя AUTOCUT_RCLONE_CONF) переопределяет — например,
@@ -190,25 +193,20 @@ _TS = re.compile(r"^\d{4}/\d\d/\d\d \d\d:\d\d:\d\d\s+"
 # Сторож простоя rclone: 10 минут тишины в stdout -> принудительное завершение (задание HU)
 RCLONE_STALL_SEC = 10 * 60
 _RCLONE_STALLED = -137
+# Поля разобранного прогресса, по изменению которых видно, что передача идёт
+# (задание IC, п. 4). `speed`/`eta` сюда не входят намеренно: они меняются и у блока
+# статистики, напечатанного по таймеру `--stats 2s`, когда передача уже встала.
+_PROGRESS_KEYS = ("bytes", "pct", "file", "file_pct", "i", "n")
 
 GDPROC = None  # Текущий процесс rclone — для отмены через /api/cancel и сторожа простоя
 
 
 def _kill_proc(p):
-    """taskkill /T /F — дерево: rclone с дочерними процессами снимается полностью."""
-    for _ in range(2):                       # taskkill /T бывает таймаутит — вторая попытка
-        try:
-            subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)],
-                           capture_output=True, timeout=15)
-            if p.poll() is not None:
-                break
-        except Exception:
-            pass
-    else:
-        try:
-            p.kill()
-        except Exception:
-            pass
+    """taskkill /T /F — дерево: rclone с дочерними процессами снимается полностью.
+
+    Имя оставлено ради тестов: реализация теперь одна на пакет — `_core.kill_tree`
+    (задание IC, п. 6)."""
+    kill_tree(p)
 
 
 def gdrive_kill():
@@ -239,6 +237,11 @@ def _run_rclone(args, emit, stat=None):
     до перезапуска сервера. Все строки разбирает ОДИН обработчик `_handle`: если
     разбирать хвост вывода второй копией (после выхода процесса), прогресс уедет
     только в статус, а из лога конец передачи пропадёт.
+
+    Простой считается по ИЗМЕНЕНИЮ разобранного прогресса, а не по факту строки
+    (задание IC, п. 4): `--stats 2s` печатает блок статистики по таймеру, и раньше
+    вставшая передача выглядела живой. Исключение на строке ловится на САМОЙ строке —
+    поток чтения из-за одной непонятной строки больше не умирает.
     """
     global GDPROC
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -251,9 +254,13 @@ def _run_rclone(args, emit, stat=None):
         _kill_proc(p)
 
     logged = -10          # -10, а не 0: первый же блок (0%) отмечает в логе старт передачи
-    # Время последней НОВОЙ строки: от него, а не от старта, считаем простой —
+    # Время последней РЕАЛЬНОЙ активности: от него, а не от старта, считаем простой —
     # большая папка качается минутами, и рубить её нельзя.
     activity = [time.time()]
+    # Последний разобранный прогресс: `--stats 2s` печатает блок статистики ПО ТАЙМЕРУ,
+    # даже когда передача встала, поэтому «пришла строка» ≠ «что-то происходит»
+    # (задание IC, п. 4). Активность — только ИЗМЕНЕНИЕ разобранных полей.
+    last_stat = [None]
 
     def _handle(raw):
         nonlocal logged
@@ -264,30 +271,55 @@ def _run_rclone(args, emit, stat=None):
         if f:
             if stat:
                 stat(f)
+            # Прогресс изменился (байты/проценты/имя файла, счётчик файлов) — передача
+            # жива. Скорость и ETA в ключ НЕ входят: они меняются у блока статистики
+            # сами по себе и «оживили» бы вставшую передачу.
+            key = tuple(f.get(k) for k in _PROGRESS_KEYS if k in f)
+            if key != last_stat[0]:
+                last_stat[0] = key
+                activity[0] = time.time()
             pct = f.get("pct")
             if pct is not None and pct >= logged + 10:
                 logged = pct - pct % 10
                 emit(_progress_line(line))
             return
-        if not _is_noise(line):
-            emit(_clean_line(line))
+        if _is_noise(line):
+            return                       # остальные строки блока статистики — не активность
+        activity[0] = time.time()        # не статистика — живое событие rclone
+        emit(_clean_line(line))
+
+    # Исключение ловится НА СТРОКУ: раньше `except Exception` стоял вокруг всего цикла,
+    # поток чтения умирал на первой же неожиданной строке, активность замирала — и
+    # сторож снимал ЗДОРОВОЕ скачивание через 10 минут (задание IC, п. 4).
+    died = [None]
 
     def _pump():
         try:
             for line in p.stdout:
-                activity[0] = time.time()
-                _handle(line)
-        except Exception:
-            pass
+                try:
+                    _handle(line)
+                except Exception as e:
+                    log.warning("rclone: строка вывода не разобрана: %s: %s",
+                                type(e).__name__, e)
+        except Exception as e:               # умерло само чтение потока, не разбор строки
+            died[0] = f"{type(e).__name__}: {e}"
+            log.warning("rclone: поток чтения вывода упал: %s", died[0])
 
     pump = threading.Thread(target=_pump, daemon=True)
     pump.start()
 
     stalled = False
+    warned_dead = False
     try:
         while p.poll() is None:
             now = time.time()
-            if now - activity[0] >= RCLONE_STALL_SEC:
+            if died[0] is not None and not warned_dead:
+                # Активность больше неоткуда взять: по простою НЕ убиваем — процесс
+                # жив и может дописывать файл молча (задание IC, п. 4).
+                warned_dead = True
+                emit("⚠ поток чтения вывода rclone умер — активность не отслеживается, "
+                     "скачивание не снимаю по простою (снять — «Стоп»)")
+            if not warned_dead and now - activity[0] >= RCLONE_STALL_SEC:
                 emit(f"⚠ rclone не отвечает {int(RCLONE_STALL_SEC // 60)} минут — "
                      f"скачивание снято (сторож простоя)")
                 _kill_proc(p)
@@ -312,8 +344,11 @@ def _run_rclone(args, emit, stat=None):
 # завершено» на любом исходе, и упавший rclone выглядел как успех. Имя не `ok`:
 # ответ и так завёрнут в ok=True («запрос принят»), и два разных смысла у одного
 # ключа — это 500 на ровном месте.
+# cancelled: «Стоп» нажал человек — это НЕ ошибка (задание IC, п. 3): раньше отмена
+# приезжала на страницу как failed=True и рисовалась красным тостом «не удалось».
 GDFRESH = {"cur": "запуск rclone…", "i": 0, "n": 0, "pct": None, "bytes": "", "total": "",
-           "speed": "", "eta": "", "file": "", "file_pct": None, "cancel": False}
+           "speed": "", "eta": "", "file": "", "file_pct": None, "cancel": False,
+           "cancelled": False}
 GDJOB = dict(GDFRESH, running=False, done=False, failed=None, log=[], log_base=0,
              url="", started=0)
 GDLOCK = threading.Lock()
@@ -356,8 +391,12 @@ def _download_job(cmd, url):
         with GDLOCK:
             GDJOB["cur"] = f"ошибка: {e}"
     finally:
+        # Отмена — не ошибка: failed=False + cancelled=True, страница покажет
+        # нейтральное «скачивание остановлено» без красного тоста (задание IC, п. 3).
+        cancelled = bool(GDJOB.get("cancel"))
         with GDLOCK:
-            GDJOB.update(running=False, done=True, failed=not ok)
+            GDJOB.update(running=False, done=True, cancelled=cancelled,
+                         failed=(not ok) and not cancelled)
 
 
 @bp.route("/api/gdrive_download", methods=["POST"])
@@ -366,8 +405,8 @@ def api_gdrive_download():
     Свой джоб (GDJOB), не общий JOB: нарезка не должна ждать гигабайт с диска —
     тот же образец, что у превью-прокси (PXJOB)."""
     d = request.get_json(silent=True) or {}
-    url = (d.get("url") or "").strip()
-    dest = (d.get("dest") or "").strip().strip('"')
+    url = jstr(d, "url").strip()
+    dest = jstr(d, "dest").strip().strip('"')
     try:
         spec = parse_gdrive_link(url)
         if not spec:

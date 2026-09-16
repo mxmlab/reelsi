@@ -21,8 +21,14 @@ SRC_FPS = 30000 / 1001                # 29.97 source rate (display only)
 
 
 def pathurl(p):
+    """Путь ОС -> file://-URL с процентным экранированием.
+
+    Кодируем БАЙТЫ пути (`os.fsencode`), а не строку: `quote(str)` падал
+    `UnicodeEncodeError` на имени с нечитаемым байтом (на Linux `os.listdir` отдаёт
+    его одиночным суррогатом `\\udcff`), и падала вся сборка XML. Нижний регистр
+    `%xx` — как было: эталонные XML не должны меняться."""
     p = os.path.abspath(p).replace("\\", "/")
-    q = urllib.parse.quote(p, safe="/")
+    q = urllib.parse.quote_from_bytes(os.fsencode(p), safe="/")
     q = re.sub(r"%[0-9A-Fa-f]{2}", lambda m: m.group(0).lower(), q)
     return "file://localhost/" + q
 
@@ -33,10 +39,15 @@ def unpathurl(u):
     Разделитель — os.sep, а не жёсткий бэкслэш: на Linux и macOS «/tmp/a/cam.mp4»
     превращался в «\\tmp\\a\\cam.mp4», то есть в несуществующий путь, и любой путь
     из XML там «пропадал». На Windows os.sep и есть «\\» — поведение прежнее.
+
+    Раскодированные БАЙТЫ отдаём через `os.fsdecode`: `unquote` декодировал их как
+    UTF-8 с `errors="replace"`, и имя с нечитаемым байтом (`%ff`) превращалось в
+    «\\ufffd» — файл, которого нет (пара к `pathurl`, IB, п. 3).
     (Поймано 2026-08-14: предполёт рендера на Linux-CI объявлял камеры пропавшими.)
     """
-    return urllib.parse.unquote(u.replace("file://localhost/", "").replace("file:///", "")
-                                ).replace("/", os.sep)
+    raw = urllib.parse.unquote_to_bytes(
+        u.replace("file://localhost/", "").replace("file:///", ""))
+    return os.fsdecode(raw).replace("/", os.sep)
 
 
 # <file>…</file> целиком: вложенных <file> внутри не бывает, потому нежадно до первого закрытия

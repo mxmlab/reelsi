@@ -59,6 +59,7 @@
 import os, json, re, copy
 
 from core import paths
+from core.fileio import atomic_text_write
 
 SPEAKER_DIR = paths.root("speakers")
 
@@ -163,8 +164,10 @@ def save(name, data):
     os.makedirs(SPEAKER_DIR, exist_ok=True)
     key = _key(name or d["label"])
     path = os.path.join(SPEAKER_DIR, key + ".json")
-    with open(path, "w", encoding="utf-8", newline="\r\n") as fh:
-        json.dump(d, fh, ensure_ascii=False, indent=1, sort_keys=True)
+    # newline="\r\n" — как в прежней прямой записи: профиль читается и на Windows,
+    # и в git-диффе; перевод строки тут часть формата, а не оформление
+    atomic_text_write(path, json.dumps(d, ensure_ascii=False, indent=1, sort_keys=True),
+                      newline="\r\n")
     return key, path
 
 

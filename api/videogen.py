@@ -8,7 +8,7 @@
 import os, json, threading, time
 import urllib.request
 from flask import request, jsonify
-from ._core import APP_NAME, APP_REFERER, LOG_CAP, bp, env, umsg_err
+from ._core import APP_NAME, APP_REFERER, LOG_CAP, bp, env, jstr, umsg_err
 from core import paths
 from core.umsg import umsg
 from core.app_meta import http_req
@@ -235,17 +235,17 @@ def api_video_gen():
         aicut.ensure_video_catalog(prof)
         insert_mode = "query" in d
         if insert_mode:
-            query = str(d.get("query") or "").strip()
-            slot = d.get("slot") or "a"
+            query = jstr(d, "query").strip()
+            slot = jstr(d, "slot") or "a"
             if not query:
                 raise SystemExit(umsg("empty_query", "Пустой запрос — у вставки нет query"))
             if slot not in aicut.VIDEO_PROMPT_SLOTS:
                 raise SystemExit(umsg("unknown_prompt_slot", f"Неизвестный слот промпта «{slot}»",
                                       slot=slot))
-            prompt = aicut.build_video_prompt(query, slot=slot, speaker=d.get("speaker") or None)
+            prompt = aicut.build_video_prompt(query, slot=slot, speaker=jstr(d, "speaker") or None)
             duration = aicut.video_insert_duration(d.get("insert_duration"), model)
             refs_in = []
-            xml = str(d.get("xml") or "").strip().strip('"')
+            xml = jstr(d, "xml").strip().strip('"')
             if not xml or not os.path.isfile(xml):
                 raise SystemExit(umsg("file_not_found", f"Файл XML не найден: {xml}", path=xml))
             try:
@@ -259,7 +259,7 @@ def api_video_gen():
                     "resolution": aicut.video_resolution_cfg(model),
                     "aspect_ratio": aspect or None}
         else:
-            prompt = str(d.get("prompt") or "").strip()
+            prompt = jstr(d, "prompt").strip()
             refs_in = d.get("refs") or []
             # И у raw-вкладки модель и разрешение ОБЩИЕ из ai_config: тело запроса
             # может прийти из устаревшей страницы, но не должно тихо запустить другую
@@ -275,7 +275,9 @@ def api_video_gen():
                 "Пустой запрос — напиши, что снять (одних референсов мало)"))
         refs = []
         for r in refs_in:
-            url = str(r.get("url") or "").strip()
+            if not isinstance(r, dict):        # элемент списка не объект — пропуск
+                continue
+            url = jstr(r, "url").strip()
             if not url:
                 continue                                   # пустую строку-референс просто пропускаем
             if not url.lower().startswith("https://"):
@@ -285,12 +287,12 @@ def api_video_gen():
             role = r.get("role") if r.get("role") in aicut.VIDEO_ROLES else "reference"
             # kind ставит ffprobe при вставке ссылки (расширения у ссылок часто нет);
             # не проверили — падаем на расширение
-            kind = str(r.get("kind") or "")
+            kind = jstr(r, "kind")
             if kind not in ("video", "image", "audio", "page"):
                 kind = "video" if aicut.is_video_url(url) else "image"
             # kind/duration от клиента — только ПОДСКАЗКА для мгновенной проверки ниже;
             # перед самой отправкой gen_video досматривает каждую ссылку сам (resolve_refs)
-            refs.append({"url": url, "role": role, "caption": r.get("caption") or "",
+            refs.append({"url": url, "role": role, "caption": jstr(r, "caption"),
                          "kind": kind, "duration": r.get("duration") or 0,
                          "w": r.get("w") or r.get("width") or 0,
                          "h": r.get("h") or r.get("height") or 0})
@@ -364,9 +366,9 @@ def api_video_history():
     выглядело бы сломанной кнопкой."""
     if request.method == "POST":
         d = request.get_json(silent=True) or {}
-        key = str(d.get("key") or "")
+        key = jstr(d, "key")
         try:
-            if (d.get("action") or "delete") != "delete" or not key:
+            if (jstr(d, "action") or "delete") != "delete" or not key:
                 raise SystemExit(umsg("need_delete_key", "нужен action=delete и key"))
             with VLOCK:
                 busy = VJOB["running"] and VJOB.get("key") == key
@@ -437,7 +439,7 @@ def api_video_models():
         if prof is None:
             raise SystemExit(umsg("video_profile_missing",
                 "Сначала выбери профиль «Видео» (OpenRouter-ключ и модель)"))
-        model = (d.get("model") or "").strip() or aicut.video_model_cfg()
+        model = jstr(d, "model").strip() or aicut.video_model_cfg()
         base = prof["base_url"].rstrip("/")
         headers = {"Authorization": "Bearer " + (prof.get("api_key") or ""),
                    "HTTP-Referer": APP_REFERER, "X-Title": APP_NAME}
@@ -491,7 +493,7 @@ def api_video_probe():
     блокирует: {ok:false} — просто гадаем по расширению, как раньше."""
     from core import aicut
     d = request.get_json() or {}
-    url = str(d.get("url") or "").strip()
+    url = jstr(d, "url").strip()
     if not url.lower().startswith("https://"):
         return jsonify(ok=False, error="нужна https-ссылка")
     info = aicut.probe_media(url)

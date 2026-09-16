@@ -11,6 +11,7 @@ CLI:  python reelsi/subtitle_xml.py "EditedFromPremiere.xml"
 import os, re, sys
 from core import align
 from core import xmlbuild
+from core.fileio import atomic_text_write
 from core.xml2ae import parse_full
 from core.app_meta import console_emit, wrap_emit
 
@@ -105,7 +106,8 @@ def add_subtitles(xml_path, out_xml=None, model=None, emit=console_emit):
     vend = _sequence_video_close(txt)
     new = txt[:vend] + subtrack + txt[vend:]
     out_xml = out_xml or (os.path.splitext(xml_path)[0] + "_subs.xml")
-    open(out_xml, "w", encoding="UTF-8").write(new)
+    # атомарно: XML с дорожкой субтитров — результат шага, усечённый файл не соберёшь
+    atomic_text_write(out_xml, new, encoding="UTF-8")
     nsrt = align.make_srt(sub_words, os.path.splitext(out_xml)[0] + ".srt", fps=meta["fps"])
     if longs:
         emit("  ⚠ слишком длинные (без титра): {words}", words=", ".join(longs))

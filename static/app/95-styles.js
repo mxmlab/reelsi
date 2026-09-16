@@ -1506,6 +1506,7 @@ async function sfxLoad(){
     if(!isV){
       SFX.pps=Math.max(80,Math.ceil(1500/Math.max(0.3,dur||1)));   // ~1500 точек на файл
       const d=await (await fetch("/api/waveform?pps="+SFX.pps+"&path="+encodeURIComponent(SFX.path))).json();
+      SFX.pps=d.pps||SFX.pps;
       SFX.peaks=d.peaks||[];if(SFX.dur<=0&&d.dur)SFX.dur=d.dur;
     }
     sfxDraw();sfxMarkInfo();

@@ -52,7 +52,7 @@ def test_verify_jsx_catches_raw_u2028_u2029(tmp_path):
 
 def test_xml_text_strips_disallowed_characters():
     """xml_text удаляет запрещённые XML 1.0 символы (C0 кроме \\t\\n\\r, U+FFFE, суррогаты)."""
-    from core.xmltext import xml_text, xml_attr
+    from core.xmltext import xml_text
 
     bad = "test\x01\x08\x0b\x0c\x1f&\t<\n>\r\"\ud800\ufffe\uffff"
     cleaned = xml_text(bad)
@@ -68,10 +68,6 @@ def test_xml_text_strips_disallowed_characters():
     assert "&lt;" in cleaned
     assert "&gt;" in cleaned
     assert "\t" in cleaned and "\n" in cleaned and "\r" in cleaned
-
-    # xml_attr экранирует двойную кавычку
-    attr_val = xml_attr(bad)
-    assert "&quot;" in attr_val
 
 
 def test_xml_escape_is_one_function_everywhere():

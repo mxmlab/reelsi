@@ -7,51 +7,82 @@
 индексы, термины, конфиги — ничего из них не пересобирается само). Один паттерн
 на все места, где пишутся данные, а не пересоздаваемый кэш. То же и для XML
 пользователя: усечённый XML из Премьеры не открывается вовсе.
+
+Запись идёт в ЦЕЛЬ ссылки (`os.path.realpath` до mkstemp): раньше os.replace
+подменял саму ссылку обычным файлом, а цель оставалась со старыми данными — на
+`styles/` и `speakers/`, подключённых junction'ом из рабочей копии сессии, это
+означало «сохранил пресет, а его нигде нет». Права существующего файла при этом
+переносятся на tmp: mkstemp создаёт его с 0600, и обычный файл пользователя
+(0644/0664) после первой же атомарной записи становился «только для владельца».
 """
 import json
 import os
+import stat
 import tempfile
+
+# umask снимаем ОДИН раз при импорте: mkstemp всегда даёт 0600, а у нового файла
+# права должны быть такие же, как у open(..., "w") — 0666 & ~umask.
+_UMASK = os.umask(0)
+os.umask(_UMASK)
+_NEW_FILE_MODE = 0o666 & ~_UMASK
+
+
+def _carry_mode(path, tmp):
+    """Перенести на tmp права (и владельца на POSIX) уже существующего файла.
+
+    Файла нет — ставим права нового файла по umask: у mkstemp-файла они 0600, и
+    без этого свежесозданный конфиг не прочитал бы никто, кроме владельца."""
+    try:
+        st = os.stat(path)          # os.stat, а не lstat: path уже realpath
+    except OSError:
+        os.chmod(tmp, _NEW_FILE_MODE)
+        return
+    os.chmod(tmp, stat.S_IMODE(st.st_mode))
+    if os.name == "posix":
+        try:
+            os.chown(tmp, st.st_uid, st.st_gid)
+        except OSError:             # не владелец/нет прав — права уже перенесены
+            pass
+
+
+def _atomic_write(path, write, encoding="utf-8", newline=None):
+    """Одна точка записи для обеих функций модуля: tmp рядом с целью + fsync + replace.
+
+    Имя tmp уникально (mkstemp): два одновременных писателя в один файл не
+    перемешают половины — кто последним сделал os.replace, того данные и остались,
+    а битого файла не бывает. newline=None (как у open по умолчанию) — переводы
+    строк не трогаем: вызывающий сам решает, нужен ли ему CRLF."""
+    path = os.path.realpath(path)
+    d = os.path.dirname(path) or "."
+    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".tmp.", dir=d)
+    try:
+        with os.fdopen(fd, "w", encoding=encoding, newline=newline) as f:
+            write(f)
+            f.flush()
+            os.fsync(f.fileno())
+        _carry_mode(path, tmp)
+        os.replace(tmp, path)
+    except Exception:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def atomic_json_dump(path, obj, **kw):
-    """Записать obj в path атомарно. Имя tmp уникально (mkstemp): два одновременных
-    писателя в один файл не перемешают половины — кто последним сделал os.replace,
-    того данные и остались, а битого файла не бывает."""
-    d = os.path.dirname(path) or "."
-    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".tmp.", dir=d)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(obj, f, ensure_ascii=False, **kw)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    except Exception:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise
+    """Записать obj в path атомарно (см. _atomic_write)."""
+    _atomic_write(path, lambda f: json.dump(obj, f, ensure_ascii=False, **kw))
 
 
-def atomic_text_write(path, text, encoding="utf-8"):
+def atomic_text_write(path, text, encoding="utf-8", newline=None):
     """Записать текст атомарно: tmp рядом + fsync + os.replace.
 
-    Нужна там, где пишется XML пользователя (core/xml2ae/highlights.py): сбой или
-    «Стоп» между усечением и записью оставлял пустой файл вместо живого XML."""
-    d = os.path.dirname(path) or "."
-    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".tmp.", dir=d)
-    try:
-        with os.fdopen(fd, "w", encoding=encoding) as f:
-            f.write(text)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, path)
-    except Exception:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise
+    Нужна там, где пишется XML/`.jsx`/SRT пользователя (core/xml2ae/highlights.py,
+    сборка `.jsx`, субтитры): сбой или «Стоп» между усечением и записью оставлял
+    пустой файл вместо живого. newline — как у open: профили спикеров пишутся с
+    newline="\\r\\n", чтобы байты совпадали с прежней прямой записью."""
+    _atomic_write(path, lambda f: f.write(text), encoding=encoding, newline=newline)
 
 
 def json_load_soft(path, default=None):

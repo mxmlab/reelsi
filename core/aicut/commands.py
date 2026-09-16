@@ -6,7 +6,7 @@
 к границам фразы. Это не обвязка вызова модели, а правила, которые применяются к её
 ответу (и без которых модель ставит вставки поверх речи).
 """
-import os, re, json, time
+import os, re, json, math, time
 from .config import reason_budget, step_profile, step_reasoning
 from .llm import _ask_json
 from .prompts import (INSERTS_SCHEMA, INSERTS_SYSTEM, INTRO_SCHEMA, INTRO_SYSTEM,
@@ -92,6 +92,19 @@ _STYLE_WORDS = {"3d", "2d", "icon", "icons", "render", "rendering", "rendered", 
 def _strip_style_words(q):
     out = [t for t in str(q).split() if t.strip(".,;:!?\"'()").lower() not in _STYLE_WORDS]
     return " ".join(out).strip()
+
+
+def _finite_float(v):
+    """float(v), если это КОНЕЧНОЕ число; иначе None (NaN, ±Infinity, строка, None, список).
+
+    `float()` пропускает `nan`/`inf`, а сравнения с ними всегда ложны: `nan or 2.5`
+    даёт `nan`, `min`/`max` его не режут — и `nan` уезжает и в `.jsx` (там `_r(nan)`
+    падает), и в JSON (`jsonify` пишет голый `NaN` — невалидный JSON для браузера)."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
 
 
 def _snap_to_phrase(ins, words, emit=console_emit):
@@ -317,6 +330,20 @@ def cmd_inserts(xml_path, system=None, dry=False, model=None, url=None, emit=con
     # ответил 400 на structured outputs) в списке бывают строки и null, и первый же
     # it.get(...) ронял шаг AttributeError — уже после оплаченного вызова (GZ, п. G).
     ins = [it for it in ins if isinstance(it, dict)]
+    # Числа из ответа модели — такие же данные, а не гарантия, как и типы: `NaN` и
+    # `Infinity` проходят и `float()`, и сортировку ниже. Вставку без числового
+    # старта честнее выбросить (и сказать об этом), чем поставить её в начало
+    # таймлайна; нечисловая длительность — 0, дальше штатный кламп (IB, п. 4).
+    dated = []
+    for it in ins:
+        if _finite_float(it.get("start_sec")) is None:
+            emit("  ! вставка отброшена: start_sec не число ({raw})",
+                 raw=repr(it.get("start_sec"))[:40])
+            continue
+        if _finite_float(it.get("duration_sec")) is None:
+            it["duration_sec"] = 0
+        dated.append(it)
+    ins = dated
     # 1) тайминг: прижать start_sec к началу цитируемой фразы (модель врёт «на глаз»)
     _snap_to_phrase(ins, words, emit=emit)
     # 2) query фото: голый предмет — чистим стилевые слова, если модель их всё же дописала

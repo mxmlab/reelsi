@@ -39,6 +39,16 @@ PYVER="$("$PY" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
 say "Python $PYVER ($OS)"
 [ "$PYVER" = "3.10" ] || say "WARNING: project targets 3.10; some wheels may not be available for other versions."
 
+if [ -z "${REELSI_NO_VENV:-}" ] && "$PY" -c 'import sys; sys.exit(0 if sys.prefix == sys.base_prefix else 1)'; then
+  say "Creating virtual environment in $HERE/.venv"
+  "$PY" -m venv "$HERE/.venv"
+  if [ -f "$HERE/.venv/bin/python" ]; then
+    PY="$HERE/.venv/bin/python"
+  else
+    PY="$HERE/.venv/Scripts/python.exe"
+  fi
+fi
+
 if command -v ffmpeg >/dev/null; then
   say "ffmpeg found"
 else
@@ -97,4 +107,4 @@ step "Verification"
 (cd "$HERE" && "$PY" -m core.bootstrap) || true
 
 echo
-echo "Run:  $PY reelsi/webui.py"
+echo "Run:  \"$PY\" \"$HERE/webui.py\""

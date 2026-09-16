@@ -614,7 +614,7 @@ over-the-shoulder fly-out loses its point, a deliberate choice).
 | `tools/webui_test.py` | isolated UI profile on port 5098 |
 | `core/umsg.py` | error codes for translation (`ERR_*` from `static/i18n/en.json`) |
 | `core/app_meta.py`, `core/device.py` | paths/environment, device selection (cuda → mps → cpu) |
-| `core/fileio.py` | atomic JSON writing (tmp + fsync + replace) |
+| `core/fileio.py` | atomic writing of JSON and text files (tmp + fsync + replace; target permissions and symlinks preserved) |
 | `doctor.py` | environment diagnostics |
 | `core/insertlib.py` | insert library: XML + folder scan, `insertlib.json` index, semantic lookup |
 | `api/` | **shared backend**: all `/api/*` (Blueprint), JOB/LOCK, jobs |
@@ -729,8 +729,10 @@ the full list of files and JSON schemas, from `Reelsi_out/` to `ai_config.json`.
 - `<outdir>/_tmp/` — temporary files (cleaned by the 🧹 button and before a new
   cut).
 
-**JSON schemas** — all JSON in `Reelsi_out/` — atomically (tmp + fsync +
-replace), see `core/fileio.py`.
+**JSON schemas** — user data and user files (sidecars, `ai_config.json`, style and
+speaker presets, user XML, `.jsx`, `.srt`) are written atomically (tmp + fsync +
+replace), see `core/fileio.py`; regenerable temporary artifacts (transcript caches,
+`_tmp/` intervals, proxy cache) are written directly — losing them costs nothing.
 
 **`ai_config.json` contracts** — server-side, not localStorage:
 - LLM profiles (LM Studio / Claude / OpenRouter / OpenAI-compatible),

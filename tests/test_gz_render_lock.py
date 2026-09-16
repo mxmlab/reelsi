@@ -128,45 +128,48 @@ def test_эндпоинт_занимает_лок_на_время_рендера
 def test_после_рендера_лок_свободен(tmp_path, monkeypatch, lock_state):
     """Три исхода рендера (нормальный выход / ошибка / «Стоп») — во всех лок отпущен."""
     from api import _core, render
-    from api import build as build_mod
 
-    def fake_norm_ok(jobs):
-        assert _core._JOB_LOCK_FH is not None, "лок задач не занят во время рендера"
-        return [{"xml_path": str(tmp_path / "clip.xml")}]
-
-    def fake_norm_empty(jobs):
-        return []
-
-    def fake_norm_boom(jobs):
-        assert _core._JOB_LOCK_FH is not None, "лок задач не занят во время рендера"
-        raise ValueError("xml не найден")
-
-    monkeypatch.setattr(build_mod, "_norm_build_jobs", fake_norm_ok)
+    # 1. Нормальный выход
     monkeypatch.setattr(render, "_run_render_single", lambda *a: None)
     assert _core._cross_lock_acquire() is True         # так же, как эндпоинт
-    render._run_render_job([{"xml_path": "clip.xml"}], "", str(tmp_path))
+    render._run_render_job([{"xml_path": str(tmp_path / "clip.xml")}], "", str(tmp_path))
     assert _core._JOB_LOCK_FH is None, "лок остался занят после рендера"
     with render.RLOCK:
         assert render.RJOB["running"] is False
 
-    monkeypatch.setattr(build_mod, "_norm_build_jobs", fake_norm_boom)
+    # 2. _run_render_single бросает (ошибка в рендере)
+    def fake_crash(*a, **k):
+        raise RuntimeError("сбой рендера")
+
+    monkeypatch.setattr(render, "_run_render_single", fake_crash)
     assert _core._cross_lock_acquire() is True
-    render._run_render_job([{"xml_path": "clip.xml"}], "", str(tmp_path))
+    render._run_render_job([{"xml_path": str(tmp_path / "clip.xml")}], "", str(tmp_path))
     assert _core._JOB_LOCK_FH is None, "лок остался занят после ошибки рендера"
+    with render.RLOCK:
+        assert render.RJOB["running"] is False
 
-    monkeypatch.setattr(build_mod, "_norm_build_jobs", fake_norm_empty)
-    assert _core._cross_lock_acquire() is True
-    render._run_render_job([{"xml_path": "clip.xml"}], "", str(tmp_path))
-    assert _core._JOB_LOCK_FH is None, "лок остался занят после «Набор пуст»"
-
-    # «Стоп» на наборе из двух файлов: до работы не доходит, диспетчер выходит сам
-    monkeypatch.setattr(build_mod, "_norm_build_jobs",
-                        lambda jobs: [{"xml_path": str(tmp_path / "a.xml")},
-                                      {"xml_path": str(tmp_path / "b.xml")}])
+    # 3. «Стоп» на наборе из двух файлов: до работы не доходит, диспетчер выходит сам
+    two_jobs = [{"xml_path": str(tmp_path / "a.xml")},
+                {"xml_path": str(tmp_path / "b.xml")}]
     with render.RLOCK:
         render.RJOB["cancel"] = True
     assert _core._cross_lock_acquire() is True
-    render._run_render_job([{"xml_path": "a.xml"}], "", str(tmp_path))
+    render._run_render_job(two_jobs, "", str(tmp_path))
     assert _core._JOB_LOCK_FH is None, "лок остался занят после «Стоп»"
     with render.RLOCK:
         render.RJOB["cancel"] = False
+
+
+def test_кривой_набор_в_render_run_не_берет_лок(client, tmp_path, lock_state):
+    """Несуществующий файл или пустой набор — api_render_run отдаёт ошибку и лок не занимает."""
+    from api import _core
+
+    r = client.post("/api/render_run", json={"jobs": [{"xml": str(tmp_path / "nonexistent.xml")}]})
+    assert r.status_code == 200
+    assert r.get_json().get("err") == "file_not_found"
+    assert _core._JOB_LOCK_FH is None, "лок взят при несуществующем файле"
+
+    r = client.post("/api/render_run", json={"jobs": []})
+    assert r.status_code == 200
+    assert r.get_json().get("err") == "set_empty"
+    assert _core._JOB_LOCK_FH is None, "лок взят при пустом наборе"

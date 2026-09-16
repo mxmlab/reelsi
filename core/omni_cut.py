@@ -101,8 +101,7 @@ def _learn_halluc(phrases):
         cur = set()
     new = (cur | set(phrases)) - HALLUC_SEED
     if new != cur:
-        json.dump(sorted(new), open(HALLUC_PHRASES_PATH, "w", encoding="utf-8"),
-                  ensure_ascii=False, indent=1)
+        atomic_json_dump(HALLUC_PHRASES_PATH, sorted(new), indent=1)
 
 
 def voiced_ratio(seg, sr=16000):

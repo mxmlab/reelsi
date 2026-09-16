@@ -21,8 +21,3 @@ def xml_text(s, attr=False):
     if attr:
         escaped = escaped.replace('"', "&quot;")
     return escaped
-
-
-def xml_attr(s):
-    """Очистить строку и экранировать для использования внутри XML-атрибутов в двойных кавычках."""
-    return xml_text(s, attr=True)

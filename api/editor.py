@@ -48,14 +48,14 @@ def _sidecar_caption(xml_path):
 def api_caption():
     """Подпись о ролике (<stem>.caption.json рядом с XML): чтение и сохранение (задание DG)."""
     d = request.get_json() or {}
-    xml_path = (d.get("xml") or "").strip().strip('"')
+    xml_path = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml_path):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml_path}",
                                   path=xml_path))
         try:
             if "text" in d:
-                text = str(d.get("text") or "").strip()
+                text = jstr(d, "text").strip()
                 p = os.path.splitext(xml_path)[0] + ".caption.json"
                 atomic_json_dump(p, {"text": text}, indent=1)
                 return jsonify(ok=True, text=text)
@@ -71,7 +71,7 @@ def api_caption():
 def api_words():
     """Return the ordered subtitle words of an edited sequence XML so the UI can
     let the user click which to highlight (yellow). Indices match to_ae_full."""
-    xml_path = (request.get_json() or {}).get("xml", "").strip().strip('"')
+    xml_path = jstr(request.get_json() or {}, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml_path):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml_path}",
@@ -139,7 +139,7 @@ def api_breaths():
     Уверенные детектор вырезал сам ещё в нарезке (в сайдкаре они помечены
     `вырезано`), здесь важны СПОРНЫЕ: юзер снимает их одним кликом. Нет файла —
     пустой список: нарезка могла идти без детектора (нет моделей или весов)."""
-    xml_path = ((request.get_json() or {}).get("xml") or "").strip().strip('"')
+    xml_path = jstr(request.get_json() or {}, "xml").strip().strip('"')
     p = os.path.splitext(xml_path)[0] + ".breaths.json"
     if not os.path.isfile(p):
         return jsonify(ok=True, marks=[])
@@ -233,7 +233,7 @@ def _reproject_subs(sub_words, yellow, old_keep, new_keep, fps):
 def api_editor_save():
     """Пересобрать XML из отредактированных блоков (оставленные куски исходника)."""
     d = request.get_json() or {}
-    xml = (d.get("xml") or "").strip().strip('"')
+    xml = jstr(d, "xml").strip().strip('"')
     keep = d.get("keep") or []
     try:
         if not os.path.isfile(xml):
@@ -368,8 +368,8 @@ def api_gen_subs():
     """Субтитры С НУЛЯ: склеить аудио нарезки (камера 1 по keep) → Whisper → вписать
     субтитр-графику в XML. Нужен <stem>.project.json."""
     data = request.get_json() or {}
-    xml = (data.get("xml") or "").strip().strip('"')
-    subengine = data.get("subengine", "whisper") or "whisper"
+    xml = jstr(data, "xml").strip().strip('"')
+    subengine = jstr(data, "subengine") or "whisper"
     try:
         if not os.path.isfile(xml):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
@@ -473,14 +473,14 @@ def api_set_yellow():
     """Явно задать набор жёлтых слов в XML (ручная разметка из предпросмотра):
     выбранные красим, ранее покрашенные но снятые — возвращаем в белый. Пишет и сайдкар."""
     d = request.get_json() or {}
-    xml = (d.get("xml") or "").strip().strip('"')
+    xml = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
                                   path=xml))
         try:
             from core import xml2ae
-            idx = [int(i) for i in (d.get("indices") or [])]
+            idx = [int(i) for i in ((d.get("indices") if isinstance(d.get("indices"), list) else []) or [])]
             res = xml2ae.set_highlights(xml, idx)
             try:                                             # сайдкар .yellow.json — фолбэк для /api/words
                 atomic_json_dump(os.path.splitext(xml)[0] + ".yellow.json",
@@ -505,7 +505,7 @@ def api_clear_subs():
     Сайдкар .yellow.json тоже сносим, иначе /api/words вернул бы жёлтые от старых слов."""
     from core import xmlbuild
     d = request.get_json() or {}
-    xml = (d.get("xml") or "").strip().strip('"')
+    xml = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
@@ -543,15 +543,15 @@ def api_edit_word():
     terms.json, и в следующих роликах то же слово чинится само (см. terms.learn).
     Термин при этом должен уже быть в словаре — иначе туда поехали бы обычные опечатки."""
     d = request.get_json() or {}
-    xml = (d.get("xml") or "").strip().strip('"')
+    xml = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
                                   path=xml))
         try:
             from core import xml2ae
-            was = (d.get("was") or "").strip()
-            res = xml2ae.edit_word(xml, int(d.get("index")), d.get("text") or "")
+            was = jstr(d, "was").strip()
+            res = xml2ae.edit_word(xml, int(d.get("index")), jstr(d, "text"))
             if res.get("error"):
                 raise SystemExit(umsg("edit_word_failed", res["error"], err=res["error"]))
             learned = None
@@ -578,7 +578,7 @@ def api_edit_word():
 def api_delete_word():
     """Удалить слово-субтитр #index (порядок parse_full) прямо из XML."""
     d = request.get_json() or {}
-    xml = (d.get("xml") or "").strip().strip('"')
+    xml = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml):
             raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",

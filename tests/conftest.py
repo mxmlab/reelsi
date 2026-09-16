@@ -7,7 +7,10 @@
 job.lock, ai_calls.jsonl, models_dev.json, _videogen), чтобы тесты не писали
 в боевые файлы рабочей копии.
 """
+import logging
+from logging.handlers import RotatingFileHandler
 import os
+import shutil
 import tempfile
 
 import pytest
@@ -119,4 +122,32 @@ def reset_job_state():
         applog.get_logger()
     except Exception:
         pass
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Убрать временный каталог с логом тестов после завершения всей сессии.
+
+    На Windows открытый файл невозможно удалить (PermissionError). Поэтому
+    сначала закрываем и снимаем с логгера reelsi все RotatingFileHandler, чьи файлы
+    лежат внутри _TEST_LOG_DIR, затем удаляем каталог через shutil.rmtree.
+    """
+    logger = logging.getLogger("reelsi")
+    norm_test_dir = os.path.normcase(os.path.realpath(_TEST_LOG_DIR))
+    for h in list(logger.handlers):
+        if isinstance(h, RotatingFileHandler):
+            bf = getattr(h, "baseFilename", None)
+            if bf:
+                norm_bf = os.path.normcase(os.path.realpath(bf))
+                try:
+                    is_inside = os.path.commonpath([norm_test_dir, norm_bf]) == norm_test_dir
+                except ValueError:
+                    is_inside = False
+                if is_inside:
+                    try:
+                        h.close()
+                    except Exception:
+                        pass
+                    logger.removeHandler(h)
+    shutil.rmtree(_TEST_LOG_DIR, ignore_errors=True)
+
 

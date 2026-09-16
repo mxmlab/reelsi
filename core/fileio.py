@@ -49,10 +49,12 @@ def _atomic_write(path, write, mode="w", encoding="utf-8", newline=None):
     """Одна точка записи для функций модуля: tmp рядом с целью + fsync + replace.
 
     Имя tmp уникально (mkstemp): два одновременных писателя в один файл не
-    перемешают половины — кто последним сделал os.replace, того данные и остались,
-    а битого файла не бывает. mode="w" или "wb". Для текстового режима newline=None
-    (как у open по умолчанию) — переводы строк не трогаем: вызывающий сам решает,
-    нужен ли ему CRLF."""
+    перемешают половины — кто последним сделал os.replace, того данные и остались.
+    Целостность — всегда (старая или новая версия, не половина; битого файла не
+    бывает). Долговечность переименования при отбое питания — на POSIX через fsync
+    каталога, на Windows — журналом NTFS. mode="w" или "wb". Для текстового режима
+    newline=None (как у open по умолчанию) — переводы строк не трогаем: вызывающий
+    сам решает, нужен ли ему CRLF."""
     path = os.path.realpath(path)
     d = os.path.dirname(path) or "."
     fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".tmp.", dir=d)
@@ -67,6 +69,15 @@ def _atomic_write(path, write, mode="w", encoding="utf-8", newline=None):
             os.fsync(f.fileno())
         _carry_mode(path, tmp)
         os.replace(tmp, path)
+        if os.name == "posix":
+            try:
+                dfd = os.open(d, os.O_RDONLY)
+                try:
+                    os.fsync(dfd)
+                finally:
+                    os.close(dfd)
+            except OSError:
+                pass
     except Exception:
         try:
             os.remove(tmp)

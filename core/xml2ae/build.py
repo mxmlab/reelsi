@@ -1729,8 +1729,9 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             '    var shadeCtx = shadeGrp.property("ADBE Vectors Group");\n'
             '    try{ shadeCtx.addProperty("ADBE Vector Shape - Rect").property("ADBE Vector Rect Size")'
             '.setValue([INTRO_SHADE.w, INTRO_SHADE.h]); }catch(e){}\n'
+            "    // заливка через _fill_js: одна проверенная форма для всех заливок (3 компонента в AE, задание KG)\n"
             '    try{ shadeCtx.addProperty("ADBE Vector Graphic - Fill").property("ADBE Vector Fill Color")'
-            '.setValue([0,0,0,1]); }catch(e){}\n'
+            '.setValue(' + _fill_js([0, 0, 0]) + '); }catch(e){}\n'
             '    try{ shadeGrp.property("ADBE Vector Transform Group").property("ADBE Vector Position")'
             '.setValue([INTRO_SHADE.ox, INTRO_SHADE.oy]); }catch(e){}\n'
             "    // обводку не добавляем: в amdi1.aep её нет\n"

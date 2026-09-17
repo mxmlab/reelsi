@@ -136,6 +136,11 @@ def test_jsx_with_shade_builds_figure_with_blur(xml_subs, tmp_path):
         'shadeLayer.property("ADBE Transform Group").property("ADBE Position")'
         '.setValue([INTRO_SHADE.x, INTRO_SHADE.y])')
 
+    # заливка слоя затемнения: единая форма _fill_js (3 компонента в AE, задание KG)
+    assert ('shadeCtx.addProperty("ADBE Vector Graphic - Fill")'
+            '.property("ADBE Vector Fill Color").setValue([0,0,0])') in jsx
+    assert "[0,0,0,1]" not in jsx
+
     rep = verify_jsx.Report(path)
     verify_jsx.check_syntax(path, jsx, rep)        # node --check
     verify_jsx.check_undeclared(jsx, rep)

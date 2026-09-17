@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Log file**: the web UI writes a rotating log (`reelsi.log`, or the path in `REELSI_LOG`) with the startup line and the causes of failures that used to be swallowed silently.
 
 ### Changed
+- **Style panel layout**: layer order rows are 24 px high like the other rows, and sliders take the full width.
 - **Roto failures stop the build**: when roto is on in the style (it is on in the base style) and a chunk gets no mask — out of video memory, a model error, an empty mask, or no PyTorch — the build now fails with "roto was not computed for N of M chunks" or "roto failed" instead of silently producing a project without roto. Computed masks stay cached for the next build; turn roto off in the style to build without it.
 - **Roto mask cache key**: masks are keyed by the normalized path, the nanosecond modification time and the file size, so a camera file overwritten in the same second no longer reuses an old mask. Existing cached masks are recomputed once.
 - **Style defaults in one place**: every fallback value the After Effects build uses for a missing style key now comes from `styles.BASE`; a guard test stops new hard-coded fallbacks.
@@ -45,6 +46,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **GigaAM pinned**: the optional GigaAM dependency is installed from a fixed commit.
 
 ### Fixed
+- **doctor and whisper.cpp**: the whisper.cpp check runs even without PyTorch (the machines that need whisper.cpp most often have no CUDA build), lists the downloaded ggml models and warns when there are none; running doctor twice in one process no longer adds up the problems.
+- **Whisper frees video memory on failure**: the model is released even when transcription raises, so a failed run no longer keeps it in VRAM.
+- **Video model catalog follows the provider**: the catalog in memory is tied to the provider and address it came from; after switching the video profile it is fetched again, so a model is no longer rejected or its fields cut by another provider's list.
+- **Paths on case-insensitive disks**: insert library, video history and roto mask keys ignore letter case where the file system does (macOS APFS by default), not only on Windows, so `Foo.png` and `foo.png` are one entry; keys on Windows and case-sensitive Linux are unchanged. Not tested on a real Mac.
+- **Insert library cache between processes**: the index is re-read when its nanosecond timestamp or size changes, so a write by the command line and the web UI in the same second is no longer missed.
 - **whisper.cpp on Linux installs**: the pinned release archive keeps its internal library symlinks (`libwhisper.so -> libwhisper.so.1`), which `whisper-cli` needs to start; the install used to refuse every symlink and never finished. Links pointing outside the folder, absolute links and writes through a link are still refused.
 - **Insert library keeps concurrent edits**: a rescan or a vision description run no longer overwrites "don't suggest", a hand-written description or a just generated (and paid) picture saved while it was running.
 - **Media import**: a folder whose name only starts with the library folder name (`library_backup` next to `library`) is no longer skipped.

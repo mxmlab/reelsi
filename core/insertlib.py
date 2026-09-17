@@ -400,7 +400,7 @@ def scan(dirs, emit=None):
 
 
 def _merge_prev_records(records):
-    """Схлопывание нескольких прежних записей одного пути (после normcase):
+    """Схлопывание нескольких прежних записей одного пути (после pkey):
     - desc/desc_src: побеждает запись с пригодным desc (см. _field_unfit); если таких
       несколько — та, у которой desc_src != 'name';
     - used: максимум;
@@ -490,17 +490,17 @@ def build_index(dirs, emit=None, use_emb=True):
     for it in old.get("items", []):
         p = it.get("path")
         if p:
-            k = os.path.normcase(os.path.abspath(p))
+            k = paths.pkey(os.path.abspath(p))
             old_grouped.setdefault(k, []).append(it)
     old_items = {k: _merge_prev_records(recs) for k, recs in old_grouped.items()}
 
     stale = old.get("emb_tag") != EMB_TAG        # схема эмбеддинга сменилась -> всё пересчитать
     found = scan(dirs, emit)
-    found_nc = {os.path.normcase(os.path.abspath(p)) for p in found}
+    found_nc = {paths.pkey(os.path.abspath(p)) for p in found}
     items = []
     # 1. Живые файлы, найденные сканом
     for p, meta in sorted(found.items()):
-        k = os.path.normcase(os.path.abspath(p))
+        k = paths.pkey(os.path.abspath(p))
         prev = old_items.get(k) or {}
         if prev.get("desc"):
             desc = prev["desc"]
@@ -566,7 +566,7 @@ def build_index(dirs, emit=None, use_emb=True):
         for it in cur.get("items", []):
             p = it.get("path")
             if p:
-                k = os.path.normcase(os.path.abspath(p))
+                k = paths.pkey(os.path.abspath(p))
                 cur_grouped.setdefault(k, []).append(it)
         cur_items = {k: _merge_prev_records(recs) for k, recs in cur_grouped.items()}
 
@@ -574,14 +574,14 @@ def build_index(dirs, emit=None, use_emb=True):
         for it in items:
             p = it.get("path")
             if p:
-                k = os.path.normcase(os.path.abspath(p))
+                k = paths.pkey(os.path.abspath(p))
                 built_by_k[k] = it
 
         # Записи, удалённые из cur за время скана (были в old, нет в cur), не воскрешать.
         # Если скан нашёл их заново на диске — они остаются как найденные.
         to_drop = {k for k in old_items if k not in cur_items and k not in found_nc}
         if to_drop:
-            items = [it for it in items if os.path.normcase(os.path.abspath(it.get("path") or "")) not in to_drop]
+            items = [it for it in items if paths.pkey(os.path.abspath(it.get("path") or "")) not in to_drop]
             built_by_k = {k: it for k, it in built_by_k.items() if k not in to_drop}
 
         # Записи cur, которых не было в old (добавлены за время скана, например add_generated)
@@ -661,10 +661,11 @@ def _load():
     with _LOCK:
         _seed_index()
         try:
-            mt = os.path.getmtime(INDEX_PATH)
+            st = os.stat(INDEX_PATH)
+            mt = (st.st_mtime_ns, st.st_size)
         except OSError:
             return None
-        if _CACHE["data"] is None or _CACHE["mtime"] != mt:
+        if _CACHE["data"] is None or _CACHE.get("mtime") != mt:
             try:
                 _CACHE["data"] = json.load(open(INDEX_PATH, encoding="utf-8"))
                 _CACHE["mtime"] = mt
@@ -853,12 +854,12 @@ def _ensure_emb_tag(emit=None):
         d = _load()
         if not d or d.get("emb_tag") == EMB_TAG:
             return False
-        by_path = {os.path.normcase(os.path.abspath(it.get("path") or "")): it
+        by_path = {paths.pkey(os.path.abspath(it.get("path") or "")): it
                    for it in d.get("items", [])}
         # между тактами индекс мог измениться — ищем запись заново по пути, и только
         # если описание/ru/vis не поменялись (иначе припишем чужой свежий вектор к новому тексту)
         for (p, dsc, ru, vis, _txt), v in zip(pairs, vecs):
-            it = by_path.get(os.path.normcase(os.path.abspath(p)))
+            it = by_path.get(paths.pkey(os.path.abspath(p)))
             if it is not None and (it.get("desc") or "") == dsc and (it.get("ru") or "") == ru \
                and (it.get("vis") or "") == vis:
                 it["emb"] = v
@@ -1204,11 +1205,11 @@ def embed_items(items, emit=None):
         if not data:
             return 0
         model = data.get("emb_model") or ""
-        by_p = {os.path.normcase(os.path.abspath(it.get("path") or "")): it
+        by_p = {paths.pkey(os.path.abspath(it.get("path") or "")): it
                 for it in data.get("items", [])}
         doc_texts = []
         for p, d, r in norm_items:
-            cur = by_p.get(os.path.normcase(p)) or {}
+            cur = by_p.get(paths.pkey(p)) or {}
             cur_ru = r or (cur.get("ru") or "")
             cur_vis = cur.get("vis") or ""
             doc_texts.append(_subject_text(_doc_text(d or "", cur_ru, cur_vis)))
@@ -1291,12 +1292,12 @@ def adopt(items, dest_dir, emit=None):
     чей путь изменился/нормализован (фронт по нему чинит media в своём состоянии).
 
     Важно (Windows): ФС case-insensitive (desktop==Desktop), а Python-сравнения — нет.
-    Поэтому всюду сравниваем через os.path.normcase, а итоговые пути отдаём в реальном
+    Поэтому всюду сравниваем через paths.pkey, а итоговые пути отдаём в реальном
     регистре диска (через _real_case), чтобы .jsx/AE открывал файл."""
     emit = wrap_emit(emit)
     import shutil
     dest = _real_case(os.path.abspath(dest_dir))          # реальный регистр папки базы
-    dest_nc = os.path.normcase(dest)
+    dest_nc = paths.pkey(dest)
     base_idx = _build_base_index(dest)                    # basename(lower) -> [пути в базе]
     mapping, seen, transferred, crops = {}, {}, {}, {}
     for it in items:
@@ -1308,7 +1309,7 @@ def adopt(items, dest_dir, emit=None):
         desc = (it.get("desc") or "").strip()
         ru = (it.get("ru") or "").strip()
         crop = _crop_of(it)
-        p_nc = os.path.normcase(p)
+        p_nc = paths.pkey(p)
         # 1) уже в базе (без учёта регистра)? — НЕ двигаем, только нормализуем путь.
         # В mapping кладём ТОЛЬКО если путь реально изменился (регистр/слеши) —
         # контракт: mapping = «старый путь -> новый», identity-записей не плодим.
@@ -1342,7 +1343,7 @@ def adopt(items, dest_dir, emit=None):
         while True:
             if not os.path.exists(tgt):
                 break
-            if os.path.normcase(tgt) == os.path.normcase(src):
+            if paths.pkey(tgt) == paths.pkey(src):
                 break
             tgt = os.path.join(sub, "%s_%d%s" % (stem, n, ext))
             n += 1
@@ -1394,10 +1395,10 @@ def _index_adopt(mapping, seen, emit=None, crops=None):
             return
         items = data.setdefault("items", [])
         # mapping: старый_путь(lower) -> новый_путь; индекс по path(lower) -> entry
-        map_nc = {os.path.normcase(k): v for k, v in mapping.items()}
+        map_nc = {paths.pkey(k): v for k, v in mapping.items()}
         # 1) чиним path у переехавших (по старому пути, без учёта регистра)
         for it in items:
-            newp = map_nc.get(os.path.normcase(it.get("path") or ""))
+            newp = map_nc.get(paths.pkey(it.get("path") or ""))
             if newp:
                 it["path"] = newp
                 it["name"] = os.path.basename(newp)
@@ -1405,13 +1406,13 @@ def _index_adopt(mapping, seen, emit=None, crops=None):
         #    by_nc строим ПОСЛЕ шага 1: построенный до него индексировал бы по СТАРЫМ
         #    путям, шаг 2 искал по новым -> промах -> на один файл дописывалась
         #    дубликат-запись с расщеплённым used (аудит, adopt)
-        by_nc = {os.path.normcase(it.get("path") or ""): it for it in items}
+        by_nc = {paths.pkey(it.get("path") or ""): it for it in items}
         model = data.get("emb_model") or ""
         fresh = []
         for path, sval in seen.items():
             desc = (sval.get("desc") if isinstance(sval, dict) else sval) or ""
             ru = (sval.get("ru") if isinstance(sval, dict) else "") or ""
-            key = os.path.normcase(path)
+            key = paths.pkey(path)
             it = by_nc.get(key)
             if it is None:
                 it = {"path": path, "name": os.path.basename(path), "type": _media_kind(path),
@@ -1447,10 +1448,10 @@ def _index_adopt(mapping, seen, emit=None, crops=None):
             with _LOCK:
                 data = _load()
                 if data:
-                    by_p = {os.path.normcase(it.get("path") or ""): it
+                    by_p = {paths.pkey(it.get("path") or ""): it
                             for it in data.get("items", [])}
                     for (path, dsc, ru, _txt), v in zip(fresh, vecs):
-                        it = by_p.get(os.path.normcase(path))
+                        it = by_p.get(paths.pkey(path))
                         if it is not None and (it.get("desc") or "") == dsc and (it.get("ru") or "") == ru:
                             it["emb"] = v
                     _save(data)
@@ -1465,7 +1466,7 @@ def import_media(dirs, dest, since_ts=0.0, move=True, emit=None, recursive=False
     (old->new), пути в insertlib.json обновляются (used/desc сохраняются). -> dict(count, dest)."""
     emit = wrap_emit(emit)
     dest = os.path.abspath(dest)
-    dest_nc = os.path.normcase(dest)
+    dest_nc = paths.pkey(dest)
     moved, mapping = 0, {}
     for d in dirs:
         d = (d or "").strip().strip('"')
@@ -1475,7 +1476,7 @@ def import_media(dirs, dest, since_ts=0.0, move=True, emit=None, recursive=False
         for root, dns, fns in os.walk(d):
             if not recursive:
                 dns[:] = []
-            root_nc = os.path.normcase(os.path.abspath(root))
+            root_nc = paths.pkey(os.path.abspath(root))
             if SKIP_DIR.search(root) or root_nc == dest_nc or root_nc.startswith(dest_nc + os.sep):
                 dns[:] = []
                 continue
@@ -1668,7 +1669,7 @@ def auto_describe(emit=None, only_missing=True, progress=None):
             cur = _load()
             if not cur:
                 return
-            by_p = {os.path.normcase(os.path.abspath(it.get("path") or "")): it
+            by_p = {paths.pkey(os.path.abspath(it.get("path") or "")): it
                     for it in cur.get("items", [])}
             applied = []
             for k, txt in pending.items():
@@ -1686,7 +1687,7 @@ def auto_describe(emit=None, only_missing=True, progress=None):
     for path, name in todo:
         txt = describe_file(path, model)
         if txt:
-            pending[os.path.normcase(os.path.abspath(path))] = txt
+            pending[paths.pkey(os.path.abspath(path))] = txt
             emit("  {name}: {vis}", name=name[:48], vis=txt[:80])
         else:
             emit("  ⚠ {name}: vision не ответил", name=name[:60])
@@ -1717,10 +1718,10 @@ def auto_describe(emit=None, only_missing=True, progress=None):
                 with _LOCK:
                     cur = _load()
                     if cur:
-                        by_p = {os.path.normcase(os.path.abspath(it.get("path") or "")): it
+                        by_p = {paths.pkey(os.path.abspath(it.get("path") or "")): it
                                 for it in cur.get("items", [])}
                         for (p, dsc, ru, vis, _txt), v in zip(need, vecs):
-                            it = by_p.get(os.path.normcase(os.path.abspath(p)))
+                            it = by_p.get(paths.pkey(os.path.abspath(p)))
                             if it is not None and (it.get("desc") or "") == dsc and (it.get("ru") or "") == ru \
                                and (it.get("vis") or "") == vis:
                                 it["emb"] = v
@@ -1745,7 +1746,7 @@ def set_desc(path, desc):
         target = new_desc = cur_ru = None
         m = ""
         for it in d.get("items", []):
-            if os.path.normcase(it["path"]) == os.path.normcase(path):
+            if paths.pkey(it["path"]) == paths.pkey(path):
                 it["desc"] = desc or _norm_text(it["path"])
                 it["desc_src"] = "user" if desc else "name"
                 it["emb"] = None
@@ -1768,7 +1769,7 @@ def set_desc(path, desc):
                 d = _load()
                 if d:
                     for it in d.get("items", []):
-                        if os.path.normcase(it["path"]) == os.path.normcase(path):
+                        if paths.pkey(it["path"]) == paths.pkey(path):
                             # описание/ru/vis могли смениться между тактами — не приписывать
                             # вектор, посчитанный по старому тексту
                             if (it.get("desc") or "") == new_desc and (it.get("ru") or "") == cur_ru \

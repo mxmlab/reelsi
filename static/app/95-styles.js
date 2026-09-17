@@ -518,7 +518,8 @@ function renderLayerOrderUI(){
 
     const titleWrap = document.createElement('div');
     titleWrap.className = 'layer-order-title';
-    titleWrap.innerHTML = `<span>${esc(t(def.title))}</span> <span class="layer-order-desc">${esc(t(def.desc))}</span>`;
+    const descHtml = def.desc ? ` <span class="i layer-order-desc" data-t="${esc(t(def.desc))}">!</span>` : '';
+    titleWrap.innerHTML = `<span>${esc(t(def.title))}</span>${descHtml}`;
     row.appendChild(titleWrap);
 
     const btns = document.createElement('div');
@@ -526,7 +527,7 @@ function renderLayerOrderUI(){
 
     const upBtn = document.createElement('button');
     upBtn.type = 'button';
-    upBtn.className = 'layer-order-btn';
+    upBtn.className = 'layer-order-btn icon';
     upBtn.innerHTML = ico('arrow_up');
     upBtn.setAttribute('aria-label', t('Поднять слой «{name}» выше', { name: t(def.title) }));
     upBtn.setAttribute('data-t', t('Поднять слой выше'));
@@ -547,7 +548,7 @@ function renderLayerOrderUI(){
 
     const dnBtn = document.createElement('button');
     dnBtn.type = 'button';
-    dnBtn.className = 'layer-order-btn';
+    dnBtn.className = 'layer-order-btn icon';
     dnBtn.innerHTML = ico('arrow_down');
     dnBtn.setAttribute('aria-label', t('Опустить слой «{name}» ниже', { name: t(def.title) }));
     dnBtn.setAttribute('data-t', t('Опустить слой ниже'));

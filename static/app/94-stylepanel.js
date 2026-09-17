@@ -470,6 +470,15 @@ function renderStylePanel() {
         gBox.appendChild(gBody);
         frag.appendChild(gBox);
       } else if (item.type === 'field') {
+        if (item.ctl === 'layer_order') {
+          const loBox = document.createElement('div');
+          loBox.id = 'st_layer_order_list';
+          loBox.className = 'layer-order-list';
+          loBox.style.setProperty('--lvl', level);
+          frag.appendChild(loBox);
+          continue;
+        }
+
         const fRow = document.createElement('div');
         fRow.className = 'strow stfield';
         fRow.id = 'strow_' + item.key;
@@ -655,11 +664,6 @@ function renderStylePanel() {
           ptWrap.appendChild(ptVal);
           ptWrap.appendChild(btnPick);
           right.appendChild(ptWrap);
-        } else if (item.ctl === 'layer_order') {
-          const loBox = document.createElement('div');
-          loBox.id = 'st_layer_order_list';
-          loBox.className = 'stlayerorder';
-          right.appendChild(loBox);
         } else if (item.ctl === 'textarea') {
           const ta = document.createElement('textarea');
           ta.id = item.key === 'disclaimer' ? 'st_disc_text' : ('st_' + item.key);
@@ -1137,6 +1141,7 @@ function fillStyleFields() {
   if (typeof styleSubPos === 'function') styleSubPos();
   if (typeof aewUpdateCaptionUI === 'function') aewUpdateCaptionUI();
   if (typeof updateStyleDiffDots === 'function') updateStyleDiffDots();
+  if (typeof renderLayerOrderUI === 'function') renderLayerOrderUI();
 }
 
 function stEdit() {

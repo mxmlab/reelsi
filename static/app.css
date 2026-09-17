@@ -150,9 +150,10 @@ header.top{position:sticky;top:0;z-index:30;background:var(--bg);border-bottom:1
 .stnum-edit{width:56px !important;min-height:20px !important;height:20px !important;max-height:20px !important;padding:1px 4px !important;font-size:11px !important;background:var(--bg2) !important;color:var(--tx) !important;border:1px solid var(--iron) !important;border-radius:var(--r-sm);text-align:left !important;box-sizing:border-box !important}
 
 /* Слайдер на развёрнутой строке */
-.stslider-row{height:auto;min-height:24px;max-height:none;padding:0 6px 4px calc(6px + var(--lvl,0) * 14px)}
-.stslider-inner{width:100%;display:flex;align-items:center}
-.stslider{width:100%;height:14px;accent-color:var(--acc);cursor:pointer;margin:0;padding:0;background:transparent;border:0}
+.stslider-row{display:flex;align-items:center;height:auto;min-height:24px;max-height:none;
+  padding:0 6px 4px calc(6px + var(--lvl,0) * 14px + 32px);box-sizing:border-box}
+.stslider-inner{width:100%;display:flex;align-items:center;gap:8px}
+.stslider{flex:1;width:100%;min-width:240px;height:14px;accent-color:var(--acc);cursor:pointer;margin:0;padding:0;background:transparent;border:0}
 
 /* Компактный чекбокс: 12px, рамка --iron */
 #stpanel input[type=checkbox].stchk,.stchk{appearance:none !important;-webkit-appearance:none !important;width:12px !important;height:12px !important;min-width:12px !important;min-height:12px !important;max-width:12px !important;max-height:12px !important;padding:0 !important;margin:0 !important;border:1px solid var(--iron) !important;border-radius:var(--r-sm);background:var(--bg2) !important;cursor:pointer !important;position:relative !important;display:inline-grid !important;place-content:center !important;flex:none !important;box-sizing:border-box !important}
@@ -196,8 +197,6 @@ header.top{position:sticky;top:0;z-index:30;background:var(--bg);border-bottom:1
 #stpanel .streset,.streset{height:20px !important;min-height:0 !important;max-height:20px !important;font-size:11px !important;color:var(--mut) !important;background:none !important;border:none !important;box-shadow:none !important;cursor:pointer !important;padding:0 2px !important;user-select:none !important;line-height:20px !important;border-radius:0;text-align:left !important;width:auto !important}
 #stpanel .streset:hover,.streset:hover{color:var(--tx) !important;background:none !important;border:none !important}
 
-/* Порядок слоёв (drag-and-drop список): строки рисует renderLayerOrderUI, контейнер — панель */
-.stlayerorder{display:flex;flex-direction:column;gap:2px;width:100%;padding:4px 0}
 /* Ряд сохранения стиля: прижат низом панели (sticky), виден всегда (задание CP3) */
 .stactbar{position:sticky;bottom:0;z-index:5;background:var(--panel);padding:10px 0 4px;margin-top:auto}
 #aewstyle .stactbar{background:var(--bg2)}
@@ -882,24 +881,29 @@ button.icon .ic{width:16px;height:16px;vertical-align:-3.5px}
 .qpath{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ok)}
 .qreason{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dng)}
 
-/* ===== Порядок слоёв в стиле (задание FM) ===== */
-.layer-order-list{display:flex;flex-direction:column;gap:6px;max-width:520px;margin-top:6px}
-.layer-order-item{display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--bg2);
-  border:1px solid var(--bd2);border-radius:var(--r);user-select:none;-webkit-user-select:none;
-  transition:border-color .12s,background .12s,transform .12s,opacity .12s}
-.layer-order-item:hover{border-color:var(--iron);background:#1a1a1a}
-.layer-order-item.dragging{opacity:.4;border-color:var(--amber)}
-.layer-order-item.drag-over{border-color:var(--amber);background:rgba(235,185,55,.08)}
-.layer-order-grip{cursor:grab;color:var(--mut);display:flex;align-items:center;padding:2px 4px;touch-action:none}
+/* ===== Порядок слоёв в стиле (задание FM, KP) ===== */
+.layer-order-list{display:flex;flex-direction:column;width:100%;box-sizing:border-box;
+  padding:0 6px 0 calc(6px + var(--lvl,0) * 14px);margin:0}
+.layer-order-item{display:flex;align-items:center;gap:6px;height:24px;min-height:24px;max-height:24px;
+  padding:0 4px;box-sizing:border-box;background:transparent;border:0;border-top:1px solid transparent;border-bottom:1px solid transparent;
+  user-select:none;-webkit-user-select:none;transition:background-color .08s ease}
+.layer-order-item:not(:first-child){border-top-color:var(--bd)}
+.layer-order-item:hover{background:#171717}
+.layer-order-item.dragging{opacity:.4}
+.layer-order-item.drag-over{border-top-color:var(--iron) !important;border-bottom-color:var(--iron) !important;background:rgba(255,255,255,.04)}
+.layer-order-grip{cursor:grab;color:var(--mut);display:inline-flex;align-items:center;justify-content:center;
+  width:14px;height:14px;flex:none;padding:0;touch-action:none}
 .layer-order-grip:active{cursor:grabbing}
 .layer-order-grip .ic{width:14px;height:14px}
-.layer-order-title{font-size:13px;color:var(--tx);flex:1;display:flex;align-items:center;gap:8px}
-.layer-order-desc{font-size:11.5px;color:var(--mut)}
-.layer-order-btns{display:flex;gap:4px;align-items:center;flex:none}
-.layer-order-btn{background:transparent;border:1px solid var(--bd2);border-radius:var(--r-sm);
-  color:var(--tx);padding:4px;display:inline-flex;align-items:center;justify-content:center;
-  cursor:pointer;min-width:28px;min-height:28px;transition:border-color .12s,color .12s}
-.layer-order-btn:hover:not(:disabled){border-color:var(--iron);color:var(--amber)}
+.layer-order-title{font-size:12px;color:var(--tx);flex:1;display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden;line-height:20px}
+.layer-order-title > span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.layer-order-desc{flex:none}
+.layer-order-btns{display:flex;gap:2px;align-items:center;flex:none}
+#stpanel .layer-order-btn,.layer-order-btn{background:transparent !important;border:none !important;border-radius:var(--r-sm);
+  color:var(--mut) !important;padding:0 !important;display:inline-flex !important;align-items:center !important;justify-content:center !important;
+  cursor:pointer;width:20px !important;height:20px !important;min-width:20px !important;min-height:20px !important;max-width:20px !important;max-height:20px !important;
+  box-shadow:none !important;transition:color .12s}
+#stpanel .layer-order-btn:hover:not(:disabled),.layer-order-btn:hover:not(:disabled){color:var(--tx) !important;background:transparent !important}
 .layer-order-btn:disabled{opacity:.25;cursor:default;pointer-events:none}
-.layer-order-btn .ic{width:14px;height:14px}
+.layer-order-btn .ic{width:12px;height:12px}
 

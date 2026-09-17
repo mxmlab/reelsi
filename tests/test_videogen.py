@@ -24,6 +24,12 @@ def _ref(url, role="reference", kind=None, dur=0):
     return {"url": url, "role": role, "kind": kind, "duration": dur, "caption": ""}
 
 
+@pytest.fixture(autouse=True)
+def _isolate_active_video_profile(monkeypatch):
+    """Изолируем тесты от ai_config.json на машине: по умолчанию активного профиля нет."""
+    monkeypatch.setattr(aicut.video, "_active_video_profile", lambda: None)
+
+
 # ---- каталог моделей --------------------------------------------------------
 
 def test_builtin_models_cover_main_families():
@@ -36,7 +42,7 @@ def test_builtin_models_cover_main_families():
 
 def test_caps_without_catalog():
     """Каталог провайдера не подтянут — возможности всё равно известны (встроенные)."""
-    aicut.video.VIDEO_MODEL_CAPS = {}
+    aicut.video.set_video_catalog(None, {})
     c = aicut.video_caps("google/veo-3.1")
     assert c["durations"] == ["4", "6", "8"]
     assert c["aspect_ratios"] == ["16:9", "9:16"]
@@ -45,16 +51,16 @@ def test_caps_without_catalog():
 
 def test_live_catalog_overrides_builtin():
     """Живой каталог главнее: по нему провайдер и валидирует запрос."""
-    aicut.video.VIDEO_MODEL_CAPS = {
+    aicut.video.set_video_catalog(None, {
         "google/veo-3.1": {"id": "google/veo-3.1", "supported_durations": [8],
-                           "supported_resolutions": ["1080p"], "generate_audio": False}}
+                           "supported_resolutions": ["1080p"], "generate_audio": False}})
     try:
         c = aicut.video_caps("google/veo-3.1")
         assert c["durations"] == ["8"] and c["resolutions"] == ["1080p"]
         assert c["audio"] is False and c["listed"] is True
         assert c["ref_images"] == 3          # чего в каталоге нет — берём из встроенного
     finally:
-        aicut.video.VIDEO_MODEL_CAPS = {}
+        aicut.video.set_video_catalog(None, {})
 
 
 def test_unknown_model_is_not_blocked():
@@ -275,12 +281,12 @@ def test_prompt_is_required():
 
 def test_non_video_model_is_stopped_when_catalog_known():
     """В профиле у юзера лежала несуществующая модель — запрос уходил в никуда."""
-    aicut.video.VIDEO_MODEL_CAPS = {"bytedance/seedance-2.0": {"id": "bytedance/seedance-2.0"}}
+    aicut.video.set_video_catalog(None, {"bytedance/seedance-2.0": {"id": "bytedance/seedance-2.0"}})
     try:
         bad = aicut.video_check("google/gemini-2.5-flash", {}, [], prompt="x")
         assert bad and "не видео-модель" in bad[0]
     finally:
-        aicut.video.VIDEO_MODEL_CAPS = {}
+        aicut.video.set_video_catalog(None, {})
 
 
 def test_dangling_tag_is_noticed():
@@ -684,7 +690,7 @@ def _live_ensure(called):
     после GET {base}/videos/models."""
     def ensure(prof, emit=None):
         called.append(prof)
-        aicut.video.VIDEO_MODEL_CAPS = {_LIVE_MODEL: _LIVE_CAPS}
+        aicut.video.set_video_catalog(prof, {_LIVE_MODEL: _LIVE_CAPS})
     return ensure
 
 
@@ -701,8 +707,10 @@ def test_video_insert_live_only_model_uses_early_catalog(vapi, monkeypatch):
                    "</sequence></xmeml>", encoding="utf-8")
     called = []
     monkeypatch.setattr(aicut, "ensure_video_catalog", _live_ensure(called))
-    monkeypatch.setattr(aicut, "resolve_video_profile", lambda: {
-        "name": "test", "provider": "openrouter", "base_url": "https://example.test", "api_key": ""})
+    prof = {
+        "name": "test", "provider": "openrouter", "base_url": "https://example.test", "api_key": ""}
+    monkeypatch.setattr(aicut, "resolve_video_profile", lambda: prof)
+    monkeypatch.setattr(aicut.video, "_active_video_profile", lambda: prof)
     monkeypatch.setattr(aicut, "video_model_cfg", lambda: _LIVE_MODEL)
     monkeypatch.setattr(aicut.video, "load_ai_config",
                         lambda: {"video_resolution": "1080p", "profiles": {}})
@@ -725,7 +733,7 @@ def test_video_insert_live_only_model_uses_early_catalog(vapi, monkeypatch):
         assert len(called) == 1 and called[0]["name"] == "test"
     finally:
         api.VJOB.update(running=False, done=False, cancel=False, key=None, context="")
-        aicut.video.VIDEO_MODEL_CAPS = {}
+        aicut.video.set_video_catalog(None, {})
 
 
 def test_raw_video_uses_early_catalog_for_model_dependent_params(vapi, monkeypatch):
@@ -734,8 +742,10 @@ def test_raw_video_uses_early_catalog_for_model_dependent_params(vapi, monkeypat
     api, client, _ = vapi
     called = []
     monkeypatch.setattr(aicut, "ensure_video_catalog", _live_ensure(called))
-    monkeypatch.setattr(aicut, "resolve_video_profile", lambda: {
-        "name": "test", "provider": "openrouter", "base_url": "https://example.test", "api_key": ""})
+    prof = {
+        "name": "test", "provider": "openrouter", "base_url": "https://example.test", "api_key": ""}
+    monkeypatch.setattr(aicut, "resolve_video_profile", lambda: prof)
+    monkeypatch.setattr(aicut.video, "_active_video_profile", lambda: prof)
     monkeypatch.setattr(aicut, "video_model_cfg", lambda: _LIVE_MODEL)
     monkeypatch.setattr(aicut.video, "load_ai_config",
                         lambda: {"video_resolution": "1080p", "profiles": {}})
@@ -758,4 +768,4 @@ def test_raw_video_uses_early_catalog_for_model_dependent_params(vapi, monkeypat
         assert len(called) == 1
     finally:
         api.VJOB.update(running=False, done=False, cancel=False, key=None, context="")
-        aicut.video.VIDEO_MODEL_CAPS = {}
+        aicut.video.set_video_catalog(None, {})

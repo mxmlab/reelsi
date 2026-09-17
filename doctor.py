@@ -151,18 +151,24 @@ def check_compute():
                                   "настройками: CTranslate2 не поддерживает ни Metal, "
                                   "ни ROCm. См. docs/PLATFORMS.md"))
 
+
+def check_whisper_cpp():
     # whisper.cpp — опциональная замена faster-whisper для Mac/AMD (Metal/Vulkan).
     # Это не питоновский пакет, поэтому ставится мимо pip; отсутствие бинарника
-    # только отключает быструю транскрипцию (WARN, а не FAIL — как в check_optional).
+    # или моделей только отключает быструю транскрипцию (WARN, а не FAIL — как в check_optional).
     try:
         from core import whisper_cpp
-        if whisper_cpp.whisper_cli_path():
-            row(OK, "whisper.cpp", t("бинарник найден — Metal/Vulkan-транскрипция "
-                                   "доступна (движок в селекторе субтитров)"))
-        else:
+        if not whisper_cpp.whisper_cli_path():
             row(WARN, "whisper.cpp", t("бинарника нет — на Mac/AMD быстрой транскрипции "
                                      "не будет. Поставить по запросу: python "
                                      "-m core.whisper_cpp install (или brew/scoop)"))
+            return
+        models = [size for size in whisper_cpp.MODEL_FILES if whisper_cpp.model_path(size)]
+        if models:
+            row(OK, "whisper.cpp", t("бинарник найден, модели: {models}", models=", ".join(models)))
+        else:
+            row(WARN, "whisper.cpp", t("моделей нет — скачаются при первом выборе "
+                                      "движка (large-v3 ≈ 3 ГБ)"))
     except Exception as e:
         row(WARN, "whisper.cpp", t("проверка не удалась: {err}", err=type(e).__name__))
 
@@ -367,12 +373,16 @@ def _flush(title=None):
 
 
 def main():
+    global _bad, _rows
+    _bad = 0
+    _rows = []
     paths.require_source_tree()
     print(t("Reelsi v{ver} — проверка окружения ({sys} {rel}, {arch})",
             ver=APP_VERSION, sys=platform.system(), rel=platform.release(),
             arch=platform.machine()))
     check_core()
     check_compute()
+    check_whisper_cpp()
     check_assets()
     check_workspace()
     check_ae_tooling()

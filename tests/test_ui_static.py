@@ -2664,3 +2664,44 @@ def test_ipv_drag_insert_index_matches_plan_filter(js):
         "сопоставление индекса обязано опираться на тот же фильтр, что ipvPlanBody, "
         "а не на findIndex по media")
 
+
+def test_style_panel_layer_order_and_slider_contracts(css, js):
+    """Панель стиля (задание KP):
+    - поле layer_order не порождает строки .strow с подписью;
+    - у .layer-order-item в CSS нет padding: 8px 12px и нет цвета amber;
+    - у .stslider ширина не фиксирована в px.
+    """
+    # 1. Поле layer_order не порождает строки .strow с подписью
+    assert "strow_layer_order" not in js
+    panel_js = _read(PANEL_JS)
+    m = re.search(r"if\s*\(\s*item\.ctl\s*===\s*['\"]layer_order['\"]\s*\)\s*\{([^}]+)\}", panel_js)
+    assert m, "ветка item.ctl === 'layer_order' отсутствует в 94-stylepanel.js"
+    lo_body = m.group(1)
+    assert "frag.appendChild(loBox)" in lo_body
+    assert "continue" in lo_body
+    assert "fRow" not in lo_body
+    assert "strow" not in lo_body
+    assert "stfield-lbl" not in lo_body
+
+    # 2. У .layer-order-item в CSS нет padding: 8px 12px и нет цвета amber
+    m_item = re.search(r"\.layer-order-item\s*\{([^}]+)\}", css)
+    assert m_item, ".layer-order-item не найден в app.css"
+    item_rules = m_item.group(1)
+    assert "padding: 8px 12px" not in item_rules and "padding:8px 12px" not in item_rules, (
+        "у .layer-order-item остался старый паддинг 8px 12px"
+    )
+    lo_css_matches = re.findall(r"(\.layer-order-[^{]+)\{([^}]+)\}", css)
+    assert lo_css_matches, "правила .layer-order-* не найдены в CSS"
+    for selector, rules in lo_css_matches:
+        assert "amber" not in rules.lower(), f"в правиле {selector} найден цвет amber: {rules}"
+
+    # 3. У .stslider ширина не фиксирована в px
+    m_slider = re.search(r"\.stslider\s*\{([^}]+)\}", css)
+    assert m_slider, ".stslider не найден в app.css"
+    slider_rules = m_slider.group(1)
+    assert not re.search(r"(?<![\w-])width:\s*\d+px", slider_rules), (
+        f"у .stslider ширина зафиксирована в px: {slider_rules}"
+    )
+    assert "min-width:240px" in slider_rules.replace(" ", "") or "min-width: 240px" in slider_rules
+
+

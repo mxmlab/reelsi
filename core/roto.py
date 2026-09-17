@@ -348,12 +348,12 @@ def alpha_for_video(video, out_mask, downsample_ratio=None, bottom_pct=0.0,
 
 
 def _mask_key(video, s, e, bottom_pct, div):
-    """Стабильный ключ маски по СОДЕРЖИМОМУ: normcase-путь, mtime в наносекундах и размер
+    """Стабильный ключ маски по СОДЕРЖИМОМУ: pkey-путь, mtime в наносекундах и размер
     (st_mtime_ns + st_size) + границы + низ + делитель разрешения + модель/px RVM.
     st_mtime_ns и st_size защищают от подмены видео на том же пути в ту же секунду
     (перезапись экспорта): целые секунды mtime давали ложное попадание в кэш со старой
-    маской. normcase на Windows сам понижает регистр, а на POSIX сохраняет
-    регистрозависимость (два разных файла A.mp4 и a.mp4 не сливаются).
+    маской. pkey на Windows и macOS учитывает регистронезависимость ФС, а на Linux
+    сохраняет регистрозависимость (два разных файла A.mp4 и a.mp4 не сливаются).
     Переход на наносекунды и размер одноразово обесценивает старый кэш масок — так
     задумано ради надёжности (одна пересчитанная сборка)."""
     import hashlib
@@ -362,7 +362,7 @@ def _mask_key(video, s, e, bottom_pct, div):
         mt_ns, sz = st.st_mtime_ns, st.st_size
     except OSError:
         mt_ns, sz = 0, 0
-    raw = (f"{os.path.normcase(os.path.abspath(video))}|{mt_ns}|{sz}|{round(s, 3)}|{round(e, 3)}|"
+    raw = (f"{paths.pkey(os.path.abspath(video))}|{mt_ns}|{sz}|{round(s, 3)}|{round(e, 3)}|"
            f"{round(float(bottom_pct), 4)}|d{div}|m{_VARIANT}|px{_INTERNAL_PX}")
     return hashlib.md5(raw.encode("utf-8")).hexdigest()[:16]
 

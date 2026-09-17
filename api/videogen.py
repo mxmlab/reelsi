@@ -104,7 +104,7 @@ def vhist_scan_files(items):
     """Ролики, о которых история не знает: сгенерированы до её появления или файл
     положили в папку руками. Импортируем как готовые задачи — иначе «что ещё можно
     скачать» показывало бы только генерации последних дней."""
-    known = {os.path.normcase(os.path.abspath(it["path"]))
+    known = {paths.pkey(os.path.abspath(it["path"]))
              for it in items if it.get("path")}
     try:
         names = sorted(os.listdir(VIDEO_OUT))
@@ -115,7 +115,7 @@ def vhist_scan_files(items):
         if not fn.lower().endswith((".mp4", ".webm", ".mov")):
             continue
         p = os.path.join(VIDEO_OUT, fn)
-        if os.path.normcase(os.path.abspath(p)) in known:
+        if paths.pkey(os.path.abspath(p)) in known:
             continue
         try:
             ts = int(os.path.getmtime(p))
@@ -386,8 +386,8 @@ def api_video_history():
                 # вне _videogen/out по ключу из запроса всё равно нельзя
                 if not (p and os.path.isfile(p)):
                     continue
-                if os.path.normcase(os.path.abspath(os.path.dirname(p))) != \
-                   os.path.normcase(os.path.abspath(VIDEO_OUT)):
+                if paths.pkey(os.path.abspath(os.path.dirname(p))) != \
+                   paths.pkey(os.path.abspath(VIDEO_OUT)):
                     continue
                 try:
                     os.remove(p)
@@ -466,18 +466,17 @@ def api_video_models():
     except SystemExit as e:
         return jsonify(**umsg_err(e))
     entries = data.get("data") or data.get("models") or []
-    aicut.video.VIDEO_MODEL_CAPS = {
-        (m.get("id") or m.get("slug") or "").lower(): m for m in entries
-        if (m.get("id") or m.get("slug"))}
+    key = aicut.video._catalog_key(prof)
+    aicut.video.set_video_catalog(key, entries)
     ids = sorted(aicut.video.VIDEO_MODEL_CAPS.keys())
-    caps = aicut.video_caps(model)
+    caps = aicut.video_caps(model, prof=prof)
     out = {"ok": True, "models": ids, "count": len(ids), "model": model,
            # выпадашка обновляется тем же ответом: встроенные + всё, что есть у провайдера
-           "list": aicut.video_model_list(),
+           "list": aicut.video_model_list(prof=prof),
            "found": bool(caps and caps.get("listed")),
            # живой каталог мог измениться после сохранения: переоцениваем и сбрасываем
            # устаревшее серверное значение, фронт применит итог — скрытого local state нет
-           "video_resolution": aicut.video_resolution_sync(model)}
+           "video_resolution": aicut.video_resolution_sync(model, prof=prof)}
     if caps:
         # raw наружу не тащим (в нём длинный description) — только то, что рисует UI
         out["caps"] = {k: v for k, v in caps.items() if k != "raw"}

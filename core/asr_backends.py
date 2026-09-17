@@ -182,12 +182,15 @@ def _whisper(wav_path, **opts):
     from core import transcribe
     aicut.unload_ours()                      # free VRAM for Whisper
     aicut.warn_foreign_models()
-    words = transcribe.transcribe(wav_path, **opts)
     try:
-        transcribe.release_model()
-    except Exception:
-        pass
-    return words
+        return transcribe.transcribe(wav_path, **opts)
+    finally:
+        # Выгружаем модель даже при падении транскрипции, иначе занятая VRAM
+        # намертво вешает последующие запуски на Windows вместо OOM
+        try:
+            transcribe.release_model()
+        except Exception:
+            pass
 
 
 register("whisper", _whisper)

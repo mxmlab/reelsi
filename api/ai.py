@@ -627,9 +627,8 @@ def api_ai_models():
                 with urllib.request.urlopen(req, timeout=20) as r:
                     vdata = json.load(r)
                 ventries = vdata.get("data") or vdata.get("models") or []
-                aicut.video.VIDEO_MODEL_CAPS = {
-                    (m.get("id") or m.get("slug") or "").lower(): m
-                    for m in ventries if (m.get("id") or m.get("slug"))}
+                vkey = aicut.video._catalog_key({"provider": provider, "base_url": base})
+                aicut.video.set_video_catalog(vkey, ventries)
                 video = [m.get("id") or m.get("slug") for m in ventries
                          if (m.get("id") or m.get("slug"))]
                 models = sorted(set(models) | set(video))

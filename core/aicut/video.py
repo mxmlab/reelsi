@@ -274,10 +274,86 @@ VIDEO_MODEL_HINTS = list(VIDEO_MODELS)     # порядок в выпадашк�
 # (image_url), поля text на референсе нет; видео-референс и подпись-к-референсу
 # схемой НЕ описаны — поэтому подписи всегда вплетаем в промпт (_video_prompt).
 VIDEO_MODEL_CAPS = {}
+# Ключ провайдера, для которого загружен VIDEO_MODEL_CAPS:
+# (provider, base_url без хвостового «/» в нижнем регистре). None = не привязан/пуст.
+VIDEO_CATALOG_KEY = None
 
 
-def video_model_entry(model):
-    """Сырая запись каталога по id модели (или {}). Регистронезависимо."""
+def _catalog_key(prof):
+    """Ключ источника каталога: (provider, base_url без хвостового «/» в нижнем регистре).
+    Принимает словарь профиля или кортеж (provider, base_url). Пусто/невалидно -> None."""
+    if not prof:
+        return None
+    if isinstance(prof, tuple) and len(prof) == 2:
+        p, b = prof
+        p_str = str(p or "").strip().lower()
+        b_str = str(b or "").strip().rstrip("/").lower()
+        return (p_str, b_str) if (p_str or b_str) else None
+    if isinstance(prof, dict):
+        p_str = str(prof.get("provider") or "").strip().lower()
+        b_str = str(prof.get("base_url") or "").strip().rstrip("/").lower()
+        return (p_str, b_str) if (p_str or b_str) else None
+    return None
+
+
+def _active_video_profile():
+    """Разрешить активный видео-профиль с учётом возможного мока на фасаде aicut."""
+    import sys
+    _mod = sys.modules.get("core.aicut")
+    _resolver = getattr(_mod, "resolve_video_profile", resolve_video_profile) if _mod else resolve_video_profile
+    return _resolver()
+
+
+# Маркер «профиль проверен, его нет»: позволяет video_model_list передать
+# результат в video_caps без повторного чтения ai_config на каждой модели списка.
+_NO_PROFILE = object()
+
+
+def _catalog_matches(prof=None):
+    """Совпадает ли ключ текущего каталога в памяти с профилем prof (или active_video).
+    Если в месте чтения профиль не передан — пробуем _active_video_profile().
+    Если профиля нет вовсе (CLI/изолированный тест): если ключ не был задан (каталог
+    заполнен вручную/без ключа), разрешаем чтение; если ключ был задан под конкретного
+    провайдера — без профиля чужой каталог не используем."""
+    if not VIDEO_MODEL_CAPS:
+        return False
+    if prof is None:
+        prof = _active_video_profile()
+    if prof is None or prof is _NO_PROFILE:
+        return VIDEO_CATALOG_KEY is None
+    key = _catalog_key(prof)
+    return key is not None and VIDEO_CATALOG_KEY == key
+
+
+def set_video_catalog(key, entries):
+    """Обновить глобальный каталог видео-моделей под указанный ключ источника.
+    Объект словаря один на процесс: VIDEO_MODEL_CAPS не переприсваивается
+    (сохраняется идентичность для импортёров aicut.VIDEO_MODEL_CAPS), а очищается
+    и наполняется заново по правилам ensure_video_catalog (id/slug в нижнем регистре)."""
+    global VIDEO_CATALOG_KEY
+    VIDEO_MODEL_CAPS.clear()
+    VIDEO_CATALOG_KEY = _catalog_key(key)
+    if isinstance(entries, dict):
+        for k, m in entries.items():
+            if isinstance(m, dict):
+                mid = (m.get("id") or m.get("slug") or k or "").lower()
+            else:
+                mid = str(k or "").lower()
+            if mid:
+                VIDEO_MODEL_CAPS[mid] = m
+    elif isinstance(entries, (list, tuple)):
+        for m in entries:
+            if isinstance(m, dict):
+                mid = (m.get("id") or m.get("slug") or "").lower()
+                if mid:
+                    VIDEO_MODEL_CAPS[mid] = m
+
+
+def video_model_entry(model, prof=None):
+    """Сырая запись каталога по id модели (или {}). Регистронезависимо.
+    Возвращает запись, только если каталог в памяти соответствует профилю prof."""
+    if not _catalog_matches(prof):
+        return {}
     return VIDEO_MODEL_CAPS.get((model or "").lower()) or {}
 
 
@@ -294,7 +370,7 @@ def _caps_refs(entry):
     return None
 
 
-def video_caps(model):
+def video_caps(model, prof=None):
     """Нормализованные возможности модели: ЖИВОЙ каталог + встроенный VIDEO_MODELS.
     None — модель неизвестна обоим (шлём как есть, провайдер сам отвергнет лишнее).
 
@@ -303,7 +379,7 @@ def video_caps(model):
     generate_audio/seed — умеет ли). Встроенный докладывает то, чего в каталоге нет
     вовсе: референсы r2v и их лимиты (ref_images/ref_videos/ref_video_total_s)."""
     mid = (model or "").strip().lower()
-    e = video_model_entry(mid)
+    e = video_model_entry(mid, prof=prof)
     b = VIDEO_MODELS.get(mid) or {}
     if not e and not b:
         return None
@@ -365,7 +441,13 @@ def ensure_video_catalog(prof, emit=None):
     (бесплатный GET). Нужен, чтобы предполёт знал ограничения модели ДАЖЕ когда
     страницу не открывали (CLI, свежий процесс) — и чтобы не улететь запросом на
     модель, которой у провайдера нет вовсе. Не отдался — молча работаем на встроенном."""
-    if VIDEO_MODEL_CAPS:
+    global VIDEO_CATALOG_KEY
+    key = _catalog_key(prof)
+    if VIDEO_MODEL_CAPS and VIDEO_CATALOG_KEY == key:
+        return
+    VIDEO_MODEL_CAPS.clear()
+    VIDEO_CATALOG_KEY = None
+    if not prof or not key or not prof.get("base_url"):
         return
     try:
         base = prof["base_url"].rstrip("/")
@@ -380,21 +462,23 @@ def ensure_video_catalog(prof, emit=None):
     except Exception:
         return
     entries = data.get("data") or data.get("models") or []
-    VIDEO_MODEL_CAPS.update({(m.get("id") or m.get("slug") or "").lower(): m
-                             for m in entries if (m.get("id") or m.get("slug"))})
+    set_video_catalog(key, entries)
     if emit and VIDEO_MODEL_CAPS:
         emit("  видео: каталог провайдера — {count} моделей", count=len(VIDEO_MODEL_CAPS))
 
 
-def video_model_list():
+def video_model_list(prof=None):
     """Список моделей для выпадашки на странице «Видео»: встроенные главные (в своём
     порядке) + всё, что вернул живой каталог. Каждой — её caps, чтобы UI подстраивал
     поля СРАЗУ, без сетевого запроса."""
-    ids = list(VIDEO_MODELS) + [m for m in sorted(VIDEO_MODEL_CAPS)
+    if prof is None:
+        prof = _active_video_profile() or _NO_PROFILE
+    caps_dict = VIDEO_MODEL_CAPS if _catalog_matches(prof) else {}
+    ids = list(VIDEO_MODELS) + [m for m in sorted(caps_dict)
                                 if m not in VIDEO_MODELS]
     out = []
     for mid in ids:
-        c = video_caps(mid) or {}
+        c = video_caps(mid, prof=prof) or {}
         c.pop("raw", None)                     # в raw длинный description — UI не нужен
         out.append({"id": mid, "label": c.get("label") or "",
                     "builtin": mid in VIDEO_MODELS, "caps": c})
@@ -508,13 +592,13 @@ def resolve_refs(refs, emit=None):
 
 
 
-def video_check(model, opts, refs, caps=None, probe=False, prompt=None):
+def video_check(model, opts, refs, caps=None, probe=False, prompt=None, prof=None):
     """ПРЕДПОЛЁТНАЯ проверка запроса -> список проблем человеческим текстом (пусто =
     можно слать). Смысл: 400 от провайдера приходит на чужом языке и через полминуты
     ожидания, а половина отказов — правила, которые видно заранее.
 
     probe=True — досмотреть видео-референсы ffprobe'ом (суммарная длина r2v)."""
-    caps = caps or video_caps(model)
+    caps = caps or video_caps(model, prof=prof)
     refs = refs or []
     opts = opts or {}
     bad = []
@@ -535,10 +619,10 @@ def video_check(model, opts, refs, caps=None, probe=False, prompt=None):
         # промпт обязателен у всех моделей, одни референсы не запрос
         bad.append("нужен текст запроса — одних референсов провайдеру мало")
     if not caps:
-        # Модель незнакомая. Если каталог провайдера уже подтянут, а её там нет —
-        # это не видео-модель (у юзера в профиле лежала несуществующая) и запрос
-        # уйдёт в никуда; каталога нет — пусть решает провайдер.
-        if VIDEO_MODEL_CAPS and (model or "").strip().lower() not in VIDEO_MODEL_CAPS:
+        # Модель незнакомая. Если каталог провайдера уже подтянут под этот профиль,
+        # а её там нет — это не видео-модель (у юзера в профиле лежала несуществующая)
+        # и запрос уйдёт в никуда; каталога нет или он от другого провайдера — пусть решает провайдер.
+        if _catalog_matches(prof) and (model or "").strip().lower() not in VIDEO_MODEL_CAPS:
             bad.append(f"«{model}» — не видео-модель этого провайдера: выбери модель из списка")
         return bad
 
@@ -622,11 +706,11 @@ def video_check(model, opts, refs, caps=None, probe=False, prompt=None):
     return bad
 
 
-def video_warnings(model, refs, caps=None, prompt=None):
+def video_warnings(model, refs, caps=None, prompt=None, prof=None):
     """Не отказ, но стоит сказать вслух ДО оплаты: формат картинки под вопросом
     (вендор его не заявлял, но и отказом мы это не видели) и @-тег в промпте без
     приложенного файла. Блокировать такое нельзя — данные неточные."""
-    caps = caps or video_caps(model)
+    caps = caps or video_caps(model, prof=prof)
     out = []
     if caps:
         fmts = caps.get("image_formats") or []
@@ -671,7 +755,7 @@ def video_model_cfg():
     return str(cfg.get("video_model") or prof.get("model") or VIDEO_MODEL_HINTS[0]).strip()
 
 
-def video_resolution_cfg(model=None):
+def video_resolution_cfg(model=None, prof=None):
     """Разрешение генерации видео из общего ai_config.video_resolution.
 
     Пусто/нет = провайдер решает сам (""). Для ИЗВЕСТНОЙ модели с непустыми caps
@@ -684,14 +768,14 @@ def video_resolution_cfg(model=None):
     saved = str(cfg.get("video_resolution") or "").strip()
     if not saved:
         return ""
-    caps = video_caps(model)
+    caps = video_caps(model, prof=prof)
     if caps is not None and caps.get("resolutions"):
         low = {str(r).lower(): str(r) for r in caps["resolutions"]}
         return low.get(saved.lower()) or ""
     return saved
 
 
-def video_resolution_sync(model=None):
+def video_resolution_sync(model=None, prof=None):
     """Переоценить сохранённое разрешение против актуальных caps модели и СБРОСИТЬ
     устаревшее на сервере. Живой каталог мог измениться ПОСЛЕ сохранения (смена модели
     или свежий /videos/models убрал значение) — иначе осталось бы скрытое устаревшее
@@ -700,7 +784,7 @@ def video_resolution_sync(model=None):
     saved = str(cfg.get("video_resolution") or "").strip()
     if not saved:
         return ""
-    caps = video_caps(model)
+    caps = video_caps(model, prof=prof)
     if caps is not None and caps.get("resolutions"):
         if saved.lower() not in {str(r).lower() for r in caps["resolutions"]}:
             cfg["video_resolution"] = ""
@@ -708,7 +792,7 @@ def video_resolution_sync(model=None):
                 save_ai_config(cfg)
             except Exception:
                 pass
-    return video_resolution_cfg(model)
+    return video_resolution_cfg(model, prof=prof)
 
 
 _VIDEO_URL_EXTS = (".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi")
@@ -854,18 +938,18 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
     # у Seedance это списки допустимых длин/разрешений/пропорций/размеров. Недопустимое
     # не шлём (иначе 400 и деньги на ветер). caps=None -> каталога нет, шлём как есть.
     ensure_video_catalog(prof, emit=emit)      # ограничения модели знать надо ДО отправки
-    caps = video_caps(model)
+    caps = video_caps(model, prof=prof)
     # ПРЕДПОЛЁТ. Сначала выясняем, ЧТО реально лежит по каждой ссылке (тип и длина —
     # по расширению их знать нельзя), потом проверяем правила модели. Иначе это же
     # прилетит 400-м на чужом языке через полминуты ожидания.
     if refs:
         emit("  видео: проверяю референсы…")
         resolve_refs(refs, emit=emit)
-    bad = video_check(model, opts, refs, caps=caps, probe=True, prompt=prompt)
+    bad = video_check(model, opts, refs, caps=caps, probe=True, prompt=prompt, prof=prof)
     if bad:
         raise SystemExit(umsg("bad_opts", "; ".join(bad), list="; ".join(bad)))
     payload = {"model": model, "prompt": _video_prompt(prompt, refs)}
-    for w in video_warnings(model, refs, caps=caps, prompt=prompt):
+    for w in video_warnings(model, refs, caps=caps, prompt=prompt, prof=prof):
         emit("  видео: {warning}", warning=w)
     def _put(key, value, allowed=None, label=None):
         if allowed and str(value) not in allowed:

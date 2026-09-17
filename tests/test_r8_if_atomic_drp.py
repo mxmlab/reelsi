@@ -88,6 +88,11 @@ def test_atomic_bytes_write_через_ссылку_меняет_цель(tmp_pa
         pytest.skip("симлинки в этом окружении не создаются")
     fileio.atomic_bytes_write(str(link), b"new data")
     assert os.path.islink(link), "симлинк был заменён обычным файлом"
+    rl = os.readlink(link)
+    rl_path = Path(rl)
+    if not rl_path.is_absolute():
+        rl_path = link.parent / rl_path
+    assert os.path.samefile(rl_path, target), "симлинк указывает не на прежнюю цель"
     assert target.read_bytes() == b"new data", "цель симлинка не обновлена"
 
 
@@ -123,8 +128,20 @@ def test_drp_write_и_read_сохраняют_содержимое_и_файлы
     assert [p.name for p in tmp_path.iterdir() if ".tmp." in p.name] == []
 
 
+@posix_only
+def test_drp_write_права_существующего_файла_сохраняются(tmp_path):
+    """0644 и 0664 переживают перезапись проекта .drp."""
+    for mode in (0o644, 0o664):
+        p = tmp_path / f"m{mode:o}.drp"
+        drp.write(str(p), {"init.txt": b"initial"})
+        os.chmod(p, mode)
+        drp.write(str(p), {"updated.txt": b"updated"})
+        assert stat.S_IMODE(p.stat().st_mode) == mode, \
+            f"права {mode:o} не сохранились: {stat.S_IMODE(p.stat().st_mode):o}"
+
+
 def test_drp_write_через_ссылку_меняет_цель(tmp_path):
-    """drp.write через симлинк пишет в цель ссылки."""
+    """drp.write через симлинк пишет в цель ссылки, сохраняя саму ссылку."""
     target = tmp_path / "real.drp"
     target.write_bytes(b"empty")
     link = tmp_path / "link.drp"
@@ -136,24 +153,61 @@ def test_drp_write_через_ссылку_меняет_цель(tmp_path):
     files = {"a.txt": b"content"}
     drp.write(str(link), files)
     assert os.path.islink(link), "симлинк подменён обычным файлом"
+    rl = os.readlink(link)
+    rl_path = Path(rl)
+    if not rl_path.is_absolute():
+        rl_path = link.parent / rl_path
+    assert os.path.samefile(rl_path, target), "симлинк указывает не на прежнюю цель"
     assert drp.read(str(target)) == files, "цель симлинка не обновлена"
 
 
 def test_drp_write_сбой_не_трогает_старый_файл(tmp_path, monkeypatch):
-    """Сбой при drp.write не повреждает существующий .drp файл."""
+    """Сбой при сборке архива не повреждает существующий .drp файл."""
     drp_path = tmp_path / "existing.drp"
-    old_files = {"old.txt": b"old"}
+    old_files = {"old1.txt": b"old content 1", "old2.txt": b"old content 2"}
     drp.write(str(drp_path), old_files)
     original_bytes = drp_path.read_bytes()
 
-    def boom(*a, **k):
-        raise OSError("сбой на подмене файла")
+    real_writestr = zipfile.ZipFile.writestr
+    call_count = 0
 
-    monkeypatch.setattr(fileio.os, "replace", boom)
-    with pytest.raises(OSError):
-        drp.write(str(drp_path), {"new.txt": b"new"})
+    # Отказ моделируется на уровне writestr, чтобы ловить прямую запись в файл:
+    # если писать напрямую, исключение на втором файле оставит битый архив на месте старого.
+    def fail_on_second(self, zinfo_or_arcname, data, *args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count >= 2:
+            raise OSError("сбой при записи архива")
+        return real_writestr(self, zinfo_or_arcname, data, *args, **kwargs)
+
+    monkeypatch.setattr(zipfile.ZipFile, "writestr", fail_on_second)
+    with pytest.raises(OSError, match="сбой при записи архива"):
+        drp.write(str(drp_path), {"new1.txt": b"new 1", "new2.txt": b"new 2"})
+
     assert drp_path.read_bytes() == original_bytes, "старый .drp файл повреждён"
-    assert [p.name for p in tmp_path.iterdir()] == ["existing.drp"], "временный файл остался"
+    assert [p.name for p in tmp_path.iterdir()] == ["existing.drp"], "в папке остались посторонние файлы"
+
+
+def test_drp_write_сбой_создания_не_оставляет_мусора(tmp_path, monkeypatch):
+    """Сбой при создании нового .drp не оставляет повреждённого файла или мусора."""
+    drp_path = tmp_path / "new.drp"
+
+    real_writestr = zipfile.ZipFile.writestr
+    call_count = 0
+
+    def fail_on_second(self, zinfo_or_arcname, data, *args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count >= 2:
+            raise OSError("сбой при записи архива")
+        return real_writestr(self, zinfo_or_arcname, data, *args, **kwargs)
+
+    monkeypatch.setattr(zipfile.ZipFile, "writestr", fail_on_second)
+    with pytest.raises(OSError, match="сбой при записи архива"):
+        drp.write(str(drp_path), {"f1.txt": b"data 1", "f2.txt": b"data 2"})
+
+    assert not drp_path.exists(), "недописанный .drp остался на диске"
+    assert [p.name for p in tmp_path.iterdir()] == [], "в папке остались посторонние файлы"
 
 
 def test_xmlbuild_пишет_через_atomic_text_write(tmp_path, monkeypatch):

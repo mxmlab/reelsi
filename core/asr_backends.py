@@ -26,7 +26,7 @@
 возвращает ОДИН И ТОТ ЖЕ пословный контракт, на который расчитан `xmlbuild`.
 Движок по умолчанию — "whisper", поэтому нетронутый селектор ничего не меняет.
 """
-import os, json, subprocess, tempfile
+import os, json, subprocess, tempfile, logging
 from core import paths
 from core.app_meta import child_env, console_emit, module_cmd, wrap_emit
 
@@ -79,21 +79,43 @@ _BUILTIN = [{"id": "whisper:%s" % s, "label": "Whisper %s" % s, "lang": "multi",
 
 def _custom():
     """CTC-движки других языков из `asr_engines.json` (правится руками).
-    Формат записи: {"id","label","lang","model"[,"device"]}. Битый JSON не должен
-    ронять UI — просто вернём пустой список."""
-    try:
-        raw = json.load(open(ENGINES_JSON, encoding="utf-8"))
-    except Exception:
+    Формат записи: {"id","label","lang","model"[,"device"]}. Битый JSON или не тот тип
+    пишут предупреждение в лог и возвращают пустой список, не роняя UI."""
+    if not os.path.exists(ENGINES_JSON):
         return []
+    try:
+        with open(ENGINES_JSON, encoding="utf-8") as f:
+            raw = json.load(f)
+    except Exception as exc:
+        logging.getLogger(__name__).warning("Не удалось прочитать %s: %s", ENGINES_JSON, exc)
+        return []
+
+    if isinstance(raw, list):
+        items = raw
+    elif isinstance(raw, dict):
+        engines_val = raw.get("engines")
+        if not isinstance(engines_val, list):
+            logging.getLogger(__name__).warning("%s: поле 'engines' должно быть списком", ENGINES_JSON)
+            return []
+        items = engines_val
+    else:
+        logging.getLogger(__name__).warning("%s: ожидается список или словарь с ключом 'engines'", ENGINES_JSON)
+        return []
+
     out = []
-    for e in (raw if isinstance(raw, list) else raw.get("engines", [])):
-        if not isinstance(e, dict) or not e.get("model"):
+    for e in items:
+        if not isinstance(e, dict):
             continue
-        eid = e.get("id") or ("ctc:" + (e.get("lang") or e["model"]).split("/")[-1])
+        model = e.get("model")
+        if not isinstance(model, str) or not model:
+            continue
+        if any(e.get(k) is not None and not isinstance(e.get(k), str) for k in ("id", "label", "lang", "device")):
+            continue
+        eid = e.get("id") or ("ctc:" + (e.get("lang") or model).split("/")[-1])
         out.append({"id": eid if eid.startswith("ctc:") else "ctc:" + eid,
                     "label": e.get("label") or eid, "lang": e.get("lang") or "?",
                     "kind": "ctc", "prob": True, "subs": True, "selfcheck": True, "cut": True,
-                    "model": e["model"], "device": e.get("device", "cuda")})
+                    "model": model, "device": e.get("device") or "cuda"})
     return out
 
 
@@ -340,10 +362,16 @@ def _omni(wav_path, engine=None, refine=False, **opts):
         # движка/недодиске умеет и не завершиться вообще. Зависший процесс
         # жрал бы VRAM, пока юзер не перезапустит сервер — subprocess без хэндла
         # не убить даже «Стопом» (CURPROC хранит только omni_cut).
-        subprocess.run(cmd, check=True, timeout=3600, env=child_env())
+        # stderr захватываем через PIPE, чтобы при ошибке дать пользователю хвост stderr,
+        # а stdout оставляем унаследованным, чтобы прогресс обработки доходил до лога.
+        subprocess.run(cmd, check=True, stderr=subprocess.PIPE, timeout=3600, env=child_env())
         if not os.path.isfile(out):
             raise RuntimeError("Omni-субтитры: движок не записал результат")
         phrases = json.load(open(out, encoding="utf-8"))
+    except subprocess.CalledProcessError as e:
+        err = (e.stderr or b"").decode("utf-8", "replace").strip()
+        tail = err[-300:] if err else str(e)
+        raise RuntimeError(f"Omni-субтитры: {tail}") from None
     except subprocess.TimeoutExpired:
         raise RuntimeError("Omni-субтитры: процесс завис (> 1 ч) — прервано")
     finally:

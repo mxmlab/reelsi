@@ -17,6 +17,7 @@ from core import styles
 from core import xml2ae
 from api.editor import _sidecar_caption
 from core.xml2ae.build import scene_plan
+import test_style_keys_in_ui as watcher  # noqa: E402
 
 
 @pytest.fixture()
@@ -210,19 +211,31 @@ def test_caption_api_routes(tmp_path):
 
 
 def test_caption_ui_elements():
+    """Поля подписи есть в схеме и в панели предпросмотра, а не в старой разметке (JB п. 6).
+
+    Раньше одиннадцать полей подписи были выписаны руками в index.html, и каждое надо
+    было провести через fillStyleFields/stEdit/updateStyleDiffDots. С JB их строит
+    панель по core/style_schema.py — поэтому проверяем схему (ключ, контрол, тумблер
+    плашки), а разметку только ту, что живёт в предпросмотре и к панели не относится.
+    """
+    fields = {k: f for k, f in ((it.get("key"), it) for kind, it in watcher.schema_items()
+                                if kind == "field") if k}
+    for key, ctl in (("caption_font", "font"), ("caption_size", "num"), ("caption_case", "select"),
+                     ("caption_fill", "color"), ("caption_x", "num"), ("caption_y", "num"),
+                     ("caption_bg_fill", "color"), ("caption_bg_op", "num"),
+                     ("caption_bg_round", "num"), ("caption_kx", "num"), ("caption_ky", "num")):
+        assert key in fields, f"в схеме нет поля {key}"
+        assert fields[key]["ctl"] == ctl, f"{key}: контрол {fields[key]['ctl']} вместо {ctl}"
+
+    # галка подписи — тумблер слоя caption; галка плашки — тумблер группы caption.bg
+    layer = next(it for kind, it in watcher.schema_items()
+                 if kind == "layer" and it.get("id") == "caption")
+    assert layer.get("toggle") == "caption", "у слоя «Подпись» пропал тумблер включения"
+    group = next(it for kind, it in watcher.schema_items()
+                 if kind == "group" and it.get("id") == "caption.bg")
+    assert group.get("toggle") == "caption_bg", "у группы «Плашка» пропал тумблер"
+
     index_html = open(os.path.join(ROOT, "templates", "index.html"), "r", encoding="utf-8").read()
-    assert 'id="st_caption"' in index_html
-    assert 'id="st_caption_wrap"' in index_html
-    assert 'id="st_captionfont"' in index_html
-    assert 'id="st_captionsize"' in index_html
-    assert 'id="st_captioncase"' in index_html
-    assert 'id="st_captionfillcolor"' in index_html
-    assert 'id="st_captionx"' in index_html
-    assert 'id="st_captiony"' in index_html
-    assert 'id="st_captionbg"' in index_html
-    assert 'id="st_captionbg_wrap"' in index_html
-    assert 'id="st_captionkx"' in index_html
-    assert 'id="st_captionky"' in index_html
     assert 'id="aewcaption"' in index_html
     assert 'id="aewcaption_text"' in index_html
     assert 'id="aewcaptionsave"' in index_html
@@ -245,12 +258,9 @@ def test_caption_ui_elements():
     app_css = open(os.path.join(ROOT, "static", "app.css"), "r", encoding="utf-8").read()
     assert ".ipvcaption" in app_css
 
-    styles_js = open(os.path.join(ROOT, "static", "app", "95-styles.js"), "r", encoding="utf-8").read()
-    assert "captionUI" in styles_js
-    assert "captionBgUI" in styles_js
-    assert "syncCaptionFillHex" in styles_js
-    assert "syncCaptionBgHex" in styles_js
-    assert "st_caption" in styles_js
+    # Цвет подписи вводится общей функцией HEX панели, отдельных sync*Hex на поле больше нет
+    assert "function stHexChange(" in watcher._panel_js()
+    assert "function stHexInput(" in watcher._panel_js()
 
     view_js = open(os.path.join(ROOT, "static", "app", "85-inserts-view.js"), "r", encoding="utf-8").read()
     assert "ipvCaption" in view_js

@@ -4,6 +4,7 @@
 """Тесты фиксации удалённого кода и безопасной распаковки (задание HN)."""
 import hashlib
 import io
+import os
 import platform
 import sys
 import tarfile
@@ -106,8 +107,9 @@ def test_whisper_cpp_rejects_unsafe_tar(tmp_path):
     with tarfile.open(archive, "r:gz") as t:
         with pytest.raises(RuntimeError, match=r"небезопасный путь"):
             whisper_cpp._safe_extract_tar(t, str(bin_dir))
+    assert sorted(p.name for p in bin_dir.iterdir()) == []
 
-    # 2. Архив с symlink
+    # 2. Архив с symlink на /etc/passwd
     link_archive = tmp_path / "link.tar.gz"
     with tarfile.open(link_archive, "w:gz") as t:
         ti = tarfile.TarInfo(name="link_file")
@@ -115,10 +117,86 @@ def test_whisper_cpp_rejects_unsafe_tar(tmp_path):
         ti.linkname = "/etc/passwd"
         t.addfile(ti)
     with tarfile.open(link_archive, "r:gz") as t:
-        with pytest.raises(RuntimeError, match=r"ссылки запрещены"):
+        with pytest.raises(RuntimeError, match=r"небезопасная ссылка"):
             whisper_cpp._safe_extract_tar(t, str(bin_dir))
+    assert sorted(p.name for p in bin_dir.iterdir()) == []
 
-    # 3. Архив с устройством (на 3.10 у tarfile нет filter= — проверяем руками)
+    # 3. Симлинк с linkname="../x"
+    archive_dotdot = tmp_path / "symlink_dotdot.tar.gz"
+    with tarfile.open(archive_dotdot, "w:gz") as t:
+        ti = tarfile.TarInfo(name="sub/link")
+        ti.type = tarfile.SYMTYPE
+        ti.linkname = "../x"
+        t.addfile(ti)
+    with tarfile.open(archive_dotdot, "r:gz") as t:
+        with pytest.raises(RuntimeError, match=r"небезопасная ссылка"):
+            whisper_cpp._safe_extract_tar(t, str(bin_dir))
+    assert sorted(p.name for p in bin_dir.iterdir()) == []
+
+    # 4. Симлинк с linkname="a/../b" (компонент .. запрещён целиком)
+    archive_norm_dotdot = tmp_path / "symlink_norm_dotdot.tar.gz"
+    with tarfile.open(archive_norm_dotdot, "w:gz") as t:
+        ti = tarfile.TarInfo(name="link")
+        ti.type = tarfile.SYMTYPE
+        ti.linkname = "a/../b"
+        t.addfile(ti)
+    with tarfile.open(archive_norm_dotdot, "r:gz") as t:
+        with pytest.raises(RuntimeError, match=r"небезопасная ссылка"):
+            whisper_cpp._safe_extract_tar(t, str(bin_dir))
+    assert sorted(p.name for p in bin_dir.iterdir()) == []
+
+    # 5. Симлинк с диском Windows (C:\x)
+    archive_win_abs = tmp_path / "symlink_win_abs.tar.gz"
+    with tarfile.open(archive_win_abs, "w:gz") as t:
+        ti = tarfile.TarInfo(name="link")
+        ti.type = tarfile.SYMTYPE
+        ti.linkname = "C:\\x"
+        t.addfile(ti)
+    with tarfile.open(archive_win_abs, "r:gz") as t:
+        with pytest.raises(RuntimeError, match=r"небезопасная ссылка"):
+            whisper_cpp._safe_extract_tar(t, str(bin_dir))
+    assert sorted(p.name for p in bin_dir.iterdir()) == []
+
+    # 6. Хардлинк на несуществующий в архиве член
+    archive_bad_hardlink = tmp_path / "bad_hardlink.tar.gz"
+    with tarfile.open(archive_bad_hardlink, "w:gz") as t:
+        ti = tarfile.TarInfo(name="link_hard")
+        ti.type = tarfile.LNKTYPE
+        ti.linkname = "nonexistent_file"
+        t.addfile(ti)
+    with tarfile.open(archive_bad_hardlink, "r:gz") as t:
+        with pytest.raises(RuntimeError, match=r"небезопасная ссылка"):
+            whisper_cpp._safe_extract_tar(t, str(bin_dir))
+    assert sorted(p.name for p in bin_dir.iterdir()) == []
+
+    # 7. Хардлинк на ../x
+    archive_dotdot_hardlink = tmp_path / "dotdot_hardlink.tar.gz"
+    with tarfile.open(archive_dotdot_hardlink, "w:gz") as t:
+        ti = tarfile.TarInfo(name="link_hard")
+        ti.type = tarfile.LNKTYPE
+        ti.linkname = "../x"
+        t.addfile(ti)
+    with tarfile.open(archive_dotdot_hardlink, "r:gz") as t:
+        with pytest.raises(RuntimeError, match=r"небезопасная ссылка"):
+            whisper_cpp._safe_extract_tar(t, str(bin_dir))
+    assert sorted(p.name for p in bin_dir.iterdir()) == []
+
+    # 8. Запись сквозь ссылку (lib -> sub + файл lib/evil)
+    archive_through_symlink = tmp_path / "through_symlink.tar.gz"
+    with tarfile.open(archive_through_symlink, "w:gz") as t:
+        ti_sym = tarfile.TarInfo(name="lib")
+        ti_sym.type = tarfile.SYMTYPE
+        ti_sym.linkname = "sub"
+        t.addfile(ti_sym)
+        ti_file = tarfile.TarInfo(name="lib/evil")
+        ti_file.size = 4
+        t.addfile(ti_file, io.BytesIO(b"evil"))
+    with tarfile.open(archive_through_symlink, "r:gz") as t:
+        with pytest.raises(RuntimeError, match=r"небезопасная ссылка"):
+            whisper_cpp._safe_extract_tar(t, str(bin_dir))
+    assert sorted(p.name for p in bin_dir.iterdir()) == []
+
+    # 9. Архив с устройством (на 3.10 у tarfile нет filter= — проверяем руками)
     dev_archive = tmp_path / "dev.tar.gz"
     with tarfile.open(dev_archive, "w:gz") as t:
         ti = tarfile.TarInfo(name="dev_null")
@@ -128,9 +206,139 @@ def test_whisper_cpp_rejects_unsafe_tar(tmp_path):
     with tarfile.open(dev_archive, "r:gz") as t:
         with pytest.raises(RuntimeError, match=r"спецфайлы"):
             whisper_cpp._safe_extract_tar(t, str(bin_dir))
+    assert sorted(p.name for p in bin_dir.iterdir()) == []
 
     assert not (tmp_path / "escape.txt").exists()
+    assert not (tmp_path / "evil").exists()
     assert sorted(p.name for p in bin_dir.iterdir()) == []
+
+
+def _can_create_symlinks(tmp_path):
+    """Проверить, разрешено ли создание симлинков в текущей ОС/окружении."""
+    src = tmp_path / "_test_symlink_src"
+    dst = tmp_path / "_test_symlink_dst"
+    src.write_text("test")
+    try:
+        os.symlink(src, dst)
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            dst.unlink(missing_ok=True)
+            src.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def _create_release_like_tar(archive_path):
+    """Собрать tar-архив, аналогичный официальному Linux-релизу whisper.cpp.
+
+    Содержит каталог build/bin/, бинарник whisper-cli, базовые библиотеки и
+    8 цепочек внутренних относительных симлинков.
+    """
+    files = {
+        "build/bin/whisper-cli": b"elf-payload-cli",
+        "build/bin/libwhisper.so.1.9.2": b"elf-payload-whisper",
+        "build/bin/libggml.so.0.9.0": b"elf-payload-ggml",
+        "build/bin/libggml-base.so.0.9.0": b"elf-payload-ggml-base",
+        "build/bin/libggml-cpu.so.0.9.0": b"elf-payload-ggml-cpu",
+    }
+    symlinks = {
+        "build/bin/libwhisper.so.1": "libwhisper.so.1.9.2",
+        "build/bin/libwhisper.so": "libwhisper.so.1",
+        "build/bin/libggml.so.0": "libggml.so.0.9.0",
+        "build/bin/libggml.so": "libggml.so.0",
+        "build/bin/libggml-base.so.0": "libggml-base.so.0.9.0",
+        "build/bin/libggml-base.so": "libggml-base.so.0",
+        "build/bin/libggml-cpu.so.0": "libggml-cpu.so.0.9.0",
+        "build/bin/libggml-cpu.so": "libggml-cpu.so.0",
+    }
+    with tarfile.open(archive_path, "w:gz") as t:
+        for name, content in files.items():
+            ti = tarfile.TarInfo(name=name)
+            ti.size = len(content)
+            ti.type = tarfile.REGTYPE
+            t.addfile(ti, io.BytesIO(content))
+        for name, linkname in symlinks.items():
+            ti = tarfile.TarInfo(name=name)
+            ti.type = tarfile.SYMTYPE
+            ti.linkname = linkname
+            t.addfile(ti)
+    return files, symlinks
+
+
+def test_whisper_cpp_release_tar_validation_passes(tmp_path, monkeypatch):
+    """Валидация архива с цепочками внутренних симлинков проходит без извлечения."""
+    archive = tmp_path / "release_validate.tar.gz"
+    _create_release_like_tar(archive)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+
+    # Подменяем extractall на заглушку: тест разбора и валидации должен
+    # выполняться всегда, даже если у текущего пользователя нет прав на symlink.
+    monkeypatch.setattr(tarfile.TarFile, "extractall", lambda *a, **kw: None)
+
+    with tarfile.open(archive, "r:gz") as t:
+        whisper_cpp._safe_extract_tar(t, str(bin_dir))
+
+
+def test_whisper_cpp_extracts_release_like_tar(tmp_path):
+    """Архив релиза с 8 цепочечными симлинками успешно распаковывается."""
+    if not _can_create_symlinks(tmp_path):
+        pytest.skip("Создание симлинков требует повышенных привилегий на Windows")
+
+    archive = tmp_path / "release.tar.gz"
+    files, symlinks = _create_release_like_tar(archive)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+
+    with tarfile.open(archive, "r:gz") as t:
+        whisper_cpp._safe_extract_tar(t, str(bin_dir))
+
+    # Все файлы на месте
+    for rel_path in files:
+        target = bin_dir / rel_path
+        assert target.is_file()
+        assert target.read_bytes() == files[rel_path]
+
+    # Все 8 симлинков на месте, читаются и указывают внутрь bin_dir
+    real_bin_dir = os.path.realpath(str(bin_dir))
+    for rel_path, expected_linkname in symlinks.items():
+        link_path = bin_dir / rel_path
+        assert os.path.islink(link_path)
+        assert os.readlink(link_path) == expected_linkname
+        real_link = os.path.realpath(str(link_path))
+        assert real_link == real_bin_dir or real_link.startswith(real_bin_dir + os.sep)
+
+
+def test_whisper_cpp_install_cli_linux_tar(tmp_path, monkeypatch):
+    """install_cli на платформе Linux скачивает и распаковывает release-архив с whisper-cli."""
+    if not _can_create_symlinks(tmp_path):
+        pytest.skip("Создание симлинков требует повышенных привилегий на Windows")
+
+    bin_dir = tmp_path / "bin"
+    archive = tmp_path / "downloaded.tar.gz"
+    _create_release_like_tar(archive)
+    archive_bytes = archive.read_bytes()
+    expected_sha = hashlib.sha256(archive_bytes).hexdigest()
+
+    asset_name = "whisper-bin-ubuntu-x64.tar.gz"
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(whisper_cpp, "BIN_DIR", str(bin_dir))
+    monkeypatch.setitem(whisper_cpp.ASSET_SHA256, asset_name, expected_sha)
+    monkeypatch.delenv("REELSI_WHISPER_CLI", raising=False)
+    monkeypatch.setattr(whisper_cpp.shutil, "which", lambda _name: None)
+
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = archive_bytes
+    monkeypatch.setattr("urllib.request.urlopen", lambda url, timeout=None: mock_resp)
+
+    path = whisper_cpp.install_cli(emit=lambda *a, **kw: None)
+    expected_cli = str(bin_dir / "build" / "bin" / "whisper-cli")
+    assert path == expected_cli
+    assert os.path.isfile(path)
 
 
 def test_whisper_cpp_installs_valid_archive(tmp_path, monkeypatch):

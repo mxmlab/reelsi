@@ -22,6 +22,7 @@ sys.path.insert(0, ROOT)
 from core import styles
 from core import xml2ae
 from core.xml2ae.build import scene_plan
+import test_style_keys_in_ui as watcher  # noqa: E402
 
 
 @pytest.fixture()
@@ -132,25 +133,30 @@ def test_top_line_jsx_generation(xml_subs, tmp_path):
 
 
 def test_top_line_ui_elements():
-    """Элементы интерфейса, JS-функции и CSS-классы для верхней строки."""
+    """Элементы интерфейса, JS-функции и CSS-классы для верхней строки.
+
+    Поля строки заведены в схеме панели (задание JB): id старой разметки (st_topline*)
+    и ручные syncTopLine*Hex/topLineUI из 95-styles.js ушли, их заменили общий обход
+    схемы и одна функция HEX на все цвета. Превью строки (ipvTopLine) не тронуто.
+    """
     html = open(os.path.join(ROOT, "templates", "index.html"), "r", encoding="utf-8").read()
     css = open(os.path.join(ROOT, "static", "app.css"), "r", encoding="utf-8").read()
-    js_styles = open(os.path.join(ROOT, "static", "app", "95-styles.js"), "r", encoding="utf-8").read()
-    js_preview = open(os.path.join(ROOT, "static", "app", "85-inserts-view.js"), "r", encoding="utf-8").read()
+    js_preview = open(os.path.join(ROOT, "static", "app", "85-inserts-view.js"),
+                      "r", encoding="utf-8").read()
+
+    fields = {it.get("key"): it for kind, it in watcher.schema_items()
+              if kind == "field" and it.get("key")}
+    for key in ("top_line_y", "top_line_w", "top_line_th", "top_line_track_op"):
+        assert fields[key]["ctl"] == "num", f"{key}: не величина"
+    for key in ("top_line_from", "top_line_to", "top_line_track_fill"):
+        assert fields[key]["ctl"] == "color", f"{key}: не цвет"
+
+    layer = next(it for kind, it in watcher.schema_items()
+                 if kind == "layer" and it.get("id") == "topline")
+    assert layer.get("toggle") == "top_line", "у слоя «Верхняя строка» пропал тумблер"
+    assert "top_line" in styles.BASE
 
     # HTML
-    assert 'id="st_topline"' in html
-    assert 'id="st_topline_wrap"' in html
-    assert 'id="st_topliney"' in html
-    assert 'id="st_toplinew"' in html
-    assert 'id="st_toplineth"' in html
-    assert 'id="st_toplinetrackop"' in html
-    assert 'id="st_toplinetrackfillcolor"' in html
-    assert 'id="st_toplinetrackfillhex"' in html
-    assert 'id="st_toplinefromcolor"' in html
-    assert 'id="st_toplinefromhex"' in html
-    assert 'id="st_toplinetocolor"' in html
-    assert 'id="st_toplinetohex"' in html
     assert 'id="ipvtopline"' in html
 
     # CSS
@@ -159,8 +165,8 @@ def test_top_line_ui_elements():
     assert ".pvtl_prog" in css
 
     # JS
-    assert "function syncTopLineTrackHex()" in js_styles
-    assert "function syncTopLineFromHex()" in js_styles
-    assert "function syncTopLineToHex()" in js_styles
-    assert "function topLineUI()" in js_styles
+    panel = watcher._panel_js()
+    assert "function stHexChange(" in panel and "function stHexInput(" in panel
+    assert "function topLineUI()" not in watcher._js_text(), (
+        "ручная обвязка topLineUI вернулась — её заменил общий обход схемы")
     assert "function ipvTopLine(" in js_preview

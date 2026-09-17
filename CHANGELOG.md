@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Unreleased
 
 ### Added
+- **Style panel in the spirit of Effect Controls**: the style panel is built from one schema (`core/style_schema.py`: layer → group → field, every key of the base style) served by `/api/style_schema`; rows are compact, groups fold, numbers can be dragged with the mouse, layers and effects have their own toggles, each group has a Reset button, and a dot marks changed values up the tree. The hand-written bindings for about 120 style keys in four places are gone; a guard test keeps the schema and the base style in sync.
+- **Intro fade-out**: intro words fade out over 0.35 s with one style key, `intro_fade`, shared by regular and glitch intro precomps. The former glitch-only keys `intro_fx_fade` and `intro_fx_fade_last` are removed from saved presets when they load, so a custom value there falls back to the new 0.35 s; set `intro_fade` instead. The default After Effects build changed on purpose, and the geometry golden file was updated with it.
+- **Intro dimming**: the style option `intro_shade` with an opacity slider (`intro_shade_op`) adds a blurred dark layer under the intro, above the camera clips; the preview shows the same dimming. Its size follows the composition width (the numbers are measured on 1080 px wide projects) and `intro_scale`.
+- **Subtitles during photo inserts**: the style key `insert_sub_swap` (on by default) moves subtitles away while a rising photo insert is on screen; turn it off to keep them visible.
 - **Feature guide**: `docs/FEATURES.md` and `docs/FEATURES.ru.md` describe every feature step by step: where it is, how to use it, settings, limits and cost.
 - **Glitch glow choice**: yellow intro words with the glitch animation glow with the built-in Gaussian Blur and Glow or with the third-party Deep Glow 2 plugin (⚙ › Tools › After Effects).
 - **Build progress for a multi-clip set**: the AE project build stage shows "N of M", the clip being built and the ETA; built clips are marked "built, waiting for render".
@@ -18,6 +22,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Log file**: the web UI writes a rotating log (`reelsi.log`, or the path in `REELSI_LOG`) with the startup line and the causes of failures that used to be swallowed silently.
 
 ### Changed
+- **Roto failures stop the build**: when roto is on in the style (it is on in the base style) and a chunk gets no mask — out of video memory, a model error, an empty mask, or no PyTorch — the build now fails with "roto was not computed for N of M chunks" or "roto failed" instead of silently producing a project without roto. Computed masks stay cached for the next build; turn roto off in the style to build without it.
+- **Roto mask cache key**: masks are keyed by the normalized path, the nanosecond modification time and the file size, so a camera file overwritten in the same second no longer reuses an old mask. Existing cached masks are recomputed once.
+- **Style defaults in one place**: every fallback value the After Effects build uses for a missing style key now comes from `styles.BASE`; a guard test stops new hard-coded fallbacks.
+- **Style presets**: keys the build no longer reads (`roto_video`, `caption_padx`, `caption_pady`, `intro_fx_fade`, `intro_fx_fade_last`) are removed from saved presets when they load.
+- **Golden files**: the "default build stays byte-identical" rule now states its exception — a deliberate change of the default build updates the golden file in the same commit and is recorded here.
 - **CLA**: removed the internal author note from `docs/CLA.md`; `docs/CLA.md` and `.github/CONTRIBUTING.md` link CLA Assistant, which checks pull requests.
 - **Contributing**: `.github/CONTRIBUTING.md` explains the task codes («задание GZ») found in comments and specs.
 - **Demo**: the README demo is an animated WebP, 3.8 MB instead of the 8.4 MB GIF.
@@ -36,6 +45,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **GigaAM pinned**: the optional GigaAM dependency is installed from a fixed commit.
 
 ### Fixed
+- **whisper.cpp on Linux installs**: the pinned release archive keeps its internal library symlinks (`libwhisper.so -> libwhisper.so.1`), which `whisper-cli` needs to start; the install used to refuse every symlink and never finished. Links pointing outside the folder, absolute links and writes through a link are still refused.
+- **Insert library keeps concurrent edits**: a rescan or a vision description run no longer overwrites "don't suggest", a hand-written description or a just generated (and paid) picture saved while it was running.
+- **Media import**: a folder whose name only starts with the library folder name (`library_backup` next to `library`) is no longer skipped.
+- **Paid video download**: the file is downloaded to a temporary name and kept only when it is complete (Content-Length) and is a video container (MP4/MOV or WebM); an HTML error page with status 200 or a cut-off body no longer becomes the result. Every provider link is tried, and a WebM result keeps the `.webm` extension.
+- **Video status polling**: an HTML page, a JSON list or a read timeout counts as a failed poll instead of crashing; after four in a row the error names the task id and the status URL, so a paid result can still be collected.
+- **Subtitle filter**: live speech containing "корректор" or "редактор субтитров" is kept when it was recognized confidently; credit lines with a name ("Корректор А. Егорова") are still removed.
+- **Custom ASR engines file**: an `asr_engines.json` edited by hand into the wrong shape (`null`, a number, `engines` not a list, non-string fields) no longer breaks the engine list; the problem is logged.
+- **GigaAM failures are visible**: a recognition error on a chunk stops the run with an error instead of turning that speech into an empty line; the temporary wav is unique and removed. Omni subtitles show the tail of the engine's error output.
+- **Image generation no longer hangs**: when the OpenRouter Images API stays silent, the request falls back to chat completions after 40 s (90 s limit, then a clear `img_timeout` error); every image call is written to the AI call log.
+- **AI highlights reach the word list**: a clip whose highlight set is empty reads it from the file, as the build does; re-running "highlights (AI)" resets and reloads the set.
 - **Stop could delete an arbitrary folder**: a `WORK_DIR=` line printed inside a model's answer was trusted as the job's temp folder and removed on Stop; only the engine's own temp folder is accepted now.
 - **Escaping in the interface**: file names and error texts are escaped before they go into HTML, and video history actions pass their keys through `data-*` attributes instead of inline JavaScript.
 - **Saved API key and foreign address**: when the key field holds the mask, the connection check and model list use the saved profile's address and headers, not the ones from the request.

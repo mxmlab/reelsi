@@ -299,8 +299,8 @@ def test_render_job_batch_dispatcher(batch_fixture, tmp_path, monkeypatch):
     monkeypatch.setattr(render.subprocess, "Popen", FakePopen)
 
     jobs = [
-        {"xml": batch_fixture["xml1"], "outdir": outdir, "roto": False},
-        {"xml": batch_fixture["xml2"], "outdir": outdir, "roto": False},
+        {"xml": batch_fixture["xml1"], "outdir": outdir, "roto": False, "style": {"roto": False}},
+        {"xml": batch_fixture["xml2"], "outdir": outdir, "roto": False, "style": {"roto": False}},
     ]
     # api_render_run нормализует набор ДО старта потока (задание HU), поэтому прямой
     # вызов диспетчера получает тот же вид, что в бою, — нормализованный.

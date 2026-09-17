@@ -138,8 +138,10 @@ def test_jsx_несёт_подъём_над_рото(xml_subs, tmp_path):
 
 
 def test_ключ_стиля_есть_в_ручке_ui():
-    """Пятый пункт задания: сторож ключей зелёный — ключ есть в styles.BASE и пишется
-    в CURSTYLE из static/app/*.js (значит, у него есть галка в интерфейсе)."""
+    """Пятый пункт задания: сторож ключей зелёный — ключ есть в styles.BASE и заведён
+    в схеме панели (значит, у него есть галка в интерфейсе; задание JB)."""
     import test_style_keys_in_ui as watcher
     assert "intro_roto_by_pos" in styles.BASE
-    assert "intro_roto_by_pos" in watcher._written_keys(watcher._js_text())
+    field = watcher.schema_field("intro_roto_by_pos")
+    assert field is not None, "ключ есть в BASE, но ручки в схеме нет"
+    assert field["ctl"] == "bool", "intro_roto_by_pos перестал быть галкой"

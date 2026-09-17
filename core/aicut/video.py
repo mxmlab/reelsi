@@ -6,7 +6,7 @@
 пропорций и правил на референсы. Поля в интерфейсе режутся под выбранную модель по
 этой таблице, а video_check ловит несовместимое ДО оплаченного вызова.
 """
-import os, re, json, shutil, subprocess, math
+import os, re, json, shutil, subprocess, math, tempfile
 import urllib.request, urllib.error
 from .config import APP_NAME, APP_REFERER, _profile_dict, apply_profile_headers, load_ai_config, save_ai_config
 from core.umsg import umsg
@@ -815,6 +815,11 @@ def dangling_tags(text, refs):
     return sorted(t for t in used if t.lower() not in {h.lower() for h in have})
 
 
+class _PollBadResponse(Exception):
+    """Ответ опроса статуса не является JSON-объектом (HTML-ошибка 200, список и т.п.)."""
+    pass
+
+
 def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
               emit=console_emit, should_cancel=None, poll_every=5.0, max_wait=1800):
     """Сгенерировать одно видео. Блокирующая (зовётся в фоновом потоке api/videogen.py).
@@ -948,7 +953,16 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
     def _get(url):
         req = http_req(url, headers=headers)
         with urllib.request.urlopen(req, timeout=180) as r:
-            return json.load(r)
+            body = r.read()
+        text = body.decode("utf-8", "replace") if isinstance(body, bytes) else str(body)
+        snippet = re.sub(r"\s+", " ", text).strip()[:120]
+        try:
+            res = json.loads(text)
+        except ValueError:
+            raise _PollBadResponse(snippet or "не JSON")
+        if not isinstance(res, dict):
+            raise _PollBadResponse(snippet or "не dict")
+        return res
 
     try:
         job = _post(base + "/videos", payload)
@@ -1006,6 +1020,18 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
             continue
         except urllib.error.URLError:
             continue                                    # временный сетевой сбой — ещё раз
+        except (_PollBadResponse, TimeoutError, OSError) as e:
+            errs += 1
+            reason = str(e) or e.__class__.__name__
+            if errs >= 4:
+                raise SystemExit(umsg("video_poll_failed",
+                                      f"опрос статуса не удался ({reason}). "
+                                      f"Задача {vid} могла досчитаться и списаться — "
+                                      f"проверь её у провайдера: {poll_url}",
+                                      reason=reason, vid=vid, poll_url=poll_url))
+            emit("  видео: опрос статуса ({reason}) — повтор ({errs}/3)…",
+                 reason=reason, errs=errs)
+            continue
         status = (st.get("status") or "").lower()
         cost = ((st.get("usage") or {}).get("cost")) or cost
         if status in ("completed", "succeeded", "success"):
@@ -1040,28 +1066,64 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
     from urllib.parse import urlparse
     base_host = urlparse(base).netloc.lower()
     tries = []
-    if urls:
-        same = urlparse(urls[0]).netloc.lower() == base_host
-        tries += [(urls[0], False)] + ([(urls[0], True)] if same else [])
+    for u in urls:
+        same = urlparse(u).netloc.lower() == base_host
+        tries += [(u, False)] + ([(u, True)] if same else [])
     if content_ep:
         tries += [(content_ep, True), (content_ep, False)]
     os.makedirs(out_dir, exist_ok=True)
     safe = re.sub(r"[^\w.-]+", "_", (vid or "video"))[:60] or "video"
     # имя файла с моделью: в папке лежат ролики от разных моделей, «seedance_*» врало
     tag = re.sub(r"[^\w.-]+", "-", model.split("/")[-1])[:24] or "video"
-    out_path = os.path.join(out_dir, f"{tag}_{safe}.mp4")
+    out_base = os.path.join(out_dir, f"{tag}_{safe}")
+    out_path = f"{out_base}.mp4"
 
     last = None
     for url, with_auth in tries:
+        tmp_path = None
         try:
             h = apply_profile_headers({"Authorization": headers["Authorization"]} if "Authorization" in headers else {}, prof) if with_auth else {}
             req = http_req(url, headers=h)
-            with urllib.request.urlopen(req, timeout=600) as r, open(out_path, "wb") as f:
-                shutil.copyfileobj(r, f)
-            if os.path.getsize(out_path) > 0:
+            with urllib.request.urlopen(req, timeout=600) as r:
+                fd, tmp_path = tempfile.mkstemp(dir=out_dir, prefix=".dl_", suffix=".part")
+                with os.fdopen(fd, "wb") as f:
+                    shutil.copyfileobj(r, f)
+
+                r_headers = getattr(r, "headers", None) or (r.info() if hasattr(r, "info") else {})
+                ctype = (r_headers.get("Content-Type") or r_headers.get("content-type") or "").strip()
+                ctype_low = ctype.lower()
+                if ctype_low.startswith("text/") or "html" in ctype_low or "json" in ctype_low:
+                    last = f"не видео ({ctype})"
+                    continue
+
+                sz = os.path.getsize(tmp_path)
+                cl_raw = r_headers.get("Content-Length") or r_headers.get("content-length")
+                if cl_raw is not None:
+                    try:
+                        cl = int(cl_raw)
+                    except (ValueError, TypeError):
+                        cl = None
+                    if cl is not None and sz != cl:
+                        last = f"оборвано: {sz} из {cl} байт"
+                        continue
+
+                if sz == 0:
+                    last = "пустой файл"
+                    continue
+
+                with open(tmp_path, "rb") as f:
+                    head = f.read(12)
+                is_mp4 = len(head) >= 8 and head[4:8] in {b"ftyp", b"moov", b"mdat", b"wide", b"free", b"skip"}
+                is_webm = len(head) >= 4 and head[:4] == b"\x1a\x45\xdf\xa3"
+                if not (is_mp4 or is_webm):
+                    last = "не видеофайл"
+                    continue
+
+                out_path = f"{out_base}.webm" if is_webm else f"{out_base}.mp4"
+                os.replace(tmp_path, out_path)
+                tmp_path = None
                 last = None
                 break
-            last = "пустой файл"
         except urllib.error.HTTPError as e:
             last = f"{e.code}"
             if e.code not in (401, 403, 404):            # не про доступ — перебор не поможет
@@ -1069,6 +1131,14 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
         except urllib.error.URLError as e:
             last = str(e)
             break
+        except (TimeoutError, OSError) as e:
+            last = str(e) or e.__class__.__name__
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
     if last is not None:
         # видео СГЕНЕРИРОВАНО и оплачено — не теряем его: отдаём прямую ссылку
         raise SystemExit(umsg("video_download_failed",

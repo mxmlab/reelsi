@@ -141,7 +141,7 @@ def _ui_job(tmp_path):
                                x=0, y=0, sc=100, mw=100, mh=100, sin=0)],
                  intro=[dict(words=["ПЕРВОЕ"], color="white", times=[1.0])],
                  intro_remove=[0, 1], intro_splits=[], intro_mode="word", cams=2,
-                 exposure=0, roto=False, roto_bottom=0.35, style=None)]
+                 exposure=0, roto=False, roto_bottom=0.35, style={"roto": False})]
 
 
 def test_preflight_passes_for_ui_intro_and_inserts(tmp_path, monkeypatch):

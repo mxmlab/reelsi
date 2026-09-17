@@ -396,6 +396,8 @@ async function loadStyles(){let d;
   if(!d.ok){toast(t('Стили не загрузились: ')+(d.error||t('ответ без ok')));uiLog(t('loadStyles(ответ): ')+JSON.stringify(d).slice(0,300));return;}
   try{STYLES=d.styles||{};
     migrateClipStyles();
+    await loadStyleSchema();
+    if(STSCHEMA)renderStylePanel();
     const sel=$('style');const want=STYLESAVED||'base';sel.innerHTML='';
     Object.keys(STYLES).forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=t(STYLES[k].label||k);sel.appendChild(o);});
     if(want==='__custom__')ensureCustomOption();sel.value=(want==='__custom__')?'__custom__':(STYLES[want]?want:'base');onStyleChange();}
@@ -452,13 +454,13 @@ function editStyle(){
   if(key==='__custom__'){if($('st_name'))$('st_name').focus();return;}      // уже кастом — не хватает имени
   if(STYLE_EDITING===key)return;
   const src=STYLES[key];if(!src){toast(t('Нечего править — стиль не выбран'));return;}
-  // Рото — настройка КЛИПА, а не шаблона: запоминаем и возвращаем (иначе сбросится).
-  const rb=val('rotobottom'),ro=$('roto').checked,r1=$('roto_cam1only').checked;
   STYLE_EDITING=key;STYLE_EDIT_ORIG=JSON.parse(JSON.stringify(src));STYLE_TOUCHED=false;
   CURSTYLE=JSON.parse(JSON.stringify(src));
   ensureEditOption(key,src.label||key);
   $('style').value='__edit__';
-  $('roto').checked=ro;$('rotobottom').value=rb;$('roto_cam1only').checked=r1;rotoSync();
+  // Рото — теперь поле СТИЛЯ (задание EX2c), а не настройка клипа: шаблон его и приносит,
+  // fillStyleFields раскладывает по панели вместе с остальными. Прежняя возня с
+  // #roto/#rotobottom (запомнить у клипа и вернуть) канула вместе со старой разметкой.
   if($('st_name'))$('st_name').value=BUILTIN_STYLES[key]?'':key;
   const el=$('st_saved');if(el){el.className='ok';el.textContent='';}
   fillStyleFields();
@@ -478,11 +480,6 @@ async function delStyle(){let name=$('style').value;
   if(d.error){toast(errText(d));return;}
   toast(t('Шаблон «{n}» удалён',{n:t(label)}));uiLog(t('стиль удалён: ')+name);
   STYLESAVED='base';await loadStyles();}
-// Окна разделов панели стиля (задание AC2): не модалки — панель с полями раздела, в
-// предпросмотре живёт в правой колонке рядом с кадром (панель целиком переезжает в
-// вкладку «Стиль»), кадр не затемняется и продолжает играть. Одно окно за раз;
-// закрытие по Esc и клику мимо (кнопка «x» ушла вместе с заголовком, задание CP1).
-const STYLE_PARTS=['text','frame','inserts','layers','sound'];
 const LAYER_DEFS = {
   subs: { title: 'Субтитры', desc: 'Строки субтитров и плашка' },
   intro: { title: 'Интро-текст', desc: 'Крупный акцентный текст' },
@@ -606,24 +603,6 @@ function renderLayerOrderUI(){
   });
 }
 
-function openStylePart(name){
-  STYLE_PARTS.forEach(n=>{const el=$('stylepart_'+n);if(el)el.style.display=(n===name)?'':'none';});
-  const r=document.querySelector('#styleparts input[name=stpart][value="'+name+'"]');
-  if(r)r.checked=true;
-  segUI();
-  if(STYLE_PARTS.indexOf(name)>=0&&$('stylepart_'+name))$('stylepart_'+name).scrollIntoView({block:'nearest',behavior:'smooth'});}
-function closeStylePart(){
-  STYLE_PARTS.forEach(n=>{const el=$('stylepart_'+n);if(el)el.style.display='none';});
-  document.querySelectorAll('#styleparts input[name=stpart]').forEach(r=>r.checked=false);
-  segUI();}
-function stylePartOpen(){return STYLE_PARTS.some(n=>{const el=$('stylepart_'+n);return el&&el.style.display!=='none';});}
-document.addEventListener('keydown',e=>{if(e.key==='Escape'&&stylePartOpen())closeStylePart();});
-document.addEventListener('pointerdown',e=>{
-  if(!stylePartOpen())return;
-  const box=$('stylebox');
-  if(box&&(box.contains(e.target)||(e.target.closest&&e.target.closest('#styleparts'))))return;
-  closeStylePart();});
-function updateHlBoldUI(){const on=$('st_hlbold').checked;const w=$('hlfontwrap');if(w)w.style.display=on?'':'none';}
 // Есть ли на текущем стиле несохранённые правки: в режиме правки шаблона — расхождение
 // CURSTYLE с его снимком до правок; в кастоме — флаг «поля трогали». Задание AC2.
 function styleDirty(){
@@ -678,63 +657,23 @@ async function loadFonts(){try{const d=await (await fetch('/api/fonts')).json();
 function updateHlFontList(){const dl=$('hlfontlist');if(!dl||!FONTS.length)return;const base=(val('st_font')||'').trim();
   const fam=(FONTS.find(f=>f.ps===base)||{}).family;const list=fam?FONTS.filter(f=>f.family===fam):FONTS;
   dl.innerHTML=list.map(f=>'<option value="'+esc(f.ps)+'">'+esc(f.family)+'</option>').join('');}
-function syncHex(){let v=val('st_hlhex').trim();if(v&&v[0]!=='#')v='#'+v;if(/^#[0-9a-fA-F]{6}$/.test(v)){v=v.toUpperCase();$('st_hlcolor').value=v;$('st_hlhex').value=v;stEdit();}}
-function syncSubHex(){let v=val('st_subhex').trim();if(v&&v[0]!=='#')v='#'+v;if(/^#[0-9a-fA-F]{6}$/.test(v)){v=v.toUpperCase();$('st_subcolor').value=v;$('st_subhex').value=v;stEdit();}}
-function syncSubBgHex(){let v=val('st_subbghex').trim();if(v&&v[0]!=='#')v='#'+v;if(/^#[0-9a-fA-F]{6}$/.test(v)){v=v.toUpperCase();$('st_subbgcolor').value=v;$('st_subbghex').value=v;stEdit();}}
-function subBgUI(){const on=$('st_subbg')&&$('st_subbg').checked;const w=$('st_subbg_wrap');if(w)w.style.display=on?'':'none';}
-function syncTopLineTrackHex(){let v=val('st_toplinetrackfillhex').trim();if(v&&v[0]!=='#')v='#'+v;if(/^#[0-9a-fA-F]{6}$/.test(v)){v=v.toUpperCase();$('st_toplinetrackfillcolor').value=v;$('st_toplinetrackfillhex').value=v;stEdit();}}
-function syncTopLineFromHex(){let v=val('st_toplinefromhex').trim();if(v&&v[0]!=='#')v='#'+v;if(/^#[0-9a-fA-F]{6}$/.test(v)){v=v.toUpperCase();$('st_toplinefromcolor').value=v;$('st_toplinefromhex').value=v;stEdit();}}
-function syncTopLineToHex(){let v=val('st_toplinetohex').trim();if(v&&v[0]!=='#')v='#'+v;if(/^#[0-9a-fA-F]{6}$/.test(v)){v=v.toUpperCase();$('st_toplinetocolor').value=v;$('st_toplinetohex').value=v;stEdit();}}
-function topLineUI(){const on=$('st_topline')&&$('st_topline').checked;const w=$('st_topline_wrap');if(w)w.style.display=on?'':'none';}
-function syncCaptionFillHex(){let v=val('st_captionfillhex').trim();if(v&&v[0]!=='#')v='#'+v;if(/^#[0-9a-fA-F]{6}$/.test(v)){v=v.toUpperCase();$('st_captionfillcolor').value=v;$('st_captionfillhex').value=v;stEdit();}}
-function syncCaptionBgHex(){let v=val('st_captionbghex').trim();if(v&&v[0]!=='#')v='#'+v;if(/^#[0-9a-fA-F]{6}$/.test(v)){v=v.toUpperCase();$('st_captionbgcolor').value=v;$('st_captionbghex').value=v;stEdit();}}
-function captionUI(){const on=$('st_caption')&&$('st_caption').checked;const w=$('st_caption_wrap');if(w)w.style.display=on?'':'none';captionBgUI();}
-function captionBgUI(){const on=$('st_caption')&&$('st_caption').checked&&$('st_captionbg')&&$('st_captionbg').checked;const w=$('st_captionbg_wrap');if(w)w.style.display=on?'':'none';}
-function syncHl3Hex(){let v=val('st_hl3hex').trim();if(v&&v[0]!=='#')v='#'+v;if(/^#[0-9a-fA-F]{6}$/.test(v)){v=v.toUpperCase();$('st_hl3color').value=v;$('st_hl3hex').value=v;stEdit();}}
-// Тень ПРЕКОМПА интро (задание B): цвет тени камеры 1/камеры 2 — по образцу syncHl3Hex.
-function syncIcShadow1Hex(){let v=val('st_icshadow1hex').trim();if(v&&v[0]!=='#')v='#'+v;if(/^#[0-9a-fA-F]{6}$/.test(v)){v=v.toUpperCase();$('st_icshadow1color').value=v;$('st_icshadow1hex').value=v;stEdit();}}
-function syncIcShadow2Hex(){let v=val('st_icshadow2hex').trim();if(v&&v[0]!=='#')v='#'+v;if(/^#[0-9a-fA-F]{6}$/.test(v)){v=v.toUpperCase();$('st_icshadow2color').value=v;$('st_icshadow2hex').value=v;stEdit();}}
-// intro_fill/intro_hl_fill — цвета с дефолтом None («как сегодня», задание FC): в
-// отличие от обычных цветов источник истины для CURSTYLE не пикер (он не бывает
-// пустым), а hex-поле — очистка hex-поля возвращает null, как пустой accent_font.
-function syncIntroFillHex(){let v=val('st_introfillhex').trim();if(v&&v[0]!=='#'&&v!=='')v='#'+v;if(v===''){$('st_introfillhex').value='';stEdit();return;}if(/^#[0-9a-fA-F]{6}$/.test(v)){v=v.toUpperCase();$('st_introfillcolor').value=v;$('st_introfillhex').value=v;stEdit();}}
-function syncIntroHlFillHex(){let v=val('st_introhlfillhex').trim();if(v&&v[0]!=='#'&&v!=='')v='#'+v;if(v===''){$('st_introhlfillhex').value='';stEdit();return;}if(/^#[0-9a-fA-F]{6}$/.test(v)){v=v.toUpperCase();$('st_introhlfillcolor').value=v;$('st_introhlfillhex').value=v;stEdit();}}
-function introShadowUI(){const on=$('st_introshadow')&&$('st_introshadow').checked;const w=$('st_introshadow_wrap');if(w)w.style.display=on?'':'none';}
-function rotoSync(){if(!CURSTYLE)CURSTYLE=JSON.parse(JSON.stringify(STYLES.base||{}));CURSTYLE.roto=$('roto').checked;CURSTYLE.roto_bottom=(parseFloat(val('rotobottom'))||0)/100;CURSTYLE.roto_cam1_only=$('roto_cam1only').checked;captureAE();rotoWrapUI();}
-// Настройки рото («Устройство рото», «Низ маски», «Рото только на Камере 1») видны только
-// при включённом «Авто-ротоскопе» (задание FG). Две двери: rotoSync — при клике по галке,
-// fillStyleFields — при загрузке стиля (иначе после F5 обёртка не совпадёт с галкой).
-function rotoWrapUI(){const w=$('rotowrap');if(!w)return;w.style.display=($('roto')&&$('roto').checked)?'':'none';}
-// Сворачиваемые секции окна стиля (задание FG): состояние живёт в localStorage
-// (ключ reelsi_stylesec_<имя>), как reelsi_ins_tab для вкладок окна вставок.
-// Дефолт при первом открытии: «Субтитры» развёрнута, остальные свёрнуты.
-const STYLESEC_DEFAULT={'stsec_subs':true};   // единственная развёрнутая по умолчанию
-function styleSecKey(id){return 'reelsi_stylesec_'+id;}
-function styleSecState(id){
-  try{
-    const v=localStorage.getItem(styleSecKey(id));
-    if(v!==null)return v==='1';
-  }catch(e){}
-  return !!STYLESEC_DEFAULT[id];}
-function styleSecApply(){
-  document.querySelectorAll('#stylebody details.stsec').forEach(d=>{
-    d.open=styleSecState(d.id);
-    d.querySelector('summary').setAttribute('aria-expanded',d.open?'true':'false');
-  });}
-document.addEventListener('DOMContentLoaded',()=>{
-  document.querySelectorAll('#stylebody details.stsec').forEach(d=>{
-    d.addEventListener('toggle',()=>{
-      try{localStorage.setItem(styleSecKey(d.id),d.open?'1':'0');}catch(e){}
-      const s=d.querySelector('summary');if(s)s.setAttribute('aria-expanded',d.open?'true':'false');
-    });
-  });
-  styleSecApply();});
+// Рото — три обычных поля схемы (roto/roto_bottom/roto_cam1_only), поэтому значения
+// берутся из панели общей дверью stReadView, а не из отдельных id старой разметки.
+function rotoSync(){
+  if(!CURSTYLE)CURSTYLE=JSON.parse(JSON.stringify((typeof STSCHEMA!=='undefined'&&STSCHEMA&&STSCHEMA.base)||STYLES.base||{}));
+  if(typeof stReadView==='function'){
+    const r=stReadView('roto');if(r!=null)CURSTYLE.roto=!!r;
+    const b=stReadView('roto_bottom');if(b!=null)CURSTYLE.roto_bottom=b;
+    const c=stReadView('roto_cam1_only');if(c!=null)CURSTYLE.roto_cam1_only=!!c;
+  }
+  captureAE();
+}
 // ---- живые подсказки стиля на превью ----
 // «Низ маски %» (ротоскоп): пока поле крутится, на кадре предпросмотра снизу —
 // полупрозрачная красная маска ровно на столько процентов высоты; перестал
 // крутить или ушёл с поля — маска ушла. Иначе «35%» не говорит, где это по кадру.
 let ROTOMASK_T=0;
-function rotoMaskSync(){const v=parseFloat(val('rotobottom'));rotoMask(isNaN(v)?0:v);
+function rotoMaskSync(pct){const v=(pct!==undefined)?pct:(typeof stReadView==='function'?stReadView('roto_bottom'):NaN);rotoMask(isNaN(v)||v==null?0:v);
   clearTimeout(ROTOMASK_T);ROTOMASK_T=setTimeout(rotoMaskHide,1500);}
 function rotoMaskHide(){clearTimeout(ROTOMASK_T);rotoMask(-1);}
 function rotoMask(pct){const show=pct>=0;
@@ -755,12 +694,15 @@ function styleSubPos(){if(typeof CURSTYLE==='undefined'||!CURSTYLE)return;
   // :not(.plan) — контейнер стопки по плану живёт во весь кадр (см. ipvSubs), и
   // инлайновый bottom обрезал бы ему высоту, а с ней и проценты рядов
   document.querySelectorAll('.pvsub:not(.plan)').forEach(el=>{el.style.bottom=pct+'%';});}
-function reflectStyle(){if(!CURSTYLE)return;if(CURSTYLE.roto!=null)$('roto').checked=!!CURSTYLE.roto;if(CURSTYLE.roto_bottom!=null)$('rotobottom').value=Math.round(CURSTYLE.roto_bottom*100);
-  $('roto_cam1only').checked=(CURSTYLE.roto_cam1_only!==false);
+function reflectStyle(){
+  if(!CURSTYLE)return;
+  // Поля рото панель выставляет сама (они в схеме и уже разложены fillStyleFields);
+  // здесь остаётся только то, чего в схеме нет: режим интро (EXTERNAL) и превью.
   if(CURSTYLE.intro_mode){const el=$('intromode');if(el)el.value=CURSTYLE.intro_mode;}
   styleSubPos();
   applyStyleHlColor();
-  if(typeof aewUpdateCaptionUI==='function')aewUpdateCaptionUI();}
+  if(typeof aewUpdateCaptionUI==='function')aewUpdateCaptionUI();
+}
 function styleFrameDim(){
   const pl=(typeof IPV!=='undefined'&&IPV.plan)||{};
   return {w:pl.w||1080,h:pl.h||1920};
@@ -770,537 +712,6 @@ function pctToPxX(pct){return Math.round(((parseFloat(pct)||0)/100)*styleFrameDi
 function pxToPctY(py){return +(((py||0)/styleFrameDim().h)*100).toFixed(1);}
 function pctToPxY(pct){return Math.round(((parseFloat(pct)||0)/100)*styleFrameDim().h);}
 
-function fillStyleFields(){const s=CURSTYLE||{};
-  $('st_font').value=s.font||'';$('st_hlfont').value=s.hl_font||'';$('st_hlbold').checked=!!s.hl_bold;
-  $('st_suby').value=Math.round((1-(s.sub_y!=null?s.sub_y:0.5964))*100);
-  if($('st_subscale'))$('st_subscale').value=(s.sub_scale!=null?s.sub_scale:100);
-  if($('st_subwords'))$('st_subwords').value=s.sub_words_per_row||1;
-  if($('st_subrows'))$('st_subrows').value=s.sub_rows_max||1;
-  $('st_introfont').value=s.intro_font||'';$('st_introhlfont').value=s.intro_hl_font||'';
-  $('st_accentfont').value=s.accent_font||'';$('st_accentcase').value=s.accent_case||'title';
-  $('st_backfont').value=s.back_font||'';$('st_backcase').value=s.back_case||'lower';
-  if($('st_backstep'))$('st_backstep').value=(s.back_step!=null?s.back_step:0.45);
-  if($('st_backscale'))$('st_backscale').value=(s.back_scale!=null?s.back_scale:0.69);
-  if($('st_backgap'))$('st_backgap').value=(s.back_gap!=null?s.back_gap:4);
-  if($('st_introanchor'))$('st_introanchor').value=s.intro_anchor||'center';
-  if($('st_introanchor2'))$('st_introanchor2').value=s.intro_anchor2||'center';
-  if($('st_introrotopos'))$('st_introrotopos').checked=!!s.intro_roto_by_pos;
-  if($('st_introfade'))$('st_introfade').value=(s.intro_fade!=null?s.intro_fade:0.35);
-  if($('st_introfxholdadd'))$('st_introfxholdadd').value=(s.intro_fx_hold_add!=null?s.intro_fx_hold_add:0.3);
-  // затемнение под интро (задание IL): галка + непрозрачность слоя
-  if($('st_introshade'))$('st_introshade').checked=!!s.intro_shade;
-  if($('st_introshadeop'))$('st_introshadeop').value=(s.intro_shade_op!=null?s.intro_shade_op:100);
-  $('st_hlcolor').value=rgb2hex(s.hl_fill);$('st_hlhex').value=rgb2hex(s.hl_fill).toUpperCase();
-  $('st_subcolor').value=rgb2hex(s.sub_fill||[1,1,1]);$('st_subhex').value=rgb2hex(s.sub_fill||[1,1,1]).toUpperCase();
-  $('st_subcase').value=s.sub_case||'upper';
-  $('st_subbg').checked=!!s.sub_bg;
-  $('st_subbgcolor').value=rgb2hex(s.sub_bg_fill||[1,1,1]);$('st_subbghex').value=rgb2hex(s.sub_bg_fill||[1,1,1]).toUpperCase();
-  $('st_subbgop').value=(s.sub_bg_op!=null?s.sub_bg_op:72);
-  $('st_subbgh').value=(s.sub_bg_h!=null?s.sub_bg_h:160);
-  $('st_subbground').value=(s.sub_bg_round!=null?s.sub_bg_round:78);
-  $('st_subbgpad').value=(s.sub_bg_pad!=null?s.sub_bg_pad:18);
-  if($('st_subbgpadmin'))$('st_subbgpadmin').value=(s.sub_bg_padmin!=null?s.sub_bg_padmin:70);
-  if($('st_subbganim'))$('st_subbganim').value=(s.sub_bg_anim!=null?s.sub_bg_anim:0.22);
-  $('st_subbgdy').value=(s.sub_bg_dy!=null?s.sub_bg_dy:0);
-  subBgUI();
-  $('st_caption').checked=!!s.caption;
-  $('st_captionfont').value=s.caption_font||'SFPro-Bold';
-  $('st_captionsize').value=(s.caption_size!=null?s.caption_size:26);
-  if($('st_captioncase'))$('st_captioncase').value=s.caption_case||'upper';
-  $('st_captionfillcolor').value=rgb2hex(s.caption_fill||[1,1,1]);
-  $('st_captionfillhex').value=rgb2hex(s.caption_fill||[1,1,1]).toUpperCase();
-  $('st_captionx').value=(s.caption_x!=null?s.caption_x:55.5);
-  $('st_captiony').value=(s.caption_y!=null?s.caption_y:228);
-  $('st_captionbg').checked=(s.caption_bg!==false);
-  $('st_captionbgcolor').value=rgb2hex(s.caption_bg_fill||[0.345,0.345,0.345]);
-  $('st_captionbghex').value=rgb2hex(s.caption_bg_fill||[0.345,0.345,0.345]).toUpperCase();
-  $('st_captionbgop').value=(s.caption_bg_op!=null?s.caption_bg_op:45);
-  $('st_captionbground').value=(s.caption_bg_round!=null?s.caption_bg_round:68);
-  if($('st_captionkx'))$('st_captionkx').value=(s.caption_kx!=null?s.caption_kx:1.718);
-  if($('st_captionky'))$('st_captionky').value=(s.caption_ky!=null?s.caption_ky:2.484);
-  captionUI();
-  $('st_musicdb').value=(s.music_db!=null?s.music_db:-20);$('st_voicedb').value=(s.voice_db!=null?s.voice_db:0);
-  syncDbSliders();
-  $('st_introsfx').checked=(s.intro_riser!==false);
-  if($('st_audiofades'))$('st_audiofades').checked=(s.audio_fades!==false);
-  if($('st_riserfile'))$('st_riserfile').value=s.intro_riser_file||'';
-  if($('st_poplead'))$('st_poplead').value=(s.pop_lead!=null?s.pop_lead:4);
-  if($('st_popdb'))$('st_popdb').value=(s.pop_db!=null?s.pop_db:0);
-  if($('st_glitchdb'))$('st_glitchdb').value=(s.glitch_db!=null?s.glitch_db:0);
-  const dshow=(s.disclaimer!=='');  $('st_disc_show').checked=dshow;$('st_disc_text').value=(dshow&&s.disclaimer)?s.disclaimer:'';discUI();
-  $('st_disc_end').checked=!!s.disclaimer_end;
-  if($('st_discgap'))$('st_discgap').value=(s.disc_gap!=null?s.disc_gap:'');
-  $('st_startblur').value=(s.start_blur!=null?s.start_blur:0);$('st_startblurdur').value=(s.start_blur_dur!=null?s.start_blur_dur:0.52);
-  $('st_trans').value=s.transition||'';$('st_transsfx').value=s.transition_sfx||'';$('st_pop').value=s.pop||'';
-  if($('st_glitch'))$('st_glitch').value=s.glitch||'';
-  $('st_rotodev').value=s.roto_device||'';$('st_insstyle').value=s.insert_style||'auto';
-  $('st_insfx').value=s.insert_fx||'card';
-  if($('st_insanim'))$('st_insanim').value=s.insert_anim||'zoom';
-  $('st_insc1on2x').value=pxToPctX(s.insert_c1on2_x!=null?s.insert_c1on2_x:0);$('st_insc1on2y').value=pxToPctY(s.insert_c1on2_y!=null?s.insert_c1on2_y:0);
-  $('st_insc1x').value=pxToPctX(s.insert_c1_x!=null?s.insert_c1_x:0);$('st_insc1y').value=pxToPctY(s.insert_c1_y!=null?s.insert_c1_y:0);
-  insC1On2UI();
-  $('st_snapcut').checked=(s.insert_snap_cut!==false);
-  $('st_subswap').checked=(s.insert_sub_swap!==false);
-  renderLayerOrderUI();
-  $('st_cam1zoom').value=s.cam1_zoom||'pulse';
-  $('st_cam1zoomstart').checked=(s.cam1_zoom_start!==false);
-  if($('st_cam1zoombig'))$('st_cam1zoombig').value=(s.cam1_zoom_big!=null?s.cam1_zoom_big:182);
-  if($('st_cam1zoomlo'))$('st_cam1zoomlo').value=(s.cam1_zoom_lo!=null?s.cam1_zoom_lo:112);
-  if($('st_cam1zoomhi'))$('st_cam1zoomhi').value=(s.cam1_zoom_hi!=null?s.cam1_zoom_hi:140);
-  $('st_topline').checked=!!s.top_line;
-  $('st_topliney').value=(s.top_line_y!=null?s.top_line_y:162);
-  $('st_toplinew').value=(s.top_line_w!=null?s.top_line_w:969);
-  $('st_toplineth').value=(s.top_line_th!=null?s.top_line_th:12.5);
-  $('st_toplinetrackop').value=(s.top_line_track_op!=null?s.top_line_track_op:16);
-  $('st_toplinetrackfillcolor').value=rgb2hex(s.top_line_track_fill||[1,1,1]);
-  $('st_toplinetrackfillhex').value=rgb2hex(s.top_line_track_fill||[1,1,1]).toUpperCase();
-  $('st_toplinefromcolor').value=rgb2hex(s.top_line_from||[0.984,1,0.541]);
-  $('st_toplinefromhex').value=rgb2hex(s.top_line_from||[0.984,1,0.541]).toUpperCase();
-  $('st_toplinetocolor').value=rgb2hex(s.top_line_to||[1,0.698,0.988]);
-  $('st_toplinetohex').value=rgb2hex(s.top_line_to||[1,0.698,0.988]).toUpperCase();
-  topLineUI();
-  $('st_driftlo').value=(s.cam1_drift_lo!=null?s.cam1_drift_lo:100);$('st_drifthi').value=(s.cam1_drift_hi!=null?s.cam1_drift_hi:160);
-  $('st_cam1fit').value=(s.cam1_fit!=null?s.cam1_fit:100);
-  $('st_introscale').value=(s.intro_scale!=null?s.intro_scale:100);
-  // ползунки «% кадра»: значение в стиле хранится в px, ползунок показывает долю кадра
-  // (задание Q). H берём из плана сцены, вне превью — стандартный вертикальный кадр.
-  const H=(typeof IPV!=='undefined'&&IPV.plan&&IPV.plan.h)||1920;
-  $('st_introy').value=Math.round(((s.intro_y!=null?s.intro_y:0)/H)*100);
-  $('st_introy2').value=Math.round(((s.intro_y2!=null?s.intro_y2:0)/H)*100);
-  if($('st_introx'))$('st_introx').value=pxToPctX(s.intro_x!=null?s.intro_x:0);
-  $('st_insc2y').value=Math.round(((s.insert_c2_y!=null?s.insert_c2_y:0.172))*1000)/10;
-  if($('st_insc2x'))$('st_insc2x').value=Math.round(((s.insert_c2_x!=null?s.insert_c2_x:0.5))*1000)/10;
-  // Класть сюда px НЕЛЬЗЯ: ползунок ограничен -50..100 (% кадра), и intro_y=799
-  // прижимался к 100, а следующая же правка любого поля читала эти 100 обратно и
-  // записывала в стиль 1920 px. Стиль портился от одного открытия окна.
-  $('st_introy').value=Math.max(-50,Math.min(100,$('st_introy').value));
-  $('st_introy2').value=Math.max(-50,Math.min(100,$('st_introy2').value));
-  $('st_introglow').value=(s.intro_glow!=null?s.intro_glow:1);
-  $('st_hl3color').value=rgb2hex(s.hl_fill3||[0.6863,0.1216,0.1216]);$('st_hl3hex').value=rgb2hex(s.hl_fill3||[0.6863,0.1216,0.1216]).toUpperCase();
-  $('st_introfillcolor').value=rgb2hex(s.intro_fill||[1,1,1]);$('st_introfillhex').value=s.intro_fill?rgb2hex(s.intro_fill).toUpperCase():'';
-  $('st_introhlfillcolor').value=rgb2hex(s.intro_hl_fill||s.hl_fill||[1,0.918,0]);$('st_introhlfillhex').value=s.intro_hl_fill?rgb2hex(s.intro_hl_fill).toUpperCase():'';
-  $('st_introshadow').checked=!!s.intro_shadow;
-  $('st_introshadowop').value=(s.intro_shadow_op!=null?s.intro_shadow_op:116);
-  $('st_introshadowdir').value=(s.intro_shadow_dir!=null?s.intro_shadow_dir:16);
-  $('st_introshadowdist').value=(s.intro_shadow_dist!=null?s.intro_shadow_dist:6.8);
-  $('st_introshadowsoft').value=(s.intro_shadow_soft!=null?s.intro_shadow_soft:34);
-  $('st_backshadowop').value=(s.back_shadow_op!=null?s.back_shadow_op:131);
-  $('st_backshadowsoft').value=(s.back_shadow_soft!=null?s.back_shadow_soft:38);
-  // Тень ПРЕКОМПА интро (задание B): своя у камеры 1 и камеры 2 — цвет + непрозрачность
-  $('st_icshadow1color').value=rgb2hex(s.intro_comp_shadow_fill||[1,1,1]);$('st_icshadow1hex').value=rgb2hex(s.intro_comp_shadow_fill||[1,1,1]).toUpperCase();
-  $('st_icshadow1op').value=(s.intro_comp_shadow_op!=null?s.intro_comp_shadow_op:68);
-  $('st_icshadow2color').value=rgb2hex(s.intro_comp_shadow2_fill||[1,1,1]);$('st_icshadow2hex').value=rgb2hex(s.intro_comp_shadow2_fill||[1,1,1]).toUpperCase();
-  $('st_icshadow2op').value=(s.intro_comp_shadow2_op!=null?s.intro_comp_shadow2_op:68);
-  introShadowUI();
-  const dw=$('driftwrap');if(dw)dw.style.display=((s.cam1_zoom||'pulse')==='drift')?'':'none';
-  const zsw=$('cam1zoomstartwrap');if(zsw)zsw.style.display=((s.cam1_zoom||'pulse')==='none')?'none':'';
-  // Первый наезд (cam1_zoom_big) используется только в pulse и drift; в jump его нет
-  // (см. xml2ae/build.py) — показываем по тому же правилу, что у driftwrap.
-  const zbw=$('zoombigwrap');if(zbw)zbw.style.display=((s.cam1_zoom||'pulse')==='jump'||(s.cam1_zoom||'pulse')==='none')?'none':'';
-  // Возвраты (cam1_zoom_lo/hi) работают в pulse и jump; в drift свои границы дрейфа
-  const zrw=$('zoomretwrap');if(zrw)zrw.style.display=((s.cam1_zoom||'pulse')==='drift'||(s.cam1_zoom||'pulse')==='none')?'none':'';
-  updateHlFontList();updateHlBoldUI();reflectStyle();rotoWrapUI();styleSecApply();
-  if(typeof syncSldnums==='function')syncSldnums();
-  if(typeof syncSubTabUI==='function')syncSubTabUI();
-  applyStyleHlColor();
-  updateStyleDiffDots();}
-function updateStyleDiffDots(){
-  const s=CURSTYLE||{};
-  let orig=STYLE_EDIT_ORIG;
-  if(!orig){
-    const k=STYLE_EDITING||val('style');
-    orig=(k&&k!=='__custom__'&&k!=='__edit__'&&STYLES[k])?STYLES[k]:(STYLES.base||{});
-  }
-  const H=(typeof IPV!=='undefined'&&IPV.plan&&IPV.plan.h)||1920;
-
-  // text tab diffs
-  const d_font=(s.font||'SFPro-CondensedSemibold')!==(orig.font||'SFPro-CondensedSemibold');
-  const d_hlcolor=rgb2hex(s.hl_fill||[1,0.918,0])!==rgb2hex(orig.hl_fill||[1,0.918,0]);
-  const d_hlbold=(!!s.hl_bold)!==(!!orig.hl_bold);
-  const d_subcolor=rgb2hex(s.sub_fill||[1,1,1])!==rgb2hex(orig.sub_fill||[1,1,1]);
-  const d_subcase=(s.sub_case||'upper')!==(orig.sub_case||'upper');
-  const d_suby=Math.round((1-(s.sub_y!=null?s.sub_y:0.5964))*100)!==Math.round((1-(orig.sub_y!=null?orig.sub_y:0.5964))*100);
-  const d_subscale=(s.sub_scale!=null?s.sub_scale:100)!==(orig.sub_scale!=null?orig.sub_scale:100);
-  const d_subwords=(s.sub_words_per_row||1)!==(orig.sub_words_per_row||1);
-  const d_subrows=(s.sub_rows_max||1)!==(orig.sub_rows_max||1);
-  const d_subbg=(!!s.sub_bg)!==(!!orig.sub_bg);
-  const d_subbgcolor=rgb2hex(s.sub_bg_fill||[1,1,1])!==rgb2hex(orig.sub_bg_fill||[1,1,1]);
-  const d_subbgop=(s.sub_bg_op!=null?s.sub_bg_op:72)!==(orig.sub_bg_op!=null?orig.sub_bg_op:72);
-  const d_subbgh=(s.sub_bg_h!=null?s.sub_bg_h:160)!==(orig.sub_bg_h!=null?orig.sub_bg_h:160);
-  const d_subbground=(s.sub_bg_round!=null?s.sub_bg_round:78)!==(orig.sub_bg_round!=null?orig.sub_bg_round:78);
-  const d_subbgpad=(s.sub_bg_pad!=null?s.sub_bg_pad:18)!==(orig.sub_bg_pad!=null?orig.sub_bg_pad:18);
-  const d_subbgdy=(s.sub_bg_dy!=null?s.sub_bg_dy:0)!==(orig.sub_bg_dy!=null?orig.sub_bg_dy:0);
-  const d_caption=(!!s.caption)!==(!!orig.caption);
-  const d_captionfont=(s.caption_font||'SFPro-Bold')!==(orig.caption_font||'SFPro-Bold');
-  const d_captionsize=(s.caption_size!=null?s.caption_size:26)!==(orig.caption_size!=null?orig.caption_size:26);
-  const d_captioncase=(s.caption_case||'upper')!==(orig.caption_case||'upper');
-  const d_captionfill=rgb2hex(s.caption_fill||[1,1,1])!==rgb2hex(orig.caption_fill||[1,1,1]);
-  const d_captionx=(s.caption_x!=null?s.caption_x:55.5)!==(orig.caption_x!=null?orig.caption_x:55.5);
-  const d_captiony=(s.caption_y!=null?s.caption_y:228)!==(orig.caption_y!=null?orig.caption_y:228);
-  const d_captionbg=(s.caption_bg!==false)!==(orig.caption_bg!==false);
-  const d_captionbgcolor=rgb2hex(s.caption_bg_fill||[0.345,0.345,0.345])!==rgb2hex(orig.caption_bg_fill||[0.345,0.345,0.345]);
-  const d_captionbgop=(s.caption_bg_op!=null?s.caption_bg_op:45)!==(orig.caption_bg_op!=null?orig.caption_bg_op:45);
-  const d_captionbground=(s.caption_bg_round!=null?s.caption_bg_round:68)!==(orig.caption_bg_round!=null?orig.caption_bg_round:68);
-  const d_captionkx=(s.caption_kx!=null?s.caption_kx:1.718)!==(orig.caption_kx!=null?orig.caption_kx:1.718);
-  const d_captionky=(s.caption_ky!=null?s.caption_ky:2.484)!==(orig.caption_ky!=null?orig.caption_ky:2.484);
-  const d_hlfont=(s.hl_font||'')!==(orig.hl_font||'');
-  const d_introfont=(s.intro_font||'')!==(orig.intro_font||'');
-  const d_introhlfont=(s.intro_hl_font||'')!==(orig.intro_hl_font||'');
-  const d_accentfont=(s.accent_font||'')!==(orig.accent_font||'');
-  const d_accentcase=(s.accent_case||'title')!==(orig.accent_case||'title');
-  const d_backfont=(s.back_font||'')!==(orig.back_font||'');
-  const d_backcase=(s.back_case||'lower')!==(orig.back_case||'lower');
-  const d_backstep=(s.back_step!=null?s.back_step:0.45)!==(orig.back_step!=null?orig.back_step:0.45);
-  const d_backscale=(s.back_scale!=null?s.back_scale:0.69)!==(orig.back_scale!=null?orig.back_scale:0.69);
-  const d_backgap=(s.back_gap!=null?s.back_gap:4)!==(orig.back_gap!=null?orig.back_gap:4);
-  const d_introanchor=(s.intro_anchor||'center')!==(orig.intro_anchor||'center');
-  const d_introanchor2=(s.intro_anchor2||'center')!==(orig.intro_anchor2||'center');
-  const d_introrotopos=(!!s.intro_roto_by_pos)!==(!!orig.intro_roto_by_pos);
-  const d_introfade=(s.intro_fade!=null?s.intro_fade:0.35)!==(orig.intro_fade!=null?orig.intro_fade:0.35);
-  const d_introfxholdadd=(s.intro_fx_hold_add!=null?s.intro_fx_hold_add:0.3)!==(orig.intro_fx_hold_add!=null?orig.intro_fx_hold_add:0.3);
-  const d_introshade=(!!s.intro_shade)!==(!!orig.intro_shade);
-  const d_introshadeop=(s.intro_shade_op!=null?s.intro_shade_op:100)!==(orig.intro_shade_op!=null?orig.intro_shade_op:100);
-  const d_introglow=(s.intro_glow!=null?s.intro_glow:1)!==(orig.intro_glow!=null?orig.intro_glow:1);
-  const d_hl3color=rgb2hex(s.hl_fill3||[0.6863,0.1216,0.1216])!==rgb2hex(orig.hl_fill3||[0.6863,0.1216,0.1216]);
-  const d_introfill=!!s.intro_fill!==!!orig.intro_fill||(!!s.intro_fill&&rgb2hex(s.intro_fill)!==rgb2hex(orig.intro_fill));
-  const d_introhlfill=!!s.intro_hl_fill!==!!orig.intro_hl_fill||(!!s.intro_hl_fill&&rgb2hex(s.intro_hl_fill)!==rgb2hex(orig.intro_hl_fill));
-  const d_introshadow=(!!s.intro_shadow)!==(!!orig.intro_shadow);
-  const d_introshadowop=(s.intro_shadow_op!=null?s.intro_shadow_op:116)!==(orig.intro_shadow_op!=null?orig.intro_shadow_op:116);
-  const d_introshadowdir=(s.intro_shadow_dir!=null?s.intro_shadow_dir:16)!==(orig.intro_shadow_dir!=null?orig.intro_shadow_dir:16);
-  const d_introshadowdist=(s.intro_shadow_dist!=null?s.intro_shadow_dist:6.8)!==(orig.intro_shadow_dist!=null?orig.intro_shadow_dist:6.8);
-  const d_introshadowsoft=(s.intro_shadow_soft!=null?s.intro_shadow_soft:34)!==(orig.intro_shadow_soft!=null?orig.intro_shadow_soft:34);
-  const d_backshadowop=(s.back_shadow_op!=null?s.back_shadow_op:131)!==(orig.back_shadow_op!=null?orig.back_shadow_op:131);
-  const d_backshadowsoft=(s.back_shadow_soft!=null?s.back_shadow_soft:38)!==(orig.back_shadow_soft!=null?orig.back_shadow_soft:38);
-  const d_icshadow1fill=rgb2hex(s.intro_comp_shadow_fill||[1,1,1])!==rgb2hex(orig.intro_comp_shadow_fill||[1,1,1]);
-  const d_icshadow1op=(s.intro_comp_shadow_op!=null?s.intro_comp_shadow_op:68)!==(orig.intro_comp_shadow_op!=null?orig.intro_comp_shadow_op:68);
-  const d_icshadow2fill=rgb2hex(s.intro_comp_shadow2_fill||[1,1,1])!==rgb2hex(orig.intro_comp_shadow2_fill||[1,1,1]);
-  const d_icshadow2op=(s.intro_comp_shadow2_op!=null?s.intro_comp_shadow2_op:68)!==(orig.intro_comp_shadow2_op!=null?orig.intro_comp_shadow2_op:68);
-  const d_introscale=(s.intro_scale!=null?s.intro_scale:100)!==(orig.intro_scale!=null?orig.intro_scale:100);
-  const d_introy=Math.round(((s.intro_y!=null?s.intro_y:0)/H)*100)!==Math.round(((orig.intro_y!=null?orig.intro_y:0)/H)*100);
-  const d_introy2=Math.round(((s.intro_y2!=null?s.intro_y2:0)/H)*100)!==Math.round(((orig.intro_y2!=null?orig.intro_y2:0)/H)*100);
-  const d_introx=pxToPctX(s.intro_x!=null?s.intro_x:0)!==pxToPctX(orig.intro_x!=null?orig.intro_x:0);
-  const d_subbgpadmin=(s.sub_bg_padmin!=null?s.sub_bg_padmin:70)!==(orig.sub_bg_padmin!=null?orig.sub_bg_padmin:70);
-  const d_subbganim=(s.sub_bg_anim!=null?s.sub_bg_anim:0.22)!==(orig.sub_bg_anim!=null?orig.sub_bg_anim:0.22);
-  const d_discshow=(s.disclaimer!=='')!==(orig.disclaimer!=='');
-  const d_discend=(!!s.disclaimer_end)!==(!!orig.disclaimer_end);
-  const d_disctext=((s.disclaimer!=='')?(s.disclaimer||''):'')!==((orig.disclaimer!=='')?(orig.disclaimer||''):'');
-  const d_discgap=(s.disc_gap!=null?s.disc_gap:null)!==(orig.disc_gap!=null?orig.disc_gap:null);
-
-  // frame tab diffs
-  const d_cam1zoom=(s.cam1_zoom||'pulse')!==(orig.cam1_zoom||'pulse');
-  const d_zoombig=(s.cam1_zoom_big!=null?s.cam1_zoom_big:182)!==(orig.cam1_zoom_big!=null?orig.cam1_zoom_big:182);
-  const d_zoomret=(s.cam1_zoom_lo!=null?s.cam1_zoom_lo:112)!==(orig.cam1_zoom_lo!=null?orig.cam1_zoom_lo:112)
-               ||(s.cam1_zoom_hi!=null?s.cam1_zoom_hi:140)!==(orig.cam1_zoom_hi!=null?orig.cam1_zoom_hi:140);
-  const d_cam1zoomstart=(s.cam1_zoom_start!==false)!==(orig.cam1_zoom_start!==false);
-  const d_topline=(!!s.top_line)!==(!!orig.top_line);
-  const d_topliney=(s.top_line_y!=null?s.top_line_y:162)!==(orig.top_line_y!=null?orig.top_line_y:162);
-  const d_toplinew=(s.top_line_w!=null?s.top_line_w:969)!==(orig.top_line_w!=null?orig.top_line_w:969);
-  const d_toplineth=(s.top_line_th!=null?s.top_line_th:12.5)!==(orig.top_line_th!=null?orig.top_line_th:12.5);
-  const d_toplinetrackop=(s.top_line_track_op!=null?s.top_line_track_op:16)!==(orig.top_line_track_op!=null?orig.top_line_track_op:16);
-  const d_toplinetrackfill=rgb2hex(s.top_line_track_fill||[1,1,1])!==rgb2hex(orig.top_line_track_fill||[1,1,1]);
-  const d_toplinefrom=rgb2hex(s.top_line_from||[0.984,1,0.541])!==rgb2hex(orig.top_line_from||[0.984,1,0.541]);
-  const d_toplineto=rgb2hex(s.top_line_to||[1,0.698,0.988])!==rgb2hex(orig.top_line_to||[1,0.698,0.988]);
-  const d_pickzoom=(s.cam1_zoom_cx!=null?s.cam1_zoom_cx:0.5)!==(orig.cam1_zoom_cx!=null?orig.cam1_zoom_cx:0.5)
-                 ||(s.cam1_zoom_cy!=null?s.cam1_zoom_cy:0.5)!==(orig.cam1_zoom_cy!=null?orig.cam1_zoom_cy:0.5);
-  const d_drift=(s.cam1_drift_lo!=null?s.cam1_drift_lo:100)!==(orig.cam1_drift_lo!=null?orig.cam1_drift_lo:100)
-             ||(s.cam1_drift_hi!=null?s.cam1_drift_hi:160)!==(orig.cam1_drift_hi!=null?orig.cam1_drift_hi:160);
-  const d_cam1fit=(s.cam1_fit!=null?s.cam1_fit:100)!==(orig.cam1_fit!=null?orig.cam1_fit:100);
-  const d_startblur=(s.start_blur!=null?s.start_blur:0)!==(orig.start_blur!=null?orig.start_blur:0);
-  const d_startblurdur=(s.start_blur_dur!=null?s.start_blur_dur:0.52)!==(orig.start_blur_dur!=null?orig.start_blur_dur:0.52);
-
-  // inserts tab diffs
-  const d_insstyle=(s.insert_style||'auto')!==(orig.insert_style||'auto');
-  const d_insfx=(s.insert_fx||'card')!==(orig.insert_fx||'card');
-  const d_insanim=(s.insert_anim||'zoom')!==(orig.insert_anim||'zoom');
-  const d_insc1on2=pxToPctX(s.insert_c1on2_x!=null?s.insert_c1on2_x:0)!==pxToPctX(orig.insert_c1on2_x!=null?orig.insert_c1on2_x:0)
-                ||pxToPctY(s.insert_c1on2_y!=null?s.insert_c1on2_y:0)!==pxToPctY(orig.insert_c1on2_y!=null?orig.insert_c1on2_y:0);
-  const d_rotodev=(s.roto_device||'')!==(orig.roto_device||'');
-  const d_snapcut=(s.insert_snap_cut!==false)!==(orig.insert_snap_cut!==false);
-  const d_subswap=(s.insert_sub_swap!==false)!==(orig.insert_sub_swap!==false);
-  const d_insc2y=Math.round((s.insert_c2_y!=null?s.insert_c2_y:0.172)*1000)/10!==Math.round((orig.insert_c2_y!=null?orig.insert_c2_y:0.172)*1000)/10;
-  const d_insc2x=Math.round((s.insert_c2_x!=null?s.insert_c2_x:0.5)*1000)/10!==Math.round((orig.insert_c2_x!=null?orig.insert_c2_x:0.5)*1000)/10;
-  const d_insc1=pxToPctX(s.insert_c1_x!=null?s.insert_c1_x:0)!==pxToPctX(orig.insert_c1_x!=null?orig.insert_c1_x:0)
-             ||pxToPctY(s.insert_c1_y!=null?s.insert_c1_y:0)!==pxToPctY(orig.insert_c1_y!=null?orig.insert_c1_y:0);
-
-  // layers tab diffs (задание FM)
-  const d_layer_order=JSON.stringify(s.layer_order||DEFAULT_LAYER_ORDER)!==JSON.stringify(orig.layer_order||DEFAULT_LAYER_ORDER);
-
-  // sound tab diffs
-  const d_musicdb=(s.music_db!=null?s.music_db:-20)!==(orig.music_db!=null?orig.music_db:-20);
-  const d_voicedb=(s.voice_db!=null?s.voice_db:0)!==(orig.voice_db!=null?orig.voice_db:0);
-  const d_introsfx=(s.intro_riser!==false)!==(orig.intro_riser!==false);
-  const d_audiofades=(s.audio_fades!==false)!==(orig.audio_fades!==false);
-  const d_poplead=(s.pop_lead!=null?s.pop_lead:4)!==(orig.pop_lead!=null?orig.pop_lead:4);
-  const d_popdb=(s.pop_db!=null?s.pop_db:0)!==(orig.pop_db!=null?orig.pop_db:0);
-  const d_glitchdb=(s.glitch_db!=null?s.glitch_db:0)!==(orig.glitch_db!=null?orig.glitch_db:0);
-  const d_riserfile=(s.intro_riser_file||'')!==(orig.intro_riser_file||'');
-  const d_trans=(s.transition||'')!==(orig.transition||'');
-  const d_transsfx=(s.transition_sfx||'')!==(orig.transition_sfx||'');
-  const d_pop=(s.pop||'')!==(orig.pop||'');
-  const d_glitch=(s.glitch||'')!==(orig.glitch||'');
-
-  const setDot=(el,diff)=>{if(el)el.classList.toggle('st-changed',!!diff);};
-  const setParentDot=(id,diff)=>{const el=$(id);if(el){const p=el.closest('.stylegrid > div')||el.closest('.stylemats > div')||el.closest('.stylepart > div')||el.parentElement;if(p)p.classList.toggle('st-changed',!!diff);}};
-
-  setParentDot('st_font', d_font);
-  setParentDot('st_hlcolor', d_hlcolor);
-  setDot($('st_hlbold')&&$('st_hlbold').closest('label'), d_hlbold);
-  setParentDot('st_subcolor', d_subcolor);
-  setParentDot('st_subcase', d_subcase);
-  setParentDot('st_suby', d_suby);
-  setParentDot('st_subscale', d_subscale);
-  setParentDot('st_subwords', d_subwords);
-  setParentDot('st_subrows', d_subrows);
-  setDot($('st_subbg')&&$('st_subbg').closest('label'), d_subbg);
-  setParentDot('st_subbgcolor', d_subbgcolor);
-  setParentDot('st_subbgop', d_subbgop);
-  setParentDot('st_subbgh', d_subbgh);
-  setParentDot('st_subbground', d_subbground);
-  setParentDot('st_subbgpad', d_subbgpad);
-  setParentDot('st_subbgdy', d_subbgdy);
-  setDot($('st_caption')&&$('st_caption').closest('label'), d_caption);
-  setParentDot('st_captionfont', d_captionfont);
-  setParentDot('st_captionsize', d_captionsize);
-  setParentDot('st_captioncase', d_captioncase);
-  setParentDot('st_captionfillcolor', d_captionfill);
-  setParentDot('st_captionx', d_captionx);
-  setParentDot('st_captiony', d_captiony);
-  setDot($('st_captionbg')&&$('st_captionbg').closest('label'), d_captionbg);
-  setParentDot('st_captionbgcolor', d_captionbgcolor);
-  setParentDot('st_captionbgop', d_captionbgop);
-  setParentDot('st_captionbground', d_captionbground);
-  setParentDot('st_captionkx', d_captionkx);
-  setParentDot('st_captionky', d_captionky);
-  setParentDot('st_hlfont', d_hlfont);
-  setParentDot('st_introfont', d_introfont);
-  setParentDot('st_introhlfont', d_introhlfont);
-  setParentDot('st_accentfont', d_accentfont);
-  setParentDot('st_accentcase', d_accentcase);
-  setParentDot('st_backfont', d_backfont);
-  setParentDot('st_backcase', d_backcase);
-  setParentDot('st_backstep', d_backstep);
-  setParentDot('st_backscale', d_backscale);
-  setParentDot('st_backgap', d_backgap);
-  setParentDot('st_introanchor', d_introanchor);
-  setParentDot('st_introanchor2', d_introanchor2);
-  setDot($('st_introrotopos')&&$('st_introrotopos').closest('label'), d_introrotopos);
-  setParentDot('st_introfade', d_introfade);
-  setParentDot('st_introfxholdadd', d_introfxholdadd);
-  setDot($('st_introshade')&&$('st_introshade').closest('label'), d_introshade);
-  setParentDot('st_introshadeop', d_introshadeop);
-  setParentDot('st_introglow', d_introglow);
-  setParentDot('st_hl3color', d_hl3color);
-  setParentDot('st_introfillcolor', d_introfill);
-  setParentDot('st_introhlfillcolor', d_introhlfill);
-  setDot($('st_introshadow')&&$('st_introshadow').closest('label'), d_introshadow);
-  setParentDot('st_introshadowop', d_introshadowop);
-  setParentDot('st_introshadowdir', d_introshadowdir);
-  setParentDot('st_introshadowdist', d_introshadowdist);
-  setParentDot('st_introshadowsoft', d_introshadowsoft);
-  setParentDot('st_backshadowop', d_backshadowop);
-  setParentDot('st_backshadowsoft', d_backshadowsoft);
-  setParentDot('st_icshadow1color', d_icshadow1fill);
-  setParentDot('st_icshadow1op', d_icshadow1op);
-  setParentDot('st_icshadow2color', d_icshadow2fill);
-  setParentDot('st_icshadow2op', d_icshadow2op);
-  setParentDot('st_introscale', d_introscale);
-  setParentDot('st_introy', d_introy);
-  setParentDot('st_introy2', d_introy2);
-  setParentDot('st_introx', d_introx);
-  setParentDot('st_subbgpadmin', d_subbgpadmin);
-  setParentDot('st_subbganim', d_subbganim);
-  setDot($('st_disc_show')&&$('st_disc_show').closest('label'), d_discshow);
-  setDot($('st_disc_end')&&$('st_disc_end').closest('label'), d_discend);
-  setParentDot('st_disc_text', d_disctext);
-  setParentDot('st_discgap', d_discgap);
-
-  setParentDot('st_cam1zoom', d_cam1zoom);
-  setDot($('zoombigwrap'), d_zoombig);
-  setDot($('zoomretwrap'), d_zoomret);
-  setDot($('st_cam1zoomstart')&&$('st_cam1zoomstart').closest('label'), d_cam1zoomstart);
-  setDot($('st_topline')&&$('st_topline').closest('label'), d_topline);
-  setParentDot('st_topliney', d_topliney);
-  setParentDot('st_toplinew', d_toplinew);
-  setParentDot('st_toplineth', d_toplineth);
-  setParentDot('st_toplinetrackop', d_toplinetrackop);
-  setParentDot('st_toplinetrackfillcolor', d_toplinetrackfill);
-  setParentDot('st_toplinefromcolor', d_toplinefrom);
-  setParentDot('st_toplinetocolor', d_toplineto);
-  setDot($('st_pickzoom'), d_pickzoom);
-  setDot($('driftwrap'), d_drift);
-  setParentDot('st_cam1fit', d_cam1fit);
-  setParentDot('st_startblur', d_startblur);
-  setParentDot('st_startblurdur', d_startblurdur);
-
-  setParentDot('st_insstyle', d_insstyle);
-  setParentDot('st_insfx', d_insfx);
-  setParentDot('st_insanim', d_insanim);
-  setDot($('insc1on2wrap'), d_insc1on2);
-  setParentDot('st_rotodev', d_rotodev);
-  setDot($('st_snapcut')&&$('st_snapcut').closest('label'), d_snapcut);
-  setDot($('st_subswap')&&$('st_subswap').closest('label'), d_subswap);
-  setParentDot('st_insc2y', d_insc2y);
-  setParentDot('st_insc2x', d_insc2x);
-  setParentDot('st_insc1y', d_insc1);
-
-  setDot($('st_layer_order_list'), d_layer_order);
-
-  setParentDot('st_musicdb', d_musicdb);
-  setParentDot('st_voicedb', d_voicedb);
-  setDot($('st_introsfx')&&$('st_introsfx').closest('label'), d_introsfx);
-  setDot($('st_audiofades')&&$('st_audiofades').closest('label'), d_audiofades);
-  setParentDot('st_poplead', d_poplead);
-  setParentDot('st_popdb', d_popdb);
-  setParentDot('st_glitchdb', d_glitchdb);
-  setParentDot('st_riserfile', d_riserfile);
-  setParentDot('st_trans', d_trans);
-  setParentDot('st_transsfx', d_transsfx);
-  setParentDot('st_pop', d_pop);
-  setParentDot('st_glitch', d_glitch);
-
-  // Tab segment dots (green dot on tab if any field inside is modified)
-  const hasTextDiff=d_font||d_hlcolor||d_hlbold||d_subcolor||d_subcase||d_suby||d_subscale||d_subwords||d_subrows||d_hlfont||d_introfont||d_introhlfont||d_accentfont||d_accentcase||d_backfont||d_backcase||d_backstep||d_backscale||d_backgap||d_introanchor||d_introanchor2||d_introfade||d_introfxholdadd||d_introshade||d_introshadeop||d_introglow||d_hl3color||d_introfill||d_introhlfill||d_introshadow||d_introshadowop||d_introshadowdir||d_introshadowdist||d_introshadowsoft||d_backshadowop||d_backshadowsoft||d_icshadow1fill||d_icshadow1op||d_icshadow2fill||d_icshadow2op||d_introrotopos||d_introscale||d_introy||d_introy2||d_introx||d_subbgpadmin||d_subbganim||d_discshow||d_discend||d_disctext||d_subbg||d_subbgcolor||d_subbgop||d_subbgh||d_subbground||d_subbgpad||d_subbgdy||d_caption||d_captionfont||d_captionsize||d_captioncase||d_captionfill||d_captionx||d_captiony||d_captionbg||d_captionbgcolor||d_captionbgop||d_captionbground||d_captionkx||d_captionky;
-  const hasFrameDiff=d_cam1zoom||d_zoombig||d_zoomret||d_cam1zoomstart||d_topline||d_topliney||d_toplinew||d_toplineth||d_toplinetrackop||d_toplinetrackfill||d_toplinefrom||d_toplineto||d_pickzoom||d_drift||d_cam1fit||d_startblur||d_startblurdur;
-  const hasInsertsDiff=d_insstyle||d_insfx||d_insanim||d_insc1on2||d_rotodev||d_snapcut||d_insc2y||d_insc2x||d_insc1;
-  const hasLayersDiff=d_layer_order;
-  const hasSoundDiff=d_musicdb||d_voicedb||d_introsfx||d_audiofades||d_poplead||d_popdb||d_glitchdb||d_riserfile||d_trans||d_transsfx||d_pop||d_glitch;
-
-  const tabRadioText=document.querySelector('#styleparts input[value="text"]');
-  if(tabRadioText&&tabRadioText.parentElement)tabRadioText.parentElement.classList.toggle('st-changed',hasTextDiff);
-  const tabRadioFrame=document.querySelector('#styleparts input[value="frame"]');
-  if(tabRadioFrame&&tabRadioFrame.parentElement)tabRadioFrame.parentElement.classList.toggle('st-changed',hasFrameDiff);
-  const tabRadioInserts=document.querySelector('#styleparts input[value="inserts"]');
-  if(tabRadioInserts&&tabRadioInserts.parentElement)tabRadioInserts.parentElement.classList.toggle('st-changed',hasInsertsDiff);
-  const tabRadioLayers=document.querySelector('#styleparts input[value="layers"]');
-  if(tabRadioLayers&&tabRadioLayers.parentElement)tabRadioLayers.parentElement.classList.toggle('st-changed',hasLayersDiff);
-  const tabRadioSound=document.querySelector('#styleparts input[value="sound"]');
-  if(tabRadioSound&&tabRadioSound.parentElement)tabRadioSound.parentElement.classList.toggle('st-changed',hasSoundDiff);
-  updateStyleSaveUI();
-}
-function stEdit(){CURSTYLE=CURSTYLE||{};STYLE_TOUCHED=true;const g=id=>val(id);
-  CURSTYLE.font=g('st_font')||'SFPro-CondensedSemibold';CURSTYLE.hl_bold=$('st_hlbold').checked;
-  CURSTYLE.hl_font=CURSTYLE.hl_bold?(g('st_hlfont')||null):null;CURSTYLE.intro_font=g('st_introfont')||null;CURSTYLE.intro_hl_font=g('st_introhlfont')||null;
-  CURSTYLE.accent_font=g('st_accentfont')||null;CURSTYLE.accent_case=g('st_accentcase')||'title';
-  CURSTYLE.back_font=g('st_backfont')||null;CURSTYLE.back_case=g('st_backcase')||'lower';
-  let bstep=parseFloat(g('st_backstep'));CURSTYLE.back_step=isNaN(bstep)?0.45:bstep;
-  let bscale=parseFloat(g('st_backscale'));CURSTYLE.back_scale=isNaN(bscale)?0.69:bscale;
-  let bgap=parseFloat(g('st_backgap'));CURSTYLE.back_gap=isNaN(bgap)?4:bgap;
-  CURSTYLE.intro_anchor=g('st_introanchor')||'center';
-  CURSTYLE.intro_anchor2=g('st_introanchor2')||'center';
-  CURSTYLE.intro_roto_by_pos=$('st_introrotopos')&&$('st_introrotopos').checked;
-  let fade=parseFloat(g('st_introfade'));CURSTYLE.intro_fade=isNaN(fade)?0.35:fade;
-  let fxholdadd=parseFloat(g('st_introfxholdadd'));CURSTYLE.intro_fx_hold_add=isNaN(fxholdadd)?0.3:fxholdadd;
-  // затемнение под интро (задание IL): галка и непрозрачность слоя-фигуры
-  CURSTYLE.intro_shade=$('st_introshade')&&$('st_introshade').checked;
-  let ishop=parseFloat(g('st_introshadeop'));CURSTYLE.intro_shade_op=isNaN(ishop)?100:ishop;
-  CURSTYLE.hl_fill=hex2rgb(g('st_hlcolor'));let mdb=parseFloat(g('st_musicdb'));CURSTYLE.music_db=isNaN(mdb)?-20:mdb;
-  CURSTYLE.sub_fill=hex2rgb(g('st_subcolor'));CURSTYLE.sub_case=g('st_subcase')||'upper';
-  let sy=parseFloat(g('st_suby'));CURSTYLE.sub_y=isNaN(sy)?0.5964:Math.min(0.98,Math.max(0.05,1-sy/100));
-  let ssc=parseFloat(g('st_subscale'));CURSTYLE.sub_scale=isNaN(ssc)||ssc<=0?100:ssc;
-  let sw=parseInt(g('st_subwords'));CURSTYLE.sub_words_per_row=isNaN(sw)||sw<1?1:sw;
-  let sr=parseInt(g('st_subrows'));CURSTYLE.sub_rows_max=isNaN(sr)||sr<1?1:sr;
-  CURSTYLE.sub_bg=$('st_subbg').checked;
-  CURSTYLE.sub_bg_fill=hex2rgb(g('st_subbgcolor'));
-  let sbgop=parseFloat(g('st_subbgop'));CURSTYLE.sub_bg_op=isNaN(sbgop)?72:sbgop;
-  let sbgh=parseFloat(g('st_subbgh'));CURSTYLE.sub_bg_h=isNaN(sbgh)?160:sbgh;
-  let sbgr=parseFloat(g('st_subbground'));CURSTYLE.sub_bg_round=isNaN(sbgr)?78:sbgr;
-  let sbgpad=parseFloat(g('st_subbgpad'));CURSTYLE.sub_bg_pad=isNaN(sbgpad)?18:sbgpad;
-  let sbgpadmin=parseFloat(g('st_subbgpadmin'));CURSTYLE.sub_bg_padmin=isNaN(sbgpadmin)?70:sbgpadmin;
-  let sbganim=parseFloat(g('st_subbganim'));CURSTYLE.sub_bg_anim=isNaN(sbganim)?0.22:sbganim;
-  let sbgdy=parseFloat(g('st_subbgdy'));CURSTYLE.sub_bg_dy=isNaN(sbgdy)?0:sbgdy;
-  subBgUI();
-  CURSTYLE.caption=$('st_caption')&&$('st_caption').checked;
-  CURSTYLE.caption_font=g('st_captionfont')||'SFPro-Bold';
-  let csz=parseFloat(g('st_captionsize'));CURSTYLE.caption_size=isNaN(csz)?26:csz;
-  CURSTYLE.caption_case=g('st_captioncase')||'upper';
-  CURSTYLE.caption_fill=hex2rgb(g('st_captionfillcolor'));
-  let cx=parseFloat(g('st_captionx'));CURSTYLE.caption_x=isNaN(cx)?55.5:cx;
-  let cy=parseFloat(g('st_captiony'));CURSTYLE.caption_y=isNaN(cy)?228:cy;
-  CURSTYLE.caption_bg=$('st_captionbg')&&$('st_captionbg').checked;
-  CURSTYLE.caption_bg_fill=hex2rgb(g('st_captionbgcolor'));
-  let cbop=parseFloat(g('st_captionbgop'));CURSTYLE.caption_bg_op=isNaN(cbop)?45:cbop;
-  let cbr=parseFloat(g('st_captionbground'));CURSTYLE.caption_bg_round=isNaN(cbr)?68:cbr;
-  let ckx=parseFloat(g('st_captionkx'));CURSTYLE.caption_kx=isNaN(ckx)?1.718:ckx;
-  let cky=parseFloat(g('st_captionky'));CURSTYLE.caption_ky=isNaN(cky)?2.484:cky;
-  captionUI();
-  if(typeof aewUpdateCaptionUI==='function')aewUpdateCaptionUI();
-  let vdb=parseFloat(g('st_voicedb'));CURSTYLE.voice_db=isNaN(vdb)?0:vdb;CURSTYLE.intro_riser=$('st_introsfx').checked;
-  CURSTYLE.audio_fades=$('st_audiofades')&&$('st_audiofades').checked;
-  CURSTYLE.disclaimer=$('st_disc_show').checked?(g('st_disc_text').trim()||null):'';
-  CURSTYLE.disclaimer_end=$('st_disc_end').checked;
-  let dgap=parseFloat(g('st_discgap'));CURSTYLE.disc_gap=isNaN(dgap)?null:dgap;
-  let sb=parseFloat(g('st_startblur'));CURSTYLE.start_blur=isNaN(sb)||sb<=0?0:sb;
-  let sbd=parseFloat(g('st_startblurdur'));CURSTYLE.start_blur_dur=isNaN(sbd)||sbd<=0?0.52:sbd;
-  CURSTYLE.transition=g('st_trans')||null;CURSTYLE.transition_sfx=g('st_transsfx')||null;CURSTYLE.pop=g('st_pop')||null;
-  CURSTYLE.glitch=g('st_glitch')||null;
-  CURSTYLE.intro_riser_file=g('st_riserfile')||null;
-  let pld=parseInt(g('st_poplead'));CURSTYLE.pop_lead=isNaN(pld)||pld<=0?4:pld;
-  let pdb=parseFloat(g('st_popdb'));CURSTYLE.pop_db=isNaN(pdb)?0:pdb;
-  let gldb=parseFloat(g('st_glitchdb'));CURSTYLE.glitch_db=isNaN(gldb)?0:gldb;
-  CURSTYLE.roto_device=g('st_rotodev')||null;CURSTYLE.insert_style=g('st_insstyle')||'auto';
-  CURSTYLE.insert_fx=g('st_insfx')||'card';
-  CURSTYLE.insert_anim=g('st_insanim')||'zoom';
-  let ic2x=parseFloat(g('st_insc1on2x'));CURSTYLE.insert_c1on2_x=isNaN(ic2x)?0:pctToPxX(ic2x);
-  let ic2y=parseFloat(g('st_insc1on2y'));CURSTYLE.insert_c1on2_y=isNaN(ic2y)?0:pctToPxY(ic2y);
-  let ic1x=parseFloat(g('st_insc1x'));CURSTYLE.insert_c1_x=isNaN(ic1x)?0:pctToPxX(ic1x);
-  let ic1y=parseFloat(g('st_insc1y'));CURSTYLE.insert_c1_y=isNaN(ic1y)?0:pctToPxY(ic1y);
-  insC1On2UI();
-  CURSTYLE.insert_snap_cut=$('st_snapcut').checked;
-  CURSTYLE.insert_sub_swap=$('st_subswap').checked;
-  CURSTYLE.layer_order=Array.isArray(CURSTYLE.layer_order)?[...CURSTYLE.layer_order]:[...DEFAULT_LAYER_ORDER];
-  CURSTYLE.cam1_zoom=g('st_cam1zoom')||'pulse';
-  let zb=parseFloat(g('st_cam1zoombig'));CURSTYLE.cam1_zoom_big=isNaN(zb)?182:zb;
-  let zlo=parseFloat(g('st_cam1zoomlo'));CURSTYLE.cam1_zoom_lo=isNaN(zlo)?112:zlo;
-  let zhi=parseFloat(g('st_cam1zoomhi'));CURSTYLE.cam1_zoom_hi=isNaN(zhi)?140:zhi;
-  CURSTYLE.cam1_zoom_start=$('st_cam1zoomstart').checked;
-  CURSTYLE.top_line=$('st_topline')&&$('st_topline').checked;
-  let tly=parseFloat(g('st_topliney'));CURSTYLE.top_line_y=isNaN(tly)?162:tly;
-  let tlw=parseFloat(g('st_toplinew'));CURSTYLE.top_line_w=isNaN(tlw)?969:tlw;
-  let tlth=parseFloat(g('st_toplineth'));CURSTYLE.top_line_th=isNaN(tlth)?12.5:tlth;
-  let tlop=parseFloat(g('st_toplinetrackop'));CURSTYLE.top_line_track_op=isNaN(tlop)?16:tlop;
-  CURSTYLE.top_line_track_fill=hex2rgb(g('st_toplinetrackfillcolor'));
-  CURSTYLE.top_line_from=hex2rgb(g('st_toplinefromcolor'));
-  CURSTYLE.top_line_to=hex2rgb(g('st_toplinetocolor'));
-  topLineUI();
-  let dlo=parseFloat(g('st_driftlo'));CURSTYLE.cam1_drift_lo=isNaN(dlo)?100:dlo;
-  let dhi=parseFloat(g('st_drifthi'));CURSTYLE.cam1_drift_hi=isNaN(dhi)?160:dhi;
-  let cfit=parseFloat(g('st_cam1fit'));CURSTYLE.cam1_fit=(isNaN(cfit)||cfit<=0)?100:cfit;
-  let isc=parseFloat(g('st_introscale'));CURSTYLE.intro_scale=(isNaN(isc)||isc<=0)?100:isc;
-  // ползунки «% кадра» → px в стиле (задание Q): значение живёт в px, ползунок — доля кадра
-  const H2=(typeof IPV!=='undefined'&&IPV.plan&&IPV.plan.h)||1920;
-  let iy=parseFloat(g('st_introy'));CURSTYLE.intro_y=isNaN(iy)?0:Math.round(iy/100*H2);
-  let iy2=parseFloat(g('st_introy2'));CURSTYLE.intro_y2=isNaN(iy2)?0:Math.round(iy2/100*H2);
-  let ix=parseFloat(g('st_introx'));CURSTYLE.intro_x=isNaN(ix)?0:pctToPxX(ix);
-  let ic2p=parseFloat(g('st_insc2y'));CURSTYLE.insert_c2_y=isNaN(ic2p)?0.172:ic2p/100;
-  let ic2xp=parseFloat(g('st_insc2x'));CURSTYLE.insert_c2_x=isNaN(ic2xp)?0.5:ic2xp/100;
-  let ig=parseFloat(g('st_introglow'));CURSTYLE.intro_glow=isNaN(ig)?1:ig;
-  CURSTYLE.hl_fill3=hex2rgb(g('st_hl3color'));
-  CURSTYLE.intro_fill=g('st_introfillhex')?hex2rgb(g('st_introfillhex')):null;
-  CURSTYLE.intro_hl_fill=g('st_introhlfillhex')?hex2rgb(g('st_introhlfillhex')):null;
-  CURSTYLE.intro_shadow=$('st_introshadow')&&$('st_introshadow').checked;introShadowUI();
-  let isop=parseFloat(g('st_introshadowop'));CURSTYLE.intro_shadow_op=isNaN(isop)?116:isop;
-  let isdir=parseFloat(g('st_introshadowdir'));CURSTYLE.intro_shadow_dir=isNaN(isdir)?16:isdir;
-  let isdist=parseFloat(g('st_introshadowdist'));CURSTYLE.intro_shadow_dist=isNaN(isdist)?6.8:isdist;
-  let issoft=parseFloat(g('st_introshadowsoft'));CURSTYLE.intro_shadow_soft=isNaN(issoft)?34:issoft;
-  let bsop=parseFloat(g('st_backshadowop'));CURSTYLE.back_shadow_op=isNaN(bsop)?131:bsop;
-  let bssoft=parseFloat(g('st_backshadowsoft'));CURSTYLE.back_shadow_soft=isNaN(bssoft)?38:bssoft;
-  // Тень ПРЕКОМПА интро (задание B): цвет камеры 1/камеры 2 и непрозрачность 0..255.
-  CURSTYLE.intro_comp_shadow_fill=hex2rgb(g('st_icshadow1color'));
-  let ics1op=parseFloat(g('st_icshadow1op'));CURSTYLE.intro_comp_shadow_op=isNaN(ics1op)?68:ics1op;
-  CURSTYLE.intro_comp_shadow2_fill=hex2rgb(g('st_icshadow2color'));
-  let ics2op=parseFloat(g('st_icshadow2op'));CURSTYLE.intro_comp_shadow2_op=isNaN(ics2op)?68:ics2op;
-  {const dw=$('driftwrap');if(dw)dw.style.display=(CURSTYLE.cam1_zoom==='drift')?'':'none';}
-  {const zsw=$('cam1zoomstartwrap');if(zsw)zsw.style.display=(CURSTYLE.cam1_zoom==='none')?'none':'';}
-  {const zbw=$('zoombigwrap');if(zbw)zbw.style.display=(CURSTYLE.cam1_zoom==='jump'||CURSTYLE.cam1_zoom==='none')?'none':'';}
-  {const zrw=$('zoomretwrap');if(zrw)zrw.style.display=(CURSTYLE.cam1_zoom==='drift'||CURSTYLE.cam1_zoom==='none')?'none':'';}
-  CURSTYLE.roto=$('roto').checked;CURSTYLE.roto_bottom=(parseFloat(val('rotobottom'))||0)/100;CURSTYLE.roto_cam1_only=$('roto_cam1only').checked;CURSTYLE.intro_mode=val('intromode');CURSTYLE.label=CURSTYLE.label||'кастом';styleSubPos();syncDbSliders();applyDbGains();
-  if(typeof syncSubTabUI==='function')syncSubTabUI();
-  applyStyleHlColor();
-  updateStyleDiffDots();
-  captureAE();
-  // «% снизу» и строка в кадре — один источник (задание E): правка поля догоняет предпросмотр
-  // через план (posy считает scene_plan из style.sub_y). ipvPlanFetch сам гасится вне AE-режима.
-  ipvPlanSoon();updateStyleSaveUI();}
 // Ползунки «Музыка, dB» / «Голос, dB» у плеера вставок — ЭТО ЖЕ поля стиля, что
 // st_musicdb/st_voicedb: значение живёт в CURSTYLE, ползунок — ещё один способ его
 // поменять (и наоборот), отдельной переменной у него нет. applyDbGains — чтобы
@@ -1312,12 +723,11 @@ function syncDbSliders(){const s=CURSTYLE||{};
   updateStyleDiffDots();}
 function setStyleDb(which,v){if(!CURSTYLE)CURSTYLE=JSON.parse(JSON.stringify(STYLES.base||{}));
   const db=Math.max(-40,Math.min(6,Math.round((parseFloat(v)||0)*2)/2));
-  if(which==='music'){CURSTYLE.music_db=db;$('st_musicdb').value=db;}
-  else{CURSTYLE.voice_db=db;$('st_voicedb').value=db;}
+  if(which==='music'){CURSTYLE.music_db=db;}
+  else{CURSTYLE.voice_db=db;}
+  if(typeof stRefresh==='function')stRefresh(which==='music'?'music_db':'voice_db');
   syncDbSliders();applyDbGains();
-  updateStyleDiffDots();
   captureAE();}
-function discUI(){const on=$('st_disc_show').checked;const w=$('st_disc_wrap');if(w)w.style.display=on?'':'none';}
 // Точка наезда Камеры 1 прицелом (задание Q, часть 4): кнопка ставит курсор в crosshair
 // над кадром предпросмотра, клик кладёт точку в cam1_zoom_cx/cy (доли кадра), на кадре
 // остаётся маркер-перекрестие. Повторное нажатие кнопки и Esc — отмена. Маркер виден
@@ -1355,14 +765,12 @@ function zoomPickClick(e){const st=$('ipvstage');if(!ZOOM_PICK||!st)return;
   if(!CURSTYLE)CURSTYLE=JSON.parse(JSON.stringify(STYLES.base||{}));
   CURSTYLE.cam1_zoom_cx=cx;CURSTYLE.cam1_zoom_cy=cy;
   zoomPickMark();
-  updateStyleDiffDots();
+  if(typeof stRefresh==='function')stRefresh('cam1_zoom_cx');
+  else updateStyleDiffDots();
   captureAE();ipvPlanSoon();
   zoomPickOff();}
 document.addEventListener('pointerdown',e=>{if(ZOOM_PICK&&e.target&&e.target.closest('#ipvstage'))zoomPickClick(e);},true);
 document.addEventListener('keydown',e=>{if(ZOOM_PICK&&e.key==='Escape')zoomPickOff();});
-// сдвиг «вылета на перебивке» имеет смысл только при принудительном стиле «Кам 1»:
-// на «авто» вставка над перебивкой и так собирается в стиле Кам 2, вылета из-за спины там нет
-function insC1On2UI(){const w=$('insc1on2wrap');if(w)w.style.display=(val('st_insstyle')==='cam1')?'':'none';}
 async function pickInto(id){try{const d=await (await fetch('/api/pickone')).json();if(d.path){$(id).value=d.path;stEdit();
   if(SFX_PREFIX[id])openSfxEdit(id);}}   // заменил звук — сразу настрой (задание AA)
   catch(e){toast(t('Не открылся выбор файла — сервер не ответил'));uiLog(t('pickone: ')+e);}}
@@ -1476,8 +884,9 @@ async function loadASREngines(){
 // Дефолты in=0/out=пусто/at=0/db=0 = сегодняшнее поведение: .jsx не меняется (golden).
 // Волна — с /api/waveform (кэш рядом с файлом, один pps на файл; зум отрисовкой).
 let SFX=null,SFXAUD=null;
-const SFX_PREFIX={st_pop:"pop",st_transsfx:"transition_sfx",st_riserfile:"intro_riser",st_trans:"transition",st_glitch:"glitch"};
-const SFX_ISVIDEO={st_trans:true};
+// SFX_PREFIX/SFX_ISVIDEO объявлены в 94-stylepanel.js и строятся ТАМ из схемы
+// (initSfxMaps): два `let` с одним именем в общем скоупе файлов — это SyntaxError
+// «Identifier 'SFX_PREFIX' has already been declared», и весь этот файл не исполнялся.
 function openSfxEdit(field){
   const path=val(field).trim();if(!path){toast(t("Сначала выбери файл звука"));return;}
   const prefix=SFX_PREFIX[field]||field.replace(/^st_/,"");
@@ -1570,7 +979,7 @@ function sfxSave(){
   if(SFX.out!=null)s[p+"_out"]=+SFX.out.toFixed(3);else delete s[p+"_out"];
   if(SFX.at>1e-9)s[p+"_at"]=+SFX.at.toFixed(3);else delete s[p+"_at"];
   if(SFX.db)s[p+"_db"]=+SFX.db.toFixed(1);else delete s[p+"_db"];
-  if(p==="pop"&&$('st_popdb')){$('st_popdb').value=(s.pop_db!=null?s.pop_db:0);if(typeof syncSldnums==='function')syncSldnums();}
+  if(p==="pop"&&typeof stRefresh==='function')stRefresh('pop_db');
   updateStyleDiffDots();
   captureAE();ipvPlanSoon();}
 function sfxSaveDb(v){SFX.db=parseFloat(v)||0;sfxSave();}

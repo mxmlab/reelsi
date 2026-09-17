@@ -48,7 +48,8 @@ function ipvPlanBody(){
     intro:ir.lines,intro_remove:ir.remove,intro_splits:ir.splits,
     intro_mode:val('intromode')||'word',censor:$('censor')?$('censor').checked:true,
     cams:clipNcams(c),exposure:parseFloat(val('aeexposure'))||0,
-    roto:$('roto')?$('roto').checked:false,roto_bottom:(parseFloat(val('rotobottom'))||0)/100,
+    roto: (CURSTYLE && CURSTYLE.roto != null) ? !!CURSTYLE.roto : (typeof STSCHEMA !== 'undefined' && STSCHEMA && STSCHEMA.base ? !!STSCHEMA.base.roto : false),
+    roto_bottom: (CURSTYLE && CURSTYLE.roto_bottom != null) ? CURSTYLE.roto_bottom : (typeof STSCHEMA !== 'undefined' && STSCHEMA && STSCHEMA.base ? STSCHEMA.base.roto_bottom : 0),
     style:CURSTYLE};}
 let IPVPLAN_T=0;
 function ipvPlanSoon(){clearTimeout(IPVPLAN_T);IPVPLAN_T=setTimeout(ipvPlanFetch,300);}   // правки идут пачкой — рефетчим по затишью
@@ -1709,7 +1710,7 @@ $('ipvsub').addEventListener('pointerdown',e=>{
   const up=ev=>{window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',up);
     const dy=(ev.clientY-st.y0)/el.clientHeight;
     CURSTYLE.sub_y=Math.min(0.98,Math.max(0.05,st.sy+dy));
-    const f=$('st_suby');if(f)f.value=Math.round((1-CURSTYLE.sub_y)*100);
+    if(typeof stRefresh==='function')stRefresh('sub_y');
     styleSubPos();captureAE();ipvPlanSoon();};
   window.addEventListener('pointermove',move);window.addEventListener('pointerup',up);});
 

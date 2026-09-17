@@ -27,6 +27,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 
 from core import xml2ae  # noqa: E402
 from core.xml2ae.layout import ZOOM_BIG  # noqa: E402
+import test_style_keys_in_ui as watcher  # noqa: E402
 
 
 @pytest.fixture()
@@ -110,11 +111,14 @@ def test_cam1_zoom_start_jump_keys(xml_subs, tmp_path):
 
 
 def test_ui_index_html_checkbox_cam1_zoom_start():
-    """В templates/index.html присутствует чекбокс st_cam1zoomstart."""
-    html_path = os.path.join(os.path.dirname(HERE), "templates", "index.html")
-    with open(html_path, "r", encoding="utf-8") as f:
-        html = f.read()
+    """Галка «наезд в начале» есть в схеме и прячется при cam1_zoom='none' (задание JB п. 6).
 
-    assert 'id="st_cam1zoomstart"' in html
-    assert 'id="cam1zoomstartwrap"' in html
-    assert "наезд в начале" in html
+    Раньше галка жила в разметке (id st_cam1zoomstart, обёртка cam1zoomstartwrap),
+    которую правил fillStyleFields; теперь поле строит панель по core/style_schema.py,
+    а видимость считает show_if — то же правило, что прятало обёртку.
+    """
+    field = watcher.schema_field("cam1_zoom_start")
+    assert field, "в схеме пропало поле cam1_zoom_start"
+    assert field["ctl"] == "bool", "cam1_zoom_start перестал быть галкой"
+    assert field.get("show_if") == {"key": "cam1_zoom", "ne": "none"}, (
+        "галка «наезд в начале» больше не прячется при cam1_zoom='none'")

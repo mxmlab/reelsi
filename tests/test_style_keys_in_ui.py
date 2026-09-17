@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""У каждого ключа стиля есть ручка в UI, и сторож не даёт завести ключ без неё (задание FB).
+"""У каждого ключа стиля есть ручка, и ручка теперь одна — строка в схеме (задание JB).
 
-Ручка стиля заводилась ВРУЧНУЮ в трёх местах (templates/index.html — сам элемент,
+До JB ручка стиля заводилась ВРУЧНУЮ в трёх местах (templates/index.html — сам элемент,
 fillStyleFields() — значение из стиля в поле, stEdit() — значение из поля обратно в
 CURSTYLE), и ничто не проверяло, что она заведена. Так девять ключей styles.BASE жили
-без ручки — поменять их из интерфейса было нельзя вообще, и стиль приходилось править
-прямо в styles/*.json. Обратная дыра: cam1_zoom, pop_lead, intro_riser_file интерфейс
-писал, а в styles.BASE их не было — дефолты жили врассыпную по xml2ae/build.py.
+без ручки — поменять их из интерфейса было нельзя вообще, — а обратная дыра
+(cam1_zoom, pop_lead, intro_riser_file интерфейс писал, а в BASE их не было) разводила
+дефолт между стилем и build.py.
 
-Тест стережёт связку в обе стороны: каждый ключ styles.BASE обязан писаться в CURSTYLE
-из JS (значит у него есть ручка), и каждый ключ, который JS так пишет, обязан быть в
-styles.BASE (иначе дефолт снова разъедется между стилем и build.py). Списка исключений
-нет: после задания FB он пустой, и пусть таким остаётся.
+JB свёл обвязку к одному источнику: поле стиля заводится строкой в core/style_schema.py,
+дефолт живёт только в styles.BASE, а панель (static/app/94-stylepanel.js) строится из
+схемы. Поэтому сторож теперь про связку «схема <-> BASE» и про то, что ручной обвязки
+не осталось ни в разметке, ни в других файлах JS.
 
 Запуск: python -m pytest reelsi/tests -q
 """
@@ -26,16 +26,23 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
-from core import styles  # noqa: E402
+from core import app_meta, style_schema, styles  # noqa: E402
+
+PANEL_JS = os.path.join(ROOT, "static", "app", "94-stylepanel.js")
+
+
+def _read(path):
+    return io.open(path, encoding="utf-8").read()
 
 
 def _js_text():
-    parts = []
-    for name in sorted(os.listdir(os.path.join(ROOT, "static", "app"))):
-        if name.endswith(".js"):
-            parts.append(io.open(os.path.join(ROOT, "static", "app", name),
-                                 encoding="utf-8").read())
-    return "\n".join(parts)
+    """Весь код интерфейса одной строкой: файлы static/app/ грузятся в общий скоуп."""
+    return app_meta.app_js_text()
+
+
+def _panel_js():
+    """Код панели стиля — единственная дверь полей (задание JB)."""
+    return _read(PANEL_JS)
 
 
 def _code_only(js):
@@ -45,37 +52,87 @@ def _code_only(js):
     return js
 
 
-def _written_keys(js):
-    """Ключи, которые JS пишет в CURSTYLE: `CURSTYLE.<key>=` и `CURSTYLE['<key>']=`."""
-    js = _code_only(js)
-    out = set()
-    for m in re.finditer(r"CURSTYLE\.([A-Za-z_][A-Za-z0-9_]*)\s*=", js):
-        out.add(m.group(1))
-    for m in re.finditer(r"CURSTYLE\[\s*['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]\s*\]\s*=", js):
-        out.add(m.group(1))
+def schema_items():
+    """Обход схемы по порядку: [('layer'|'group'|'field', узел), ...]."""
+    out = []
+
+    def walk(items):
+        for it in items:
+            if it.get("type") == "group":
+                out.append(("group", it))
+                walk(it.get("items", []))
+            elif it.get("type") == "field":
+                out.append(("field", it))
+
+    for layer in style_schema.LAYERS:
+        out.append(("layer", layer))
+        walk(layer.get("items", []))
     return out
 
 
+def schema_field(key):
+    """Узел поля схемы по ключу (или по второму ключу пары X/Y); None — такого поля нет."""
+    for kind, it in schema_items():
+        if kind == "field" and (it.get("key") == key or it.get("key2") == key):
+            return it
+    return None
+
+
+def schema_keys():
+    """Ключи, которые панель показывает: поля (key и key2) и тумблеры слоёв/групп."""
+    keys = set()
+    for kind, it in schema_items():
+        if kind == "field":
+            if it.get("key"):
+                keys.add(it["key"])
+            if it.get("key2"):
+                keys.add(it["key2"])
+        if it.get("toggle"):
+            keys.add(it["toggle"])
+    return keys
+
+
 def test_every_base_style_key_has_a_handle():
-    """Каждый ключ styles.BASE пишется в CURSTYLE из JS — значит у него есть ручка."""
-    js = _js_text()
-    written = _written_keys(js)
-    missing = sorted(k for k in styles.BASE if k not in written)
+    """Каждый ключ styles.BASE заведён в схеме (или во внешних — label и intro_mode)."""
+    missing = sorted(k for k in styles.BASE
+                     if k not in schema_keys() and k not in style_schema.EXTERNAL)
     assert not missing, (
-        "ключи styles.BASE без ручки в UI (нет записи CURSTYLE.<key>= в static/app/*.js): "
-        + ", ".join(missing)
+        "ключи styles.BASE без ручки в схеме (core/style_schema.py): " + ", ".join(missing)
     )
 
 
-def test_every_js_written_style_key_is_in_base():
-    """Ключ, который JS пишет в CURSTYLE, обязан быть в styles.BASE.
-
-    Иначе дефолт живёт врассыпную по xml2ae/build.py, а не в стиле, и правка в
-    интерфейсе расходится с тем, что подставляет сборка.
-    """
-    js = _js_text()
-    written = _written_keys(js)
-    unknown = sorted(k for k in written if k not in styles.BASE)
+def test_every_schema_key_is_in_base():
+    """Ключ схемы обязан быть в styles.BASE, иначе дефолт снова уедет в build.py."""
+    unknown = sorted(k for k in schema_keys()
+                     if k not in styles.BASE and k not in style_schema.EXTERNAL)
     assert not unknown, (
-        "JS пишет в CURSTYLE ключи, которых нет в styles.BASE: " + ", ".join(unknown)
+        "схема знает ключи, которых нет в styles.BASE: " + ", ".join(unknown)
     )
+
+
+def test_fields_are_wired_only_in_the_panel():
+    """fillStyleFields/stEdit объявлены ТОЛЬКО в панели: у поля не должно быть двух дверей."""
+    panel = _panel_js()
+    for fn in ("fillStyleFields", "stEdit"):
+        assert re.search(r"\bfunction\s+%s\s*\(" % fn, panel), (
+            "в 94-stylepanel.js нет function %s" % fn)
+    bad = []
+    for path in app_meta.app_js_files():
+        name = os.path.basename(path)
+        if name == "94-stylepanel.js":
+            continue
+        text = _code_only(_read(path))
+        for fn in ("fillStyleFields", "stEdit"):
+            if re.search(r"\bfunction\s+%s\s*\(" % fn, text):
+                bad.append("%s: function %s" % (name, fn))
+    assert not bad, "ручная обвязка полей стиля вернулась в другие файлы: " + ", ".join(bad)
+
+
+def test_index_html_has_no_old_style_markup():
+    """Полей стиля в разметке больше нет: их строит панель по схеме (задание JB п. 1)."""
+    html = _read(os.path.join(ROOT, "templates", "index.html"))
+    for token in ("stylepart_", "stsec_", "stfold", "stylegrid", "stylemats"):
+        assert token not in html, "в index.html осталась старая разметка стиля: " + token
+    assert 'id="stpanel"' in html and 'class="stpanel"' in html, (
+        "в index.html нет контейнера панели #stpanel")
+    assert 'role="tree"' in html, "панель перестала быть деревом (role=tree)"

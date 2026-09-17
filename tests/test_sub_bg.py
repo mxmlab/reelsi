@@ -25,6 +25,7 @@ from core import styles
 from core import xml2ae
 from core.xml2ae.layout import (SUB_BG_SH_OP, SUB_BG_SH_DIR, SUB_BG_SH_DIST, SUB_BG_SH_SOFT)
 from core.xml2ae.build import _sub_bg_expr, scene_plan
+import test_style_keys_in_ui as watcher  # noqa: E402
 
 
 @pytest.fixture()
@@ -207,25 +208,28 @@ def test_sub_bg_with_rise_hide(xml_subs, tmp_path):
 
 
 def test_static_sub_bg_ui():
-    """Элементы интерфейса плашки субтитров в index.html и 95-styles.js."""
-    html_path = os.path.join(ROOT, "templates", "index.html")
-    html = open(html_path, encoding="utf-8").read()
-    assert 'id="st_subbg"' in html
-    assert 'id="st_subbg_wrap"' in html
-    assert 'id="st_subbgcolor"' in html
-    assert 'id="st_subbghex"' in html
-    assert 'id="st_subbgop"' in html
-    assert 'id="st_subbgh"' in html
-    assert 'id="st_subbground"' in html
-    assert 'id="st_subbgpad"' in html
-    assert 'id="st_subbgdy"' in html
+    """Поля плашки субтитров заведены в схеме панели, а не в старой разметке (JB п. 6).
 
-    js_path = os.path.join(ROOT, "static", "app", "95-styles.js")
-    js = open(js_path, encoding="utf-8").read()
-    assert "syncSubBgHex" in js
-    assert "subBgUI" in js
-    assert "st_subbg" in js
-    assert "CURSTYLE.sub_bg=" in js
+    Раньше девять полей плашки были выписаны руками в index.html плюс subBgUI и
+    syncSubBgHex в 95-styles.js, и каждое поле надо было провести через три места.
+    Теперь их строит панель по core/style_schema.py: HEX у цвета — одна общая функция
+    (stHexChange/stHexInput), а галка плашки — тумблер группы subs.bg.
+    """
+    fields = {it.get("key"): it for kind, it in watcher.schema_items()
+              if kind == "field" and it.get("key")}
+    assert fields["sub_bg_fill"]["ctl"] == "color"
+    for key in ("sub_bg_op", "sub_bg_h", "sub_bg_round", "sub_bg_pad", "sub_bg_dy"):
+        assert fields[key]["ctl"] == "num", f"{key}: не величина"
+
+    group = next(it for kind, it in watcher.schema_items()
+                 if kind == "group" and it.get("id") == "subs.bg")
+    assert group.get("toggle") == "sub_bg", "галка плашки больше не прячет её настройки"
+    assert "sub_bg" in styles.BASE
+
+    panel = watcher._panel_js()
+    assert "function stHexChange(" in panel and "function stHexInput(" in panel, (
+        "HEX-ввод цвета пропал из панели")
+    assert "'_hex'" in panel and "'_color'" in panel, "панель не строит поле цвета"
 
 
 def test_sub_shadow_and_badge_dk(xml_subs, tmp_path):

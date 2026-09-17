@@ -72,6 +72,29 @@ def transcribe_clip(proc, model, arr_int16):
                              clean_up_tokenization_spaces=False)[0].strip()
 
 
+def transcribe_clip_gigaam(model, clip_audio):
+    """Транскрибировать чанк через GigaAM. Принимает путь к wav-файлу (грузит через ffmpeg),
+    а не numpy-массив. Пишем во временный файл, дескриптор сразу закрываем,
+    а сам файл гарантированно удаляем в finally."""
+    fd, tmp = tempfile.mkstemp(suffix=".wav", prefix="_omni_gigaam_")
+    os.close(fd)
+    try:
+        sf.write(tmp, clip_audio, SR, subtype="PCM_16")
+        # Короткие чанки (<25с) — transcribe; длинные — transcribe_longform
+        # (иначе GigaAM бросает ValueError "Too long wav file").
+        if len(clip_audio) > SR * 25:
+            res = model.transcribe_longform(tmp)
+        else:
+            res = model.transcribe(tmp)
+        # TranscriptionResult / LongformTranscriptionResult оба отдают текст через .text
+        return res.text if hasattr(res, "text") else str(res)
+    finally:
+        try:
+            os.remove(tmp)
+        except Exception:
+            pass
+
+
 def _hf_cache_bytes(repo):
     """Сколько байт весов репо уже лежит в HF-кэше (вкл. недокачанные .incomplete)."""
     d = os.path.expanduser("~/.cache/huggingface/hub/models--"
@@ -350,7 +373,7 @@ def group_chunks(intervals, max_len=24.0):
     return chunks
 
 
-def main():
+def main(args=None):
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("wav")
@@ -361,7 +384,7 @@ def main():
                    help="принудительно использовать этот локальный движок слуха "
                         "(игнорирует выбранный в UI профиль Omni). 'gigaam' — локальная "
                         "GigaAM-v3-CTC как источник транскрипции (для обычной VAD-нарезки).")
-    a = ap.parse_args()
+    a = ap.parse_args(args)
     audio, sr = sf.read(a.wav, dtype="int16")
     if audio.ndim > 1:
         audio = audio.mean(1).astype("int16")
@@ -398,34 +421,24 @@ def main():
             print("Omni ЛОКАЛЬНО: Qwen2.5-Omni", flush=True)
             proc, model = load_model()
         print("model loaded", flush=True)
-        def transcribe_clip_gigaam(model, clip_audio):
-            try:
-                # GigaAM принимает ПУТЬ к wav-файлу (грузит через ffmpeg), а не numpy-массив.
-                # Пишем чанк во временный wav (как transcribe_clip для Qwen), затем транскрибируем.
-                tmp = os.path.join(tempfile.gettempdir(), "_omni_gigaam_clip_%d.wav" % os.getpid())
-                sf.write(tmp, clip_audio, SR, subtype="PCM_16")
-                # Короткие чанки (<25с) — transcribe; длинные — transcribe_longform
-                # (иначе GigaAM бросает ValueError "Too long wav file").
-                if len(clip_audio) > SR * 25:
-                    res = model.transcribe_longform(tmp)
-                else:
-                    res = model.transcribe(tmp)
-                # TranscriptionResult / LongformTranscriptionResult оба отдают текст через .text
-                return res.text if hasattr(res, "text") else str(res)
-            except Exception as e:
-                print(f"Ошибка GigaAM инференса: {e}", flush=True)
-                return ""
     dur = len(audio) / SR
     out = []
     for i, (s, e) in enumerate(chunks):
         c0 = max(0.0, s - 0.12); c1 = min(dur, e + 0.12)   # чуть контекста по краям
         clip = audio[int(c0*SR):int(c1*SR)]
-        if cloud:
-            txt = transcribe_clip_cloud(cloud, clip)
-        elif engine == "gigaam":
-            txt = transcribe_clip_gigaam(model, clip)
-        else:
-            txt = transcribe_clip(proc, model, clip)
+        try:
+            if cloud:
+                txt = transcribe_clip_cloud(cloud, clip)
+            elif engine == "gigaam":
+                txt = transcribe_clip_gigaam(model, clip)
+            else:
+                txt = transcribe_clip(proc, model, clip)
+        except Exception as exc:
+            if engine == "gigaam":
+                sys.stderr.write(f"Ошибка GigaAM инференса на куске {s:.1f}–{e:.1f}: {exc}\n")
+                sys.stderr.flush()
+                raise SystemExit(1)
+            raise
         out.append({"start": round(s, 2), "end": round(e, 2), "text": txt})
         print(f"[{i:2d}] {s:6.1f}-{e:6.1f}  {txt}", flush=True)
     dst = a.out or (os.path.splitext(a.wav)[0] + ".omni.json")

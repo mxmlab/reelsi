@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 
 from core import xml2ae  # noqa: E402
 from core.xml2ae.layout import EASE_DEFAULT  # noqa: E402
+import test_style_keys_in_ui as watcher  # noqa: E402
 
 node = pytest.mark.skipif(not shutil.which("node"), reason="контракт фронта требует node в PATH")
 
@@ -101,18 +102,17 @@ def test_existing_zoom_modes_unaffected(xml_subs, tmp_path):
 
 
 def test_ui_index_html_option_none():
-    """В templates/index.html присутствует пункт 'none' в селекторе st_cam1zoom."""
-    html_path = os.path.join(os.path.dirname(HERE), "templates", "index.html")
-    with open(html_path, "r", encoding="utf-8") as f:
-        html = f.read()
+    """Пункт 'none' есть у поля cam1_zoom в схеме панели (задание JB п. 6).
 
-    m = re.search(r'<select[^>]*id="st_cam1zoom"[^>]*>(.*?)</select>', html, re.DOTALL)
-    assert m, "селектор st_cam1zoom не найден в index.html"
-    options = m.group(1)
-    assert 'value="none"' in options
-    assert 'value="pulse"' in options
-    assert 'value="jump"' in options
-    assert 'value="drift"' in options
+    Селектор режима зума строит панель по core/style_schema.py, поэтому пункты
+    проверяются там, а не в разметке: id старой разметки (st_cam1zoom) больше нет.
+    """
+    field = watcher.schema_field("cam1_zoom")
+    assert field, "в схеме пропало поле cam1_zoom"
+    assert field["ctl"] == "select", "cam1_zoom перестал быть селектом"
+    options = [o[0] for o in field["options"]]
+    for mode in ("none", "pulse", "jump", "drift"):
+        assert mode in options, f"в схеме cam1_zoom нет режима {mode!r}"
 
 
 @node

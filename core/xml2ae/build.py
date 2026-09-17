@@ -10,17 +10,18 @@ import re
 from core import paths
 from core.app_meta import console_emit, wrap_emit
 from core import fonts as _fonts
+from core import styles as _styles
 from core.fileio import atomic_text_write
 
 from .jsutil import _asset_or, _fill_js, _jd, _js, _js_multiline, _r
 from .layout import (DEFAULT_DISCLAIMER, DISC_FIT_W, EASE_DEFAULT, HL_EASE_IN, HL_EASE_OUT,
-                     INS_C1_HIGH, INS_C2_BASE, INS_C2_PEAK, INS_C2_Y_FR, INS_EXIT,
+                     INS_C1_HIGH, INS_C2_BASE, INS_C2_PEAK, INS_EXIT,
                      INS_RISE_DY, INS_RISE_S0, INS_RISE_ENTER, INTRO_BASE_Y,
                      INTRO_F_DUR, INTRO_F_OUT, INTRO_FIT_W, INTRO_HOLD, INTRO_SCALE,
-                     SHADE_BLUR, SHADE_DY, SHADE_H, SHADE_OX, SHADE_OY, SHADE_SCALE,
+                     SHADE_BLUR, SHADE_DY, SHADE_H, SHADE_OX, SHADE_OY, SHADE_REF_W, SHADE_SCALE,
                      SHADE_W, SHADE_X,
                      SUB_BG_SH_DIR, SUB_BG_SH_DIST,
-                     SUB_BG_SH_OP, SUB_BG_SH_SOFT, ZOOM_BIG,
+                     SUB_BG_SH_OP, SUB_BG_SH_SOFT,
                      cover_sweep,
                      _anim_keys,
                      _blur_keys, _cam1_drift_keys, _cam1_jump_keys, _cam1_pos_keys,
@@ -32,6 +33,28 @@ from .layout import (DEFAULT_DISCLAIMER, DISC_FIT_W, EASE_DEFAULT, HL_EASE_IN, H
                      intro_line_ys)
 from .parse import Cancelled, HERE, _is_image, parse_full
 from .template import AE_FULL, SUBS_LOOP_WORDS, SUBS_LOOP_ROWS, SUBS_LOOP_WORDS_JOINED
+
+
+def _sv(st, key):
+    """Значение ключа стиля; ключа нет (None) — дефолт из styles.BASE (задание JC).
+
+    Раньше запасное число стояло рядом с КАЖДЫМ чтением (`st.get("sub_bg_op") if
+    st.get("sub_bg_op") is not None else 72.0`), и правка дефолта в styles.BASE до
+    сборки не доезжала: в BASE новое число, в .jsx старое. Источник дефолтов один —
+    styles.BASE. Форма с `is not None`: ноль и пустая строка — ЗАДАННЫЕ значения.
+    """
+    v = st.get(key)
+    return _styles.BASE[key] if v is None else v
+
+
+def _sv_or(st, key):
+    """Значение ключа стиля; пусто/ноль — дефолт из styles.BASE (задание JC).
+
+    Форма `st.get(k) or <число/строка>`: ноль, пустая строка и None означают «не
+    задано» ровно как раньше, но запас берётся из styles.BASE, а не из литерала
+    рядом с чтением.
+    """
+    return st.get(key) or _styles.BASE[key]
 
 
 def _fps_js(fps):
@@ -49,10 +72,10 @@ def _sub_bg_expr(st, sub_layer_name="Субтитры (текст)"):
     Текст берётся целиком из refs/sub_bg_size.js, подставляются 4 константы из стиля
     и имя слоя субтитров в главном композе.
     """
-    h = float(st.get("sub_bg_h") if st.get("sub_bg_h") is not None else 160.0)
-    pad = float(st.get("sub_bg_pad") if st.get("sub_bg_pad") is not None else 18.0) / 100.0
-    padmin = float(st.get("sub_bg_padmin") if st.get("sub_bg_padmin") is not None else 70.0)
-    anim = float(st.get("sub_bg_anim") if st.get("sub_bg_anim") is not None else 0.22)
+    h = float(_sv(st, "sub_bg_h"))
+    pad = float(_sv(st, "sub_bg_pad")) / 100.0
+    padmin = float(_sv(st, "sub_bg_padmin"))
+    anim = float(_sv(st, "sub_bg_anim"))
     ref_path = paths.data("refs", "sub_bg_size.js")
     with open(ref_path, "r", encoding="utf-8") as f:
         src = f.read()
@@ -153,7 +176,7 @@ def _intro_fit_ds(lines, ts, te, ds, w, G, cam_keys, fps, st, intro_font_ps,
     linew = 0.0
     for ln in lines:
         ps = _intro_line_font(ln, intro_font_ps, intro_hl_font_ps)
-        fs = round(fsize * float(st.get("back_scale") if st.get("back_scale") is not None else 0.69)) if ln.get("back") else fsize
+        fs = round(fsize * float(_sv(st, "back_scale"))) if ln.get("back") else fsize
         wpx = _fonts.text_width(ps, " ".join(ln.get("words") or []), fs)
         if wpx is None:
             return ds
@@ -407,7 +430,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     # Точки СМЕНЫ КАМЕРЫ (сек): где показываемая (верхняя включённая) камера меняется. Не каждый
     # VAD-стык внутри одной камеры, а именно переход кам1↔кам2. По ним режем/прижимаем вставки.
     _cam_change_sec = [f / _fps0 for f in _cam_change_frames(cams)]
-    _snap = bool(st.get("insert_snap_cut", True))
+    _snap = bool(_sv(st, "insert_snap_cut"))
     # Вставка, стартующая ВПРИТЫК перед катом, доигрывала бы вход на уходящем кадре и обрывалась
     # срезом. Прижимаем старт ровно к кату: вставка начинается уже на следующем кадре, вся анимация
     # входа идёт по нему (и стиль фото авто-выбирается по НОВОЙ камере). Конец не двигаем.
@@ -481,7 +504,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             for k in ("start", "end", "end_s", "end_f"):
                 x.pop(k, None)
 
-    _instyle = (st.get("insert_style") or "auto")      # стиль фотовставок: авто | cam1 | cam2
+    _instyle = (_sv_or(st, "insert_style"))      # стиль фотовставок: авто | cam1 | cam2
     for x in inserts:                                  # стиль фото: force cam1/cam2 или АВТО по активной камере
         if (x.get("type") or "photo") != "photo":
             continue
@@ -503,8 +526,8 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     cnt_raw = set(int(x) for x in (hl_count or []) if 0 <= int(x) < len(subs))
     joins_raw = set(int(x) for x in (hl_joins or []) if 0 <= int(x) < len(subs))
     joins_raw = joins_raw - brk_raw
-    sub_words_per_row = max(1, int(st.get("sub_words_per_row") or 1))
-    sub_rows_max = max(1, int(st.get("sub_rows_max") or 1))
+    sub_words_per_row = max(1, int(_sv_or(st, "sub_words_per_row")))
+    sub_rows_max = max(1, int(_sv_or(st, "sub_rows_max")))
     eff_intro = [] if sub_words_per_row > 1 else (intro or [])
     eff_intro_remove = [] if sub_words_per_row > 1 else (intro_remove or [])
     eff_intro_splits = [] if sub_words_per_row > 1 else (intro_splits or [])
@@ -534,16 +557,16 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         if os.path.isfile(os.path.join(alt, "assets", "assets.json")):
             asset_base = alt
     aset = _assets.resolver(asset_base)
-    font_ps = st.get("font") or "SFPro-CondensedSemibold"  # st уже резолвнут выше
+    font_ps = _sv_or(st, "font")  # st уже резолвнут выше
     hl_font_ps = st.get("hl_font") or font_ps
     intro_font_ps = st.get("intro_font") or font_ps        # шрифты интро: пусто = как субтитры
     intro_hl_font_ps = st.get("intro_hl_font") or hl_font_ps
     # Акцентный шрифт строк интро (задание R): PostScript-имя; пусто = выключено.
     # Значение живой в стиле, в шаблон и план едет через данные строки (accent_font).
-    accent_font_ps = (st.get("accent_font") or "").strip()
-    accent_case = (st.get("accent_case") or "title").strip()
-    back_font_ps = (st.get("back_font") or "").strip()
-    back_case = (st.get("back_case") or "lower").strip()
+    accent_font_ps = (_sv_or(st, "accent_font")).strip()
+    accent_case = (_sv_or(st, "accent_case")).strip()
+    back_font_ps = (_sv_or(st, "back_font")).strip()
+    back_case = (_sv_or(st, "back_case")).strip()
     # Цвета и тень текста интро (новые ключи стиля): третий цвет строки (color=="accent"),
     # свой цвет обычного/выделенного текста интро (intro_fill/intro_hl_fill, None = как
     # сегодня) и пресет тени на КАЖДОМ слове интро (intro_shadow). Дефолты не меняют .jsx
@@ -552,54 +575,54 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     intro_fill = st.get("intro_fill")
     intro_hl_fill = st.get("intro_hl_fill")
     intro_shadow_on = bool(st.get("intro_shadow"))
-    intro_shadow_op = float(st.get("intro_shadow_op") if st.get("intro_shadow_op") is not None else 116.0)
-    intro_shadow_dir = float(st.get("intro_shadow_dir") if st.get("intro_shadow_dir") is not None else 16.0)
-    intro_shadow_dist = float(st.get("intro_shadow_dist") if st.get("intro_shadow_dist") is not None else 6.8)
-    intro_shadow_soft = float(st.get("intro_shadow_soft") if st.get("intro_shadow_soft") is not None else 34.0)
-    back_shadow_op = float(st.get("back_shadow_op") if st.get("back_shadow_op") is not None else 131.0)
-    back_shadow_soft = float(st.get("back_shadow_soft") if st.get("back_shadow_soft") is not None else 38.0)
+    intro_shadow_op = float(_sv(st, "intro_shadow_op"))
+    intro_shadow_dir = float(_sv(st, "intro_shadow_dir"))
+    intro_shadow_dist = float(_sv(st, "intro_shadow_dist"))
+    intro_shadow_soft = float(_sv(st, "intro_shadow_soft"))
+    back_shadow_op = float(_sv(st, "back_shadow_op"))
+    back_shadow_soft = float(_sv(st, "back_shadow_soft"))
     # Тень ПРЕКОМПА интро (задание B): у камеры 1 и камеры 2 свои цвет/непрозрачность
     # (ключи стиля intro_comp_shadow*). Дефолты — прежняя белая тень dropShadow(iL, 68):
     # при всех четырёх дефолтах .jsx остаётся прежним байт в байт (golden).
-    intro_comp_shadow_fill = [float(v) for v in (st.get("intro_comp_shadow_fill") or [1, 1, 1])]
+    intro_comp_shadow_fill = [float(v) for v in (_sv_or(st, "intro_comp_shadow_fill"))]
     intro_comp_shadow_op = float(
-        st.get("intro_comp_shadow_op") if st.get("intro_comp_shadow_op") is not None else 68.0)
-    intro_comp_shadow2_fill = [float(v) for v in (st.get("intro_comp_shadow2_fill") or [1, 1, 1])]
+        _sv(st, "intro_comp_shadow_op"))
+    intro_comp_shadow2_fill = [float(v) for v in (_sv_or(st, "intro_comp_shadow2_fill"))]
     intro_comp_shadow2_op = float(
-        st.get("intro_comp_shadow2_op") if st.get("intro_comp_shadow2_op") is not None else 68.0)
-    back_step = float(st.get("back_step") if st.get("back_step") is not None else 0.45)
+        _sv(st, "intro_comp_shadow2_op"))
+    back_step = float(_sv(st, "back_step"))
     if abs(back_step - 0.75) < 1e-4:
         back_step = 0.45
-    back_scale = float(st.get("back_scale") if st.get("back_scale") is not None else 0.69)
+    back_scale = float(_sv(st, "back_scale"))
     # Зазор между буквами соседних строк интро (задание A1): шаг ДО строки заднего плана
     # не меньше «хвост вниз верхней строки + высота букв нижней + back_gap». Числа даёт
     # fonts.ink_extent; зазор стиля — дефолт 4 px, как раздвинул строки пользователь в AE.
-    back_gap = float(st.get("back_gap") if st.get("back_gap") is not None else 4.0)
+    back_gap = float(_sv(st, "back_gap"))
     # Фейд-аут прекомпа интро (задание IK): единый ключ стиля intro_fade (дефолт 0.35).
-    intro_fade = float(st.get("intro_fade") if st.get("intro_fade") is not None else 0.35)
-    intro_fx_hold_add = float(st.get("intro_fx_hold_add") if st.get("intro_fx_hold_add") is not None else 0.3)
+    intro_fade = float(_sv(st, "intro_fade"))
+    intro_fx_hold_add = float(_sv(st, "intro_fx_hold_add"))
     # Размытие на старте и хвостовой дисклеймер (задание S): дефолты = выключено,
     # при них плейсхолдеры шаблона пусты и .jsx не меняется ни на байт (golden).
-    start_blur = float(st.get("start_blur") or 0)
-    start_blur_dur = float(st.get("start_blur_dur") or 0.52)
+    start_blur = float(_sv_or(st, "start_blur"))
+    start_blur_dur = float(_sv_or(st, "start_blur_dur"))
     disc_end_on = bool(st.get("disclaimer_end")) and bool(disclaimer)
     # Макет спикера (задание Q): точка наезда камеры, точка покоя вставок Кам2 и сдвиг
     # интро по X. Дефолты = сегодняшнее поведение (0.5/0.5, 0.5/0.172, 0), при них
     # плейсхолдеры шаблона пусты и .jsx не меняется ни на байт (golden).
-    cam1_cx = float(st.get("cam1_zoom_cx") if st.get("cam1_zoom_cx") is not None else 0.5)
-    cam1_cy = float(st.get("cam1_zoom_cy") if st.get("cam1_zoom_cy") is not None else 0.5)
-    ins_c2x = float(st.get("insert_c2_x") if st.get("insert_c2_x") is not None else 0.5)
-    ins_c2y = float(st.get("insert_c2_y") if st.get("insert_c2_y") is not None else INS_C2_Y_FR)
+    cam1_cx = float(_sv(st, "cam1_zoom_cx"))
+    cam1_cy = float(_sv(st, "cam1_zoom_cy"))
+    ins_c2x = float(_sv(st, "insert_c2_x"))
+    ins_c2y = float(_sv(st, "insert_c2_y"))
     # Общий сдвиг точки покоя вставок кам1 (задание CB), px. Дефолт 0/0 = как сегодня.
-    ins_c1x = float(st.get("insert_c1_x") or 0)
-    ins_c1y = float(st.get("insert_c1_y") or 0)
-    intro_x_px = float(st.get("intro_x") or 0)
+    ins_c1x = float(_sv_or(st, "insert_c1_x"))
+    ins_c1y = float(_sv_or(st, "insert_c1_y"))
+    intro_x_px = float(_sv_or(st, "intro_x"))
     hl_fill = st.get("hl_fill")
     # Регистр и цвет базовых субтитров (задание CO): регистр применяется в scene_plan к
     # ГОТОВОМУ тексту (и .jsx, и превью читают его — второй копии правила нет), цвет
     # уезжает в план для превью и в шаблон как параметр FILL. Дефолты upper/белый —
     # подстановки пустые, .jsx прежний (golden).
-    sub_case = (st.get("sub_case") or "upper").strip()
+    sub_case = (_sv_or(st, "sub_case")).strip()
     sub_fill = st.get("sub_fill")
     # интро разбиваем на прекомпы по splits (индексы строк-начал новых групп)
     _intro_lines = [x for x in eff_intro if (x.get("words") or (x.get("text") or "").strip())]
@@ -690,7 +713,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         riser = _riser_file
     pop = (_asset_or(st.get("pop"), "highlight_pop", aset)) if hl else ""
     glitch_asset = (_asset_or(st.get("glitch"), "glitch", aset)) if _any_glitch else ""
-    glitch_db = float(st.get("glitch_db") if st.get("glitch_db") is not None else 0.0)
+    glitch_db = float(_sv(st, "glitch_db"))
     has_video = any((x.get("type") or "photo") == "video" for x in inserts)
     trans = _asset_or(st.get("transition"), "transition", aset) if has_video else ""
     trans_sfx = _asset_or(st.get("transition_sfx"), "whoosh", aset) if has_video else ""
@@ -810,14 +833,14 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         ns = subs[k + 1][0] if k + 1 < len(subs) else None
         return min(e, ns) if (ns is not None and ns > s) else e
 
-    _posy = int(meta["h"] * float(st.get("sub_y") or 0.5964))
+    _posy = int(meta["h"] * float(_sv_or(st, "sub_y")))
     _hl_step = round(meta["h"] * 0.06224, 2)
     _hl_rise = round(meta["h"] * 0.06406, 2)
     _fsize = max(60, int(meta["w"] * 0.13))
     _sub_step = round(_fsize * 1.18, 2)
     # Масштаб СЛОЯ прекомпа субтитров (задание FE), %: кегль/раскладка не трогаются,
     # 100 = как сегодня. При 100 подстановка в шаблон пуста — .jsx прежний (golden).
-    sub_scale = float(st.get("sub_scale") if st.get("sub_scale") is not None else 100.0)
+    sub_scale = float(_sv(st, "sub_scale"))
     from core.subs import build_sub_rows
     from core import fonts as _fonts
 
@@ -989,18 +1012,18 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         ]
         sub_rows_js = _jd(sub_rows_data)
         sub_loop = SUBS_LOOP_ROWS % dict(sub_rows=sub_rows_js, sub_step=_sub_step)
-    _c1zoom = (st.get("cam1_zoom") or "pulse")         # pulse = наезд с откатом | jump = резкие скачки | drift = скачок+плавный дрейф 100–160% | none = нет зума
+    _c1zoom = (_sv_or(st, "cam1_zoom"))         # pulse = наезд с откатом | jump = резкие скачки | drift = скачок+плавный дрейф 100–160% | none = нет зума
     if cam1_scale is None:                             # авто-зум по сменам кам1→кам2
         if _c1zoom == "none":
             cam1_scale = [(0, 100.0)]
         else:
-            _zstart = (st.get("cam1_zoom_start") is not False)
-            _zbig = float(st.get("cam1_zoom_big") or ZOOM_BIG)
-            _zlo = float(st.get("cam1_zoom_lo") or 112.0)
-            _zhi = float(st.get("cam1_zoom_hi") or 140.0)
+            _zstart = _sv(st, "cam1_zoom_start")
+            _zbig = float(_sv_or(st, "cam1_zoom_big"))
+            _zlo = float(_sv_or(st, "cam1_zoom_lo"))
+            _zhi = float(_sv_or(st, "cam1_zoom_hi"))
             if _c1zoom == "drift":
-                _zdlo = float(st.get("cam1_drift_lo") or 100.0)
-                _zdhi = float(st.get("cam1_drift_hi") or 160.0)
+                _zdlo = float(_sv_or(st, "cam1_drift_lo"))
+                _zdhi = float(_sv_or(st, "cam1_drift_hi"))
                 cam1_scale = _cam1_drift_keys(cams, lo=_zdlo, hi=_zdhi, fps=meta["fps"], big=_zbig, start=_zstart)
             elif _c1zoom == "jump":
                 cam1_scale = _cam1_jump_keys(cams, lo=_zlo, hi=_zhi, fps=meta["fps"], start=_zstart)
@@ -1042,7 +1065,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     def _front(x):
         return _vfront if x.get("front") is None else bool(x.get("front"))
 
-    _insert_anim = (st.get("insert_anim") or "zoom").strip()
+    _insert_anim = (_sv_or(st, "insert_anim")).strip()
 
     def _ins_js(x):
         t0, t1raw = _win(x)
@@ -1129,8 +1152,8 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
                 out["en"], out["ex"] = _r(en), _r(ex)
                 ix, iy = float(out["x"] or 0), float(out["y"] or 0)
                 if out["oncam2"]:                    # общий сдвиг всех cam1-на-перебивке (INS_C1_ON2_X/Y)
-                    ix += float(st.get("insert_c1on2_x") or 0)
-                    iy += float(st.get("insert_c1on2_y") or 0)
+                    ix += float(_sv_or(st, "insert_c1on2_x"))
+                    iy += float(_sv_or(st, "insert_c1on2_y"))
                 if _insert_anim == "none":           # задание FC: без анимации — сразу точка покоя
                     # up — точка ПОКОЯ из _cam1_pos_keys (layout.py), нижняя точка dn
                     # (за спиной) не строится вовсе: слой просто стоит на месте
@@ -1259,7 +1282,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     # (родителе прекомпа) и множит СМЕЩЕНИЕ ребёнка и его размер, а собственный сдвиг
     # нула (intro_y/intro_y2) не трогает. Поэтому G входит в базу (-INTRO_BASE_Y+iDy),
     # а intro_y/intro_y2 — плоским слагаемым. 100% = дефолт: y не меняется ни на сотую.
-    _G = float(st.get("intro_scale") or 100) / 100
+    _G = float(_sv_or(st, "intro_scale")) / 100
     # Кегль интро = кегль субтитров (в AE это один FONT_SIZE): тот же _fsize, что у
     # стопки ниже, — автофит меряет ширину строки тем же размером (задание BP).
     # окна групп (ts/te) — здесь, в плане; превью их не считает (задание D). По тем же
@@ -1322,7 +1345,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         # Якорь блока интро этой группы (задание A1): на перебивке свой ключ стиля —
         # группа висит на другом нуле (кам2) и «первая строка» там своя. "first" —
         # первая строка стоит на месте, остальные ложатся ниже.
-        _anchor = str((st.get("intro_anchor2") if _on2 else st.get("intro_anchor")) or "center")
+        _anchor = str(_sv_or(st, "intro_anchor2" if _on2 else "intro_anchor"))
         _intro_anchor.append(_anchor)
         # Смещение ГРУППЫ (задание E): живёт на головной строке (первой в группе) и
         # добавляется к позиции прекомпа в шаблоне. После разрезания/слияния групп
@@ -1356,9 +1379,9 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
                 _lines[0]["ds"] = _r(_ds)
             else:
                 _lines[0].pop("ds", None)
-        _y = round((st.get("intro_y") or 0) + _G * (-INTRO_BASE_Y + _idy), 2)
+        _y = round((_sv_or(st, "intro_y")) + _G * (-INTRO_BASE_Y + _idy), 2)
         if _on2:
-            _y = round(_y + (st.get("intro_y2") or 0), 2)
+            _y = round(_y + (_sv_or(st, "intro_y2")), 2)
         # Галка «интро над рото по положению» (задание C): группу Камеры 1, чей блок
         # от центра кадра в НИЖНЕЙ половине (зона субтитров), в .jsx поднимают над
         # рото; блок в верхней половине остаётся под ним. Зум камеры не учитываем —
@@ -1427,13 +1450,13 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     _accent_used = any("accent_font" in ln for p in intro_plan for ln in p["lines"])
     # геометрия субтитров для предпросмотра: стопка живёт в comp-координатах, и JS не должен
     # досчитывать формулы из h (posy = sub_y*h, шаг = 0.06224*h — это контракт _ae ниже)
-    _posy = int(meta["h"] * float(st.get("sub_y") or 0.5964))
+    _posy = int(meta["h"] * float(_sv_or(st, "sub_y")))
     _hl_step = round(meta["h"] * 0.06224, 2)
     _hl_rise = round(meta["h"] * 0.06406, 2)
     # уход субтитров на вставках rise (задание DD): для каждой rise-вставки
     # субтитры скрываются [[t0,100],[t0+en,0],[t1-ex,0],[t1,100]]; окна внахлёст объединяются
     sub_hide = []
-    if _insert_anim == "rise" and bool(st.get("insert_sub_swap", True)):
+    if _insert_anim == "rise" and bool(_sv(st, "insert_sub_swap")):
         rise_windows = []
         for xi in inserts_plan:
             if (xi.get("t") or "photo") == "photo" and xi.get("style") == "cam2":
@@ -1482,14 +1505,14 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     sub_bg_js = ""
     sub_bg_plan = None
     if sub_bg_on:
-        sub_bg_fill = list(st.get("sub_bg_fill") if st.get("sub_bg_fill") is not None else [1.0, 1.0, 1.0])
-        sub_bg_op = float(st.get("sub_bg_op") if st.get("sub_bg_op") is not None else 72.0)
-        sub_bg_h = float(st.get("sub_bg_h") if st.get("sub_bg_h") is not None else 160.0)
-        sub_bg_round = float(st.get("sub_bg_round") if st.get("sub_bg_round") is not None else 78.0)
-        sub_bg_pad = float(st.get("sub_bg_pad") if st.get("sub_bg_pad") is not None else 18.0)
-        sub_bg_padmin = float(st.get("sub_bg_padmin") if st.get("sub_bg_padmin") is not None else 70.0)
-        sub_bg_dy = float(st.get("sub_bg_dy") if st.get("sub_bg_dy") is not None else 0.0)
-        sub_bg_anim = float(st.get("sub_bg_anim") if st.get("sub_bg_anim") is not None else 0.22)
+        sub_bg_fill = list(_sv(st, "sub_bg_fill"))
+        sub_bg_op = float(_sv(st, "sub_bg_op"))
+        sub_bg_h = float(_sv(st, "sub_bg_h"))
+        sub_bg_round = float(_sv(st, "sub_bg_round"))
+        sub_bg_pad = float(_sv(st, "sub_bg_pad"))
+        sub_bg_padmin = float(_sv(st, "sub_bg_padmin"))
+        sub_bg_dy = float(_sv(st, "sub_bg_dy"))
+        sub_bg_anim = float(_sv(st, "sub_bg_anim"))
         # центр = posy + (строк - 1) * sub_step / 2 - 0.27 * fsize + sub_bg_dy (задание DI)
         sub_bg_y = round(_posy + (sub_rows_max - 1) * _sub_step / 2.0 - 0.27 * _fsize + sub_bg_dy, 2)
         sub_bg_plan = {
@@ -1535,13 +1558,13 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     top_line_js = ""
     top_line_plan = None
     if top_line_on:
-        top_line_y = float(st.get("top_line_y") if st.get("top_line_y") is not None else 162.0)
-        top_line_w = float(st.get("top_line_w") if st.get("top_line_w") is not None else 969.0)
-        top_line_th = float(st.get("top_line_th") if st.get("top_line_th") is not None else 12.5)
-        top_line_from = list(st.get("top_line_from") if st.get("top_line_from") is not None else [0.984, 1.0, 0.541])
-        top_line_to = list(st.get("top_line_to") if st.get("top_line_to") is not None else [1.0, 0.698, 0.988])
-        top_line_track_fill = list(st.get("top_line_track_fill") if st.get("top_line_track_fill") is not None else [1.0, 1.0, 1.0])
-        top_line_track_op = float(st.get("top_line_track_op") if st.get("top_line_track_op") is not None else 16.0)
+        top_line_y = float(_sv(st, "top_line_y"))
+        top_line_w = float(_sv(st, "top_line_w"))
+        top_line_th = float(_sv(st, "top_line_th"))
+        top_line_from = list(_sv(st, "top_line_from"))
+        top_line_to = list(_sv(st, "top_line_to"))
+        top_line_track_fill = list(_sv(st, "top_line_track_fill"))
+        top_line_track_op = float(_sv(st, "top_line_track_op"))
         top_line_plan = {
             "y": top_line_y,
             "w": top_line_w,
@@ -1594,24 +1617,24 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     # подпись о ролике (задание DG, обновлено DL)
     caption_on = bool(st.get("caption"))
     caption_text_raw = str(caption or "").strip()
-    caption_case = st.get("caption_case") or "upper"
+    caption_case = _sv_or(st, "caption_case")
     caption_text = caption_text_raw.upper() if caption_case == "upper" else caption_text_raw
     caption_js = ""
     caption_plan = None
     if caption_on:
-        caption_font = st.get("caption_font") or "SFPro-Bold"
-        caption_size = float(st.get("caption_size") if st.get("caption_size") is not None else 26.0)
-        caption_fill = list(st.get("caption_fill") if st.get("caption_fill") is not None else [1.0, 1.0, 1.0])
-        caption_x = float(st.get("caption_x") if st.get("caption_x") is not None else 55.5)
-        caption_y = float(st.get("caption_y") if st.get("caption_y") is not None else 228.0)
-        caption_bg = bool(st.get("caption_bg", True))
-        caption_bg_fill = list(st.get("caption_bg_fill") if st.get("caption_bg_fill") is not None else [0.345, 0.345, 0.345])
-        caption_bg_op = float(st.get("caption_bg_op") if st.get("caption_bg_op") is not None else 45.0)
-        caption_bg_round = float(st.get("caption_bg_round") if st.get("caption_bg_round") is not None else 68.0)
+        caption_font = _sv_or(st, "caption_font")
+        caption_size = float(_sv(st, "caption_size"))
+        caption_fill = list(_sv(st, "caption_fill"))
+        caption_x = float(_sv(st, "caption_x"))
+        caption_y = float(_sv(st, "caption_y"))
+        caption_bg = bool(_sv(st, "caption_bg"))
+        caption_bg_fill = list(_sv(st, "caption_bg_fill"))
+        caption_bg_op = float(_sv(st, "caption_bg_op"))
+        caption_bg_round = float(_sv(st, "caption_bg_round"))
         # множители плашки считаются от ВИДИМОГО текста (масштаб слоя всегда 100%):
         # в эталоне 181.4/105.6 по ширине и 88.2/35.5 по высоте (задание DL-хвост)
-        caption_kx = float(st.get("caption_kx") if st.get("caption_kx") is not None else 1.718)
-        caption_ky = float(st.get("caption_ky") if st.get("caption_ky") is not None else 2.484)
+        caption_kx = float(_sv(st, "caption_kx"))
+        caption_ky = float(_sv(st, "caption_ky"))
         cap_pos_expr = _caption_pos_expr(caption_x, caption_y, caption_kx)
         caption_plan = {
             "text": caption_text,
@@ -1671,18 +1694,23 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
                 + ('    try{ capBg.moveToBeginning(); }catch(e){}\n' if caption_bg else '')
                 + '    try{ capLayer.moveToBeginning(); }catch(e){}\n'
             )
-    # Затемнение под интро (задание IL): единственный источник чисел — этот план, из него
-    # их берут и шаблон (.jsx), и предпросмотр. Выключенная галка = None: подстановка в
-    # шаблоне пустая, .jsx не меняется ни на байт (golden). Координаты — в системе нула
-    # «Камера 1» (та же, в которой стоит нул «интро»: [0, INTRO_Y], template.py): позиция
-    # слоя следует за высотой интро, «y = INTRO_Y − 215» по ручным роликам amdi1.aep.
+    # Затемнение под интро (задание IL, масштабирование KF): единственный источник чисел —
+    # этот план, из него их берут и шаблон (.jsx), и предпросмотр. Выключенная галка = None:
+    # подстановка в шаблоне пустая, .jsx не меняется ни на байт (golden). Координаты — в
+    # системе нула «Камера 1» (та же, в которой стоит нул «интро»: [0, INTRO_Y], template.py).
+    # k масштабирует пиксели под ширину композиции относительно эталона SHADE_REF_W (доля
+    # кадра постоянна при любом W). _G (intro_scale / 100) — масштаб нула интро: затемнение
+    # висит на нуле «Камера 1», поэтому его scale и сдвиг SHADE_DY от intro_y масштабируются
+    # на _G вслед за размером и положением текста интро.
     shade_plan = None
     if bool(st.get("intro_shade")):
+        k = meta["w"] / SHADE_REF_W
+        intro_y = float(_sv_or(st, "intro_y"))
         shade_plan = {
-            "x": SHADE_X, "y": _r(float(st.get("intro_y") or 0) + SHADE_DY),
-            "scale": SHADE_SCALE, "w": SHADE_W, "h": SHADE_H,
-            "ox": SHADE_OX, "oy": SHADE_OY, "blur": SHADE_BLUR,
-            "op": float(st.get("intro_shade_op") if st.get("intro_shade_op") is not None else 100.0),
+            "x": _r(SHADE_X * k), "y": _r(intro_y + SHADE_DY * k * _G),
+            "scale": _r(SHADE_SCALE * _G), "w": _r(SHADE_W * k), "h": _r(SHADE_H * k),
+            "ox": _r(SHADE_OX * k), "oy": _r(SHADE_OY * k), "blur": _r(SHADE_BLUR * k),
+            "op": float(_sv(st, "intro_shade_op")),
         }
     # JS слоя затемнения: собирается ТОЛЬКО при включённой галке — при выключенной
     # подстановка пустая, и .jsx остаётся прежним байт в байт (golden). Слой — фигура
@@ -1738,7 +1766,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         # ease = [in, out] на каждый ключ (задание B); fit = постоянный масштаб-страховка;
         # cx/cy — точка наезда в долях кадра (задание Q): при наезде неподвижна она,
         # превью рисует её же как transformOrigin и центр масштабирования
-        "zoom": {"hold": _c1zoom == "jump", "fit": float(st.get("cam1_fit") or 100),
+        "zoom": {"hold": _c1zoom == "jump", "fit": float(_sv_or(st, "cam1_fit")),
                  "cx": cam1_cx, "cy": cam1_cy,
                  "keys": cam1_scale or [], "ease": _zoom_key_eases(cam1_scale or [])},
         "intro": intro_plan,
@@ -1747,7 +1775,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         "shade": shade_plan,
         # общий масштаб интро, в процентах как в стиле (задание BG): превью множит на него
         # положение и размер блока; поля групп (dx/dy/ds/y) читает оно же — не переименовывать
-        "intro_scale": float(st.get("intro_scale") or 100),
+        "intro_scale": float(_sv_or(st, "intro_scale")),
         # параметры анимаций интро: превью анимирует теми же числами,
         # что AE — вторая копия не заводится.
         "intro_anims": {
@@ -1768,7 +1796,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             },
         },
         "inserts": inserts_plan,
-        "layer_order": list(st.get("layer_order") or ["subs", "video", "roto", "photo", "intro"]),
+        "layer_order": list(_sv_or(st, "layer_order")),
         "subs": subs_plan,
         "sub_hide": sub_hide,
         # цвет базовых субтитров (задание CO): [r,g,b] 0..1, превью красит тем же,
@@ -1787,7 +1815,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
                   "src_start": _r(p["src_start"]), "src_end": _r(p["src_end"]),
                   "scale": _r(p["scale"])} for p in roto_plan],
         "audio": {"voice_src": (cams[0].get("path") or "") if cams else "",
-                  "voice_db": float(st.get("voice_db") or 0),
+                  "voice_db": float(_sv_or(st, "voice_db")),
                   "music_path": music_path, "music_db": music_db,
                   "censor": [[_r(a), _r(b)] for a, b in censor_windows],
                   "sfx": sfx_plan},
@@ -2395,9 +2423,9 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         name=_js(meta["name"]), cams=cams_js, subs=subs_js, cam1scale=cam1scale_js,
         cam1_ease=cam1_ease_js,
         cam1hold="true" if _c1zoom == "jump" else "false",
-        cam1_fit=float(st.get("cam1_fit") or 100),
-        intro_scale=float(st.get("intro_scale") or 100), intro_y=float(st.get("intro_y") or 0),
-        intro_y2=float(st.get("intro_y2") or 0), intro_on2=_jd(_intro_on2),
+        cam1_fit=float(_sv_or(st, "cam1_fit")),
+        intro_scale=float(_sv_or(st, "intro_scale")), intro_y=float(_sv_or(st, "intro_y")),
+        intro_y2=float(_sv_or(st, "intro_y2")), intro_on2=_jd(_intro_on2),
         # Подъём интро над видеовставкой: все подстановки пустые, когда front выключен.
         intro_front_decl=_intro_front_decl,
         intro_front_arr_decl=_intro_front_arr_decl,
@@ -2463,8 +2491,8 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         intro_x_js=("%g" % intro_x_px if intro_x_px else "0"),
         intro_x_p=("+%g" % intro_x_px if intro_x_px else ""),
         music=_js(music_path) if music_path else '""', music_db=music_db,
-        voice_db=float(st.get("voice_db") or 0),
-        audio_fade=(0.010 if st.get("audio_fades", True) else 0.0),
+        voice_db=float(_sv_or(st, "voice_db")),
+        audio_fade=(0.010 if _sv(st, "audio_fades") else 0.0),
         riser=_js(riser) if riser else '""',
         pop=_js(pop) if pop else '""', censor=censor_js, intro_groups=intro_groups_js,
         # Звуки с обрезкой/точкой удара/громкостью (задание AA): дефолты = прежние
@@ -2514,7 +2542,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         intro_back_scale_tmp=_intro_back_scale_tmp,
         intro_back_scale_word=_intro_back_scale_word,
         intro_back_scale_wpx=_intro_back_scale_wpx,
-        intro_glow=float(st.get("intro_glow") if st.get("intro_glow") is not None else 1.0),
+        intro_glow=float(_sv(st, "intro_glow")),
         exposure=float(exposure or 0), roto="[]",
         inserts=inserts_js, trans=_js(trans) if trans else '""',
         trans_sfx=_js(trans_sfx) if trans_sfx else '""',
@@ -2574,12 +2602,12 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         fill=_fill_js(sub_fill if sub_fill else [1, 1, 1]),
         hl_bold=("true" if st.get("hl_bold") else "false"),
         sh_op=68, sh_dir=181, sh_dist=5, sh_soft=44,
-        ins_fx=_js(st.get("insert_fx") or "card"),
+        ins_fx=_js(_sv_or(st, "insert_fx")),
         # Задание FC: «none»-вставки без анимации и без эффектов. Подстановки при
         # дефолтах (zoom/card/white) дают ровно прежний текст шаблона — .jsx не меняется
         # (golden); при none — пусто: ни вызова insFX, ни маски, ни wiggle.
-        insfx_cam1=("insFX(L,\"cam1\");" if (st.get("insert_fx") or "card") != "none" else ""),
-        insfx_cam2=("insFX(L,\"cam2\");" if (st.get("insert_fx") or "card") != "none" else ""),
+        insfx_cam1=("insFX(L,\"cam1\");" if (_sv_or(st, "insert_fx")) != "none" else ""),
+        insfx_cam2=("insFX(L,\"cam2\");" if (_sv_or(st, "insert_fx")) != "none" else ""),
         ins_wiggle=(
             "try{ L.property(\"ADBE Transform Group\").property(\"ADBE Position\").expression=\"wiggle(1,15)\"; }catch(e){}  // лёгкое дрожание"
             if _insert_anim != "none" else ""),
@@ -2596,13 +2624,13 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             "            mw = Math.max(20, Math.min(W,  mw*(ins.mw||100)/100));\n"
             "            mh = Math.max(20, Math.min(ph, mh*(ins.mh||100)/100));\n"
             "            roundMask(L, (W-mw)/2, Math.max(0,(H-mh)/2), (W+mw)/2, Math.min(H,(H+mh)/2), INS_MASK_R); }"
-            if (st.get("insert_fx") or "card") != "none" else ""),
-        ins_c1on2_x=float(st.get("insert_c1on2_x") or 0),
-        ins_c1on2_y=float(st.get("insert_c1on2_y") or 0),
+            if (_sv_or(st, "insert_fx")) != "none" else ""),
+        ins_c1on2_x=float(_sv_or(st, "insert_c1on2_x")),
+        ins_c1on2_y=float(_sv_or(st, "insert_c1on2_y")),
         sub_loop=sub_loop,
         sub_shadow_js=sub_shadow_js,
         sub_bg_js=sub_bg_js,
-        layer_order=_jd(list(st.get("layer_order") or ["subs", "video", "roto", "photo", "intro"])),
+        layer_order=_jd(list(_sv_or(st, "layer_order"))),
         sub_bg_null_anchor=("    nullAnchor = bgLayer;\n" if sub_bg_on else ""),
         # Масштаб слоя прекомпа субтитров (задание FE). При 100 — пусто, .jsx прежний
         # (golden). При другом значении: якорь и позицию слоя прекомпа переносим в точку
@@ -2640,12 +2668,14 @@ def _roto_js(plan, xml_path, kw, emit, cancel):
     if not kw.get("roto") or not plan.get("roto"):
         return "[]"
     from core import styles as _styles
+    from core.umsg import umsg
     st = _styles.resolve(kw.get("style"))
+    _roto = None
     try:
         from core import roto as _roto
         cams = plan["cams"]
         _plan = [p for p in plan["roto"] if cams[p["ci"]].get("path")]   # нужен исходник камеры
-        if st.get("roto_cam1_only", True):     # рото только на кусках Камеры 1 (cam2 без рото)
+        if _sv(st, "roto_cam1_only"):     # рото только на кусках Камеры 1 (cam2 без рото)
             _plan = [p for p in _plan if p["ci"] == 0]
         if not _plan:
             return "[]"
@@ -2660,13 +2690,15 @@ def _roto_js(plan, xml_path, kw, emit, cancel):
             by_cam.setdefault(p["ci"], []).append(p)
         emit("  · рото: {chunks} кусков по {cams} камере(ам) — самый долгий этап сборки",
              chunks=len(_plan), cams=len(by_cam))
+        failures = []
         for ci, ps in by_cam.items():
             masks_by_cam[ci] = _roto.alpha_for_ranges(
                 cams[ci]["path"], [(p["src_start"], p["src_end"]) for p in ps],
                 os.path.join(roto_dir, "cam%d" % (ci + 1)),
                 bottom_pct=float(kw.get("roto_bottom") or 0), device=kw.get("roto_device"),
-                emit=emit, cancel=cancel)
+                emit=emit, cancel=cancel, failures=failures)
         ents = []
+        missing = []
         for p in _plan:
             ms = masks_by_cam.get(p["ci"], [])
             m = next((mm for mm in ms if abs(mm["start"] - p["src_start"]) < 0.02), None)
@@ -2675,17 +2707,29 @@ def _roto_js(plan, xml_path, kw, emit, cancel):
                              "cs": _r(p["ts"] - p["src_start"]),
                              "scale": p["scale"], "mf": _r(m.get("f") or 1),
                              "mask": m["mask"]})
+            elif (p["src_end"] - p["src_start"]) >= _roto.MIN_SEG_SEC:
+                missing.append(p)
+        if missing:
+            non_micro = [p for p in _plan if (p["src_end"] - p["src_start"]) >= _roto.MIN_SEG_SEC]
+            n = len(missing)
+            m = len(non_micro)
+            first_err = failures[0]["error"] if failures else "маска не найдена"
+            msg = (f"рото не посчитано для {n} из {m} кусков "
+                   f"(первая причина: {first_err}). "
+                   f"Готовые маски в кэше — собери заново, или сними галку рото в стиле")
+            raise SystemExit(umsg("roto_incomplete", msg, n=n, m=m, err=first_err, error=first_err))
         return _jd(ents)
-    except Cancelled:
-        raise                                    # «Стоп» — не «рото пропущен»
+    except (Cancelled, SystemExit):
+        raise                                    # «Стоп» — не «рото пропущен», SystemExit — пробрасывать
     except Exception as ex:
-        emit("рото пропущен: {err}", err=str(ex))
-        return "[]"
+        msg = f"рото не удалось: {ex}. Сними галку рото в стиле или исправь причину"
+        raise SystemExit(umsg("roto_failed", msg, err=str(ex), error=str(ex))) from ex
     finally:
-        try:
-            _roto.release(emit=emit)             # выгрузить RVM из VRAM после сборки
-        except Exception:
-            pass
+        if _roto is not None:
+            try:
+                _roto.release(emit=emit)         # выгрузить RVM из VRAM после сборки
+            except Exception:
+                pass
 
 
 def to_ae_full(xml_path, jsx_path=None, return_source=False, emit=console_emit, cancel=None,

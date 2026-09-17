@@ -83,8 +83,10 @@ function inspSubEdit(){
   CURSTYLE.sub_words_per_row=isNaN(sw)||sw<1?1:Math.min(6,sw);
   let sr=parseInt(val('insp_subrows'));
   CURSTYLE.sub_rows_max=isNaN(sr)||sr<1?1:sr;
-  if($('st_subwords'))$('st_subwords').value=CURSTYLE.sub_words_per_row;
-  if($('st_subrows'))$('st_subrows').value=CURSTYLE.sub_rows_max;
+  if(typeof stRefresh==='function'){
+    stRefresh('sub_words_per_row');
+    stRefresh('sub_rows_max');
+  }
   syncSubTabUI();
   captureAE();
   ipvPlanSoon();
@@ -163,7 +165,7 @@ let AEWMODE='words';
 function aewOn(){return $('mbInserts').classList.contains('on')&&IPVMODE==='ae';}
 function aewSetMode(m){AEWMODE=m;
   document.querySelectorAll('#aewmode label').forEach(l=>l.classList.toggle('on',l.querySelector('input').checked));
-  if(m==='style'){styleToModal();if(typeof stylePartOpen==='function'&&!stylePartOpen())openStylePart('text');}else styleHome();
+  if(m==='style'){styleToModal();const p=$('stpanel');if(p&&!p.children.length&&typeof renderStylePanel==='function')renderStylePanel();}else styleHome();
   aewRender();}
 // Блок стиля НЕ дублируется в модалке — сам узел #stylebox переезжает туда и обратно.
 // Копия ломала бы всё: id перестали бы быть уникальными, onStyleChange/stEdit писали бы

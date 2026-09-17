@@ -348,31 +348,38 @@ def alpha_for_video(video, out_mask, downsample_ratio=None, bottom_pct=0.0,
 
 
 def _mask_key(video, s, e, bottom_pct, div):
-    """Стабильный ключ маски по СОДЕРЖИМОМУ: путь+mtime исходника + границы + низ +
-    делитель разрешения + модель/внутреннее разрешение RVM. Совпал ключ -> та же маска,
-    RVM не пересчитываем (реюз при пересборке/между XML). div в ключе, чтобы v1-маски
-    (полноразмерные) не перепутались с половинными; модель/px — чтобы смена качества
-    RVM не подхватывала старые маски."""
+    """Стабильный ключ маски по СОДЕРЖИМОМУ: normcase-путь, mtime в наносекундах и размер
+    (st_mtime_ns + st_size) + границы + низ + делитель разрешения + модель/px RVM.
+    st_mtime_ns и st_size защищают от подмены видео на том же пути в ту же секунду
+    (перезапись экспорта): целые секунды mtime давали ложное попадание в кэш со старой
+    маской. normcase на Windows сам понижает регистр, а на POSIX сохраняет
+    регистрозависимость (два разных файла A.mp4 и a.mp4 не сливаются).
+    Переход на наносекунды и размер одноразово обесценивает старый кэш масок — так
+    задумано ради надёжности (одна пересчитанная сборка)."""
     import hashlib
     try:
-        mt = int(os.path.getmtime(video))
+        st = os.stat(video)
+        mt_ns, sz = st.st_mtime_ns, st.st_size
     except OSError:
-        mt = 0
-    raw = (f"{os.path.abspath(video).lower()}|{mt}|{round(s, 3)}|{round(e, 3)}|"
+        mt_ns, sz = 0, 0
+    raw = (f"{os.path.normcase(os.path.abspath(video))}|{mt_ns}|{sz}|{round(s, 3)}|{round(e, 3)}|"
            f"{round(float(bottom_pct), 4)}|d{div}|m{_VARIANT}|px{_INTERNAL_PX}")
     return hashlib.md5(raw.encode("utf-8")).hexdigest()[:16]
 
 
 def alpha_for_ranges(video, ranges, out_dir, bottom_pct=0.0,
                      device=None, seq_chunk=None, emit=console_emit, cache_dir=None,
-                     cancel=None):
+                     cancel=None, failures=None):
     """Для каждого (start,end) сек исходного видео камеры получить альфа-маску его
     сегмента. Возвращает [{start,end,mask,f}] (mask = grayscale .mp4, f = во сколько
     раз маска мельче исходника — AE-слой маски масштабировать на scale*f).
 
-    Кэш: имя маски = хэш(исходник+mtime+границы+низ+делитель). Если такой файл уже
+    Кэш: имя маски = хэш(исходник+mtime+размер+границы+низ+делитель). Если такой файл уже
     есть (в cache_dir или out_dir) — переиспользуем, RVM не гоняем заново (тот же
     камера+фрагмент = та же маска). cache_dir=None -> кэшируем в out_dir.
+
+    failures — необязательный список, куда дописываются {"start", "end", "error"}
+    для каждого не посчитанного куска при сбое сегмента, OOM или пустой маске.
 
     cancel — колбэк «нажали Стоп?»: проверяется ПЕРЕД каждым куском. Рото — самый
     долгий этап сборки (сотни кусков на шестиминутном ролике), и без этой проверки
@@ -415,6 +422,9 @@ def alpha_for_ranges(video, ranges, out_dir, bottom_pct=0.0,
                                   seq_chunk=chunk, emit=emit, start=s, n_frames=n)
             if out:
                 res.append({"start": float(s), "end": float(e), "mask": out[0], "f": out[1]})
+            else:
+                if failures is not None:
+                    failures.append({"start": float(s), "end": float(e), "error": "маска пустая"})
         except Exception as ex:
             # CUDA OOM — особый случай: рото теперь сплошное на весь хрон, у 6-минутного
             # ролика это сотни диапазонов. Раньше цикл ловил ЛЮБУЮ ошибку и шёл дальше,
@@ -433,15 +443,28 @@ def alpha_for_ranges(video, ranges, out_dir, bottom_pct=0.0,
                         if out:
                             res.append({"start": float(s), "end": float(e),
                                         "mask": out[0], "f": out[1]})
-                        chunk = 2                # дальше идём мельче, не упираясь снова
-                        continue
+                            chunk = 2                # дальше идём мельче, не упираясь снова
+                            continue
+                        else:
+                            if failures is not None:
+                                failures.append({"start": float(s), "end": float(e),
+                                                 "error": "маска пустая"})
+                            chunk = 2
+                            continue
                     except Exception as ex2:
                         ex = ex2
                 release(emit=emit)
                 emit("  ! рото прервано: не хватает видеопамяти. Закрой LM Studio/другие "
                      "модели и собери заново (готовые маски переиспользуются из кэша).")
+                if failures is not None:
+                    for s_rem, e_rem in ranges[i:]:
+                        if e_rem - s_rem >= MIN_SEG_SEC:
+                            failures.append({"start": float(s_rem), "end": float(e_rem),
+                                             "error": "не хватает видеопамяти"})
                 break
             emit("  ! RVM ошибка на {s:.2f}-{e:.2f}: {err}", s=s, e=e, err=str(ex))
+            if failures is not None:
+                failures.append({"start": float(s), "end": float(e), "error": str(ex)})
     if n_cache:
         emit("  · рото из кэша: {count} сегм. (не пересчитывал)", count=n_cache)
     return res

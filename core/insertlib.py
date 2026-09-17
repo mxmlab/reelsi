@@ -483,7 +483,9 @@ def build_index(dirs, emit=None, use_emb=True):
     """Скан + эмбеддинги + сохранение insertlib.json. Описания (desc), правленные руками
     в прошлом индексе, сохраняются; эмбеддинги пересчитываются только для новых/правленых."""
     emit = wrap_emit(emit)
-    old = _load() or {}
+    import copy
+    with _LOCK:
+        old = copy.deepcopy(_load() or {})
     old_grouped = {}
     for it in old.get("items", []):
         p = it.get("path")
@@ -555,9 +557,81 @@ def build_index(dirs, emit=None, use_emb=True):
                 model = None
     else:
         emit("эмбеддер не найден (LM Studio /models без 'embed') — токенный матч по именам")
-    data = {"dirs": [os.path.abspath(x.strip().strip('"')) for x in dirs if x.strip()],
-            "emb_model": model or "", "emb_tag": EMB_TAG, "items": items}
-    _save(data)
+
+    # Слияние под локом: не затираем параллельные правки (rej, add_generated, set_desc),
+    # сделанные другими между началом скана и сохранением
+    with _LOCK:
+        cur = _load() or {}
+        cur_grouped = {}
+        for it in cur.get("items", []):
+            p = it.get("path")
+            if p:
+                k = os.path.normcase(os.path.abspath(p))
+                cur_grouped.setdefault(k, []).append(it)
+        cur_items = {k: _merge_prev_records(recs) for k, recs in cur_grouped.items()}
+
+        built_by_k = {}
+        for it in items:
+            p = it.get("path")
+            if p:
+                k = os.path.normcase(os.path.abspath(p))
+                built_by_k[k] = it
+
+        # Записи, удалённые из cur за время скана (были в old, нет в cur), не воскрешать.
+        # Если скан нашёл их заново на диске — они остаются как найденные.
+        to_drop = {k for k in old_items if k not in cur_items and k not in found_nc}
+        if to_drop:
+            items = [it for it in items if os.path.normcase(os.path.abspath(it.get("path") or "")) not in to_drop]
+            built_by_k = {k: it for k, it in built_by_k.items() if k not in to_drop}
+
+        # Записи cur, которых не было в old (добавлены за время скана, например add_generated)
+        for k, cur_it in cur_items.items():
+            if k not in old_items:
+                if k in built_by_k:
+                    it = built_by_k[k]
+                    merged = dict(cur_it)
+                    merged["used"] = max(int(it.get("used") or 0), int(cur_it.get("used") or 0))
+                    if not os.path.isfile(merged.get("path") or ""):
+                        if not merged.get("gone"):
+                            merged["gone"] = time.time()
+                    idx = items.index(it)
+                    items[idx] = merged
+                    built_by_k[k] = merged
+                else:
+                    new_it = dict(cur_it)
+                    if not os.path.isfile(new_it.get("path") or ""):
+                        if not new_it.get("gone"):
+                            new_it["gone"] = time.time()
+                    items.append(new_it)
+                    built_by_k[k] = new_it
+
+        # Для записей, которые есть и в old, и в cur: обновляем изменённые поля,
+        # used берем как максимум из трёх; если текст изменился — сбрасываем emb
+        fields_to_merge = ("rej", "desc", "desc_src", "ru", "vis", "look", "mw", "mh", "added")
+        for k in old_items:
+            if k in cur_items and k in built_by_k:
+                it = built_by_k[k]
+                old_it = old_items[k]
+                cur_it = cur_items[k]
+                comp_desc = it.get("desc") or ""
+                comp_ru = it.get("ru") or ""
+                comp_vis = it.get("vis") or ""
+
+                for f in fields_to_merge:
+                    if cur_it.get(f) != old_it.get(f):
+                        if f in cur_it and cur_it[f] is not None:
+                            it[f] = cur_it[f]
+                        else:
+                            it.pop(f, None)
+
+                it["used"] = max(int(it.get("used") or 0), int(old_it.get("used") or 0), int(cur_it.get("used") or 0))
+
+                if (it.get("desc") or "") != comp_desc or (it.get("ru") or "") != comp_ru or (it.get("vis") or "") != comp_vis:
+                    it["emb"] = None
+
+        data = {"dirs": [os.path.abspath(x.strip().strip('"')) for x in dirs if x.strip()],
+                "emb_model": model or "", "emb_tag": EMB_TAG, "items": items}
+        _save(data)
     emit("индекс: {count} файлов ({photos} фото, {videos} видео)",
          count=len(items),
          photos=sum(1 for i in items if i.get('type') == 'photo'),
@@ -1391,6 +1465,7 @@ def import_media(dirs, dest, since_ts=0.0, move=True, emit=None, recursive=False
     (old->new), пути в insertlib.json обновляются (used/desc сохраняются). -> dict(count, dest)."""
     emit = wrap_emit(emit)
     dest = os.path.abspath(dest)
+    dest_nc = os.path.normcase(dest)
     moved, mapping = 0, {}
     for d in dirs:
         d = (d or "").strip().strip('"')
@@ -1400,7 +1475,8 @@ def import_media(dirs, dest, since_ts=0.0, move=True, emit=None, recursive=False
         for root, dns, fns in os.walk(d):
             if not recursive:
                 dns[:] = []
-            if SKIP_DIR.search(root) or os.path.abspath(root).startswith(dest):
+            root_nc = os.path.normcase(os.path.abspath(root))
+            if SKIP_DIR.search(root) or root_nc == dest_nc or root_nc.startswith(dest_nc + os.sep):
                 dns[:] = []
                 continue
             for fn in fns:
@@ -1564,10 +1640,14 @@ def auto_describe(emit=None, only_missing=True, progress=None):
     Пишет ТОЛЬКО в vis: desc (исходная фраза/запрос) и desc_src не трогаются. Сбрасывает emb
     (пересчёт батчем в конце). progress(done,total)."""
     emit = wrap_emit(emit)
-    d = _load()
-    if not d or not d.get("items"):
-        emit("индекс пуст — сначала скан")
-        return dict(count=0)
+    with _LOCK:
+        d = _load()
+        if not d or not d.get("items"):
+            emit("индекс пуст — сначала скан")
+            return dict(count=0)
+        todo = [(it["path"], it.get("name") or os.path.basename(it["path"]))
+                for it in d["items"]
+                if os.path.isfile(it.get("path") or "") and (not only_missing or needs_vis(it))]
     model = _vision_model()
     if not model:
         emit("⚠ vision-модель не найдена в LM Studio (нужна qwen-vl или похожая)")
@@ -1577,34 +1657,75 @@ def auto_describe(emit=None, only_missing=True, progress=None):
         aicut.ensure_loaded(model)
     except Exception:
         pass
-    todo = [it for it in d["items"]
-            if os.path.isfile(it["path"]) and (not only_missing or needs_vis(it))]
     emit("vision-описания: {count} файлов через {model}…", count=len(todo), model=model)
+
+    pending = {}
+
+    def _flush_pending():
+        if not pending:
+            return
+        with _LOCK:
+            cur = _load()
+            if not cur:
+                return
+            by_p = {os.path.normcase(os.path.abspath(it.get("path") or "")): it
+                    for it in cur.get("items", [])}
+            applied = []
+            for k, txt in pending.items():
+                it = by_p.get(k)
+                if it is not None:
+                    it["vis"] = txt
+                    it["emb"] = None
+                    applied.append(k)
+            if applied:
+                _save(cur)
+            for k in applied:
+                pending.pop(k, None)
+
     done = 0
-    for it in todo:
-        txt = describe_file(it["path"], model)
+    for path, name in todo:
+        txt = describe_file(path, model)
         if txt:
-            it["vis"] = txt
-            it["emb"] = None
-            emit("  {name}: {vis}", name=it['name'][:48], vis=txt[:80])
+            pending[os.path.normcase(os.path.abspath(path))] = txt
+            emit("  {name}: {vis}", name=name[:48], vis=txt[:80])
         else:
-            emit("  ⚠ {name}: vision не ответил", name=it['name'][:60])
+            emit("  ⚠ {name}: vision не ответил", name=name[:60])
         done += 1
         if progress:
             progress(done, len(todo))
         if done % 10 == 0:
-            _save(d)                                            # чекпойнт
-    _save(d)
+            _flush_pending()                                    # чекпойнт
+    _flush_pending()
+
     emb_model = _emb_model()
-    need = [it for it in d["items"] if not it.get("emb")]
-    if emb_model and need:
-        emit("эмбеддинги: {count} описаний…", count=len(need))
-        vecs = _emb_docs([_subject_text(_doc_text(it["desc"], it.get("ru"), it.get("vis"))) for it in need], emb_model)
-        if vecs:
-            for it, v in zip(need, vecs):
-                it["emb"] = v
-        d["emb_model"], d["emb_tag"] = emb_model, EMB_TAG
-    _save(d)
+    if emb_model:
+        with _LOCK:
+            cur = _load()
+            need = []
+            if cur:
+                for it in cur.get("items", []):
+                    if not it.get("emb"):
+                        p = it.get("path")
+                        if p:
+                            doc_t = _subject_text(_doc_text(it.get("desc"), it.get("ru"), it.get("vis")))
+                            if doc_t:
+                                need.append((p, it.get("desc") or "", it.get("ru") or "", it.get("vis") or "", doc_t))
+        if need:
+            emit("эмбеддинги: {count} описаний…", count=len(need))
+            vecs = _emb_docs([t for _, _, _, _, t in need], emb_model)
+            if vecs:
+                with _LOCK:
+                    cur = _load()
+                    if cur:
+                        by_p = {os.path.normcase(os.path.abspath(it.get("path") or "")): it
+                                for it in cur.get("items", [])}
+                        for (p, dsc, ru, vis, _txt), v in zip(need, vecs):
+                            it = by_p.get(os.path.normcase(os.path.abspath(p)))
+                            if it is not None and (it.get("desc") or "") == dsc and (it.get("ru") or "") == ru \
+                               and (it.get("vis") or "") == vis:
+                                it["emb"] = v
+                        cur["emb_model"], cur["emb_tag"] = emb_model, EMB_TAG
+                        _save(cur)
     emit("готово: описано {count}", count=done)
     return dict(count=done)
 

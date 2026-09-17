@@ -27,11 +27,30 @@ CSS = os.path.join(ROOT, "static", "app.css")
 # Весь код интерфейса одной строкой: файлов теперь четырнадцать (static/app/),
 # и список берётся из папки — проверки не надо чинить при добавлении файла.
 from core import app_meta  # noqa: E402
+import test_style_keys_in_ui as watcher  # noqa: E402
 HTML = os.path.join(ROOT, "templates", "index.html")
+# Панель стиля: с задания JB поля строятся из схемы, а не выписаны в разметке,
+# поэтому проверки стиля смотрят в схему + в код панели (см. tests/test_style_keys_in_ui.py).
+PANEL_JS = os.path.join(ROOT, "static", "app", "94-stylepanel.js")
+STYLES_JS = os.path.join(ROOT, "static", "app", "95-styles.js")
 
 
 def _read(path):
     return io.open(path, encoding="utf-8").read()
+
+
+def _panel_js():
+    """Код панели стиля — единственная дверь полей (задание JB)."""
+    return _read(PANEL_JS)
+
+
+def _schema_field(key):
+    return watcher.schema_field(key)
+
+
+def _schema_toggles():
+    """Ключи-тумблеры схемы: группу/слой прячет её же галка (задание JB п. 2)."""
+    return {it["toggle"] for _kind, it in watcher.schema_items() if it.get("toggle")}
 
 
 def test_batch_master_layout_contract(html, js, css):
@@ -135,9 +154,15 @@ def test_batch_clip_controls_keep_speaker_and_markup_states(js):
 
 
 def test_ae_words_help_and_style_default(html, js):
+    """Справка «Как пользоваться» на месте, а стиль правится панелью по схеме (JB п. 1-2)."""
     assert 'Как пользоваться' in html
-    assert "openStylePart('text')" in js
+    assert 'id="stpanel"' in html and 'role="tree"' in html, (
+        "в index.html нет контейнера панели стиля")
+    assert "function renderStylePanel(" in js
     assert 'function updateStyleSaveUI' in js
+    # Ручные «окна разделов» (openStylePart/closeStylePart) ушли вместе со старой разметкой
+    assert "openStylePart(" not in js and "STYLE_PARTS" not in js, (
+        "обвязка вкладок #styleparts вернулась — её заменила панель")
 
 
 def test_howto_details_reset_global_separator(css):
@@ -931,8 +956,14 @@ def test_style_template_is_editable_without_retyping_its_name(js, html):
     assert "ensureEditOption(" in body, "селектор не показывает имя шаблона с пометкой «правится»"
     assert "BUILTIN_STYLES[key]?'':key" in body, (
         "имя шаблона снова вписывается руками (или подставляется встроенному)")
-    assert "$('rotobottom').value=rb" in body and "rotoSync()" in body, (
-        "заход в правку шаблона сбрасывает рото открытого клипа на шаблонное")
+    # Поля панели раскладываются из шаблона ОДНИМ путём. Раньше тут вручную возвращали
+    # рото открытого клипа (#roto/#rotobottom), потому что рото было настройкой КЛИПА;
+    # с задания EX2c рото — поле стиля, и шаблон приносит его сам (JB п. 2).
+    assert "$('rotobottom')" not in body and "st_roto" not in body, (
+        "заход в правку шаблона снова правит поля рото руками")
+    assert "fillStyleFields();" in body, "поля панели не заполняются из шаблона"
+    assert "roto" in _schema_toggles(), "рото перестало быть тумблером слоя схемы"
+    assert _schema_field("roto_bottom")["ctl"] == "num", "«Низ маски» пропал из схемы"
 
 
 def test_edit_mode_key_never_leaks_out_of_the_selector(js):
@@ -1021,12 +1052,18 @@ def test_style_roto_bottom_shows_mask_while_editing(js, html, css):
     рото в фокусе и крутится, на кадре предпросмотра снизу живёт полупрозрачная
     красная полоса на столько процентов высоты; перестал крутить или ушёл с поля —
     ушла. Раньше ротоскоп правился вслепую, до рендера.
+
+    Живую маску включает поле с hint «rotomask» (задание JB): id старой разметки
+    (rotobottom) больше нет, поле строит панель по схеме.
     """
-    assert 'id="rotobottom"' in html and "onfocus=\"rotoMaskSync()\"" in html, (
-        "поле рото не будит маску при входе")
-    assert "oninput=\"rotoMaskSync()\"" in html and "onblur=\"rotoMaskHide()\"" in html, (
-        "маска не обновляется по ходу правки / не прячется при уходе")
-    assert "function rotoMaskSync()" in js and "function rotoMaskHide()" in js, (
+    field = _schema_field("roto_bottom")
+    assert field and field.get("hint") == "rotomask", (
+        "у поля «Низ маски» пропала живая маска (hint rotomask)")
+    panel = _panel_js()
+    assert "field.hint === 'rotomask'" in panel, "панель не включает маску у поля рото"
+    assert "rotoMaskSync()" in panel and "rotoMaskHide()" in panel, (
+        "поле рото не будит/не прячет маску")
+    assert "function rotoMaskSync(" in js and "function rotoMaskHide()" in js, (
         "механика маски пропала из 95-styles.js")
     assert "setTimeout(rotoMaskHide,1500)" in js, (
         "маска не гаснет сама после паузы в кручении")
@@ -1060,16 +1097,23 @@ def test_roto_mask_hint_rides_cam1_zoom(js, css):
 def test_style_sub_height_live_moves_preview_subtitle(js, html):
     """«Высота субтитров %» двигает строку в превью сразу, а не после рендера.
 
-    Поле крутится oninput — строка слова в превью садится на те же проценты от
-    низа, что AE поставит POSY. Маркер не нужен: сами слова и есть подсказка.
+    Поле тянется мышью и уходит в stEdit на каждый шаг — строка слова в превью садится
+    на те же проценты от низа, что AE поставит POSY. Маркер не нужен: сами слова и есть
+    подсказка. Поле строит панель по схеме (conv inv_pct), id старой разметки ушёл.
     """
-    assert 'id="st_suby"' in html and "oninput=\"stEdit()\"" in html, (
-        "поле высоты субтитров не крутится вживую")
+    field = _schema_field("sub_y")
+    assert field and field["ctl"] == "num" and field.get("conv") == "inv_pct", (
+        "«Высота субтитров» пропала из схемы или потеряла пересчёт в % снизу")
+    panel = _panel_js()
+    drag = _fn_body(panel, "function initNumDrag(")
+    assert "stEdit();" in drag, "перетаскивание числа не двигает превью вживую"
+    assert "stEdit();" in _fn_body(panel, "function stSliderInput("), (
+        "ползунок не двигает превью вживую")
     assert "function styleSubPos()" in js and ".pvsub" in js[js.index("function styleSubPos()"):], (
         "позиция субтитров в превью больше не пересчитывается")
-    edit = js[js.index("function stEdit()"):js.index("function discUI(")]
-    assert "styleSubPos();" in edit, "правка стиля не двигает строку в превью"
-    refl = js[js.index("function reflectStyle()"):js.index("function fillStyleFields(")]
+    assert "styleSubPos();" in _fn_body(panel, "function stEdit()"), (
+        "правка стиля не двигает строку в превью")
+    refl = js[js.index("function reflectStyle()"):js.index("function styleFrameDim()")]
     assert "styleSubPos();" in refl, "смена шаблона не выставляет высоту субтитров в превью"
 
 
@@ -1909,74 +1953,66 @@ def test_video_resolution_settings_contract(js):
 
 
 def test_style_panel_cp2_sldnum_and_pairs(html, css, js):
-    """Задание CU: слайдер+число (.sldnum) на все величины (включая rotobottom), пары X/Y в .wide ячейках."""
-    # 1. Проверяем наличие стилей .sldnum в CSS
-    assert ".sldnum" in css, "в app.css нет класса .sldnum"
+    """Задание CU (в редакции JB): у каждой величины есть и число, и ползунок, пары X/Y — одно поле.
 
-    # 2. Проверяем функции синхронизации в JS
-    assert "function syncSldnums(" in js, "в JS нет функции syncSldnums"
-    assert "function sldSync(" in js, "в JS нет функции sldSync"
+    Списка id в разметке больше нет: строки строит панель по схеме, поэтому проверяем
+    схему (все 22 величины на месте, у пары X/Y — один узел с key2) и общий код панели,
+    который рисует ползунок КАЖДОМУ числовому полю, а не выписанному списку.
+    """
+    panel = _panel_js()
+    quantity = ("num", "int", "angle")
+    for key in ("cam1_fit", "cam1_drift_lo", "cam1_drift_hi", "start_blur", "start_blur_dur",
+                "sub_y", "sub_words_per_row", "sub_rows_max", "intro_scale", "intro_glow",
+                "intro_y", "intro_y2", "insert_c2_y", "insert_c1_y", "insert_c1_x",
+                "insert_c1on2_y", "insert_c1on2_x", "music_db", "voice_db", "pop_lead",
+                "pop_db", "roto_bottom"):
+        field = _schema_field(key)
+        assert field, f"в схеме нет величины {key}"
+        assert field["ctl"] in quantity, f"{key}: контрол {field['ctl']} вместо величины"
 
-    # 3. Список полей величин, которые обязаны быть в .sldnum (все 21 величина)
-    fields = [
-        "st_cam1fit", "st_driftlo", "st_drifthi", "st_startblur", "st_startblurdur",
-        "st_suby", "st_subwords", "st_subrows", "st_introscale", "st_introglow",
-        "st_introy", "st_introy2", "st_insc2y", "st_insc1y", "st_insc1x",
-        "st_insc1on2y", "st_insc1on2x", "st_musicdb", "st_voicedb", "st_poplead", "st_popdb",
-        "rotobottom"
-    ]
-    for fid in fields:
-        assert f'id="{fid}"' in html, f"поле {fid} отсутствует в html"
-        if fid == "rotobottom":
-            pattern = rf'<div class="sldnum">[^<]*<input type="range"[^>]*>[^<]*<input type="number"[^>]*id="{fid}"'
-        else:
-            pattern = rf'<div class="sldnum">[^<]*<input type="range"[^>]*oninput="sldSync\(this\);stEdit\(\)"[^>]*>[^<]*<input type="number"[^>]*id="{fid}"'
-        assert re.search(pattern, html), f"поле {fid} не обёрнуто в .sldnum со слайдером range или нет sldSync"
+    # ползунок, число и правка с клавиатуры — у каждого числового поля, из одного места
+    assert "'st_' + item.key + '_slider'" in panel, "панель не строит ползунок"
+    assert "'st_' + item.key + '_val'" in panel and "'st_' + item.key + '_input'" in panel
+    assert "range.min = item.min" in panel and "range.max = item.max" in panel, (
+        "ползунок больше не берёт границы из схемы")
+    assert "function stSliderInput(" in panel and "function initNumDrag(" in panel
 
-    # 4. Проверяем, что пары X/Y оформлены через .pair в ячейках .wide
-    assert re.search(r'<div class="wide"[^>]*>.*?<div class="pair">.*?id="st_insc1x".*?id="st_insc1y"', html, re.S), (
-        "st_insc1x/y не оформлены парой в wide ячейке"
-    )
-    assert re.search(r'<div id="insc1on2wrap" class="wide"[^>]*>.*?<div class="pair">.*?id="st_insc1on2x".*?id="st_insc1on2y"', html, re.S), (
-        "st_insc1on2x/y не оформлены парой в wide ячейке"
-    )
+    # Пара X/Y — ОДНО поле строки с вторым ключом (отдельной строки для Y нет)
+    point = _schema_field("cam1_zoom_cx")
+    assert point["ctl"] == "point" and point.get("key2") == "cam1_zoom_cy", (
+        "точка наезда перестала быть парой X/Y одним полем")
+    assert _schema_field("cam1_zoom_cy") is point, "вторая половина пары живёт отдельным полем"
 
 
 def test_style_panel_cp3_all_fields_call_stedit(html):
-    """Задание CP3/CU: каждое поле стиля внутри .stylepart обязано вести в stEdit().
+    """Задание CP3/CU (в редакции JB): каждое поле стиля ведёт в stEdit().
 
-    Рото теперь поле СТИЛЯ, из STYLE_LOCAL он убран (задание EX2c); исключение
-    остаётся лишь потому, что у рото свой обработчик rotoSync. Все остальные
-    input/select/textarea обязаны иметь stEdit() в цепочке onchange/oninput.
+    Полей в разметке больше нет — их строит панель по схеме, — поэтому проверяем саму
+    панель: у каждого типа контрола обработчик заканчивается вызовом stEdit() (или
+    зовёт помощника, который в него ведёт: перетаскивание числа, ползунок, HEX, галки,
+    «Сброс»). Раньше это приходилось проверять по каждой строке index.html, и забытое
+    поле не ловилось ничем.
     """
-    allowed_exceptions = {"roto", "rotobottom", "roto_cam1only"}
+    panel = _panel_js()
+    assert 'id="stpanel"' in html and "stylepart_" not in html, (
+        "в index.html осталась старая разметка полей стиля")
 
-    parts = re.findall(
-        r'<div\s+id="stylepart_[^"]+"\s+class="stylepart"[^>]*>(.*?)(?=<div\s+id="stylepart_|\s*</div>\s*<!-- /stylebody|\Z)',
-        html,
-        re.S,
-    )
-    assert len(parts) == 5, f"найдено {len(parts)} разделов stylepart вместо 5"
+    # Контролы панели: у каждого свой обработчик. stHexInput сюда не входит нарочно —
+    # он только подкрашивает образец по ходу набора, а в стиль пишет stHexChange (onchange).
+    for header in ("function initNumDrag(", "function stSliderInput(", "function stHexChange(",
+                   "function stColorSwatchChange(",
+                   "function stToggleLayer(", "function stToggleGroup(",
+                   "function createAngleDial(", "function stReset(", "function stResetKey("):
+        assert "stEdit()" in _fn_body(panel, header), (
+            "%s не ведёт в stEdit() — правка поля не доедет до стиля" % header)
 
-    missing = []
-    for part in parts:
-        for m in re.finditer(r'<((?:input|select|textarea)\b[^>]*)>', part):
-            tag = m.group(1)
-            id_m = re.search(r'id="([^"]+)"', tag)
-            el_id = id_m.group(1) if id_m else None
-
-            if el_id in allowed_exceptions:
-                assert "rotoSync" in tag, f"поле-исключение {el_id} не вызывает rotoSync"
-                continue
-
-            onchange = re.search(r'onchange="([^"]+)"', tag)
-            oninput = re.search(r'oninput="([^"]+)"', tag)
-            handlers = (onchange.group(1) if onchange else "") + " " + (oninput.group(1) if oninput else "")
-
-            if "stEdit" not in handlers:
-                missing.append(el_id or tag[:50])
-
-    assert not missing, f"поля внутри .stylepart без stEdit(): {', '.join(missing)}"
+    # простые контролы подключаются к stEdit прямо в разметке панели
+    for line in ("chk.onchange = () => stEdit();", "sel.onchange = () => stEdit();",
+                 "inp.onchange = () => stEdit();", "inp.oninput = () => stEdit();",
+                 "ta.onchange = () => stEdit();", "ta.oninput = () => stEdit();",
+                 "hex.onchange = () => stHexChange(item.key, hex.value);",
+                 "swatch.onchange = () => stColorSwatchChange(item.key, swatch.value);"):
+        assert line in panel, "в панели пропала привязка контрола к stEdit(): " + line
 
 
 def test_style_panel_cp3_layout_and_dots(html, css, js):
@@ -2038,44 +2074,74 @@ def test_sub_shadow_and_clean_preview_dk(js, css):
 
 
 def test_style_diff_vars_all_declared_dm():
-    """Задание DM: все переменные отличий d_<имя> в 95-styles.js объявлены.
+    """Задание DM (в редакции JB): точки «изменено» считает одна общая функция по схеме.
 
-    Удаление поля из интерфейса без удаления его diff-переменной приводит к ReferenceError
-    при вызове updateStyleDiffDots(), падению loadStyles() и пустому списку стилей.
+    До JB на каждое поле стиля в updateStyleDiffDots жила своя переменная d_<имя>.
+    Удаление поля из разметки без удаления его переменной давало ReferenceError при
+    вызове updateStyleDiffDots(), падение loadStyles() и пустой список стилей — то есть
+    цена забывчивости была высокой, а поймать её было нечем. Теперь точек одна дверь:
+    обход схемы, сравнение с дефолтом родителя (STSCHEMA.base). Сторожим её
+    единственность и то, что необъявленных d_*-переменных в коде не осталось.
     """
-    styles_path = os.path.join(ROOT, "static", "app", "95-styles.js")
-    code = _read(styles_path)
-    clean = re.sub(r"//.*$", "", code, flags=re.MULTILINE)
+    js = _read(os.path.join(ROOT, "static", "app", "95-styles.js"))
+    clean = re.sub(r"//.*$", "", js, flags=re.MULTILINE)
     clean = re.sub(r"/\*.*?\*/", "", clean, flags=re.DOTALL)
     declared = set(re.findall(r"\b(?:const|let|var)\s+(d_[a-zA-Z0-9_]+)\s*=", clean))
     used = set(re.findall(r"\b(d_[a-zA-Z0-9_]+)\b", clean))
-    undeclared = used - declared
-    assert len(declared) > 0, "в 95-styles.js не найдено объявлений d_*"
-    assert not undeclared, (
-        "необъявленные переменные отличий в 95-styles.js: " + ", ".join(sorted(undeclared))
+    assert not (used - declared), (
+        "необъявленные переменные отличий в 95-styles.js: " + ", ".join(sorted(used - declared))
     )
+
+    panel = _panel_js()
+    app_js = app_meta.app_js_text()
+    assert app_js.count("function updateStyleDiffDots(") == 1, (
+        "дверей у точек «изменено» стало больше одной")
+    assert "function updateStyleDiffDots(" in panel, "точки «изменено» ушли из панели"
+    body = _fn_body(panel, "function updateStyleDiffDots(")
+    assert "STSCHEMA.layers" in body and "STSCHEMA.base" in body, (
+        "точки считаются не по схеме и её дефолтам")
+    assert "updateStyleSaveUI()" in body, "точки не обновляют ряд сохранения"
 
 
 def test_style_element_ids_exist_in_html_dm(html):
-    """Задание DM: все обращения к полям стиля (st_*) в JS существуют в index.html.
+    """Задание DM (в редакции JB): обращение к полю стиля (st_*) ведёт к существующему элементу.
 
-    Поля стиля с префиксом st_ должны быть объявлены в templates/index.html (id="st_..."),
-    иначе обращение к свойствам несуществующего элемента вызывает TypeError/null-deref.
+    Поля стиля больше не выписаны в index.html — их строит панель из схемы, — поэтому
+    id бывает двух родов: постоянные (в разметке: st_name, st_saved, st_pickzoom,
+    st_layer_order_list, st_disc_text) и выведенные из ключа схемы (st_<key> и его части
+    _val/_input/_slider/_hex/_color). Обращение к id, которого не будет ни там, ни там, —
+    это null-deref, ради которого тест и заведён.
     """
     html_ids = set(re.findall(r"""\bid=["']([^"']+)["']""", html))
+    derived = set()
+    for key in (it.get("key") for _kind, it in watcher.schema_items() if it.get("key")):
+        derived |= {"st_" + key, "st_" + key + "_val", "st_" + key + "_input",
+                    "st_" + key + "_slider", "st_" + key + "_hex", "st_" + key + "_color"}
+    for key in (it.get("toggle") for _kind, it in watcher.schema_items() if it.get("toggle")):
+        derived.add("st_" + key)
+    # постоянные id панели и предпросмотра (см. JB п. 3, список оставшихся обращений)
+    known = {"stpanel", "st_name", "st_saved", "st_pickzoom", "st_layer_order_list",
+             "st_disc_text"}
+
     pattern = re.compile(r"""(?:\$|getElementById|val|num|setParentDot)\s*\(\s*["'](st_[a-zA-Z0-9_]+)["']\s*\)""")
     missing = []
+    dynamic = 0
     for js_path in app_meta.app_js_files():
         js_text = _read(js_path)
         js_clean = re.sub(r"//.*$", "", js_text, flags=re.MULTILINE)
         js_clean = re.sub(r"/\*.*?\*/", "", js_clean, flags=re.DOTALL)
         for m in pattern.finditer(js_clean):
             el_id = m.group(1)
-            if el_id not in html_ids:
-                missing.append(f"{el_id} ({os.path.basename(js_path)})")
+            if el_id in html_ids or el_id in known:
+                continue
+            if el_id in derived:
+                dynamic += 1
+                continue
+            missing.append(f"{el_id} ({os.path.basename(js_path)})")
     assert not missing, (
         "обращения к несуществующим полям стиля (st_*) в index.html: " + ", ".join(sorted(missing))
     )
+    assert dynamic > 0, "ни одного обращения к полю из схемы — проверка выродилась"
 
 
 def test_no_camcustom_and_speaker_dirs_restores_cams(js):

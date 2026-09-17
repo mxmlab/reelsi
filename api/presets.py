@@ -24,6 +24,19 @@ def api_styles():
         return jsonify(**umsg_err(e))
 
 
+@bp.route("/api/style_schema")
+def api_style_schema():
+    """Схема слоёв, групп и полей стиля для панели настроек (Effect Controls)."""
+    try:
+        try:
+            from core import style_schema
+            return jsonify(ok=True, **style_schema.schema())
+        except Exception as e:
+            raise SystemExit(umsg("styles_load_failed", str(e), err=str(e)))
+    except SystemExit as e:
+        return jsonify(**umsg_err(e))
+
+
 @bp.route("/api/savestyle", methods=["POST"])
 def api_savestyle():
     """Сохранить пользовательский пресет стиля как reelsi/styles/<name>.json."""

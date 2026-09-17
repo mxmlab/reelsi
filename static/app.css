@@ -17,6 +17,10 @@
      на случай «плана нет». Держать в :root, а не только инлайном: иначе var() молча
      работает на фолбэке, и разъехавшийся кегль не поймать (см. test_css_variables_all_declared). */
    --subfs:7.7cqw;
+   /* Уровень вложенности строки компактной панели стиля (--lvl ставит renderStylePanel):
+      объявлен здесь, а не только инлайном, — иначе var() молча работает на фолбэке
+      (см. test_css_variables_all_declared). */
+   --lvl:0;
    /* Цвет базовых субтитров в предпросмотре: ставится из плана сцены (sub_fill, задание
       CO), здесь — белый фолбэк «плана нет». */
    --subfc:#fff;
@@ -73,70 +77,130 @@ header.top{position:sticky;top:0;z-index:30;background:var(--bg);border-bottom:1
 .card h2 .k{font-family:ui-monospace,monospace;color:var(--mut2);font-size:12px}
 .sect{font-size:12px;font-weight:400;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);
   border-bottom:1px solid var(--bd);padding-bottom:6px;margin:20px 0 12px}
-/* окна разделов панели стиля (задание AC2): не модалки — панель с полями раздела, в
+/* окно раздела панели стиля (задание AC2): не модалка — панель с полями раздела, в
    предпросмотре живёт в правой колонке рядом с кадром, кадр не затемняется и играет.
    Одно окно за раз; закрытие по Esc и клику мимо (кнопка «x» ушла вместе с заголовком,
    задание CP1). */
-#stylebox{display:flex;flex-direction:column;max-height:70vh}
-#stylecustom{display:flex;flex-direction:column;flex:1;min-height:0}
-.stylebody{flex:1;min-height:220px;overflow-y:auto;padding-right:4px;margin-top:12px}
-.stylepart{border:1px solid var(--bd2);border-radius:var(--r);padding:14px;background:var(--bg2)}
-.stylegrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:end}
-.stylegrid .wide{grid-column:span 2}
-.stylemats{display:flex;flex-direction:column;gap:12px;margin-top:12px}
-.stylemats > div{width:100%}
-.stchkrow{grid-column:span 2;display:flex;flex-wrap:wrap;gap:12px;align-items:center;min-height:var(--h-sm);padding:4px 0}
-.stylepart .sect{grid-column:1/-1;margin:8px 0 0}
-.stylepart .sect:first-child{margin-top:0}
-.stylepart .wide{grid-column:span 2}
-/* подпись сверху, контрол на всю ширину ячейки (задание CP1): ширина живёт в ячейке
-   сетки, а не в инлайновых style=; у пар .tc/.pair свои фиксированные поля */
-/* Контрол занимает ячейку сетки целиком. ЧИСЛО из пары «слайдер + число» сюда не
-   входит: у него своя узкая ширина ниже, а это правило специфичнее (три :not
-   считаются как атрибуты) и перебивало её — число распирало на всю ячейку, слайдер
-   схлопывался в ноль (жалоба 2026-08-19, «слайдер шириной 1 пиксель»). */
-.stylepart select,.stylepart textarea,
-.stylepart input:not([type=checkbox]):not([type=color]):not([type=range]):not([type=number]){width:100%}
-.stylepart textarea{resize:vertical}
-.stylepart .sldnum{display:flex;gap:8px;align-items:center;width:100%;min-height:var(--h)}
-.stylepart .sldnum input[type=range]{flex:1;min-width:0;min-height:0;height:24px;padding:0;margin:0;
-  background:transparent;border:0;cursor:ew-resize;accent-color:var(--acc)}
-.stylepart .sldnum input[type=number]{width:64px;flex:none;min-height:var(--h);text-align:right;padding:8px 6px}
-.stylepart .pair{display:flex;gap:6px;align-items:center;width:100%}
-.stylepart .pair .sldnum{flex:1;min-width:0}
-.stylepart .pair .u{color:var(--mut);font-size:12px;flex:none}
-.stylepart .tc input:not([type=checkbox]):not([type=color]):not([type=range]){width:52px}
-.stylepart .pair input:not([type=color]):not([type=range]):not([type=number]){flex:1;min-width:0}
-.stylepart .filepick{display:flex;gap:8px;align-items:center}
-.stylepart .filepick input{flex:1;min-width:0}
-.stylepart label.chk{margin:0;justify-self:start}
-.stylepart button{justify-self:start}
-.stylepart details.stfold{margin-top:4px}
-.stylepart details.stfold summary{font-size:12px;color:var(--mut);cursor:pointer;user-select:none;padding:2px 0}
-.stylepart details.stfold summary:hover{color:var(--tx)}
-.stylepart details.stfold summary:focus-visible{outline:1px solid var(--mut);outline-offset:2px}
-.stylepart details.stfold .sldnum{margin-top:4px}
-/* Секции окна стиля (задание FG): сворачиваемые группы внутри вкладки. Заголовок на
-   всю ширину, шеврон — CSS-треугольник (эмодзи в интерфейсе запрещены), тело — та же
-   сетка, что у .stylegrid, чтобы существующие .wide/.stchkrow не поехали. */
-.stylepart details.stsec{grid-column:1/-1;margin:2px 0}
-.stylepart details.stsec summary{font-size:12px;color:var(--mut);cursor:pointer;user-select:none;padding:6px 0;
-  text-transform:uppercase;letter-spacing:.08em;display:flex;align-items:center;gap:7px}
-.stylepart details.stsec summary:hover{color:var(--tx)}
-.stylepart details.stsec summary:focus-visible{outline:1px solid var(--mut);outline-offset:2px}
-.stylepart details.stsec summary::-webkit-details-marker{display:none}
-.stylepart details.stsec summary::before{content:'';width:0;height:0;
-  border-left:5px solid currentColor;border-top:4px solid transparent;border-bottom:4px solid transparent;
-  transition:transform .15s}
-.stylepart details.stsec[open] summary::before{transform:rotate(90deg)}
-.stylepart details.stsec .stsec-b{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:end;padding-top:4px}
-.stylepart details.stsec .stsec-b .wide,.stylepart details.stsec .stsec-b .stchkrow{grid-column:span 2}
+/* Инспектор свойств стиля (задание JB: Effect Controls / Premiere-style компактная панель) */
+#stylebox{display:flex;flex-direction:column}
+#stylecustom{display:flex;flex-direction:column}
+/* Панель растёт по содержимому (без overflow/flex/min-height); прокручивается страница/модалка */
+.stpanel{overflow:visible !important;padding-right:4px}
+/* Внутри #stpanel все контролы: высота 20px, кегль 12px, паддинг 0 6px, радиус --r-sm */
+#stpanel select,
+#stpanel input:not([type=checkbox]):not([type=color]):not([type=range]),
+#stpanel textarea,
+#stpanel button:not(.streset){
+  height:20px !important;min-height:0 !important;max-height:20px !important;font-size:12px !important;padding:0 6px !important;border-radius:var(--r-sm);box-sizing:border-box !important;line-height:18px !important}
+#stpanel button:not(.streset){height:20px !important;min-height:0 !important;max-height:20px !important;font-size:11px !important;padding:0 6px !important;border-radius:var(--r-sm)}
+#stpanel button.icon{width:20px !important;height:20px !important;min-height:0 !important;max-height:20px !important;padding:0 !important;display:inline-flex !important;align-items:center !important;justify-content:center !important;border-radius:var(--r-sm)}
+
+/* Строки и уровни вложенности. Отступ уровня — 14px на --lvl (его ставит renderStylePanel),
+   строки 24px: осознанное исключение из --h 40px ради плотности как в Effect Controls
+   (см. docs/DESIGN.md, «Компактная панель свойств»). */
+/* Строка — сетка: [отступ+треугольник+галка] [точка 8px] [имя 1fr ellipsis] [значение 180px, по левому краю] */
+.strow{display:grid;grid-template-columns:auto 8px minmax(0,1fr) 180px;align-items:center;gap:0 6px;
+  height:24px;min-height:24px;max-height:24px;box-sizing:border-box;font-size:12px;font-weight:400;
+  padding:0 6px 0 calc(6px + var(--lvl,0) * 14px);transition:background-color .08s ease}
+.strow:hover{background:#171717}
+.strow.stscrub-active{cursor:col-resize;background:#202020}
+
+/* Слой — строка 28px */
+.stlayer{height:28px;min-height:28px;max-height:28px;font-size:12px;font-weight:400;color:var(--tx);cursor:pointer;user-select:none}
+.stlayer-box:not(:first-child) > .stlayer{border-top:1px solid var(--bd)}
+/* Группа — 24px, без bold/uppercase/letter-spacing, цвет --tx */
+.stgroup{font-size:12px;font-weight:400;color:var(--tx);cursor:pointer;user-select:none}
+.strow-ctl{display:inline-flex;align-items:center;gap:4px;flex:none}
+.stchk-spacer{width:12px;height:12px;display:inline-block;flex:none}
+.stval-spacer{width:180px;display:inline-block;flex:none}
+
+/* Подписи: вес 400, кегль 12px, без text-transform, без letter-spacing */
+#stpanel .stlabel,#stpanel .stfield-lbl,#stpanel .stgroup,#stpanel .stlayer{
+  font-weight:400 !important;font-size:12px !important;text-transform:none !important;letter-spacing:normal !important}
+#stpanel .stlayer,#stpanel .stlayer .stlabel,#stpanel .stgroup,#stpanel .stgroup .stlabel{color:var(--tx) !important}
+#stpanel .stfield-lbl{color:var(--mut) !important}
+#stpanel .stlayer.st-off .stlabel,#stpanel .stgroup.st-off .stlabel{color:var(--mut) !important}
+.stlabel{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* Шеврон-треугольник: 8px, цвет --mut, поворот 90° при раскрытии */
+.sttw{width:12px;height:12px;display:inline-flex;align-items:center;justify-content:center;flex:none;cursor:pointer;font-size:0;line-height:0}
+.sttw::before{content:'';display:block;width:0;height:0;border-left:5px solid var(--mut);border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .12s ease;transform-origin:2px 4px}
+.sttw.open::before{transform:rotate(90deg)}
+.sttw:hover::before{border-left-color:var(--tx)}
+.sttw-spacer{width:12px;display:inline-block;flex:none}
+/* Треугольник числового поля */
+.sttw-field{width:10px;height:10px}
+.sttw-field::before{border-left:4px solid var(--mut);border-top:3px solid transparent;border-bottom:3px solid transparent;transform-origin:2px 3px}
+
+/* Бэйдж FX и чекбокс включения */
+.stfx{font-size:11px;font-weight:700;color:var(--mut);border:1px solid var(--bd2);border-radius:var(--r-sm);padding:0 3px;line-height:14px;margin-right:2px}
+.sttoggle-lbl{display:inline-flex;align-items:center;margin:0;cursor:pointer;min-height:0 !important;padding:0 !important}
+
+/* Поле: имя и значение */
+.stfield{cursor:default}
+.stfield-name{display:flex;align-items:center;gap:4px;min-width:0;overflow:hidden}
+.stfield-lbl{color:var(--mut);font-size:12px;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:0;line-height:20px}
+#stpanel .i{width:13px !important;height:13px !important;min-width:13px !important;min-height:13px !important;max-width:14px !important;max-height:14px !important;font-size:11px !important;line-height:12px !important;color:var(--mut);border-radius:50%;cursor:help;flex:none;margin-left:4px;display:inline-flex !important;align-items:center !important;justify-content:center !important}
+
+.stfield-right{display:flex;align-items:center;justify-content:flex-start;gap:6px;width:180px;min-width:180px;max-width:180px;box-sizing:border-box}
+
+/* Числовые значения и drag-to-scrub. Пунктир — только под числом (width:auto) */
+.stnum-val{color:var(--tx);border-bottom:1px dashed var(--iron);cursor:ew-resize;font-family:inherit;font-size:11px;text-align:left;width:auto;display:inline-block;line-height:16px;user-select:none}
+.stnum-val:hover{border-bottom-color:var(--mut);color:#fff}
+.stnum-edit{width:56px !important;min-height:20px !important;height:20px !important;max-height:20px !important;padding:1px 4px !important;font-size:11px !important;background:var(--bg2) !important;color:var(--tx) !important;border:1px solid var(--iron) !important;border-radius:var(--r-sm);text-align:left !important;box-sizing:border-box !important}
+
+/* Слайдер на развёрнутой строке */
+.stslider-row{height:auto;min-height:24px;max-height:none;padding:0 6px 4px calc(6px + var(--lvl,0) * 14px)}
+.stslider-inner{width:100%;display:flex;align-items:center}
+.stslider{width:100%;height:14px;accent-color:var(--acc);cursor:pointer;margin:0;padding:0;background:transparent;border:0}
+
+/* Компактный чекбокс: 12px, рамка --iron */
+#stpanel input[type=checkbox].stchk,.stchk{appearance:none !important;-webkit-appearance:none !important;width:12px !important;height:12px !important;min-width:12px !important;min-height:12px !important;max-width:12px !important;max-height:12px !important;padding:0 !important;margin:0 !important;border:1px solid var(--iron) !important;border-radius:var(--r-sm);background:var(--bg2) !important;cursor:pointer !important;position:relative !important;display:inline-grid !important;place-content:center !important;flex:none !important;box-sizing:border-box !important}
+#stpanel input[type=checkbox].stchk:hover,.stchk:hover{border-color:var(--mut) !important}
+#stpanel input[type=checkbox].stchk:checked,.stchk:checked{background:var(--acc) !important;border-color:var(--acc) !important}
+#stpanel input[type=checkbox].stchk::after,.stchk:checked::after{content:'' !important;position:absolute !important;left:3px !important;top:1px !important;width:3px !important;height:6px !important;border:solid #000 !important;border-width:0 1.5px 1.5px 0 !important;transform:rotate(45deg) !important;opacity:0 !important}
+#stpanel input[type=checkbox].stchk:checked::after,.stchk:checked::after{opacity:1 !important}
+
+/* Цвет */
+.stcolor-wrap{display:flex;align-items:center;gap:6px}
+#stpanel input[type=color].stcolor-swatch,.stcolor-swatch{width:22px !important;height:14px !important;min-height:0 !important;max-height:14px !important;padding:0 !important;margin:0 !important;border:1px solid var(--bd2) !important;border-radius:var(--r-sm);cursor:pointer !important;flex:none !important;box-sizing:border-box !important}
+.stcolor-swatch:hover{border-color:var(--mut)}
+.stcolor-picker{position:absolute;opacity:0;pointer-events:none;width:0;height:0}
+.sthex{width:62px !important;height:20px !important;min-height:0 !important;max-height:20px !important;font-size:11px !important;color:var(--tx) !important;font-family:monospace !important;letter-spacing:.02em !important;padding:0 4px !important;box-sizing:border-box !important}
+
+/* Угловой циферблат (angle dial) — класс ставит createAngleDial в 94-stylepanel.js */
+.stangle-dial{flex:none;cursor:ew-resize}
+.stangle-dial circle{transition:stroke .12s}
+.stangle-dial:hover circle{stroke:var(--iron)}
+
+/* Селект и шрифт */
+.stselect{height:20px !important;min-height:0 !important;max-height:20px !important;font-size:11px !important;padding:1px 4px !important;background:var(--bg2) !important;color:var(--tx) !important;border:1px solid var(--bd2) !important;border-radius:var(--r-sm);max-width:140px;box-sizing:border-box !important}
+.stfont{height:20px !important;min-height:0 !important;max-height:20px !important;font-size:11px !important;padding:1px 4px !important;background:var(--bg2) !important;color:var(--tx) !important;border:1px solid var(--bd2) !important;border-radius:var(--r-sm);width:120px;box-sizing:border-box !important}
+
+/* Файл и точка/координаты */
+.stfile-wrap{display:flex;align-items:center;gap:4px;width:100%;justify-content:flex-start}
+.stfile{height:20px !important;min-height:0 !important;max-height:20px !important;font-size:11px !important;padding:1px 4px !important;background:var(--bg2) !important;color:var(--tx) !important;border:1px solid var(--bd2) !important;border-radius:var(--r-sm);flex:1;max-width:100px;box-sizing:border-box !important}
+.stpoint-wrap{display:flex;align-items:center;gap:6px}
+.stpoint-val{font-size:11px;color:var(--tx)}
+
+/* Текстовое поле */
+.sttextarea{width:100%;height:20px !important;min-height:20px !important;font-size:11px;background:var(--bg2);color:var(--tx);border:1px solid var(--bd2);border-radius:var(--r-sm);padding:2px 6px;resize:none;box-sizing:border-box !important}
+
+/* Точка изменения: фиксированная колонка 8px СЛЕВА от имени (col 2 grid).
+   Не изменено — пусто (ничего); изменено — круг 6px --tx; клик по точке поля — сброс */
+.stdot{display:inline-flex;align-items:center;justify-content:center;width:8px;min-width:8px;max-width:8px;height:20px;cursor:pointer;flex:none;font-size:0;line-height:0}
+.stdot::after{content:none}
+.stdot.st-changed::after{content:'';width:6px;height:6px;border-radius:50%;background:var(--tx);display:block}
+.stdot:hover.st-changed::after{background:#fff}
+/* Сброс группы — текст 11px --mut без рамки и фона, hover --tx, в колонке значений */
+#stpanel .streset,.streset{height:20px !important;min-height:0 !important;max-height:20px !important;font-size:11px !important;color:var(--mut) !important;background:none !important;border:none !important;box-shadow:none !important;cursor:pointer !important;padding:0 2px !important;user-select:none !important;line-height:20px !important;border-radius:0;text-align:left !important;width:auto !important}
+#stpanel .streset:hover,.streset:hover{color:var(--tx) !important;background:none !important;border:none !important}
+
+/* Порядок слоёв (drag-and-drop список): строки рисует renderLayerOrderUI, контейнер — панель */
+.stlayerorder{display:flex;flex-direction:column;gap:2px;width:100%;padding:4px 0}
 /* Ряд сохранения стиля: прижат низом панели (sticky), виден всегда (задание CP3) */
 .stactbar{position:sticky;bottom:0;z-index:5;background:var(--panel);padding:10px 0 4px;margin-top:auto}
 #aewstyle .stactbar{background:var(--bg2)}
-/* зелёная точка на изменённом поле стиля и на сегменте вкладки (правило №1 DESIGN.md, задание CP3) */
-.st-changed > label::after, label.chk.st-changed::after, .seg label.st-changed::after, button.st-changed::after{
-  content:'';display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--ok);margin-left:6px;vertical-align:middle;flex:none}
 .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
 label{display:block;font-size:12px;color:var(--mut);margin-bottom:6px;letter-spacing:.01em}
 select,input,textarea{background:var(--bg2);color:var(--tx);border:1px solid var(--bd2);border-radius:var(--r);
@@ -704,10 +768,6 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 /* вкладка «Стиль» в предпросмотре: занимает всю доступную высоту колонки (задание CP3) */
 #aewstyle{flex:1;min-height:0;overflow:hidden;margin-top:10px;padding-right:6px}
 #aewstyle #stylebox,#aewstyle #stylecustom{display:flex;flex-direction:column;max-height:100%;height:100%}
-#aewstyle .stylebody{max-height:none}
-/* в колонке предпросмотра сетка вкладки схлопывается в столбик (задание CP1) */
-#aewstyle .stylegrid{grid-template-columns:1fr}
-#aewstyle .stylegrid .wide,#aewstyle .stchkrow{grid-column:1/-1}
 #aewstyle .sect:first-child{margin-top:0}
 #aewstyle select,#aewstyle input[type=text],#aewstyle input:not([type]){max-width:100%}
 .aewintrolist{max-height:24vh;overflow:auto;border:1px solid var(--bd);border-radius:var(--r);padding:4px 10px 8px;background:var(--bg2)}

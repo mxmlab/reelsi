@@ -44,6 +44,8 @@ sys.path.insert(0, ROOT)
 
 from core import verify_jsx  # noqa: E402
 from core import xml2ae  # noqa: E402
+from core import styles  # noqa: E402
+import test_style_keys_in_ui as watcher  # noqa: E402
 from test_fm_layer_order import simulate_jsx_stack  # noqa: E402
 
 JS_REL = ("static", "app", "85-inserts-view.js")
@@ -293,19 +295,37 @@ def test_node_preview_without_shade_has_no_element(tmp_path):
 # ------------------------------------------------------------------ интерфейс
 
 def test_style_fields_are_wired_in_three_places():
-    """Галка и ползунок на месте и ходят тем же путём, что соседние ключи: заполнение
-    полей, точка «изменено», чтение в stEdit (иначе правка не доедет до плана и превью)."""
-    html = open(os.path.join(ROOT, "templates", "index.html"), encoding="utf-8").read()
-    assert html.count('id="st_introshade"') == 1
-    assert html.count('id="st_introshadeop"') == 1
-    assert 'id="st_introshade"' in html[html.index('id="st_introfade"'):
-                                        html.index('id="st_introfxholdadd"')], \
-        "поля затемнения обязаны стоять рядом с фейд-аутом интро"
+    """Галка и ползунок заведены одной строкой в схеме — из неё и заполнение, и чтение.
 
-    st = open(os.path.join(ROOT, "static", "app", "95-styles.js"), encoding="utf-8").read()
-    assert "$('st_introshade').checked=!!s.intro_shade" in st            # fillStyleFields
-    assert "const d_introshade=(!!s.intro_shade)!==(!!orig.intro_shade)" in st
-    assert "CURSTYLE.intro_shade_op=isNaN(ishop)?100:ishop" in st        # stEdit
+    До JB поле надо было провести в ТРЁХ местах (элемент в index.html, заполнение в
+    fillStyleFields, чтение в stEdit) и в четвёртом — переменную отличия в
+    updateStyleDiffDots; забытое место не ловилось ничем. Теперь поле живёт узлом схемы
+    (core/style_schema.py), а панель обходит её одним кодом: stView на показ, stStore на
+    запись, updateStyleDiffDots на точку «изменено». Проверяем саму запись в схеме —
+    ключ, контрол и тумблер, который прячет ползунок при снятой галке.
+    """
+    field = watcher.schema_field("intro_shade_op")
+    assert field, "в схеме нет ползунка затемнения (intro_shade_op)"
+    assert field["ctl"] == "num", "intro_shade_op перестал быть числом"
+
+    group = next((it for kind, it in watcher.schema_items()
+                  if kind == "group" and "intro_shade_op" in
+                  [f.get("key") for f in it.get("items", [])]), None)
+    assert group, "ползунок затемнения выпал из своей группы"
+    assert group.get("toggle") == "intro_shade", (
+        "галка затемнения больше не прячет ползунок (тумблер группы)")
+    assert "intro_shade" in styles.BASE, "ключ intro_shade пропал из styles.BASE"
+
+    panel = watcher._panel_js()
+    assert "updateStyleVisibility();" in panel and "show_if" in panel, (
+        "панель не прячет поля выключенной группы")
+    for fn in ("fillStyleFields", "stEdit"):
+        body = panel[panel.index("function %s()" % fn):]
+        body = body[:body.index("\nfunction ")]
+        assert "updateStyleVisibility();" in body, f"{fn} не приводит видимость к тумблерам"
+    assert "STSCHEMA.layers" in panel[panel.index("function updateStyleDiffDots()"):
+                                      panel.index("function stResetKey(")], (
+        "точка «изменено» не обходит схему — у поля её не будет")
 
 
 @pytest.fixture()

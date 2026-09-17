@@ -66,8 +66,8 @@ def xmls(tmp_path):
 
 def _jobs(xmls, outdir):
     """Сырые jobs фронта (как их шлёт startRender): по ролику набора."""
-    return [{"xml": xmls["xml1"], "outdir": outdir, "roto": False},
-            {"xml": xmls["xml2"], "outdir": outdir, "roto": False}]
+    return [{"xml": xmls["xml1"], "outdir": outdir, "roto": False, "style": {"roto": False}},
+            {"xml": xmls["xml2"], "outdir": outdir, "roto": False, "style": {"roto": False}}]
 
 
 def _norm(jobs):

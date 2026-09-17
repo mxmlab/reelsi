@@ -133,7 +133,8 @@ def _backend_err_codes():
     import glob
     codes = set()
     for f in glob.glob(os.path.join(ROOT, "api", "*.py")) + \
-            glob.glob(os.path.join(ROOT, "core", "aicut", "*.py")):
+            glob.glob(os.path.join(ROOT, "core", "aicut", "*.py")) + \
+            glob.glob(os.path.join(ROOT, "core", "xml2ae", "*.py")):
         src = io.open(f, encoding="utf-8").read()
         for m in re.finditer(r'umsg\("([a-z0-9_]+)"', src):
             codes.add(m.group(1))

@@ -569,7 +569,8 @@ session. Done this way: `st_subbg_wrap`, `st_caption_wrap`, `st_topline_wrap`,
 visible only when "Auto rotoscope" is on, task FG).
 
 **Style keys from tasks FE/FC/FF** (all defaults = the previous behaviour; the `.jsx`
-stays byte-identical — the golden test catches it): `sub_scale` (scale of the subtitle
+stays byte-identical — the golden test catches it; except for an intentional change of the
+default build with an updated golden and CHANGELOG.md entry): `sub_scale` (scale of the subtitle
 precomp LAYER, %; the layout inside the precomp — line breaks, auto-fit, stack step —
 is NOT recalculated; at ≠100 the layer anchor/position move to the line point
 `[W/2, POSY]`, otherwise `sub_y` starts lying); `insert_anim` (`'zoom'` | `'rise'` |

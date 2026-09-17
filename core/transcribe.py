@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
 """Local word-level transcription via faster-whisper (GPU)."""
-import json, os, hashlib
+import json, os, hashlib, re
 from core import cuda_env
 from core.device import ct2_device
 cuda_env.setup()
@@ -93,8 +93,18 @@ def release_model():
 
 # Авто-титры YouTube — НИКОГДА не произносятся вслух, режем всегда (по подстроке сегмента).
 CREDITS = [
-    "субтитры делал", "субтитры сделал", "субтитры создавал", "редактор субтитров",
-    "корректор", "dimatorzok", "субтитры подготовил",
+    "субтитры делал", "субтитры сделал", "субтитры создавал", "субтитры подготовил",
+    "dimatorzok",
+]
+# Подписи с именами авторов титров («Редактор субтитров А.Семкин», «Корректор А. Егорова») —
+# характерные галлюцинации Whisper. Режем всегда по исходному регистру с инициалом.
+CREDITS_NAMED = re.compile(
+    r"(?i:редактор\s+субтитров|корректор)\s+[A-ZА-ЯЁ]\.\s*[A-ZА-ЯЁ]\w*"
+)
+# Голые слова («корректор», «редактор субтитров») без имени могут быть живой речью
+# («корректор пришёл вовремя»). Режем только при низкой уверенности, как и CTA_BOILER.
+CREDITS_BARE = [
+    "редактор субтитров", "корректор",
 ]
 # Дежурные концовки/призывы — их автор РЕАЛЬНО говорит («подписывайтесь», «ставьте лайки»,
 # «спасибо за просмотр»). Whisper их же галлюцинирует на тишине/музыке. Поэтому режем ТОЛЬКО
@@ -104,7 +114,7 @@ CTA_BOILER = [
     "подписывайтесь", "ставьте лайки", "до новых встреч", "продолжение в следующей",
     "subscribe", "thanks for watching",
 ]
-HALLUCINATIONS = CREDITS + CTA_BOILER   # для обратной совместимости
+HALLUCINATIONS = CREDITS + CREDITS_BARE + CTA_BOILER   # для обратной совместимости
 
 
 def _is_hallucination(text):
@@ -113,16 +123,21 @@ def _is_hallucination(text):
 
 
 def _drop_segment(s):
-    """Выкинуть сегмент? Титры YouTube — всегда; явная галлюцинация на тишине — всегда;
-    призывы (подписывайтесь и пр.) — только если распозналось неуверенно (иначе это живая речь)."""
-    t = (s.text or "").lower()
+    """Выкинуть сегмент? Титры YouTube и подписи с именем — всегда; явная галлюцинация
+    на тишине — всегда; призывы (подписывайтесь и пр.) и голые роли (корректор) без имени —
+    только если распозналось неуверенно (иначе это живая речь)."""
+    raw = s.text or ""
+    t = raw.lower()
     nsp = getattr(s, "no_speech_prob", 0.0); alp = getattr(s, "avg_logprob", 0.0)
-    if any(h in t for h in CREDITS):
+    if any(h in t for h in CREDITS) or bool(CREDITS_NAMED.search(raw)):
         return True
     if nsp > 0.7 and alp < -0.6:                       # общий детектор галлюцинаций на не-речи
         return True
-    if any(h in t for h in CTA_BOILER) and (nsp > 0.5 or alp < -0.7):
+    low_conf = (nsp > 0.5 or alp < -0.7)
+    if any(h in t for h in CTA_BOILER) and low_conf:
         return True                                    # призыв только при низкой уверенности
+    if any(h in t for h in CREDITS_BARE) and low_conf:
+        return True                                    # голая роль только при низкой уверенности
     return False
 
 

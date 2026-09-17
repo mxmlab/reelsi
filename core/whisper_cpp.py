@@ -16,6 +16,7 @@ import io
 import json
 import os
 import platform
+import posixpath
 import shutil
 import subprocess
 import sys
@@ -55,17 +56,20 @@ def whisper_cli_path():
     explicit = os.environ.get("REELSI_WHISPER_CLI")
     if explicit and os.path.isfile(explicit):
         return explicit
-    on_path = shutil.which("whisper-cli")
+    bin_name = "whisper-cli.exe" if sys.platform == "win32" else "whisper-cli"
+    on_path = shutil.which(bin_name)
     if on_path:
         return on_path
-    # Прямой путь И рекурсивно: GitHub-архив распаковывается в bin/Release/,
+    # Прямой путь И рекурсивно: GitHub-архив распаковывается в bin/Release/ или build/bin/,
     # и заставлять пользователя переносить файлы вручную — лишнее действие.
-    local = os.path.join(BIN_DIR, _BIN_NAME)
-    if os.path.isfile(local):
-        return local
+    target_names = {bin_name, _BIN_NAME}
+    for name in target_names:
+        local = os.path.join(BIN_DIR, name)
+        if os.path.isfile(local):
+            return local
     for root, _dirs, files in os.walk(BIN_DIR):
         for f in files:
-            if f == _BIN_NAME:
+            if f in target_names:
                 return os.path.join(root, f)
     return None
 
@@ -284,23 +288,128 @@ def _safe_extract_zip(z, target_dir):
     z.extractall(target_dir)
 
 
+def _norm_member_name(name):
+    """Нормализовать имя члена архива для единообразного сравнения."""
+    norm = posixpath.normpath(name.replace("\\", "/"))
+    while norm.startswith("./"):
+        norm = norm[2:]
+    return norm
+
+
 def _safe_extract_tar(t, target_dir):
-    """Безопасная распаковка tar: проверка путей, запрет symlink/hardlink и спецфайлов."""
-    for member in t.getmembers():
+    """Безопасная распаковка tar с поддержкой внутренних симлинков и хардлинков.
+
+    ELF-бинарники whisper.cpp (whisper-cli) на Linux линкуются с DT_NEEDED
+    libwhisper.so.1 / libggml.so.0 и DT_RUNPATH $ORIGIN, поэтому официальные
+    релизы whisper-bin-ubuntu-*.tar.gz содержат цепочки симлинков вида
+    libwhisper.so -> libwhisper.so.1 -> libwhisper.so.1.9.2.
+
+    Разрешены внутренние относительные симлинки (без '..' и без выхода за пределы
+    целевого каталога) и хардлинки на ранее встретившиеся обычные файлы архива.
+    Запрещены спецфайлы устройств (chr/blk/fifo), ссылки наружу и запись
+    сквозь симлинки.
+    """
+    members = t.getmembers()
+
+    # Сначала собираем имена всех симлинков для проверки запрета записи сквозь ссылку
+    symlink_names = set()
+    for member in members:
+        if member.issym():
+            symlink_names.add(_norm_member_name(member.name))
+
+    regular_files_seen = set()
+
+    for member in members:
+        norm_name = _norm_member_name(member.name)
+
         if not _is_safe_member_path(target_dir, member.name):
             raise RuntimeError(
                 f"whisper.cpp: небезопасный путь в архиве {member.name!r} — "
                 f"попытка выхода за пределы {target_dir}"
             )
-        if member.issym() or member.islnk():
-            raise RuntimeError(
-                f"whisper.cpp: ссылки запрещены в архиве ({member.name!r})"
-            )
+
         if member.ischr() or member.isblk() or member.isfifo():
             raise RuntimeError(
                 f"whisper.cpp: спецфайлы устройств запрещены в архиве ({member.name!r})"
             )
-    t.extractall(target_dir)
+
+        # Запрет записи сквозь ссылку: ни один префикс-каталог пути не должен
+        # совпадать с именем симлинка в архиве (например, lib -> sub и lib/evil)
+        parts = norm_name.split("/")
+        for i in range(1, len(parts)):
+            prefix = "/".join(parts[:i])
+            if prefix in symlink_names:
+                raise RuntimeError(
+                    f"whisper.cpp: небезопасная ссылка в архиве {member.name!r} — "
+                    f"запись сквозь ссылку {prefix!r}"
+                )
+
+        if member.issym():
+            link = member.linkname
+            # Симлинк разрешён только если linkname:
+            # - непустой, без обратных слэшей, не абсолютный
+            # - без компонента '..' вообще
+            # - posixpath.join(dirname, linkname) после normpath не уходит в .. и не абсолютен
+            if (
+                not link
+                or "\\" in link
+                or link.startswith(("/", "\\"))
+                or posixpath.isabs(link)
+                or os.path.isabs(link)
+                or (len(link) >= 2 and link[1] == ":")
+            ):
+                raise RuntimeError(
+                    f"whisper.cpp: небезопасная ссылка в архиве {member.name!r} -> {link!r}"
+                )
+
+            link_parts = [p for p in link.split("/") if p]
+            if ".." in link_parts:
+                raise RuntimeError(
+                    f"whisper.cpp: небезопасная ссылка в архиве {member.name!r} -> {link!r}"
+                )
+
+            target_path = posixpath.normpath(
+                posixpath.join(posixpath.dirname(member.name), link)
+            )
+            if (
+                target_path.startswith("..")
+                or posixpath.isabs(target_path)
+                or target_path.startswith("/")
+            ):
+                raise RuntimeError(
+                    f"whisper.cpp: небезопасная ссылка в архиве {member.name!r} -> {link!r}"
+                )
+
+        elif member.islnk():
+            # Хардлинк разрешён, только если linkname — имя обычного файла,
+            # встретившегося в архиве ранее этого члена.
+            link = member.linkname
+            if (
+                not link
+                or "\\" in link
+                or link.startswith(("/", "\\"))
+                or posixpath.isabs(link)
+                or os.path.isabs(link)
+                or (len(link) >= 2 and link[1] == ":")
+                or ".." in [p for p in link.split("/") if p]
+            ):
+                raise RuntimeError(
+                    f"whisper.cpp: небезопасная ссылка в архиве {member.name!r} -> {link!r}"
+                )
+
+            norm_target = _norm_member_name(link)
+            if norm_target not in regular_files_seen:
+                raise RuntimeError(
+                    f"whisper.cpp: небезопасная ссылка в архиве {member.name!r} -> {link!r}"
+                )
+
+        elif member.isreg():
+            regular_files_seen.add(norm_name)
+
+    if hasattr(tarfile, "data_filter"):
+        t.extractall(target_dir, filter="data")
+    else:
+        t.extractall(target_dir)
 
 
 def install_cli(emit=console_emit):

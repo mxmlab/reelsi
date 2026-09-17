@@ -73,29 +73,49 @@ except Exception:
     pass
 
 
-# ---- Сторож изоляции корня репозитория (задание LC) -------------------------
+# ---- Сторож изоляции репозитория (задания LC, LP) ---------------------------
 _ROOT_SNAPSHOT = {}
+
+_SNAPSHOT_SKIP_DIRS = frozenset({
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".mypy_cache",
+    ".venv",
+    "node_modules",
+})
 
 
 def _snapshot_root_files():
-    """Снимок имён и mtime_ns файлов верхнего уровня в корне репозитория."""
+    """Снимок всего дерева репозитория: путь относительно корня -> (mtime_ns, size).
+
+    Пропускает служебные каталоги (.git, кэши, виртуальные окружения)
+    и скомпилированные файлы *.pyc.
+    """
     snap = {}
     root = paths.ROOT
     try:
-        entries = os.listdir(root)
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [
+                d for d in dirnames
+                if d not in _SNAPSHOT_SKIP_DIRS
+                and not d.startswith((".pytest", ".ruff", "__pycache"))
+            ]
+            for fname in filenames:
+                if fname.endswith(".pyc"):
+                    continue
+                if fname.startswith((".pytest", ".ruff", "__pycache")):
+                    continue
+                full = os.path.join(dirpath, fname)
+                rel = os.path.relpath(full, root).replace("\\", "/")
+                try:
+                    st = os.stat(full)
+                    snap[rel] = (st.st_mtime_ns, st.st_size)
+                except OSError:
+                    pass
     except OSError:
         return snap
-    for name in entries:
-        if name in (".git", "__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache"):
-            continue
-        if name.startswith((".pytest", ".ruff", "__pycache")):
-            continue
-        full = os.path.join(root, name)
-        try:
-            if os.path.isfile(full):
-                snap[name] = os.stat(full).st_mtime_ns
-        except OSError:
-            pass
     return snap
 
 
@@ -104,7 +124,7 @@ _ROOT_SNAPSHOT = _snapshot_root_files()
 
 
 def pytest_sessionstart(session):
-    """Снимок файлов верхнего уровня корня репозитория до начала прогона тестов."""
+    """Снимок файлов репозитория до начала прогона тестов."""
     global _ROOT_SNAPSHOT
     _ROOT_SNAPSHOT = _snapshot_root_files()
 
@@ -285,10 +305,10 @@ def reset_tune_globals():
 
 
 def _check_root_snapshot(session):
-    """Сравнить снимок файлов корня репозитория со снимком на старте сессии.
+    """Сравнить снимок файлов репозитория со снимком на старте сессии.
 
     При расхождении печатает список изменившихся/новых/удалённых файлов
-    и завершает сессию с кодом ошибки (exitstatus = 1).
+    (до 20 путей и общее число) и завершает сессию с кодом ошибки (exitstatus = 1).
     """
     if not _ROOT_SNAPSHOT:
         return
@@ -300,14 +320,23 @@ def _check_root_snapshot(session):
     for name in sorted(set(_ROOT_SNAPSHOT) - set(current)):
         diffs.append(f"удалён файл: {name}")
     for name in sorted(set(_ROOT_SNAPSHOT) & set(current)):
-        if _ROOT_SNAPSHOT[name] != current[name]:
-            diffs.append(f"изменён mtime: {name}")
+        old_val = _ROOT_SNAPSHOT[name]
+        cur_val = current[name]
+        if isinstance(old_val, tuple) and isinstance(cur_val, tuple):
+            if old_val != cur_val:
+                diffs.append(f"изменён файл: {name}")
+        elif isinstance(old_val, (int, float)) and isinstance(cur_val, tuple):
+            if old_val != cur_val[0]:
+                diffs.append(f"изменён файл: {name}")
+        elif old_val != cur_val:
+            diffs.append(f"изменён файл: {name}")
     if diffs:
-        sys.stderr.write(
-            "\n[СТОРОЖ ИЗОЛЯЦИИ] Тесты изменили файлы в корне репозитория:\n  "
-            + "\n  ".join(diffs)
-            + "\n"
-        )
+        total = len(diffs)
+        shown = diffs[:20]
+        header = f"\n[СТОРОЖ ИЗОЛЯЦИИ] Тесты изменили файлы в репозитории (всего {total}):\n  "
+        body = "\n  ".join(shown)
+        tail = f"\n  ... и ещё {total - 20} путей\n" if total > 20 else "\n"
+        sys.stderr.write(header + body + tail)
         session.exitstatus = 1
 
 

@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Tests never touch personal files**: every state path (AI call log, UI state, job lock, video history, word lists, insert index, AI config) points to a test folder before the app modules load, the AI config starts empty, and a guard fails the run if any top-level file of the repository changes. Cutting thresholds are restored after each test.
+- **Test isolation guard covers the whole tree**: a test that writes anywhere in the repository, not just next to the root files, fails the run; the provider's "answer cut off by the output limit" branch is covered by tests.
 - **Style panel tests catch real breakage**: the DOM stub only knows the elements the panel created; visibility, field read-back for every control type, the slider row and the roto fraction are checked by behaviour, and each check was confirmed by a deliberate code mutation.
 - **Every style knob is checked end to end**: each of the 118 style keys changes the built `.jsx` (caption, intro rows, sound, music, transition and roto included), fractional fields keep their scale, and a full pass through the style panel leaves every value unchanged.
 - **Style panel layout**: layer order rows are 24 px high like the other rows, and sliders take the full width.

@@ -253,8 +253,17 @@ def process_pair(cams, out_xml, args, model=None, emit=console_emit, music_path=
 
     mapped = align.map_words(words, segments) if words else None
     sub_words = mapped if (mapped and not args.no_subs) else None
-    info = xmlbuild.build(cams, segments, offsets, out_xml, assign=assign,
-                          scale=args.scale, sub_words=sub_words, music_path=music_path)
+    try:
+        info = xmlbuild.build(cams, segments, offsets, out_xml, assign=assign,
+                              scale=args.scale, sub_words=sub_words, music_path=music_path)
+    except SystemExit as e:
+        # Пустой монтаж (немой дубль, скринкаст: vad не нашёл речи) — build файл не тронул.
+        # «Готовым» его помечать нечем: без этой ветки прогон печатал «-> 01_C1432.xml
+        # (0s, 0 сег., 0 суб.)» и джоб отмечал клип собранным, а прошлая нарезка терялась.
+        # Ключ строки — общий «XML не создан» (тот же, что у джоба нарезки): очередь
+        # пометит клип упавшим и пойдёт дальше.
+        emit("  ⚠ XML не создан — {reason}", reason=str(e))
+        raise RuntimeError(str(e)) from None
     if info.get("long_words"):
         emit("  ⚠ слишком длинные слова (>19 букв) — без титра, добавь вручную: {words}",
              words=", ".join(info["long_words"]))

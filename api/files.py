@@ -352,6 +352,17 @@ ALLOWED_MEDIA_EXTS = {
     "wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "aif", "aiff",
 }
 
+# Allowlist /api/waveform (задание MC): только звук и видео — то, откуда волна
+# вообще берётся. Картинки из списка выше исключены нарочно: волны из них не
+# выйдет, а кэш роут пишет РЯДОМ С ЦЕЛЬЮ (<путь>.peaks<pps>.json) — по просьбе
+# страницы он создавал файл рядом с любым файлом на диске.
+ALLOWED_WAVE_EXTS = {
+    # Видео
+    "mp4", "mov", "m4v", "mkv", "webm", "avi", "mxf", "mts", "m2ts", "mpg", "mpeg",
+    # Звук
+    "wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "aif", "aiff",
+}
+
 
 @bp.route("/api/media")
 def api_media():
@@ -409,6 +420,22 @@ def api_waveform():
     except (TypeError, ValueError):
         pps = 80                     # ?pps=abc роняло роут в HTML-500 (задание HL)
     pps = max(10, min(1000, pps))    # ограничение [10, 1000] от раздувания кэша (задание HU)
+    # Те же проверки, что у /api/media (задание MC). Это был единственный файловый
+    # маршрут без них, а он не только читает файл, но и пишет кэш РЯДОМ с ним —
+    # то есть по просьбе страницы создавал файл рядом с любым файлом на диске.
+    # Расширение должно быть допустимым и у присланного пути, и у realpath: иначе
+    # симлинк clip.wav -> notes.txt обходит allowlist.
+    ext = os.path.splitext(path)[1].lower().lstrip(".")
+    if ext not in ALLOWED_WAVE_EXTS:
+        return ("forbidden", 403)
+    try:
+        real_ext = os.path.splitext(os.path.realpath(path))[1].lower().lstrip(".")
+    except Exception:
+        real_ext = ""
+    if real_ext not in ALLOWED_WAVE_EXTS:
+        return ("forbidden", 403)
+    if _never_serve(path):
+        return ("forbidden", 403)
     if not os.path.isfile(path):
         return jsonify(**umsg_err(SystemExit(umsg("no_file", "нет файла"))))
     cache = path + f".peaks{pps}.json"

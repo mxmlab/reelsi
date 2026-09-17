@@ -39,6 +39,16 @@ MODELS_DIR = os.path.join(WHISPER_CPP_DIR, "models")
 # которые объявлены в _BUILTIN у asr_backends.py. Репо — ggerganov/whisper.cpp
 # (ggml-org/whisper.cpp на HF НЕ существует — проверено вживую 2026-08-09).
 HF_REPO = "ggerganov/whisper.cpp"
+# Ревизия весов закреплена полным коммит-хешем — та же защита, что у бинарника
+# (WHISPER_CPP_VERSION + ASSET_SHA256): без неё ~3 ГБ ggml-large-v3.bin качались
+# из main на момент скачивания. Хеш снят 2026-09-18, это голова main:
+# коммит 5359861c739e955e79d9a303bcbc70fb988958b1 «Add automatic-speech-recognition
+# tag (#15)» от 2024-10-29. Здесь это важнее, чем у обычной зависимости: веса
+# разбирает НАТИВНЫЙ код whisper.cpp, и подмена файла в main без нашего ведома —
+# это парсинг чужих байтов чужой моделью; падало бы это не при скачивании, а в
+# транскрипции, то есть после трёх гигабайт трафика. Заодно у всех одна модель:
+# и у скачавших сегодня, и у скачавших год назад.
+HF_REVISION = "5359861c739e955e79d9a303bcbc70fb988958b1"
 MODEL_FILES = {
     "large-v3": "ggml-large-v3.bin",
     "medium": "ggml-medium.bin",
@@ -103,8 +113,8 @@ def ensure_model(size):
         raise RuntimeError("whisper.cpp: нет huggingface_hub — установите: "
                            "pip install huggingface-hub")
     try:
-        return hf_hub_download(repo_id=HF_REPO, filename=_model_file(size),
-                               local_dir=MODELS_DIR)
+        return hf_hub_download(repo_id=HF_REPO, revision=HF_REVISION,
+                               filename=_model_file(size), local_dir=MODELS_DIR)
     except Exception as e:
         raise RuntimeError("whisper.cpp: не удалось скачать модель %s (%s: %s)"
                            % (_model_file(size), type(e).__name__, e))

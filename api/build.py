@@ -352,9 +352,13 @@ def api_cams_save():
             sub_words = ([{"w": w, "start": int(s), "end": int(e)} for (s, e, w) in subs]
                          if subs else None)
             yellow = xml2ae.auto_highlights(xml).get("yellow", [])
-            info = xmlbuild.build(cams, keep, offsets, xml,
-                                  assign=(assign if N > 1 else None),
-                                  scale=p.get("scale", 50.4), sub_words=sub_words, music_path=None)
+            try:
+                info = xmlbuild.build(cams, keep, offsets, xml,
+                                      assign=(assign if N > 1 else None),
+                                      scale=p.get("scale", 50.4), sub_words=sub_words, music_path=None)
+            except SystemExit as e:
+                # Пустой монтаж: build файл не тронул — текст гарда отдаём как есть.
+                raise SystemExit(umsg("cams_save_failed", str(e), err=str(e)))
             from core import xml2ae
             xml2ae.write_srt_for(xml)
             colored = 0
@@ -455,8 +459,12 @@ def api_swap_cam():
                                               big_chunk_sec=6.0)
             else:
                 assign = None
-            xmlbuild.build(cams, keep, offsets, xml, assign=assign,
-                           scale=p.get("scale", 50.4), sub_words=sub_words, music_path=None)
+            try:
+                xmlbuild.build(cams, keep, offsets, xml, assign=assign,
+                               scale=p.get("scale", 50.4), sub_words=sub_words, music_path=None)
+            except SystemExit as e:
+                # Пустой монтаж: build файл не тронул — текст гарда отдаём как есть.
+                raise SystemExit(umsg("swap_cam_failed", str(e), err=str(e)))
             colored = 0
             if yellow:                                       # вернуть жёлтые (в XML) — цвет с аудио cam1
                 colored = len(xml2ae.write_highlights(xml, yellow).get("colored", []))

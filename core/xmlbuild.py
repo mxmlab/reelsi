@@ -357,6 +357,17 @@ def build(cam_paths, segments, offsets, out_path, assign=None,
     offset in seconds (offsets[0]=0; offsets[k]=find_offset(cam1,camk)). assign:
     active-camera index (0-based) per KEPT segment (None -> all camera 1).
     Camera 1 is always enabled (base); camera k>0 is enabled only where assign==k."""
+    # Пустой монтаж — отказ ДО открытия файла. Проверку держим ЗДЕСЬ, а не у восьми
+    # вызывающих: цикл по кускам просто не выполнялся, и atomic_text_write клал поверх
+    # XML пользователя валидный файл с нулём клипов и нулевой длительностью. Так терялась
+    # прошлая нарезка: редактор («убрал последний блок» -> «Сохранить в XML», keep=[]),
+    # немой дубль/скринкаст (vad вернул [] — резать нечего, а файл помечался готовым).
+    # Критерий тот же, что у info["segments"] в конце.
+    if not [1 for s, e in segments if round(e * FPS) > round(s * FPS)]:
+        raise SystemExit(
+            "Собирать нечего: не осталось ни одного куска длиннее кадра. "
+            "Ничего не перезаписываю — прошлая нарезка цела. "
+            "Верни блоки в редакторе или проверь пороги нарезки и запусти ещё раз.")
     if isinstance(cam_paths, str):        # back-compat: single path
         cam_paths = [cam_paths]
     N = len(cam_paths)
@@ -449,6 +460,12 @@ def build(cam_paths, segments, offsets, out_path, assign=None,
 \t</sequence>
 </xmeml>
 """
+    # Копия оригинала из Премьера — один раз и ДО первой правки файла на месте
+    # (см. _backup_once: есть .bak — не трогаем). Звали его только жёлтые, а build
+    # перезаписывает тот же файл пользователя и в нарезке, и в редакторе, и в субтитрах.
+    if os.path.isfile(out_path):
+        from core.xml2ae.highlights import _backup_once
+        _backup_once(out_path)
     fileio.atomic_text_write(out_path, seq, encoding="UTF-8")
     return {"segments": len([1 for s, e in segments if round(e*FPS) > round(s*FPS)]),
             "total_frames": total, "total_s": total / FPS, "cameras": N,

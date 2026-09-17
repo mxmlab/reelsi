@@ -1,0 +1,29 @@
+# Заведомо ложные срабатывания gitleaks на истории Reelsi.
+#
+# Правило generic-api-key видит секрет там, где лежит ИМЯ поля JSON-схемы стиля
+# («key»: «cam1_drift_lo») или подставное значение в тесте. Глушить правило целиком
+# нельзя: настоящий ключ в любом другом файле обязан ловиться, поэтому исключения —
+# только по путям тех файлов, где срабатывание разобрано руками.
+#
+# Прогон локально (версия, как в .github/workflows/ci.yml):
+#   gitleaks git --redact -c .gitleaks.toml .
+
+[extend]
+# Набор правил по умолчанию наследуется целиком: ниже только исключения по путям,
+# ни одно правило не отключено и не переопределено.
+useDefault = true
+
+[[allowlists]]
+description = "generic-api-key: имена полей схемы стиля и фикстуры тестов, а не ключи"
+paths = [
+  # core/style_schema.py:1156, 1294, 1306 — «key» здесь ключ не доступа, а имя поля
+  # схемы стиля («cam1_drift_lo», «insert_c1on2_x», «insert_c1on2_y»); значения —
+  # имена настроек, ключами доступа такие строки не бывают.
+  '''core/style_schema\.py''',
+  # tests/test_gc_key_env_and_url.py:42 — фикстура ai_config с подставным ключом
+  # «sk-secret123456»: тест про маскировку ключа в GET /api/ai_config, секрета нет.
+  '''tests/test_gc_key_env_and_url\.py''',
+  # tests/test_gdrive.py:58 — фиктивный resourcekey=0-ABCDEFGHIXJQpIGqBJq3MC внутри
+  # тестовой ссылки Google Drive: разбор ссылки, к реальному диску не ходим.
+  '''tests/test_gdrive\.py''',
+]

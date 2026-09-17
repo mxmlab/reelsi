@@ -172,7 +172,7 @@ def api_editor_load():
         return jsonify(**umsg_err(e))
 
 
-def _reproject_subs(sub_words, yellow, old_keep, new_keep, fps):
+def _reproject_subs(sub_words, yellow, old_keep, new_keep, old_fps, new_fps=None):
     """Перенести слова-субтитры и жёлтые со СТАРОГО монтажа на новый. -> (sub_words|None, yellow)
 
     Слова живут в кадрах ТАЙМЛАЙНА, а таймлайн собирается курсором по списку кусков
@@ -183,17 +183,30 @@ def _reproject_subs(sub_words, yellow, old_keep, new_keep, fps):
     речь. Переводим кадр таймлайна -> кадр ИСХОДНИКА по старому keep и обратно по
     новому; что попало в удалённые куски — выбрасываем.
 
+    ЧАСТОТ ДВЕ, и стороны разные по природе: старый таймлайн — кадры входного XML, то
+    есть частота проекта (25, 29.97 — что пришло из Премьера), новый — кадры НАШЕЙ
+    секвенции, `xmlbuild.FPS` = 60, `build` всегда пишет 60. Одна частота на обе стороны
+    уводила слово на чужое время: у 25-кадрового проекта — в 60/25 = 2.4 раза дальше,
+    чем оно звучит. Общий язык сторон — СЕКУНДЫ исходника: кадр старого таймлайна ->
+    секунда -> кадр нового. new_fps=None — прежние вызовы: частота одна на обе стороны.
+
     Жёлтые — позиции в списке слов (см. auto_highlights), после выброса они съезжают,
     поэтому пересчитываем их на новый порядок, иначе покрасились бы соседи.
     """
     if not sub_words:
         return None, []
-    if not old_keep or [(round(s, 3), round(e, 3)) for s, e in old_keep] == \
-                       [(round(s, 3), round(e, 3)) for s, e in new_keep]:
-        return sub_words, list(yellow)      # монтаж тот же (случай cams_save) — не трогаем
+    if new_fps is None:
+        new_fps = old_fps
+    same_keep = ([(round(s, 3), round(e, 3)) for s, e in old_keep] ==
+                 [(round(s, 3), round(e, 3)) for s, e in new_keep])
+    # Монтаж тот же (случай cams_save) — кадры не трогаем. Но это верно ТОЛЬКО при равных
+    # частотах: у 25-кадрового проекта слова всё равно надо перевести в кадры 60.
+    if not old_keep or (same_keep and old_fps == new_fps):
+        return sub_words, list(yellow)
 
-    def _spans(keep):
-        """[(начало_на_таймлайне, конец, начало_в_исходнике)] в кадрах — курсором, как xmlbuild."""
+    def _spans(keep, fps):
+        """[(начало_на_таймлайне, конец, начало_в_исходнике)] в кадрах СВОЕЙ частоты —
+        курсором, как xmlbuild."""
         out, tl = [], 0
         for s, e in keep:
             in0, out0 = round(s * fps), round(e * fps)
@@ -203,23 +216,25 @@ def _reproject_subs(sub_words, yellow, old_keep, new_keep, fps):
             tl += out0 - in0
         return out
 
-    old_sp, new_sp = _spans(old_keep), _spans(new_keep)
+    old_sp, new_sp = _spans(old_keep, old_fps), _spans(new_keep, new_fps)
     if not old_sp or not new_sp:
         return sub_words, list(yellow)
 
     words, kept_idx = [], []
     for i, wd in enumerate(sub_words):
         f0 = int(wd["start"])
-        src = next((s + (f0 - a) for a, b, s in old_sp if a <= f0 < b), None)
+        src = next((s0 + (f0 - a) for a, b, s0 in old_sp if a <= f0 < b), None)
         if src is None:
             continue                                  # слово вне старого монтажа — мусор
-        seg = next(((a, b, s) for a, b, s in new_sp if s <= src < s + (b - a)), None)
+        t_src = src / old_fps                         # секунда исходника — общий язык сторон
+        src_new = round(t_src * new_fps)
+        seg = next(((a, b, s0) for a, b, s0 in new_sp if s0 <= src_new < s0 + (b - a)), None)
         if seg is None:
             continue                                  # этот кусок исходника удалили
-        ns = seg[0] + (src - seg[2])
+        ns = seg[0] + (src_new - seg[2])
         # длину сохраняем, но за границу своего куска не пускаем: слово на стыке
         # иначе наехало бы на следующий кусок, где звучит уже другое слово
-        ne = min(ns + max(1, int(wd["end"]) - f0), seg[1])
+        ne = min(ns + max(1, round((int(wd["end"]) - f0) / old_fps * new_fps)), seg[1])
         if ne <= ns:
             continue
         words.append({"w": wd["w"], "start": ns, "end": ne})
@@ -256,11 +271,19 @@ def api_editor_save():
             sub_words = ([{"w": w, "start": int(s), "end": int(e)} for (s, e, w) in subs]
                          if subs else None)
             yellow = xml2ae.auto_highlights(xml).get("yellow", [])
-            sub_words, yellow = _reproject_subs(sub_words, yellow, old_keep, segs, xmlbuild.FPS)
+            # Частоты РАЗНЫЕ: старые кадры — частота проекта (входной XML), новые — 60
+            # (столько пишет build). Одна частота уводила слова на чужое время.
+            sub_words, yellow = _reproject_subs(sub_words, yellow, old_keep, segs, fps,
+                                                xmlbuild.FPS)
             assign = align.assign_cameras(segs, N, return_every=p.get("cam_return", 2),
                                           big_chunk_sec=6.0) if N > 1 else None
-            info = xmlbuild.build(cams, segs, offsets, xml, assign=assign,
-                                  scale=p.get("scale", 50.4), sub_words=sub_words, music_path=None)
+            try:
+                info = xmlbuild.build(cams, segs, offsets, xml, assign=assign,
+                                      scale=p.get("scale", 50.4), sub_words=sub_words, music_path=None)
+            except SystemExit as e:
+                # Пустой монтаж (убрали все блоки): build файл не тронул — отдаём отказ
+                # роута с текстом гарда КАК ЕСТЬ, а не «SystemExit: …».
+                raise SystemExit(umsg("editor_save_failed", str(e), err=str(e)))
             from core import xml2ae
             xml2ae.write_srt_for(xml)
             if yellow:
@@ -380,7 +403,7 @@ def api_gen_subs():
             from core import xmlbuild
             from core import asr_backends
             p = _ensure_project(xml)                      # сайдкар или реконструкция из XML
-            cams = p["cams"]; offsets = p["offsets"]; fps = p.get("fps", 60); N = len(cams)
+            cams = p["cams"]; offsets = p["offsets"]; N = len(cams)
             keep = [(float(s), float(e)) for s, e in p["keep"]]
             y, sr = librosa.load(cams[0], sr=16000, mono=True)
             parts = [y[int(s*16000):int(e*16000)] for s, e in keep]
@@ -403,7 +426,10 @@ def api_gen_subs():
                     os.remove(tmp)
                 except Exception:
                     pass
-            sub_words = [{"w": w["w"], "start": round(w["start"]*fps), "end": round(w["end"]*fps)}
+            # Кадры слов — нашей секвенции (build пишет 60), а не проекта: у 25-кадрового
+            # проекта слово уезжало в 2.4 раза дальше, чем звучит.
+            sub_words = [{"w": w["w"], "start": round(w["start"]*xmlbuild.FPS),
+                          "end": round(w["end"]*xmlbuild.FPS)}
                          for w in words]
             stored = p.get("assign")                      # ручная раскладка камер (если валидна по длине)
             if N > 1 and isinstance(stored, list) and len(stored) == len(keep):
@@ -413,8 +439,12 @@ def api_gen_subs():
                                               big_chunk_sec=6.0)
             else:
                 assign = None
-            info = xmlbuild.build(cams, keep, offsets, xml, assign=assign,
-                                  scale=p.get("scale", 50.4), sub_words=sub_words, music_path=None)
+            try:
+                info = xmlbuild.build(cams, keep, offsets, xml, assign=assign,
+                                      scale=p.get("scale", 50.4), sub_words=sub_words, music_path=None)
+            except SystemExit as e:
+                # Пустой монтаж: build файл не тронул — текст гарда отдаём как есть.
+                raise SystemExit(umsg("gen_subs_failed", str(e), err=str(e)))
             from core import xml2ae
             xml2ae.write_srt_for(xml)
             return jsonify(ok=True, subs=info.get("subtitles", len(sub_words)), words=len(words),
@@ -523,8 +553,12 @@ def api_clear_subs():
                 from core import align
                 assign = align.assign_cameras(keep, N, return_every=p.get("cam_return", 2),
                                               big_chunk_sec=6.0)
-            info = xmlbuild.build(cams, keep, offsets, xml, assign=assign,
-                                  scale=p.get("scale", 50.4), sub_words=None, music_path=None)
+            try:
+                info = xmlbuild.build(cams, keep, offsets, xml, assign=assign,
+                                      scale=p.get("scale", 50.4), sub_words=None, music_path=None)
+            except SystemExit as e:
+                # Пустой монтаж: build файл не тронул — текст гарда отдаём как есть.
+                raise SystemExit(umsg("clear_subs_failed", str(e), err=str(e)))
             try:
                 os.remove(os.path.splitext(xml)[0] + ".yellow.json")
             except OSError:

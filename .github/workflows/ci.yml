@@ -35,7 +35,14 @@ jobs:
           python -m pip install --upgrade pip
           # CPU-сборка torch: она в разы легче CUDA-колеса, а тестам контрактов
           # видеокарта не нужна — они проверяют разметку и XML, а не инференс.
-          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          # Индекс pytorch ДОПОЛНЯЕТ PyPI (extra-index-url), а не заменяет его:
+          # замена отдаёт PyPI целиком в пользу индекса pytorch, а там
+          # typing-extensions есть только исходником, и его сборка требует
+          # flit_core, которого в том индексе нет —
+          # ERROR: Could not find a version that satisfies the requirement flit_core<4,>=3.11.
+          # Зелено сейчас только за счёт кэша pip у setup-python: сбросится кэш —
+          # джоба упадёт на ровном месте. Обратно на замену индекса не чинить.
+          pip install torch torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
           # Импорта требуют только эти четыре; всё тяжёлое (transformers,
           # faster-whisper, rembg) грузится лениво внутри функций и в тестах не
           # выполняется. Ставить requirements.txt целиком — минуты ради ничего.
@@ -73,7 +80,8 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install torch torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
+          # Дополняем PyPI индексом pytorch, а не заменяем — почему, разобрано в джобе test.
           pip install flask numpy scipy soundfile pytest fonttools "pillow>=10.0" pyarrow "zstandard>=0.22"
 
       - uses: actions/setup-node@v6
@@ -82,6 +90,39 @@ jobs:
 
       - name: Tests
         run: python -m pytest tests -q
+
+  # Секреты во всей истории и уязвимые зависимости. Джоба самостоятельная: от test
+  # не зависит и идёт с ним параллельно — незачем ждать сборку torch, чтобы узнать
+  # про утёкший ключ.
+  scan:
+    runs-on: ubuntu-latest
+    env:
+      # Версия закреплена: в новой могут смениться правила, и сборка покраснеет
+      # на находках, которых раньше не было. Обновлять осознанно.
+      GITLEAKS_VERSION: "8.30.1"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Вся история, а не последний коммит: с глубиной по умолчанию gitleaks
+          # видит один коммит, и проверка секретов вырождается в пустую.
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+
+      # Бинарник релиза, а не action из маркетплейса: action требует лицензию для
+      # организаций. Заведомо ложные срабатывания перечислены в .gitleaks.toml,
+      # правило generic-api-key там не глушится целиком.
+      - name: Scan history for secrets (gitleaks)
+        run: |
+          curl -sL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar xz gitleaks
+          ./gitleaks git --redact -c .gitleaks.toml .
+
+      - name: Audit dependencies (pip-audit)
+        run: |
+          pip install pip-audit
+          pip-audit -r requirements.txt
 
   smoke:
     runs-on: ubuntu-latest

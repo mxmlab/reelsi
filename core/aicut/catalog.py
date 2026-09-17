@@ -12,7 +12,7 @@
 себя как раньше (фолбэк-списки в config.py). Обновляется раз в сутки при первом
 обращении, кнопка «Обновить» в ⚙ тянет его силой (force).
 """
-import os, json, time
+import os, json, time, tempfile
 import urllib.request
 
 from .config import AI_CONFIG_PATH, APP_NAME, APP_REFERER
@@ -46,13 +46,28 @@ def _load_disk(path):
 
 
 def _save_disk(path, data):
+    """Записать кэш атомарно: уникальный временный файл + os.replace.
+
+    Имя tmp уникально (mkstemp), а не фиксированный path+".tmp": две одновременные
+    кнопки «Обновить список» (вкладка ИИ и вкладка Видео) писали в ОДИН и тот же
+    файл, и содержимое кэша перемешивалось. Приём тот же, что при скачивании
+    роликов — core/aicut/video.py."""
+    tmp = None
     try:
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
+        fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".tmp.",
+                                   dir=os.path.dirname(path) or ".")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False)
         os.replace(tmp, path)
+        tmp = None
     except Exception:
         pass                                  # кэш — не критичный путь
+    finally:
+        if tmp:
+            try:
+                os.remove(tmp)                # replace не состоялся — убираем за собой
+            except Exception:
+                pass
 
 
 # Состояние каталога в памяти процесса: словарь и время загрузки. По ним не

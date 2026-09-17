@@ -401,9 +401,14 @@ function makeDom() {
       return name in el.attrs ? el.attrs[name] : null;
     };
     el.removeAttribute = (name) => { delete el.attrs[name]; };
-    el.addEventListener = (t, fn) => { (el._listeners[t] = el._listeners[t] || []).push(fn); };
-    el.removeEventListener = () => {};
-    el.dispatch = (t, ev) => { (el._listeners[t] || []).forEach(fn => fn(ev || {})); };
+    el.addEventListener = (t, fn, opt) => addListener(el, t, fn, opt);
+    el.removeEventListener = (t, fn, opt) => removeListener(el, t, fn, opt);
+    el.dispatchEvent = (ev) => dispatchToTarget(el, ev);
+    el.dispatch = (t, ev) => {
+      const e = (ev && typeof ev === 'object') ? ev : {};
+      if (!e.type) e.type = t;
+      return dispatchToTarget(el, e);
+    };
     el.focus = () => {};
     el.blur = () => {};
     el.select = () => {};
@@ -428,18 +433,107 @@ function makeDom() {
     return el;
   }
 
+  function addListener(target, type, fn, opt) {
+    const capture = typeof opt === 'boolean' ? opt : !!(opt && opt.capture);
+    target._listeners = target._listeners || {};
+    target._listeners[type] = target._listeners[type] || [];
+    target._listeners[type].push({ fn, capture });
+  }
+
+  function removeListener(target, type, fn, opt) {
+    const capture = typeof opt === 'boolean' ? opt : !!(opt && opt.capture);
+    if (!target._listeners || !target._listeners[type]) return;
+    target._listeners[type] = target._listeners[type].filter(l => l.fn !== fn || l.capture !== capture);
+  }
+
+  function dispatchToTarget(target, ev) {
+    if (typeof ev === 'string') ev = { type: ev };
+    if (!ev.target) ev.target = target;
+    if (ev.bubbles === undefined) ev.bubbles = false;
+    if (ev.cancelBubble === undefined) ev.cancelBubble = false;
+    if (!ev.stopPropagation) ev.stopPropagation = () => { ev.cancelBubble = true; };
+    if (!ev.preventDefault) ev.preventDefault = () => { ev.defaultPrevented = true; };
+
+    const path = [];
+    let curr = target;
+    while (curr) {
+      path.unshift(curr);
+      curr = curr.parentNode;
+    }
+    if (path[0] !== document && path[0] === docHtml) {
+      path.unshift(document);
+    } else if (path[0] !== document && path[0] === docBody) {
+      path.unshift(docHtml);
+      path.unshift(document);
+    }
+
+    for (let i = 0; i < path.length - 1; i++) {
+      if (ev.cancelBubble) break;
+      const node = path[i];
+      const list = (node._listeners && node._listeners[ev.type]) || [];
+      for (const l of list) {
+        if (l.capture) {
+          ev.currentTarget = node;
+          l.fn.call(node, ev);
+          if (ev.cancelBubble) break;
+        }
+      }
+    }
+
+    if (!ev.cancelBubble) {
+      if (typeof target['on' + ev.type] === 'function') {
+        ev.currentTarget = target;
+        target['on' + ev.type].call(target, ev);
+      }
+      const list = (target._listeners && target._listeners[ev.type]) || [];
+      for (const l of list) {
+        ev.currentTarget = target;
+        l.fn.call(target, ev);
+        if (ev.cancelBubble) break;
+      }
+    }
+
+    if (ev.bubbles && !ev.cancelBubble) {
+      for (let i = path.length - 2; i >= 0; i--) {
+        if (ev.cancelBubble) break;
+        const node = path[i];
+        const list = (node._listeners && node._listeners[ev.type]) || [];
+        for (const l of list) {
+          if (!l.capture) {
+            ev.currentTarget = node;
+            l.fn.call(node, ev);
+            if (ev.cancelBubble) break;
+          }
+        }
+      }
+    }
+    return !ev.defaultPrevented;
+  }
+
+  const docHtml = makeEl('html');
+  const docBody = makeEl('body');
+  docHtml.appendChild(docBody);
+
   const document = {
-    body: makeEl('body'),
-    documentElement: makeEl('html'),
+    body: docBody,
+    documentElement: docHtml,
+    _listeners: {},
     createElement: (tag) => makeEl(tag, null),
     createElementNS: (ns, tag) => makeEl(tag, ns),
     createDocumentFragment: () => { const f = makeEl('#fragment'); f._fragment = true; return f; },
     getElementById: (id) => byId.get(id) || null,
     querySelector: (sel) => all.find(e => matchSelector(e, sel)) || null,
     querySelectorAll: (sel) => all.filter(e => matchSelector(e, sel)),
-    addEventListener: () => {},
-    removeEventListener: () => {}
+    addEventListener: (t, fn, opt) => addListener(document, t, fn, opt),
+    removeEventListener: (t, fn, opt) => removeListener(document, t, fn, opt),
+    dispatchEvent: (ev) => dispatchToTarget(document, ev),
+    dispatch: (t, ev) => {
+      const e = (ev && typeof ev === 'object') ? ev : {};
+      if (!e.type) e.type = t;
+      return dispatchToTarget(document, e);
+    }
   };
+  docHtml.parentNode = document;
   return document;
 }
 

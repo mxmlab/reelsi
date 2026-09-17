@@ -533,6 +533,17 @@ def _load_omni_cache(omf, intervals):
     return cand
 
 
+def _guard_keep(keep, intervals):
+    """Санитарный гард доли речи: меньше 25% (или пусто) — отказ от перезаписи."""
+    kept_s = sum(e - s for s, e in keep)
+    src_s = sum(e - s for s, e in intervals)
+    if not keep or (src_s > 0 and kept_s < 0.25 * src_s):
+        raise SystemExit(
+            f"ИИ вырезал почти весь ролик: осталось {kept_s:.1f}с из {src_s:.1f}с "
+            f"({len(keep)} сег.). Ничего не перезаписываю — прошлая нарезка цела. "
+            f"Проверь модель и промпт в настройках ⚙ и запусти ещё раз.")
+
+
 def decide(texts, emit=console_emit, model=None, ssm_flags=None, overrides=None, halluc=None,
 
            full_map=None, allow_long_drop=False):
@@ -585,6 +596,11 @@ def decide(texts, emit=console_emit, model=None, ssm_flags=None, overrides=None,
     # Ответ модели — недоверенный: `{"drop": ["a"]}` или `[{}]` роняли джоб трейсбеком уже
     # ПОСЛЕ оплаченного вызова, поэтому разбираем через as_ints, а не голым int().
     llm_drop = set(aicut.as_ints(data.get("drop"), lo=0)) & idxset
+    # Санитарный гард доли речи: проверяем решение модели ДО возврата длинных
+    # интервалов (иначе вето длинных интервалов возвращает вырезанное и маскирует сбой).
+    src_intervals = [(float(t["start"]), float(t["end"])) for t in texts]
+    model_keep = [src_intervals[i] for i in range(len(texts)) if i not in (llm_drop | auto_drop)]
+    _guard_keep(model_keep, src_intervals)
     # Защита от «схлопывания куска таймлайна»: длинный содержательный интервал НЕ выкидываем,
     # если он не дубль соседа (±2). Короткие (<2.5с, брошенные заходы) LLM резать разрешаем.
     # Для GigaAM (allow_long_drop=True) эту защиту ОТКЛЮЧАЕМ — там фразы режутся по паузам
@@ -681,7 +697,7 @@ def main(work):
                     default=None,
                     help="чистка дублей кодом (задание CA). Явный флаг (пришёл с галки "
                          "шага 1) перекрывает профиль спикера; без флага — профиль "
-                         "либо дефолт True")
+                         "либо дефолт False")
     ap.add_argument("--no-sense", action="store_true",
                     help="без ИИ-разметки смысловых кусков (задание GE)")
     ap.add_argument("--no-refine", action="store_true",
@@ -1019,13 +1035,7 @@ def main(work):
     # съесть тихий/шумный исходник. Без гарда xmlbuild спокойно писал ПУСТОЙ
     # таймлайн поверх out.xml и затирал .project.json — прошлая нарезка терялась.
     # Лучше упасть с внятным текстом и не трогать готовые файлы.
-    kept_s = sum(e - s for s, e in keep)
-    src_s = sum(e - s for s, e in intervals)
-    if not keep or (src_s > 0 and kept_s < 0.25 * src_s):
-        raise SystemExit(
-            f"ИИ вырезал почти весь ролик: осталось {kept_s:.1f}с из {src_s:.1f}с "
-            f"({len(keep)} сег.). Ничего не перезаписываю — прошлая нарезка цела. "
-            f"Проверь модель и промпт в настройках ⚙ и запусти ещё раз.")
+    _guard_keep(keep, intervals)
 
     # self-check стыков (уроки video-use): LM Studio выгружаем ДО Whisper (16 ГБ VRAM),
     # склейка keep-аудио -> Whisper -> сомнительное слово у стыка = обрезано катом ->

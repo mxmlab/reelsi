@@ -136,6 +136,10 @@ def parse_markup(text):
         else:
             out.append((_tok(chunk) or chunk.lower(), depth > 0))
     return out
+# Минимальная доля слов ролика, найденных в ответе модели (0..1).
+# Если совпало меньше — модель вернула отказ, пустышку или текст из другого ролика;
+# пустой drop при этом маскирует сбой под «резать нечего».
+MIN_COVER = 0.5
 
 
 def align_markup(words, marked, emit=console_emit):
@@ -198,6 +202,11 @@ def decide_markup(words, full_text, model=None, emit=console_emit, silence_bound
     emit(f"duplicate_groups: {len(groups)}{f' ({summary})' if summary else ''}", flush=True)
     marked = parse_markup(data.get("text", "") if isinstance(data, dict) else "")
     drop, cover = align_markup(words, marked, emit=emit)
+    if cover < MIN_COVER:
+        raise SystemExit(
+            f"ответ модели не про этот ролик (совпало {100 * cover:.0f}%) — "
+            f"ничего не перезаписываю — прошлая нарезка цела. "
+            f"Проверь модель и промпт в настройках ⚙ и запусти ещё раз.")
     kept = set(i for i in range(len(words)) if i not in drop)
     cutlog = [{"t0": round(words[a]["start"], 2), "t1": round(words[b]["end"], 2),
                "text": _words_text(words, a, b),

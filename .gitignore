@@ -67,6 +67,9 @@ render_stats*.json
 env.ps1
 _*.log
 reelsi.log*
+reelsi_crash.log
+reelsi.running
+reelsi.*.running
 
 # пользовательские пресеты стиля — создаются из UI, у каждого свои
 styles/*.json

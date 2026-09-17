@@ -509,6 +509,9 @@ function renderStylePanel() {
           const fOpen = isExpanded('field_' + item.key);
           twField = document.createElement('span');
           twField.className = 'sttw sttw-field' + (fOpen ? ' open' : '');
+          twField.setAttribute('role', 'button');
+          twField.tabIndex = 0;
+          twField.setAttribute('aria-label', fOpen ? t('Свернуть') : t('Развернуть'));
           twField.setAttribute('aria-expanded', fOpen ? 'true' : 'false');
           twField.dataset.tw = 'field_' + item.key;
           twField.textContent = '';
@@ -524,10 +527,20 @@ function renderStylePanel() {
         const dot = document.createElement('span');
         dot.className = 'stdot';
         dot.title = t('Сброс');
+        dot.setAttribute('role', 'button');
+        dot.tabIndex = 0;
+        dot.setAttribute('aria-label', t('Сброс'));
         dot.dataset.dotKey = item.key;
         dot.onclick = (e) => {
-          e.stopPropagation();
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
           stResetKey(item.key);
+        };
+        dot.onkeydown = (e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            if (e.preventDefault) e.preventDefault();
+            if (e.stopPropagation) e.stopPropagation();
+            stResetKey(item.key);
+          }
         };
         fRow.appendChild(dot);
 
@@ -537,7 +550,19 @@ function renderStylePanel() {
 
         const fLbl = document.createElement('label');
         fLbl.className = 'stfield-lbl';
-        fLbl.htmlFor = 'st_' + item.key;
+        if (isNumCtl) {
+          fLbl.htmlFor = 'st_' + item.key + '_val';
+        } else if (item.ctl === 'color' || item.ctl === 'color_opt') {
+          fLbl.htmlFor = 'st_' + item.key + '_hex';
+        } else if (item.ctl === 'point') {
+          fLbl.htmlFor = 'st_pickzoom';
+        } else if (item.key === 'layer_order') {
+          fLbl.htmlFor = 'st_layer_order_list';
+        } else if (item.ctl === 'textarea') {
+          fLbl.htmlFor = item.key === 'disclaimer' ? 'st_disc_text' : ('st_' + item.key);
+        } else {
+          fLbl.htmlFor = 'st_' + item.key;
+        }
         fLbl.textContent = t(item.label || item.key);
         nameWrap.appendChild(fLbl);
 
@@ -558,6 +583,14 @@ function renderStylePanel() {
           span.className = 'stnum-val';
           span.id = 'st_' + item.key + '_val';
           span.dataset.key = item.key;
+          span.tabIndex = 0;
+          span.setAttribute('role', 'spinbutton');
+          span.setAttribute('aria-label', t(item.label || item.key));
+          const limMin = item.lim_min != null ? item.lim_min : (item.min != null ? item.min : null);
+          const limMax = item.lim_max != null ? item.lim_max : (item.max != null ? item.max : null);
+          if (limMin != null) span.setAttribute('aria-valuemin', limMin);
+          if (limMax != null) span.setAttribute('aria-valuemax', limMax);
+          span.setAttribute('aria-valuenow', '0');
           span.textContent = '0';
 
           const edit = document.createElement('input');
@@ -739,12 +772,20 @@ function renderStylePanel() {
           frag.appendChild(sldRow);
 
           if (twField) {
-            twField.onclick = (e) => {
-              e.stopPropagation();
+            const toggleTw = (e) => {
+              if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+              if (e && typeof e.preventDefault === 'function') e.preventDefault();
               const n = toggleExpanded('field_' + item.key);
               twField.classList.toggle('open', n);
               twField.setAttribute('aria-expanded', n ? 'true' : 'false');
+              twField.setAttribute('aria-label', n ? t('Свернуть') : t('Развернуть'));
               sldRow.style.display = n ? '' : 'none';
+            };
+            twField.onclick = toggleTw;
+            twField.onkeydown = (e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                toggleTw(e);
+              }
             };
           }
         }
@@ -858,14 +899,75 @@ function renderStylePanel() {
 }
 
 function initNumDrag(span, input, field) {
+  const step = field.step || (field.ctl === 'int' ? 1 : 0.1);
+  const limMin = field.lim_min != null ? field.lim_min : (field.min != null ? field.min : -Infinity);
+  const limMax = field.lim_max != null ? field.lim_max : (field.max != null ? field.max : Infinity);
+
+  const openEdit = () => {
+    span.style.display = 'none';
+    input.style.display = '';
+    input.value = span.textContent;
+    input.focus();
+    input.select();
+  };
+
+  const cancelEdit = () => {
+    input.value = span.textContent;
+    input.style.display = 'none';
+    span.style.display = '';
+    span.focus();
+  };
+
+  const commitInput = () => {
+    input.style.display = 'none';
+    span.style.display = '';
+    const v = parseFloat(input.value);
+    if (!isNaN(v)) {
+      const fin = (field.ctl === 'int') ? Math.round(v) : v;
+      span.textContent = fin;
+      span.setAttribute('aria-valuenow', fin);
+      const slider = document.getElementById('st_' + field.key + '_slider');
+      if (slider) slider.value = Math.max(field.min != null ? field.min : -Infinity, Math.min(field.max != null ? field.max : Infinity, fin));
+      if (field.ctl === 'angle') updateAngleDial(field.key, fin);
+      stEdit();
+    }
+  };
+
+  span.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === 'F2') {
+      if (e.preventDefault) e.preventDefault();
+      openEdit();
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      if (e.preventDefault) e.preventDefault();
+      const mult = e.shiftKey ? 10 : 1;
+      const delta = (e.key === 'ArrowUp' ? 1 : -1) * step * mult;
+      const viewVal = parseFloat(span.textContent) || 0;
+      let v = viewVal + delta;
+      if (field.ctl === 'int') {
+        v = Math.round(v);
+      } else {
+        const dec = (step.toString().split('.')[1] || '').length;
+        v = parseFloat(v.toFixed(Math.max(dec, 1)));
+      }
+      const minB = Math.min(viewVal, limMin);
+      const maxB = Math.max(viewVal, limMax);
+      v = Math.max(minB, Math.min(maxB, v));
+      span.textContent = v;
+      span.setAttribute('aria-valuenow', v);
+      input.value = v;
+      const slider = document.getElementById('st_' + field.key + '_slider');
+      if (slider) slider.value = Math.max(field.min != null ? field.min : -Infinity, Math.min(field.max != null ? field.max : Infinity, v));
+      if (field.ctl === 'angle') updateAngleDial(field.key, v);
+      stEdit();
+      if (field.hint === 'rotomask' && typeof rotoMaskSync === 'function') rotoMaskSync();
+    }
+  });
+
   span.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
-    e.preventDefault();
+    if (e.preventDefault) e.preventDefault();
     const startX = e.clientX;
     const viewVal = parseFloat(span.textContent) || 0;
-    const step = field.step || (field.ctl === 'int' ? 1 : 0.1);
-    const limMin = field.lim_min != null ? field.lim_min : (field.min != null ? field.min : -Infinity);
-    const limMax = field.lim_max != null ? field.lim_max : (field.max != null ? field.max : Infinity);
     const minB = Math.min(viewVal, limMin);
     const maxB = Math.max(viewVal, limMax);
     let moved = false;
@@ -887,6 +989,7 @@ function initNumDrag(span, input, field) {
         }
         v = Math.max(minB, Math.min(maxB, v));
         span.textContent = v;
+        span.setAttribute('aria-valuenow', v);
         input.value = v;
         const slider = document.getElementById('st_' + field.key + '_slider');
         if (slider) slider.value = Math.max(field.min != null ? field.min : -Infinity, Math.min(field.max != null ? field.max : Infinity, v));
@@ -901,11 +1004,7 @@ function initNumDrag(span, input, field) {
       window.removeEventListener('mouseup', onUp);
       if (field.hint === 'rotomask' && typeof rotoMaskHide === 'function') rotoMaskHide();
       if (!moved) {
-        span.style.display = 'none';
-        input.style.display = '';
-        input.value = span.textContent;
-        input.focus();
-        input.select();
+        openEdit();
       }
     };
 
@@ -913,27 +1012,14 @@ function initNumDrag(span, input, field) {
     window.addEventListener('mouseup', onUp);
   });
 
-  const commitInput = () => {
-    input.style.display = 'none';
-    span.style.display = '';
-    const v = parseFloat(input.value);
-    if (!isNaN(v)) {
-      const fin = (field.ctl === 'int') ? Math.round(v) : v;
-      span.textContent = fin;
-      const slider = document.getElementById('st_' + field.key + '_slider');
-      if (slider) slider.value = Math.max(field.min != null ? field.min : -Infinity, Math.min(field.max != null ? field.max : Infinity, fin));
-      if (field.ctl === 'angle') updateAngleDial(field.key, fin);
-      stEdit();
-    }
-  };
-
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
+      if (e.preventDefault) e.preventDefault();
       commitInput();
+      span.focus();
     } else if (e.key === 'Escape') {
-      input.value = span.textContent;
-      input.style.display = 'none';
-      span.style.display = '';
+      if (e.preventDefault) e.preventDefault();
+      cancelEdit();
     }
   });
 
@@ -1025,7 +1111,10 @@ function stSliderInput(key, val) {
   const input = document.getElementById('st_' + key + '_input');
   let v = parseFloat(val);
   if (field.ctl === 'int') v = Math.round(v);
-  if (span) span.textContent = v;
+  if (span) {
+    span.textContent = v;
+    span.setAttribute('aria-valuenow', v);
+  }
   if (input) input.value = v;
   if (field.ctl === 'angle') updateAngleDial(key, v);
   stEdit();
@@ -1117,7 +1206,10 @@ function fillStyleFields() {
           const span = document.getElementById('st_' + item.key + '_val');
           const inp = document.getElementById('st_' + item.key + '_input');
           const slider = document.getElementById('st_' + item.key + '_slider');
-          if (span) span.textContent = view;
+          if (span) {
+            span.textContent = view;
+            span.setAttribute('aria-valuenow', view);
+          }
           if (inp) inp.value = view;
           if (slider) slider.value = Math.max(item.min != null ? item.min : -Infinity, Math.min(item.max != null ? item.max : Infinity, view));
           if (item.ctl === 'angle') updateAngleDial(item.key, view);
@@ -1525,7 +1617,10 @@ function stRefresh(key) {
     const span = document.getElementById('st_' + key + '_val');
     const inp = document.getElementById('st_' + key + '_input');
     const slider = document.getElementById('st_' + key + '_slider');
-    if (span) span.textContent = view;
+    if (span) {
+      span.textContent = view;
+      span.setAttribute('aria-valuenow', view);
+    }
     if (inp) inp.value = view;
     if (slider) slider.value = Math.max(field.min != null ? field.min : -Infinity, Math.min(field.max != null ? field.max : Infinity, view));
     if (field.ctl === 'angle') updateAngleDial(key, view);

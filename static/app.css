@@ -196,6 +196,12 @@ header.top{position:sticky;top:0;z-index:30;background:var(--bg);border-bottom:1
 /* Сброс группы — текст 11px --mut без рамки и фона, hover --tx, в колонке значений */
 #stpanel .streset,.streset{height:20px !important;min-height:0 !important;max-height:20px !important;font-size:11px !important;color:var(--mut) !important;background:none !important;border:none !important;box-shadow:none !important;cursor:pointer !important;padding:0 2px !important;user-select:none !important;line-height:20px !important;border-radius:0;text-align:left !important;width:auto !important}
 #stpanel .streset:hover,.streset:hover{color:var(--tx) !important;background:none !important;border:none !important}
+/* Доступность с клавиатуры в панели стиля (задание LF) */
+#stpanel .stnum-val:focus-visible{outline:1px solid var(--mut);outline-offset:1px;border-radius:var(--r-sm);color:#fff;border-bottom-color:var(--tx)}
+#stpanel .sttw:focus-visible{outline:1px solid var(--mut);outline-offset:1px;border-radius:var(--r-sm)}
+#stpanel .sttw:focus-visible::before{border-left-color:var(--tx)}
+#stpanel .stdot:focus-visible{outline:1px solid var(--mut);outline-offset:1px;border-radius:var(--r-sm)}
+#stpanel .stgroup:focus-visible,#stpanel .stlayer:focus-visible{outline:1px solid var(--mut);outline-offset:-1px}
 
 /* Ряд сохранения стиля: прижат низом панели (sticky), виден всегда (задание CP3) */
 .stactbar{position:sticky;bottom:0;z-index:5;background:var(--panel);padding:10px 0 4px;margin-top:auto}

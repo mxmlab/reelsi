@@ -24,6 +24,8 @@ _TEST_LOG_DIR = tempfile.mkdtemp(prefix="reelsi-tests-")
 _TEST_LOG_FILE = os.path.join(_TEST_LOG_DIR, "reelsi.log")
 os.environ["REELSI_LOG"] = _TEST_LOG_FILE
 os.environ["AUTOCUT_LOG"] = _TEST_LOG_FILE
+os.environ["REELSI_CRASH_LOG"] = os.path.join(_TEST_LOG_DIR, "reelsi_crash.log")
+os.environ["REELSI_RUN_MARKER"] = os.path.join(_TEST_LOG_DIR, "reelsi.running")
 
 os.environ["REELSI_AI_LOG"] = os.path.join(_TEST_LOG_DIR, "ai_calls.jsonl")
 os.environ["REELSI_UI_STATE"] = os.path.join(_TEST_LOG_DIR, "ui_state.json")

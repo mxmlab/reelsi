@@ -513,7 +513,7 @@ def postprocess(words, kept, drop, silence_bounds=None, protect=(), light=False,
     force_takes, dedupe_repeats, dedupe_fragments, drop_truncated, и автоматически
     включает light (решение модели — готовая расстановка резов, спорить с ней
     кодом нельзя; остаётся только drop_micro_keeps). None — текущий
-    tune.DEDUPE (профиль спикера / дефолт True).
+    tune.DEDUPE (профиль спикера / дефолт False).
 
     rule — атрибуция (задание CA): dict {индекс слова: имя функции}, кому
     каждая вырезанная чистка принадлежит. Обновляется на месте: слова, ушедшие

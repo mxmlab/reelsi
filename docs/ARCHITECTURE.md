@@ -1599,6 +1599,11 @@ voice_db, music_path, music_db, censor:[{ts,te}]}}`. Ключи вставок �
 ## Как запускать / проверять
 
 - Веб: `python reelsi/webui.py` → http://127.0.0.1:5001 (единственный интерфейс).
+- **Диагностика и падения:** штатный лог пишется в `reelsi.log` (или `$REELSI_LOG`). При внезапных
+  нативных сбоях (CUDA, C-расширения) трассировка пишется в `reelsi_crash.log` через `faulthandler`.
+  При старте сервер проверяет маркер `reelsi.<port>.running` (без порта — `reelsi.running`, или
+  `$REELSI_RUN_MARKER`): если прошлый процесс на этом порту упал нештатно, в лог выводится
+  предупреждение, хвост crash-лога и события Windows EventLog.
 - CLI ИИ-нарезки (основной движок): `python reelsi/omni_cut.py --cam1 A.MP4 --cam2 B.MP4 --out cut.xml --mode gigaam`
   (режимы `old`/`gigaam`, профиль спикера — `--speaker`).
 - CLI классика: `python reelsi/reelsi.py --cams 2|1` (или `--single`, `--no-cut`, `--aggressive`).

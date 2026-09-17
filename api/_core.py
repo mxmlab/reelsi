@@ -248,7 +248,13 @@ def _never_serve(path):
     Сверяем basename и присланного пути, и его os.path.realpath (задание LB): симлинк с
     безобидным именем (например, harmless.png -> ai_config.json) иначе обходит денилист
     секретов. Сегодня сервер и так слушает только localhost (см. _block_dns_rebinding),
-    но эта проверка — последний рубеж, который переживёт вынос интерфейса наружу (REMOTE_PLAN)."""
+    но эта проверка — последний рубеж, который переживёт вынос интерфейса наружу (REMOTE_PLAN).
+
+    Сравнение через os.path.samefile с известными существующими секретами (задание LK):
+    жёсткая ссылка (os.link) оставляет безобидное имя (clip.mp4) и не раскрывается через
+    os.path.realpath (указывает напрямую на тот же inode/file index ФС). Сравнение
+    по samefile ловит и симлинки, и жёсткие ссылки. Любое OSError при проверке означает,
+    что по этому признаку файл секретом не является (имя и realpath проверены ранее)."""
     if not path:
         return False
     if os.path.basename(path).lower() in _NEVER_SERVE:
@@ -259,11 +265,40 @@ def _never_serve(path):
         real = path
     if os.path.basename(real).lower() in _NEVER_SERVE:
         return True
+    rc_conf = None
     try:
         from .gdrive import rclone_conf
-        return real == os.path.realpath(rclone_conf())
+        rc_conf = rclone_conf()
+        if rc_conf and real == os.path.realpath(rc_conf):
+            return True
     except Exception:      # конфига нет / путь не разрешается — имени выше достаточно
-        return False
+        pass
+    try:
+        if os.path.exists(path):
+            candidates = []
+            try:
+                import core.aicut.config as _ai_config
+                ai_cfg = getattr(_ai_config, "AI_CONFIG_PATH", None)
+                if ai_cfg:
+                    candidates.append(ai_cfg)
+            except Exception:
+                pass
+            try:
+                candidates.append(paths.root("ai_config.json"))
+                candidates.append(paths.root("ai_config.test.json"))
+            except Exception:
+                pass
+            if rc_conf:
+                candidates.append(rc_conf)
+            for secret in candidates:
+                try:
+                    if secret and os.path.exists(secret) and os.path.samefile(path, secret):
+                        return True
+                except OSError:
+                    continue
+    except OSError:
+        pass
+    return False
 
 JOB = {"running": False, "log": [], "results": [], "failed": [], "done": False, "cancel": False,
        "log_base": 0,   # log_base = сколько строк срезано с начала (для ?since=)

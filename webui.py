@@ -117,6 +117,8 @@ def main():
     url = f"http://127.0.0.1:{port}"
     print(f"Reelsi Web UI v{APP_VERSION} -> {url}")
     log = get_logger("reelsi")
+    from core import crashtrace
+    crashtrace.install(log, port=port)
     log.info(f"Reelsi Web UI v{APP_VERSION} -> {url} (port {port})")
     if not (os.environ.get("REELSI_NO_BROWSER") or os.environ.get("AUTOCUT_NO_BROWSER")):
         threading.Timer(1.0, lambda: webbrowser.open(url)).start()

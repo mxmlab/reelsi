@@ -26,6 +26,9 @@ def _mock_pipeline_sidecars(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline.aicut, "warn_foreign_models", lambda *a, **k: None)
     monkeypatch.setattr(pipeline.xmlbuild, "build", lambda *a, **k: {"total_s": 10.0, "segments": 1})
     monkeypatch.setattr(pipeline.draftrender, "clean_tmp", lambda *a, **k: None)
+    orig_dedupe = pipeline.tune.DEDUPE
+    yield
+    pipeline.tune.DEDUPE = orig_dedupe
 
 
 _WORDS_VOCAB = [
@@ -321,7 +324,7 @@ def test_missing_dedupe_in_stages_preserves_speaker_profile_and_passes_none_to_p
 
     # Мокаем apply_speaker, чтобы он установил tune.DEDUPE = False (как из профиля спикера)
     def fake_apply_speaker(speaker, emit=None):
-        pipeline.tune.DEDUPE = False
+        monkeypatch.setattr(pipeline.tune, "DEDUPE", False)
 
     monkeypatch.setattr(pipeline, "apply_speaker", fake_apply_speaker)
 

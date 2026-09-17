@@ -33,6 +33,18 @@ def _num_field(d, key, default=0.0):
         raise ValueError(f"Поле {key} должно быть числом, получено: {v!r}")
 
 
+
+def _roto_bottom_safe(st):
+    """roto_bottom хранится долей (0–1). Дефект V1 (rotoSync без обратного
+    пересчёта frac_pct_int) мог записать в состояние ПРОЦЕНТЫ (>1). Значение
+    >1 считаем процентами и делим на 100, чтобы испорченное состояние не ломило
+    маску рото на весь кадр."""
+    v = float(st.get("roto_bottom") or 0)
+    if v > 1:
+        v = v / 100.0
+    return v
+
+
 def _norm_build_jobs(jobs_in):
     """Нормализация набора клипов для фонового джоба сборки (/api/build_run)."""
     from core import aicut, styles  # локальный импорт, как в соседних модулях api/
@@ -84,7 +96,7 @@ def _norm_build_jobs(jobs_in):
             ncams=j.get("cams") or None,
             exposure=_num_field(j, "exposure", 0),
             intro_mode=jstr(j, "intro_mode") or "word",
-            roto=bool(st.get("roto")), roto_bottom=float(st.get("roto_bottom") or 0),
+            roto=bool(st.get("roto")), roto_bottom=_roto_bottom_safe(st),
             roto_device=jstr(j, "roto_device").strip().lower() or None,
             style=style or None,
             music_db=float(st.get("music_db") if st.get("music_db") is not None else -20.0),
@@ -479,14 +491,22 @@ def api_export_xml():
     # Расширение — ДО чтения файла (задание IC, п. 9): роут читал ЛЮБОЙ файл по пути
     # (`/proc/self/environ` на Linux), а при сбое разбора отдавал его вложением.
     # Теперь .xml (без учёта регистра) — условие входа, остальное 403 как у /api/media.
+    # Расширение должно быть .xml и у присланного пути, и у realpath (задание LB):
+    # симлинк x.xml -> ai_config.json или y.xml -> secret.txt иначе отдаёт секрет вложением.
     if not path:
         return ("not found", 404)
     if os.path.splitext(path)[1].lower() != ".xml":
         return ("forbidden", 403)
-    if not os.path.isfile(path):
-        return ("not found", 404)
+    try:
+        real_ext = os.path.splitext(os.path.realpath(path))[1].lower()
+    except Exception:
+        real_ext = ""
+    if real_ext != ".xml":
+        return ("forbidden", 403)
     if _never_serve(path):
         return ("forbidden", 403)
+    if not os.path.isfile(path):
+        return ("not found", 404)
     from core import xmlbuild
     try:
         text = open(path, encoding="utf-8", newline="").read()

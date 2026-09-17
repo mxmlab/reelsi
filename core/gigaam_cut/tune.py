@@ -96,8 +96,9 @@ FILLERS = {"ну", "вот", "короче", "наверное", "типа", "з
 REPEAT_N = 10         # слов: максимальная длина n-граммы при поиске повторов/заходов
 REPEAT_WIN = 4.0      # сек: дальше этого повтор — уже осмысленный, а не запинка
 TAKE_WIN = 12.0       # сек: пересъёмка идёт сразу; дальше — не заход, а другая мысль
-DEDUPE = True         # чистка дублей кодом после решения модели (задание CA): сняли —
-                      # решает только модель по смыслу. Дефолт = прежнее поведение
+DEDUPE = False        # чистка дублей кодом после решения модели (задание CA): сняли —
+                      # решает только модель по смыслу. Умолчание False (задание LA,
+                      # как в cutstages: умной модели только мешает, режет перечисления и роли).
 
 
 # --------------------------------------------------------------------------- #
@@ -123,6 +124,10 @@ _CUT_GLOBALS = {          # ключ профиля -> имя модульной
     "hole_min": "HOLE_MIN", "min_keep": "MIN_KEEP", "min_island": "MIN_ISLAND",
     "silence_sec": "SILENCE_SEC", "dedupe": "DEDUPE",
 }
+# Снимок умолчаний при импорте модуля (задание LA):
+# apply_speaker(name) всегда начинает с чистого листа, а apply_speaker(None)
+# полностью возвращает модульные пороги к значениям по умолчанию.
+_DEFAULT_CUT_GLOBALS = {gname: globals()[gname] for gname in _CUT_GLOBALS.values()}
 
 
 def apply_speaker(name, emit=console_emit):
@@ -133,6 +138,10 @@ def apply_speaker(name, emit=console_emit):
     emit = wrap_emit(emit)
     global SPEAKER, _DB_TUNED
     _DB_TUNED = False
+    SPEAKER = None
+    g = globals()
+    for gname, val in _DEFAULT_CUT_GLOBALS.items():
+        g[gname] = val
     if not name:
         return None
     try:
@@ -147,7 +156,6 @@ def apply_speaker(name, emit=console_emit):
         return None
     cut = _sp.resolve_cut(prof)
     changed = []
-    g = globals()
     for k, gname in _CUT_GLOBALS.items():
         if k not in cut:
             continue

@@ -480,7 +480,7 @@ def test_anaphora_survives_postprocess_order():
     kept = set(range(7, len(words)))          # модель вырезала первую половину
     drop = set(range(7))
     gc.postprocess(words, kept, drop, gc._silence_bounds(words),
-                   emit=lambda *a, **k: None)
+                   dedupe=True, emit=lambda *a, **k: None)
     assert sorted(drop) == []
 
 
@@ -517,7 +517,7 @@ def test_cutlog_rule_on_every_record():
     words = mk("в организме в организме резко взлетает")
     kept, drop = set(range(len(words))), set()
     rule = {i: "decide_markup" for i in drop}
-    gc.postprocess(words, kept, drop, gc._silence_bounds(words), rule=rule,
+    gc.postprocess(words, kept, drop, gc._silence_bounds(words), dedupe=True, rule=rule,
                    emit=lambda *a, **k: None)
     cutlog = gc.build_cutlog(words, drop, gc._silence_bounds(words), rule=rule)
     assert cutlog, "ничего не вырезано — тест проверяет не то"
@@ -535,7 +535,7 @@ def test_cutlog_structure_preserved_except_rule():
     words = mk("и список самых опасных и список для прически")
     kept, drop = set(range(len(words))), set()
     rule = {i: "decide_markup" for i in drop}
-    gc.postprocess(words, kept, drop, gc._silence_bounds(words), rule=rule,
+    gc.postprocess(words, kept, drop, gc._silence_bounds(words), dedupe=True, rule=rule,
                    emit=lambda *a, **k: None)
     cutlog = gc.build_cutlog(words, drop, gc._silence_bounds(words), rule=rule)
     assert cutlog

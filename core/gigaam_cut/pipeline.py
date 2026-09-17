@@ -55,6 +55,17 @@ def _audio_file_diag(wav_path):
     return f"WAV '{wav_path}' ({file_info}; {dir_info})"
 
 
+def _guard_keep(keep, words):
+    """Санитарный гард доли речи: меньше 25% (или пусто) — отказ от перезаписи."""
+    kept_s = sum(e - s for s, e in keep)
+    src_s = (words[-1]["end"] - words[0]["start"]) if words else 0.0
+    if not keep or (src_s > 0 and kept_s < 0.25 * src_s):
+        raise SystemExit(
+            f"ИИ вырезал почти весь ролик: осталось {kept_s:.1f}с из {src_s:.1f}с "
+            f"({len(keep)} сег.). Ничего не перезаписываю — прошлая нарезка цела. "
+            f"Проверь модель и промпт в настройках ⚙ и запусти ещё раз.")
+
+
 # --------------------------------------------------------------------------- #
 # Оркестратор
 # --------------------------------------------------------------------------- #
@@ -72,7 +83,7 @@ def run(wav_path, cams, offsets, out, scale, model=None,
     speaker    — профиль спикера (speakers/*.json): свои пороги под его студию
                  и говор. None = калибровка по спикеру A, как было
     dedupe     — чистка дублей кодом (задание CA). None = профиль спикера
-                 (`speakers.CUT_DEFAULTS.dedupe`) либо дефолт True.
+                 (`speakers.CUT_DEFAULTS.dedupe`) либо дефолт False.
     stages     — словарь ступеней нарезки (задание GE); если задан, draft/dedupe/etc
                  берутся из него.
     engine     — ASR-движок с пословными таймингами (None -> aicut.cut_asr_engine()).
@@ -147,6 +158,7 @@ def _run(wav_path, cams, offsets, out, scale, model=None,
         full_text, words = transcribe_words_for_cut(wav_path, engine=engine, emit=emit)
     if not words:
         raise RuntimeError("GigaAM не дал ни одного слова — проверь аудио")
+    src_s = (words[-1]["end"] - words[0]["start"]) if words else 0.0
     if stages.get("pauses") != "off":
         silence_bounds = _silence_bounds(words)
         if silence_bounds:
@@ -161,6 +173,12 @@ def _run(wav_path, cams, offsets, out, scale, model=None,
         kept, drop, _notes, cutlog = decide_markup(
             words, full_text, model=model, emit=emit, silence_bounds=silence_bounds)
         rule = {i: "decide_markup" for i in drop}
+        # Санитарный гард решения модели (до чистки кодом, задание LA):
+        # если 27b забраковала почти всю речь, postprocess (особенно veto_unique_drops
+        # при dedupe=True) не должен маскировать сбой возвратом всего текста под видом успеха.
+        model_keep = keep_intervals(words, kept, silence_bounds)
+        model_keep = [(s, e) for s, e in model_keep if round(e * 60) - round(s * 60) > 0]
+        _guard_keep(model_keep, words)
     else:
         kept = set(range(len(words)))
         drop = set()
@@ -188,14 +206,8 @@ def _run(wav_path, cams, offsets, out, scale, model=None,
     # и вызывающий падал невнятным AttributeError уже ПОСЛЕ полного прогона
     # GigaAM+LLM. Плюс защищаем готовый out.xml от перезаписи пустышкой.
     # Гард проверяется ТОЛЬКО когда включён sense (задание GE).
-    kept_s = sum(e - s for s, e in keep)
-    src_s = (words[-1]["end"] - words[0]["start"]) if words else 0.0
     if stages.get("sense", True):
-        if not keep or (src_s > 0 and kept_s < 0.25 * src_s):
-            raise SystemExit(
-                f"ИИ вырезал почти весь ролик: осталось {kept_s:.1f}с из {src_s:.1f}с "
-                f"({len(keep)} сег.). Ничего не перезаписываю — прошлая нарезка цела. "
-                f"Проверь модель и промпт в настройках ⚙ и запусти ещё раз.")
+        _guard_keep(keep, words)
     # Камеры раскладываем по СМЫСЛОВЫМ кускам, и только потом подгоняем резы по
     # звуку: refine режет фразу на части (вдох/пауза внутри), а assign_cameras
     # обязан менять камеру на соседнем куске — без наследования картинка прыгала

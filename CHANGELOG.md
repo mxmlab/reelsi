@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Log file**: the web UI writes a rotating log (`reelsi.log`, or the path in `REELSI_LOG`) with the startup line and the causes of failures that used to be swallowed silently.
 
 ### Changed
+- **Tests never touch personal files**: every state path (AI call log, UI state, job lock, video history, word lists, insert index, AI config) points to a test folder before the app modules load, the AI config starts empty, and a guard fails the run if any top-level file of the repository changes. Cutting thresholds are restored after each test.
+- **Style panel tests catch real breakage**: the DOM stub only knows the elements the panel created; visibility, field read-back for every control type, the slider row and the roto fraction are checked by behaviour, and each check was confirmed by a deliberate code mutation.
 - **Style panel layout**: layer order rows are 24 px high like the other rows, and sliders take the full width.
 - **Roto failures stop the build**: when roto is on in the style (it is on in the base style) and a chunk gets no mask — out of video memory, a model error, an empty mask, or no PyTorch — the build now fails with "roto was not computed for N of M chunks" or "roto failed" instead of silently producing a project without roto. Computed masks stay cached for the next build; turn roto off in the style to build without it.
 - **Roto mask cache key**: masks are keyed by the normalized path, the nanosecond modification time and the file size, so a camera file overwritten in the same second no longer reuses an old mask. Existing cached masks are recomputed once.
@@ -46,6 +48,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **GigaAM pinned**: the optional GigaAM dependency is installed from a fixed commit.
 
 ### Fixed
+- **Cutting no longer reports a wiped-out cut as success**: when the model rejects almost all speech (or returns nothing, or text from another video), the cut stops with an error before the code cleanup runs; the code cleanup used to bring the whole range back, so an empty cut was logged as done. The previous cut stays untouched.
+- **One default for the code cleanup of the cut**: "Fix the cut with code" is off by default everywhere — the stage, the interface, the speaker defaults and the command line; a speaker profile or the checkbox still turns it on. Loading no speaker profile resets the thresholds to their defaults.
+- **Roto mask bottom is a fraction again**: opening a clip wrote the shown percentage (35) into the style instead of 0.35, and the build clamped it to a full-frame mask. The build now treats a stored value above 1 as a percentage, so an already affected state is repaired.
+- **Style panel**: the slider row of a dependent field comes back with the field; the "editing a template, Save will overwrite it" note is shown again; the zoom point highlight works for the button the panel creates after loading; layer order has a label, a changed marker and a reset; a failed schema load is retried the next time the panel opens; the style label is stored untranslated.
+- **Files are checked by their real path**: the secret-file guard and the extension checks of the media and XML export routes also look at where a symbolic link points, so a link with an allowed name no longer serves a key file or a non-media file.
+- **Draft proxies survive cleanup**: the automatic cleanup before a cut keeps the 720p draft proxies (`proxy_*.mp4`) as well as the preview proxies.
 - **doctor and whisper.cpp**: the whisper.cpp check runs even without PyTorch (the machines that need whisper.cpp most often have no CUDA build), lists the downloaded ggml models and warns when there are none; running doctor twice in one process no longer adds up the problems.
 - **Whisper frees video memory on failure**: the model is released even when transcription raises, so a failed run no longer keeps it in VRAM.
 - **Video model catalog follows the provider**: the catalog in memory is tied to the provider and address it came from; after switching the video profile it is fetched again, so a model is no longer rejected or its fields cut by another provider's list.

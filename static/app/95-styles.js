@@ -664,7 +664,7 @@ function rotoSync(){
   if(!CURSTYLE)CURSTYLE=JSON.parse(JSON.stringify((typeof STSCHEMA!=='undefined'&&STSCHEMA&&STSCHEMA.base)||STYLES.base||{}));
   if(typeof stReadView==='function'){
     const r=stReadView('roto');if(r!=null)CURSTYLE.roto=!!r;
-    const b=stReadView('roto_bottom');if(b!=null)CURSTYLE.roto_bottom=b;
+    const b=stReadView('roto_bottom');if(b!=null)CURSTYLE.roto_bottom=stStore(findFieldByKey('roto_bottom'),b);
     const c=stReadView('roto_cam1_only');if(c!=null)CURSTYLE.roto_cam1_only=!!c;
   }
   captureAE();
@@ -737,10 +737,18 @@ function setStyleDb(which,v){if(!CURSTYLE)CURSTYLE=JSON.parse(JSON.stringify(STY
 // нельзя и так: она держит зум, и клик по кнопке снова её показывает.
 let ZOOM_PICK=false;
 let ZOOM_HOVER=false;
+// V4: кнопку st_pickzoom панель создаёт ПОСЛЕ fetch('/api/style_schema'), а
+// DOMContentLoaded стреляет раньше — обработчик на саму кнопку не вешался никогда.
+// Делегируем с контейнера панели. mouseenter/mouseleave НЕ всплывают, поэтому их
+// слушаем в фазе перехвата (capture): иначе до контейнера событие не дойдёт.
 document.addEventListener('DOMContentLoaded',()=>{
-  const b=$('st_pickzoom');if(!b)return;
-  ['mouseenter','focusin'].forEach(ev=>b.addEventListener(ev,()=>{ZOOM_HOVER=true;zoomPickMark();}));
-  ['mouseleave','focusout'].forEach(ev=>b.addEventListener(ev,()=>{ZOOM_HOVER=false;zoomPickMark();}));
+  const host=document.getElementById('stpanel')||document.body;
+  ['mouseenter','focusin'].forEach(ev=>host.addEventListener(ev,(e)=>{
+    if(e.target&&e.target.id==='st_pickzoom'){ZOOM_HOVER=true;zoomPickMark();}
+  },{capture:true}));
+  ['mouseleave','focusout'].forEach(ev=>host.addEventListener(ev,(e)=>{
+    if(e.target&&e.target.id==='st_pickzoom'){ZOOM_HOVER=false;zoomPickMark();}
+  },{capture:true}));
 });
 function pickZoomPoint(){const st=$('ipvstage');
   if(ZOOM_PICK){zoomPickOff();return;}

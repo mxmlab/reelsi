@@ -186,7 +186,9 @@ def to_reelsi_opts(
         "subs": False,
         "srt": False,
         "no_cut": norm_stages.get("pauses") == "off",
-        "dedup": bool(norm_stages.get("dedupe", True)),
+        # Умолчание берём из описания ступени (False), а не литералом True (задание LA):
+        # как зафиксировано в подсказке ступени, с умной моделью dedupe только портит.
+        "dedup": bool(norm_stages.get("dedupe", DEFAULTS["dedupe"])),
         "ae": False,
         "keep": "last",
         "aggressive": False,

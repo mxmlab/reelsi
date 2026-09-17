@@ -4,19 +4,20 @@
 // Загружается до static/app/95-styles.js. Порядок вызовов согласован.
 
 let STSCHEMA = null;
+// Промис идущей загрузки схемы: два открытия панели подряд не тянут /api/style_schema дважды.
+let STSCHEMA_LOADING = null;
 let SFX_PREFIX = {};
 let SFX_ISVIDEO = {};
 
 function initSfxMaps() {
+  // V8: id кнопок — «st_» + ключ поля схемы. Здесь остались имена старой разметки
+  // (st_transsfx, st_riserfile, st_trans) — по ним openSfxEdit не находил ни один
+  // звук и брал префикс из самого id ('transsfx' вместо 'transition_sfx').
   SFX_PREFIX = {
     st_pop: 'pop',
-    st_transsfx: 'transition_sfx',
-    st_riserfile: 'intro_riser',
-    st_trans: 'transition',
     st_glitch: 'glitch'
   };
   SFX_ISVIDEO = {
-    st_trans: true,
     st_transition: true
   };
   if (!STSCHEMA || !STSCHEMA.layers) return;
@@ -34,16 +35,25 @@ function initSfxMaps() {
 }
 
 async function loadStyleSchema() {
-  try {
-    const res = await fetch('/api/style_schema');
-    if (!res.ok) throw new Error('HTTP ' + res.status);
-    STSCHEMA = await res.json();
-    initSfxMaps();
-  } catch (e) {
-    if (typeof uiLog === 'function') uiLog('loadStyleSchema: ' + e);
-    if (typeof toast === 'function') toast(t('Не удалось загрузить схему стиля'));
-    STSCHEMA = null;
-  }
+  // V11: одна неудачная загрузка раньше выключала панель до перезагрузки страницы —
+  // renderStylePanel выходил по пустой схеме, и повторить попытку было некому.
+  // Повтор — по следующему открытию панели (см. renderStylePanel), не циклом.
+  if (STSCHEMA_LOADING) return STSCHEMA_LOADING;
+  STSCHEMA_LOADING = (async () => {
+    try {
+      const res = await fetch('/api/style_schema');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      STSCHEMA = await res.json();
+      initSfxMaps();
+    } catch (e) {
+      if (typeof uiLog === 'function') uiLog('loadStyleSchema: ' + e);
+      if (typeof toast === 'function') toast(t('Не удалось загрузить схему стиля'));
+      STSCHEMA = null;
+    } finally {
+      STSCHEMA_LOADING = null;
+    }
+  })();
+  return STSCHEMA_LOADING;
 }
 
 // Таблица пересчётов conv (JA п. 2)
@@ -309,6 +319,13 @@ function stReadView(key) {
     const s = CURSTYLE || {};
     return Array.isArray(s[key]) ? [...s[key]] : null;
   }
+  if (field.ctl === 'textarea') {
+    // У дисклеймера свой id (st_disc_text) — так же читают его fillStyleFields,
+    // stEdit и stRefresh. Без этой ветки stReadView отдавал value ЧЕКБОКСА слоя
+    // st_disclaimer: у textarea-поля двери показывали и читали разные элементы.
+    const ta = document.getElementById(field.key === 'disclaimer' ? 'st_disc_text' : ('st_' + key));
+    return ta ? ta.value : null;
+  }
   const el = document.getElementById('st_' + key);
   return el ? el.value : null;
 }
@@ -353,12 +370,16 @@ function isNodeOn(item) {
 
 function renderStylePanel() {
   const host = document.getElementById('stpanel');
-  if (!host || !STSCHEMA || !STSCHEMA.layers) return;
+  if (!host) return;
+  if (!STSCHEMA || !STSCHEMA.layers) {
+    // V11: схема не загрузилась в прошлый раз. Пробуем ещё раз — по действию человека
+    // (открыл панель), а не циклом: не выйдет — следующее открытие попробует снова.
+    loadStyleSchema().then(() => { if (STSCHEMA && STSCHEMA.layers) renderStylePanel(); });
+    return;
+  }
   host.innerHTML = '';
 
-  // Перевод подписей схемы: только вызов t(…) — имя t значением не передаём
-  // (сторож test_t_is_only_ever_called_never_passed_as_value).
-  const tr = (s) => t(s);
+  // V5: алиас tr убран — вызываем t напрямую, чтобы сторож перевода видел строки
 
   function renderItems(items, level) {
     const frag = document.createDocumentFragment();
@@ -401,7 +422,7 @@ function renderStylePanel() {
           tch.type = 'checkbox';
           tch.id = 'st_' + item.toggle;
           tch.className = 'stchk';
-          tch.setAttribute('aria-label', tr(item.label || item.id));
+          tch.setAttribute('aria-label', t(item.label || item.id));
           tch.onchange = (e) => {
             e.stopPropagation();
             stToggleGroup(item.id, item.toggle, tch.checked);
@@ -413,21 +434,21 @@ function renderStylePanel() {
         // col 2: точка изменения (фиксированная колонка 8px СЛЕВА от имени)
         const dot = document.createElement('span');
         dot.className = 'stdot';
-        dot.title = tr('Изменено');
+        dot.title = t('Изменено');
         dot.dataset.dotGroup = item.id;
         gRow.appendChild(dot);
 
         // col 3: имя группы
         const lbl = document.createElement('span');
         lbl.className = 'stlabel';
-        lbl.textContent = tr(item.label || item.id);
+        lbl.textContent = t(item.label || item.id);
         gRow.appendChild(lbl);
 
         // col 4: кнопка сброса в колонке значений (180px)
         const rst = document.createElement('button');
         rst.type = 'button';
         rst.className = 'streset';
-        rst.textContent = tr('Сброс');
+        rst.textContent = t('Сброс');
         rst.onclick = (e) => {
           e.stopPropagation();
           stReset(item.id);
@@ -470,15 +491,6 @@ function renderStylePanel() {
         gBox.appendChild(gBody);
         frag.appendChild(gBox);
       } else if (item.type === 'field') {
-        if (item.ctl === 'layer_order') {
-          const loBox = document.createElement('div');
-          loBox.id = 'st_layer_order_list';
-          loBox.className = 'layer-order-list';
-          loBox.style.setProperty('--lvl', level);
-          frag.appendChild(loBox);
-          continue;
-        }
-
         const fRow = document.createElement('div');
         fRow.className = 'strow stfield';
         fRow.id = 'strow_' + item.key;
@@ -511,7 +523,7 @@ function renderStylePanel() {
         // col 2: точка изменения (фиксированная колонка 8px СЛЕВА от имени)
         const dot = document.createElement('span');
         dot.className = 'stdot';
-        dot.title = tr('Сброс');
+        dot.title = t('Сброс');
         dot.dataset.dotKey = item.key;
         dot.onclick = (e) => {
           e.stopPropagation();
@@ -526,13 +538,13 @@ function renderStylePanel() {
         const fLbl = document.createElement('label');
         fLbl.className = 'stfield-lbl';
         fLbl.htmlFor = 'st_' + item.key;
-        fLbl.textContent = tr(item.label || item.key);
+        fLbl.textContent = t(item.label || item.key);
         nameWrap.appendChild(fLbl);
 
         if (item.tip) {
           const tip = document.createElement('span');
           tip.className = 'i';
-          tip.dataset.t = tr(item.tip);
+          tip.dataset.t = t(item.tip);
           tip.textContent = '!';
           nameWrap.appendChild(tip);
         }
@@ -596,7 +608,7 @@ function renderStylePanel() {
             for (const opt of item.options) {
               const o = document.createElement('option');
               o.value = opt[0];
-              o.textContent = tr(opt[1]);
+              o.textContent = t(opt[1]);
               sel.appendChild(o);
             }
           }
@@ -607,7 +619,7 @@ function renderStylePanel() {
           inp.id = 'st_' + item.key;
           inp.className = 'stfont';
           inp.setAttribute('list', item.list || 'fontlist');
-          if (item.placeholder) inp.placeholder = tr(item.placeholder);
+          if (item.placeholder) inp.placeholder = t(item.placeholder);
           inp.onchange = () => stEdit();
           inp.oninput = () => stEdit();
           right.appendChild(inp);
@@ -619,13 +631,13 @@ function renderStylePanel() {
           inp.type = 'text';
           inp.id = 'st_' + item.key;
           inp.className = 'stfile';
-          if (item.placeholder) inp.placeholder = tr(item.placeholder);
+          if (item.placeholder) inp.placeholder = t(item.placeholder);
           inp.onchange = () => stEdit();
 
           const btnPick = document.createElement('button');
           btnPick.type = 'button';
           btnPick.className = 'sm';
-          btnPick.textContent = tr('Файл…');
+          btnPick.textContent = t('Файл…');
           btnPick.onclick = () => {
             if (typeof pickInto === 'function') pickInto('st_' + item.key);
           };
@@ -633,7 +645,7 @@ function renderStylePanel() {
           const btnEdit = document.createElement('button');
           btnEdit.type = 'button';
           btnEdit.className = 'icon';
-          btnEdit.setAttribute('aria-label', tr('Настройка звука'));
+          btnEdit.setAttribute('aria-label', t('Настройка звука'));
           btnEdit.innerHTML = '<span data-ic="pencil"></span>';
           btnEdit.onclick = () => {
             if (typeof openSfxEdit === 'function') openSfxEdit('st_' + item.key);
@@ -656,7 +668,7 @@ function renderStylePanel() {
           btnPick.type = 'button';
           btnPick.className = 'sm';
           btnPick.id = 'st_pickzoom';
-          btnPick.textContent = tr('Прицел');
+          btnPick.textContent = t('Прицел');
           btnPick.onclick = () => {
             if (typeof pickZoomPoint === 'function') pickZoomPoint();
           };
@@ -669,7 +681,7 @@ function renderStylePanel() {
           ta.id = item.key === 'disclaimer' ? 'st_disc_text' : ('st_' + item.key);
           ta.className = 'sttextarea';
           ta.rows = 3;
-          if (item.placeholder) ta.placeholder = tr(item.placeholder);
+          if (item.placeholder) ta.placeholder = t(item.placeholder);
           ta.onchange = () => stEdit();
           ta.oninput = () => stEdit();
           right.appendChild(ta);
@@ -677,6 +689,19 @@ function renderStylePanel() {
 
         fRow.appendChild(right);
         frag.appendChild(fRow);
+
+        // V7: у layer_order раньше была голая коробка списка — без метки, точки
+        // «изменено» и сброса. Виджет порядка остаётся как есть (renderLayerOrderUI
+        // ищет #st_layer_order_list), но идёт отдельной строкой: в колонку значений
+        // (180px) он не влезает — так же, как ползунок у числового поля.
+        if (item.ctl === 'layer_order') {
+          const loBox = document.createElement('div');
+          loBox.id = 'st_layer_order_list';
+          loBox.className = 'layer-order-list';
+          loBox.style.setProperty('--lvl', level);
+          frag.appendChild(loBox);
+          continue;   // виджет порядка — вся обвязка поля, дальше ручек у него нет
+        }
 
         if (isNumCtl) {
           const fOpen = isExpanded('field_' + item.key);
@@ -758,7 +783,7 @@ function renderStylePanel() {
       tch.type = 'checkbox';
       tch.id = 'st_' + layer.toggle;
       tch.className = 'stchk';
-      tch.setAttribute('aria-label', tr(layer.label || layer.id));
+      tch.setAttribute('aria-label', t(layer.label || layer.id));
       tch.onchange = (e) => {
         e.stopPropagation();
         stToggleLayer(layer.id, layer.toggle, tch.checked);
@@ -774,14 +799,14 @@ function renderStylePanel() {
     // col 2: точка изменения (фиксированная колонка 8px СЛЕВА от имени)
     const dot = document.createElement('span');
     dot.className = 'stdot';
-    dot.title = tr('Изменено');
+    dot.title = t('Изменено');
     dot.dataset.dotLayer = layer.id;
     lRow.appendChild(dot);
 
     // col 3: имя слоя
     const lbl = document.createElement('span');
     lbl.className = 'stlabel';
-    lbl.textContent = tr(layer.label || layer.id);
+    lbl.textContent = t(layer.label || layer.id);
     lRow.appendChild(lbl);
 
     // col 4: пустая ячейка для колонки значений
@@ -1231,7 +1256,10 @@ function stEdit() {
 
   const imEl = document.getElementById('intromode');
   if (imEl && imEl.value) CURSTYLE.intro_mode = imEl.value;
-  CURSTYLE.label = CURSTYLE.label || t('кастом');
+  // V10: в ДАННЫЕ пишем исходное «кастом», а не перевод: в английском интерфейсе
+  // t('кастом') клал в стиль 'custom', и метка уезжала в состояние/сборку другой строкой.
+  // Переводится только показ — селектор стилей и подсказки зовут t(label) сами.
+  CURSTYLE.label = CURSTYLE.label || 'кастом';
 
   updateStyleVisibility();
 
@@ -1270,7 +1298,12 @@ function updateStyleVisibility() {
         const row = document.getElementById('strow_' + item.key);
         const sldRow = document.getElementById('stslider_row_' + item.key);
         if (row) row.style.display = vis ? '' : 'none';
-        if (sldRow && !vis) sldRow.style.display = 'none';
+        if (sldRow) {
+          if (!vis) sldRow.style.display = 'none';
+          // V2: при возврате видимости — восстановить состояние слайдера по раскрытости
+          // треугольника, иначе он останется скрытым навсегда
+          else sldRow.style.display = isExpanded('field_' + item.key) ? '' : 'none';
+        }
       } else if (item.type === 'group' || item.id) {
         if (item.toggle) {
           const on = isNodeOn(item);
@@ -1517,7 +1550,10 @@ function stRefresh(key) {
 
 // Экспорт в глобальную область видимости браузера
 if (typeof window !== 'undefined') {
-  window.STSCHEMA = STSCHEMA;
+  // V9: STSCHEMA/SFX_PREFIX присваивались здесь СНИМКОМ на момент загрузки скрипта,
+  // то есть null и {}. Схема приезжает позже (loadStyleSchema), поэтому наружу отдаём
+  // геттеры — внешний код видит текущее значение, а не пустышку.
+  Object.defineProperty(window, 'STSCHEMA', { get: () => STSCHEMA, configurable: true });
   window.loadStyleSchema = loadStyleSchema;
   window.stConv = stConv;
   window.stView = stView;
@@ -1531,6 +1567,6 @@ if (typeof window !== 'undefined') {
   window.stResetKey = stResetKey;
   window.stRefresh = stRefresh;
   window.stReadView = stReadView;
-  window.SFX_PREFIX = SFX_PREFIX;
-  window.SFX_ISVIDEO = SFX_ISVIDEO;
+  Object.defineProperty(window, 'SFX_PREFIX', { get: () => SFX_PREFIX, configurable: true });
+  Object.defineProperty(window, 'SFX_ISVIDEO', { get: () => SFX_ISVIDEO, configurable: true });
 }

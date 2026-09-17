@@ -365,8 +365,16 @@ def api_media():
     # файл на диске: посторонний клиент узнавал про существование любого файла, а
     # `_never_serve` для СВОИХ имён (`ai_config.json` без расширения из allowlist)
     # был недостижим — до него просто не доходили.
+    # Расширение должно быть допустимым и у присланного пути, и у realpath (задание LB):
+    # иначе симлинк clip.mp4 -> notes.txt позволяет читать немедийные файлы.
     ext = os.path.splitext(path)[1].lower().lstrip(".")
     if ext not in ALLOWED_MEDIA_EXTS:
+        return ("forbidden", 403)
+    try:
+        real_ext = os.path.splitext(os.path.realpath(path))[1].lower().lstrip(".")
+    except Exception:
+        real_ext = ""
+    if real_ext not in ALLOWED_MEDIA_EXTS:
         return ("forbidden", 403)
     if _never_serve(path):
         return ("forbidden", 403)

@@ -20,6 +20,11 @@
   значение из стиля при показе не обрезается — в трёх шаблонах music_db = −100…−105,
   и старое числовое поле это держало.
 
+Полный цикл (fillStyleFields → stEdit) идёт на мини-DOM, и он же — часть контракта:
+`getElementById` отдаёт null для id, которого панель НЕ создавала (реестр созданных
+элементов), как в браузере. Раньше заглушка возвращала объект на любой id — и мутация
+«дверь читает `st_<key>_zzz`» проходила незамеченной.
+
 Запуск: python -m pytest reelsi/tests -q
 """
 import io
@@ -228,35 +233,246 @@ def test_music_db_below_slider_range_survives(tmp_path):
 # ------------------------------------------------------------------
 
 DOM_STUB = r"""
-let elements = {};
-function getEl(id) {
-  if (!elements[id]) {
-    elements[id] = {
-      id: id,
+// ---------------------------------------------------------------------------
+// Мини-DOM с РЕЕСТРОМ созданных элементов.
+//
+// Раньше заглушка отдавала объект на ЛЮБОЙ id, и панель «работала» даже с
+// несуществующими полями: мутация «читать st_<key>_zzz» проходила незамеченной.
+// Здесь id попадает в реестр только тогда, когда элемент создан панелью
+// (createElement/createElementNS + id = … или setAttribute('id', …)), а чужой id
+// честно даёт null — как в браузере. innerHTML = '' и удаление узла реестр чистят.
+//
+// Чего в заглушке нет нарочно: полей index.html (их панель не создаёт — тесты про
+// панель) и событий мыши (addEventListener — пустышка): двери панели зовут напрямую.
+function makeDom() {
+  const byId = new Map();
+  const all = [];
+
+  function attrToKey(name) {
+    if (name.indexOf('data-') !== 0) return null;
+    return name.slice(5).replace(/-([a-z])/g, (m, c) => c.toUpperCase());
+  }
+
+  function matchSelector(el, sel) {
+    const attrRe = /\[([\w-]+)(?:=(?:"([^"]*)"|'([^']*)'|([^\]]*)))?\]/g;
+    let rest = String(sel);
+    let m;
+    while ((m = attrRe.exec(String(sel)))) {
+      const name = m[1];
+      const want = m[2] !== undefined ? m[2] : (m[3] !== undefined ? m[3] : m[4]);
+      const key = attrToKey(name);
+      const actual = key ? el.dataset[key] : el.attrs[name];
+      if (actual === undefined || actual === null) return false;
+      if (want !== undefined && String(actual) !== want) return false;
+      rest = rest.replace(m[0], '');
+    }
+    rest = rest.trim();
+    const tag = rest.match(/^[A-Za-z][\w-]*/);
+    if (tag) {
+      if (el.tagName !== tag[0].toUpperCase()) return false;
+      rest = rest.slice(tag[0].length);
+    }
+    for (const c of rest.split('.').map(s => s.trim()).filter(Boolean)) {
+      if (!el.classList.contains(c)) return false;
+    }
+    return true;
+  }
+
+  function unregister(node) {
+    const stack = [node];
+    while (stack.length) {
+      const n = stack.pop();
+      if (n._regId && byId.get(n._regId) === n) byId.delete(n._regId);
+      const i = all.indexOf(n);
+      if (i >= 0) all.splice(i, 1);
+      for (const c of n.children) stack.push(c);
+    }
+  }
+
+  function detach(node) {
+    if (!node || !node.parentNode) return;
+    const i = node.parentNode.children.indexOf(node);
+    if (i >= 0) node.parentNode.children.splice(i, 1);
+    node.parentNode = null;
+  }
+
+  function appendChild(parent, child) {
+    if (child && child._fragment) {
+      for (const c of [...child.children]) appendChild(parent, c);
+      child.children.length = 0;
+      return child;
+    }
+    detach(child);
+    parent.children.push(child);
+    child.parentNode = parent;
+    return child;
+  }
+
+  function makeEl(tag, ns) {
+    const el = {
+      tagName: String(tag || 'div').toUpperCase(),
+      nodeType: 1,
+      ns: ns || null,
+      _fragment: false,
+      _regId: '',
+      _html: '',
+      className: '',
+      textContent: '',
       value: '',
       checked: false,
-      textContent: '',
-      style: { display: '' },
-      classList: { toggle: () => {}, add: () => {}, remove: () => {}, contains: () => false },
-      setAttribute: () => {},
-      getAttribute: () => null,
-      querySelector: () => ({ setAttribute: () => {} }),
-      querySelectorAll: () => [],
-      dataset: {}
+      disabled: false,
+      tabIndex: 0,
+      type: '',
+      rows: 0,
+      maxLength: 0,
+      min: null,
+      max: null,
+      step: null,
+      placeholder: '',
+      title: '',
+      htmlFor: '',
+      clientWidth: 640,
+      clientHeight: 360,
+      dataset: {},
+      attrs: {},
+      style: { display: '', setProperty() {}, getPropertyValue: () => '' },
+      children: [],
+      parentNode: null,
+      _listeners: {}
     };
+    el.classList = {
+      add: (...cs) => {
+        const set = new Set(el.className.split(/\s+/).filter(Boolean));
+        cs.forEach(c => set.add(c));
+        el.className = [...set].join(' ');
+      },
+      remove: (...cs) => {
+        const set = new Set(el.className.split(/\s+/).filter(Boolean));
+        cs.forEach(c => set.delete(c));
+        el.className = [...set].join(' ');
+      },
+      contains: (c) => el.className.split(/\s+/).indexOf(c) >= 0,
+      toggle: (c, on) => {
+        const has = el.classList.contains(c);
+        const want = (on === undefined) ? !has : !!on;
+        if (want && !has) el.classList.add(c);
+        else if (!want && has) el.classList.remove(c);
+        return want;
+      }
+    };
+    Object.defineProperty(el, 'id', {
+      get: () => el._regId,
+      set: (v) => {
+        const id = String(v == null ? '' : v);
+        if (el._regId && byId.get(el._regId) === el) byId.delete(el._regId);
+        el._regId = id;
+        if (id) byId.set(id, el);
+      },
+      configurable: true
+    });
+    Object.defineProperty(el, 'innerHTML', {
+      get: () => el._html,
+      set: (v) => {
+        if (v === '') {
+          for (const c of [...el.children]) unregister(c);
+          el.children.length = 0;
+        }
+        el._html = String(v == null ? '' : v);
+      },
+      configurable: true
+    });
+    el.appendChild = (c) => appendChild(el, c);
+    el.removeChild = (c) => { detach(c); unregister(c); return c; };
+    el.insertBefore = (c, ref) => {
+      detach(c);
+      const i = ref ? el.children.indexOf(ref) : -1;
+      if (i < 0) el.children.push(c); else el.children.splice(i, 0, c);
+      c.parentNode = el;
+      return c;
+    };
+    el.setAttribute = (name, value) => {
+      if (name === 'id') { el.id = value; return; }
+      if (name === 'class') { el.className = String(value); return; }
+      el.attrs[name] = String(value);
+    };
+    el.getAttribute = (name) => {
+      if (name === 'id') return el._regId || null;
+      if (name === 'class') return el.className || null;
+      return name in el.attrs ? el.attrs[name] : null;
+    };
+    el.removeAttribute = (name) => { delete el.attrs[name]; };
+    el.addEventListener = (t, fn) => { (el._listeners[t] = el._listeners[t] || []).push(fn); };
+    el.removeEventListener = () => {};
+    el.dispatch = (t, ev) => { (el._listeners[t] || []).forEach(fn => fn(ev || {})); };
+    el.focus = () => {};
+    el.blur = () => {};
+    el.select = () => {};
+    el.getBoundingClientRect = () => ({ left: 0, top: 0, width: 32, height: 32 });
+    el.querySelectorAll = (sel) => {
+      const out = [];
+      const stack = [...el.children];
+      while (stack.length) {
+        const n = stack.shift();
+        if (matchSelector(n, sel)) out.push(n);
+        stack.push(...n.children);
+      }
+      return out;
+    };
+    el.querySelector = (sel) => el.querySelectorAll(sel)[0] || null;
+    el.closest = (sel) => {
+      let n = el;
+      while (n) { if (matchSelector(n, sel)) return n; n = n.parentNode; }
+      return null;
+    };
+    all.push(el);
+    return el;
   }
-  return elements[id];
+
+  const document = {
+    body: makeEl('body'),
+    documentElement: makeEl('html'),
+    createElement: (tag) => makeEl(tag, null),
+    createElementNS: (ns, tag) => makeEl(tag, ns),
+    createDocumentFragment: () => { const f = makeEl('#fragment'); f._fragment = true; return f; },
+    getElementById: (id) => byId.get(id) || null,
+    querySelector: (sel) => all.find(e => matchSelector(e, sel)) || null,
+    querySelectorAll: (sel) => all.filter(e => matchSelector(e, sel)),
+    addEventListener: () => {},
+    removeEventListener: () => {}
+  };
+  return document;
 }
-global.document = {
-  getElementById: (id) => getEl(id),
-  querySelector: () => ({ classList: { toggle: () => {} }, style: {}, setAttribute: () => {} }),
-  querySelectorAll: () => []
-};
+
+// Свежий документ на прогон: реестр id не течёт из теста в тест.
+function resetDom() { global.document = makeDom(); return global.document; }
+
+resetDom();
 global.window = global;
 global.t = s => s;
+// CURSTYLE/STYLES в браузере объявлены в 95-styles.js, которого в этом файле нет:
+// без объявления первое же чтение (fillStyleFields) падает ReferenceError.
+global.CURSTYLE = null;
+global.STYLES = {};
+global.localStorage = {
+  _m: {},
+  getItem(k) { return Object.prototype.hasOwnProperty.call(this._m, k) ? this._m[k] : null; },
+  setItem(k, v) { this._m[k] = String(v); },
+  removeItem(k) { delete this._m[k]; }
+};
+
+// Панель так, как её видит браузер: контейнер #stpanel в разметке, поля — из схемы.
+function buildPanel() {
+  resetDom();
+  localStorage._m = {};
+  const host = document.createElement('div');
+  host.id = 'stpanel';
+  document.body.appendChild(host);
+  renderStylePanel();
+  return host;
+}
 
 function runCycle(initial) {
-  elements = {};
+  buildPanel();
   CURSTYLE = JSON.parse(JSON.stringify(initial));
   fillStyleFields();
   stEdit();
@@ -439,6 +655,12 @@ CURSTYLE = JSON.parse(JSON.stringify(BASE));
 
 const changedDots = [];
 const queryElements = {};
+
+// Панель строим здесь: заглушка знает только созданные элементы, «полей вообще»
+// в DOM больше нет (раньше getElementById выдумывал их на любой id). Счётчик точек
+// вешаем ПОСЛЕ постройки — buildPanel() подменяет document свежим.
+buildPanel();
+
 global.document.querySelector = (sel) => {
   if (!queryElements[sel]) {
     queryElements[sel] = {
@@ -518,6 +740,11 @@ INCOMPLETE_TEMPLATES_NO_DOTS = DOM_STUB + r"""
 // Проверка JB-5: на неполных шаблонах после выбора нет ложных точек «изменено»
 const changedDots = [];
 const queryElements = {};
+
+// Поля в DOM появляются только вместе с панелью; счётчик вешаем ПОСЛЕ постройки —
+// buildPanel() подменяет document свежим.
+buildPanel();
+
 global.document.querySelector = (sel) => {
   if (!queryElements[sel]) {
     queryElements[sel] = {

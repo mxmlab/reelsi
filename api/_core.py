@@ -243,14 +243,25 @@ _NEVER_SERVE = ("ai_config.json", "ai_config.test.json", "rclone.conf")
 def _never_serve(path):
     """Секрет ли это. Помимо имён из _NEVER_SERVE сверяем РЕАЛЬНЫЙ путь конфига rclone:
     он переезжает переменной REELSI_RCLONE_CONF (изолированный профиль на 5098), и там
-    лежат токены гугл-диска — по одному имени такой файл не поймать. Сегодня сервер и
-    так слушает только localhost (см. _block_dns_rebinding), но эта проверка — последний
-    рубеж, который переживёт вынос интерфейса наружу (REMOTE_PLAN)."""
+    лежат токены гугл-диска — по одному имени такой файл не поймать.
+
+    Сверяем basename и присланного пути, и его os.path.realpath (задание LB): симлинк с
+    безобидным именем (например, harmless.png -> ai_config.json) иначе обходит денилист
+    секретов. Сегодня сервер и так слушает только localhost (см. _block_dns_rebinding),
+    но эта проверка — последний рубеж, который переживёт вынос интерфейса наружу (REMOTE_PLAN)."""
+    if not path:
+        return False
     if os.path.basename(path).lower() in _NEVER_SERVE:
         return True
     try:
+        real = os.path.realpath(path)
+    except Exception:
+        real = path
+    if os.path.basename(real).lower() in _NEVER_SERVE:
+        return True
+    try:
         from .gdrive import rclone_conf
-        return os.path.realpath(path) == os.path.realpath(rclone_conf())
+        return real == os.path.realpath(rclone_conf())
     except Exception:      # конфига нет / путь не разрешается — имени выше достаточно
         return False
 

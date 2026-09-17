@@ -134,6 +134,13 @@ def tmp_dir(out_xml_or_dir):
 
 
 PROXY_GLOB = "pv_*.mp4"          # превью-прокси камер (build_preview_proxy)
+# В _tmp живут два независимых кэша прокси:
+# 1) `pv_*.mp4` — превью-прокси для плеера веба (build_preview_proxy);
+# 2) `proxy_*.mp4` — 720p-прокси камер для быстрого рендера черновика (_proxy_path).
+# У них разные имена/префиксы, но одинаковая суть: пересборка декода камеры стоит десятки
+# секунд. Поэтому рутинная авто-очистка перед нарезкой (proxies=False) бережёт оба вида,
+# а явная очистка места кнопкой (proxies=True) удаляет и считает оба.
+PROXY_GLOBS = ("pv_*.mp4", "proxy_*.mp4")
 # Имя файла субтитров черновика — ФИКСИРОВАННОЕ. В фильтрграфе имя идёт сырым
 # (`subtitles=<имя>`), а фильтр разбирается по запятым, `[ ]`, `;`, `:` и кавычкам:
 # стем ролика вида «C1,2[1];x'y» рвал `subtitles`, и черновик не собирался вовсе
@@ -142,26 +149,33 @@ DRAFT_SUBS_NAME = "draft_subs.ass"
 
 
 def proxy_size(outdir):
-    """Сколько занимают превью-прокси в <outdir>/_tmp, байт. Нужно, чтобы кнопка очистки
-    показывала цену вопроса: удалил — следующее открытие предпросмотра ждёт пересборку."""
+    """Сколько занимают прокси (превью и черновика) в <outdir>/_tmp, байт. Нужно, чтобы кнопка
+    очистки показывала цену вопроса: удалил — следующее открытие предпросмотра/черновика ждёт пересборку."""
     import glob
+    t = os.path.join(outdir, "_tmp")
+    seen = set()
     total = 0
-    for f in glob.glob(os.path.join(outdir, "_tmp", PROXY_GLOB)):
-        try:
-            total += os.path.getsize(f)
-        except OSError:
-            pass
+    for pat in PROXY_GLOBS:
+        for f in glob.glob(os.path.join(t, pat)):
+            p = os.path.abspath(f)
+            if p in seen:
+                continue
+            seen.add(p)
+            try:
+                total += os.path.getsize(p)
+            except OSError:
+                pass
     return total
 
 
 def clean_tmp(outdir, emit=console_emit, proxies=False):
     """Очистить <outdir>/_tmp. Возвращает освобождённые байты.
 
-    proxies=False (по умолчанию) — превью-прокси НЕ трогаем. Они не мусор, а кэш по
-    файлу камеры: пересборка стоит десятки секунд на файл, а зависят они от исходника,
-    не от монтажа. Авто-очистка перед новой нарезкой ходит именно так — иначе каждая
+    proxies=False (по умолчанию) — прокси (превью pv_*.mp4 и черновика proxy_*.mp4) НЕ трогаем.
+    Они не мусор, а кэш по файлу камеры: пересборка стоит десятки секунд на файл, а зависят они от
+    исходника, не от монтажа. Авто-очистка перед новой нарезкой ходит именно так — иначе каждая
     нарезка в этой папке обнуляла бы прокси всем клипам разом.
-    proxies=True — явная уборка кнопкой, когда место нужно прямо сейчас."""
+    proxies=True — явная уборка кнопкой, когда место нужно прямо сейчас (сносит и прокси)."""
     emit = wrap_emit(emit)
     import glob
     import shutil
@@ -169,7 +183,10 @@ def clean_tmp(outdir, emit=console_emit, proxies=False):
     freed = 0
     if not os.path.isdir(t):
         return 0
-    keep = set() if proxies else {os.path.abspath(p) for p in glob.glob(os.path.join(t, PROXY_GLOB))}
+    keep = set()
+    if not proxies:
+        for pat in PROXY_GLOBS:
+            keep.update(os.path.abspath(p) for p in glob.glob(os.path.join(t, pat)))
     for root, _dirs, files in os.walk(t):
         for f in files:
             p = os.path.join(root, f)

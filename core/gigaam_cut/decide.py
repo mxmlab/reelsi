@@ -140,6 +140,10 @@ def parse_markup(text):
 # Если совпало меньше — модель вернула отказ, пустышку или текст из другого ролика;
 # пустой drop при этом маскирует сбой под «резать нечего».
 MIN_COVER = 0.5
+# Если модель не нашла что вырезать (drop пуст), ответ обязан содержать почти
+# весь текст ролика. Иначе обрыв по лимиту вывода на середине текста без скобок
+# ошибочно сочтётся за решение «оставить всё как есть».
+MIN_COVER_NO_CUT = 0.9
 
 
 def align_markup(words, marked, emit=console_emit):
@@ -202,7 +206,8 @@ def decide_markup(words, full_text, model=None, emit=console_emit, silence_bound
     emit(f"duplicate_groups: {len(groups)}{f' ({summary})' if summary else ''}", flush=True)
     marked = parse_markup(data.get("text", "") if isinstance(data, dict) else "")
     drop, cover = align_markup(words, marked, emit=emit)
-    if cover < MIN_COVER:
+    min_cover = MIN_COVER_NO_CUT if not drop else MIN_COVER
+    if cover < min_cover:
         raise SystemExit(
             f"ответ модели не про этот ролик (совпало {100 * cover:.0f}%) — "
             f"ничего не перезаписываю — прошлая нарезка цела. "

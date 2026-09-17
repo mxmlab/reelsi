@@ -20,6 +20,7 @@
 """
 import glob
 import gzip
+import json
 import os
 import shutil
 import sys
@@ -114,6 +115,48 @@ def _mock_roto(monkeypatch):
     monkeypatch.setattr(roto, "alpha_for_ranges", mock_alpha_for_ranges)
     monkeypatch.setattr(roto, "release", lambda emit=None: None)
     monkeypatch.setattr(roto, "_RECORDED_CALLS", recorded_calls, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_fonts(monkeypatch):
+    """Детерминированные метрики шрифтов: формулы зазоров (back_gap, disc_gap)
+    считаются независимо от наличия системных шрифтов в окружении."""
+    from core import fonts
+
+    def mock_ink_extent(ps_name, text, size_px):
+        if not text or not str(text).strip():
+            return (0.0, 0.0)
+        k = float(size_px)
+        return (round(0.7 * k, 2), round(0.2 * k, 2))
+
+    monkeypatch.setattr(fonts, "ink_extent", mock_ink_extent)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_assets(monkeypatch, tmp_path):
+    """Детерминированные ассеты: создаём assets/assets.json во tmp_path рядом с XML
+    и изолируем поиск от папки assets/ уровнем выше репозитория (intro_riser, glitch_db)."""
+    assets_dir = tmp_path / "assets"
+    assets_dir.mkdir(exist_ok=True)
+    dummy_assets = {
+        "intro_riser": "intro_riser.wav",
+        "whoosh": "whoosh.wav",
+        "transition": "transition.mov",
+        "highlight_pop": "pop.wav",
+        "glitch": "glitch.wav",
+    }
+    for fname in dummy_assets.values():
+        (assets_dir / fname).write_bytes(b"RIFF....WAVE")
+    (assets_dir / "assets.json").write_text(json.dumps(dummy_assets), encoding="utf-8")
+
+    from core import assets
+    orig_resolver = assets.resolver
+
+    def mock_resolver(base):
+        # Ищем строго во tmp_path: запрещаем переход в папку assets/ уровнем выше репозитория
+        return orig_resolver(str(tmp_path))
+
+    monkeypatch.setattr(assets, "resolver", mock_resolver)
 
 
 def _collect_schema_items():

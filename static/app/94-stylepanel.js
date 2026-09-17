@@ -394,6 +394,7 @@ function renderStylePanel() {
         gRow.className = 'strow stgroup';
         gRow.tabIndex = 0;
         gRow.setAttribute('role', 'treeitem');
+        gRow.setAttribute('aria-label', t(item.label || item.id));
         gRow.dataset.tw = item.id;
         gRow.style.setProperty('--lvl', level);
 
@@ -449,6 +450,7 @@ function renderStylePanel() {
         rst.type = 'button';
         rst.className = 'streset';
         rst.textContent = t('Сброс');
+        rst.setAttribute('aria-label', t('Сброс'));
         rst.onclick = (e) => {
           e.stopPropagation();
           stReset(item.id);
@@ -548,6 +550,7 @@ function renderStylePanel() {
         const nameWrap = document.createElement('div');
         nameWrap.className = 'stfield-name';
 
+        const fTitle = t(item.label || item.key);
         const fLbl = document.createElement('label');
         fLbl.className = 'stfield-lbl';
         if (isNumCtl) {
@@ -557,13 +560,13 @@ function renderStylePanel() {
         } else if (item.ctl === 'point') {
           fLbl.htmlFor = 'st_pickzoom';
         } else if (item.key === 'layer_order') {
-          fLbl.htmlFor = 'st_layer_order_list';
+          fLbl.id = 'st_lbl_layer_order';
         } else if (item.ctl === 'textarea') {
           fLbl.htmlFor = item.key === 'disclaimer' ? 'st_disc_text' : ('st_' + item.key);
         } else {
           fLbl.htmlFor = 'st_' + item.key;
         }
-        fLbl.textContent = t(item.label || item.key);
+        fLbl.textContent = fTitle;
         nameWrap.appendChild(fLbl);
 
         if (item.tip) {
@@ -585,7 +588,7 @@ function renderStylePanel() {
           span.dataset.key = item.key;
           span.tabIndex = 0;
           span.setAttribute('role', 'spinbutton');
-          span.setAttribute('aria-label', t(item.label || item.key));
+          span.setAttribute('aria-label', fTitle);
           const limMin = item.lim_min != null ? item.lim_min : (item.min != null ? item.min : null);
           const limMax = item.lim_max != null ? item.lim_max : (item.max != null ? item.max : null);
           if (limMin != null) span.setAttribute('aria-valuemin', limMin);
@@ -599,6 +602,7 @@ function renderStylePanel() {
           edit.id = 'st_' + item.key + '_input';
           edit.dataset.key = item.key;
           edit.style.display = 'none';
+          edit.setAttribute('aria-label', fTitle);
 
           right.appendChild(span);
           right.appendChild(edit);
@@ -618,6 +622,7 @@ function renderStylePanel() {
           swatch.type = 'color';
           swatch.id = 'st_' + item.key + '_color';
           swatch.className = 'stcolor-swatch';
+          swatch.setAttribute('aria-label', fTitle);
           swatch.onchange = () => stColorSwatchChange(item.key, swatch.value);
 
           const hex = document.createElement('input');
@@ -671,6 +676,7 @@ function renderStylePanel() {
           btnPick.type = 'button';
           btnPick.className = 'sm';
           btnPick.textContent = t('Файл…');
+          btnPick.setAttribute('aria-label', fTitle + ' — ' + t('Файл…'));
           btnPick.onclick = () => {
             if (typeof pickInto === 'function') pickInto('st_' + item.key);
           };
@@ -702,6 +708,7 @@ function renderStylePanel() {
           btnPick.className = 'sm';
           btnPick.id = 'st_pickzoom';
           btnPick.textContent = t('Прицел');
+          btnPick.setAttribute('aria-label', fTitle);
           btnPick.onclick = () => {
             if (typeof pickZoomPoint === 'function') pickZoomPoint();
           };
@@ -731,6 +738,8 @@ function renderStylePanel() {
           const loBox = document.createElement('div');
           loBox.id = 'st_layer_order_list';
           loBox.className = 'layer-order-list';
+          loBox.setAttribute('role', 'list');
+          loBox.setAttribute('aria-labelledby', 'st_lbl_layer_order');
           loBox.style.setProperty('--lvl', level);
           frag.appendChild(loBox);
           continue;   // виджет порядка — вся обвязка поля, дальше ручек у него нет
@@ -751,6 +760,7 @@ function renderStylePanel() {
           range.type = 'range';
           range.id = 'st_' + item.key + '_slider';
           range.className = 'stslider';
+          range.setAttribute('aria-label', fTitle);
           range.min = item.min != null ? item.min : 0;
           range.max = item.max != null ? item.max : 100;
           range.step = item.step != null ? item.step : (item.ctl === 'int' ? 1 : 0.1);
@@ -804,6 +814,7 @@ function renderStylePanel() {
     lRow.className = 'strow stlayer';
     lRow.tabIndex = 0;
     lRow.setAttribute('role', 'treeitem');
+    lRow.setAttribute('aria-label', t(layer.label || layer.id));
     lRow.dataset.tw = layer.id;
 
     // col 1: обёртка — треугольник + галка (или спейсер)

@@ -269,3 +269,121 @@ def test_separate_markers_per_port(tmp_path, monkeypatch):
     crashtrace._remove_marker(str(marker_b))
     assert not marker_a.exists()
     assert not marker_b.exists()
+
+
+def test_crash_warning_text_mentions_killed_or_crashed(crashtrace_isolation, monkeypatch):
+    """Предупреждение о нештатном выходе содержит фразу '(упал или был снят принудительно)'."""
+    marker_file = crashtrace_isolation["marker"]
+    dead_pid = 999999
+    marker_data = {
+        "pid": dead_pid,
+        "started": datetime.now().astimezone().isoformat(),
+        "version": APP_VERSION,
+        "port": 5001,
+    }
+    marker_file.write_text(json.dumps(marker_data), encoding="utf-8")
+    monkeypatch.setattr(crashtrace, "is_pid_alive", lambda pid: False)
+    mock_log = MagicMock()
+    crashtrace.install(log=mock_log, port=5001)
+
+    warning_calls = [str(call.args) for call in mock_log.warning.call_args_list]
+    assert any("завершился не штатно (упал или был снят принудительно)" in s for s in warning_calls)
+
+
+def test_install_in_non_main_thread_catches_value_error(crashtrace_isolation):
+    """Вызов install из фонового потока ловит ValueError от signal.signal и не падает."""
+    err = []
+
+    def worker():
+        try:
+            crashtrace.install(port=5003)
+        except Exception as e:
+            err.append(e)
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join()
+
+    assert not err, f"install в фоновом потоке выбросил исключение: {err}"
+
+
+def test_sigterm_in_subprocess_removes_marker(tmp_path):
+    """Процесс ставит install, завершается сигналом SIGTERM -> маркер удалён, следующий запуск чист."""
+    log_file = tmp_path / "reelsi.log"
+    marker_file = tmp_path / "reelsi.5001.running"
+
+    sub_code = """
+import os, sys, signal
+from core import crashtrace
+
+res = crashtrace.install(port=5001)
+marker = res["marker"]
+if not os.path.isfile(marker):
+    sys.exit(2)
+
+if os.name == "nt":
+    signal.raise_signal(signal.SIGTERM)
+else:
+    os.kill(os.getpid(), signal.SIGTERM)
+"""
+    env = os.environ.copy()
+    env["REELSI_LOG"] = str(log_file)
+    env.pop("REELSI_RUN_MARKER", None)
+    env["PYTHONPATH"] = os.path.abspath(".")
+
+    proc = subprocess.run(
+        [sys.executable, "-c", sub_code],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert proc.returncode == 0, f"stdout: {proc.stdout}, stderr: {proc.stderr}"
+    assert not marker_file.exists(), "Маркер должен быть удалён обработчиком SIGTERM"
+
+    # Следующий install не должен логировать предупреждений о нештатном выходе
+    mock_log = MagicMock()
+    env_save = os.environ.get("REELSI_LOG")
+    try:
+        os.environ["REELSI_LOG"] = str(log_file)
+        crashtrace.install(log=mock_log, port=5001)
+        assert not any("не штатно" in str(args) for args in [c.args for c in mock_log.warning.call_args_list])
+    finally:
+        crashtrace.uninstall()
+        if env_save is not None:
+            os.environ["REELSI_LOG"] = env_save
+
+
+def test_os_kill_sigterm_in_subprocess(tmp_path):
+    """Штатная остановка через os.kill(os.getpid(), signal.SIGTERM); на Windows - skip."""
+    if os.name == "nt":
+        pytest.skip("На Windows os.kill(pid, SIGTERM) вызывает TerminateProcess в обход обработчиков Python")
+
+    log_file = tmp_path / "reelsi.log"
+    marker_file = tmp_path / "reelsi.5001.running"
+
+    sub_code = """
+import os, sys, signal
+from core import crashtrace
+
+res = crashtrace.install(port=5001)
+marker = res["marker"]
+if not os.path.isfile(marker):
+    sys.exit(2)
+os.kill(os.getpid(), signal.SIGTERM)
+"""
+    env = os.environ.copy()
+    env["REELSI_LOG"] = str(log_file)
+    env.pop("REELSI_RUN_MARKER", None)
+    env["PYTHONPATH"] = os.path.abspath(".")
+
+    proc = subprocess.run(
+        [sys.executable, "-c", sub_code],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    assert proc.returncode == 0
+    assert not marker_file.exists()
+

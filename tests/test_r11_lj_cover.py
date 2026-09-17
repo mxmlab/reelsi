@@ -195,3 +195,94 @@ def test_omni_cut_guard_keep_helper():
 def test_min_cover_constant_value():
     """Константа MIN_COVER равна 0.5."""
     assert decide.MIN_COVER == 0.5
+
+
+def test_min_cover_no_cut_constant_value():
+    """Константа MIN_COVER_NO_CUT равна 0.9."""
+    assert decide.MIN_COVER_NO_CUT == 0.9
+
+
+def test_half_transcript_without_brackets_raises_system_exit(
+    monkeypatch, tmp_path, _mock_pipeline_env
+):
+    """Половина транскрипта без скобок (cover=0.5, drop пуст) -> SystemExit (порог 0.9)."""
+    text, words = _make_dummy_words(count=20, dur_per_word=1.0)
+    monkeypatch.setattr(pipeline, "transcribe_words_whole", lambda *a, **k: (text, words))
+    # Ровно половина слов ролика без скобок
+    half_text = " ".join(w["w"] for w in words[:10])
+    response = {"text": half_text, "notes": "обрыв ответа", "duplicate_groups": []}
+    monkeypatch.setattr(pipeline.aicut, "_ask_json", lambda *a, **k: response)
+
+    out_xml = tmp_path / "out.xml"
+    out_xml.write_bytes(b"<xml>original_cut</xml>")
+
+    with pytest.raises(SystemExit) as exc_info:
+        pipeline.run(
+            "dummy.wav", ["cam1.mp4"], [0.0], str(out_xml), 50.4,
+            stages={"draft": False, "sense": True, "dedupe": False},
+            emit=lambda *a, **k: None,
+        )
+
+    msg = str(exc_info.value)
+    assert "ответ модели не про этот ролик" in msg
+    assert "ничего не перезаписываю" in msg
+    assert out_xml.read_bytes() == b"<xml>original_cut</xml>"
+
+
+def test_ninety_two_percent_transcript_without_brackets_succeeds(
+    monkeypatch, tmp_path, _mock_pipeline_env
+):
+    """92% транскрипта без скобок (cover=0.92 >= 0.9, drop пуст) -> успешно проходит."""
+    text, words = _make_dummy_words(count=25, dur_per_word=1.0)
+    monkeypatch.setattr(pipeline, "transcribe_words_whole", lambda *a, **k: (text, words))
+    # 23 слова из 25 = 92%
+    ninety_two_text = " ".join(w["w"] for w in words[:23])
+    response = {"text": ninety_two_text, "notes": "почти весь текст", "duplicate_groups": []}
+    monkeypatch.setattr(pipeline.aicut, "_ask_json", lambda *a, **k: response)
+
+    out_xml = tmp_path / "out.xml"
+    out_xml.write_bytes(b"<xml>original_cut</xml>")
+
+    keep, cutlog, draft, info = pipeline.run(
+        "dummy.wav", ["cam1.mp4"], [0.0], str(out_xml), 50.4,
+        stages={"draft": False, "sense": True, "dedupe": False},
+        emit=lambda *a, **k: None,
+    )
+
+    assert len(keep) > 0
+    assert out_xml.read_bytes() == b"<xml>new_cut</xml>"
+    cuts_file = tmp_path / "out.cuts.json"
+    assert cuts_file.exists()
+    cuts_data = json.loads(cuts_file.read_text(encoding="utf-8"))
+    assert len(cuts_data) == 0
+
+
+def test_half_transcript_with_brackets_succeeds(
+    monkeypatch, tmp_path, _mock_pipeline_env
+):
+    """Половина транскрипта со скобками (cover=0.5, drop не пуст) -> успешно проходит (порог 0.5)."""
+    text, words = _make_dummy_words(count=20, dur_per_word=1.0)
+    monkeypatch.setattr(pipeline, "transcribe_words_whole", lambda *a, **k: (text, words))
+    # 10 слов из 20 (50%), одно слово в скобках -> drop не пуст
+    half_words = [w["w"] for w in words[:10]]
+    half_words[2] = "[" + half_words[2] + "]"
+    half_text = " ".join(half_words)
+    response = {"text": half_text, "notes": "вырезано слово", "duplicate_groups": []}
+    monkeypatch.setattr(pipeline.aicut, "_ask_json", lambda *a, **k: response)
+
+    out_xml = tmp_path / "out.xml"
+    out_xml.write_bytes(b"<xml>original_cut</xml>")
+
+    keep, cutlog, draft, info = pipeline.run(
+        "dummy.wav", ["cam1.mp4"], [0.0], str(out_xml), 50.4,
+        stages={"draft": False, "sense": True, "dedupe": False},
+        emit=lambda *a, **k: None,
+    )
+
+    assert len(keep) > 0
+    assert out_xml.read_bytes() == b"<xml>new_cut</xml>"
+    cuts_file = tmp_path / "out.cuts.json"
+    assert cuts_file.exists()
+    cuts_data = json.loads(cuts_file.read_text(encoding="utf-8"))
+    assert len(cuts_data) == 1
+

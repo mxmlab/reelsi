@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re
+import signal
 import subprocess
 import sys
 import threading
@@ -32,6 +33,7 @@ _ORIG_THREADING_EXCEPTHOOK = None
 _FAULTHANDLER_WAS_ENABLED = False
 _CURRENT_MARKER_PATH: str | None = None
 _REGISTERED_MARKERS: set[str] = set()
+_ORIG_SIGNAL_HANDLERS: dict = {}
 
 
 def get_log_dir() -> str:
@@ -178,7 +180,10 @@ def _check_previous_crash(log: logging.Logger, marker_path: str, crash_path: str
         return
 
     # Процесс умер не штатно (маркер не был удалён atexit)
-    log.warning("Прошлый запуск (PID %s, время старта %s) завершился не штатно", prev_pid, prev_started)
+    log.warning(
+        "Прошлый запуск (PID %s, время старта %s) завершился не штатно (упал или был снят принудительно)",
+        prev_pid, prev_started,
+    )
 
     # Хвост reelsi_crash.log (последние 40 строк, если файл свежее старта)
     if os.path.isfile(crash_path):
@@ -295,6 +300,38 @@ def install(log=None, port=None):
         atexit.register(_remove_marker, marker_path)
         _REGISTERED_MARKERS.add(marker_path)
 
+    # atexit не вызывается при SIGTERM, поэтому маркер остаётся.
+    # Обработчик сигналов SIGTERM (и SIGBREAK на Windows) удаляет маркер и завершает
+    # процесс штатно (sys.exit(0)). Ставить только из главного потока (иначе ValueError).
+    if threading.current_thread() is threading.main_thread():
+        signals = [getattr(signal, "SIGTERM", None), getattr(signal, "SIGBREAK", None)]
+        for sig in signals:
+            if sig is None:
+                continue
+            try:
+                if sig not in _ORIG_SIGNAL_HANDLERS:
+                    _ORIG_SIGNAL_HANDLERS[sig] = signal.getsignal(sig)
+                prev_h = _ORIG_SIGNAL_HANDLERS[sig]
+
+                def _make_handler(prev, m_path):
+                    def _sig_handler(signum, frame):
+                        _remove_marker(m_path)
+                        for m in list(_REGISTERED_MARKERS):
+                            _remove_marker(m)
+                        if callable(prev):
+                            try:
+                                prev(signum, frame)
+                            except SystemExit:
+                                raise
+                            except Exception:
+                                pass
+                        sys.exit(0)
+                    return _sig_handler
+
+                signal.signal(sig, _make_handler(prev_h, marker_path))
+            except (ValueError, OSError):
+                pass
+
     # 4. faulthandler в файл reelsi_crash.log
     _FAULTHANDLER_WAS_ENABLED = faulthandler.is_enabled()
     if _CRASH_FILE_HANDLE is not None:
@@ -360,10 +397,18 @@ def install(log=None, port=None):
 def uninstall():
     """Восстанавливает прежнее состояние faulthandler и хуков (для изоляции тестов)."""
     global _CRASH_FILE_HANDLE, _ORIG_SYS_EXCEPTHOOK, _ORIG_THREADING_EXCEPTHOOK
-    global _REGISTERED_MARKERS, _CURRENT_MARKER_PATH
+    global _REGISTERED_MARKERS, _CURRENT_MARKER_PATH, _ORIG_SIGNAL_HANDLERS
 
     _REGISTERED_MARKERS.clear()
     _CURRENT_MARKER_PATH = None
+
+    if threading.current_thread() is threading.main_thread():
+        for sig, orig_h in list(_ORIG_SIGNAL_HANDLERS.items()):
+            try:
+                signal.signal(sig, orig_h)
+            except (ValueError, OSError):
+                pass
+    _ORIG_SIGNAL_HANDLERS.clear()
 
     if _ORIG_SYS_EXCEPTHOOK is not None:
         sys.excepthook = _ORIG_SYS_EXCEPTHOOK

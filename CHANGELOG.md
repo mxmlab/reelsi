@@ -50,6 +50,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **GigaAM pinned**: the optional GigaAM dependency is installed from a fixed commit.
 
 ### Fixed
+- **"Nothing to cut" needs the whole text back**: when the model marks nothing for removal, at least 90% of the video's words must be in its answer; half a transcript without brackets (a cut-off answer) is an error, not a finished cut.
+- **A normal stop is not reported as a crash**: stopping the server with SIGTERM (SIGBREAK on Windows) removes its run marker, so the next start no longer warns about an abnormal end; the warning now says "crashed or was killed".
+- **Style panel controls have accessible names**: sliders, hidden number inputs, colour swatches, file and reset buttons and tree rows are labelled; the layer order list is labelled by its caption.
 - **A model answer about some other text stops the cut**: when fewer than half of the video's words are found in the model's answer (an empty answer, a refusal, text from another video), the cut stops with an error instead of reporting "nothing to cut" and overwriting the timeline with one piece. The older VAD path checks the model's decision before long intervals are restored.
 - **Secrets are not served through hard links**: the secret-file guard also compares the requested file with the known secret files, so a hard link with a media name no longer serves a key.
 - **Style panel works from the keyboard**: numbers are focusable spin buttons (arrow keys change them, Enter edits, Escape cancels), expand arrows and reset dots are buttons with labels, field labels point at real controls, and focus is visible.

@@ -380,6 +380,12 @@ function checkFields(items) {
         badLabels.push({ key: it.key, err: 'нет label.stfield-lbl' });
         continue;
       }
+      if (it.key === 'layer_order') {
+        if (!lbl.id) {
+          badLabels.push({ key: it.key, err: 'нет id у метки layer_order' });
+        }
+        continue;
+      }
       const forId = lbl.htmlFor;
       if (!forId) {
         badLabels.push({ key: it.key, err: 'пустой htmlFor' });
@@ -470,4 +476,125 @@ def test_v6_stylepanel_keyboard_accessibility(tmp_path):
     mut_script2 = DOM_STUB + BROWSER_GLOBALS + _env_src() + mutated_panel2 + "\nSTSCHEMA = {base: BASE, layers: LAYERS};\n" + V6_RUNNER
     res_mut2 = _run_node_script(tmp_path, "v6_mut2.js", mut_script2)
     assert res_mut2["afterUp"] == res_mut2["beforeVal"], "мутация отключения ArrowUp не уронила изменение значения"
+
+
+# ------------------------------------------------------------------
+# Доступные имена интерактивных контролов панели (#stpanel)
+# ------------------------------------------------------------------
+
+ACCESSIBLE_NAMES_RUNNER = r"""
+buildPanel();
+CURSTYLE = JSON.parse(JSON.stringify(BASE));
+fillStyleFields();
+if (typeof renderLayerOrderUI === 'function') renderLayerOrderUI();
+
+const panel = document.getElementById('stpanel');
+const allNodes = [];
+function walk(el) {
+  for (const c of el.children) {
+    allNodes.push(c);
+    walk(c);
+  }
+}
+walk(panel);
+
+// 1. Интерактивные контролы: input/select/textarea/button/[role=button]/[role=spinbutton]/[tabindex]
+const targetTags = new Set(['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON']);
+const targetRoles = new Set(['button', 'spinbutton']);
+
+const elements = allNodes.filter(el => {
+  if (targetTags.has(el.tagName)) return true;
+  const r = el.getAttribute('role');
+  if (r && targetRoles.has(r)) return true;
+  if (el.getAttribute('tabindex') !== null) return true;
+  return false;
+});
+
+// 2. Проверка label[for]: ни одна не указывает на div/span без роли контрола
+const labels = allNodes.filter(el => el.tagName === 'LABEL');
+const labelForMap = new Map();
+const badLabelTargets = [];
+
+for (const lbl of labels) {
+  const forId = lbl.htmlFor;
+  if (forId) {
+    const target = document.getElementById(forId);
+    if (!target) {
+      badLabelTargets.push({ forId, err: 'not_found' });
+    } else {
+      const tag = target.tagName;
+      const role = target.getAttribute('role');
+      const isControl = targetTags.has(tag) || (role && targetRoles.has(role));
+      if (!isControl && (tag === 'DIV' || tag === 'SPAN')) {
+        badLabelTargets.push({ forId, tag, role, err: 'div_or_span_without_control_role' });
+      }
+      labelForMap.set(forId, lbl);
+    }
+  }
+}
+
+// 3. Проверка доступного имени у каждого контрола
+const missingNames = [];
+for (const el of elements) {
+  const ariaLabel = el.getAttribute('aria-label');
+  const ariaLabelledBy = el.getAttribute('aria-labelledby');
+  const id = el.id;
+  const lbl = id ? labelForMap.get(id) : null;
+
+  let hasName = false;
+  if (ariaLabel && ariaLabel.trim()) hasName = true;
+  else if (ariaLabelledBy && document.getElementById(ariaLabelledBy)) hasName = true;
+  else if (lbl) hasName = true;
+
+  if (!hasName) {
+    missingNames.push({
+      tag: el.tagName,
+      type: el.type,
+      id: el.id,
+      className: el.className,
+      role: el.getAttribute('role')
+    });
+  }
+}
+
+// 4. Проверка layer_order: role=list и aria-labelledby на id метки
+const loBox = document.getElementById('st_layer_order_list');
+const loRole = loBox ? loBox.getAttribute('role') : null;
+const loLabelledBy = loBox ? loBox.getAttribute('aria-labelledby') : null;
+const loLabelEl = loLabelledBy ? document.getElementById(loLabelledBy) : null;
+
+console.log(JSON.stringify({
+  totalControls: elements.length,
+  missingCount: missingNames.length,
+  missingNames: missingNames,
+  badLabelTargets: badLabelTargets,
+  loRole: loRole,
+  loLabelledBy: loLabelledBy,
+  loLabelFound: !!loLabelEl
+}));
+"""
+
+
+@node
+def test_stylepanel_controls_have_accessible_names(tmp_path):
+    """Каждый контрол панели имеет доступное имя, и ни одна метка не указывает на div/span без роли."""
+    script = DOM_STUB + BROWSER_GLOBALS + _env_src() + _src(PANEL_JS) + "\nSTSCHEMA = {base: BASE, layers: LAYERS};\n" + _src(STYLES_JS) + ACCESSIBLE_NAMES_RUNNER
+    res = _run_node_script(tmp_path, "a11y_names.js", script)
+
+    assert res["totalControls"] >= 400, f"слишком мало контролов найдено: {res['totalControls']}"
+    assert res["badLabelTargets"] == [], f"label[for] указывает на div/span без роли: {res['badLabelTargets']}"
+    assert res["missingCount"] == 0, f"контролы без доступного имени: {res['missingNames']}"
+    assert res["loRole"] == "list", f"список layer_order должен иметь role=list, получено: {res['loRole']}"
+    assert res["loLabelFound"] is True, f"элемент метки для layer_order не найден по {res['loLabelledBy']}"
+
+    # Мутация: снять aria-label у ползунка -> тест красный
+    mutated_panel = _src(PANEL_JS).replace(
+        "range.setAttribute('aria-label', fTitle);",
+        "",
+    )
+    assert mutated_panel != _src(PANEL_JS), "мутируемая строка не найдена в 94-stylepanel.js"
+    mut_script = DOM_STUB + BROWSER_GLOBALS + _env_src() + mutated_panel + "\nSTSCHEMA = {base: BASE, layers: LAYERS};\n" + _src(STYLES_JS) + ACCESSIBLE_NAMES_RUNNER
+    res_mut = _run_node_script(tmp_path, "a11y_mut.js", mut_script)
+    assert res_mut["missingCount"] > 0, "мутация снятия aria-label у ползунка обязана ронять тест"
+
 

@@ -270,6 +270,12 @@ function openSpeaker(key){
   $('spk_pos_a').value=(ips.a&&ips.a.pos==='prefix')?'prefix':'suffix';
   $('spk_extra_b').value=(ips.b&&ips.b.extra)||'';
   $('spk_pos_b').value=(ips.b&&ips.b.pos==='prefix')?'prefix':'suffix';
+  // pa/pb — приписки вставок с галкой «на подложке» (задание ZK): тот же формат, что a/b,
+  // и так же живут в image_prompts профиля
+  $('spk_extra_pa').value=(ips.pa&&ips.pa.extra)||'';
+  $('spk_pos_pa').value=(ips.pa&&ips.pa.pos==='prefix')?'prefix':'suffix';
+  $('spk_extra_pb').value=(ips.pb&&ips.pb.extra)||'';
+  $('spk_pos_pb').value=(ips.pb&&ips.pb.pos==='prefix')?'prefix':'suffix';
   const vps=p.video_prompts||{};
   $('spk_video_extra_a').value=(vps.a&&vps.a.extra)||'';
   $('spk_video_pos_a').value=(vps.a&&vps.a.pos==='prefix')?'prefix':'suffix';
@@ -303,13 +309,16 @@ async function saveSpeaker(){
   const data=SPKEDIT?JSON.parse(JSON.stringify(SPEAKERS[SPKEDIT])):{};
   data.label=label;data.outdir=val('spk_outdir').trim();data.jsxdir=val('spk_jsxdir').trim();data.renderdir=val('spk_renderdir').trim();data.style=val('spk_style');
   data.hint=val('spk_hint');
-  // Приписки к промптам генерации картинок (задание CQ)
+  // Приписки к промптам генерации картинок (задание CQ; pa/pb — подложка, задание ZK).
+  // Пустой слот не пишем, как и раньше: профиль без правок остаётся без image_prompts.
   const exA=val('spk_extra_a').trim(),exB=val('spk_extra_b').trim();
-  if(exA||exB){
-    data.image_prompts={};
-    if(exA)data.image_prompts.a={extra:exA,pos:val('spk_pos_a')==='prefix'?'prefix':'suffix'};
-    if(exB)data.image_prompts.b={extra:exB,pos:val('spk_pos_b')==='prefix'?'prefix':'suffix'};
-  }else delete data.image_prompts;
+  const exPA=val('spk_extra_pa').trim(),exPB=val('spk_extra_pb').trim();
+  const imgPr={};
+  if(exA)imgPr.a={extra:exA,pos:val('spk_pos_a')==='prefix'?'prefix':'suffix'};
+  if(exB)imgPr.b={extra:exB,pos:val('spk_pos_b')==='prefix'?'prefix':'suffix'};
+  if(exPA)imgPr.pa={extra:exPA,pos:val('spk_pos_pa')==='prefix'?'prefix':'suffix'};
+  if(exPB)imgPr.pb={extra:exPB,pos:val('spk_pos_pb')==='prefix'?'prefix':'suffix'};
+  if(exA||exB||exPA||exPB)data.image_prompts=imgPr;else delete data.image_prompts;
   // Видео хранит отдельные приписки: image_prompts нельзя переиспользовать, иначе
   // «3d icon» случайно уезжает в ролик. Пустые оба слота не записываем, чтобы старый
   // профиль оставался эквивалентен чистому query.
@@ -758,7 +767,7 @@ function pickZoomPoint(){const st=$('ipvstage');
   zoomPickMark();}
 function zoomPickOff(){ZOOM_PICK=false;
   const st=$('ipvstage');if(st)st.classList.remove('zoompick');
-  const b=$('st_pickzoom');if(b)b.textContent=t('Точка наезда…');
+  const b=$('st_pickzoom');if(b)b.textContent=t('Прицел');
   zoomPickMark();}
 function zoomPickMark(){const st=$('ipvstage');if(!st)return;
   let m=$('zoommark');
@@ -771,12 +780,15 @@ function zoomPickClick(e){const st=$('ipvstage');if(!ZOOM_PICK||!st)return;
   const r=st.getBoundingClientRect();
   const cx=Math.max(0.02,Math.min(0.98,(e.clientX-r.left)/r.width));
   const cy=Math.max(0.02,Math.min(0.98,(e.clientY-r.top)/r.height));
-  if(!CURSTYLE)CURSTYLE=JSON.parse(JSON.stringify(STYLES.base||{}));
-  CURSTYLE.cam1_zoom_cx=cx;CURSTYLE.cam1_zoom_cy=cy;
-  zoomPickMark();
-  if(typeof stRefresh==='function')stRefresh('cam1_zoom_cx');
-  else updateStyleDiffDots();
-  captureAE();ipvPlanSoon();
+  if(typeof applyZoomPoint==='function')applyZoomPoint(cx,cy);
+  else{
+    if(!CURSTYLE)CURSTYLE=JSON.parse(JSON.stringify(STYLES.base||{}));
+    CURSTYLE.cam1_zoom_cx=cx;CURSTYLE.cam1_zoom_cy=cy;
+    zoomPickMark();
+    if(typeof stRefresh==='function')stRefresh('cam1_zoom_cx');
+    else updateStyleDiffDots();
+    captureAE();ipvPlanSoon();
+  }
   zoomPickOff();}
 document.addEventListener('pointerdown',e=>{if(ZOOM_PICK&&e.target&&e.target.closest('#ipvstage'))zoomPickClick(e);},true);
 document.addEventListener('keydown',e=>{if(ZOOM_PICK&&e.key==='Escape')zoomPickOff();});

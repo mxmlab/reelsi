@@ -97,7 +97,8 @@ def test_cam1_zoom_start_drift_keys(xml_subs, tmp_path):
 
 
 def test_cam1_zoom_start_jump_keys(xml_subs, tmp_path):
-    """В режиме jump при cam1_zoom_start=False: кадр 0 = 100%, количество ключей не меняется."""
+    """В режиме jump при cam1_zoom_start=False: кадр 0 = 100%.
+    Задание ZA: в jump появился плавный наезд в начале, со start=True на 1 ключ больше."""
     jsx_start_true = _build_jsx(xml_subs, str(tmp_path / "jump_true.jsx"),
                                 style={"cam1_zoom": "jump", "cam1_zoom_start": True})
     keys_true = _cam1_scale_from_jsx(jsx_start_true)
@@ -106,8 +107,8 @@ def test_cam1_zoom_start_jump_keys(xml_subs, tmp_path):
     jsx_start_false = _build_jsx(xml_subs, str(tmp_path / "jump_false.jsx"),
                                  style={"cam1_zoom": "jump", "cam1_zoom_start": False})
     keys_false = _cam1_scale_from_jsx(jsx_start_false)
-    assert keys_false[0] == [0, 100.0] or keys_false[0] == [0, 100]
-    assert len(keys_false) == len(keys_true)
+    assert keys_false[0][:2] in ([0, 100.0], [0, 100])
+    assert len(keys_true) == len(keys_false) + 1
 
 
 def test_ui_index_html_checkbox_cam1_zoom_start():

@@ -21,6 +21,7 @@
 import glob
 import gzip
 import json
+import math
 import os
 import shutil
 import sys
@@ -33,7 +34,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE)
 
 from api import build  # noqa: E402
-from core import roto, style_schema, styles, xml2ae  # noqa: E402
+from core import insertlib, roto, style_schema, styles, xml2ae  # noqa: E402
 from tests.test_geometry_python import _build, _mask_assets  # noqa: E402
 
 T_CAM1, T_CAM2 = 1.0, 8.3
@@ -69,6 +70,10 @@ KNOWN_DEAD_KEYS = set()
 # Префиксы и суффиксы для составного чтения ключей (_sfx_cfg)
 SFX_PREFIXES = {"pop", "transition_sfx", "intro_riser", "transition"}
 SFX_SUFFIXES = {"_in", "_out", "_at", "_db"}
+
+# Ручки подложки (задание ZK): сами по себе сборку не двигают — подложку включает галка
+# У ВСТАВКИ (ins.plate), поэтому этим ключам нужен контекст со вставкой на подложке.
+PLATE_KNOBS = {"insert_plate_file", "insert_plate_scale"}
 
 
 @pytest.fixture()
@@ -211,7 +216,7 @@ ALL_SCHEMA_KEYS = sorted(SCHEMA_ITEMS.keys())
 TESTED_KEYS = [k for k in ALL_SCHEMA_KEYS if k not in EXCEPTIONS]
 
 
-def _build_source(xml, style=None, inserts=None, music_path=None, caption="Спикер Иван"):
+def _build_source(xml, style=None, inserts=None, music_path=None, caption="Спикер Иван", highlights=None):
     """Сборка .jsx без записи на диск через to_ae_full(..., return_source=True)."""
     st = dict(style or {})
     music_val = float(st.get("music_db") if st.get("music_db") is not None else -20.0)
@@ -228,10 +233,27 @@ def _build_source(xml, style=None, inserts=None, music_path=None, caption="Сп�
         roto=bool(st.get("roto")),
         roto_bottom=build._roto_bottom_safe(st),
         roto_device=st.get("roto_device"),
-        highlights=[0, 1],
+        highlights=[0, 1] if highlights is None else highlights,
         emit=lambda *a, **k: None,
     )
     return jsx
+
+
+def _knob_png(tmp_path, name, w=64, h=48):
+    """Синтетический PNG для ручек подложки: nobg_path читает файл с диска, а геометрия
+    плашки считается по РЕАЛЬНОМУ размеру картинки (PIL)."""
+    from PIL import Image
+    p = tmp_path / name
+    Image.new("RGBA", (w, h), (200, 60, 60, 255)).save(str(p))
+    return str(p)
+
+
+def _knob_png_bytes(w=64, h=48):
+    from PIL import Image
+    import io as _io
+    buf = _io.BytesIO()
+    Image.new("RGBA", (w, h), (30, 120, 220, 255)).save(buf, "PNG")
+    return buf.getvalue()
 
 
 def _get_test_mutation(k, item, base_val, tmp_path):
@@ -245,8 +267,27 @@ def _get_test_mutation(k, item, base_val, tmp_path):
         st_setup["start_blur"] = 50.0
     elif k == "sub_rows_max":
         st_setup["sub_words_per_row"] = 3
+    elif k == "hl_row_anim":
+        # Ручка работает только в режиме строк, и нужен жёлтый в строке (задание ZH)
+        st_setup["sub_words_per_row"] = 2
+        return st_setup, "row"
+    elif k == "hl_blur_amt":
+        # Сила блюра видна только при включённом блюре (как cam1_take_* при cam1_take_zoom)
+        st_setup["hl_blur"] = True
+        return st_setup, 70.5
     elif k == "insert_sub_swap":
         st_setup["insert_anim"] = "rise"
+    elif k in ("cam1_take_min", "cam1_take_lo", "cam1_take_hi", "cam1_take_hold", "cam1_take_yellow"):
+        st_setup["cam1_take_zoom"] = True
+        if k == "cam1_take_min":
+            return st_setup, 7.0
+        if k == "cam1_take_yellow":
+            st_setup["cam1_take_min"] = 3.0
+            return st_setup, True
+    elif k in ("cam1_head_x", "cam1_head_smooth", "cam1_head_min"):
+        st_setup["cam1_head_follow"] = True
+        if k == "cam1_head_min":
+            return st_setup, 150.0
     elif k == "layer_order":
         return st_setup, ["intro", "photo", "roto", "video", "subs"]
     elif k in ("cam1_zoom_cx", "cam1_zoom_cy"):
@@ -279,6 +320,14 @@ def _get_test_mutation(k, item, base_val, tmp_path):
     elif k == "roto_cam1_only":
         st_setup["roto"] = True
         return st_setup, False
+    elif k == "insert_plate_file":
+        # show_if у подложки больше нет (задание ZK): файл виден всегда, а подложку
+        # включает галка У ВСТАВКИ — её ставит контекст сборки (см. PLATE_KNOBS ниже).
+        # Картинка настоящая: по её размеру считается высота плашки в прекомпе.
+        return {}, _knob_png(tmp_path, "plate_knob.png", 512, 512)
+    elif k == "insert_plate_scale":
+        # файл подложки в контексте, отличие — масштаб плашки
+        return {"insert_plate_file": _knob_png(tmp_path, "plate_scale.png", 800, 800)}, 105.0
 
     if kind == "toggle" or ctl == "bool" or isinstance(base_val, bool):
         return st_setup, not bool(base_val)
@@ -390,8 +439,19 @@ def test_exceptions_read_in_code_or_reported_as_dead():
 
 
 @pytest.mark.parametrize("knob_key", TESTED_KEYS)
-def test_each_knob_affects_assembly(knob_key, xml_subs, music_file, tmp_path):
+def test_each_knob_affects_assembly(knob_key, xml_subs, music_file, tmp_path, monkeypatch):
     """2. Каждая ручка влияет: изменение значения ключа меняет собранный .jsx относительно базы."""
+    if knob_key.startswith("cam1_head_"):
+        synthetic = {
+            "v": 1,
+            "fps": 10,
+            "w": 2160,
+            "h": 3840,
+            "pts": [[i / 10, 0.5 + 0.15 * math.sin(i / 15)] for i in range(0, 3000)],
+        }
+        monkeypatch.setattr("core.headtrack.load_cached", lambda xml_path, video: synthetic)
+        monkeypatch.setattr("core.headtrack.load_or_track", lambda *a, **kw: synthetic)
+
     it = SCHEMA_ITEMS[knob_key]
     base_val = styles.BASE.get(knob_key)
     st_setup, new_val = _get_test_mutation(knob_key, it, base_val, tmp_path)
@@ -435,8 +495,22 @@ def test_each_knob_affects_assembly(knob_key, xml_subs, music_file, tmp_path):
     if knob_key not in st_setup:
         ref_st[knob_key] = base_val
 
-    ref_jsx = _mask_assets(_build_source(xml_subs, style=ref_st, music_path=music_file))
-    test_jsx = _mask_assets(_build_source(xml_subs, style=test_st, music_path=music_file))
+    hl = [0, 1, 11] if knob_key == "cam1_take_yellow" else None
+    ins = None
+    if knob_key in PLATE_KNOBS:
+        # Подложка включается галкой У ВСТАВКИ (задание ZK), а не галкой стиля: без неё
+        # ручки стиля (файл и масштаб плашки) на сборку не влияют вовсе. Картинка вставки
+        # настоящая (nobg_path читает файл с диска), rembg подменяем — onnx-модели на CPU
+        # в тестах не место.
+        ins = [{"type": "photo", "style": "cam2",
+                "media": _knob_png(tmp_path, "plate_src.png", 320, 240),
+                "start_s": 1, "dur_s": 2, "plate": True}]
+        monkeypatch.setattr(insertlib, "remove_bg",
+                            lambda data, trim=True, emit=None: _knob_png_bytes(320, 240))
+    ref_jsx = _mask_assets(_build_source(xml_subs, style=ref_st, music_path=music_file,
+                                         highlights=hl, inserts=ins))
+    test_jsx = _mask_assets(_build_source(xml_subs, style=test_st, music_path=music_file,
+                                          highlights=hl, inserts=ins))
 
     assert test_jsx != ref_jsx, f"Ручка {knob_key} ({it['kind']}) не повлияла на собранный .jsx"
 

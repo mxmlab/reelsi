@@ -35,9 +35,11 @@ def image_rembg_on():
     return bool(load_ai_config().get("image_rembg", True))
 
 
-# Слотов приписки ДВА (a и b) под разные стили (на карточке вставки кнопки 1 и 2).
+# Слотов приписки ЧЕТЫРЕ: a/b под разные стили (на карточке вставки кнопки 1 и 2) и
+# pa/pb — свои приписки для вставок с галкой «на подложке» (задание ZK): подложка уже
+# из стиля, фото с вырезанным фоном, и стиль предмета у таких вставок свой.
 # Настройки хранятся строго в профиле спикера (speakers/*.json -> image_prompts).
-IMAGE_PROMPT_SLOTS = ("a", "b")
+IMAGE_PROMPT_SLOTS = ("a", "b", "pa", "pb")
 
 
 def resolve_image_prompt_cfg(slot="a", speaker=None):

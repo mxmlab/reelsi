@@ -158,7 +158,8 @@ def test_cam1_fit_is_frame_fill_not_premiere_scale(xml_nosubs, tmp_path):
     out = str(tmp_path / "fit.jsx")
     xml2ae.to_ae_full(xml_nosubs, out, style={"cam1_fit": 115})
     txt = open(out, encoding="utf-8-sig").read()
-    assert re.search(r"var CAM1_FIT=115;", txt)
+    # задание ZE: заполнение переехало в ключи зума нула (как в превью), слои кам1 — ровно 100
+    assert re.search(r"var CAM1_FIT=100;", txt)
     assert "fitS = 100*Math.max(W/src.width, H/src.height)" in txt        # заполнение кадра
     assert "var csc = isSecond ? c[5] : fitS*CAM1_FIT/100;" in txt        # кам1 — от него, кам2 — как в Премьере
     assert "var rsc = (ci==0) ? rfit*CAM1_FIT/100 : rr.scale;" in txt     # рото-копия

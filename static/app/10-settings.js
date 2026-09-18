@@ -692,13 +692,13 @@ function resetCensor(kind){
       censorFill(d.lists);toast(t('Вернул список из поставки'));
     }catch(e){toast(t('⚠ сервер не ответил: ')+e);}});}
 // Приписки к промпту: профиль спикера -> пусто (задание CS).
+// pa/pb — слоты вставок с галкой «на подложке» (задание ZK): у них свой стиль предмета,
+// и кнопки 1/2 на карточке такой вставки шлют именно их.
 function imgPrompts(spkKey){
   const spk=(typeof SPEAKERS!=='undefined'&&spkKey)?SPEAKERS[spkKey]:null;
   const spkP=(spk&&spk.image_prompts)||{};
-  return {
-    a:(spkP.a&&spkP.a.extra)?spkP.a:{extra:'',pos:'suffix'},
-    b:(spkP.b&&spkP.b.extra)?spkP.b:{extra:'',pos:'suffix'},
-  };
+  const slot=k=>(spkP[k]&&spkP[k].extra)?spkP[k]:{extra:'',pos:'suffix'};
+  return {a:slot('a'),b:slot('b'),pa:slot('pa'),pb:slot('pb')};
 }
 // Приписки к видео независимы от image_prompts: одинаковые две кнопки на карточке
 // не означают общий стиль, у моделей картинки и видео разные инструкции.
@@ -760,18 +760,24 @@ const GEN_FETCH_MS=330000;   // 5.5 мин: одна попытка 300с + за
 // -> true если файл появился; ошибку кидаем наверх, чтобы пачка не молотила N раз
 // подряд в один и тот же отвал (нет ключа / 402 / 429).
 async function insGenCore(x,slot,speaker){
+  // Кнопка 1/2 — это слот приписки: у вставки с галкой «на подложке» свои слоты pa/pb
+  // (задание ZK), у обычной — прежние a/b. Выбор ОДИН на все двери: insGenOne и
+  // insGenBatch зовут с 'a'/'b', подложка сама превращает их в 'pa'/'pb'.
+  const second=(slot==='b'||slot==='pb');
+  const use=x.plate?(second?'pb':'pa'):(second?'b':'a');
   const ac=new AbortController();
   const timer=setTimeout(()=>ac.abort(),GEN_FETCH_MS);
   let d;
   try{
-    const body={query:x.query,prompt:(x.prompt||''),slot:(slot==='b'?'b':'a'),dest:(val('illdest')||'').trim()};
+    const body={query:x.query,prompt:(x.prompt||''),slot:use,dest:(val('illdest')||'').trim()};
     if(speaker) body.speaker=speaker;
     d=await (await fetch('/api/ai_genimage',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(body),signal:ac.signal})).json();
   }finally{clearTimeout(timer);}
   if(d.error)throw errText(d);
   x.media=d.path;x.genAuto=true;x.libAuto=false;x.libOpts=null;x.noAuto=false;
-  uiLog(t('✨ сгенерено (промпт {p})',{p:(slot==='b'?'2':'1')})+': '+d.path.replace(/^.*[\\\/]/,'')
+  // в логе видно, какой промпт ушёл: номер кнопки и «подложка» у вставок на подложке
+  uiLog(t('✨ сгенерено (промпт {p})',{p:(second?'2':'1')+(x.plate?t(' · подложка'):'')})+': '+d.path.replace(/^.*[\\\/]/,'')
     +(d.nobg?t(' · фон убран'):'')+t(' (в базе)')+(d.warn?' ⚠ '+d.warn:''));
   return true;}
 async function insGenOne(i,slot){if(curIns<0)return;const x=CLIPS[curIns].inserts[i];if(!x)return;

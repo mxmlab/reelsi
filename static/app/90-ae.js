@@ -21,11 +21,11 @@ function ensureJobs(){CLIPS.forEach(c=>{if(!c.job)c.job=defJob();
   // и накапливал мусор: заменил картинку на шаге 2 — старая оставалась висеть; удалил вставку
   // и создал новую с тем же файлом — новая не добавлялась, старая жила на старом тайминге.
   // Тайминги ВСЕГДА с шага 2; ручные AE-подстройки (стиль/scale/noexit) переносим по файлу.
-  // Всё, что правится ПРЯМО В КАРТОЧКЕ шага 2 (мозаика, точка покоя x/y, масштаб sc, форма
-  // маски mw/mh, старт куска в файле sin), едет из неё же — иначе правка по предпросмотру
-  // никуда не доезжала и молча терялась.
+  // Всё, что правится ПРЯМО В КАРТОЧКЕ шага 2 (мозаика, точка покоя x/y, сдвиг карточки
+  // на подложке kx/ky, масштаб sc, форма маски mw/mh, старт куска в файле sin), едет из
+  // неё же — иначе правка по предпросмотру никуда не доезжала и молча терялась.
   const old=Array.isArray(c.job.ins)?c.job.ins:[];
-  const tw={};old.forEach(x=>{const k=normInsPath(x.media);if(k&&!tw[k])tw[k]={style:x.style,scale:x.scale,sin:x.sin,noexit:x.noexit,x:x.x,y:x.y};});
+  const tw={};old.forEach(x=>{const k=normInsPath(x.media);if(k&&!tw[k])tw[k]={style:x.style,scale:x.scale,sin:x.sin,noexit:x.noexit,x:x.x,y:x.y,kx:x.kx,ky:x.ky};});
   // Вставки, добавленные РУКАМИ на шаге 3 (кнопка «＋ вставка»), в c.inserts не попадают —
   // пересборка списка их молча убивала на каждом заходе в шаг. Признак ручной = нет src2.
   const manual=old.filter(x=>!x.src2&&(x.media||'').trim());
@@ -455,7 +455,7 @@ function renderIntro(){introReorder();wordsInfo();
 
 // ================= INS (AE manual inserts, collapsed) =================
 let INS=[];
-function addIns(){INS.push({type:'photo',style:'cam2',media:'',start_s:0,start_f:0,dur_s:2,dur_f:0,scale:44,mosaic:false,x:0,y:0,sc:100,mw:100,mh:100,sin:0});renderIns();captureAE();}
+function addIns(){INS.push({type:'photo',style:'cam2',media:'',start_s:0,start_f:0,dur_s:2,dur_f:0,scale:44,mosaic:false,plate:false,x:0,y:0,sc:100,mw:100,mh:100,sin:0});renderIns();captureAE();}
 function seg2(cur,a,al,b,bl,cbp,name){function opt(v,lab){return '<label class="'+(cur===v?'on':'')+'"><input type="radio" name="'+name+'" '+(cur===v?'checked':'')+' onchange="'+cbp+"'"+v+"')\"> "+lab+'</label>';}
   return '<div class="seg">'+opt(a,al)+opt(b,bl)+'</div>';}
 function insType(i,v){INS[i].type=v;renderIns();captureAE();}
@@ -469,7 +469,9 @@ function renderIns(){const host=$('inslist');if(!host)return;host.innerHTML='';
     card.className='inscard '+(photo?'tphoto':'tvideo')+(fname?' chosen':'');
     let fields='';
     if(photo){fields+='<div class="fld"><label>'+t('Стиль')+'</label>'+seg2(r.style,'cam2',t('Кам2'),'cam1',t('Кам1·рото'),'insStyle('+i+',','insStyle'+i)+'</div>';
-      fields+='<div class="fld"><label>'+t('Эффект')+'</label><label class="chk" style="display:flex;align-items:center;gap:6px;margin:0;height:34px"><input type="checkbox" '+(r.mosaic?'checked':'')+' onchange="INS['+i+'].mosaic=this.checked;this.blur();captureAE()">'+t(' мозаика')+'</label></div>';
+      fields+='<div class="fld"><label>'+t('Эффект')+'</label><label class="chk" style="display:flex;align-items:center;gap:6px;margin:0;height:34px"><input type="checkbox" '+(r.mosaic?'checked':'')+' onchange="INS['+i+'].mosaic=this.checked;this.blur();captureAE()">'+t(' мозаика')+'</label>'
+        // «на подложке» (задание ZK) — рядом с мозаикой: картинка-подложка из стиля, своя геометрия
+        +'<label class="chk" style="display:flex;align-items:center;gap:6px;margin:0;height:34px"><input type="checkbox" '+(r.plate?'checked':'')+' onchange="INS['+i+'].plate=this.checked;this.blur();captureAE()"> '+t('на подложке')+'</label></div>';
       fields+='<div class="fld"><label>'+t('Маска %')+'</label><div style="height:34px;display:flex;align-items:center">'
         +scrubMask('INS['+i+']',r.mw,r.mh,'ipvRefresh()','captureAE()')+'</div></div>';}
     else{fields+='<div class="fld"><label>'+t('Файл с')+'</label><div style="height:34px;display:flex;align-items:center">'

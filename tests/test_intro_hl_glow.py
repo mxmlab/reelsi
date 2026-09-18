@@ -22,6 +22,11 @@
   8. группа [accent без anim/fx] -> у слова эффектов нет, прекомп Glo2 радиус 42;
   9. стиль с intro_hl_fill -> Midtones тритона = INTRO_HL_FILL;
   10. сборка без жёлтых строк интро -> в .jsx нет introHlGlow и нет grpYellow.
+
+Цвет выделения у случаев с тритоном — тёмный (DARK_HL_FILL, задание ZN): на ярком цвете
+мидтонов тритон не ставится вовсе (свечение выбеливает букву), а дефолтный жёлтый
+hl_fill [1,0.9176,0] имеет яркость 0.87. Проверяем порядок и цвет тритона там, где он
+есть; отсутствие на ярком — в tests/test_tritone_bright.py.
 """
 import gzip
 import json
@@ -39,6 +44,11 @@ sys.path.insert(0, os.path.dirname(HERE))
 from core import xml2ae  # noqa: E402
 
 node = pytest.mark.skipif(not shutil.which("node"), reason="требуется node в PATH")
+
+# Тёмный цвет выделения для случаев с тритоном (задание ZN): красный, яркость мидтонов
+# 0.24 — тритон ставится. Дефолтный жёлтый (0.87) и жёлтый интро Джаггера (0.91) ярче
+# порога TRITONE_MAX_LUM=0.7, там тритона нет — эти случаи проверяет test_tritone_bright.
+DARK_HL_FILL = [0.6863, 0.1216, 0.1216]
 
 
 @pytest.fixture()
@@ -245,7 +255,8 @@ def test_case_1_white_back_yellow_no_anim_word_mode(xml_subs, tmp_path):
         dict(words=["благодаря"], color="white", times=[1.0], back=True),
         dict(words=["ЭТОМУ", "ПЕП*ИДУ"], color="yellow", times=[1.5]),
     ]
-    jsx, _ = _build(xml_subs, tmp_path, intro, splits=[2], name="case1.jsx")
+    jsx, _ = _build(xml_subs, tmp_path, intro, splits=[2], style={"hl_fill": DARK_HL_FILL},
+                    name="case1.jsx")
     data = _probe_intro(jsx, tmp_path)
 
     # Белое слово "благодаря" — нет Glo2 и нет Tritone
@@ -284,7 +295,8 @@ def test_case_2_reveal_back_middle_yellow_effects_order(xml_subs, tmp_path):
         dict(words=["ЖЁЛТАЯ"], color="yellow", back=True, anim="reveal", times=[1.3]),
         dict(words=["ТРЕТЬЯ"], color="white", back=True, anim="reveal", times=[1.6]),
     ]
-    jsx, _ = _build(xml_subs, tmp_path, intro, splits=[3], name="case2.jsx")
+    jsx, _ = _build(xml_subs, tmp_path, intro, splits=[3], style={"hl_fill": DARK_HL_FILL},
+                    name="case2.jsx")
     data = _probe_intro(jsx, tmp_path)
 
     yw = next(w for w in data["layers"] if w["text"].lower() == "жёлтая")
@@ -308,7 +320,8 @@ def test_case_3_yellow_back_and_yellow_glitch_glow(xml_subs, tmp_path):
         dict(words=["слово"], color="yellow", back=True, times=[1.0]),
         dict(words=["КОНСУЛЬТАЦИЯ"], color="yellow", anim="glitch", fx="glow", times=[1.5]),
     ]
-    jsx, _ = _build(xml_subs, tmp_path, intro, splits=[2], name="case3.jsx")
+    jsx, _ = _build(xml_subs, tmp_path, intro, splits=[2], style={"hl_fill": DARK_HL_FILL},
+                    name="case3.jsx")
     data = _probe_intro(jsx, tmp_path)
 
     w_slovo = next(w for w in data["layers"] if w["text"] == "слово")
@@ -361,7 +374,8 @@ def test_case_5_yellow_fx_glow_single_effects_no_comp_glow(xml_subs, tmp_path):
     intro = [
         dict(words=["СВЕЧЕНИЕ"], color="yellow", fx="glow", times=[1.0]),
     ]
-    jsx, _ = _build(xml_subs, tmp_path, intro, splits=[1], name="case5.jsx")
+    jsx, _ = _build(xml_subs, tmp_path, intro, splits=[1], style={"hl_fill": DARK_HL_FILL},
+                    name="case5.jsx")
     data = _probe_intro(jsx, tmp_path)
 
     w = next(w for w in data["layers"] if w["text"] == "СВЕЧЕНИЕ")
@@ -385,7 +399,8 @@ def test_case_6_no_anim_fx_two_groups_yellow_and_white(xml_subs, tmp_path):
         dict(words=["ЖЁЛТАЯ"], color="yellow", times=[1.0]),
         dict(words=["БЕЛАЯ"], color="white", times=[5.0]),
     ]
-    jsx, _ = _build(xml_subs, tmp_path, intro, splits=[1, 1], name="case6.jsx")
+    jsx, _ = _build(xml_subs, tmp_path, intro, splits=[1, 1], style={"hl_fill": DARK_HL_FILL},
+                    name="case6.jsx")
     data = _probe_intro(jsx, tmp_path)
 
     # Группа 0: слово ЖЁЛТАЯ
@@ -414,7 +429,8 @@ def test_case_7_line_mode_case_1(xml_subs, tmp_path):
         dict(words=["благодаря"], color="white", times=[1.0], back=True),
         dict(words=["ЭТОМУ", "ПЕП*ИДУ"], color="yellow", times=[1.5]),
     ]
-    jsx, _ = _build(xml_subs, tmp_path, intro, mode="line", splits=[2], name="case7.jsx")
+    jsx, _ = _build(xml_subs, tmp_path, intro, mode="line", splits=[2],
+                    style={"hl_fill": DARK_HL_FILL}, name="case7.jsx")
     data = _probe_intro(jsx, tmp_path)
 
     # Слой белой строки

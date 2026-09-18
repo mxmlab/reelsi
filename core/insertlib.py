@@ -27,7 +27,7 @@ CLI:  python insertlib.py scan <dir1> <dir2> ...
 import os, re, json, math, threading, time, urllib.request
 from collections import Counter
 import numpy as np
-from core.fileio import atomic_json_dump
+from core.fileio import atomic_bytes_write, atomic_json_dump
 
 from core import paths
 from core.app_meta import env, console_emit, http_req, wrap_emit
@@ -949,6 +949,48 @@ def remove_bg(img_bytes, trim=True, emit=None):
     im.save(buf, "PNG")
     emit("  фон убран, прозрачный PNG {width}x{height}", width=im.width, height=im.height)
     return buf.getvalue()
+
+
+def nobg_path(media, emit=None):
+    """Путь к PNG с уже снятым фоном РЯДОМ с исходником: <папка>/<стем>.nobg.png.
+
+    Галка стиля «без фона» (задание ZI): и сборка (.jsx), и предпросмотр (/api/media?nobg=1)
+    ходят сюда — снятие фона одно на оба, второй копии правила нет. Кэш обязателен: rembg
+    это onnx-модель на CPU, 1-2 с на картинку, а вставок в ролике десятки.
+
+    Кэш НОВЕЕ исходника — берём его. Исходник перегенерировали/поправили — считаем заново:
+    иначе на экране осталась бы прошлая картинка. Не картинка (видео) или rembg упал —
+    возвращаем ИСХОДНЫЙ путь: вставка с фоном лучше пропавшей.
+    """
+    emit = wrap_emit(emit)
+    p = os.path.abspath(media or "")
+    if not p or _media_kind(p) != "photo":
+        return media
+    dst = os.path.join(os.path.dirname(p),
+                       os.path.splitext(os.path.basename(p))[0] + ".nobg.png")
+    try:
+        if os.path.isfile(dst) and os.path.getmtime(dst) >= os.path.getmtime(p):
+            return dst
+    except OSError:
+        pass                                             # mtime не прочитался — считаем заново
+    try:
+        with open(p, "rb") as f:
+            data = f.read()
+        try:
+            # SystemExit отдельно и ТОЛЬКО тут: без пакета rembg/onnxruntime remove_bg
+            # не бросает исключение, а выходит из процесса — сборка со вставкой «на
+            # подложке» падала целиком вместо отката на исходник (задание ZK).
+            out = remove_bg(data, trim=True, emit=emit)
+        except SystemExit as e:
+            emit("  фон у {name} не убран ({err}) — вставка как есть",
+                 name=os.path.basename(p), err=e)
+            return media
+        atomic_bytes_write(dst, out)                     # «Стоп»/сбой не оставит обгрызок кэша
+    except Exception as e:
+        emit("  фон у {name} не убран ({err}) — вставка как есть",
+             name=os.path.basename(p), err=e)
+        return media
+    return dst
 
 
 # --- Что читает After Effects. ЕДИНСТВЕННОЕ место: verify_jsx.py импортирует эти три

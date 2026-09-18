@@ -37,7 +37,9 @@ def test_sub_tab_html_structure():
     # Контролы вкладки Сабы
     assert 'id="insp_subwords"' in html
     assert 'id="insp_subrows"' in html
-    assert 'id="sub_introwarn"' in html
+    # Заглушки «интро пока не собирается» больше нет (задание ZL): интро собирается и при
+    # строках длиннее одного слова.
+    assert 'id="sub_introwarn"' not in html
     assert 'id="subrowslist"' in html
 
     # Диапазон значений слов в строке (1..6)

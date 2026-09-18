@@ -15,7 +15,7 @@ intro_x (интро по X); дефолты равны сегодняшнему 
   * вставки Кам2 — INS_C2_X/INS_C2_Y из стиля;
   * интро — сдвиг по X в шаблоне;
   * план несёт точку наезда и точку покоя Кам2;
-  * фронт: ipvCamChild одна функция, ipvIntroPos и ipvInsPlace зовут её.
+  * фронт: ipvCamChild одна функция, ipvIntroPos зовёт её через общий выбор ipvIntroChild.
 """
 import gzip
 import json
@@ -127,15 +127,24 @@ def test_план_несёт_точку_наезда_и_покой_кам2(xml_s
 @node
 def test_фронт_одна_функция_правила():
     """ipvCamChild — единственная реализация «экран = C + s*(p−C)»; и вставки кам1,
-    и интро зовут её, второй копии формулы в JS нет."""
+    и интро зовут её, второй копии формулы в JS нет.
+
+    Задание ZM добавило над ipvCamChild тонкий выбор ipvIntroChild (интро/затемнение
+    с откреплённой от камеры галкой) — он и есть точка входа интро, а сама формула
+    по-прежнему живёт ровно в одной функции.
+    """
     src = app_meta.app_js_text()
     assert "function ipvCamChild(" in src
     child = _func(src, "ipvCamChild")
     assert "s*px+(1-s)*dx" in child
     ins = _func(src, "ipvInsPlace")
     intro = _func(src, "ipvIntroPos")
+    intro_child = _func(src, "ipvIntroChild")
     assert "ipvCamChild(" in ins
-    assert "ipvCamChild(" in intro
+    assert "ipvCamChild(" in intro_child, (
+        "выбор координат интро/затемнения перестал звать общую машину нула Камеры 1")
+    assert "ipvIntroChild(" in intro, (
+        "ipvIntroPos считает позицию не общей функцией-выбором (задание ZM)")
     # точка наезда кадра — из плана, а не жёсткий центр: ipvZoom больше не вешает
     # transform на видео, он зовёт ipvCamPaint, и тот режет кадр от pl.zoom.cx/cy
     zoom = _func(src, "ipvZoom")
@@ -235,7 +244,8 @@ def test_q2_превью_берёт_y_из_плана():
     src = app_meta.app_js_text()
     intro = _func(src, "ipvIntroPos")
     assert "g.y" in intro and "g.dy" in intro
-    assert "ipvCamChild(" in intro
+    # задание ZM: точка идёт через общий выбор ipvIntroChild (внутри — ipvCamChild)
+    assert "ipvIntroChild(" in intro
     css = open(os.path.join(os.path.dirname(HERE), "static", "app.css"),
                encoding="utf-8").read()
     m = re.search(r"\.ipvintro\{[^}]*\}", css)

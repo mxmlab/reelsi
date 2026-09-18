@@ -17,6 +17,11 @@
 Список эффектов проверяется по порядку: функция introAnimFX из готового .jsx исполняется в
 node с заглушками слоя (как это делают другие тесты для шаблона), поэтому проверка не зависит
 от того, что обе ветки свечения лежат в одном тексте шаблона.
+
+Цвет выделения у сборок с тритоном — тёмный (DARK_HL_FILL, задание ZN): на ярком цвете
+мидтонов тритон не ставится вовсе (свечение выбеливает букву — она уходит в Highlights),
+а дефолтный жёлтый hl_fill [1,0.9176,0] имеет яркость 0.87. Отсутствие тритона на ярком
+цвете проверяет tests/test_tritone_bright.py.
 """
 import gzip
 import json
@@ -37,6 +42,11 @@ from core import xml2ae  # noqa: E402
 T_CAM1, T_CAM2 = 1.0, 8.3
 
 node = pytest.mark.skipif(not shutil.which("node"), reason="требуется node в PATH")
+
+# Тёмный цвет выделения для сборок с тритоном (задание ZN): красный, яркость мидтонов
+# 0.24 — тритон ставится. Дефолтный жёлтый (0.87) ярче порога TRITONE_MAX_LUM=0.7 —
+# там тритона нет.
+DARK_HL_FILL = [0.6863, 0.1216, 0.1216]
 
 
 @pytest.fixture()
@@ -159,7 +169,8 @@ def _probe(jsx, tmp_path):
 @node
 def test_жёлтая_строка_с_глитчем_blur_глоу_и_тритон(xml_subs, tmp_path):
     """Жёлтый глитч: Blur 3.4 -> Glo2 149/77/0.62 -> Tritone Midtones=HL_FILL; прекомп 211/93/0.42."""
-    jsx, _ = _build(xml_subs, tmp_path, _glow_intro(), name="glow_all.jsx")
+    jsx, _ = _build(xml_subs, tmp_path, _glow_intro(), style={"hl_fill": DARK_HL_FILL},
+                    name="glow_all.jsx")
     hl = _hl_fill_literal(jsx)
     got = _probe(jsx, tmp_path)
 
@@ -182,7 +193,8 @@ def test_жёлтая_строка_с_глитчем_blur_глоу_и_трито
 @node
 def test_жёлтая_строка_только_с_свечением_без_blur_тени_и_glo2_прекомпа(xml_subs, tmp_path):
     """fx=='glow' без глитча, жёлтая: только Glo2 + Tritone, без Blur и тени; у прекомпа Glo2 нет."""
-    jsx, _ = _build(xml_subs, tmp_path, _glow_intro(), name="glow_all2.jsx")
+    jsx, _ = _build(xml_subs, tmp_path, _glow_intro(), style={"hl_fill": DARK_HL_FILL},
+                    name="glow_all2.jsx")
     hl = _hl_fill_literal(jsx)
     got = _probe(jsx, tmp_path)
 
@@ -218,7 +230,8 @@ def test_жёлтая_строка_только_с_свечением_без_т�
 @node
 def test_белая_и_акцентная_строки_тритона_не_получают(xml_subs, tmp_path):
     """Белая строка со свечением — Glo2 без тритона; акцентная с глитчем — без тритона."""
-    jsx, _ = _build(xml_subs, tmp_path, _glow_intro(), name="glow_all3.jsx")
+    jsx, _ = _build(xml_subs, tmp_path, _glow_intro(), style={"hl_fill": DARK_HL_FILL},
+                    name="glow_all3.jsx")
     got = _probe(jsx, tmp_path)
 
     assert got["white_glow"] == [
@@ -237,13 +250,17 @@ def test_белая_и_акцентная_строки_тритона_не_по�
 
 
 def test_тритон_берёт_intro_hl_fill_из_стиля(xml_subs, tmp_path):
-    """При заданном в стиле intro_hl_fill тритон красится им, а не HL_FILL."""
+    """При заданном в стиле intro_hl_fill тритон красится им, а не HL_FILL.
+
+    Цвет тёмный (яркость 0.39): на ярком цвете мидтонов тритона нет вовсе (задание ZN),
+    и проверить подстановку INTRO_HL_FILL было бы не на чем."""
+    fill = [0.2, 0.4, 0.8]
     jsx, _ = _build(xml_subs, tmp_path, [
         dict(words=["ЖЁЛТОЕ"], color="yellow", times=[T_CAM1], fx="glow"),
         dict(words=["ОБЫЧНОЕ"], color="white", times=[T_CAM2]),
-    ], style={"intro_hl_fill": [1.0, 0.8, 0.1]}, name="glow_hlfill.jsx")
+    ], style={"intro_hl_fill": fill}, name="glow_hlfill.jsx")
 
-    assert "INTRO_HL_FILL=[1,0.8,0.1]" in jsx
+    assert "INTRO_HL_FILL=[0.2,0.4,0.8]" in jsx
     assert 'var tt=addFX(L,"ADBE Tritone"); setP(tt,"ADBE Tritone-0002",INTRO_HL_FILL);' in jsx
 
 
@@ -299,7 +316,8 @@ def test_ролик_без_глитча_и_свечения_прежний(xml_s
 @node
 def test_сборка_jsx_с_тритоном_проходит_проверку_синтаксиса(xml_subs, tmp_path):
     """Сборка из п.1 (жёлтый глитч, свечение, back, акцент) валидна по verify_jsx и node --check."""
-    jsx, jsx_path = _build(xml_subs, tmp_path, _glow_intro(), name="glow_syntax.jsx")
+    jsx, jsx_path = _build(xml_subs, tmp_path, _glow_intro(), style={"hl_fill": DARK_HL_FILL},
+                           name="glow_syntax.jsx")
 
     rep = verify_jsx.Report(jsx_path)
     verify_jsx.check_syntax(jsx_path, jsx, rep)

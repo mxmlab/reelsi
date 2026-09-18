@@ -17,7 +17,8 @@ from .jsutil import _asset_or, _fill_js, _jd, _js, _js_multiline, _r
 from .layout import (DEFAULT_DISCLAIMER, DISC_FIT_W, EASE_DEFAULT, HL_EASE_IN, HL_EASE_OUT,
                      INS_C1_HIGH, INS_C2_BASE, INS_C2_PEAK, INS_EXIT,
                      INS_RISE_DY, INS_RISE_S0, INS_RISE_ENTER, INTRO_BASE_Y,
-                     INTRO_F_DUR, INTRO_F_OUT, INTRO_FIT_W, INTRO_HOLD, INTRO_SCALE,
+                     INTRO_F_DUR, INTRO_F_OUT, INTRO_FIT_W, INTRO_HOLD, INTRO_LINE_STEP,
+                     INTRO_SCALE,
                      SHADE_BLUR, SHADE_DY, SHADE_H, SHADE_OX, SHADE_OY, SHADE_REF_W, SHADE_SCALE,
                      SHADE_W, SHADE_X,
                      SUB_BG_SH_DIR, SUB_BG_SH_DIST,
@@ -25,14 +26,50 @@ from .layout import (DEFAULT_DISCLAIMER, DISC_FIT_W, EASE_DEFAULT, HL_EASE_IN, H
                      cover_sweep,
                      _anim_keys,
                      _blur_keys, _cam1_drift_keys, _cam1_jump_keys, _cam1_pos_keys,
-                     _cam1_zoom_keys, _cam_change_frames, _censor_windows,
-                     _fill_slack, _fit_scale, _ins_card, _ins_enter_exit, _ins_scale,
+                     _cam1_zoom_keys, _cam1_follow_keys, _cam_change_frames, _censor_windows,
+                     _fill_slack, _fit_scale, _ins_card, _ins_enter_exit, _ins_plate, _ins_scale,
                      _intro_group_window, _intro_i_dy, _media_dims, _project_base,
                      _show_segments, _span_roto_plan, _stack_layout,
-                     _zoom_key_eases, _zoom_max,
+                     _zoom_key_eases, _zoom_key_holds, _zoom_max,
                      intro_line_ys)
 from .parse import Cancelled, HERE, _is_image, parse_full
 from .template import AE_FULL, SUBS_LOOP_WORDS, SUBS_LOOP_ROWS, SUBS_LOOP_WORDS_JOINED
+
+# Цвет камер через Lumetri (задание ZJ): ключ плана -> matchName эффекта в AE и подпись
+# для лога. Номера сняты архитектором с живого AE 26.2 по свойствам эффекта (ADBE Lumetri),
+# диапазоны ползунков — в core/style_schema.py. Порядок = порядок setValue в .jsx.
+LUMETRI_PARAMS = (
+    ("exposure", "ADBE Lumetri-0011", "Exposure"),
+    ("contrast", "ADBE Lumetri-0012", "Contrast"),
+    ("highlights", "ADBE Lumetri-0013", "Highlights"),
+    ("shadows", "ADBE Lumetri-0014", "Shadows"),
+    ("whites", "ADBE Lumetri-0015", "Whites"),
+    ("blacks", "ADBE Lumetri-0016", "Blacks"),
+    ("temp", "ADBE Lumetri-0007", "Temperature"),
+    ("tint", "ADBE Lumetri-0008", "Tint"),
+    ("sat", "ADBE Lumetri-0020", "Saturation"),
+)
+
+
+# Tritone выбеливает яркие цвета: при яркости цвета мидтонов (Rec.709,
+# 0.2126R+0.7152G+0.0722B по значениям 0–1) выше порога не ставим. Замер 2026-09-18:
+# жёлтый интро Джаггера 0.91, жёлтый по умолчанию 0.87 — выкл; голубой 0.61,
+# оранжевый 0.57, красный 0.24 — вкл.
+# Механика: Tritone красит по яркости — цвет мидтонов уезжает на букву, Highlights
+# остаётся белым. Свечение выталкивает букву почти в белое, и она попадает в Highlights
+# вместо мидтонов (задание ZN). Свечение (Glo2) при этом не трогаем.
+TRITONE_MAX_LUM = 0.7
+
+
+def _tritone_on(rgb):
+    """Ставить ли ADBE Tritone для цвета мидтонов rgb ([r,g,b] 0..1; None — дефолтный жёлтый).
+
+    Порог и почему он есть — в комментарии к TRITONE_MAX_LUM. Дефолт None повторяет
+    подстановку _fill_js(None): тот же жёлтый, что и при пустом hl_fill в стиле."""
+    r = list(rgb or [1, 0.9176, 0])[:3]
+    while len(r) < 3:
+        r.append(0.0)
+    return (0.2126 * r[0] + 0.7152 * r[1] + 0.0722 * r[2]) <= TRITONE_MAX_LUM
 
 
 def _sv(st, key):
@@ -162,7 +199,7 @@ def _intro_line_font(line, intro_font_ps, intro_hl_font_ps):
 
 
 def _intro_fit_ds(lines, ts, te, ds, w, G, cam_keys, fps, st, intro_font_ps,
-                  intro_hl_font_ps, fsize, hold=False):
+                  intro_hl_font_ps, fsize, holds=None, hold=None):
     """Автофит группы интро (задание BP): широкая строка видна как lineW·(iSc/100)·G·Z
     (iSc = INTRO_SCALE·ds/100 — масштаб прекомпа, G — общий масштаб интро, Z — зум
     Камеры 1), и если с МАКСИМАЛЬНЫМ зумом на окне группы [ts, te] она шире 0.92·W,
@@ -181,7 +218,7 @@ def _intro_fit_ds(lines, ts, te, ds, w, G, cam_keys, fps, st, intro_font_ps,
         if wpx is None:
             return ds
         linew = max(linew, wpx)
-    z = _zoom_max(cam_keys, fps, ts, te, hold=hold)
+    z = _zoom_max(cam_keys, fps, ts, te, holds=holds, hold=hold)
     fit = 100.0 * w * INTRO_FIT_W / (linew * (INTRO_SCALE / 100.0) * G * (z / 100.0))
     return min(ds, fit)
 
@@ -345,6 +382,46 @@ GLITCH_SFX_ATTACK_S = 0.08    # нарастание от тишины до glit
 GLITCH_SFX_HOLD_S = 0.45      # полка звука после последнего слова группы, с
 GLITCH_SFX_RELEASE_S = 0.12   # спад до тишины, с
 GLITCH_SFX_QUIET_DB = -48.0   # уровень «тихо» (как у микро-фейдов клипов камеры), dB
+
+
+def _lumetri_decl(lum):
+    """Объявление LUMETRI и функции applyLumetri для .jsx (задание ZJ).
+
+    Один эффект ADBE Lumetri на слой, значения — по matchName из LUMETRI_PARAMS;
+    ошибки уходят в _LOG (пустых catch нет: иначе неверный цвет ищут в AE вслепую).
+    При выключенной галке стиля (lum = None) подстановка пустая — .jsx побайтово
+    прежний (golden держит).
+    """
+    if not lum:
+        return ""
+    # Начинается без ведущего \n и кончается \n: подстановка стоит в НАЧАЛЕ строки
+    # шаблона (перед `var ROTO=`) — при выключенной галке строка шаблона не меняется.
+    js = ["    // Цвет камер через Lumetri (задание ZJ): значения из стиля, exposure уже"
+          "\n    // включает экспозицию клипа. Один эффект на слой — как в панели Lumetri в AE.",
+          "\n    var LUMETRI = {%s};"
+          % ", ".join('%s: %g' % (k, lum[k]) for k, _mn, _lb in LUMETRI_PARAMS),
+          "\n    function applyLumetri(L){",
+          "\n        try{",
+          "\n            var lc = L.property(\"ADBE Effect Parade\").addProperty(\"ADBE Lumetri\");"]
+    for _key, _mn, _label in LUMETRI_PARAMS:
+        js.append("\n            try{ lc.property(\"%s\").setValue(LUMETRI.%s); }"
+                  "catch(e){ _LOG(\"Lumetri %s: \" + e); }" % (_mn, _key, _label))
+    js.append("\n        }catch(e){ _LOG(\"Lumetri на слое: \" + e); }")
+    js.append("\n    }\n")
+    return "".join(js)
+
+
+# Клипы камер: покадровая экспозиция (EXPOSURE) ИЛИ весь Lumetri из стиля — ровно в том
+# же месте шаблона, что и раньше. Значения по умолчанию — прежний текст .jsx байт в байт.
+LUMETRI_CAM_OFF = (
+    "if (EXPOSURE!=0){ try{ var lc=lay.property(\"ADBE Effect Parade\").addProperty(\"ADBE Lumetri\");  // яркость на все камеры\n"
+    "                try{ lc.property(\"ADBE Lumetri-0011\").setValue(EXPOSURE); }catch(e){} }catch(e){} }")
+LUMETRI_CAM_ON = "applyLumetri(lay);"
+# Рото-копии камер — то же самое, но своей строкой шаблона (без внешнего try).
+LUMETRI_ROTO_OFF = (
+    "if (EXPOSURE!=0){ try{ var lc=cc.property(\"ADBE Effect Parade\").addProperty(\"ADBE Lumetri\");\n"
+    "                lc.property(\"ADBE Lumetri-0011\").setValue(EXPOSURE); }catch(e){} }")
+LUMETRI_ROTO_ON = "applyLumetri(cc);"
 
 
 def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам кам1→кам2
@@ -528,9 +605,13 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     joins_raw = joins_raw - brk_raw
     sub_words_per_row = max(1, int(_sv_or(st, "sub_words_per_row")))
     sub_rows_max = max(1, int(_sv_or(st, "sub_rows_max")))
-    eff_intro = [] if sub_words_per_row > 1 else (intro or [])
-    eff_intro_remove = [] if sub_words_per_row > 1 else (intro_remove or [])
-    eff_intro_splits = [] if sub_words_per_row > 1 else (intro_splits or [])
+    # Задание ZL: интро собирается и в режиме строк. Запрет из задания CH («со строками эта
+    # связь ещё не продумана») снят: связь как раз прямая — слова интро вынимаются из subs
+    # НИЖЕ и раньше, чем строятся строки (raw_lines), поэтому строки собираются из оставшихся
+    # слов, а интро от режима субтитров не зависит.
+    eff_intro = intro or []
+    eff_intro_remove = intro_remove or []
+    eff_intro_splits = intro_splits or []
     remove = set(int(i) for i in eff_intro_remove if 0 <= int(i) < len(subs))
     censor_source = list(subs)                    # цензор считаем по ВСЕМ словам (интро-слова звучат)
     if remove:                                   # слова интро убираем из титров, хайлайты переиндексируем
@@ -598,6 +679,10 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     # не меньше «хвост вниз верхней строки + высота букв нижней + back_gap». Числа даёт
     # fonts.ink_extent; зазор стиля — дефолт 4 px, как раздвинул строки пользователь в AE.
     back_gap = float(_sv(st, "back_gap"))
+    # Межстрочный интервал интро (задание ZO): ОДИН множитель k на оба места — шаги строк
+    # и центровку блока в Python (intro_line_ys, _intro_i_dy) и var LINE_STEP в шаблоне.
+    # 100 = прежние 160 px: подстановка печатает ровно «160», .jsx прежний (golden).
+    _line_step_k = float(_sv(st, "intro_line_step")) / 100.0
     # Фейд-аут прекомпа интро (задание IK): единый ключ стиля intro_fade (дефолт 0.35).
     intro_fade = float(_sv(st, "intro_fade"))
     intro_fx_hold_add = float(_sv(st, "intro_fx_hold_add"))
@@ -611,11 +696,39 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     # плейсхолдеры шаблона пусты и .jsx не меняется ни на байт (golden).
     cam1_cx = float(_sv(st, "cam1_zoom_cx"))
     cam1_cy = float(_sv(st, "cam1_zoom_cy"))
+    pan_x = float(_sv_or(st, "cam1_pan_x"))
+    pan_y = float(_sv_or(st, "cam1_pan_y"))
+    rot = float(_sv_or(st, "cam1_rot"))
     ins_c2x = float(_sv(st, "insert_c2_x"))
     ins_c2y = float(_sv(st, "insert_c2_y"))
     # Общий сдвиг точки покоя вставок кам1 (задание CB), px. Дефолт 0/0 = как сегодня.
     ins_c1x = float(_sv_or(st, "insert_c1_x"))
     ins_c1y = float(_sv_or(st, "insert_c1_y"))
+    # Подложка фото-вставок (задание ZK): картинку задаёт СТИЛЬ, а решение «эта вставка
+    # на подложке» — галка у самой вставки (поле plate). Файла в стиле нет — подложки нет
+    # ни у кого: подстановки шаблона пустые и .jsx побайтово прежний (golden).
+    _plate_path = str(_sv_or(st, "insert_plate_file") or "").strip()
+    _plate_scale = float(_sv_or(st, "insert_plate_scale")) or 100.0
+    _any_plate = bool(_plate_path) and any(x.get("plate") for x in inserts)
+    # Цвет камер через Lumetri (задание ZJ): девять значений стиля одной дверью — их
+    # читают и .jsx (LUMETRI), и превью (plan["lumetri"]), второй копии нет. Экспозиция
+    # клипа (kwarg exposure с шага AE) ПРИБАВЛЯЕТСЯ к стилевой: раньше её нёс EXPOSURE
+    # ровно на тех же слоях. Выключенная галка — None: подстановки шаблона прежние, .jsx
+    # побайтово как раньше (golden). Ключи читаются ЯВНО (не склейкой "lm_"+k): сторож
+    # схемы (test_r11_li_every_knob) ищет ручку в коде по её имени.
+    lumetri = None
+    if _sv(st, "lm_on"):
+        lumetri = {
+            "exposure": float(_sv(st, "lm_exposure")) + float(exposure or 0),
+            "contrast": float(_sv(st, "lm_contrast")),
+            "highlights": float(_sv(st, "lm_highlights")),
+            "shadows": float(_sv(st, "lm_shadows")),
+            "whites": float(_sv(st, "lm_whites")),
+            "blacks": float(_sv(st, "lm_blacks")),
+            "temp": float(_sv(st, "lm_temp")),
+            "tint": float(_sv(st, "lm_tint")),
+            "sat": float(_sv(st, "lm_sat")),
+        }
     intro_x_px = float(_sv_or(st, "intro_x"))
     hl_fill = st.get("hl_fill")
     # Регистр и цвет базовых субтитров (задание CO): регистр применяется в scene_plan к
@@ -624,14 +737,13 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     # подстановки пустые, .jsx прежний (golden).
     sub_case = (_sv_or(st, "sub_case")).strip()
     sub_fill = st.get("sub_fill")
-    # интро разбиваем на прекомпы по splits (индексы строк-начал новых групп)
+    # интро разбиваем на прекомпы по splits (индексы строк-начал новых групп). Режим строк
+    # (sub_words_per_row > 1) группы не отменяет (задание ZL): строки субтитров собираются из
+    # слов БЕЗ интро, поэтому раскладка субтитров на группы интро не влияет.
     _intro_lines = [x for x in eff_intro if (x.get("words") or (x.get("text") or "").strip())]
-    if sub_words_per_row > 1:
-        _intro_groups = []
-    else:
-        _splits = sorted(set(int(s) for s in eff_intro_splits if 0 < int(s) < len(_intro_lines)))
-        _bounds = [0] + _splits + [len(_intro_lines)]
-        _intro_groups = [_intro_lines[_bounds[k]:_bounds[k + 1]] for k in range(len(_bounds) - 1)]
+    _splits = sorted(set(int(s) for s in eff_intro_splits if 0 < int(s) < len(_intro_lines)))
+    _bounds = [0] + _splits + [len(_intro_lines)]
+    _intro_groups = [_intro_lines[_bounds[k]:_bounds[k + 1]] for k in range(len(_bounds) - 1)]
 
     # группы идут по таймингу: первая = самая ранняя (JS считает её началом ролика и держит её с 0)
     def _g_at(g):
@@ -837,10 +949,43 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     _hl_step = round(meta["h"] * 0.06224, 2)
     _hl_rise = round(meta["h"] * 0.06406, 2)
     _fsize = max(60, int(meta["w"] * 0.13))
+    # Кегль интро = кегль ДО ужатия строк (доработка ZL). В режиме строк автофит ужимает
+    # _fsize под самую длинную строку, но интро — не строка субтитров: раньше оно брало
+    # ужатый кегль и выходило в 2.4 раза мельче, чем в режиме по слову. Запоминаем
+    # неужатый здесь, ДО ветки строк; в режиме по слову _fsize_base == _fsize и .jsx
+    # остаётся прежним байт в байт (golden).
+    _fsize_base = _fsize
     _sub_step = round(_fsize * 1.18, 2)
     # Масштаб СЛОЯ прекомпа субтитров (задание FE), %: кегль/раскладка не трогаются,
     # 100 = как сегодня. При 100 подстановка в шаблон пуста — .jsx прежний (golden).
     sub_scale = float(_sv(st, "sub_scale"))
+    # Жёлтые в режиме строк (задание ZH): HL_ROW_WORD нужен только циклу строк — в режиме
+    # «по слову» объявления нет вовсе, и .jsx остаётся прежним байт в байт (golden).
+    hl_row_decl = ("" if sub_words_per_row <= 1 else
+                   ("\n    var HL_ROW_WORD = %s;   // жёлтые в строке (hl_row_anim): true — въезжает,"
+                    " когда слово произнесено; false — вместе со строкой"
+                    % ("true" if _sv(st, "hl_row_anim") == "word" else "false")))
+    # Блюр появления жёлтых (задание ZH): выключен — ни объявления, ни функции, ни вызовов,
+    # все три подстановки пусты и .jsx прежний байт в байт (golden).
+    hl_blur_on = bool(_sv(st, "hl_blur"))
+    hl_blur_decl = hl_blur_fn = hl_blur_call = ""
+    if hl_blur_on:
+        hl_blur_decl = ("\n    var HL_BLUR = %g;   // сила блюра появления жёлтых, px"
+                        " (Gaussian Blur, повтор краёв выключен)" % float(_sv(st, "hl_blur_amt")))
+        hl_blur_fn = (
+            "\n    // Блюр появления жёлтого (задание ZH): Gaussian Blur HL_BLUR -> 0 на ТЕХ ЖЕ"
+            "\n    // ключах, что подъём и проявление. Повтор краёв выключен — иначе размытие"
+            "\n    // подтягивало бы в кадр края текстового слоя."
+            "\n    function hlBlur(L, t0){"
+            "\n        try{"
+            "\n            var bl = L.property(\"ADBE Effect Parade\").addProperty(\"ADBE Gaussian Blur 2\");"
+            "\n            bl.property(\"ADBE Gaussian Blur 2-0003\").setValue(0);   // Repeat Edge Pixels = 0"
+            "\n            var bp = bl.property(\"ADBE Gaussian Blur 2-0001\");"
+            "\n            bp.setValueAtTime(t0, HL_BLUR); bp.setValueAtTime(t0+HL_DUR, 0);"
+            "\n            easePair(bp);"
+            "\n        }catch(e){ _LOG(\"блюр появления жёлтого: \" + e); }"
+            "\n    }")
+        hl_blur_call = " hlBlur(L, t0);"
     from core.subs import build_sub_rows
     from core import fonts as _fonts
 
@@ -911,11 +1056,11 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
                 '            }catch(e){}\n'
                 '        }'
             )
-            sub_loop = sub_tpl % dict(sub_count_code=sub_count_code)
+            sub_loop = sub_tpl % dict(sub_count_code=sub_count_code, hl_blur_call=hl_blur_call)
         else:
             subs_js = _jd([[s, _endc(k), _sub_w(w), 1 if k in hl else 0, rows[k], gend[k]]
                            for k, (s, e, w) in enumerate(subs)])
-            sub_loop = sub_tpl % dict(sub_count_code="")
+            sub_loop = sub_tpl % dict(sub_count_code="", hl_blur_call=hl_blur_call)
         sub_rows_js = "[]"
     else:
         cut_bounds = set()
@@ -1011,7 +1156,8 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             for line in raw_lines
         ]
         sub_rows_js = _jd(sub_rows_data)
-        sub_loop = SUBS_LOOP_ROWS % dict(sub_rows=sub_rows_js, sub_step=_sub_step)
+        sub_loop = SUBS_LOOP_ROWS % dict(sub_rows=sub_rows_js, sub_step=_sub_step,
+                                         hl_blur_call=hl_blur_call)
     _c1zoom = (_sv_or(st, "cam1_zoom"))         # pulse = наезд с откатом | jump = резкие скачки | drift = скачок+плавный дрейф 100–160% | none = нет зума
     if cam1_scale is None:                             # авто-зум по сменам кам1→кам2
         if _c1zoom == "none":
@@ -1026,9 +1172,29 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
                 _zdhi = float(_sv_or(st, "cam1_drift_hi"))
                 cam1_scale = _cam1_drift_keys(cams, lo=_zdlo, hi=_zdhi, fps=meta["fps"], big=_zbig, start=_zstart)
             elif _c1zoom == "jump":
-                cam1_scale = _cam1_jump_keys(cams, lo=_zlo, hi=_zhi, fps=meta["fps"], start=_zstart)
+                _ztake = None
+                if _sv(st, "cam1_take_zoom"):
+                    _ztake = {
+                        "min_s": float(_sv_or(st, "cam1_take_min")),
+                        "lo": float(_sv_or(st, "cam1_take_lo")),
+                        "hi": float(_sv_or(st, "cam1_take_hi")),
+                        "hold_s": float(_sv_or(st, "cam1_take_hold")),
+                    }
+                    if _sv(st, "cam1_take_yellow"):
+                        _ztake["words"] = sorted(subs[k][0] for k in hl)
+                cam1_scale = _cam1_jump_keys(cams, lo=_zlo, hi=_zhi, fps=meta["fps"], start=_zstart, big=_zbig, take=_ztake)
             else:
                 cam1_scale = _cam1_zoom_keys(cams, big=_zbig, lo=_zlo, hi=_zhi, fps=meta["fps"], start=_zstart)
+    # «Заполнение кадра» (задание ZE) — общий множитель зума Камеры 1, и умножается он РОВНО
+    # ЗДЕСЬ, один раз. Раньше fit сидел в Scale слоёв клипа и рото, и кадр рос вокруг своего
+    # центра, а вставки кам1 с интро не росли вовсе — в превью кадр хороший, в AE уезжает на
+    # 240–335 px (ipvZoomAt множит fit на ключи и масштабирует ВСЁ вокруг точки наезда).
+    # Дальше ключи уже с fit берут все: CAM1_SCALE, автофит интро (_zoom_max), слежение
+    # (_cam1_follow_keys) и план. Второй копии умножения не заводить.
+    _fit_k = float(_sv_or(st, "cam1_fit")) / 100.0
+    if _fit_k != 1.0:
+        cam1_scale = [(f, round(v * _fit_k, 2), *rest) for f, v, *rest in (cam1_scale or [])]
+    holds = _zoom_key_holds(cam1_scale or [], legacy_hold=(_c1zoom == "jump"))
     # 3-й элемент (mode: 1=HOLD, 0=BEZIER) эмитим только если он есть (drift); 2-элементные — легаси
     cam1scale_js = _jd([([_r(f), _r(v)] + ([int(rest[0])] if rest else []))
                         for f, v, *rest in (cam1_scale or [])])
@@ -1070,8 +1236,21 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     def _ins_js(x):
         t0, t1raw = _win(x)
         t1, noexit = _clip_end(x, t0, t1raw)
+        # «Без фона» (задание ZQ): путь фото у вставки с галкой «на подложке» меняется
+        # ЗДЕСЬ, в плане сцены, — до _ins_plate и до всей остальной геометрии (у nobg_path
+        # свой кэш: второй раз на тот же файл rembg не зовётся). Раньше подмену делал
+        # _nobg_kw в to_ae_full, ДО scene_plan: в .jsx уезжал обрезанный PNG, а план для
+        # превью (/api/scene) считался по ИСХОДНИКУ — рамка карточки была по одним
+        # пропорциям, картинка по другим, и фото на подложке в превью сплющивалось
+        # (1408×768 -> 176×451). Теперь и .jsx, и превью читают ОДИН план: второй копии
+        # подмены в сборке не осталось.
+        media_src = x.get("media") or ""
+        media = media_src
+        if x.get("plate") and _plate_path and _is_image(media_src):
+            from core.insertlib import nobg_path
+            media = nobg_path(media_src, emit=emit)
         out = {"t": x.get("type") or "photo", "style": x.get("style") or "cam2",
-               "media": x.get("media") or "", "start": _r(t0), "end": _r(t1),
+               "media": media, "start": _r(t0), "end": _r(t1),
                "scale": _r(x.get("scale") or 44), "mosaic": bool(x.get("mosaic")),
                "x": _r(x.get("x") or 0), "y": _r(x.get("y") or 0),
                # ручной масштаб, % от авто (фото — от карточки, видео — от заполнения кадра);
@@ -1086,7 +1265,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         # входа/выхода cam2-анимации. Размеры не прочитались -> полей нет: вставку
         # не трогаем (старое if(!iw||!ih) return).
         if (x.get("type") or "photo") == "video":
-            wh = _media_dims(x.get("media"))
+            wh = _media_dims(media)
             if wh:
                 k = _r(x.get("sc") or 100) / 100               # округлённый sc: как увидит JSX
                 iw, ih = wh
@@ -1103,10 +1282,32 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         else:
             # маска-карточка в comp-координатах (осевший масштаб): её масштабирует anim.scale
             # (как Scale слоя в AE), и предпросмотру не нужны размеры картинки (задание D)
-            _card = _ins_card(x.get("media"), out["style"], out.get("mw"), out.get("mh"),
-                              out.get("sc"), meta["w"], meta["h"])
-            if _card:
-                out["card"] = _card
+            # Подложка — решение ВСТАВКИ, не стиля (задание ZK): у кого галки нет, тот идёт
+            # прежним путём (карточка, маска) даже при заданном в стиле файле подложки.
+            _plate = _ins_plate(media, _plate_path, out["style"], out.get("sc"),
+                                out.get("x"), out.get("y"), meta["w"], meta["h"],
+                                _plate_scale) if (x.get("plate") and _plate_path) else None
+            if _plate:
+                # Подложка (задание ZK): масштаб слоя прекомпа — плашка под карточку, фото
+                # вписано в неё, ручные сдвиг/масштаб уехали в px/py/ps ВНУТРЬ прекомпа.
+                # Анимация слоя (вылет кам1, выезд кам2, точка покоя) считается по
+                # нейтральному sc=100: подложка у всех таких вставок одного размера.
+                # plate в данных — признак для шаблона: слой подложки и отказ от маски
+                # достаются РОВНО этим вставкам.
+                out.update(_plate)
+                out["plate"] = True
+                # Сдвиг ВСЕЙ карточки — kx/ky (задание ZQ): точка покоя слоя и его
+                # ключи анимации считаются по ним, поэтому драг в превью двигает плашку
+                # вместе с фото. Ручные x/y со страницы вставок уехали в px/py (_ins_plate)
+                # и по-прежнему двигают только фото ВНУТРИ подложки (задание ZI).
+                out["x"] = _r(x.get("kx") or 0)
+                out["y"] = _r(x.get("ky") or 0)
+                out["sc"] = 100
+            else:
+                _card = _ins_card(media, out["style"], out.get("mw"), out.get("mh"),
+                                  out.get("sc"), meta["w"], meta["h"])
+                if _card:
+                    out["card"] = _card
             # анимации вставок: готовые ключи вместо досчёта в ExtendScript (остаток задания B).
             # Те же округлённые t0/t1 и en/ex, что ушли в JSX, — предпросмотр интерполирует их же.
             t0r, t1r = _r(t0), _r(t1)
@@ -1283,8 +1484,25 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     # нула (intro_y/intro_y2) не трогает. Поэтому G входит в базу (-INTRO_BASE_Y+iDy),
     # а intro_y/intro_y2 — плоским слагаемым. 100% = дефолт: y не меняется ни на сотую.
     _G = float(_sv_or(st, "intro_scale")) / 100
-    # Кегль интро = кегль субтитров (в AE это один FONT_SIZE): тот же _fsize, что у
-    # стопки ниже, — автофит меряет ширину строки тем же размером (задание BP).
+    # Открепление интро от Камеры 1 (задание ZM): галка «интро едет с камерой» снята —
+    # нулы «интро» и «интро на кам2» (и затемнение под интро) НЕ привязываются к нулу
+    # Камеры 1, а идут по уже существующей ветке else: позиция в координатах кадра.
+    # Подстановки пустые при дефолтном True — .jsx остаётся прежним байт в байт (golden),
+    # объявление INTRO_CAM появляется только при False (иначе читать нечего).
+    _intro_cam = bool(_sv(st, "intro_cam"))
+    _intro_cam_decl = (
+        "    var INTRO_CAM=false;  // стиль «интро едет с камерой» снят: нулы интро и затемнение\n"
+        "                          // стоят в координатах кадра, а не на нуле Камеры 1 (задание ZM)\n"
+    ) if not _intro_cam else ""
+    _intro_cam_cond = "" if _intro_cam else " && INTRO_CAM"
+    _intro_cam_shade_cmt = (
+        "" if _intro_cam else
+        "    // галка «интро едет с камерой» снята (задание ZM): затемнение открепляется вместе\n"
+        "    // с интро — та же ветка else, координаты кадра\n"
+    )
+    # Кегль интро = кегль субтитров ДО ужатия строк (в AE это один FONT_SIZE): тот же
+    # _fsize_base, что у стопки ниже, — автофит меряет ширину строки тем же размером
+    # (задание BP), а ужимание строк его не касается (доработка ZL).
     # окна групп (ts/te) — здесь, в плане; превью их не считает (задание D). По тем же
     # округлённым times, что ушли в .jsx, — иначе план и AE разойдутся на сотых.
     intro_plan = []
@@ -1364,14 +1582,20 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         # а опускание блока от него не зависит. При якоре «first» блок по числу строк не
         # пересчитывается (задание A1): первая строка на месте, значит и центр блока —
         # как у одной строки, добавленные строки свисают вниз и верх не поднимают.
-        _idy = _intro_i_dy(meta["h"], 1 if _anchor == "first" else len(_grp), _ds)
+        # Высота блока — по тому же межстрочному шагу, что у строк (step_k, задание ZO):
+        # раздвинули строки — блок выше, и под SAFE_TOP его опускают сильнее.
+        _idy = _intro_i_dy(meta["h"], 1 if _anchor == "first" else len(_grp), _ds,
+                           step_k=_line_step_k)
         # Автофит (задание BP / CF): применяется ТОЛЬКО если группу НЕ трогали руками
         # (_gs == 100). Если gs != 100 — пользователь явно задал масштаб рукой (рука
         # сильнее автофита), автофит не урезает его значение.
+        # Зум Камеры 1 в автофит входит, только пока интро к ней привязано (задание ZM):
+        # откреплённый текст её зумом не растёт — ключей нет, значит _zoom_max даёт 100.
         if _gs == 100:
-            _ds = _intro_fit_ds(_lines, _ts, _te, _ds, meta["w"], _G, cam1_scale,
+            _ds = _intro_fit_ds(_lines, _ts, _te, _ds, meta["w"], _G,
+                                cam1_scale if _intro_cam else [],
                                 meta["fps"], st, intro_font_ps, intro_hl_font_ps,
-                                _fsize, hold=(_c1zoom == "jump"))
+                                _fsize_base, holds=holds)
         # ds головной строки = готовое значение автофита: шаблон читает GRP[0].ds,
         # превью — plan.intro[].ds, второй копии расчёта нет.
         if _lines:
@@ -1399,8 +1623,8 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         # жёсткие пиксели, и якорь блока. Считает Python — тем же числам едут и .jsx
         # (INTRO_LY), и превью. В строки (lines) поле не кладём: INTRO_GROUPS обязан
         # остаться прежним (golden).
-        _ys = intro_line_ys(_lines, _line_fonts, _fsize, back_scale, back_step, back_gap,
-                            _any_back, _anchor, meta["h"])
+        _ys = intro_line_ys(_lines, _line_fonts, _fsize_base, back_scale, back_step, back_gap,
+                            _any_back, _anchor, meta["h"], step_k=_line_step_k)
         _intro_ly.append(_ys)
         intro_plan.append({"group": _g, "on2": bool(_on2),
                            "ts": _ts, "te": _te, "fade": _r(_fade), "lines": _lines,
@@ -1675,7 +1899,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
                 '    capLayer.name = "Подпись";\n'
                 '    var capDoc = capLayer.property("ADBE Text Properties").property("ADBE Text Document");\n'
                 f'    var capVal = capDoc.value; capVal.resetCharStyle(); capVal.resetParagraphStyle(); capVal.text = {_jd(caption_text)};\n'
-                f'    try{{ capVal.font = {_js(caption_font)}; }}catch(e){{}}\n'
+                f'    try{{ setFont(capVal, {_js(caption_font)}); }}catch(e){{}}\n'
                 f'    capVal.fontSize = {caption_size:g};\n'
                 f'    capVal.fillColor = {_fill_js(caption_fill)};\n'
                 '    capVal.applyFill = true;\n'
@@ -1747,7 +1971,8 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             '.setValue(INTRO_SHADE.op); }catch(e){}\n'
             "    // порядок как у рото: сначала parent, ПОТОМ позиция и масштаб — AE при привязке\n"
             "    // пересчитывает локальную позицию ребёнка под трансформ нула (задание BK)\n"
-            "    if (cam1null){ shadeLayer.parent=cam1null;\n"
+            + _intro_cam_shade_cmt +
+            "    if (cam1null" + _intro_cam_cond + "){ shadeLayer.parent=cam1null;\n"
             '        try{ shadeLayer.property("ADBE Transform Group").property("ADBE Position")'
             '.setValue([INTRO_SHADE.x, INTRO_SHADE.y]); }catch(e){}\n'
             '        try{ shadeLayer.property("ADBE Transform Group").property("ADBE Scale")'
@@ -1759,17 +1984,50 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             '.setValue([INTRO_SHADE.scale, INTRO_SHADE.scale]); }catch(e){}\n'
             "    }\n"
         )
+    follow_keys = []
+    if bool(st.get("cam1_head_follow")) and xml_path and cams and cams[0].get("path"):
+        from core import headtrack
+        hdata = headtrack.load_cached(xml_path, cams[0]["path"])
+        if hdata is not None:
+            w_src = hdata.get("w") or meta["w"]
+            h_src = hdata.get("h") or meta["h"]
+            target = float(_sv(st, "cam1_head_x"))
+            smooth_s = float(_sv(st, "cam1_head_smooth"))
+            # Заполнение уже сидит в ключах зума (ZE): сюда 100 — слои клипа и рото кам1
+            # заполняют кадр ровно, а fit растит нул вместе с детьми. Порог слежения —
+            # в числах пользователя («150 — точка отсчёта для всего, пересчитывать в уме
+            # нельзя»), а сравнивается он с ключами, которые уже ×k, — значит и порог ×k.
+            min_scale = float(_sv(st, "cam1_head_min")) * _fit_k
+            follow_keys = _cam1_follow_keys(
+                cams=cams, pts=hdata.get("pts", []),
+                w_src=w_src, h_src=h_src,
+                zoom_keys=cam1_scale, holds=holds,
+                fps=_fps0, W=meta["w"], H=meta["h"],
+                cx=cam1_cx, pan_x=pan_x, cam1_fit=100.0,
+                target=target, smooth_s=smooth_s,
+                min_scale=min_scale,
+            )
+
+    # fit = 100 (ZE): заполнение живёт в ключах зума выше, а превью считает ровно так же —
+    # (fit/100)·(ключ/100). Вторая копия умножения развела бы превью и AE.
+    zoom_plan = {"holds": [1 if h else 0 for h in holds], "fit": 100.0,
+                 "cx": cam1_cx, "cy": cam1_cy,
+                 "pan": [pan_x, pan_y], "rot": rot,
+                 "keys": cam1_scale or [], "ease": _zoom_key_eases(cam1_scale or [])}
+    if follow_keys:
+        zoom_plan["follow"] = {"keys": [list(k) for k in follow_keys],
+                               "ease": [[EASE_DEFAULT, EASE_DEFAULT] for _ in follow_keys]}
+
     plan = {
         "fps": meta["fps"], "w": meta["w"], "h": meta["h"], "name": meta["name"],
         "dur": meta["dur"] / meta["fps"],
         "cams": cams_plan,
-        # Камера 1: hold = резкие скачки без отката; keys = [кадр, %], опц. mode (drift);
-        # ease = [in, out] на каждый ключ (задание B); fit = постоянный масштаб-страховка;
+        # Камера 1: holds = тип интерполяции каждого ключа (1=HOLD, 0=BEZIER); keys = [кадр, %], опц. mode (drift);
+        # ease = [in, out] на каждый ключ (задание B); fit = 100 — заполнение кадра уже
+        # в ключах (задание ZE), поле оставлено ради превью: оно множит fit на ключ;
         # cx/cy — точка наезда в долях кадра (задание Q): при наезде неподвижна она,
         # превью рисует её же как transformOrigin и центр масштабирования
-        "zoom": {"hold": _c1zoom == "jump", "fit": float(_sv_or(st, "cam1_fit")),
-                 "cx": cam1_cx, "cy": cam1_cy,
-                 "keys": cam1_scale or [], "ease": _zoom_key_eases(cam1_scale or [])},
+        "zoom": zoom_plan,
         "intro": intro_plan,
         # затемнение под интро (задание IL): None при выключенной галке, иначе готовые
         # числа слоя-фигуры (x/y/scale/w/h/ox/oy/blur/op) — их же рисует предпросмотр
@@ -1777,6 +2035,10 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         # общий масштаб интро, в процентах как в стиле (задание BG): превью множит на него
         # положение и размер блока; поля групп (dx/dy/ds/y) читает оно же — не переименовывать
         "intro_scale": float(_sv_or(st, "intro_scale")),
+        # интро едет с камерой (задание ZM): False — нулы интро и затемнение НЕ привязаны
+        # к нулу Камеры 1. Числом из плана живёт предпросмотр (ipvIntroChild): при False
+        # блок идёт в координатах кадра без зума/сдвига/слежения — второй копии правила нет.
+        "intro_cam": _intro_cam,
         # параметры анимаций интро: превью анимирует теми же числами,
         # что AE — вторая копия не заводится.
         "intro_anims": {
@@ -1798,6 +2060,10 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         },
         "inserts": inserts_plan,
         "layer_order": list(_sv_or(st, "layer_order")),
+        # Цвет камер через Lumetri (задание ZJ): None при выключенной галке, иначе девять
+        # значений стиля (exposure уже с экспозицией клипа). Их же читает превью —
+        # второй копии правил нет: .jsx и предпросмотр берут один plan["lumetri"].
+        "lumetri": lumetri,
         "subs": subs_plan,
         "sub_hide": sub_hide,
         # цвет базовых субтитров (задание CO): [r,g,b] 0..1, превью красит тем же,
@@ -1821,7 +2087,10 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
                   "censor": [[_r(a), _r(b)] for a, b in censor_windows],
                   "sfx": sfx_plan},
         # стопка субтитров и кегль — для отрисовки в предпросмотре (тот же источник, что _ae)
+        # intro_fsize — кегль интро (до ужатия строк, доработка ZL): превью рисует им
+        # интро, fsize (ужатым) — субтитры; в режиме по слову числа равны.
         "posy": _posy, "hl_step": _hl_step, "hl_rise": _hl_rise, "fsize": _fsize,
+        "intro_fsize": _fsize_base,
         # масштаб слоя прекомпа субтитров (задание FE): превью рисует transform: scale()
         # с origin в posy — то же число, что уходит в Scale в .jsx
         "sub_scale": sub_scale,
@@ -1859,6 +2128,10 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     # если реально нужны — при их отсутствии выражение побайтово прежнее.
     _white_expr = "INTRO_FILL" if intro_fill is not None else "[1,1,1]"
     _yellow_expr = "INTRO_HL_FILL" if intro_hl_fill is not None else "HL_FILL"
+    # Ставить ли тритон на жёлтую строку: цвет мидтонов у него тот же, что уезжает в
+    # подстановку _yellow_expr — берём значение из переменных сборки, а не из строки JS
+    # (задание ZN). Яркий цвет — тритон выбеливает букву, обе подстановки пустые.
+    _tritone_on_yellow = _tritone_on(intro_hl_fill if intro_hl_fill is not None else hl_fill)
     _fill_inner = _white_expr
     if _custom_color_used:
         _fill_inner = '(col=="custom"?(cf||[1,1,1]):%s)' % _fill_inner
@@ -2038,9 +2311,10 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         # (INTRO_HL_FILL, если он задан в стиле, иначе HL_FILL). Highlights/Shadows/
         # смешивание — дефолтные. Ставится ПОСЛЕ Glo2; строк без глитча и свечения,
         # как и белый/accent/custom цвет, он не касается. Нет таких строк в сборке —
-        # подстановка пустая, .jsx прежний.
+        # подстановка пустая, .jsx прежний. Яркий цвет (задание ZN) — тоже пустая:
+        # свечение выбеливает букву, и тритон гонит её в Highlights вместо мидтонов.
         _tt_yellow = ""
-        if _any_glitch or _any_fx_glow:
+        if (_any_glitch or _any_fx_glow) and _tritone_on_yellow:
             _tt_yellow = (
                 '            if((anim=="glitch"||fx=="glow") && col=="yellow"){\n'
                 '                var tt=addFX(L,"ADBE Tritone"); setP(tt,"ADBE Tritone-0002",%s);\n'
@@ -2250,11 +2524,14 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     _intro_line_anim += _hl_call_line
     _intro_word_anim += _hl_call_word
 
+    # Тритон в introHlGlow — вторая подстановка того же цвета (задание G); на ярком
+    # цвете её нет, сама функция со свечением (Glo2) остаётся (задание ZN).
     _intro_hl_glow_fn = (
         '\n        function introHlGlow(L){\n'
         '            var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",149); setP(fxGl,"ADBE Glo2-0003",77); setP(fxGl,"ADBE Glo2-0004",0.62);\n'
-        f'            var tt=addFX(L,"ADBE Tritone"); setP(tt,"ADBE Tritone-0002",{_yellow_expr});\n'
-        '        }'
+        + (f'            var tt=addFX(L,"ADBE Tritone"); setP(tt,"ADBE Tritone-0002",{_yellow_expr});\n'
+           if _tritone_on_yellow else "")
+        + '        }'
     ) if _any_intro_yellow else ""
 
     if _any_intro_yellow:
@@ -2418,15 +2695,44 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     disc_lead_decl = (", DISC_LEAD=%g" % disc_lead) if disc_lead is not None else ""
     disc_lead_js = ("" if disc_lead is None else _disc_lead_code + "\n        ")
     disc_lead_js_tail = ("" if disc_lead is None else "\n    " + _disc_lead_code)
+    cam1_moved = (cam1_cx != 0.5 or cam1_cy != 0.5 or pan_x != 0 or pan_y != 0 or bool(follow_keys))
+    cam1_follow_decl = ("\n    var CAM1_FOLLOW=%s;" % _jd([list(k) for k in follow_keys])) if follow_keys else ""
+    cam1_follow_js = (
+        "\n    // слежение за головой по X (задание ZC): ключи на X-координату нула Камеры 1\n"
+        "    if (cam1null && typeof CAM1_FOLLOW !== \"undefined\" && CAM1_FOLLOW.length){\n"
+        "        var pos = cam1null.property(\"ADBE Transform Group\").property(\"ADBE Position\");\n"
+        "        pos.dimensionsSeparated = true;\n"
+        "        var posX = cam1null.property(\"ADBE Transform Group\").property(\"ADBE Position_0\");\n"
+        "        var base = posX.value;\n"
+        "        for (var fi = 0; fi < CAM1_FOLLOW.length; fi++)\n"
+        "            posX.setValueAtTime(CAM1_FOLLOW[fi][0] / FPS, base + CAM1_FOLLOW[fi][1]);\n"
+        "        for (var ki = 1; ki <= posX.numKeys; ki++)\n"
+        "            posX.setInterpolationTypeAtKey(ki, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER);\n"
+        "        var eIns = [], eOuts = [];\n"
+        "        for (var ki2 = 0; ki2 < posX.numKeys; ki2++){\n"
+        "            eIns.push(%(ease_default)g); eOuts.push(%(ease_default)g);\n"
+        "        }\n"
+        "        temporalEase(posX, eIns, eOuts);\n"
+        "    }\n"
+    ) % {"ease_default": EASE_DEFAULT} if follow_keys else ""
     # служебное для сборки: готовые токены шаблона (не входят в контракт плана)
     plan["_ae"] = dict(
         w=meta["w"], h=meta["h"], fps=_fps_js(meta["fps"]), dur=meta["dur"] / meta["fps"],
         name=_js(meta["name"]), cams=cams_js, subs=subs_js, cam1scale=cam1scale_js,
         cam1_ease=cam1_ease_js,
-        cam1hold="true" if _c1zoom == "jump" else "false",
-        cam1_fit=float(_sv_or(st, "cam1_fit")),
+        cam1holds=_jd([1 if h else 0 for h in holds]),
+        # Слои клипа и рото кам1 заполняют кадр ровно (задание ZE): их прежний масштаб
+        # переехал в ключи зума нула, иначе фит растил бы кадр вокруг СВОЕГО центра.
+        cam1_fit=100.0,
+        cam1_follow_decl=cam1_follow_decl,
+        cam1_follow_js=cam1_follow_js,
         intro_scale=float(_sv_or(st, "intro_scale")), intro_y=float(_sv_or(st, "intro_y")),
         intro_y2=float(_sv_or(st, "intro_y2")), intro_on2=_jd(_intro_on2),
+        # Открепление интро от Камеры 1 (задание ZM): объявление INTRO_CAM и добавка
+        # «&& INTRO_CAM» к условию привязки. При дефолтном True обе подстановки пустые —
+        # .jsx прежний байт в байт (golden).
+        intro_cam_decl=_intro_cam_decl,
+        intro_cam_cond=_intro_cam_cond,
         # Подъём интро над видеовставкой: все подстановки пустые, когда front выключен.
         intro_front_decl=_intro_front_decl,
         intro_front_arr_decl=_intro_front_arr_decl,
@@ -2449,6 +2755,10 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         intro_idy=_jd(intro_idy),
         # Длительность фейд-аута прекомпов интро (задание IK)
         intro_fade=intro_fade,
+        # Межстрочный шаг строк интро в пикселях (задание ZO): 160 × intro_line_step/100.
+        # При дефолтных 100% %g печатает ровно «160» — .jsx прежний байт в байт (golden).
+        # Число строк и центровку блока считает Python (intro_line_ys) — второго шага нет.
+        intro_line_step_px=INTRO_LINE_STEP * _line_step_k,
         # Окна фейд-аута прекомпов с глитчем (ПРАВКА 3/4): подстановки непустые только
         # при глитче в ролике, иначе .jsx прежний (golden).
         intro_fx_decl=_intro_fx_decl,
@@ -2463,25 +2773,29 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         # Камера 1: якорь и позиция нула считаются от точки наезда (cx/cy доли кадра).
         # При дефолте 0.5/0.5 это ровно то, что AE ставит сам, — кода нет вовсе.
         cam1_cx=cam1_cx, cam1_cy=cam1_cy,
-        cam1_anchor=("" if (cam1_cx == 0.5 and cam1_cy == 0.5) else
+        cam1_anchor=("" if not cam1_moved else
                      ("\n    // точка наезда камеры (задание Q): anchor+position от неё, "
                       "неподвижна именно она\n"
                       "    if(cam1null){ cam1null.property(\"ADBE Transform Group\").property(\"ADBE Anchor Point\").setValue([%g,%g]);"
                       " cam1null.property(\"ADBE Transform Group\").property(\"ADBE Position\").setValue([%g,%g]); }"
                       % (cam1_cx * meta["w"] - meta["w"] / 2, cam1_cy * meta["h"] - meta["h"] / 2,
-                         cam1_cx * meta["w"], cam1_cy * meta["h"]))),
+                         cam1_cx * meta["w"] + pan_x, cam1_cy * meta["h"] + pan_y))),
         # Рото привязывается к нулу ПОСЛЕ того, как нул получил якорь точки наезда и
         # ключи зума (задание BK). AE при присвоении parent сохраняет мировое положение
         # слоя и пересчитывает локальную Position ребёнка под трансформ нула на ТЕКУЩИЙ
         # момент — без принудительной позиции рото уезжает на смещение точки наезда от
         # центра кадра (Scale рядом уже перезадаётся по той же причине). При дефолтной
         # точке 0.5/0.5 смещения нет — подстановки пустые, .jsx прежний (golden).
-        roto_pos_cc=("" if (cam1_cx == 0.5 and cam1_cy == 0.5) else
+        roto_pos_cc=("" if not cam1_moved else
                      ("\n            // AE компенсирует позицию при привязке по трансформу нула на"
                       "\n            // текущий момент, а нул уже несёт якорь точки наезда и ключи зума"
                       "\n            try{ cc.property(\"ADBE Transform Group\").property(\"ADBE Position\").setValue([0,0]); }catch(e){}")),
-        roto_pos_mk=("" if (cam1_cx == 0.5 and cam1_cy == 0.5) else
+        roto_pos_mk=("" if not cam1_moved else
                      ("\n            try{ mk.property(\"ADBE Transform Group\").property(\"ADBE Position\").setValue([0,0]); }catch(e){}")),
+        cam1_rot_decl=("\n    var CAM1_ROT=%g;" % rot if rot != 0 else ""),
+        cam1_rot_cam=(' if(!isSecond){ try{ lay.property("ADBE Transform Group").property("ADBE Rotate Z").setValue(CAM1_ROT); }catch(e){} }' if rot != 0 else ""),
+        roto_rot_cc=('\n            if(ci==0){ try{ cc.property("ADBE Transform Group").property("ADBE Rotate Z").setValue(CAM1_ROT); }catch(e){} }' if rot != 0 else ""),
+        roto_rot_mk=('\n            if(ci==0){ try{ mk.property("ADBE Transform Group").property("ADBE Rotate Z").setValue(CAM1_ROT); }catch(e){} }' if rot != 0 else ""),
         # вставки Кам2: точка покоя по X и Y в px (в стиле insert_c2_x/y, долями кадра).
         # Дефолт 0.5/0.172 — X остаётся W/2, Y как INS_C2_Y_FR*H: объявление INS_C2_X
         # и подстановка в позицию пустые, .jsx прежний (golden).
@@ -2545,10 +2859,20 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         intro_back_scale_wpx=_intro_back_scale_wpx,
         intro_glow=float(_sv(st, "intro_glow")),
         exposure=float(exposure or 0), roto="[]",
+        # Цвет камер через Lumetri (задание ZJ): при выключенной галке подстановки несут
+        # ровно прежний текст шаблона и пустое объявление — .jsx побайтово как раньше
+        # (golden). При включённой: LUMETRI + applyLumetri вместо покадровой экспозиции
+        # на клипах камер и их рото-копиях (экспозиция клипа уже внутри LUMETRI.exposure).
+        lumetri_decl=_lumetri_decl(lumetri),
+        lumetri_cam=(LUMETRI_CAM_ON if lumetri else LUMETRI_CAM_OFF),
+        lumetri_roto=(LUMETRI_ROTO_ON if lumetri else LUMETRI_ROTO_OFF),
         inserts=inserts_js, trans=_js(trans) if trans else '""',
         trans_sfx=_js(trans_sfx) if trans_sfx else '""',
         hl_rise=_hl_rise, hl_step=_hl_step,
         hl_ease_out=HL_EASE_OUT, hl_ease_in=HL_EASE_IN,
+        # Жёлтые в строке и блюр появления (задание ZH): при дефолтах обе подстановки
+        # пусты — .jsx прежний байт в байт (golden).
+        hl_row_decl=hl_row_decl, hl_blur_decl=hl_blur_decl, hl_blur_fn=hl_blur_fn,
         ease_default=EASE_DEFAULT,
         disclaimer=_js_multiline(disclaimer) if disclaimer else '""',
         # Кегль дисклеймера строкой: целое 47 печатается ровно «47» (было %d), ужатый под
@@ -2582,7 +2906,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
                      "\n    var dle=main.layers.addText(DISCLAIMER);"
                      "\n    var dsp=dle.property(\"ADBE Text Properties\").property(\"ADBE Text Document\");"
                      "\n    var dd=dsp.value; dd.resetCharStyle(); dd.resetParagraphStyle(); dd.text=DISCLAIMER;"
-                     "\n    try{dd.font=FONT;}catch(e){} dd.fontSize=DISC_SIZE; dd.fillColor=[1,1,1]; dd.applyFill=true;"
+                     "\n    try{setFont(dd, FONT);}catch(e){} dd.fontSize=DISC_SIZE; dd.fillColor=[1,1,1]; dd.applyFill=true;"
                      "\n    try{dd.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}"
                      + disc_lead_js_tail +
                      "\n    dsp.setValue(dd);"
@@ -2598,6 +2922,10 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         # окажется за краем и человек его не увидит; выключено — пустая подстановка
         comp_dur=("+%.4g" % disc_sec) if disc_end_on else "",
         fsize=_fsize,
+        # Кегль текста интро в шаблоне (доработка ZL): при ужатых строках субтитров introDoc
+        # обязан ставить СВОЙ кегль, а не FONT_SIZE. Кегли равны (режим по слову) —
+        # подстановка ровно "FONT_SIZE", и .jsx прежний байт в байт (golden).
+        intro_fsize_js=("FONT_SIZE" if _fsize_base == _fsize else str(_fsize_base)),
         posy=_posy,
         font=_js(font_ps), hl_font=_js(hl_font_ps), hlfill=_fill_js(hl_fill),
         fill=_fill_js(sub_fill if sub_fill else [1, 1, 1]),
@@ -2628,6 +2956,13 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             if (_sv_or(st, "insert_fx")) != "none" else ""),
         ins_c1on2_x=float(_sv_or(st, "insert_c1on2_x")),
         ins_c1on2_y=float(_sv_or(st, "insert_c1on2_y")),
+        # Подложка фото-вставок (задание ZK): дефолты — ровно тот текст, что был в шаблоне,
+        # поэтому без единой вставки с галкой .jsx побайтово прежний (golden). Вставка с
+        # галкой переопределяет их ниже — там же и объяснение формул.
+        ins_plate_decl="",
+        ins_plate_layer="",
+        ins_photo_pos="[W/2, H/2]",
+        ins_photo_scale="[_f*100,_f*100]",
         sub_loop=sub_loop,
         sub_shadow_js=sub_shadow_js,
         sub_bg_js=sub_bg_js,
@@ -2660,6 +2995,38 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         caption_js=caption_js)
     if sub_words_per_row > 1:
         plan["sub_step"] = _sub_step
+    if _any_plate:
+        # Подложка фото-вставок (задание ZK). Подстановки непустые ТОЛЬКО когда файл в стиле
+        # задан и хоть у одной вставки есть галка — иначе .jsx побайтово прежний (golden).
+        # Путь подложки уезжает в .jsx ОДИН раз (INS_PLATE в шапке), а решение «этой вставке
+        # подложку» шаблон принимает по полю ins.plate: у остальных вставок прекомп, маска и
+        # формулы те же, что были. Слой плашки добавляется ПЕРВЫМ (фото встанет поверх неё),
+        # один импорт на весь .jsx (imp дедуплицирует). Масштаб фото и сдвиг внутри прекомпа
+        # посчитал Python (_ins_plate): в .jsx едут готовые ins.ps/px/py, своих формул
+        # шаблон не держит.
+        plan["_ae"]["ins_plate_decl"] = (
+            "    var INS_PLATE = %s;   // подложка вставок с галкой «на подложке» (задание ZK): путь или пусто\n"
+            % _js(_plate_path))
+        plan["_ae"]["ins_plate_layer"] = (
+            "        // подложка: слой ПЕРВЫМ в прекомпе, только у вставок с галкой «на подложке»\n"
+            "        if(ins.plate && INS_PLATE){ var plateItem=imp(INS_PLATE);\n"
+            "            if(plateItem){ toBin(plateItem,\"Вставки\");\n"
+            "                var plateL=pc.layers.add(plateItem);\n"
+            "                try{ plateL.property(\"ADBE Transform Group\").property(\"ADBE Position\").setValue([W/2,H/2]);\n"
+            "                    var plateW=plateItem.width; if(plateW){ var plateF=W/plateW;\n"
+            "                        plateL.property(\"ADBE Transform Group\").property(\"ADBE Scale\").setValue([plateF*100,plateF*100]); } }catch(e){} } }\n"
+            "        ")
+        plan["_ae"]["ins_photo_pos"] = (
+            "(ins.plate&&INS_PLATE)?[W/2+ins.px, H/2+ins.py]:[W/2, H/2]")
+        plan["_ae"]["ins_photo_scale"] = (
+            "(ins.plate&&INS_PLATE)?[(ins.ps||100),(ins.ps||100)]:[_f*100,_f*100]")
+        # маска-скругление — только НЕ на подложке; у остальных вставок она остаётся
+        if plan["_ae"]["ins_mask"]:
+            plan["_ae"]["ins_mask"] = (
+                "if (!(ins.plate && INS_PLATE)) {\n"
+                + "\n".join(("    " + _ln) if _ln.strip() else _ln
+                            for _ln in plan["_ae"]["ins_mask"].split("\n"))
+                + "\n        }")
     return plan
 
 
@@ -2749,6 +3116,25 @@ def to_ae_full(xml_path, jsx_path=None, return_source=False, emit=console_emit, 
     (meta["name"], то самое, по которому om.file пишет .mov). Рендер ждёт файл по нему,
     а не по стему .jsx — на наборе это разные вещи (файл 01_C0233.xml → композиция C0233)."""
     emit = wrap_emit(emit)
+    st_pre = _styles.resolve(kw.get("style"))
+    if bool(st_pre.get("cam1_head_follow")):
+        try:
+            meta_pre, cams_pre, _, _ = parse_full(xml_path, ncams=kw.get("ncams"))
+            if cams_pre and cams_pre[0].get("path") and os.path.isfile(cams_pre[0]["path"]):
+                fps0 = meta_pre["fps"] or 60
+                ranges = []
+                for cl in cams_pre[0].get("clips", []):
+                    if cl[4] and cl[1] > cl[0]:
+                        in_s = cl[2] / float(fps0)
+                        dur_s = (cl[1] - cl[0]) / float(fps0)
+                        ranges.append((in_s, in_s + dur_s))
+                if ranges:
+                    from core import headtrack
+                    headtrack.load_or_track(xml_path, cams_pre[0]["path"], ranges, emit=emit, cancel=cancel, fps=10)
+        except Cancelled:
+            raise
+        except Exception as ex:
+            emit("слежение за головой пропущено: {err}", err=ex)
     plan = scene_plan(xml_path, emit=emit, cancel=cancel, hl_count=hl_count, hl_joins=hl_joins, **kw)
     if comp_name_out is not None:
         comp_name_out.append(plan.get("name") or os.path.splitext(os.path.basename(xml_path))[0])

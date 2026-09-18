@@ -401,7 +401,6 @@
             <div class="row" style="align-items:center;margin-bottom:10px">
               <div><label for="insp_subwords">Слов в строке <span class="i" data-t="Сколько слов группировать в одну строку (1 = по одному слову, как раньше).">!</span></label><input type="number" id="insp_subwords" min="1" max="6" step="1" value="1" style="width:80px" onchange="inspSubEdit()"></div>
               <div><label for="insp_subrows">Строк <span class="i" data-t="Максимум строк при переносе: 1 (ужимать шрифт по ширине) или 2 (разбивать на две строки).">!</span></label><select id="insp_subrows" onchange="inspSubEdit()"><option value="1">1 (ужимать)</option><option value="2">2 (переносить)</option></select></div>
-              <span id="sub_introwarn" class="hint" style="display:none;align-self:center;margin-top:14px;color:var(--mut)" data-t="Интро режется из слов субтитров, со строками длиннее одного слова интро пока не собирается.">интро пока не собирается</span>
             </div>
             <div class="sect" style="margin-top:6px;margin-bottom:8px">Строки субтитров <span class="i" data-t="Список строк субтитров. Клик по строке — перемотка превью на неё.">!</span></div>
             <div id="subrowslist" class="subrowslist" data-noi18n></div>
@@ -605,6 +604,20 @@
             <span style="display:flex;gap:8px;flex:1;min-width:0">
               <input id="spk_extra_b" placeholder="пусто — без приписки" style="flex:1;min-width:0">
               <select id="spk_pos_b" style="min-width:104px">
+                <option value="suffix">сзади</option>
+                <option value="prefix">спереди</option>
+              </select></span></div>
+          <div class="setrow"><label for="spk_pos_pa">Подложка: приписка к промпту 1 <span class="i" data-t="Что дописывать к предмету у вставок с галкой «на подложке» — кнопка 1: подложка уже из стиля, приписка про сам предмет. Клеится пробелом. Пусто — генерим предмет как есть.">!</span></label>
+            <span style="display:flex;gap:8px;flex:1;min-width:0">
+              <input id="spk_extra_pa" placeholder="пусто — без приписки" style="flex:1;min-width:0">
+              <select id="spk_pos_pa" style="min-width:104px">
+                <option value="suffix">сзади</option>
+                <option value="prefix">спереди</option>
+              </select></span></div>
+          <div class="setrow"><label for="spk_pos_pb">Подложка: приписка к промпту 2 <span class="i" data-t="Вторая приписка для вставок на подложке — кнопка 2: второй стиль фотки (например «вырезан по контуру»). Пусто — генерим предмет как есть.">!</span></label>
+            <span style="display:flex;gap:8px;flex:1;min-width:0">
+              <input id="spk_extra_pb" placeholder="пусто — без приписки" style="flex:1;min-width:0">
+              <select id="spk_pos_pb" style="min-width:104px">
                 <option value="suffix">сзади</option>
                 <option value="prefix">спереди</option>
               </select></span></div>

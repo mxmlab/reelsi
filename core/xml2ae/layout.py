@@ -6,6 +6,7 @@
 какой кейс её задал.
 """
 import heapq
+import math
 import os
 from core import fonts as _fonts
 from .jsutil import _r
@@ -19,6 +20,9 @@ from .parse import is_out_dir
 INS_CARD_W, INS_CARD_H = 1030.0, 560.0
 INS_CARD_H_CAM2 = 495.0            # кам2 садится мельче кам1 (сохраняем прежнее отношение 44/50)
 INS_MASK_SQUARE_AR = 2.2           # должно совпадать с одноимённой константой в AE_FULL
+# Сторона коробки, в которую вписано фото на подложке, долей стороны плашки (задание ZI):
+# фото занимает 75% плашки, остальное — её поля.
+INS_PLATE_INNER = 0.75
 _IMG_SIZE_CACHE = {}
 
 
@@ -77,6 +81,41 @@ def _ins_card(media, style, mw, mh, sc, comp_w=1080, comp_h=1920):
             "pw": _r(comp_w * s, 2), "ph": _r(photo_h * s, 2)}
 
 
+def _ins_plate(media, plate, style, sc, x, y, comp_w=1080, comp_h=1920, plate_scale=100.0):
+    """Геометрия фото-вставки на подложке (задания ZI/ZK) — плашка из стиля снизу,
+    фото сверху, маски-скругления нет. Зовётся ТОЛЬКО для вставок с галкой «на подложке»
+    (поле plate, задание ZK): у остальных прежний путь — карточка и маска.
+
+    Подложка у всех таких вставок ОДНА и стоит одинаково: масштаб и положение со страницы
+    вставок двигают только фото ВНУТРИ прекомпа, поэтому сдвиг уезжает не в точку покоя
+    слоя (её считает шаблон), а в px/py прекомпа (экранные px делятся на масштаб слоя).
+    Масштаб слоя прекомпа (scale) — плашка, вписанная в «карточку»: та же коробка, что
+    у _ins_scale, только роль фото играет плашка.
+
+    -> dict(scale, ps, px, py, card) или None, если подложки нет. Размеры плашки не
+    прочитались — считаем её квадратной (plate_h_pc = comp_w): собрать вставку лучше,
+    чем уронить её на битом файле. Размеров фото нет — ps=100 (не растягиваем).
+    """
+    if not plate:
+        return None
+    w = float(comp_w)
+    pw, ph = (_img_size(plate) or (0, 0))
+    plate_h_pc = (w * ph / pw) if (pw and ph) else w         # высота плашки в прекомпе
+    card_h = INS_CARD_H if style == "cam1" else INS_CARD_H_CAM2
+    s_l = min(INS_CARD_W / w, card_h / plate_h_pc) * 100 * (float(plate_scale or 100) / 100)
+    k = s_l / 100.0
+    box = INS_PLATE_INNER * min(w, plate_h_pc)               # коробка фото внутри плашки
+    iw, ih = (_img_size(media) or (0, 0))
+    ps = (min(box / iw, box / ih) * 100 * (float(sc or 100) / 100)) if (iw and ih) else 100.0
+    # card — для предпросмотра: плашка и фото НА ЭКРАНЕ в осевшем масштабе, фото —
+    # сдвигом от центра плашки (те самые ручные x/y со страницы вставок), px/ph не нужны
+    return {"scale": _r(s_l, 2), "ps": _r(ps, 2),
+            "px": _r(float(x or 0) / k, 2), "py": _r(float(y or 0) / k, 2),
+            "card": {"w": _r(w * k, 2), "h": _r(plate_h_pc * k, 2), "plate": plate,
+                     "photo": {"w": _r(iw * ps / 100 * k, 2), "h": _r(ih * ps / 100 * k, 2),
+                               "x": _r(x or 0, 2), "y": _r(y or 0, 2)}}}
+
+
 def _intro_group_window(times, gi, n_groups):
     """Окно группы интро (сек): (ts, te) — РОВНО формула inAt/outEnd из AE_FULL.
     times — моменты слов группы (сек, округлённые как в плане). gi — индекс группы,
@@ -107,7 +146,7 @@ INTRO_F_DUR, INTRO_HOLD, INTRO_F_OUT = 0.3, 1.0, 0.75
 # AE_FULL: iDy=0, iTop=H/2 - 520.7894 - (nL/2)*LINE_STEP*(iSc/100); if(iTop<SAFE_TOP)
 # iDy=SAFE_TOP-iTop. iSc — базовый масштаб прекомпа 96.8 × gs/100.
 INTRO_BASE_Y = 520.7894     # база позиции прекомпа интро, px (подъём от центра кадра)
-INTRO_LINE_STEP = 160.0     # шаг строки внутри прекомпа, px
+INTRO_LINE_STEP = 160.0     # шаг строки внутри прекомпа, px (= 100% ключа intro_line_step)
 INTRO_SAFE_TOP = 285.0      # верх блока не выше этой линии кадра — иначе опускаем
 INTRO_SCALE = 96.8          # базовый масштаб прекомпа при gs=100, %%
 # Запас автофита интро (задание BP): строка не шире этой доли кадра даже на максимуме
@@ -131,14 +170,18 @@ SHADE_DY = -215                     # позиция слоя: y = intro_y + SHA
 SHADE_SCALE = 94                    # масштаб слоя, % (среднее по роликам)
 
 
-def _intro_i_dy(h, n_lines, gs):
+def _intro_i_dy(h, n_lines, gs, step_k=1.0):
     """Опускание блока интро под INTRO_SAFE_TOP, px (задание Q2). От неужатого масштаба
     (96.8·gs/100) — автофит длинных строк (INTRO_FIT_W) знает только AE, а его редкий
     случай осознанно отдаём: превью сходится с AE всегда, очень длинная строка получает
     чуть другое опускание, чем сегодня. Точность как в старом
-    шаблоне: без округления, чтобы .jsx не поехал на сотых."""
+    шаблоне: без округления, чтобы .jsx не поехал на сотых.
+
+    step_k — множитель межстрочного интервала (intro_line_step/100, задание ZO): высота
+    блока растёт вместе с шагом, поэтому под SAFE_TOP его опускают по ТОМУ ЖЕ шагу, что
+    стоит в раскладке строк. При 1.0 числа прежние."""
     i_sc = INTRO_SCALE * (float(gs) if gs else 100.0) / 100.0
-    i_top = h / 2 - INTRO_BASE_Y - (n_lines / 2.0) * INTRO_LINE_STEP * (i_sc / 100.0)
+    i_top = h / 2 - INTRO_BASE_Y - (n_lines / 2.0) * (INTRO_LINE_STEP * step_k) * (i_sc / 100.0)
     if i_top < INTRO_SAFE_TOP:
         return INTRO_SAFE_TOP - i_top
     return 0.0
@@ -151,7 +194,7 @@ def _line_ink(ps_name, line, size_px):
 
 
 def intro_line_ys(lines, fonts, fsize, back_scale, back_step, back_gap,
-                  any_back_in_clip, anchor, h):
+                  any_back_in_clip, anchor, h, step_k=1.0):
     """Y базовых линий строк интро в координатах прекомпа (высота h), по числу строк
     (задание A1). Раньше шаг был жёсткими пикселями ТОЛЬКО в шаблоне (LINE_STEP=160,
     160*back_step до строки заднего плана) и о шрифте не знал: после смены шрифта малые
@@ -173,10 +216,16 @@ def intro_line_ys(lines, fonts, fsize, back_scale, back_step, back_gap,
     нижние (блок не поднимается); "center" — как раньше: без back h/2 - (nL-1)/2*LINE_STEP,
     с back и головой не back — h/2 - (nL-1)*60, иначе h/2 - totH/2. Округление до сотых:
     столько же знаков, сколько у остальных чисел .jsx.
+
+    step_k — множитель межстрочного интервала (intro_line_step/100, задание ZO): ОДИН на
+    весь шаг строки — базовые 160 px и «60» центровки с back. Зазор по чернилам не
+    множится: он и так не меньше базового, а с ростом шага базовый его догоняет.
+    При 1.0 числа прежние байт в байт (golden).
     """
     n = len(lines)
     if n <= 0:
         return []
+    line_step = INTRO_LINE_STEP * step_k
 
     def _back(i):
         return bool(lines[i].get("back"))
@@ -187,14 +236,14 @@ def intro_line_ys(lines, fonts, fsize, back_scale, back_step, back_gap,
     steps = []
     for i in range(1, n):
         if not any_back_in_clip:
-            steps.append(INTRO_LINE_STEP)
+            steps.append(line_step)
             continue
         if _back(i):
-            base = INTRO_LINE_STEP * back_step
+            base = line_step * back_step
         elif _back(i - 1):
-            base = INTRO_LINE_STEP * 0.75
+            base = line_step * 0.75
         else:
-            base = INTRO_LINE_STEP
+            base = line_step
         # Зазор между буквами: хвост вниз ПРЕДЫДУЩЕЙ строки плюс высота букв этой.
         # Высоту не знаем (шрифта нет) — базовый шаг, как в шаблоне.
         if _back(i) and back_gap is not None:
@@ -207,9 +256,9 @@ def intro_line_ys(lines, fonts, fsize, back_scale, back_step, back_gap,
     if anchor == "first":
         ys = [h / 2.0]
     elif not any_back_in_clip:
-        ys = [h / 2.0 - (n - 1) / 2.0 * INTRO_LINE_STEP]
+        ys = [h / 2.0 - (n - 1) / 2.0 * line_step]
     elif not _back(0) and n > 1:
-        ys = [h / 2.0 - (n - 1) * 60.0]
+        ys = [h / 2.0 - (n - 1) * 60.0 * step_k]
     else:
         ys = [h / 2.0 - sum(steps) / 2.0]
     for stp in steps:
@@ -341,6 +390,13 @@ def _cam1_pos_keys(t0, t1, noexit, ix, iy, fps, cx=0.0, cy=0.0):
 # • ОДНА КАМЕРА: фиксированный паттерн DEFAULT_CAM1_SCALE (медленный наезд → сброс на кате),
 #   правится вручную в AE под конкретное видео.
 ZOOM_BIG, ZOOM_SMALL, ZOOM_PUNCH = 182.0, 100.0, 62   # 182%→100% за 62 кадра (bezier 0.35,0.01,0.10,0.99)
+# Сняты с эталона C1456-011: заход 98 кадров, наезд 96, отъезд 88 при 60 fps (задание ZA)
+TAKE_LEAD_S = 1.6
+TAKE_IN_S = 1.6
+TAKE_OUT_S = 1.5
+TAKE_TAIL_S = 2.0
+# Подъезд не начинается раньше 0.3 с после ката — иначе он сливается с самим скачком
+TAKE_YELLOW_MIN_LEAD_S = 0.3
 
 DEFAULT_CAM1_SCALE = [
     (0, 100), (562, 110.9), (987.004, 125), (1074, 100),
@@ -383,19 +439,28 @@ def _cam1_zoom_keys(cams, big=ZOOM_BIG, small=ZOOM_SMALL, punch=ZOOM_PUNCH,
     return keys
 
 
-def _cam1_jump_keys(cams, lo=100.0, hi=140.0, min_diff=12.0, fps=60.0, start=True):
-    """Джамп-кат зум кам1: на КАЖДОЙ смене показываемой камеры (и в кадре 0) скейл ПРЫГАЕТ на
-    случайное значение 100–140%% без анимации (HOLD-кейфреймы ставит JSX по CAM1_HOLD).
-    Если start=False — в кадре 0 значение 100 вместо случайного.
-    Одна камера — прыжки на собственных склейках кам1 (см. _zoom_cut_frames), не по таймеру.
-    Детерминировано (seed от кадров реза), соседние значения отличаются минимум на
-    min_diff, чтобы скачок был заметен."""
+def _cam1_jump_keys(cams, lo=100.0, hi=140.0, min_diff=12.0, fps=60.0, start=True,
+                    big=ZOOM_BIG, punch=ZOOM_PUNCH, take=None):
+    """Джамп-кат зум кам1: на КАЖДОЙ смене показываемой камеры скейл ПРЫГАЕТ на случайное
+    значение 100–140%% (HOLD-кейфреймы, задание ZA).
+    Кадр 0 со start=True: плавный наезд big→v за punch кадров (ease out 35 / in 90).
+    Если start=False: в кадре 0 значение 100.0 без наезда.
+    В длинных тейках (seg_end - f >= take['min_s']*fps) при переданном take:
+    плавный подъезд к v*m, удержание take['hold_s'] с, отъезд обратно к v (если влезает до ката).
+    Возвращает 4-элементные ключи: [(frame, pct, mode, hold), ...].
+    Детерминировано (seed от кадров реза), значения на катах совпадают с прежними."""
     import random as _rnd
     fps = int(round(float(fps) or 60))
+    big = float(big if big is not None else ZOOM_BIG)
+    punch = int(punch if punch is not None else ZOOM_PUNCH)
     frames = sorted(set([0] + _zoom_cut_frames(cams, fps=fps)))  # ТОЛЬКО реальные срезы кадра
+    dur = max((cl[1] for c in cams for cl in c["clips"] if cl[4]), default=frames[-1] + fps)
+    seg_ends = frames[1:] + [max(dur, frames[-1] + 1)]           # конец каждого интервала (=след. смена / конец видео)
     rng = _rnd.Random(",".join(str(f) for f in frames))          # тот же таймлайн -> тот же разброс
+    trng = _rnd.Random("t," + ",".join(str(f) for f in frames)) if take else None
     keys, prev = [], None
     for idx, f in enumerate(frames):
+        seg_end = int(round(seg_ends[idx]))
         if idx == 0 and not start:
             v = 100.0
         else:
@@ -403,7 +468,51 @@ def _cam1_jump_keys(cams, lo=100.0, hi=140.0, min_diff=12.0, fps=60.0, start=Tru
                 v = round(rng.uniform(lo, hi), 1)
                 if prev is None or abs(v - prev) >= min_diff:
                     break
-        keys.append((f, v)); prev = v
+        prev = v
+
+        if idx == 0:
+            if not start:
+                keys.append((f, 100.0, 0, 1))
+                pe = None
+            else:
+                pe = min(punch, max(1, seg_end - 2))
+                keys.append((0, big, 1, 0))
+                keys.append((pe, v, 2, 1))
+        else:
+            keys.append((f, v, 0, 1))
+            pe = None
+
+        # Наезд в тейке (только если take не None и seg_end - f >= take["min_s"]*fps)
+        if take is not None and (seg_end - f) >= take["min_s"] * fps:
+            m = 1.0 + trng.uniform(take["lo"], take["hi"]) / 100.0
+            vm = round(v * m, 1)
+            take_words = take.get("words")
+            picked_w = None
+            if take_words:
+                min_lead = round(TAKE_YELLOW_MIN_LEAD_S * fps)
+                in_frames = round(TAKE_IN_S * fps)
+                for w in take_words:
+                    if f < w < seg_end:
+                        cand_b = w
+                        cand_a = cand_b - in_frames
+                        if cand_a >= f + min_lead and (idx != 0 or not start or pe is None or cand_a >= pe + 1) and cand_b <= seg_end - 2:
+                            picked_w = w
+                            a = cand_a
+                            b = cand_b
+                            break
+            if picked_w is None:
+                a = f + round(TAKE_LEAD_S * fps)
+                if idx == 0 and start and pe is not None:
+                    a = max(a, pe + 1)
+                b = a + round(TAKE_IN_S * fps)
+            if b <= seg_end - 2:
+                keys.append((a, v, 1, 0))
+                keys.append((b, vm, 2, 1))
+                c = b + round(take["hold_s"] * fps)
+                d = c + round(TAKE_OUT_S * fps)
+                if d <= seg_end - round(TAKE_TAIL_S * fps):
+                    keys.append((c, vm, 1, 0))
+                    keys.append((d, v, 2, 1))
     return keys
 
 
@@ -653,35 +762,43 @@ def _zoom_key_eases(keys):
     return out
 
 
-def _zoom_max(keys, fps, ts, te, hold=False):
-    """Максимум зума Камеры 1 (в %%, как в ключах) на окне [ts, te] сек (задание BP).
+def _zoom_key_holds(keys, legacy_hold=False):
+    """[bool, ...] — тип интерполяции отрезка от КАЖДОГО ключа до следующего (задание ZA).
+    True = HOLD (значение держится до следующего ключа); False = BEZIER (плавно).
+    Для 4-элементных ключей (f, pct, mode, hold) берётся k[3];
+    для остальных (ручной cam1_scale, старые данные) — fallback legacy_hold.
+    Длина совпадает с len(keys)."""
+    return [bool(k[3]) if len(k) >= 4 else bool(legacy_hold) for k in (keys or [])]
+
+
+def _zoom_max(keys, fps, ts, te, holds=None, hold=None):
+    """Максимум зума Камеры 1 (в %%, как в ключах) на окне [ts, te] сек (задание BP / ZA).
 
     Группа живёт секунду с лишним, и наезд успевает случиться ВНУТРИ окна — брать зум
-    в момент старта нельзя. Для плавных (pulse/drift) значения между ключами у
-    стандартных ease-кривых не выходят за концы отрезка, поэтому достаточно ключей
-    внутри окна и его границ (линейная интерполяция). Для джамп-ката (hold) значение
-    ДЕРЖИТСЯ от своего ключа до следующего — берём максимум ключей, чей интервал
-    [frame, next_frame) пересекает окно (линейная интерполяция тут занизила бы пик).
-    Ключей нет — 100 (зума нет)."""
-    keys = [(k[0], float(k[1])) for k in (keys or []) if len(k) >= 2]
-    if not keys:
+    в момент старта нельзя.
+    Отрезок i с holds[i]==True вносит в максимум v_i, если [f_i, f_{i+1}) пересекает окно
+    (последний ключ — до бесконечности);
+    плавный отрезок (holds[i]==False) — линейные значения на концах пересечения с окном.
+    До первого ключа — keys[0][1]. Ключей нет — 100.0 (зума нет).
+    """
+    raw_keys = [(k[0], float(k[1])) for k in (keys or []) if len(k) >= 2]
+    if not raw_keys:
         return 100.0
     fps = float(fps) or 60.0
-    if hold:
-        # джамп-кат: значение держится от СВОЕГО ключа до следующего, последний — навсегда.
-        # Активен ключ, чей интервал [f, next_f) пересекает окно.
-        n = len(keys)
-        best = 0.0
-        for i, (f, v) in enumerate(keys):
-            f_end = keys[i + 1][0] if i + 1 < n else float("inf")
-            if f / fps <= te + 1e-9 and f_end / fps > ts - 1e-9:
-                best = max(best, v)
-        if best:
-            return best
-        return keys[0][1]            # окно до первого ключа — зум статичен, как до ключей
-    pts = [[f / fps, v] for f, v in keys]
+    n = len(raw_keys)
+    if holds is None:
+        if hold is not None:
+            holds = [bool(hold)] * n
+        else:
+            holds = _zoom_key_holds(keys, legacy_hold=False)
+    elif isinstance(holds, bool):
+        holds = [holds] * n
+    else:
+        holds = [bool(h) for h in holds]
 
-    def _at(t):
+    pts = [[f / fps, v] for f, v in raw_keys]
+
+    def _linear_at(t):
         if t <= pts[0][0]:
             return pts[0][1]
         if t >= pts[-1][0]:
@@ -691,8 +808,43 @@ def _zoom_max(keys, fps, ts, te, hold=False):
                 return v0 if t1 <= t0 else v0 + (v1 - v0) * (t - t0) / (t1 - t0)
         return pts[-1][1]
 
-    best = max((v for t, v in pts if ts <= t <= te), default=0.0)
-    return max(best, _at(ts), _at(te))
+    # Быстрый путь: если все HOLD (jump без наездов)
+    if all(holds):
+        best = 0.0
+        for i, (f, v) in enumerate(raw_keys):
+            f_end = raw_keys[i + 1][0] if i + 1 < n else float("inf")
+            if f / fps <= te + 1e-9 and f_end / fps > ts - 1e-9:
+                best = max(best, v)
+        if best:
+            return best
+        return raw_keys[0][1]
+
+    # Быстрый путь: если все плавные (pulse / drift)
+    if not any(holds):
+        best = max((v for t, v in pts if ts <= t <= te), default=0.0)
+        return max(best, _linear_at(ts), _linear_at(te))
+
+    # Смешанный режим (задание ZA)
+    best = 0.0
+    if ts < pts[0][0] + 1e-9:
+        best = max(best, pts[0][1])
+
+    for i in range(n):
+        t_i = pts[i][0]
+        t_next = pts[i + 1][0] if i + 1 < n else float("inf")
+        if t_i <= te + 1e-9 and t_next > ts - 1e-9:
+            is_hold = holds[i] if i < len(holds) else False
+            if is_hold or i == n - 1:
+                best = max(best, pts[i][1])
+            else:
+                t_start_seg = max(ts, t_i)
+                t_end_seg = min(te, t_next)
+                best = max(best, _linear_at(t_start_seg), _linear_at(t_end_seg))
+
+    if te > pts[-1][0] - 1e-9:
+        best = max(best, pts[-1][1])
+
+    return best if best > 0.0 else pts[0][1]
 
 
 def _span_roto_plan(cams, sf, ef, fps):
@@ -714,3 +866,164 @@ def _span_roto_plan(cams, sf, ef, fps):
     for gs, ge in gaps:
         entries += _cam_overlaps(cams[0]["clips"], int(gs), int(ge), fps, 0)
     return entries
+
+
+HEAD_DEAD_RATIO = 0.03  # мёртвая зона слежения (3% ширины кадра): мелкие покачивания головы игнорируются
+
+
+def _rdp(pts, eps=4.0):
+    """Рамер–Дуглас–Пекер по (f, y) внутри клипа."""
+    if len(pts) <= 2:
+        return pts
+    x1, y1 = pts[0]
+    x2, y2 = pts[-1]
+    dx = x2 - x1
+    dy = y2 - y1
+    denom = (dx * dx + dy * dy) ** 0.5
+    max_d = -1.0
+    idx = -1
+    for i in range(1, len(pts) - 1):
+        x0, y0 = pts[i]
+        if denom == 0:
+            d = ((x0 - x1) ** 2 + (y0 - y1) ** 2) ** 0.5
+        else:
+            d = abs(dy * x0 - dx * y0 + x2 * y1 - y2 * x1) / denom
+        if d > max_d:
+            max_d = d
+            idx = i
+    if max_d > eps:
+        left = _rdp(pts[:idx + 1], eps)
+        right = _rdp(pts[idx:], eps)
+        return left[:-1] + right
+    return [pts[0], pts[-1]]
+
+
+def _cam1_follow_keys(cams, pts, w_src, h_src, zoom_keys, holds, fps=60.0,
+                      W=1080, H=1920, cx=0.5, pan_x=0.0, cam1_fit=100.0,
+                      target=0.5, smooth_s=0.6, min_scale=0.0):
+    """Ключи слежения за головой по X для Камеры 1 (задание ZC).
+
+    Возвращает [(f, off), ...]. Все ключи Easy Ease (EASE_DEFAULT).
+    """
+    if not cams or not pts or not w_src or not h_src:
+        return []
+    from core import headtrack
+
+    fps = float(fps or 60.0)
+    W = float(W)
+    H = float(H)
+    cx = float(cx if cx is not None else 0.5)
+    pan_x = float(pan_x or 0.0)
+    cam1_fit = float(cam1_fit or 100.0)
+    target = float(target if target is not None else 0.5)
+    smooth_s = max(0.01, float(smooth_s if smooth_s is not None else 0.6))
+    min_scale = float(min_scale or 0.0)
+    head_dead = HEAD_DEAD_RATIO * W
+
+    fit_w = w_src * max(W / w_src, H / h_src) * (cam1_fit / 100.0)
+    Cx = cx * W
+
+    raw_zoom = [(float(k[0]), float(k[1])) for k in (zoom_keys or []) if len(k) >= 2]
+    n_zoom = len(raw_zoom)
+
+    def _zoom_at(f):
+        if not raw_zoom:
+            return 1.0
+        if f <= raw_zoom[0][0]:
+            return raw_zoom[0][1] / 100.0
+        if f >= raw_zoom[-1][0]:
+            return raw_zoom[-1][1] / 100.0
+        for i in range(n_zoom - 1):
+            f0, v0 = raw_zoom[i]
+            f1, v1 = raw_zoom[i + 1]
+            if f0 <= f < f1:
+                is_hold = holds[i] if holds and i < len(holds) else False
+                if is_hold or f1 <= f0:
+                    return v0 / 100.0
+                return (v0 + (v1 - v0) * (f - f0) / (f1 - f0)) / 100.0
+        return raw_zoom[-1][1] / 100.0
+
+    def _clamp_off(off_val, s_val):
+        if s_val * fit_w < W:
+            return 0.0
+        left_edge = Cx + s_val * (W / 2.0 - fit_w / 2.0 - Cx) + pan_x
+        right_edge = Cx + s_val * (W / 2.0 + fit_w / 2.0 - Cx) + pan_x
+        min_off = W - right_edge
+        max_off = -left_edge
+        if min_off > max_off:
+            return 0.0
+        return max(min_off, min(max_off, off_val))
+
+    segs = _show_segments(cams)
+    shown_clips = []
+    for cl in cams[0].get("clips", []):
+        if not cl[4] or cl[1] <= cl[0]:
+            continue
+        for seg_start, seg_end, ci in segs:
+            if ci != 0:
+                continue
+            s_a = max(seg_start, cl[0])
+            s_b = min(seg_end, cl[1])
+            if s_b > s_a:
+                shown_clips.append({
+                    "start": s_a,
+                    "end": s_b,
+                    "cl_start": cl[0],
+                    "cl_in": cl[2],
+                })
+    shown_clips.sort(key=lambda c: c["start"])
+    if not shown_clips:
+        return []
+
+    step = max(1, int(round(fps / 10.0)))
+    all_keys = []
+
+    for clip in shown_clips:
+        c_start = int(clip["start"])
+        c_end = int(clip["end"])
+        if c_end <= c_start:
+            continue
+        f_last = c_end - 1
+        frames = list(range(c_start, c_end, step))
+        if frames[-1] != f_last:
+            frames.append(f_last)
+
+        clip_samples = []
+        y = 0.0
+        prev_f = None
+
+        for f in frames:
+            t_src = (clip["cl_in"] + f - clip["cl_start"]) / fps
+            hx = headtrack.head_at(pts, t_src)
+            if hx is None:
+                hx = 0.5
+            s = _zoom_at(f)
+            X0 = W / 2.0 + (hx - 0.5) * fit_w
+            screen = Cx + s * (X0 - Cx) + pan_x
+            err = target * W - screen
+            active = (s * 100.0) >= (min_scale - 1e-6)
+            desired = err if active else 0.0
+
+            if prev_f is None:
+                y = _clamp_off(desired, s)
+            else:
+                dt = (f - prev_f) / fps
+                if active:
+                    diff = err - y
+                    if abs(diff) > head_dead:
+                        sgn = 1.0 if diff > 0 else -1.0
+                        y += (diff - sgn * head_dead) * (1.0 - math.exp(-dt / smooth_s))
+                else:
+                    y += (0.0 - y) * (1.0 - math.exp(-dt / smooth_s))
+                    if abs(y) < 0.5:
+                        y = 0.0
+                y = _clamp_off(y, s)
+
+            clip_samples.append((f, y))
+            prev_f = f
+
+        rdp_pts = _rdp(clip_samples, eps=4.0)
+        all_keys.extend(rdp_pts)
+
+    return [(int(f), _r(off, 2)) for f, off in all_keys]
+

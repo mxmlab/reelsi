@@ -51,7 +51,9 @@ folder, the `.jsx` folder and the render output folder. 3. Pick a default AE sty
 write a hint to the AI if the speaker needs one. 4. Save.
 **Settings:** cutting thresholds (silence, voice, word padding, hole length and others)
 are on the collapsed **Calibration — handled by the assistant** panel; the breath detector has its own cut and mark
-thresholds. Extra prompt suffixes for image and video generation live in the same dialog.
+thresholds. Extra prompt suffixes for image and video generation live in the same dialog,
+and so do the two plate slots — **Plate: add-on to prompt 1/2** — which are used instead of
+the ordinary slots by inserts with the **on plate** checkbox.
 **Limitations / price:** profiles are plain JSON in `speakers/`, which is gitignored. The
 style in a profile is a default — you can always pick another style on step 3.
 **Code:** `core/speakers.py:29`, `core/speakers.py:68`, `api/presets.py:85`,
@@ -298,11 +300,22 @@ back.
 **Settings:** **photo** and **video** buttons add cards manually; the placeholder in the
 preview marks where a new card will land. A video insert plays its whole length and is
 never trimmed.
+
+**On a plate.** The **on plate** checkbox next to the mosaic one puts that single photo
+insert on the plate image from the style (**Inserts** › **Photo** › **Plate (file)**,
+**Plate scale, %**). The plate is drawn under the photo, the rounding mask is not applied to
+such an insert, the photo background is removed with `rembg` and cached next to the file as
+`<name>.nobg.png` (so only the first build is slower), and the generation prompt comes from
+the speaker's **Plate: add-on to prompt 1/2** slots. The scale and position fields of such
+an insert move only the photo inside the plate; dragging the insert in the step 3 preview
+moves the whole card — plate and photo together. Inserts without the checkbox are untouched:
+ordinary prompt, ordinary mask and effects.
+
 **Limitations / price:** the pick respects forbidden zones: nothing in the first seconds,
 nothing in the closing seconds, a minimum gap between inserts and a minimum duration.
 **Code:** `templates/index.html:572`, `core/aicut/commands.py:149`,
 `core/aicut/commands.py:174`, `static/app/80-inserts.js:350`,
-`static/app/85-inserts-view.js:1465`
+`static/app/85-inserts-view.js:1465`, `core/insertlib.py:954`
 
 ### Generating images and video for inserts
 
@@ -409,8 +422,9 @@ background plate.
 are the hook behind the speaker, the mid rows are accents.
 **Settings:** the intro appearance mode is **word by word** or **line by line**. Rows can
 be added and reordered; picking a row and clicking a word moves the group start.
-**Limitations / price:** already marked-up intro is replaced after a confirmation. Intro is
-cut out of subtitle words, so it is not assembled while rows are longer than one word.
+**Limitations / price:** already marked-up intro is replaced after a confirmation. Intro
+words are cut out of the subtitles, so they do not show up in the subtitle rows either; this
+works the same in the row mode and in the word-by-word mode.
 **Code:** `api/ai.py:669`, `static/app/90-ae.js:392`, `core/aicut/commands.py:1`,
 `static/app/85-inserts-view.js:950`
 
@@ -431,17 +445,128 @@ the intro is edited in its group row above.
 **How:** 1. Pick a style in the selector. 2. Edit the values you need. 3. Press **Save**,
 or **Save as…** for a copy.
 **Settings:** **Text** holds subtitles (words per row, rows, height, subtitle scale,
-casing, colours), highlights, the subtitle plate, the caption, intro colours, glow and
-shadows, the disclaimer, and the fonts. **Frame** holds the camera 1 zoom mode
-(pulse, jumps, drift, none), frame fill, the top progress line and the start blur.
-**Inserts** holds the photo style, animation, effects, insert positions and the continuous
-rotoscope. **Layers** is the layer order, dragged with the mouse or moved with the arrow
-buttons. **Sound** holds music, voice, transition, glitch and pop levels, their files and
-their hit points.
+casing, colours), highlights (including **Yellow in a row** and the blur-in), the subtitle
+plate, the caption, intro colours, glow and shadows, the disclaimer, and the fonts.
+**Frame** holds the camera 1 zoom mode
+(push-in with recoil, hard jumps, drift, none), the take zooms and the yellow-word zoom,
+frame fill, the zoom point, the frame offset, the horizon, head tracking, the Lumetri
+colour, the top progress line and the start blur.
+**Inserts** holds the photo style, animation, effects, insert positions, the plate image and
+the continuous rotoscope. **Layers** is the layer order, dragged with the mouse or moved
+with the arrow buttons. **Sound** holds music, voice, transition, glitch and pop levels,
+their files and their hit points.
 **Limitations / price:** editing a style's own template and saving it applies the change to
 every file in the set that uses that style. Built-in styles cannot be deleted.
 **Code:** `core/styles.py:1`, `api/presets.py:15`, `templates/index.html:170`,
 `static/app/95-styles.js:496`
+
+### Camera 1: hard jumps, take zooms and yellow words
+
+**Where:** step 3 › style › **Frame** › **Cam 1 zoom**.
+**How:** 1. Pick the mode: **push-in with recoil (smooth)**, **hard jumps 100–140%**,
+**drift 100–160% (smooth between cuts)** or **no zoom (static frame)**. 2. In the **hard
+jumps** mode set **punch-in at start**, **First punch-in, %**, the take zooms and the
+yellow-word zoom.
+**Settings:** in **hard jumps** the scale jumps to a random value from **Zoom-in from/to,
+%** at every cut. **punch-in at start** opens the clip with a smooth approach from **First
+punch-in, %** down to the first jump instead of starting on a random value. **zoom-ins on
+long takes** adds one smooth approach inside every take longer than **Take longer than, s**:
+the camera moves in by **Zoom-in from/to, %** of that take's own value, holds it for **Hold
+zoom-in, s** and pulls back; if the next cut comes too soon it stays zoomed in and the cut
+resets it with a jump. **zoom-in on yellow words** lands that approach exactly on the first
+yellow word of the take instead of a fixed moment after the cut; a take without yellow words
+behaves as usual.
+**Limitations / price:** the take zooms and the yellow-word zoom work only in **hard
+jumps**; in the other modes their fields are hidden.
+**Code:** `core/xml2ae/layout.py:442`, `core/xml2ae/build.py:1185`, `core/styles.py:1`
+
+### Camera 1 frame: fill, zoom point, offset and horizon
+
+**Where:** step 3 › style › **Frame** › **Transform**.
+**How:** 1. Set **Frame fill, %**: 100 fills the frame exactly, 120 pushes in by 20%.
+2. Type the zoom point in percent of the frame (X and Y), or press the crosshair button and
+click the frame in the preview. 3. Use **Frame offset X/Y, px** to move the whole frame and
+**Horizon, °** to tilt it.
+**Settings:** the zoom point is what the zoom is measured from: it stays put while the
+camera moves in. Both of its numbers are dragged with the mouse like any other number field
+(Shift takes a ten times bigger step). **Frame fill, %** is a common multiplier of the
+camera 1 zoom: like the null's Scale it grows the frame together with the camera 1 inserts
+and the intro, and the zoom point stays put. **Frame offset** moves the whole frame (the
+null's Position), so camera 1 inserts and the intro travel with it, while the zoom point
+does not move. **Horizon** turns only the camera 1 picture and its rotoscope; inserts and
+the intro stay straight, so at a zoom near 100 % the corners open up — keep some zoom in
+reserve.
+**Limitations / price:** the horizon field goes to ±10° (±45° in the extended range) and the
+frame offset to ±500 px (±2000 px in the extended range).
+**Code:** `core/xml2ae/build.py:2777`, `core/style_schema.py:1138`,
+`static/app/94-stylepanel.js:697`
+
+### Head tracking
+
+**Where:** step 3 › style › **Frame** › **Transform** › **follow the head**.
+**How:** 1. Tick **follow the head**. 2. Set **Head X, %** — where the head should sit in
+the frame. 3. Set **Follow smoothing, s** and, if needed, **Follow from zoom, %**.
+4. Build the set.
+**Settings:** the frame moves horizontally to keep the head at the chosen place. The head is
+found by the person mask — the same Robust Video Matting that rotoscope uses — and not by
+face detection, so a portrait on the wall does not confuse it. The track is computed on the
+GPU during the first build of a clip and cached next to the XML as `<name>.head.json`; later
+builds just read the cache. **Follow smoothing, s** is the time constant of the movement.
+**Follow from zoom, %** switches the tracking on only from that zoom value: below it the
+frame smoothly returns to its place, 0 means always follow. The threshold is compared in the
+same numbers as the jump and take ranges, without the frame fill. Camera 1 inserts and the
+intro travel with the frame.
+**Limitations / price:** the correction is limited by the frame itself: the edge of the
+picture never opens. Tracking needs the GPU and the matting model (downloaded on first use,
+as for rotoscope); if it fails, the build continues without tracking and says so in the log.
+**Code:** `core/headtrack.py:50`, `core/xml2ae/layout.py:901`,
+`core/xml2ae/build.py:3116`
+
+### Colour (Lumetri)
+
+**Where:** step 3 › style › **Frame** › **Color (Lumetri)** (the group has its own
+checkbox).
+**How:** 1. Tick the group. 2. Set the nine parameters — **Exposure**, **Contrast**,
+**Highlights**, **Shadows**, **Whites**, **Blacks**, **Temperature**, **Tint** and
+**Saturation**. 3. Build the set.
+**Settings:** one Lumetri Color effect goes on every camera clip and on its rotoscope copy,
+with the same nine values as the Lumetri panel in After Effects. The per-clip exposure of
+the AE step is added to **Exposure**, so the two do not fight.
+**Limitations / price:** the browser preview shows an approximation — the real Lumetri
+formulas are closed — so it is good for judging the direction of the correction, not its
+exact value.
+**Code:** `core/xml2ae/build.py:41`, `core/style_schema.py:1390`,
+`static/app/85-inserts-view.js:361`
+
+### Yellow highlights in rows: animation and blur-in
+
+**Where:** step 3 › style › **Text** › highlights.
+**How:** 1. Set **Yellow in a row**: **when spoken** or **with the row**. 2. Tick **blur-in**
+and set **Blur amount** if the yellow word should come out of a blur.
+**Settings:** the choice matters only when a row holds more than one word. With **when
+spoken** the white words appear with the row and the yellow one rises at the moment it is
+said — until then its place in the row is empty. With **with the row** the yellow word rises
+together with the row. **blur-in** adds a Gaussian Blur on the yellow word on the same
+keyframes as the rise; the default **Blur amount** is 70.4.
+**Limitations / price:** the browser preview does not show the rise of the yellow words at
+all, so this animation is judged in After Effects.
+**Code:** `core/xml2ae/build.py:973`, `core/xml2ae/template.py:108`,
+`core/style_schema.py:151`
+
+### Intro: several words in a row, camera link, line spacing
+
+**Where:** step 3 › style › **Text** › **Intro**.
+**How:** 1. Set **Line spacing, %** (100 is the usual distance). 2. Clear **intro moves with
+camera** if the intro should stay in place while the camera moves.
+**Settings:** the intro works the same whether the rows mode (**words per row**) is on or
+off: its words are cut out of the subtitles, and its font size is the one the subtitles
+would have had without the auto-shrink of long rows, so in the rows mode the intro does not
+come out smaller. **intro moves with camera** keeps the intro on the camera 1 null, so it
+inherits the zoom, the frame offset and head tracking; cleared, the intro and the shade
+under it stand still in the frame. **Line spacing, %** multiplies the distance between the
+intro rows — the back plate step and the small-row gap are counted from the same number.
+**Code:** `core/xml2ae/layout.py:192`, `core/xml2ae/build.py:1473`,
+`core/xml2ae/build.py:2075`
 
 ### Glitch glow: built-in or Deep Glow 2
 
@@ -493,6 +618,8 @@ mask), the old one (white shadow plus choker) or none. 4. Adjust the resting pos
 camera in percent of frame.
 **Settings:** camera 1 inserts inherit the camera 1 zoom, so their offset scales with it.
 When the **Camera 1** style lands on a camera 2 piece, a separate offset applies.
+**Plate (file)** and **Plate scale, %** set the plate image and its size for the inserts
+that carry the **on plate** checkbox (see the inserts editor above).
 **Limitations / price:** while a rising insert is on screen the subtitles step aside. A
 photo that crosses a camera change is trimmed exactly at the change; video inserts are
 never trimmed.
@@ -649,6 +776,13 @@ for, using a dump taken with `tools/ae_inspect.jsx`.
 
 - Verified only on Windows 11 with an NVIDIA GPU and Adobe After Effects / Premiere Pro.
   Porting notes for other platforms: [docs/PLATFORMS.md](PLATFORMS.md).
+- The Lumetri colour in the browser preview is an approximation: the real Lumetri curves are
+  closed, so the preview shows the direction of the correction, not the exact result.
+- Tritone is not applied to a bright colour of the yellow intro (luminance above 0.7): on
+  such a colour it bleaches the glow instead of tinting it. Dark accent colours keep it.
+- Two installed fonts may share one PostScript name. The build then probes the copies and
+  takes the one that really applies; if none applies, the text is built with the default
+  font and the log says which font was rejected.
 - Premiere XML export and `.drp` export contain known defects:
   [docs/KNOWN_ISSUES.md](KNOWN_ISSUES.md).
 - Beta status: configuration and project schemas may change between releases.

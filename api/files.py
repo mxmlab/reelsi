@@ -389,6 +389,16 @@ def api_media():
         return ("forbidden", 403)
     if _never_serve(path):
         return ("forbidden", 403)
+    # «без фона» (задание ZI): предпросмотр фото-вставки просит nobg=1 — отдаём тот же
+    # кэш, что уедет в сборку (insertlib.nobg_path), а не исходник с фоном. Только картинки:
+    # видео не трогаем. Фон снять не удалось — nobg_path вернёт исходный путь.
+    if (request.args.get("nobg") or "").strip() not in ("", "0"):
+        from core.insertlib import IMG_EXT, nobg_path
+        if ("." + ext) in IMG_EXT:
+            try:
+                path = nobg_path(path)
+            except Exception:
+                pass                                     # нет rembg/модели — отдаём исходник
     if not os.path.isfile(path):
         return ("not found", 404)
     if request.args.get("dl"):

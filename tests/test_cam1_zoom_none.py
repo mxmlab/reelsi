@@ -78,11 +78,11 @@ def test_cam1_zoom_none_jsx_one_key(xml_subs, tmp_path):
 
 
 def test_cam1_zoom_none_scene_plan(xml_subs):
-    """План сцены при cam1_zoom='none' содержит один ключ 100.0 и hold=False."""
+    """План сцены при cam1_zoom='none' содержит один ключ 100.0 и holds=[0]."""
     plan = xml2ae.scene_plan(xml_subs, disclaimer="", style={"cam1_zoom": "none"})
     zoom = plan["zoom"]
     assert zoom["keys"] == [(0, 100.0)]
-    assert zoom["hold"] is False
+    assert zoom["holds"] == [0]
     assert zoom["fit"] == 100.0
     assert zoom["ease"] == [[EASE_DEFAULT, EASE_DEFAULT]]
 
@@ -94,7 +94,8 @@ def test_existing_zoom_modes_unaffected(xml_subs, tmp_path):
     assert jsx_default == jsx_pulse
 
     jsx_jump = _build_jsx(xml_subs, str(tmp_path / "out_jump.jsx"), style={"cam1_zoom": "jump"})
-    assert "var CAM1_HOLD=true;" in jsx_jump
+    assert "var CAM1_HOLD=" not in jsx_jump
+    assert "var CAM1_HOLDS=" in jsx_jump
 
     jsx_drift = _build_jsx(xml_subs, str(tmp_path / "out_drift.jsx"), style={"cam1_zoom": "drift"})
     keys_drift = _cam1_scale_from_jsx(jsx_drift)

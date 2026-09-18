@@ -64,9 +64,9 @@ def _apply_conv(val, conv, w=1080, h=1920):
 
 
 def test_every_base_key_accounted_for():
-    """styles.BASE имеет ровно 120 ключей; каждый в схеме или в EXTERNAL (без списков исключений)."""
+    """styles.BASE имеет ровно 150 ключей; каждый в схеме или в EXTERNAL (без списков исключений)."""
     base_keys = set(styles.BASE.keys())
-    assert len(base_keys) == 120, f"Ожидалось ровно 120 ключей в BASE, найдено {len(base_keys)}"
+    assert len(base_keys) == 150, f"Ожидалось ровно 150 ключей в BASE, найдено {len(base_keys)}"
 
     # Внешние ключи
     ext_keys = set(style_schema.EXTERNAL.keys())
@@ -91,21 +91,21 @@ def test_every_base_key_accounted_for():
 
     _walk_schema(callback_group=on_group, callback_field=on_field)
 
-    # Все ключи полей уникальны между собой (109 полей, 110 ключей: cam1_zoom_cx/cy)
+    # Все ключи полей уникальны между собой (138 полей, 139 ключей: cam1_zoom_cx/cy)
     field_counts = collections.Counter(field_keys)
     dup_fields = [k for k, c in field_counts.items() if c > 1]
     assert not dup_fields, f"Дубликаты ключей полей: {dup_fields}"
-    assert len(field_keys) == 110
+    assert len(field_keys) == 139
 
-    # Все тумблеры уникальны между собой (9 тумблеров: 8 булевых + disclaimer)
+    # Все тумблеры уникальны между собой (10 тумблеров: 9 булевых + disclaimer)
     toggle_counts = collections.Counter(toggle_keys)
     dup_toggles = [k for k, c in toggle_counts.items() if c > 1]
     assert not dup_toggles, f"Дубликаты тумблеров: {dup_toggles}"
-    assert len(toggle_keys) == 9
+    assert len(toggle_keys) == 10
 
-    # 8 булевых тумблеров не имеют полей в items
+    # 9 булевых тумблеров не имеют полей в items
     bool_toggles = [t for t in toggle_keys if t != "disclaimer"]
-    assert len(bool_toggles) == 8
+    assert len(bool_toggles) == 9
     assert not (set(bool_toggles) & set(field_keys))
 
     # disclaimer — 3-позиционный тумблер слоя ('disc'), делящий ключ с textarea
@@ -113,7 +113,7 @@ def test_every_base_key_accounted_for():
 
     # Схема + EXTERNAL строго покрывают BASE
     schema_keys = set(field_keys) | set(toggle_keys)
-    assert len(schema_keys) == 118
+    assert len(schema_keys) == 148
 
     assert not (schema_keys & ext_keys), f"Пересечение схемы и EXTERNAL: {schema_keys & ext_keys}"
     assert schema_keys | ext_keys == base_keys
@@ -208,7 +208,7 @@ def test_unique_ids_and_valid_convs():
 
     dup_groups = [k for k, c in collections.Counter(group_ids).items() if c > 1]
     assert not dup_groups, f"Дубликаты id групп: {dup_groups}"
-    assert len(group_ids) == 37
+    assert len(group_ids) == 38
 
 
 def test_i18n_coverage_for_schema_strings():
@@ -244,14 +244,14 @@ def test_i18n_coverage_for_schema_strings():
 
 
 def test_api_style_schema_endpoint(client):
-    """GET /api/style_schema отдаёт ok: True, layers (10), external (2), base, 37 групп, 109 полей."""
+    """GET /api/style_schema отдаёт ok: True, layers (10), external (2), base, 38 групп, 138 полей."""
     res = client.get("/api/style_schema", headers=H)
     assert res.status_code == 200
     data = res.get_json()
 
     assert data.get("ok") is True
     assert "base" in data
-    assert len(data["base"]) == 120
+    assert len(data["base"]) == 150
 
     external = data.get("external")
     assert len(external) == 2
@@ -275,5 +275,5 @@ def test_api_style_schema_endpoint(client):
     for layer in layers:
         count_items(layer.get("items", []))
 
-    assert groups_count == 37
-    assert fields_count == 109
+    assert groups_count == 38
+    assert fields_count == 138

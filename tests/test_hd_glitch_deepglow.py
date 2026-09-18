@@ -36,6 +36,11 @@ def html():
 
 node = pytest.mark.skipif(not shutil.which("node"), reason="требуется node в PATH")
 
+# Тёмный цвет выделения для сборок с тритоном (задание ZN): красный, яркость мидтонов
+# 0.24 — тритон ставится. Дефолтный жёлтый (0.87) ярче порога TRITONE_MAX_LUM=0.7 —
+# там тритона нет.
+DARK_HL_FILL = [0.6863, 0.1216, 0.1216]
+
 
 @pytest.fixture()
 def xml_subs(tmp_path):
@@ -171,7 +176,8 @@ def _probe(jsx, tmp_path, null_pedg2=False):
 def test_1_deepglow2_yellow_glitch_and_accent_glitch(xml_subs, tmp_path):
     """1. glitch_glow='deepglow2': yellow_glitch == PEDG2 + 30 props + Tritone; accent == Blur+Glo2."""
     from core.xml2ae.build import DEEP_GLOW2_GLITCH
-    jsx, _ = _build(xml_subs, tmp_path, _glow_intro(), glitch_glow="deepglow2", name="dg_test1.jsx")
+    jsx, _ = _build(xml_subs, tmp_path, _glow_intro(), style={"hl_fill": DARK_HL_FILL},
+                    glitch_glow="deepglow2", name="dg_test1.jsx")
     hl = _hl_fill_literal(jsx)
     got = _probe(jsx, tmp_path)
 
@@ -197,7 +203,8 @@ def test_1_deepglow2_yellow_glitch_and_accent_glitch(xml_subs, tmp_path):
 @node
 def test_2_deepglow2_addfx_null_increments_dg_miss(xml_subs, tmp_path):
     """2. addFX возвращает null для PEDG2: DG_MISS == 1, Tritone всё равно добавлен."""
-    jsx, _ = _build(xml_subs, tmp_path, _glow_intro(), glitch_glow="deepglow2", name="dg_test2.jsx")
+    jsx, _ = _build(xml_subs, tmp_path, _glow_intro(), style={"hl_fill": DARK_HL_FILL},
+                    glitch_glow="deepglow2", name="dg_test2.jsx")
     hl = _hl_fill_literal(jsx)
     got = _probe(jsx, tmp_path, null_pedg2=True)
 

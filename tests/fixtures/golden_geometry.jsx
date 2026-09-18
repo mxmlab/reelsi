@@ -49,7 +49,7 @@
     var SUB_HIDE=[];  // [[t, opacity], ...] — уход субтитров на rise-вставках
     var TRANS="", TRANS_SFX="";  // Quick 2.mov + whoosh для видеовставок
     var CAM1_SCALE=[[0,182],[62,100],[856,136.9],[918,100],[1645,126.7],[1707,100],[2341,136.6],[2403,100],[2921,125.3],[2983,100],[3691,133.7],[3753,100],[3989,115.9],[4051,100],[4860,128.7],[4922,100],[5326,115.2],[5388,100],[5877,138.9],[5939,100]];  // [[frame, percent], ...] зум Null камеры 1 — правь/очисти под видео
-    var CAM1_HOLD=false;    // true = резкие скачки скейла (HOLD-кейфреймы), false = плавный наезд с откатом
+    var CAM1_HOLDS=[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];  // [0/1, ...] отрезок от ключа до следующего: 1=HOLD (значение держится), 0=BEZIER (плавно)
     var CAM1_FIT=100;     // масштаб кадра Камеры 1 в % ЗАПОЛНЕНИЯ КОМПОЗИЦИИ при зуме нула 100%:
                                    // 100 = кадр заполнен ровно, 120 = врезка на 20%. Считается от РЕАЛЬНОГО
                                    // размера исходника (AE его знает), а не от масштаба из Премьера — тот
@@ -70,6 +70,41 @@
         if (_log){ try{ _log.writeln(msg); }catch(e){} }
         else { _pending.push(msg); $.writeln("[reelsi] " + msg); }  // ручной режим: видно в консоли
     }
+    // Шрифт по PostScript-имени. У AE бывает НЕСКОЛЬКО записей с одним именем (след
+    // переустановки шрифта), и выбор по имени встаёт на битую: в тексте остаётся Times,
+    // а try/catch молчит — ошибки нет, шрифт просто не тот (задание ZF).
+    // Перебираем копии через fontObject и кэшируем выбор на имя — проба один раз на имя.
+    var _FONT_PICK = {};   // PostScript-имя -> Font (рабочая копия) | null (ставить по имени)
+    var _fontProbe = null, _fontProbeSp = null;   // пробная композиция со слоем — одна на весь .jsx
+    function _fontPick(ps){
+        if (_FONT_PICK[ps] !== undefined) return _FONT_PICK[ps];
+        var pick = null, list = null, can = false;
+        try{ can = !!(app.fonts && app.fonts.getFontsByPostScriptName); }catch(e){ _LOG("app.fonts: " + e); }
+        if (can){   // AE < 24: метода нет — ставим по имени, пробы не делаем
+            try{ list = app.fonts.getFontsByPostScriptName(ps); }catch(e){ _LOG("getFontsByPostScriptName(«"+ps+"»): " + e); }
+            try{
+                if (!_fontProbe){
+                    _fontProbe = app.project.items.addComp("__reelsi_font_probe", 100, 100, 1.0, 1, 25);
+                    var pl = _fontProbe.layers.addText("Reelsi");
+                    _fontProbeSp = pl.property("ADBE Text Properties").property("ADBE Text Document");
+                }
+                if (list && list.length > 1){   // двоятся ИМЕНА, а не шрифты: одна копия — не тот случай
+                    for (var i=0; i<list.length; i++){
+                        var d = _fontProbeSp.value; d.fontObject = list[i]; _fontProbeSp.setValue(d);
+                        if (_fontProbeSp.value.font === ps){ pick = list[i]; break; }
+                    }
+                }
+                if (!pick){   // копия одна или ни одна не встала — проба по имени
+                    var d2 = _fontProbeSp.value; d2.font = ps; _fontProbeSp.setValue(d2);
+                    if (_fontProbeSp.value.font !== ps)
+                        _LOG("шрифт " + ps + " не принят After Effects — будет шрифт по умолчанию");
+                }
+            }catch(e){ _LOG("проба шрифта «"+ps+"»: " + e); }
+        }
+        _FONT_PICK[ps] = pick;
+        return pick;
+    }
+    function setFont(d, ps){ var o = _fontPick(ps); if (o) d.fontObject = o; else d.font = ps; }
     // setTemporalEaseAtKey ждёт РОВНО столько KeyframeEase, сколько измерений у свойства,
     // а не value.length: Position 1-мерна, и на 2D-нуле value.length=2 роняет вызов
     // («Value array does not have 1 elements»). Пробуем value.length, при отказе — один
@@ -119,7 +154,7 @@
         var dl=main.layers.addText(DISCLAIMER);
         var dsp=dl.property("ADBE Text Properties").property("ADBE Text Document");
         var dd=dsp.value; dd.resetCharStyle(); dd.resetParagraphStyle(); dd.text=DISCLAIMER;
-        try{dd.font=FONT;}catch(e){} dd.fontSize=DISC_SIZE; dd.fillColor=[1,1,1]; dd.applyFill=true;
+        try{setFont(dd, FONT);}catch(e){} dd.fontSize=DISC_SIZE; dd.fillColor=[1,1,1]; dd.applyFill=true;
         try{dd.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
         dsp.setValue(dd);
         dl.property("ADBE Transform Group").property("ADBE Position").setValue([W/2, DISC_Y]);
@@ -142,7 +177,7 @@
         var L = subc.layers.addText(sw[2]);
         var sp = L.property("ADBE Text Properties").property("ADBE Text Document");
         var d = sp.value; d.resetCharStyle(); d.resetParagraphStyle(); d.text=sw[2];
-        try{d.font=(hl?HL_FONT:FONT);}catch(e){ try{d.font=FONT;}catch(e2){} }   // жёлтый шрифт не найден -> база (не дефолт AE)
+        try{setFont(d, (hl?HL_FONT:FONT));}catch(e){ try{setFont(d, FONT);}catch(e2){} }   // жёлтый шрифт не найден -> база (не дефолт AE)
         try{d.fauxBold=(hl&&HL_BOLD);}catch(e){}   // искусственный жирный на жёлтых
         d.fontSize=FONT_SIZE; d.fillColor=(hl?HL_FILL:FILL); d.applyFill=true;
         try{d.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
@@ -277,23 +312,26 @@
     if (cam1null && CAM1_SCALE.length){
         var sc = cam1null.property("ADBE Transform Group").property("ADBE Scale");
         var CAM1_EASE=[[33.3333,35],[90,33.3333],[33.3333,35],[90,33.3333],[33.3333,35],[90,33.3333],[33.3333,35],[90,33.3333],[33.3333,35],[90,33.3333],[33.3333,35],[90,33.3333],[33.3333,35],[90,33.3333],[33.3333,35],[90,33.3333],[33.3333,35],[90,33.3333],[33.3333,35],[90,33.3333]];  // [[in,out], ...] влияние ease на КАЖДЫЙ ключ — посчитано в Python
+        // 1) setValueAtTime всех ключей
         for (var z=0; z<CAM1_SCALE.length; z++)
             sc.setValueAtTime(CAM1_SCALE[z][0]/FPS, [CAM1_SCALE[z][1], CAM1_SCALE[z][1]]);
-        if (CAM1_HOLD){                           // джамп-кат: скейл прыгает мгновенно, без анимации
-            for (var kh=1; kh<=sc.numKeys; kh++)
-                sc.setInterpolationTypeAtKey(kh, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
-        } else {                                  // pulse/дрейф: BEZIER + фирменная кривая из данных
-            for (var k=1; k<=sc.numKeys; k++)
-                sc.setInterpolationTypeAtKey(k, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER);
-            // cubic-bezier(0.35,0.01,0.10,0.99) только на участках большой->малый:
-            // out 35 / in 90 выставил Python по соседям (pulse) или режиму ключа (drift)
-            var eIns=[], eOuts=[];
-            for (var z2=0; z2<sc.numKeys; z2++){
-                var ee=CAM1_EASE[z2]||[33.3333,33.3333];
-                eIns.push(ee[0]); eOuts.push(ee[1]);
-            }
-            // Scale 2D-нула: value.length=2, а AE ждёт 1 — откат внутри, ошибка не прячется (задание CE)
-            temporalEase(sc, eIns, eOuts);
+        // 2) всем ключам BEZIER/BEZIER
+        for (var kb=1; kb<=sc.numKeys; kb++)
+            sc.setInterpolationTypeAtKey(kb, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER);
+        // 3) temporalEase(sc, eIns, eOuts) на все ключи
+        var eIns=[], eOuts=[];
+        for (var z2=0; z2<sc.numKeys; z2++){
+            var ee=CAM1_EASE[z2]||[33.3333,33.3333];
+            eIns.push(ee[0]); eOuts.push(ee[1]);
+        }
+        // Scale 2D-нула: value.length=2, а AE ждёт 1 — откат внутри, ошибка не прячется (задание CE)
+        temporalEase(sc, eIns, eOuts);
+        // 4) затем для каждого ключа k (1-based): in / out HOLD или BEZIER по CAM1_HOLDS
+        for (var k=1; k<=sc.numKeys; k++){
+            var inHold = (k > 1 && CAM1_HOLDS[k - 2]) ? KeyframeInterpolationType.HOLD : KeyframeInterpolationType.BEZIER;
+            var outHold = (CAM1_HOLDS[k - 1]) ? KeyframeInterpolationType.HOLD : KeyframeInterpolationType.BEZIER;
+            if (inHold === KeyframeInterpolationType.HOLD || outHold === KeyframeInterpolationType.HOLD)
+                sc.setInterpolationTypeAtKey(k, inHold, outHold);
         }
     }
 
@@ -476,7 +514,7 @@
         function introDoc(tl, txt, col){
             var sp=tl.property("ADBE Text Properties").property("ADBE Text Document");
             var dd=sp.value; dd.resetCharStyle(); dd.resetParagraphStyle(); dd.text=""+txt;
-            try{dd.font=(col=="yellow"?INTRO_HL_FONT:INTRO_FONT);}catch(e){ try{dd.font=INTRO_FONT;}catch(e2){} }
+            try{setFont(dd, (col=="yellow"?INTRO_HL_FONT:INTRO_FONT));}catch(e){ try{setFont(dd, INTRO_FONT);}catch(e2){} }
             try{dd.fauxBold=(col=="yellow"&&HL_BOLD);}catch(e){} dd.fontSize=FONT_SIZE;
             dd.fillColor=(col=="yellow"?HL_FILL:[1,1,1]); dd.applyFill=true;
             try{dd.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
@@ -676,6 +714,9 @@
 
     try{ if (DISCLAIMER && dl) dl.moveToBeginning(); }catch(e){}   // дисклеймер поверх всего
 
+    // Пробная композиция шрифта (задание ZF) своё отработала — в проекте ей делать нечего.
+    // Удаляем ДО endUndoGroup: иначе «Отменить» вернёт её в панель проекта.
+    if (_fontProbe){ try{ _fontProbe.remove(); }catch(e){ _LOG("пробная композиция шрифта: " + e); } }
     main.openInViewer();
     app.endUndoGroup();
 })();

@@ -599,6 +599,7 @@ over-the-shoulder fly-out loses its point, a deliberate choice).
 | `core/subtitle_blobs.py`, `core/subs.py` | subtitle graphics (FlatBuffer Source Text) |
 | `core/speakers.py` | speaker profiles: cut thresholds + folder + style |
 | `core/roto.py` | RVM video matting of the character (alpha masks) |
+| `core/headtrack.py` | head track by the RVM person mask (task ZC): RVM over the SHOWN pieces of the camera 1 source (`fps=10`, `scale=432:-2`, recurrent state reset per piece), "head" = X centre of the top band of the silhouette. Sidecar `<stem XML>.head.json` next to the XML (path, size, mtime, `ranges`): `load_cached` is the single validity check (used by both `load_or_track` and `scene_plan`), `load_or_track` computes on a miss, `head_at` interpolates over `None` gaps. Computed in one door — the head of `to_ae_full`; `scene_plan` only READS the sidecar, so the preview needs no GPU |
 | `reelsi.py` | CLI of classic cutting (VAD branch, `process_pair`; legacy) |
 | `core/assets.py` | asset resolver (transitions, sounds) from `assets/assets.json` |
 | `core/fonts.py` | list of installed fonts |
@@ -617,7 +618,7 @@ over-the-shoulder fly-out loses its point, a deliberate choice).
 | `core/app_meta.py`, `core/device.py` | paths/environment, device selection (cuda → mps → cpu) |
 | `core/fileio.py` | atomic writing of JSON and text files (tmp + fsync + replace; target permissions and symlinks preserved) |
 | `doctor.py` | environment diagnostics |
-| `core/insertlib.py` | insert library: XML + folder scan, `insertlib.json` index, semantic lookup |
+| `core/insertlib.py` | insert library: XML + folder scan, `insertlib.json` index, semantic lookup; also `remove_bg` (rembg) and `nobg_path(media)` — ONE cache of a photo without background for the build and the preview (`<folder>/<stem>.nobg.png`; error of rembg or a non-image returns the source path and reports through `emit`) |
 | `api/` | **shared backend**: all `/api/*` (Blueprint), JOB/LOCK, jobs |
 | `webui.py` | **main** web UI (port 5001) |
 | `tests/` | pytest golden tests of contracts |
@@ -758,8 +759,42 @@ interface state, NOT project:
 **`px` contracts** — pixel contracts for inserts (coordinates, scale) — `px` in
 `xml2ae` — `PIX_*` constants in `layout.py`.
 
+**scene plan contracts** (`/api/scene` → `scene_plan`, the same maths as the build
+but without roto and without writing; the preview reads it and never recomputes).
+Fields added by tasks ZA–ZQ:
+- `zoom.holds` — the per-key 0/1 list that replaced the single `zoom.hold`: a HOLD
+  segment keeps the left value, a smooth one is interpolated (`keysAt(…, holds)`);
+- `zoom.pan` — `[pan_x, pan_y]` in comp px and `zoom.rot` in degrees (frame offset
+  and horizon, ZB); `zoom.fit` is always `100` after ZE, because the `cam1_fit`
+  multiplier is already folded into the zoom KEYS in one place; `zoom.follow` —
+  `{keys, ease}` of the head track (no key at all when the checkbox is off);
+- `lumetri` — `None` or the nine values with the clip exposure already added (ZJ);
+- `intro_fsize` (the intro size BEFORE rows auto-shrink, ZL) and `intro_cam`
+  (whether the intro rides the camera 1 null, ZM).
+
+**`xml2ae` contracts** — the JS structures built by Python and read by the `.jsx`
+in AE (tasks ZA–ZQ):
+- `CAM1_SCALE = [[frame,percent],…]` — the camera 1 null zoom. A key may carry
+  `[frame,percent,mode]` and `[frame,percent,mode,hold]`: `mode` is the incoming
+  interpolation (`0` Easy Ease, `1` out 35, `2` in 90) and `hold` means the segment
+  from this key to the next is HELD. `CAM1_HOLDS = [0|1,…]` has the same length and
+  is what the `.jsx` uses to set HOLD/BEZIER per key side; keys without the fourth
+  element keep the old rule (`_zoom_key_holds(keys, legacy_hold=…)`), and
+  `_zoom_max` takes the same `holds` list.
+- `insertlib.nobg_path` is ONE cache of a photo without background for the build and
+  the preview: the `media` of a plate photo insert is swapped for `<stem>.nobg.png`
+  in `scene_plan` (`_ins_js`) BEFORE the plate geometry is computed, so the AE build
+  and the browser preview take the frame and the file from the same place (rembg
+  trims empty margins, so the proportions of the `.nobg.png` differ from the source —
+  task ZQ).
+- Every font in the `.jsx` goes through `setFont(d, ps)`: it caches a working copy
+  per PostScript name in `_FONT_PICK` (`_fontPick`), because AE may hold two records
+  with the same PostScript name and silently keep the default font when the first
+  one fails. No `.font =` assignment outside those two functions.
+
 **`roto` contracts** — `roto/` in `Reelsi_out/` — RVM masks; `roto.json`
-(metadata: who, when, model, model key).
+(metadata: who, when, model, model key). The head track is a sidecar next to the
+XML (`<stem XML>.head.json`, task ZC).
 
 **`styles` contracts** — clip styles: `core/styles.py` + `styles/*.json` — style
 preset.
@@ -802,7 +837,13 @@ with camera strings.
 - `60-preview.js` — preview player, volume controls, word bar, intro markup.
 - `70-editor.js` — cut editor (timeline) and step 2 markup.
 - `80-inserts.js` — inserts modal and asset library: scanning, auto-matching, import.
-- `85-inserts-view.js` — insert preview: virtual player and timeline.
+- `85-inserts-view.js` — insert preview: virtual player and timeline. The camera 1
+  frame is drawn through ONE matrix, `ipvCamMatrix` (`screen = C + S·(R·p − C_c) + T`
+  from `zoom.keys`, `zoom.rot` and `ipvCamShift` = `pan` + head follow), the whole
+  source is drawn with `drawImage(v, 0, 0, vw, vh, …)`; `ipvCamChild` is only for
+  children of the camera 1 null (its inserts, the intro, the shade), free camera 2
+  inserts get no shift; `ipvLumetriFilter` builds the approximate `plan.lumetri`
+  filter (the real Lumetri formulas are closed).
 - `88-cams.js` — camera layout editor and CPV mini-player.
 - `90-ae.js` — After Effects step: words, intro, manual inserts.
 - `95-styles.js` — style presets, speaker profiles, color pickers, music, ASR engines.
@@ -891,7 +932,9 @@ generation profiles (separate from LLM), models from the catalog.
 - `POST /api/files` — camera/file lists.
 - `POST /api/pickmedia` / `pickfiles` / `pickone` / `pickaudio` / `pickdir` — native
   file dialogs (one-shot, no server-side persistence).
-- `GET /api/media` — serve any media file (Range for streaming).
+- `GET /api/media` — serve any media file (Range for streaming); `?nobg=1` serves
+  `insertlib.nobg_path` for an image (the same `<stem>.nobg.png` cache the build
+  uses), video is served as is.
 - `GET /api/waveform` — peak cache for the cut editor.
 - `POST /api/cams`, `/api/cammatch` — camera layout, audio-based match of cam 2..N.
 - `POST /api/newtakes` — "already cut" filter for the queue.

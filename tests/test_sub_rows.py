@@ -130,8 +130,12 @@ def test_sub_words_per_row_1_identical_output(xml_subs, tmp_path):
 
 
 def test_sub_words_per_row_3_on_real_xml(xml_subs, tmp_path):
-    p_w1 = xml2ae.scene_plan(xml_subs, style={"sub_words_per_row": 1})
-    p_w3 = xml2ae.scene_plan(xml_subs, style={"sub_words_per_row": 3})
+    # Интро в этом тесте — настоящее: слова интро вынимаются из субтитров (intro_remove),
+    # и в режиме строк интро собирается так же, как по слову (задание ZL; CH запрещал его).
+    intro = [dict(words=["ПЕРВОЕ"], color="white", times=[1.0])]
+    get = dict(intro=intro, intro_remove=[0], intro_splits=[1], disclaimer="")
+    p_w1 = xml2ae.scene_plan(xml_subs, style={"sub_words_per_row": 1}, **get)
+    p_w3 = xml2ae.scene_plan(xml_subs, style={"sub_words_per_row": 3}, **get)
 
     words_count = len(p_w1["subs"])
     rows_count = len(p_w3["subs"])
@@ -140,13 +144,15 @@ def test_sub_words_per_row_3_on_real_xml(xml_subs, tmp_path):
     # Строк примерно втрое меньше слов
     assert abs(rows_count - words_count / 3) <= 4
 
-    # При per_row = 3 интро отключено
-    assert p_w3["intro"] == []
-    assert p_w3["_ae"]["intro_groups"] == "[]"
+    # При per_row = 3 интро собирается: группы есть и они те же, что при per_row = 1
+    assert p_w3["intro"] != []
+    assert p_w3["intro"] == p_w1["intro"]
+    assert p_w3["_ae"]["intro_groups"] != "[]"
 
     # Проверка JSX через verify_jsx и выгрузка .srt
     jsx_path, _, _ = xml2ae.to_ae_full(xml_subs, jsx_path=str(tmp_path / "out3.jsx"),
-                                       style={"sub_words_per_row": 3}, emit=lambda *a: None)
+                                       style={"sub_words_per_row": 3}, emit=lambda *a: None,
+                                       **get)
     rep = verify_jsx.Report(jsx_path)
     jsx_code = open(jsx_path, encoding="utf-8-sig").read()
     verify_jsx.check_syntax(jsx_path, jsx_code, rep)

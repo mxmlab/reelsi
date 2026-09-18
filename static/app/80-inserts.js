@@ -29,8 +29,6 @@ function syncSubTabUI(){
   const sr=s.sub_rows_max||1;
   if($('insp_subwords'))$('insp_subwords').value=sw;
   if($('insp_subrows'))$('insp_subrows').value=sr;
-  const warn=$('sub_introwarn');
-  if(warn)warn.style.display=(sw>1)?'':'none';
 }
 let _inspSubPatchTimer = null;
 function patchSubStyleSoon(sw, sr){
@@ -377,7 +375,7 @@ function insAdd(type){if(curIns<0)return;const c=CLIPS[curIns];if(!c.inserts)c.i
   const vid=type==='video';
   // at, а не t: имя t занято функцией перевода, а тост ниже её зовёт (см. ipvUI/ipvOverlay)
   const at=Math.round(Math.max(0,ipvNow())*10)/10;   // на месте плейхеда предпросмотра
-  c.inserts.push({type:vid?'video':'photo',start_sec:at,duration_sec:vid?3:2,query:'',prompt:'',mosaic:false,media:''});
+  c.inserts.push({type:vid?'video':'photo',start_sec:at,duration_sec:vid?3:2,query:'',prompt:'',mosaic:false,plate:false,media:''});
   c.inserts.sort((a,b)=>(a.start_sec||0)-(b.start_sec||0));
   renderInsHost();syncClipLists();saveState();
   if(IPV.vids.length&&!IPV.playing)ipvSeekTo(at+0.01);   // показать заглушку сразу (без сдвига t>=start даёт флоат-промах)
@@ -417,8 +415,11 @@ function insGenBtns(i,x){
   const c=(curIns>=0&&CLIPS[curIns])?CLIPS[curIns]:null;
   const spkKey=(c&&c.job&&c.job.speaker)||(val('speaker')||'').trim()||'';
   const video=x.type==='video',ips=video?videoPrompts(spkKey):imgPrompts(spkKey);
+  // у вставки с галкой «на подложке» кнопки 1/2 шлют слоты pa/pb (задание ZK): в тултипе
+  // должна быть видна ТА приписка, которая реально уйдёт в генерацию
+  const keys=(!video&&x.plate)?['pa','pb']:['a','b'];
   const action=video?'insGenVideo':'insGenOne',kind=video?t('видео'):t('картинку');
-  return ['a','b'].map((s,n)=>{
+  return keys.map((s,n)=>{
     const ex=(ips[s].extra||'').trim();
     return '<button class="sm" onclick="'+action+'('+i+',\''+s+'\')"'
       +' aria-label="'+t('Сгенерить {kind} промптом {n}',{kind:kind,n:n+1})+'"'
@@ -447,6 +448,9 @@ function renderInsHost(){const host=$('insHost');if(!host)return;host.innerHTML=
       +(vid?scrubSin('CLIPS[curIns].inserts['+i+']',x.sin,'ipvRefresh()','saveState()')            // у видео — откуда играть файл
            :((CURSTYLE&&(CURSTYLE.insert_fx||'card')==='card')                                                // у фото — форма маски, но только при «card» (дефолт как в сборке)
              ?scrubMask('CLIPS[curIns].inserts['+i+']',x.mw,x.mh,'ipvRefresh()','saveState()'):''))      +'<label class="chk" style="display:flex;gap:6px;align-items:center;margin:0"><input type="checkbox" '+(x.mosaic?'checked':'')+' onchange="CLIPS[curIns].inserts['+i+'].mosaic=this.checked;this.blur();saveState();ipvRefresh()"> mosaic</label>'
+      // галка «на подложке» (задание ZK) — рядом с mosaic, тот же путь сохранения: вставка
+      // едет на картинке-подложке из стиля, фон с фото снимается, промпт — свой (pa/pb)
+      +'<label class="chk" style="display:flex;gap:6px;align-items:center;margin:0" data-t="'+t('вставка встаёт на картинку-подложку из стиля («Подложка (файл)»), фон с фото снимается, а промпт генерации берётся из «Подложка: приписка к промпту 1/2» профиля спикера')+'"><input type="checkbox" '+(x.plate?'checked':'')+' onchange="CLIPS[curIns].inserts['+i+'].plate=this.checked;this.blur();saveState();ipvRefresh()"> '+t('на подложке')+'</label>'
       +'<span class="grow"></span><span class="del" tabindex="0" role="button" aria-label="'+t('Удалить вставку')+'" data-t="'+t('Удалить вставку целиком')+'" onclick="insDel('+i+')">'+ico('x')+'</span></div>'
       +'<div style="display:flex;gap:8px;align-items:center"><input class="qedit" data-noi18n value="'+esc(x.query||'')+'" placeholder="'+t('что искать в базе / генерить — по-английски, 2–4 слова')+'"'
       +' aria-label="'+t('Описание вставки')+'" data-t="'+t('Описание для подбора и генерации')+'"'

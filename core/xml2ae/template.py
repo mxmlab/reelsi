@@ -13,7 +13,7 @@ SUBS_LOOP_WORDS = r"""    for (var i=0;i<SUBS.length;i++){
         var L = subc.layers.addText(sw[2]);
         var sp = L.property("ADBE Text Properties").property("ADBE Text Document");
         var d = sp.value; d.resetCharStyle(); d.resetParagraphStyle(); d.text=sw[2];
-        try{d.font=(hl?HL_FONT:FONT);}catch(e){ try{d.font=FONT;}catch(e2){} }   // жёлтый шрифт не найден -> база (не дефолт AE)
+        try{setFont(d, (hl?HL_FONT:FONT));}catch(e){ try{setFont(d, FONT);}catch(e2){} }   // жёлтый шрифт не найден -> база (не дефолт AE)
         try{d.fauxBold=(hl&&HL_BOLD);}catch(e){}   // искусственный жирный на жёлтых
         d.fontSize=FONT_SIZE; d.fillColor=(hl?HL_FILL:FILL); d.applyFill=true;
         try{d.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
@@ -30,7 +30,7 @@ SUBS_LOOP_WORDS = r"""    for (var i=0;i<SUBS.length;i++){
             posP.setValueAtTime(t0+HL_DUR, [SW/2, finalY]);
             var op = L.property("ADBE Transform Group").property("ADBE Opacity");
             op.setValueAtTime(t0, 0); op.setValueAtTime(t0+HL_DUR, 100);
-            easePair(posP); easePair(op);
+            easePair(posP); easePair(op);%(hl_blur_call)s
         } else {
             L.outPoint = sw[1]/FPS;
             posP.setValue([SW/2, POSY]);
@@ -44,7 +44,7 @@ SUBS_LOOP_WORDS_JOINED = r"""    var i=0;
             var L = subc.layers.addText(sw[2]);
             var sp = L.property("ADBE Text Properties").property("ADBE Text Document");
             var d = sp.value; d.resetCharStyle(); d.resetParagraphStyle(); d.text=sw[2];
-            try{d.font=FONT;}catch(e){}
+            try{setFont(d, FONT);}catch(e){}
             d.fontSize=FONT_SIZE; d.fillColor=FILL; d.applyFill=true;
             try{d.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
             sp.setValue(d);
@@ -67,7 +67,7 @@ SUBS_LOOP_WORDS_JOINED = r"""    var i=0;
                 var L = subc.layers.addText(kw[2]);
                 var sp = L.property("ADBE Text Properties").property("ADBE Text Document");
                 var d = sp.value; d.resetCharStyle(); d.resetParagraphStyle(); d.text=kw[2];
-                try{d.font=HL_FONT;}catch(e){ try{d.font=FONT;}catch(e2){} }
+                try{setFont(d, HL_FONT);}catch(e){ try{setFont(d, FONT);}catch(e2){} }
                 try{d.fauxBold=HL_BOLD;}catch(e){}
                 d.fontSize=FONT_SIZE; d.fillColor=HL_FILL; d.applyFill=true;
                 try{d.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
@@ -99,7 +99,7 @@ SUBS_LOOP_WORDS_JOINED = r"""    var i=0;
                 posP.setValueAtTime(t0+HL_DUR, [wCenter, finalY]);
                 var op = L.property("ADBE Transform Group").property("ADBE Opacity");
                 op.setValueAtTime(t0, 0); op.setValueAtTime(t0+HL_DUR, 100);
-                easePair(posP); easePair(op);%(sub_count_code)s
+                easePair(posP); easePair(op);%(hl_blur_call)s%(sub_count_code)s
             }
             i = j + 1;
         }
@@ -109,23 +109,31 @@ SUBS_LOOP_ROWS = r"""    var SUB_ROWS = %(sub_rows)s;
     var SUB_STEP = %(sub_step)g;
     for (var ri=0; ri<SUB_ROWS.length; ri++){
         var sr=SUB_ROWS[ri], r_t0=sr[0]/FPS, r_t1=sr[1]/FPS, r_row=sr[2], r_fsz=sr[3], r_words=sr[4];
-        var r_layers=[], r_widths=[];
+        var r_layers=[], r_widths=[], r_t0s=[];
         var cur_fsz = r_fsz || FONT_SIZE;
         for (var wi=0; wi<r_words.length; wi++){
             var wd=r_words[wi], w_hl=wd[2];
             var L=subc.layers.addText(wd[1]);
             var sp=L.property("ADBE Text Properties").property("ADBE Text Document");
             var d=sp.value; d.resetCharStyle(); d.resetParagraphStyle(); d.text=wd[1];
-            try{d.font=(w_hl?HL_FONT:FONT);}catch(e){ try{d.font=FONT;}catch(e2){} }
+            try{setFont(d, (w_hl?HL_FONT:FONT));}catch(e){ try{setFont(d, FONT);}catch(e2){} }
             try{d.fauxBold=(w_hl&&HL_BOLD);}catch(e){}
             d.fontSize=cur_fsz; d.fillColor=(w_hl?HL_FILL:FILL); d.applyFill=true;
             try{d.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
             sp.setValue(d);
-            L.inPoint = r_t0;
+            // Жёлтое в строке (задание ZH): при hl_row_anim="word" въезжает в момент, когда
+            // слово произнесено (wd[0]), но не раньше строки и не позже, чем остаётся место
+            // на подъём (иначе оно всплывало бы уже после ухода строки). "row" и белые —
+            // со строкой, как было: та же строка, то же время r_t0.
+            var w_t0 = r_t0;
+            if (w_hl && HL_ROW_WORD)
+                w_t0 = Math.min(Math.max(wd[0]/FPS, r_t0), Math.max(r_t0, r_t1 - HL_DUR));
+            L.inPoint = w_t0;
             L.outPoint = r_t1;
             r_layers.push(L);
+            r_t0s.push(w_t0);
             var rr={width:0};
-            try{ rr=L.sourceRectAtTime(r_t0+0.001, false); }catch(e){}
+            try{ rr=L.sourceRectAtTime(w_t0+0.001, false); }catch(e){}   // ширина — в момент, когда слой уже жив
             r_widths.push(rr.width);
         }
         var spc = cur_fsz * 0.28;
@@ -137,7 +145,18 @@ SUBS_LOOP_ROWS = r"""    var SUB_ROWS = %(sub_rows)s;
         var lineY = POSY + r_row * cur_step;
         for (var wi=0; wi<r_layers.length; wi++){
             var wCenter = curX + r_widths[wi] / 2;
-            r_layers[wi].property("ADBE Transform Group").property("ADBE Position").setValue([wCenter, lineY]);
+            var L = r_layers[wi];
+            var posP = L.property("ADBE Transform Group").property("ADBE Position");
+            if (r_words[wi][2]){
+                var t0 = r_t0s[wi];        // время появления посчитано выше (одно на оба прохода)
+                posP.setValueAtTime(t0,        [wCenter, lineY+HL_RISE]);
+                posP.setValueAtTime(t0+HL_DUR, [wCenter, lineY]);
+                var op = L.property("ADBE Transform Group").property("ADBE Opacity");
+                op.setValueAtTime(t0, 0); op.setValueAtTime(t0+HL_DUR, 100);
+                easePair(posP); easePair(op);%(hl_blur_call)s
+            } else {
+                posP.setValue([wCenter, lineY]);
+            }
             curX += r_widths[wi] + spc;
         }
     }"""
@@ -152,14 +171,14 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     var HL_BOLD = %(hl_bold)s;                 // искусственный жирный (fauxBold) на выделенных
     var FONT_SIZE = %(fsize)d, FILL = %(fill)s, POSY = %(posy)d;
     var HL_FILL = %(hlfill)s%(hlfill3_decl)s;                  // цвет выделения [r,g,b]
-    var HL_RISE = %(hl_rise)g, HL_DUR = 0.35;  // slide-up: снизу вверх на HL_RISE px за HL_DUR c
+    var HL_RISE = %(hl_rise)g, HL_DUR = 0.35;  // slide-up: снизу вверх на HL_RISE px за HL_DUR c%(hl_row_decl)s%(hl_blur_decl)s
     var HL_STEP = %(hl_step)g;                 // шаг вертикальной стопки для подряд идущих жёлтых
     var HL_EASE_OUT = %(hl_ease_out)d, HL_EASE_IN = %(hl_ease_in)d;     // cubic-bezier(0.35,0.01,0.10,0.99)
     var SH_OPACITY = %(sh_op)g, SH_DIR = %(sh_dir)g, SH_DIST = %(sh_dist)g, SH_SOFT = %(sh_soft)g;%(intro_shadow_decl)s
     // вставки фото/видео — дефолты-средние из компа 1221 (правь при желании)
     var INS_MASK_R = 60;                                  // радиус скругления маски на прекомпе фото, px
     var INS_FX = %(ins_fx)s;                              // "card" чёрная тень+скругление | "white" старый вид (белая тень+чокер)
-    var INS_C1_ON2_X = %(ins_c1on2_x)g, INS_C1_ON2_Y = %(ins_c1on2_y)g;  // стиль кам1, попавший на перебивку: общий сдвиг точки покоя всех таких вставок, px
+%(ins_plate_decl)s    var INS_C1_ON2_X = %(ins_c1on2_x)g, INS_C1_ON2_Y = %(ins_c1on2_y)g;  // стиль кам1, попавший на перебивку: общий сдвиг точки покоя всех таких вставок, px
     var INS_C2_Y = %(ins_c2y)d%(ins_c2x_decl)s;                           // Кам2: Y точки покоя вставки, px (считает Python: INS_C2_Y_FR * H)
     var INS_MASK_SQUARE_AR = 2.2;                         // фото уже этого отношения сторон режем маской в квадрат (ультравайды оставляем целиком)
     var INS_SH_OP = 49, INS_SH_DIR = 135, INS_SH_DIST = 15, INS_SH_SOFT = 70; // тень вставок: чёрная, opacity в %% UI
@@ -174,7 +193,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     var POP=%(pop)s;         // SFX «поп» для жёлтых слов или ""
     var CENSOR=%(censor)s;   // [[start,end], ...] сек — окна мьюта голоса (плохие слова)
     var EXPOSURE=%(exposure)g;  // яркость: Lumetri Exposure на все клипы камер (0 = не вешать)
-    var ROTO=%(roto)s;          // [{ci,ts,te,cs,scale,mf,mask}, ...] — сплошное рото персонажа по видимой камере (весь хрон); mf = маска мельче исходника в mf раз
+%(lumetri_decl)s    var ROTO=%(roto)s;          // [{ci,ts,te,cs,scale,mf,mask}, ...] — сплошное рото персонажа по видимой камере (весь хрон); mf = маска мельче исходника в mf раз
     var INTRO_GROUPS=%(intro_groups)s;  // [[{words,color,times},...], ...] — интро по прекомпам (кросс-фейд между группами)
     var INTRO_FONT=%(intro_font)s, INTRO_HL_FONT=%(intro_hl_font)s%(intro_fill_decl)s;  // шрифты интро (обычный/выделение); по умолч. = как субтитры
     var INTRO_MODE=%(intro_mode)s;  // "word" пословно (слой на слово) | "line" построчно (слой на строку, раскладка AE)
@@ -183,7 +202,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
                                     // интро: висят на нуле «интро», то есть двигают/масштабируют все прекомпы разом.
                                     // Опускание под INTRO_SAFE_TOP считает Python (задание Q2) — здесь только поправка Scale.
     var INTRO_ON2=%(intro_on2)s;    // [0|1 на группу] — группа появляется на перебивке (Камера 2): свой нул
-%(intro_front_decl)s%(intro_ly_decl)s%(intro_above_roto_decl)s    var INTRO_IDY=%(intro_idy)s;    // [px на группу] — опускание блока под INTRO_SAFE_TOP, считает Python (задание Q2)
+%(intro_front_decl)s%(intro_ly_decl)s%(intro_above_roto_decl)s%(intro_cam_decl)s    var INTRO_IDY=%(intro_idy)s;    // [px на группу] — опускание блока под INTRO_SAFE_TOP, считает Python (задание Q2)
     var INTRO_Y2=%(intro_y2)g;      // сдвиг по вертикали (px) нула «интро на кам2» ПОВЕРХ INTRO_Y:
                                     // на перебивке кадр другой, и текст за спиной просится ниже
     var INTRO_WIDE=3;               // ширина интро-прекомпа в долях кадра: прекомп шире кадра, чтобы
@@ -194,12 +213,12 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     var SUB_HIDE=%(sub_hide)s;  // [[t, opacity], ...] — уход субтитров на rise-вставках
     var TRANS=%(trans)s, TRANS_SFX=%(trans_sfx)s;  // Quick 2.mov + whoosh для видеовставок
     var CAM1_SCALE=%(cam1scale)s;  // [[frame, percent], ...] зум Null камеры 1 — правь/очисти под видео
-    var CAM1_HOLD=%(cam1hold)s;    // true = резкие скачки скейла (HOLD-кейфреймы), false = плавный наезд с откатом
+    var CAM1_HOLDS=%(cam1holds)s;  // [0/1, ...] отрезок от ключа до следующего: 1=HOLD (значение держится), 0=BEZIER (плавно)
     var CAM1_FIT=%(cam1_fit)g;     // масштаб кадра Камеры 1 в %% ЗАПОЛНЕНИЯ КОМПОЗИЦИИ при зуме нула 100%%:
                                    // 100 = кадр заполнен ровно, 120 = врезка на 20%%. Считается от РЕАЛЬНОГО
                                    // размера исходника (AE его знает), а не от масштаба из Премьера — тот
                                    // врёт, если файл пережали: 1080p-исходник приезжал со scale=50.4 и
-                                   // вставал вполовину кадра. Рото-копия едет следом. Зум нула — поверх.
+                                   // вставал вполовину кадра. Рото-копия едет следом. Зум нула — поверх.%(cam1_rot_decl)s%(cam1_follow_decl)s
     var MUSIC=%(music)s, MUSIC_DB=%(music_db)g;  // музыка отдельным аудиослоем, уровень в dB
     var VOICE_DB=%(voice_db)g;                    // базовая громкость голоса (камера 1); цензура ныряет отсюда в −100
     var AUDIO_FADE=%(audio_fade)g;                // сек: микро-фейд громкости на краях каждого аудио-клипа (0 = выкл)
@@ -215,6 +234,41 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
         if (_log){ try{ _log.writeln(msg); }catch(e){} }
         else { _pending.push(msg); $.writeln("[reelsi] " + msg); }  // ручной режим: видно в консоли
     }
+    // Шрифт по PostScript-имени. У AE бывает НЕСКОЛЬКО записей с одним именем (след
+    // переустановки шрифта), и выбор по имени встаёт на битую: в тексте остаётся Times,
+    // а try/catch молчит — ошибки нет, шрифт просто не тот (задание ZF).
+    // Перебираем копии через fontObject и кэшируем выбор на имя — проба один раз на имя.
+    var _FONT_PICK = {};   // PostScript-имя -> Font (рабочая копия) | null (ставить по имени)
+    var _fontProbe = null, _fontProbeSp = null;   // пробная композиция со слоем — одна на весь .jsx
+    function _fontPick(ps){
+        if (_FONT_PICK[ps] !== undefined) return _FONT_PICK[ps];
+        var pick = null, list = null, can = false;
+        try{ can = !!(app.fonts && app.fonts.getFontsByPostScriptName); }catch(e){ _LOG("app.fonts: " + e); }
+        if (can){   // AE < 24: метода нет — ставим по имени, пробы не делаем
+            try{ list = app.fonts.getFontsByPostScriptName(ps); }catch(e){ _LOG("getFontsByPostScriptName(«"+ps+"»): " + e); }
+            try{
+                if (!_fontProbe){
+                    _fontProbe = app.project.items.addComp("__reelsi_font_probe", 100, 100, 1.0, 1, 25);
+                    var pl = _fontProbe.layers.addText("Reelsi");
+                    _fontProbeSp = pl.property("ADBE Text Properties").property("ADBE Text Document");
+                }
+                if (list && list.length > 1){   // двоятся ИМЕНА, а не шрифты: одна копия — не тот случай
+                    for (var i=0; i<list.length; i++){
+                        var d = _fontProbeSp.value; d.fontObject = list[i]; _fontProbeSp.setValue(d);
+                        if (_fontProbeSp.value.font === ps){ pick = list[i]; break; }
+                    }
+                }
+                if (!pick){   // копия одна или ни одна не встала — проба по имени
+                    var d2 = _fontProbeSp.value; d2.font = ps; _fontProbeSp.setValue(d2);
+                    if (_fontProbeSp.value.font !== ps)
+                        _LOG("шрифт " + ps + " не принят After Effects — будет шрифт по умолчанию");
+                }
+            }catch(e){ _LOG("проба шрифта «"+ps+"»: " + e); }
+        }
+        _FONT_PICK[ps] = pick;
+        return pick;
+    }
+    function setFont(d, ps){ var o = _fontPick(ps); if (o) d.fontObject = o; else d.font = ps; }
     // setTemporalEaseAtKey ждёт РОВНО столько KeyframeEase, сколько измерений у свойства,
     // а не value.length: Position 1-мерна, и на 2D-нуле value.length=2 роняет вызов
     // («Value array does not have 1 elements»). Пробуем value.length, при отказе — один
@@ -254,7 +308,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             prop.setInterpolationTypeAtKey(k, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER);
         if (prop.numKeys<2) return;
         temporalEase(prop, HL_EASE_IN, HL_EASE_OUT);   // Position 1-мерна — откат внутри (задание CE)
-    }
+    }%(hl_blur_fn)s
 
     var main = app.project.items.addComp(%(name)s, W, H, 1.0, Math.max(DUR,1)%(comp_dur)s, FPS);
 
@@ -264,7 +318,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
         var dl=main.layers.addText(DISCLAIMER);
         var dsp=dl.property("ADBE Text Properties").property("ADBE Text Document");
         var dd=dsp.value; dd.resetCharStyle(); dd.resetParagraphStyle(); dd.text=DISCLAIMER;
-        try{dd.font=FONT;}catch(e){} dd.fontSize=DISC_SIZE; dd.fillColor=[1,1,1]; dd.applyFill=true;
+        try{setFont(dd, FONT);}catch(e){} dd.fontSize=DISC_SIZE; dd.fillColor=[1,1,1]; dd.applyFill=true;
         try{dd.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
         %(disc_lead_js)sdsp.setValue(dd);
         dl.property("ADBE Transform Group").property("ADBE Position").setValue([W/2, DISC_Y]);
@@ -314,10 +368,9 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             if (isSecond){ try{ lay.audioEnabled = false; }catch(e){} }  // звук 2-й камеры выкл
             // Камера 1 — от заполнения кадра (CAM1_FIT), перебивки — как было в Премьере
             var csc = isSecond ? c[5] : fitS*CAM1_FIT/100;
-            try{ lay.property("ADBE Transform Group").property("ADBE Scale").setValue([csc,csc]); }catch(e){}
+            try{ lay.property("ADBE Transform Group").property("ADBE Scale").setValue([csc,csc]); }catch(e){}%(cam1_rot_cam)s
             lay.parent = nul;
-            if (EXPOSURE!=0){ try{ var lc=lay.property("ADBE Effect Parade").addProperty("ADBE Lumetri");  // яркость на все камеры
-                try{ lc.property("ADBE Lumetri-0011").setValue(EXPOSURE); }catch(e){} }catch(e){} }
+            %(lumetri_cam)s
             if (!isSecond){ cam1Layers.push({lay:lay, a:c[0]/FPS, b:c[1]/FPS});  // для рото-порядка
                             try{ var alv0=lay.property("ADBE Audio Group").property("ADBE Audio Levels");
                                  alv0.setValue([VOICE_DB,VOICE_DB]);             // базовая громкость голоса
@@ -372,7 +425,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     insNull1b.property("ADBE Transform Group").property("ADBE Position").setValue([W/2,H/2]);
     // «интро» — ОДИН общий нул для всех интро-прекомпов, привязан к Null Камеры 1 (следует за её зумом)
     var introNull = main.layers.addNull(Math.max(DUR,1)); introNull.name="интро"; introNull.enabled=false;
-    if(cam1null){ introNull.parent=cam1null;
+    if(cam1null%(intro_cam_cond)s){ introNull.parent=cam1null;
         introNull.property("ADBE Transform Group").property("ADBE Position").setValue([%(intro_x_js)s,INTRO_Y]); }
     else introNull.property("ADBE Transform Group").property("ADBE Position").setValue([W/2%(intro_x_p)s,H/2+INTRO_Y]);
     // общий масштаб интро — на нуле, а не на прекомпах: внутри них раскладка слов уже посчитана
@@ -384,7 +437,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     // только своим сдвигом INTRO_Y2: на кам2 кадр другой и текст за спиной ставят ниже.
     // Двигая этот нул, правишь разом все интро-прекомпы, попавшие на перебивку.
     var introNull2 = main.layers.addNull(Math.max(DUR,1)); introNull2.name="интро на кам2"; introNull2.enabled=false;
-    if(cam1null){ introNull2.parent=cam1null;
+    if(cam1null%(intro_cam_cond)s){ introNull2.parent=cam1null;
         introNull2.property("ADBE Transform Group").property("ADBE Position").setValue([%(intro_x_js)s,INTRO_Y+INTRO_Y2]); }
     else introNull2.property("ADBE Transform Group").property("ADBE Position").setValue([W/2%(intro_x_p)s,H/2+INTRO_Y+INTRO_Y2]);
     if (INTRO_SCALE!=100)
@@ -394,25 +447,28 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     if (cam1null && CAM1_SCALE.length){
         var sc = cam1null.property("ADBE Transform Group").property("ADBE Scale");
         var CAM1_EASE=%(cam1_ease)s;  // [[in,out], ...] влияние ease на КАЖДЫЙ ключ — посчитано в Python
+        // 1) setValueAtTime всех ключей
         for (var z=0; z<CAM1_SCALE.length; z++)
             sc.setValueAtTime(CAM1_SCALE[z][0]/FPS, [CAM1_SCALE[z][1], CAM1_SCALE[z][1]]);
-        if (CAM1_HOLD){                           // джамп-кат: скейл прыгает мгновенно, без анимации
-            for (var kh=1; kh<=sc.numKeys; kh++)
-                sc.setInterpolationTypeAtKey(kh, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
-        } else {                                  // pulse/дрейф: BEZIER + фирменная кривая из данных
-            for (var k=1; k<=sc.numKeys; k++)
-                sc.setInterpolationTypeAtKey(k, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER);
-            // cubic-bezier(0.35,0.01,0.10,0.99) только на участках большой->малый:
-            // out 35 / in 90 выставил Python по соседям (pulse) или режиму ключа (drift)
-            var eIns=[], eOuts=[];
-            for (var z2=0; z2<sc.numKeys; z2++){
-                var ee=CAM1_EASE[z2]||[%(ease_default)g,%(ease_default)g];
-                eIns.push(ee[0]); eOuts.push(ee[1]);
-            }
-            // Scale 2D-нула: value.length=2, а AE ждёт 1 — откат внутри, ошибка не прячется (задание CE)
-            temporalEase(sc, eIns, eOuts);
+        // 2) всем ключам BEZIER/BEZIER
+        for (var kb=1; kb<=sc.numKeys; kb++)
+            sc.setInterpolationTypeAtKey(kb, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER);
+        // 3) temporalEase(sc, eIns, eOuts) на все ключи
+        var eIns=[], eOuts=[];
+        for (var z2=0; z2<sc.numKeys; z2++){
+            var ee=CAM1_EASE[z2]||[%(ease_default)g,%(ease_default)g];
+            eIns.push(ee[0]); eOuts.push(ee[1]);
         }
-    }
+        // Scale 2D-нула: value.length=2, а AE ждёт 1 — откат внутри, ошибка не прячется (задание CE)
+        temporalEase(sc, eIns, eOuts);
+        // 4) затем для каждого ключа k (1-based): in / out HOLD или BEZIER по CAM1_HOLDS
+        for (var k=1; k<=sc.numKeys; k++){
+            var inHold = (k > 1 && CAM1_HOLDS[k - 2]) ? KeyframeInterpolationType.HOLD : KeyframeInterpolationType.BEZIER;
+            var outHold = (CAM1_HOLDS[k - 1]) ? KeyframeInterpolationType.HOLD : KeyframeInterpolationType.BEZIER;
+            if (inHold === KeyframeInterpolationType.HOLD || outHold === KeyframeInterpolationType.HOLD)
+                sc.setInterpolationTypeAtKey(k, inHold, outHold);
+        }
+    }%(cam1_follow_js)s
 
     // ---- music as an audio layer (at MUSIC_DB) ----
     if (MUSIC){
@@ -520,10 +576,10 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
         // фото -> прекомп (унификация размеров), анимация поверх прекомпа
         var pit=imp(ins.media); if(!pit) continue; toBin(pit,"Вставки");
         var pc=app.project.items.addComp("INS "+fname, W, H, 1.0, Math.max(DUR,1), FPS); toBin(pc,"Вставки");
-        var inner=pc.layers.add(pit);
-        inner.property("ADBE Transform Group").property("ADBE Position").setValue([W/2, H/2]);
+        %(ins_plate_layer)svar inner=pc.layers.add(pit);
+        inner.property("ADBE Transform Group").property("ADBE Position").setValue(%(ins_photo_pos)s);
         try{ var _iw=pit.width; if(_iw){ var _f=W/_iw;   // тянем фото под ширину композа
-            inner.property("ADBE Transform Group").property("ADBE Scale").setValue([_f*100,_f*100]); } }catch(e){}
+            inner.property("ADBE Transform Group").property("ADBE Scale").setValue(%(ins_photo_scale)s); } }catch(e){}
         if(/\.gif$/i.test(fname)){ try{ inner.timeRemapEnabled=true;   // гифки зациклить
             inner.property("ADBE Time Remapping").expression="loopOut()"; inner.outPoint=Math.max(DUR,1); }catch(e){} }
         var L=main.layers.add(pc); L.inPoint=t0; L.outPoint=t1;
@@ -578,12 +634,12 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     // ---- интро-текст: по прекомпу на группу строк; между группами кросс-фейд по opacity ----
     var introLayers = [];%(intro_front_arr_decl)s%(intro_above_roto_arr_decl)s%(intro_fx_decl)s
     if (INTRO_GROUPS.length){
-        var LINE_STEP=160, F_DUR=0.3, HOLD=1.0, F_OUT=0.75, F_FADE=%(intro_fade)g;
+        var LINE_STEP=%(intro_line_step_px)g, F_DUR=0.3, HOLD=1.0, F_OUT=0.75, F_FADE=%(intro_fade)g;
         function introDoc(tl, txt, col%(accent_params)s%(fill_params)s){
             var sp=tl.property("ADBE Text Properties").property("ADBE Text Document");
             var dd=sp.value; dd.resetCharStyle(); dd.resetParagraphStyle(); dd.text=""+txt;
-            try{dd.font=%(accent_font_pick)s;}catch(e){ try{dd.font=INTRO_FONT;}catch(e2){} }
-            try{dd.fauxBold=(col=="yellow"&&HL_BOLD);}catch(e){} dd.fontSize=FONT_SIZE;
+            try{setFont(dd, %(accent_font_pick)s);}catch(e){ try{setFont(dd, INTRO_FONT);}catch(e2){} }
+            try{dd.fauxBold=(col=="yellow"&&HL_BOLD);}catch(e){} dd.fontSize=%(intro_fsize_js)s;
             dd.fillColor=%(intro_fill_pick)s; dd.applyFill=true;
             try{dd.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
             sp.setValue(dd);
@@ -688,17 +744,16 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             draftQ(cc);
             cc.startTime=rr.cs; cc.inPoint=rr.ts; cc.outPoint=rr.te;
             try{ cc.audioEnabled=false; }catch(e){}
-            cc.parent=nulls[ci];%(roto_pos_cc)s                    // сначала parent, ПОТОМ scale (иначе AE делит на зум Null)
+            cc.parent=nulls[ci];%(roto_pos_cc)s%(roto_rot_cc)s                    // сначала parent, ПОТОМ scale (иначе AE делит на зум Null)
             // ровно тот же масштаб, что у кадра своей камеры: рото-копия обязана лежать
             // пиксель-в-пиксель, иначе человек разъезжается с собственным кадром
             var rfit=100; try{ rfit = 100*Math.max(W/camSrc.width, H/camSrc.height); }catch(e){}
             var rsc = (ci==0) ? rfit*CAM1_FIT/100 : rr.scale;
             try{ cc.property("ADBE Transform Group").property("ADBE Scale").setValue([rsc,rsc]); }catch(e){}
-            if (EXPOSURE!=0){ try{ var lc=cc.property("ADBE Effect Parade").addProperty("ADBE Lumetri");
-                lc.property("ADBE Lumetri-0011").setValue(EXPOSURE); }catch(e){} }
+            %(lumetri_roto)s
             var mk = main.layers.add(maskIt); mk.name="Рото маска";   // альфа над копией
             mk.startTime=rr.ts; mk.inPoint=rr.ts; mk.outPoint=rr.te;
-            mk.parent=nulls[ci];%(roto_pos_mk)s
+            mk.parent=nulls[ci];%(roto_pos_mk)s%(roto_rot_mk)s
             // маска может быть в уменьшенном разрешении (mf = во сколько раз мельче исходника)
             var msc=rsc*(rr.mf||1);
             try{ mk.property("ADBE Transform Group").property("ADBE Scale").setValue([msc,msc]); }catch(e){}
@@ -770,5 +825,8 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
 
     try{ if (DISCLAIMER && dl) dl.moveToBeginning(); }catch(e){}   // дисклеймер поверх всего
 %(top_line_js)s%(caption_js)s%(disc_end_js)s%(blur_js)s
+    // Пробная композиция шрифта (задание ZF) своё отработала — в проекте ей делать нечего.
+    // Удаляем ДО endUndoGroup: иначе «Отменить» вернёт её в панель проекта.
+    if (_fontProbe){ try{ _fontProbe.remove(); }catch(e){ _LOG("пробная композиция шрифта: " + e); } }
 %(dg_report)s%(tail)s})();
 """

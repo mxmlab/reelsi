@@ -10,7 +10,9 @@
 4. При sub_scale=70 якорь [SW/2, POSY], позиция [W/2, POSY];
 5. Инвариант геометрии в node: каждый из трёх циклов исполняется с заглушками
    (sourceRectAtTime отдаёт заданные ширины, W=1080) дважды — с SUB_WIDE=1 и SUB_WIDE=3;
-   для каждого слоя X(3) - (SW - W)/2 == X(1) с точностью 1e-6.
+   для каждого слоя X(3) - (SW - W)/2 == X(1) с точностью 1e-6. Стенд цикла строк
+   объявляет HL_ROW_WORD (задание ZH): жёлтое слово въезжает в момент слова, а не
+   со строкой, — на X-раскладку это не влияет.
 """
 import gzip
 import json
@@ -91,6 +93,7 @@ const POSY = 864;
 const HL_STEP = 100;
 const HL_RISE = 60;
 const HL_DUR = 0.35;
+const HL_ROW_WORD = true;   // цикл строк (задание ZH): жёлтое въезжает в момент слова
 const HL_BOLD = true;
 const FONT_SIZE = 72;
 const HL_FILL = [1, 0.9, 0];
@@ -185,9 +188,9 @@ console.log(JSON.stringify(res));
 
 @node
 @pytest.mark.parametrize("loop_key, loop_code", [
-    ("words", SUBS_LOOP_WORDS.replace("%(sub_count_code)s", "")),
-    ("words_joined", SUBS_LOOP_WORDS_JOINED.replace("%(sub_count_code)s", "")),
-    ("rows", SUBS_LOOP_ROWS.replace("%(sub_rows)s", "_SUB_ROWS_DATA").replace("%(sub_step)g", "_SUB_STEP_DATA")),
+    ("words", SUBS_LOOP_WORDS.replace("%(sub_count_code)s", "").replace("%(hl_blur_call)s", "")),
+    ("words_joined", SUBS_LOOP_WORDS_JOINED.replace("%(sub_count_code)s", "").replace("%(hl_blur_call)s", "")),
+    ("rows", SUBS_LOOP_ROWS.replace("%(sub_rows)s", "_SUB_ROWS_DATA").replace("%(sub_step)g", "_SUB_STEP_DATA").replace("%(hl_blur_call)s", "")),
 ])
 def test_sub_wide_geometry_invariant_in_node(loop_key, loop_code, tmp_path):
     """Инвариант геометрии: для каждого слоя X(3) - (SW - W)/2 == X(1) с точностью 1e-6."""

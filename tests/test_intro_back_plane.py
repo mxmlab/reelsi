@@ -286,15 +286,15 @@ def test_back_true_авто_тень_без_галочки_intro_shadow(xml_subs
 
 
 def test_back_step_прижатие_к_главному_слову(xml_subs, tmp_path):
-    """back_step: строка заднего плана стоит к соседней главной на 0.45 обычного шага (дефолт), при back_step=1.0 — как раньше."""
+    """back_step: строка заднего плана стоит к соседней главной на 0.65 обычного шага (дефолт), при back_step=1.0 — как раньше."""
     intro = [
         dict(words=["ТЕСТОСТЕРОН"], color="white", times=[T_CAM1], anim="glitch"),
         dict(words=["вот", "что"], color="white", times=[T_CAM1 + 0.5], back=True),
     ]
-    # Дефолт back_step = 0.45 (160 * 0.45 = 72 px между строками)
+    # Дефолт back_step = 0.65 (160 * 0.65 = 104 px между строками)
     jsx_def = _build(xml_subs, tmp_path / "def", intro, style={}, intro_splits=[])
-    assert "BACK_STEP=0.45" in jsx_def
-    assert "LINE_STEP * (GRP[si].back ? BACK_STEP : (GRP[si-1].back ? 0.75 : 1.0))" in jsx_def
+    assert "BACK_STEP=0.65" in jsx_def
+    assert "LINE_STEP * ((GRP[si].back || GRP[si-1].back) ? BACK_STEP : 1.0)" in jsx_def
     assert "(!GRP[0].back && nL>1) ? (H/2 - (nL-1)*60) : (H/2 - totH/2)" in jsx_def
 
     # back_step = 1.0 — шаг как раньше

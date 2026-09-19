@@ -8,7 +8,6 @@
 import heapq
 import math
 import os
-from core import fonts as _fonts
 from .jsutil import _r
 from .parse import is_out_dir
 
@@ -187,39 +186,34 @@ def _intro_i_dy(h, n_lines, gs, step_k=1.0):
     return 0.0
 
 
-def _line_ink(ps_name, line, size_px):
-    """(asc, desc) чернил строки интро, px, или None (шрифта/глифа нет) — тонкая обёртка
-    над fonts.ink_extent: строка интро в .jsx несёт слова, а не готовую строку."""
-    return _fonts.ink_extent(ps_name, " ".join(line.get("words") or []), size_px)
-
-
-def intro_line_ys(lines, fonts, fsize, back_scale, back_step, back_gap,
-                  any_back_in_clip, anchor, h, step_k=1.0):
+def intro_line_ys(lines, back_step, any_back_in_clip=True, anchor="center",
+                  h=1920.0, step_k=1.0):
     """Y базовых линий строк интро в координатах прекомпа (высота h), по числу строк
-    (задание A1). Раньше шаг был жёсткими пикселями ТОЛЬКО в шаблоне (LINE_STEP=160,
-    160*back_step до строки заднего плана) и о шрифте не знал: после смены шрифта малые
-    строки наезжали на строку над ними, и пользователь раздвигал их руками в AE. Его шаг
-    и совпал с «хвост вниз верхней строки + высота букв нижней + ~4 px» — теперь это и
-    есть формула: шаг до строки заднего плана не меньше зазора между ЧЕРНИЛАМИ соседних
-    строк (fonts.ink_extent), а не между базовыми линиями.
+    (задания A1, ZO, ZT).
+
+    Шаг ДО строки заднего плана и шаг ПОСЛЕ неё к обычной строке — один и тот же
+    line_step * back_step, где line_step = INTRO_LINE_STEP * step_k (задание ZO).
+    Минимума по чернилам (fonts.ink_extent) и зазора back_gap здесь больше нет (задание
+    ZT): минимум (73.5 px на дефолтном шрифте) перекрывал шаг на малых back_step, и
+    ручка «не меняла ничего», а жёсткие 0.75 после строки заднего плана вообще не
+    читались из стиля. Высоту букв из файла шрифта теперь не спрашивают вовсе — шаг
+    целиком задаёт ручка.
 
     lines — строки группы ровно как уезжают в .jsx (поле back только у настоящей строки
-    заднего плана: акцент его перебивает), fonts — шрифт каждой строки (plan.intro[].fonts),
-    fsize — кегль не-back строки, back_scale/back_step — кегль и шаг строк заднего плана
-    долями от fsize/LINE_STEP.
+    заднего плана: акцент его перебивает), back_step — шаг строк заднего плана долей от
+    обычного шага.
 
     any_back_in_clip: в ролике есть строки заднего плана. Нет их — все шаги LINE_STEP и
-    базовая линия по центру: ветка шаблона без back другой раскладки не знает, шаги по
-    back_step/back_gap там смысла не имеют. back_gap None — зазор не считаем вовсе.
+    базовая линия по центру: ветка шаблона без back другой раскладки не знает, шаг по
+    back_step там смысла не имеет.
 
     anchor: "first" — первая строка стоит в h/2, добавленная строка опускает только
     нижние (блок не поднимается); "center" — как раньше: без back h/2 - (nL-1)/2*LINE_STEP,
-    с back и головой не back — h/2 - (nL-1)*60, иначе h/2 - totH/2. Округление до сотых:
+    с back и головой не back — h/2 - (nL-1)*60*k, иначе h/2 - totH/2. Округление до сотых:
     столько же знаков, сколько у остальных чисел .jsx.
 
     step_k — множитель межстрочного интервала (intro_line_step/100, задание ZO): ОДИН на
-    весь шаг строки — базовые 160 px и «60» центровки с back. Зазор по чернилам не
-    множится: он и так не меньше базового, а с ростом шага базовый его догоняет.
+    весь шаг строки — базовые 160 px, «60» центровки с back и шаг заднего плана.
     При 1.0 числа прежние байт в байт (golden).
     """
     n = len(lines)
@@ -230,27 +224,15 @@ def intro_line_ys(lines, fonts, fsize, back_scale, back_step, back_gap,
     def _back(i):
         return bool(lines[i].get("back"))
 
-    def _fsz(i):
-        return fsize * back_scale if _back(i) else fsize
-
     steps = []
     for i in range(1, n):
         if not any_back_in_clip:
             steps.append(line_step)
             continue
-        if _back(i):
+        if _back(i) or _back(i - 1):
             base = line_step * back_step
-        elif _back(i - 1):
-            base = line_step * 0.75
         else:
             base = line_step
-        # Зазор между буквами: хвост вниз ПРЕДЫДУЩЕЙ строки плюс высота букв этой.
-        # Высоту не знаем (шрифта нет) — базовый шаг, как в шаблоне.
-        if _back(i) and back_gap is not None:
-            prev = _line_ink(fonts[i - 1] if i - 1 < len(fonts) else None, lines[i - 1], _fsz(i - 1))
-            cur = _line_ink(fonts[i] if i < len(fonts) else None, lines[i], _fsz(i))
-            if prev is not None and cur is not None:
-                base = max(base, prev[1] + cur[0] + float(back_gap))
         steps.append(base)
 
     if anchor == "first":

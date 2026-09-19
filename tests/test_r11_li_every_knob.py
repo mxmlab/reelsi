@@ -271,6 +271,9 @@ def _get_test_mutation(k, item, base_val, tmp_path):
         # Ручка работает только в режиме строк, и нужен жёлтый в строке (задание ZH)
         st_setup["sub_words_per_row"] = 2
         return st_setup, "row"
+    elif k == "hl_row_stack":
+        st_setup["sub_words_per_row"] = 2
+        return st_setup, True
     elif k == "hl_blur_amt":
         # Сила блюра видна только при включённом блюре (как cam1_take_* при cam1_take_zoom)
         st_setup["hl_blur"] = True

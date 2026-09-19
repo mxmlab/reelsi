@@ -3,12 +3,16 @@
 # Copyright (c) 2026 Maxim Si
 """Межстрочный интервал интро: ползунок intro_line_step (задание ZO).
 
-Шаг строки внутри прекомпа интро был жёсткими 160 px: шаг заднего плана (back_step) и
-зазор малых строк (back_gap) регулируются, основной шаг — нет. Теперь ключ стиля
-intro_line_step (%) даёт ОДИН множитель k = intro_line_step/100 на оба места:
+Шаг строки внутри прекомпа интро был жёсткими 160 px, и множителя у него не было:
+регулировались только шаг заднего плана (back_step) и зазор малых строк (back_gap,
+задание ZT его убрало). Теперь ключ стиля intro_line_step (%) даёт ОДИН множитель
+k = intro_line_step/100 на оба места:
 
   * шаги строк и центровку блока считает Python (`intro_line_ys`, `_intro_i_dy`);
   * в шаблон уезжает готовое число: `var LINE_STEP=160*k` (template.py).
+
+Шаг заднего плана — line_step * back_step, то есть тот же множитель (задание ZT:
+минимума по чернилам и жёстких 0.75 больше нет).
 
 При 100 (дефолт) множитель равен единице, и .jsx фикстуры остаётся прежним БАЙТ В БАЙТ
 (эталон fixtures/golden_geometry.jsx) — поэтому внутри функции шаг собран одной
@@ -17,7 +21,7 @@ intro_line_step (%) даёт ОДИН множитель k = intro_line_step/100
 Здесь:
   1. golden: intro_line_step=100 (и дефолт) — .jsx побайтово как на main;
   2. `intro_line_ys` при step_k=1.5: разности соседних y ×1.5 (без заднего плана, с ним
-     и при якоре «first»); зазор по ЧЕРНИЛАМ не множится — он и так не меньше базового;
+     и при якоре «first»); шаг заднего плана множится вместе с базовым;
   3. сборка при intro_line_step=150: LINE_STEP=240 в .jsx, y групп разъехались сильнее;
   4. сторож «каждая ручка»: ключ есть в схеме стиля и реально влияет на сборку.
 
@@ -38,7 +42,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE)
 
-from core import fonts, style_schema, styles, xml2ae  # noqa: E402
+from core import style_schema, styles, xml2ae  # noqa: E402
 from core.xml2ae.layout import INTRO_LINE_STEP, intro_line_ys  # noqa: E402
 from tests.test_geometry_python import _build, _mask_assets  # noqa: E402
 
@@ -64,26 +68,13 @@ def _isolate_censor(monkeypatch):
                                            "ok": (None, None, censor.DEFAULT_OK)})
 
 
-@pytest.fixture()
-def ink(monkeypatch):
-    """Детерминированные чернила строки: asc 0.7·size, desc 0.2·size (как в других тестах)."""
-    def mock_ink_extent(ps_name, text, size_px):
-        if not text or not str(text).strip():
-            return (0.0, 0.0)
-        k = float(size_px)
-        return (round(0.7 * k, 2), round(0.2 * k, 2))
-
-    monkeypatch.setattr(fonts, "ink_extent", mock_ink_extent)
-
-
 def _ln(word, back=False):
     return {"words": [word], "times": [T_CAM1], **({"back": True} if back else {})}
 
 
-def _ys(lines, fonts_list, step_k=None, fs=100.0, bs=0.69, bstep=0.45, gap=4.0,
-        any_back=False, anchor="center", h=1920.0):
+def _ys(lines, step_k=None, bstep=0.45, any_back=False, anchor="center", h=1920.0):
     kw = {} if step_k is None else {"step_k": step_k}
-    return intro_line_ys(lines, fonts_list, fs, bs, bstep, gap, any_back, anchor, h, **kw)
+    return intro_line_ys(lines, bstep, any_back, anchor, h, **kw)
 
 
 def _plan(xml_subs, intro, splits=None, style=None):
@@ -126,10 +117,10 @@ def test_default_100_jsx_is_byte_identical_to_golden(xml_subs, tmp_path):
 
 def test_step_k_scales_line_gaps_without_back():
     """2а. Ветка без строк заднего плана: разности соседних y ровно ×1.5, база — h/2."""
-    h, fs, bs = 1920.0, 100.0, 0.69
+    h = 1920.0
     lines = [_ln("A"), _ln("A"), _ln("A")]
-    ys1 = _ys(lines, [None] * 3, 1.0, fs, bs, 0.45, 4.0, False, "center", h)
-    ys15 = _ys(lines, [None] * 3, 1.5, fs, bs, 0.45, 4.0, False, "center", h)
+    ys1 = _ys(lines, 1.0, 0.45, False, "center", h)
+    ys15 = _ys(lines, 1.5, 0.45, False, "center", h)
 
     assert [round(ys1[i + 1] - ys1[i], 2) for i in range(2)] == [INTRO_LINE_STEP] * 2
     assert [round(ys15[i + 1] - ys15[i], 2) for i in range(2)] == [240.0] * 2
@@ -142,31 +133,31 @@ def test_step_k_scales_first_anchor_steps():
     """2б. Якорь «first»: первая строка по-прежнему в h/2, шаги до нижних ×1.5."""
     h = 1920.0
     lines = [_ln("A"), _ln("A")]
-    ys1 = _ys(lines, [None] * 2, 1.0, 100.0, 0.69, 0.45, 4.0, False, "first", h)
-    ys15 = _ys(lines, [None] * 2, 1.5, 100.0, 0.69, 0.45, 4.0, False, "first", h)
+    ys1 = _ys(lines, 1.0, 0.45, False, "first", h)
+    ys15 = _ys(lines, 1.5, 0.45, False, "first", h)
     assert ys15[0] == h / 2 == ys1[0]
     assert round(ys15[1] - ys15[0], 2) == round((ys1[1] - ys1[0]) * 1.5, 2) == 240.0
 
 
-def test_step_k_scales_back_steps_but_not_ink_gap(ink):
-    """2в. С задним планом: БАЗОВЫЕ шаги ×1.5, а зазор по чернилам не множится —
-    с ростом шага базовый его догоняет, теснее строки не становятся."""
-    h, fs, bs, gap = 1920.0, 200.0, 0.69, 4.0
+def test_step_k_scales_back_steps():
+    """2в. С задним планом: шаги = line_step * back_step, оба множатся на step_k
+    (задание ZT: минимума по чернилам в формуле больше нет)."""
+    h = 1920.0
     lines = [_ln("g"), _ln("A", back=True)]
-    # чернила: хвост «g» 0.2·200 = 40 + высота «A» 0.7·(200·0.69) = 96.6 + зазор 4 = 140.6
-    ys1 = _ys(lines, [PS, PS], 1.0, fs, bs, 0.45, gap, True, "center", h)
-    ys15 = _ys(lines, [PS, PS], 1.5, fs, bs, 0.45, gap, True, "center", h)
+    ys1 = _ys(lines, 1.0, 0.45, True, "center", h)
+    ys15 = _ys(lines, 1.5, 0.45, True, "center", h)
     d1 = round(ys1[1] - ys1[0], 2)
     d15 = round(ys15[1] - ys15[0], 2)
-    assert d1 == 140.6, "базовый шаг 160·0.45=72 меньше чернил — взят зазор по чернилам"
-    assert d15 == d1, "зазор по чернилам умножился на k, а не остался прежним"
+    assert d1 == 72.0, "шаг 160·0.45 = 72"
+    assert d15 == 108.0, "шаг 240·0.45 = 108"
+    assert round(d1 * 1.5, 2) == d15
     # центровка с головой не-back — те же 60, но по новому шагу
     assert ys1[0] == round(h / 2 - 60.0, 2)
     assert ys15[0] == round(h / 2 - 60.0 * 1.5, 2)
 
-    # базовый шаг перерос чернила (back_step 1.0 = 160 px) — он и множится: 160 → 240
-    b1 = _ys(lines, [PS, PS], 1.0, fs, bs, 1.0, gap, True, "center", h)
-    b15 = _ys(lines, [PS, PS], 1.5, fs, bs, 1.0, gap, True, "center", h)
+    # шаг back_step 1.0 (160 px) — он и множится: 160 → 240
+    b1 = _ys(lines, 1.0, 1.0, True, "center", h)
+    b15 = _ys(lines, 1.5, 1.0, True, "center", h)
     assert round(b1[1] - b1[0], 2) == 160.0
     assert round(b15[1] - b15[0], 2) == 240.0
 

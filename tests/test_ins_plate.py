@@ -201,7 +201,7 @@ def test_nobg_path_caches_and_falls_back(tmp_path, monkeypatch):
 
     monkeypatch.setattr(insertlib, "remove_bg", fake_remove)
     p1 = insertlib.nobg_path(src, emit=lambda *a, **k: None)
-    assert p1 == os.path.join(str(tmp_path), "pic.nobg.png"), p1
+    assert p1 == os.path.join(str(tmp_path), "pic.png.nobg.png"), p1
     assert len(calls) == 1 and calls[0] is True, "фон снимается с обрезкой прозрачных полей"
     assert insertlib.nobg_path(src, emit=lambda *a, **k: None) == p1
     assert len(calls) == 1, "кэш новее исходника, а rembg позвали второй раз"
@@ -241,7 +241,7 @@ def test_nobg_path_survives_system_exit_from_remove_bg(tmp_path, monkeypatch):
     monkeypatch.setattr(insertlib, "remove_bg", no_rembg)
     got = insertlib.nobg_path(src, emit=log.append)
     assert got == src, "SystemExit от remove_bg обязан отдать исходник, а не пустоту"
-    assert not os.path.exists(os.path.join(str(tmp_path), "pic.nobg.png")), \
+    assert not os.path.exists(os.path.join(str(tmp_path), "pic.png.nobg.png")), \
         "кэш без фона появился, хотя фон не снимали"
     assert log, "о неснятом фоне в emit не сообщили"
     line = " ".join(log)
@@ -263,10 +263,10 @@ def test_to_ae_full_takes_nobg_media_for_the_plate_insert(xml_subs, tmp_path, mo
             "plate": True}]
     jsx = _build(xml_subs, tmp_path, style=_plate_style(tmp_path, plate), inserts=ins)
     assert calls, "фон не снимали: галка вставки не доехала до сборки"
-    assert json.dumps(os.path.join(str(tmp_path), "gen.nobg.png")) in jsx, \
+    assert json.dumps(os.path.join(str(tmp_path), "gen.png.nobg.png")) in jsx, \
         "в .jsx остался исходник вместо кэша без фона"
     assert json.dumps(photo) not in jsx, "исходный путь с фоном всё ещё в .jsx"
-    assert _ins_jsons(jsx)[0]["media"].endswith("gen.nobg.png")
+    assert _ins_jsons(jsx)[0]["media"].endswith("gen.png.nobg.png")
 
 
 def test_plate_knobs_are_in_schema_and_base():

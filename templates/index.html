@@ -109,6 +109,7 @@
       <span class="grow"></span>
       <button class="sm" onclick="scanOutdir()"><span data-ic="dl"></span> Из папки результата</button>
       <button class="sm" onclick="addExternal()"><span data-ic="plus"></span> Добавить XML…</button>
+      <button class="icon" id="delSel1" data-delsel onclick="delSelClips()" disabled aria-label="Удалить выбранные клипы" data-t="Удалить отмеченные галочками клипы — убрать из списка или стереть с диска файлы нарезки. Без отмеченных кнопка не работает."><span data-ic="trash"></span></button>
       <button class="icon" id="clipsClear" onclick="clearClipsList()" aria-label="Убрать все клипы из списка" data-t="Убрать все клипы из списка на этой странице. Файлы нарезки на диске НЕ удаляются — список подхватится заново кнопкой «Из папки результата»."><span data-ic="broom"></span></button></h2>
     <div id="clips1" class="clips"></div>
     <div class="navbar">
@@ -128,6 +129,7 @@
       <span class="muted mono" id="mkupsum" style="font-size:11px;max-width:150px;overflow:hidden;
         text-overflow:ellipsis;white-space:nowrap;font-weight:400"></span>
       <span class="lnk" tabindex="0" role="button" onclick="openAISettings('markup')" aria-label="Модели разметки" data-t="Модели разметки: ИИ-профиль, «ум» жёлтых слов, вставок и интро, а также движок субтитров."><span data-ic="gear"></span></span>
+      <button class="icon" id="delSel2" data-delsel onclick="delSelClips()" disabled aria-label="Удалить выбранные клипы" data-t="Удалить отмеченные галочками клипы — убрать из списка или стереть с диска файлы нарезки. Без отмеченных кнопка не работает."><span data-ic="trash"></span></button>
       <button class="sm" onclick="markupPhase('subs')" data-t="Субтитры у отмеченных клипов (не отмечено ни одного = все): Whisper по набору, жёлтые и вставки не трогаются.">Субтитры (<span data-markupcnt></span>)</button>
       <button class="sm" onclick="markupPhase('yellow')" data-t="Жёлтые у отмеченных клипов (не отмечено ни одного = все): ИИ-разметка, субтитры и вставки не трогаются. Без субтитров клип пропускается.">Жёлтые (<span data-markupcnt></span>)</button>
       <button class="sm" onclick="markupPhase('inserts')" data-t="Вставки у отмеченных клипов (не отмечено ни одного = все): ИИ-подбор из базы, субтитры и жёлтые не трогаются. Без субтитров клип пропускается.">Вставки (<span data-markupcnt></span>)</button>
@@ -146,6 +148,7 @@
     <h2><span class="k">◆</span>Файлы набора
       <span class="i" data-t="Галочки слева — какие файлы уйдут в сборку и в пакетное ИИ-интро (не отмечено ни одного = все). Клик по строке открывает предпросмотр: стиль, интро, жёлтые, вставки.">!</span>
       <span class="grow"></span>
+      <button class="icon" id="delSel3" data-delsel onclick="delSelClips()" disabled aria-label="Удалить выбранные клипы" data-t="Удалить отмеченные галочками клипы — убрать из списка или стереть с диска файлы нарезки. Без отмеченных кнопка не работает."><span data-ic="trash"></span></button>
       <button class="icon" id="rmSelClips" onclick="removeSelClips()" disabled aria-label="Убрать отмеченные клипы из списка" data-t="Убрать отмеченные галочками клипы из списка набора. Файлы нарезки на диске НЕ удаляются — подхватятся снова «Из папки результата». Без отмеченных кнопка не работает."><span data-ic="broom"></span></button>
       <button class="sm" id="introall" onclick="aiIntroAll()" data-t="Разметить интро ИИ сразу во всех отмеченных файлах: строки за спиной + 2–3 акцента в середине. Уже размеченное интро будет заменено — спросим перед стартом."><span data-ic="ai" data-cls="gold"></span> ИИ интро (<span data-introcnt></span>)</button></h2>
     <div id="clips3" class="clips"></div>
@@ -707,7 +710,7 @@
       <span class="grow"></span>
       <button class="icon" data-close aria-label="Закрыть" data-t="Закрыть" onclick="closeModal('mbDelClip')"><span data-ic="x"></span></button></div>
     <div class="mbody" style="display:flex;flex-direction:column;gap:10px">
-      <div id="delClipName" data-noi18n style="font-size:13px;word-break:break-all;color:var(--tx)"></div>
+      <div id="delClipName" data-noi18n style="font-size:13px;word-break:break-all;color:var(--tx);max-height:120px;overflow-y:auto"></div>
       <div id="delClipInitial" style="display:flex;flex-direction:column;gap:10px">
         <div class="muted" style="font-size:12px;line-height:1.5">Убрать клип только из списка интерфейса или удалить XML и все сопутствующие файлы нарезки с диска? Исходное видео не затрагивается.</div>
         <div class="row" style="gap:8px">

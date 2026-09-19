@@ -42,25 +42,26 @@ def test_paragraph_reset_in_source_files():
     template_txt = open(template_path, encoding="utf-8").read()
     build_txt = open(build_path, encoding="utf-8").read()
 
-    # Число вызовов в каждом файле и суммарно 8 и 8
+    # Число вызовов в каждом файле и суммарно 10 и 10
     t_char = len(re.findall(r"\bresetCharStyle\(\)", template_txt))
     t_para = len(re.findall(r"\bresetParagraphStyle\(\)", template_txt))
-    assert t_char == 6, f"в template.py ожидалось 6 resetCharStyle, получено {t_char}"
-    assert t_para == 6, f"в template.py ожидалось 6 resetParagraphStyle, получено {t_para}"
+    # +2 — циклы стопки жёлтых в режиме строк (SUBS_LOOP_STACK*, задание ZU)
+    assert t_char == 8, f"в template.py ожидалось 8 resetCharStyle, получено {t_char}"
+    assert t_para == 8, f"в template.py ожидалось 8 resetParagraphStyle, получено {t_para}"
 
     b_char = len(re.findall(r"\bresetCharStyle\(\)", build_txt))
     b_para = len(re.findall(r"\bresetParagraphStyle\(\)", build_txt))
     assert b_char == 2, f"в build.py ожидалось 2 resetCharStyle, получено {b_char}"
     assert b_para == 2, f"в build.py ожидалось 2 resetParagraphStyle, получено {b_para}"
 
-    assert (t_char + b_char) == 8
-    assert (t_para + b_para) == 8
+    assert (t_char + b_char) == 10
+    assert (t_para + b_para) == 10
 
     # Каждый resetParagraphStyle() стоит сразу после resetCharStyle() той же переменной в той же строке
     pattern = re.compile(r"(\w+)\.resetCharStyle\(\);\s*(\w+)\.resetParagraphStyle\(\);")
     for name, content in [("template.py", template_txt), ("build.py", build_txt)]:
         matches = pattern.findall(content)
-        expected_count = 6 if name == "template.py" else 2
+        expected_count = 8 if name == "template.py" else 2   # +2 — циклы стопки жёлтых (ZU)
         assert len(matches) == expected_count, (
             f"в {name} найдено {len(matches)} связок char+para вместо {expected_count}"
         )

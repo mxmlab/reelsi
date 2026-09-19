@@ -176,7 +176,7 @@ def test_plan_photo_keeps_nobg_proportions(xml_subs, tmp_path, monkeypatch):
             "plate": True}]
     plan = _plan(xml_subs, style={"insert_plate_file": plate}, inserts=ins)
     got = plan["inserts"][0]
-    nobg = os.path.join(str(tmp_path), "photo.nobg.png")
+    nobg = os.path.join(str(tmp_path), "photo.png.nobg.png")
 
     assert got["media"] == nobg and got["media"].endswith(".nobg.png"), \
         f"план несёт не кэш без фона: {got['media']!r}"
@@ -358,8 +358,8 @@ def test_preview_card_key_ignores_nobg_suffix():
     """3в. Карточка списка ищется по ИСХОДНИКУ: у вставки на подложке в плане путь кэша."""
     code = _js("normInsPath", "insCardKey") + """
     console.log(JSON.stringify({
-      plate:insCardKey({media:'C:/x/p.nobg.png',plate:true}),
-      plain:insCardKey({media:'C:/x/p.nobg.png'}),
+      plate:insCardKey({media:'C:/x/p.png.nobg.png',plate:true}),
+      plain:insCardKey({media:'C:/x/p.png.nobg.png'}),
       usual:insCardKey({media:'C:/x/p.png',plate:true})}));
     """
     out = _run_node(code)
@@ -367,7 +367,7 @@ def test_preview_card_key_ignores_nobg_suffix():
     assert out["plate"] == "c:\\x\\p.png", \
         f"вставка на подложке не нашла бы свою карточку в списке: {out['plate']}"
     assert out["usual"] == "c:\\x\\p.png", out["usual"]
-    assert out["plain"] == "c:\\x\\p.nobg.png", \
+    assert out["plain"] == "c:\\x\\p.png.nobg.png", \
         f"у вставки без галки путь подменился: {out['plain']}"
 
 

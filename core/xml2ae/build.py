@@ -33,7 +33,8 @@ from .layout import (DEFAULT_DISCLAIMER, DISC_FIT_W, EASE_DEFAULT, HL_EASE_IN, H
                      _zoom_key_eases, _zoom_key_holds, _zoom_max,
                      intro_line_ys)
 from .parse import Cancelled, HERE, _is_image, parse_full
-from .template import AE_FULL, SUBS_LOOP_WORDS, SUBS_LOOP_ROWS, SUBS_LOOP_WORDS_JOINED
+from .template import (AE_FULL, SUBS_LOOP_WORDS, SUBS_LOOP_ROWS, SUBS_LOOP_WORDS_JOINED,
+                       SUBS_LOOP_STACK, SUBS_LOOP_STACK_JOINED)
 
 # Цвет камер через Lumetri (задание ZJ): ключ плана -> matchName эффекта в AE и подпись
 # для лога. Номера сняты архитектором с живого AE 26.2 по свойствам эффекта (ADBE Lumetri),
@@ -609,6 +610,11 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     # связь ещё не продумана») снят: связь как раз прямая — слова интро вынимаются из subs
     # НИЖЕ и раньше, чем строятся строки (raw_lines), поэтому строки собираются из оставшихся
     # слов, а интро от режима субтитров не зависит.
+    if word_timings is None and xml_path:
+        from core.fileio import json_load_soft
+        _w_sidecar = os.path.splitext(xml_path)[0] + ".words.json"
+        if os.path.isfile(_w_sidecar):
+            word_timings = json_load_soft(_w_sidecar)
     eff_intro = intro or []
     eff_intro_remove = intro_remove or []
     eff_intro_splits = intro_splits or []
@@ -617,6 +623,11 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     if remove:                                   # слова интро убираем из титров, хайлайты переиндексируем
         keep = [k for k in range(len(subs)) if k not in remove]
         remap = {old: new for new, old in enumerate(keep)}
+        if word_timings is not None:
+            if isinstance(word_timings, list) and len(word_timings) == len(subs):
+                word_timings = [word_timings[k] for k in keep]
+            elif isinstance(word_timings, dict) and isinstance(word_timings.get("words"), list) and len(word_timings["words"]) == len(subs):
+                word_timings = dict(word_timings, words=[word_timings["words"][k] for k in keep])
         subs = [subs[k] for k in keep]
         hl = set(remap[k] for k in hl_raw if k in remap)
         brk = set(remap[k] for k in brk_raw if k in remap)
@@ -672,13 +683,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     intro_comp_shadow2_op = float(
         _sv(st, "intro_comp_shadow2_op"))
     back_step = float(_sv(st, "back_step"))
-    if abs(back_step - 0.75) < 1e-4:
-        back_step = 0.45
     back_scale = float(_sv(st, "back_scale"))
-    # Зазор между буквами соседних строк интро (задание A1): шаг ДО строки заднего плана
-    # не меньше «хвост вниз верхней строки + высота букв нижней + back_gap». Числа даёт
-    # fonts.ink_extent; зазор стиля — дефолт 4 px, как раздвинул строки пользователь в AE.
-    back_gap = float(_sv(st, "back_gap"))
     # Межстрочный интервал интро (задание ZO): ОДИН множитель k на оба места — шаги строк
     # и центровку блока в Python (intro_line_ys, _intro_i_dy) и var LINE_STEP в шаблоне.
     # 100 = прежние 160 px: подстановка печатает ровно «160», .jsx прежний (golden).
@@ -948,6 +953,10 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     _posy = int(meta["h"] * float(_sv_or(st, "sub_y")))
     _hl_step = round(meta["h"] * 0.06224, 2)
     _hl_rise = round(meta["h"] * 0.06406, 2)
+    # Длительность подъёма/проявления жёлтых, с (задание ZU): ровно то число, что стоит
+    # литералом HL_DUR в шаблоне (template.py). План несёт его предпросмотру — своей копии
+    # числа в JS не заводится, как и у остальной геометрии субтитров.
+    _hl_dur = 0.35
     _fsize = max(60, int(meta["w"] * 0.13))
     # Кегль интро = кегль ДО ужатия строк (доработка ZL). В режиме строк автофит ужимает
     # _fsize под самую длинную строку, но интро — не строка субтитров: раньше оно брало
@@ -1063,17 +1072,35 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             sub_loop = sub_tpl % dict(sub_count_code="", hl_blur_call=hl_blur_call)
         sub_rows_js = "[]"
     else:
+        hl_row_stack = bool(_sv(st, "hl_row_stack"))
+        # Стопка подряд жёлтых (задание ZU) раскладывается ТЕМ ЖЕ правилом, что работает в
+        # режиме «по слову»: _stack_layout даёт row/gend на каждое слово (серии с учётом
+        # склеек joins и ручных разделителей brk). Своей копии разбора серий здесь нет —
+        # иначе режимы разъехались бы. Серия — слова с ОДНИМ gend: он у всей серии общий
+        # (конец последнего слова), у одиночного жёлтого — свой собственный.
+        rows = gend = None
+        stacked_indices = set()
+        if hl_row_stack:
+            rows, gend = _stack_layout(subs, hl, brk, joins)
+            _run_words = {}
+            for _k in hl:
+                _run_words[gend[_k]] = _run_words.get(gend[_k], 0) + 1
+            stacked_indices = {_k for _k in hl if _run_words[gend[_k]] >= 2}
+
         cut_bounds = set()
         for ci_cam in cams:
             for cl in ci_cam.get("clips", []):
                 cut_bounds.add(int(cl[0]))
                 cut_bounds.add(int(cl[1]))
-        if word_timings is None and xml_path:
-            from core.fileio import json_load_soft
-            _w_sidecar = os.path.splitext(xml_path)[0] + ".words.json"
-            if os.path.isfile(_w_sidecar):
-                word_timings = json_load_soft(_w_sidecar)
-        raw_lines = build_sub_rows(subs, per_row=sub_words_per_row, max_rows=sub_rows_max,
+        if stacked_indices:
+            words_for_rows = [
+                {"start": s, "end": e, "w": w, "idx": k}
+                for k, (s, e, w) in enumerate(subs)
+                if k not in stacked_indices
+            ]
+        else:
+            words_for_rows = subs
+        raw_lines = build_sub_rows(words_for_rows, per_row=sub_words_per_row, max_rows=sub_rows_max,
                                    cut_bounds=cut_bounds, word_timings=word_timings)
         max_line_w = 0.92 * meta["w"]
 
@@ -1124,25 +1151,98 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
                 return _accent_word(w, "title" if idx in repl_first else "lower")
             return _accent_word(w, sub_case)
         subs_plan = []
+        hl_anim_mode = _sv(st, "hl_row_anim")
         for line in raw_lines:
             l_words = line["words"]
-            t_words = [{"w": _sub_w(x["w"], x["idx"]),
-                        "color": "yellow" if x["idx"] in hl else "white",
-                        "s": x["start"] / _fps0, "e": x["end"] / _fps0} for x in l_words]
+            r_s = line["start"] / _fps0
+            r_e = line["end"] / _fps0
+            t_words = []
+            for x in l_words:
+                is_hl = x["idx"] in hl
+                w_s = x["start"] / _fps0
+                w_e = x["end"] / _fps0
+                tw = {
+                    "w": _sub_w(x["w"], x["idx"]),
+                    "color": "yellow" if is_hl else "white",
+                    "s": w_s,
+                    "e": w_e,
+                }
+                if is_hl:
+                    # Время появления жёлтого в строке (задание ZH, то же правило, что в
+                    # цикле строк шаблона): при "word" — время слова, зажатое в окно строки
+                    # (не раньше её начала и не позже, чем остаётся место на подъём), при
+                    # "row" — начало строки. Считает Python: превью берёт готовое t0.
+                    if hl_anim_mode == "word":
+                        tw["t0"] = round(min(max(w_s, r_s), max(r_s, r_e - _hl_dur)), 4)
+                    else:
+                        tw["t0"] = round(r_s, 4)
+                t_words.append(tw)
             all_hl = all(x["idx"] in hl for x in l_words)
             it = {
-                "s": line["start"] / _fps0,
-                "e": line["end"] / _fps0,
+                "s": r_s,
+                "e": r_e,
                 "w": " ".join(x["w"] for x in t_words),
                 "color": "yellow" if all_hl else "white",
                 "row": line["row"],
-                "gend": line["end"] / _fps0,
+                "gend": r_e,
                 "repl": line["repl"],
                 "words": t_words,
             }
             subs_plan.append(it)
 
-        subs_js = _jd([[s, _endc(k), _sub_w(w, k), 1 if k in hl else 0, 0, _endc(k)]
+        if stacked_indices:
+            # Элементы стопки — ровно как элементы режима «по слову» (тот же состав полей и
+            # те же row/gend из _stack_layout), только с пометкой stack: по ней превью
+            # кладёт их отдельными строками по шагу HL_STEP, а не в строку текста.
+            for k in sorted(stacked_indices):
+                s, e, w = subs[k]
+                wd = _sub_w(w, k)
+                ps = hl_font_ps if k in hl else font_ps
+                w_px = _fonts.text_width(ps, w, _fsize)
+                item = {
+                    "s": s / _fps0,
+                    "e": _endc(k) / _fps0,
+                    "w": wd,
+                    "color": "yellow",
+                    "row": rows[k],
+                    "gend": gend[k] / _fps0,
+                    "repl": k,
+                    "stack": True,
+                }
+                if w_px is not None and w_px > max_line_w:
+                    shrunk_fs = max(40, int(_fsize * max_line_w / w_px))
+                    if shrunk_fs < _fsize:
+                        item["fsize"] = shrunk_fs
+                subs_plan.append(item)
+            subs_plan.sort(key=lambda item: (item["s"], item.get("row", 0)))
+
+        sub_stack_loop = ""
+        if stacked_indices:
+            any_joins = bool(joins)
+            # Данные цикла стопки — как SUBS в режиме «по слову»: [начало, конец, слово,
+            # hl=1, ряд стопки, общий конец]. Слова серии рисует цикл SUBS_LOOP_STACK:
+            # выезд на HL_RISE, проявление и общий конец стопки — второй копии анимации нет.
+            sub_stack_data = [
+                [
+                    subs[k][0],
+                    _endc(k),
+                    _sub_w(subs[k][2], k),
+                    1,
+                    rows[k],
+                    gend[k],
+                ]
+                for k in sorted(stacked_indices)
+            ]
+            sub_stack_js = _jd(sub_stack_data)
+            stack_tpl = SUBS_LOOP_STACK_JOINED if any_joins else SUBS_LOOP_STACK
+            sub_stack_loop = stack_tpl % dict(sub_stack=sub_stack_js, hl_blur_call=hl_blur_call)
+
+        # В SUBS (её читает только поп-SFX по индексу начала) у слов серии — их ряд стопки и
+        # общий конец; у остальных слов поля прежние. Галка выключена — stacked_indices пуст,
+        # ветки не вычисляются, и SUBS побайтово прежний (golden).
+        subs_js = _jd([[s, _endc(k), _sub_w(w, k), 1 if k in hl else 0,
+                        rows[k] if k in stacked_indices else 0,
+                        gend[k] if k in stacked_indices else _endc(k)]
                        for k, (s, e, w) in enumerate(subs)])
         sub_rows_data = [
             [
@@ -1156,8 +1256,11 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             for line in raw_lines
         ]
         sub_rows_js = _jd(sub_rows_data)
+        # Цикл стопки дописывается ПОСЛЕ цикла строк (в AE слои стопки встают поверх строк),
+        # а не подстановкой внутрь SUBS_LOOP_ROWS: шаблон строк остаётся прежним, и его можно
+        # подставлять по-старому (tests/test_template_sub_wide.py).
         sub_loop = SUBS_LOOP_ROWS % dict(sub_rows=sub_rows_js, sub_step=_sub_step,
-                                         hl_blur_call=hl_blur_call)
+                                         hl_blur_call=hl_blur_call) + sub_stack_loop
     _c1zoom = (_sv_or(st, "cam1_zoom"))         # pulse = наезд с откатом | jump = резкие скачки | drift = скачок+плавный дрейф 100–160% | none = нет зума
     if cam1_scale is None:                             # авто-зум по сменам кам1→кам2
         if _c1zoom == "none":
@@ -1619,12 +1722,12 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         # превью читает готовое и своей лесенки не держит. В сами строки (lines) поле не
         # кладём: они уезжают в .jsx как INTRO_GROUPS, и он обязан остаться прежним (golden).
         _line_fonts = [_intro_line_font(ln, intro_font_ps, intro_hl_font_ps) for ln in _lines]
-        # Y базовых линий строк (задание A1): шаг знает высоту букв шрифта, а не только
-        # жёсткие пиксели, и якорь блока. Считает Python — тем же числам едут и .jsx
-        # (INTRO_LY), и превью. В строки (lines) поле не кладём: INTRO_GROUPS обязан
-        # остаться прежним (golden).
-        _ys = intro_line_ys(_lines, _line_fonts, _fsize_base, back_scale, back_step, back_gap,
-                            _any_back, _anchor, meta["h"], step_k=_line_step_k)
+        # Y базовых линий строк (задания A1, ZT): шаг задаёт back_step (доля обычного),
+        # а не жёсткие пиксели шаблона, плюс якорь блока. Считает Python — тем же числам
+        # едут и .jsx (INTRO_LY), и превью. В строки (lines) поле не кладём: INTRO_GROUPS
+        # обязан остаться прежним (golden).
+        _ys = intro_line_ys(_lines, back_step, _any_back, _anchor, meta["h"],
+                            step_k=_line_step_k)
         _intro_ly.append(_ys)
         intro_plan.append({"group": _g, "on2": bool(_on2),
                            "ts": _ts, "te": _te, "fade": _r(_fade), "lines": _lines,
@@ -1987,7 +2090,11 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     follow_keys = []
     if bool(st.get("cam1_head_follow")) and xml_path and cams and cams[0].get("path"):
         from core import headtrack
-        hdata = headtrack.load_cached(xml_path, cams[0]["path"])
+        ranges = headtrack.cam1_ranges(cams, _fps0)
+        try:
+            hdata = headtrack.load_cached(xml_path, cams[0]["path"], ranges=ranges)
+        except TypeError:
+            hdata = headtrack.load_cached(xml_path, cams[0]["path"])
         if hdata is not None:
             w_src = hdata.get("w") or meta["w"]
             h_src = hdata.get("h") or meta["h"]
@@ -2090,6 +2197,12 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         # intro_fsize — кегль интро (до ужатия строк, доработка ZL): превью рисует им
         # интро, fsize (ужатым) — субтитры; в режиме по слову числа равны.
         "posy": _posy, "hl_step": _hl_step, "hl_rise": _hl_rise, "fsize": _fsize,
+        # Анимация жёлтых в строках (задание ZU) для предпросмотра: время появления — у
+        # самого слова (words[].t0), остальные числа — плоскими полями рядом с hl_rise/
+        # hl_step: превью не заводит своей копии ни одного числа. hl_dur — то же 0.35 с,
+        # что литералом HL_DUR в шаблоне, hl_row_anim — режим (word/row, задание ZH).
+        "hl_dur": _hl_dur, "hl_row_anim": _sv(st, "hl_row_anim"),
+        "hl_blur": hl_blur_on, "hl_blur_amt": float(_sv(st, "hl_blur_amt")),
         "intro_fsize": _fsize_base,
         # масштаб слоя прекомпа субтитров (задание FE): превью рисует transform: scale()
         # с origin в posy — то же число, что уходит в Scale в .jsx
@@ -2185,14 +2298,14 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         _intro_word_shadow_word = ""
 
     # Раскладка строк интро по вертикали (задание A1): готовые Y базовых линий уезжают
-    # в .jsx массивом INTRO_LY и берутся оттуда — шаг знает высоту букв шрифта (back_gap)
-    # и якорь блока, в шаблоне этого не сосчитать. Массив нужен, если в ролике есть строки
+    # в .jsx массивом INTRO_LY и берутся оттуда — шаг знает back_step и якорь блока,
+    # в шаблоне этого не сосчитать. Массив нужен, если в ролике есть строки
     # заднего плана (там шаг уже не LINE_STEP) ИЛИ хоть одна группа с якорем «first»
     # (первая строка на месте). Ни того, ни другого — .jsx прежний байт в байт (golden).
     _any_first = any(a == "first" for a in _intro_anchor)
     _intro_ly_decl = (
         "    var INTRO_LY=%s;    // [группа][строка] — Y базовой линии строки в прекомпе,"
-        " считает Python (задание A1): шаг знает высоту букв шрифта и якорь блока\n"
+        " считает Python (задание A1): шаг знает back_step и якорь блока\n"
         % _jd(_intro_ly)
     ) if (_any_back or _any_first) else ""
 
@@ -2201,7 +2314,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             "var nL=GRP.length, BACK_STEP=%g, BACK_SCALE=%g, maxLineW=0;\n"
             "            var lineSteps=[0], totH=0;\n"
             "            for(var si=1; si<nL; si++){\n"
-            "                var stp = LINE_STEP * (GRP[si].back ? BACK_STEP : (GRP[si-1].back ? 0.75 : 1.0));\n"
+            "                var stp = LINE_STEP * ((GRP[si].back || GRP[si-1].back) ? BACK_STEP : 1.0);\n"
             "                totH += stp;\n"
             "                lineSteps.push(totH);\n"
             "            }\n"
@@ -3121,15 +3234,9 @@ def to_ae_full(xml_path, jsx_path=None, return_source=False, emit=console_emit, 
         try:
             meta_pre, cams_pre, _, _ = parse_full(xml_path, ncams=kw.get("ncams"))
             if cams_pre and cams_pre[0].get("path") and os.path.isfile(cams_pre[0]["path"]):
-                fps0 = meta_pre["fps"] or 60
-                ranges = []
-                for cl in cams_pre[0].get("clips", []):
-                    if cl[4] and cl[1] > cl[0]:
-                        in_s = cl[2] / float(fps0)
-                        dur_s = (cl[1] - cl[0]) / float(fps0)
-                        ranges.append((in_s, in_s + dur_s))
+                from core import headtrack
+                ranges = headtrack.cam1_ranges(cams_pre, meta_pre.get("fps"))
                 if ranges:
-                    from core import headtrack
                     headtrack.load_or_track(xml_path, cams_pre[0]["path"], ranges, emit=emit, cancel=cancel, fps=10)
         except Cancelled:
             raise

@@ -162,6 +162,86 @@ SUBS_LOOP_ROWS = r"""    var SUB_ROWS = %(sub_rows)s;
     }"""
 
 
+SUBS_LOOP_STACK = r"""
+    var SUB_STACK = %(sub_stack)s;
+    for (var si=0; si<SUB_STACK.length; si++){
+        var sw=SUB_STACK[si], row=(sw[4]|0);
+        var L = subc.layers.addText(sw[2]);
+        var sp = L.property("ADBE Text Properties").property("ADBE Text Document");
+        var d = sp.value; d.resetCharStyle(); d.resetParagraphStyle(); d.text=sw[2];
+        try{setFont(d, HL_FONT);}catch(e){ try{setFont(d, FONT);}catch(e2){} }
+        try{d.fauxBold=HL_BOLD;}catch(e){}
+        d.fontSize=FONT_SIZE; d.fillColor=HL_FILL; d.applyFill=true;
+        try{d.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
+        sp.setValue(d);
+        try{ var rr=L.sourceRectAtTime(sw[0]/FPS+0.001,false);
+             if(rr.width>FITW){ d.fontSize=Math.max(40, Math.floor(FONT_SIZE*FITW/rr.width)); sp.setValue(d); } }catch(e){}
+        var posP = L.property("ADBE Transform Group").property("ADBE Position");
+        var t0 = sw[0]/FPS;
+        L.inPoint = t0;
+        var finalY = POSY + row*HL_STEP;
+        L.outPoint = sw[5]/FPS;
+        posP.setValueAtTime(t0,        [SW/2, finalY+HL_RISE]);
+        posP.setValueAtTime(t0+HL_DUR, [SW/2, finalY]);
+        var op = L.property("ADBE Transform Group").property("ADBE Opacity");
+        op.setValueAtTime(t0, 0); op.setValueAtTime(t0+HL_DUR, 100);
+        easePair(posP); easePair(op);%(hl_blur_call)s
+    }"""
+
+
+SUBS_LOOP_STACK_JOINED = r"""
+    var SUB_STACK = %(sub_stack)s;
+    var si=0;
+    while (si<SUB_STACK.length){
+        var sw=SUB_STACK[si], row=(sw[4]|0);
+        var sj=si;
+        while (sj+1<SUB_STACK.length && ((SUB_STACK[sj+1][4]|0)===row) && SUB_STACK[sj+1][5]===sw[5]){
+            sj++;
+        }
+        var r_layers=[], r_widths=[], r_words=[];
+        for (var sk=si; sk<=sj; sk++){
+            var kw=SUB_STACK[sk];
+            var L = subc.layers.addText(kw[2]);
+            var sp = L.property("ADBE Text Properties").property("ADBE Text Document");
+            var d = sp.value; d.resetCharStyle(); d.resetParagraphStyle(); d.text=kw[2];
+            try{setFont(d, HL_FONT);}catch(e){ try{setFont(d, FONT);}catch(e2){} }
+            try{d.fauxBold=HL_BOLD;}catch(e){}
+            d.fontSize=FONT_SIZE; d.fillColor=HL_FILL; d.applyFill=true;
+            try{d.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
+            sp.setValue(d);
+            var rr={width:0};
+            try{ rr=L.sourceRectAtTime(kw[0]/FPS+0.001,false);
+                 if(rr.width>FITW){ d.fontSize=Math.max(40, Math.floor(FONT_SIZE*FITW/rr.width)); sp.setValue(d);
+                                    rr=L.sourceRectAtTime(kw[0]/FPS+0.001,false); } }catch(e){}
+            r_layers.push(L);
+            r_widths.push(rr.width);
+            r_words.push(kw);
+        }
+        var spc = FONT_SIZE * 0.28;
+        var totW = 0;
+        for (var sk=0; sk<r_widths.length; sk++) totW += r_widths[sk];
+        totW += Math.max(0, r_widths.length - 1) * spc;
+        var curX = (SW - totW) / 2;
+        var finalY = POSY + row*HL_STEP;
+        for (var wi=0; wi<r_layers.length; wi++){
+            var L = r_layers[wi], rsw = r_words[wi];
+            var sp = L.property("ADBE Text Properties").property("ADBE Text Document");
+            var t0 = rsw[0]/FPS;
+            L.inPoint = t0;
+            L.outPoint = rsw[5]/FPS;
+            var wCenter = (r_layers.length > 1) ? (curX + r_widths[wi] / 2) : (SW / 2);
+            curX += r_widths[wi] + spc;
+            var posP = L.property("ADBE Transform Group").property("ADBE Position");
+            posP.setValueAtTime(t0,        [wCenter, finalY+HL_RISE]);
+            posP.setValueAtTime(t0+HL_DUR, [wCenter, finalY]);
+            var op = L.property("ADBE Transform Group").property("ADBE Opacity");
+            op.setValueAtTime(t0, 0); op.setValueAtTime(t0+HL_DUR, 100);
+            easePair(posP); easePair(op);%(hl_blur_call)s
+        }
+        si = sj + 1;
+    }"""
+
+
 AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
 // Reelsi -> After Effects FULL build (auto-generated). Run: File>Scripts>Run Script File
 (function () {

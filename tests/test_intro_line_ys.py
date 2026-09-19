@@ -1,20 +1,26 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Вертикальная раскладка строк интро считается в Python (задание A1).
+"""Вертикальная раскладка строк интро считается в Python (задания A1, ZT).
 
 Шаг строк жил жёсткими пикселями в шаблоне (LINE_STEP=160, до строки заднего плана
-160·back_step) и о шрифте не знал: после смены шрифта малые строки наезжали на строку
-над ними, и пользователь раздвигал их руками в AE. Его шаг совпал с «хвост вниз верхней
-строки + высота букв нижней + ~4 px» — теперь это и есть формула: высоту букв даёт
-`fonts.ink_extent` (контуры глифов через BoundsPen), зазор — ключ стиля `back_gap`.
+160·back_step), а шаг ДО строки заднего плана считался не меньше «хвост вниз верхней
+строки + высота букв нижней + зазор»: высоты давал `fonts.ink_extent` по контурам
+глифов, зазор — ключ стиля `back_gap`. Минимум по чернилам (73.5 px на дефолтном
+шрифте) перекрывал ручку на малых значениях, а шаг ПОСЛЕ строки заднего плана был
+жёсткими 0.75 — правки владельца не доезжали ни до AE, ни до превью. Задание ZT
+оставило одну формулу: шаг до строки заднего плана и шаг после неё к обычной строке
+= line_step * back_step, где line_step = INTRO_LINE_STEP * step_k (задание ZO); ни
+чернил, ни `back_gap`, ни жёсткого 0.75 в раскладке интро больше нет.
 Второе: блок центрировался по числу строк, и добавленная строка поднимала первую —
 теперь есть якорь (`intro_anchor` / `intro_anchor2`): «по центру» или «на первой строке».
 
 Здесь:
-  * `ink_extent` по контурам известной высоты: «A» 0..700, «g» −200..500 при upm 1000;
-  * без шрифта `intro_line_ys` совпадает с прежней формулой шаблона (три раскладки);
-  * с шрифтом шаг до строки заднего плана = max(базовый, хвост + высота букв + зазор);
+  * `ink_extent` по контурам известной высоты: «A» 0..700, «g» −200..500 при upm 1000
+    (функция живёт для дисклеймера — зазор `disc_gap`, задание E);
+  * шаги `intro_line_ys` совпадают с формулой шаблона в трёх раскладках — высоты букв
+    шрифта в них не входят вовсе;
+  * шаг заднего плана = line_step * back_step, в том числе ПОСЛЕ строки заднего плана;
   * якорь «first»: первая строка в h/2 при 1, 2 и 3 строках, iDy — как для одной строки;
   * план: ys у группы, в строках его нет, группа камеры 2 берёт `intro_anchor2`;
   * .jsx: со строками заднего плана есть INTRO_LY и lineY берётся оттуда, без них — нет.
@@ -93,13 +99,6 @@ def font(tmp_path, monkeypatch):
 
 
 @pytest.fixture()
-def no_fonts(monkeypatch):
-    """Шрифтов нет вовсе: ink_extent возвращает None, шаг остаётся базовым."""
-    monkeypatch.setattr(fonts, "_FONT_DIRS", [])
-    fonts.list_fonts(refresh=True)
-
-
-@pytest.fixture()
 def xml_subs(tmp_path):
     dst = str(tmp_path / "timeline.xml")
     with gzip.open(os.path.join(HERE, "fixtures", "timeline_subs.xml.gz"), "rb") as g, \
@@ -130,71 +129,68 @@ def test_ink_extent_none_without_font_or_glyph(font):
     assert fonts.ink_extent(PS, "Ж", 100) is None
 
 
-# ---- 2. без шрифта — прежняя формула шаблона ------------------------------------------------
+# ---- 2. шаги совпадают с формулой шаблона ---------------------------------------------------
 
 def _today_back(n, backs, back_step, h):
-    """Y по сегодняшней формуле шаблона (ветка со строками заднего плана)."""
+    """Y по формуле шаблона (ветка со строками заднего плана)."""
     steps = [0.0]
     tot = 0.0
     for i in range(1, n):
-        tot += INTRO_LINE_STEP * (back_step if backs[i] else (0.75 if backs[i - 1] else 1.0))
+        tot += INTRO_LINE_STEP * (back_step if (backs[i] or backs[i - 1]) else 1.0)
         steps.append(tot)
     cY = (h / 2 - (n - 1) * 60) if (not backs[0] and n > 1) else (h / 2 - tot / 2)
     return [round(cY + s, 2) for s in steps]
 
 
 def _today_noback(n, h):
-    """Y по сегодняшней формуле шаблона (ветка без строк заднего плана)."""
+    """Y по формуле шаблона (ветка без строк заднего плана)."""
     cY = h / 2 - (n - 1) / 2 * INTRO_LINE_STEP
     return [round(cY + i * INTRO_LINE_STEP, 2) for i in range(n)]
 
 
-def test_without_font_matches_template_formula(no_fonts):
-    """Шрифта нет (ink_extent → None) — intro_line_ys повторяет формулу шаблона в трёх
-    раскладках: без back; с back и головой big; с back и головой back."""
-    h, fs, bs, bstep, gap = 1920.0, 140.0, 0.69, 0.45, 4.0
+def test_matches_template_formula():
+    """intro_line_ys повторяет формулу шаблона в трёх раскладках: без строк заднего
+    плана; с back и головой не-back; с back и головой back. Высоты букв шрифта в шаг
+    больше не входят (задание ZT) — шрифтового окружения тесту не нужно."""
+    h, bstep = 1920.0, 0.45
     # без строк back в ролике — все шаги LINE_STEP
     lines = [_ln("A"), _ln("A"), _ln("A")]
-    ys = intro_line_ys(lines, [None] * 3, fs, bs, bstep, gap, False, "center", h)
+    ys = intro_line_ys(lines, bstep, False, "center", h)
     assert ys == _today_noback(3, h)
 
-    # с back и головой big
+    # с back и головой не-back
     lines = [_ln("A"), _ln("A", back=True), _ln("A")]
-    ys = intro_line_ys(lines, [None] * 3, fs, bs, bstep, gap, True, "center", h)
+    ys = intro_line_ys(lines, bstep, True, "center", h)
     assert ys == _today_back(3, [False, True, False], bstep, h)
 
     # с back и головой back
     lines = [_ln("A", back=True), _ln("A")]
-    ys = intro_line_ys(lines, [None] * 2, fs, bs, bstep, gap, True, "center", h)
+    ys = intro_line_ys(lines, bstep, True, "center", h)
     assert ys == _today_back(2, [True, False], bstep, h)
 
 
-# ---- 3. с шрифтом — шаг по зазору между буквами ----------------------------------------------
+# ---- 3. шаг заднего плана — ровно line_step * back_step --------------------------------------
 
-def test_back_gap_step_uses_ink(font):
-    """Шаг ДО строки заднего плана — max(базовый, хвост верхней строки + высота букв нижней
-    + back_gap); шаги строк над big и big под big остаются прежними (160 / 120)."""
-    h, fs, bs = 1920.0, 100.0, 0.69
-    # верх «g» (хвост 20), низ — back «A» (0.69·70 = 48.3): 20 + 48.3 + 4 = 72.3 > 72
-    ys = intro_line_ys([_ln("g"), _ln("A", back=True)], [PS, PS], fs, bs, 0.45, 4.0,
-                       True, "center", h)
-    assert round(ys[1] - ys[0], 2) == 72.3, "зазор между буквами не попал в шаг"
-
-    # хвоста нет (верх «A»: 0 + 48.3 + 4 = 52.3 < 72) — базовый шаг строки заднего плана
-    ys = intro_line_ys([_ln("A"), _ln("A", back=True)], [PS, PS], fs, bs, 0.45, 4.0,
-                       True, "center", h)
+def test_back_step_no_ink_minimum(font):
+    """Шаг ДО строки заднего плана и ПОСЛЕ неё — line_step * back_step (задание ZT:
+    минимум по чернилам и зазор back_gap убраны, жёсткое 0.75 убрано). Шрифт с известными
+    контурами зарегистрирован намеренно: даже когда высоты букв посчитать можно, шаг их
+    не спрашивает — раньше «g» над back-строкой раздвигал соседей на 72.3 вместо 72."""
+    h = 1920.0
+    # верх «g» (хвост 20), низ — back «A»: шаг строго 160 * 0.45 = 72 px, чернила не раздвигают
+    ys = intro_line_ys([_ln("g"), _ln("A", back=True)], 0.45, True, "center", h)
     assert round(ys[1] - ys[0], 2) == round(INTRO_LINE_STEP * 0.45, 2)
 
-    # зазор не влияет на шаги без строки заднего плана: big под big — 160, после back — 120
-    ys = intro_line_ys([_ln("A"), _ln("A")], [PS, PS], fs, bs, 0.45, 4.0, True, "center", h)
-    assert round(ys[1] - ys[0], 2) == INTRO_LINE_STEP
-    ys = intro_line_ys([_ln("A", back=True), _ln("A")], [PS, PS], fs, bs, 0.45, 4.0,
-                       True, "center", h)
-    assert round(ys[1] - ys[0], 2) == round(INTRO_LINE_STEP * 0.75, 2)
+    # хвоста нет (верх «A»): базовый шаг строки заднего плана 72 px
+    ys = intro_line_ys([_ln("A"), _ln("A", back=True)], 0.45, True, "center", h)
+    assert round(ys[1] - ys[0], 2) == round(INTRO_LINE_STEP * 0.45, 2)
 
-    # зазор выключен (None) — базовый шаг, как в шаблоне
-    ys = intro_line_ys([_ln("g"), _ln("A", back=True)], [PS, PS], fs, bs, 0.45, None,
-                       True, "center", h)
+    # без строки заднего плана: 160 px
+    ys = intro_line_ys([_ln("A"), _ln("A")], 0.45, True, "center", h)
+    assert round(ys[1] - ys[0], 2) == INTRO_LINE_STEP
+
+    # после back к обычному слову: тоже line_step * back_step (72 px, не 120 / 0.75)
+    ys = intro_line_ys([_ln("A", back=True), _ln("A")], 0.45, True, "center", h)
     assert round(ys[1] - ys[0], 2) == round(INTRO_LINE_STEP * 0.45, 2)
 
 
@@ -202,10 +198,10 @@ def test_back_gap_step_uses_ink(font):
 
 def test_anchor_first_keeps_first_line(font):
     """Якорь «first»: первая строка стоит в h/2 при 1, 2 и 3 строках, остальные — ниже."""
-    h, fs, bs = 1920.0, 100.0, 0.69
+    h = 1920.0
     for n in (1, 2, 3):
         lines = [_ln("A") for _ in range(n)]
-        ys = intro_line_ys(lines, [PS] * n, fs, bs, 0.45, 4.0, False, "first", h)
+        ys = intro_line_ys(lines, 0.45, False, "first", h)
         assert ys[0] == h / 2, f"{n} строк: первая строка уехала из h/2"
         assert ys == [round(h / 2 + i * INTRO_LINE_STEP, 2) for i in range(n)]
 
@@ -269,7 +265,7 @@ def _build(xml_subs, tmp_path, intro, style=None):
 
 def test_jsx_uses_intro_ly_with_back_lines(font, xml_subs, tmp_path):
     """Есть строки заднего плана — в .jsx уезжает готовая раскладка INTRO_LY, и lineY
-    берётся из неё: шаг знает высоту букв шрифта, шаблону это не сосчитать."""
+    берётся из неё: шаг знает back_step и якорь блока, шаблону это не сосчитать."""
     intro = [dict(words=["g"], color="white", times=[T_CAM1]),
              dict(words=["A"], color="white", times=[T_CAM1 + 0.5], back=True)]
     # back_case=as-is: буква строки заднего плана остаётся «A» — её высоту и меряем
@@ -280,9 +276,9 @@ def test_jsx_uses_intro_ly_with_back_lines(font, xml_subs, tmp_path):
     assert m, "INTRO_LY не разобрался"
     ys = json.loads(m.group(1))
     assert len(ys) == 1 and len(ys[0]) == 2
-    # кегль фикстуры 140 (1080·0.13), задний план 140·0.69: шаг = хвост «g» (28) + высота
-    # букв «A» (67.62) + зазор 4 = 99.62 — больше базового 160·0.45 = 72, значит он и взят
-    assert round(ys[0][1] - ys[0][0], 2) == 99.62
+    # шаг = line_step * back_step = 160 * 0.65 (дефолт BASE) = 104.0: ни высот букв
+    # «g»/«A» при кегле 140 (было 99.62 по чернилам), ни жёстких 0.75 в нём нет (ZT)
+    assert round(ys[0][1] - ys[0][0], 2) == 104.0
 
 
 def test_jsx_has_no_intro_ly_without_back(font, xml_subs, tmp_path):

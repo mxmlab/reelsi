@@ -172,7 +172,7 @@ def test_plate_only_for_the_checked_insert(xml_subs, tmp_path, monkeypatch):
     assert "plate" not in off["card"] and "pw" in off["card"], \
         "у вставки без галки пропала обычная карточка (маска)"
     # «без фона» — только у той, что на подложке
-    assert on["media"].endswith("on.nobg.png"), f"media подложки: {on['media']!r}"
+    assert on["media"].endswith("on.png.nobg.png"), f"media подложки: {on['media']!r}"
     assert off["media"] == plain, f"у обычной вставки подменили файл: {off['media']!r}"
     assert calls == [1], f"фон снимали {len(calls)} раз вместо одного"
     # подложка в .jsx — под условием, а маска-скругление под обратным ему

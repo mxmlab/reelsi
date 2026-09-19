@@ -46,6 +46,7 @@ IMG_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif", ".tif", ".
 VID_EXT = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"}
 # служебное — не вставки: переходы/звуки, рото-кэш, черновики, исходники камер
 SKIP_NAME = re.compile(r"(quick\s*\d|whoosh|riser|highlight_pop|\.draft\.|_tmp|^roto_\d+|^mask_\d+"
+                       r"|\.nobg\.png$"
                        r"|^(c\d{3,4}|dji_|img_|gx\d{6})[\w-]*\.(mp4|mov|mxf)$)", re.I)
 SKIP_DIR = re.compile(r"[\\/](roto|_tmp|\.git|__pycache__)([\\/]|$)", re.I)
 MAX_VIDEO_MB = 300                                   # видео-вставка больше — почти наверняка исходник
@@ -952,7 +953,7 @@ def remove_bg(img_bytes, trim=True, emit=None):
 
 
 def nobg_path(media, emit=None):
-    """Путь к PNG с уже снятым фоном РЯДОМ с исходником: <папка>/<стем>.nobg.png.
+    """Путь к PNG с уже снятым фоном РЯДОМ с исходником: <папка>/<стем>.<расш>.nobg.png.
 
     Галка стиля «без фона» (задание ZI): и сборка (.jsx), и предпросмотр (/api/media?nobg=1)
     ходят сюда — снятие фона одно на оба, второй копии правила нет. Кэш обязателен: rembg
@@ -964,10 +965,14 @@ def nobg_path(media, emit=None):
     """
     emit = wrap_emit(emit)
     p = os.path.abspath(media or "")
-    if not p or _media_kind(p) != "photo":
+    if not p:
+        return media
+    if os.path.basename(p).lower().endswith(".nobg.png"):
+        return media
+    if _media_kind(p) != "photo":
         return media
     dst = os.path.join(os.path.dirname(p),
-                       os.path.splitext(os.path.basename(p))[0] + ".nobg.png")
+                       os.path.basename(p) + ".nobg.png")
     try:
         if os.path.isfile(dst) and os.path.getmtime(dst) >= os.path.getmtime(p):
             return dst

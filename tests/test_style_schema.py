@@ -208,7 +208,7 @@ def test_unique_ids_and_valid_convs():
 
     dup_groups = [k for k, c in collections.Counter(group_ids).items() if c > 1]
     assert not dup_groups, f"Дубликаты id групп: {dup_groups}"
-    assert len(group_ids) == 38
+    assert len(group_ids) == 39
 
 
 def test_i18n_coverage_for_schema_strings():
@@ -244,7 +244,7 @@ def test_i18n_coverage_for_schema_strings():
 
 
 def test_api_style_schema_endpoint(client):
-    """GET /api/style_schema отдаёт ok: True, layers (10), external (2), base, 38 групп, 138 полей."""
+    """GET /api/style_schema отдаёт ok: True, layers (10), external (2), base, 39 групп, 138 полей."""
     res = client.get("/api/style_schema", headers=H)
     assert res.status_code == 200
     data = res.get_json()
@@ -275,5 +275,5 @@ def test_api_style_schema_endpoint(client):
     for layer in layers:
         count_items(layer.get("items", []))
 
-    assert groups_count == 38
+    assert groups_count == 39
     assert fields_count == 138

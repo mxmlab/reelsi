@@ -237,11 +237,20 @@ alone; preview proxies are a per-camera-file cache and are only removed if you s
 **Where:** step 1 › **Clips**.
 **How:** 1. Use **From output folder** to pick up every `.xml` in the output folder.
 2. Use **Add XML…** to bring in a timeline edited elsewhere. 3. The broom clears the list.
-**Settings:** the list lives in browser state and in a server mirror, so it survives a
-reload and a browser change. Deleting a clip can either drop it from the list or remove
-its files from disk, after a confirmation that lists them.
-**Code:** `templates/index.html:107`, `static/app/40-queue.js:327`,
-`api/files.py:397`
+4. Tick clips and press the trash button to delete them.
+**Settings:** every clip carries a selection checkbox — the same one as in the step 2 and
+step 3 lists, because the choice is shared by all three. A click with Shift sets or clears
+the whole range from the last clicked checkbox to this one. The trash button **Delete the
+selected clips** in the list header (disabled while nothing is ticked) opens the same dialog
+as the cross on a clip row: **Remove from the list** or **Delete from disk…**; the second one
+shows the combined list of cut files with their sizes and then erases them together with
+every sidecar. The source camera video is never touched, and one failing clip does not stop
+the others. The list lives in browser state and in a server mirror, so it survives a reload
+and a browser change.
+**Limitations / price:** nothing ticked here does NOT mean "all", unlike the build: there is
+nothing to delete, so the button stays disabled.
+**Code:** `templates/index.html:112`, `static/app/40-queue.js:583`,
+`static/app/40-queue.js:720`, `api/files.py:472`
 
 ## Step 2 — Markup and inserts
 
@@ -253,7 +262,9 @@ its files from disk, after a confirmation that lists them.
 button to run just that phase. 3. Or press **Mark up all** to run subtitles, then
 highlights, then inserts.
 **Settings:** which model works on which task is set in ⚙ › **Markup**: a separate model
-and reasoning level for highlights, inserts and intro, plus the subtitle engine.
+and reasoning level for highlights, inserts and intro, plus the subtitle engine. The checkbox
+column here is the same shared selection as on steps 1 and 3 — a click with Shift takes a
+whole range — and the trash button in the list header deletes the ticked clips.
 **Limitations / price:** clips without subtitles are skipped by the highlight and insert
 phases. Inserts target 10 photos and 3 videos per video, from 6 s and 10 s in.
 **Code:** `templates/index.html:122`, `static/app/70-editor.js:289`,
@@ -411,9 +422,12 @@ background plate.
 **Where:** step 3 › **Set files**.
 **How:** 1. Tick the clips that go into the build. 2. Nothing ticked means the whole set.
 3. Click a row to open the preview for that clip.
-**Settings:** the broom removes ticked clips from the list only; files on disk stay.
-**Code:** `templates/index.html:146`, `static/app/90-ae.js:280`,
-`static/app/40-queue.js:642`
+**Settings:** the selection is the same as on steps 1 and 2 (a click with Shift takes the
+whole range), and the trash button **Delete the selected clips** next to the broom removes
+the ticked clips from the list or erases their files from disk. The broom removes ticked
+clips from the list only; files on disk stay.
+**Code:** `templates/index.html:151`, `static/app/90-ae.js:280`,
+`static/app/40-queue.js:626`
 
 ### AI intro: hook and accents
 
@@ -445,7 +459,8 @@ the intro is edited in its group row above.
 **How:** 1. Pick a style in the selector. 2. Edit the values you need. 3. Press **Save**,
 or **Save as…** for a copy.
 **Settings:** **Text** holds subtitles (words per row, rows, height, subtitle scale,
-casing, colours), highlights (including **Yellow in a row** and the blur-in), the subtitle
+casing, colours), highlights (including **Yellow in a row**, the blur-in and **consecutive
+yellow — stacked**), the subtitle
 plate, the caption, intro colours, glow and shadows, the disclaimer, and the fonts.
 **Frame** holds the camera 1 zoom mode
 (push-in with recoil, hard jumps, drift, none), the take zooms and the yellow-word zoom,
@@ -542,31 +557,47 @@ exact value.
 
 **Where:** step 3 › style › **Text** › highlights.
 **How:** 1. Set **Yellow in a row**: **when spoken** or **with the row**. 2. Tick **blur-in**
-and set **Blur amount** if the yellow word should come out of a blur.
-**Settings:** the choice matters only when a row holds more than one word. With **when
+and set **Blur amount** if the yellow word should come out of a blur. 3. Tick **consecutive
+yellow — stacked** if a run of yellow words should leave the rows.
+**Settings:** the first choice matters only when a row holds more than one word. With **when
 spoken** the white words appear with the row and the yellow one rises at the moment it is
 said — until then its place in the row is empty. With **with the row** the yellow word rises
 together with the row. **blur-in** adds a Gaussian Blur on the yellow word on the same
-keyframes as the rise; the default **Blur amount** is 70.4.
-**Limitations / price:** the browser preview does not show the rise of the yellow words at
-all, so this animation is judged in After Effects.
-**Code:** `core/xml2ae/build.py:973`, `core/xml2ae/template.py:108`,
-`core/style_schema.py:151`
+keyframes as the rise; the default **Blur amount** is 70.4. **consecutive yellow — stacked**
+(the `hl_row_stack` key, off by default) takes a run of two or more yellow words in a row out
+of the rows and stacks them one word at a time, exactly as in the word-by-word mode — the
+same rise, the same stack step, one common end for the run; a lone yellow word stays in its
+row.
+**Limitations / price:** the animation is visible in the browser preview too: the moment a
+yellow word appears, its rise, its fade-in and its blur all come from the scene plan — the
+same numbers that go into the `.jsx`. With the stack checkbox off the `.jsx` is byte-for-byte
+what it was before.
+**Code:** `core/xml2ae/build.py:1075`, `core/xml2ae/build.py:2204`,
+`core/xml2ae/template.py:254`, `static/app/85-inserts-view.js:838`,
+`core/style_schema.py:162`
 
 ### Intro: several words in a row, camera link, line spacing
 
 **Where:** step 3 › style › **Text** › **Intro**.
-**How:** 1. Set **Line spacing, %** (100 is the usual distance). 2. Clear **intro moves with
-camera** if the intro should stay in place while the camera moves.
+**How:** 1. Set **Line spacing, %** (100 is the usual distance). 2. In **Text › Background**
+set **Background line spacing, %** — the distance to a background line and after it. 3. Clear
+**intro moves with camera** if the intro should stay in place while the camera moves.
 **Settings:** the intro works the same whether the rows mode (**words per row**) is on or
 off: its words are cut out of the subtitles, and its font size is the one the subtitles
 would have had without the auto-shrink of long rows, so in the rows mode the intro does not
-come out smaller. **intro moves with camera** keeps the intro on the camera 1 null, so it
-inherits the zoom, the frame offset and head tracking; cleared, the intro and the shade
-under it stand still in the frame. **Line spacing, %** multiplies the distance between the
-intro rows — the back plate step and the small-row gap are counted from the same number.
-**Code:** `core/xml2ae/layout.py:192`, `core/xml2ae/build.py:1473`,
-`core/xml2ae/build.py:2075`
+come out smaller. The fields sit in three groups: **Transform** holds the shared **Intro
+scale, %**, **Line spacing, %**, **Intro horizontal position** and the **intro moves with
+camera** checkbox; **Camera 1** holds **Intro vertical position** and **Intro anchor, camera
+1**; **Camera 2** holds **Intro on cam2 Y** and **Intro anchor, camera 2**. **intro moves
+with camera** keeps the intro on the camera 1 null, so it inherits the zoom, the frame offset
+and head tracking; cleared, the intro and the shade under it stand still in the frame.
+**Line spacing, %** multiplies the distance between the intro rows. **Background line
+spacing, %** (the `back_step` key, 10 to 300 %, 65 by default) is the distance to a background
+line and after it as a share of that same line spacing — one number for the build and for the
+preview. The old **Background step** with its glyph-based minimum and the small-row gap are
+gone; a `back_gap` left in a saved style is dropped when the style loads.
+**Code:** `core/xml2ae/layout.py:189`, `core/styles.py:417`,
+`core/style_schema.py:479`, `static/app/94-stylepanel.js:110`
 
 ### Glitch glow: built-in or Deep Glow 2
 

@@ -310,6 +310,22 @@ function renderQueue(){const tb=document.querySelector('#qt tbody');if(!tb)retur
 
 // ================= CLIPS (unified list) =================
 let CLIPS=[];   // {xml,name,status:{subs,colored},inserts:[],job:{...}}
+// Отметка клипа галочкой — ОДНА на все три шага (задание ZS): галка на шаге 1 это та же
+// c.sel, что на разметке и сборке. SEL_ANCHOR — индекс последней кликнутой галки, от него
+// Shift считает диапазон; после удаления список перерисован и точки отсчёта больше нет —
+// сбрасывается в -1 (см. delClips и removeSelClips).
+let SEL_ANCHOR=-1;
+// Shift отслеживаем сами: у события change модификаторов нет (это не MouseEvent), а
+// синтетический клик, которым браузер помечает <label>, их теряет вовсе. Залипший Shift
+// снимаем на blur — потерянный keyup иначе оставил бы диапазон включённым навсегда.
+let SHIFT_HELD=false;
+if(typeof document!=='undefined'){
+  document.addEventListener('keydown',e=>{if(e.key==='Shift')SHIFT_HELD=true;});
+  document.addEventListener('keyup',e=>{if(e.key==='Shift')SHIFT_HELD=false;});
+}
+if(typeof window!=='undefined'){
+  window.addEventListener('blur',()=>{SHIFT_HELD=false;});
+}
 function clipByXml(xml){return CLIPS.find(c=>c.xml===xml);}
 // Тег спикера ставится ЗДЕСЬ, в ЕДИНСТВЕННОЙ точке рождения клипа (задание N):
 // после нарезки спикер точно тот, с которым резали; «Из папки результата» берёт
@@ -560,35 +576,55 @@ async function clearPart(i,part){const c=CLIPS[i];if(!c)return;
     }
     saveState();syncClipLists();
   }catch(e){toast('⚠ '+e);uiLog(t('очистка ({part}): ОШИБКА — ',{part:part})+e);}}
+// Клик по галке: сам клип плюс (с Shift) ВЕСЬ диапазон от прошлой кликнутой галки до этой —
+// состояние берётся у текущей. Три списка рисуют одну и ту же c.sel, поэтому после правки
+// перерисовываем все три: иначе соседние галки в других списках разъедутся с состоянием.
+// saveState/syncBuildBtn/markupSelCount остаются в onchange — ровно как было до диапазона.
+function pickClip(i,on,shift){
+  if(!CLIPS[i])return;
+  CLIPS[i].sel=!!on;
+  const a=SEL_ANCHOR;
+  if(shift&&a>=0&&a<CLIPS.length&&a!==i){
+    const lo=Math.min(a,i),hi=Math.max(a,i);
+    for(let k=lo;k<=hi;k++)CLIPS[k].sel=!!on;
+  }
+  SEL_ANCHOR=i;
+  renderClips1();renderClips2();renderClips3();}
+// Кнопки-корзины «Удалить выбранные» в шапках трёх списков. Выбор общий, поэтому и кнопок
+// три, но правило одно: пусто у всех ≠ все (в отличие от сборки) — неотмеченное не удаляем.
+function syncDelSel(){const n=CLIPS.filter(c=>c.sel).length;
+  document.querySelectorAll('[data-delsel]').forEach(b=>{b.disabled=!n;});}
 function renderClips1(){const h=$('clips1');if(!h)return;h.innerHTML='';
-  if(!CLIPS.length){h.innerHTML='<div class="empty">'+t('Пока пусто. Запусти ИИ-нарезку или добавь XML.')+'</div>';syncNav();return;}
+  if(!CLIPS.length){h.innerHTML='<div class="empty">'+t('Пока пусто. Запусти ИИ-нарезку или добавь XML.')+'</div>';syncDelSel();syncNav();return;}
   CLIPS.forEach((c,i)=>{const el=document.createElement('div');el.className='clip';
-    el.innerHTML='<span class="idx">'+(i+1)+'</span><span class="nm grow" data-noi18n title="'+esc(c.xml)+'">'+esc(c.name)+'</span>'
+    el.innerHTML='<label class="pickbox" data-t="'+t('Выбор клипов — общий для всех шагов')+'" onclick="event.stopPropagation()">'
+      +'<input type="checkbox" '+(c.sel?'checked':'')+' onchange="CLIPS['+i+'].sel=this.checked;pickClip('+i+',this.checked,SHIFT_HELD);saveState();syncBuildBtn();markupSelCount()"></label>'
+      +'<span class="idx">'+(i+1)+'</span><span class="nm grow" data-noi18n title="'+esc(c.xml)+'">'+esc(c.name)+'</span>'
       +'<span class="st">'+spkTagHTML(c)+(c.edited?'<span class="st">'+editedTag(c)+'</span>':'')+'</span>'+clipActs(i,1);
     h.appendChild(el);});
-  syncNav();}
+  syncDelSel();syncNav();}
 function renderClips2(){const h=$('clips2');if(!h)return;h.innerHTML='';
-  if(!CLIPS.length){h.innerHTML='<div class="empty">'+t('Клипов нет — вернись на ')+'<span class="lnk" tabindex="0" role="button" onclick="goStep(1)">'+t('шаг 1')+'</span>'+t(' и запусти нарезку или подхвати XML кнопкой «Из папки результата».')+'</div>';markupSelCount();return;}
+  if(!CLIPS.length){h.innerHTML='<div class="empty">'+t('Клипов нет — вернись на ')+'<span class="lnk" tabindex="0" role="button" onclick="goStep(1)">'+t('шаг 1')+'</span>'+t(' и запусти нарезку или подхвати XML кнопкой «Из папки результата».')+'</div>';markupSelCount();syncDelSel();return;}
   // Блок клипа НЕ красим зелёным целиком (просьба юзера): и так видно по тегам, а
   // сплошная заливка глушила разницу между «готово» и «сейчас работаю».
   // Зелёные остаются только сами теги — мелкие маркеры «поработал».
   CLIPS.forEach((c,i)=>{const el=document.createElement('div');el.className='clip';
     el.innerHTML='<label class="pickbox" data-t="'+t('Фазы разметки у выбранных клипов (пусто у всех = все). Отмеченное здесь — то же, что и на шаге сборки.')+'" onclick="event.stopPropagation()">'
-      +'<input type="checkbox" '+(c.sel?'checked':'')+' onchange="CLIPS['+i+'].sel=this.checked;saveState();syncBuildBtn();markupSelCount()"></label>'
+      +'<input type="checkbox" '+(c.sel?'checked':'')+' onchange="CLIPS['+i+'].sel=this.checked;pickClip('+i+',this.checked,SHIFT_HELD);saveState();syncBuildBtn();markupSelCount()"></label>'
       +'<span class="idx">'+(i+1)+'</span><span class="nm" data-noi18n title="'+esc(c.xml)+'">'+esc(c.name)+'</span>'
       +'<span class="st grow">'+statusTags(c,true)+'</span>'+clipActs(i,2);
     h.appendChild(el);});
-  markupSelCount();}
+  markupSelCount();syncDelSel();}
 // Счётчик «(N)» на кнопках фаз шага 2: сколько клипов уйдёт в фазу (не отмечено ни
 // одного = все, как selClips). Обновляется при клике по галочке — как syncBuildBtn.
 function markupSelCount(){const n=CLIPS.filter(c=>c.sel).length||CLIPS.length;
   document.querySelectorAll('[data-markupcnt]').forEach(e=>{e.textContent=n;});}
 function renderClips3(){const h=$('clips3');if(!h)return;h.innerHTML='';
-  if(!CLIPS.length){h.innerHTML='<div class="empty">'+t('Клипов нет — вернись на ')+'<span class="lnk" tabindex="0" role="button" onclick="goStep(1)">'+t('шаг 1')+'</span>'+t(' и запусти нарезку или подхвати XML кнопкой «Из папки результата».')+'</div>';syncBuildBtn();return;}
+  if(!CLIPS.length){h.innerHTML='<div class="empty">'+t('Клипов нет — вернись на ')+'<span class="lnk" tabindex="0" role="button" onclick="goStep(1)">'+t('шаг 1')+'</span>'+t(' и запусти нарезку или подхвати XML кнопкой «Из папки результата».')+'</div>';syncBuildBtn();syncDelSel();return;}
   CLIPS.forEach((c,i)=>{const el=document.createElement('div');
     el.className='clip pick'+(aeDone(c)?' done':clipReady(c)?' ready':'')+(i===curAE?' cur':'');
     el.innerHTML='<label class="pickbox" data-t="'+t('В сборку набора (пусто у всех = собрать все)')+'" onclick="event.stopPropagation()">'
-      +'<input type="checkbox" '+(c.sel?'checked':'')+' onchange="CLIPS['+i+'].sel=this.checked;saveState();syncBuildBtn()"></label>'
+      +'<input type="checkbox" '+(c.sel?'checked':'')+' onchange="CLIPS['+i+'].sel=this.checked;pickClip('+i+',this.checked,SHIFT_HELD);saveState();syncBuildBtn()"></label>'
       +'<span class="idx">'+(i+1)+'</span>'+spkSelHTML(i,c)
       +'<span class="nm grow" data-noi18n title="'+esc(c.xml)+'">'+esc(c.name)+'</span>'
       +'<span class="st">'+spkTagHTML(c,false)+statusTags(c)+(aeDone(c)?'<span class="tag ok">'+t('готов к AE')+ico('check')+'</span>':'')+'</span>'
@@ -597,7 +633,7 @@ function renderClips3(){const h=$('clips3');if(!h)return;h.innerHTML='';
     // Клик по строке = открыть предпросмотр ЭТОГО файла (интро/жёлтые/вставки/стиль в одном окне).
     // Раньше клик только выбирал клип, а предпросмотр надо было искать кнопкой ниже.
     el.onclick=()=>openAEFor(i);h.appendChild(el);});
-  syncBuildBtn();}
+  syncBuildBtn();syncDelSel();}
 // Тег спикера на клипе: как он влияет на стиль/папки/пороги, видно по селектору.
 // Клип ставится в очередь на шаге 1 при выбранном спикере — тег ставится там же.
 function spkSelHTML(i,c){const k=(c.job||{}).speaker||'';
@@ -668,68 +704,98 @@ function _spliceClip(i){
   if(curIns===i)curIns=-1;else if(curIns>i)curIns--;
 }
 
-let DEL_CLIP_IDX=-1;
+// Что удаляем: индексы, зафиксированные на момент открытия окна (галку могли снять, пока
+// окно открыто, — удаляем ровно то, что человек выбрал и увидел в окне).
+let DEL_CLIP_IDXS=[];
+function clipLabel(c){return (c&&(c.name||(c.xml?c.xml.split(/[/\\]/).pop():'')))||'';}
+// Одиночный крестик шага 1 — ТОТ ЖЕ путь, что у «Удалить выбранные»: список из одного
+// индекса. Второй копии логики нет.
 function delClip(i){
-  // curAE / curEdit / curIns правятся при удалении в _spliceClip
-  DEL_CLIP_IDX=i;
-  const c=CLIPS[i];if(!c)return;
-  const name=c.name||(c.xml?c.xml.split(/[/\\]/).pop():'');
-  $('delClipName').textContent=name;
+  // curAE / curEdit / curIns правятся при удалении в _spliceClip (общий путь delClips)
+  delClips([i]);
+}
+// Окно удаления обобщено на список (задание ZS): заголовок — сколько клипов, в теле — их
+// имена. Дальше выбор один: убрать из списка (_spliceClip по убыванию индексов) или стереть
+// с диска (сухой прогон, потом удаление по каждому XML — бэкенд удаляет по одному).
+function delClips(idxs){
+  const list=(idxs||[]).filter(i=>i>=0&&i<CLIPS.length);
+  if(!list.length)return;
+  DEL_CLIP_IDXS=list;
+  const title=list.length===1?t('Удалить клип?')
+    :t('Удалить {n} {clips}?',{n:list.length,clips:t(plur(list.length,'клип','клипа','клипов'))});
+  $('delClipTitle').textContent=title;
+  $('delClipName').textContent=list.map(i=>clipLabel(CLIPS[i])).join(', ');
   $('delClipInitial').style.display='flex';
   $('delClipConfirm').style.display='none';
   openModal('mbDelClip');
 }
 
-function delClipListOnly(){
-  if(DEL_CLIP_IDX<0)return;
-  const i=DEL_CLIP_IDX;DEL_CLIP_IDX=-1;
-  _spliceClip(i);
-  closeModal('mbDelClip');
-  renderClips1();saveState();
+// «Удалить выбранные» в шапке любого из трёх списков. Пусто у всех НЕ значит «все»
+// (это семантика selClips для сборки): без галочек удалять нечего — кнопка и так погашена.
+function delSelClips(){
+  const idx=[];CLIPS.forEach((c,i)=>{if(c.sel)idx.push(i);});
+  if(!idx.length){toast(t('Ничего не отмечено — поставь галочки у клипов, которые убрать'));return;}
+  delClips(idx);
 }
 
+function delClipListOnly(){
+  const list=DEL_CLIP_IDXS.slice();DEL_CLIP_IDXS=[];
+  if(!list.length)return;
+  list.slice().sort((a,b)=>b-a).forEach(i=>_spliceClip(i));   // с конца: splice не съест соседей
+  SEL_ANCHOR=-1;   // список перерисован — прошлая кликнутая галка больше ни на что не указывает
+  closeModal('mbDelClip');
+  renderClips1();renderClips2();renderClips3();syncNav();
+  saveState();
+}
+
+// Сухой прогон по КАЖДОМУ выбранному клипу: сводный список файлов и суммарный размер.
+// Ошибка одного клипа не мешает прочитать остальные (в execute он всё равно попробуется).
 async function delClipDiskPrepare(){
-  if(DEL_CLIP_IDX<0)return;
-  const c=CLIPS[DEL_CLIP_IDX];if(!c)return;
+  const list=DEL_CLIP_IDXS.slice();
+  if(!list.length)return;
   $('delClipInitial').style.display='none';
   $('delClipConfirm').style.display='flex';
   $('delClipCams').textContent=t('Загрузка списка файлов…');
   $('delClipInfo').textContent='';
   $('delClipList').innerHTML='';
   $('delClipDiskConfirmBtn').disabled=true;
-  const jsxdir=(effOutdir(c)||AEGLOBAL||'').trim();
-  try{
-    const res=await fetch('/api/clip_delete',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({xml:c.xml,jsxdir:jsxdir,dry:true})
-    });
-    const d=await res.json();
-    if(d.error){$('delClipCams').textContent=errText(d);return;}
-    const camNames=(d.cams&&d.cams.length)?d.cams:[];
-    if(camNames.length){
-      $('delClipCams').textContent=t('Исходник (НЕ трогаем): ')+camNames.join(', ');
-    }else{
-      $('delClipCams').textContent=t('Исходное видео: не трогаем (удаляются только файлы нарезки)');
-    }
-    const n=(d.files||[]).length;
-    const mb=((d.bytes||0)/1048576).toFixed(2);
-    $('delClipInfo').textContent=t('Будет удалено файлов: {n} ({size} МБ)',{n:n,size:mb});
-    if(n>0){
-      $('delClipList').innerHTML=d.files.map(f=>{
-        const name=f.path.split(/[/\\]/).pop();
-        const sz=(f.size>1048576?(f.size/1048576).toFixed(2)+t(' МБ'):(f.size/1024).toFixed(1)+t(' КБ'));
-        // имя файла приходит с диска (материал мог приехать с гугл-диска) — в разметку
-        // только через esc(): кавычка или «<» в имени иначе станут тегом (задание HL)
-        return '<div style="display:flex;justify-content:space-between;gap:8px"><span>'+esc(name)+'</span><span style="flex:none;color:var(--tx)">'+sz+'</span></div>';
-      }).join('');
-      $('delClipDiskConfirmBtn').disabled=false;
-    }else{
-      $('delClipList').innerHTML='<div class="empty">'+t('Файлы нарезки не найдены на диске')+'</div>';
-      $('delClipDiskConfirmBtn').disabled=false;
-    }
-  }catch(e){
-    $('delClipCams').textContent=t('Ошибка проверки: ')+e;
+  const files=[],cams=[],bad=[];
+  let bytes=0;
+  for(const i of list){
+    const c=CLIPS[i];if(!c)continue;
+    const jsxdir=(effOutdir(c)||AEGLOBAL||'').trim();
+    try{
+      const res=await fetch('/api/clip_delete',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({xml:c.xml,jsxdir:jsxdir,dry:true})
+      });
+      const d=await res.json();
+      if(d.error){bad.push(clipLabel(c)+': '+errText(d));continue;}
+      (d.cams||[]).forEach(n=>{if(cams.indexOf(n)<0)cams.push(n);});
+      (d.files||[]).forEach(f=>files.push(f));
+      bytes+=d.bytes||0;
+    }catch(e){bad.push(clipLabel(c)+': '+e);}
   }
+  $('delClipCams').textContent=cams.length
+    ?t('Исходник (НЕ трогаем): ')+cams.join(', ')
+    :t('Исходное видео: не трогаем (удаляются только файлы нарезки)');
+  const n=files.length;
+  const mb=(bytes/1048576).toFixed(2);
+  $('delClipInfo').textContent=t('Будет удалено файлов: {n} ({size} МБ)',{n:n,size:mb})
+    +(bad.length?t(' · не прочитано клипов: {n}',{n:bad.length}):'');
+  if(n>0){
+    $('delClipList').innerHTML=files.map(f=>{
+      const name=f.path.split(/[/\\]/).pop();
+      const sz=(f.size>1048576?(f.size/1048576).toFixed(2)+t(' МБ'):(f.size/1024).toFixed(1)+t(' КБ'));
+      // имя файла приходит с диска (материал мог приехать с гугл-диска) — в разметку
+      // только через esc(): кавычка или «<» в имени иначе станут тегом (задание HL)
+      return '<div style="display:flex;justify-content:space-between;gap:8px"><span>'+esc(name)+'</span><span style="flex:none;color:var(--tx)">'+sz+'</span></div>';
+    }).join('');
+  }else{
+    $('delClipList').innerHTML='<div class="empty">'+t('Файлы нарезки не найдены на диске')+'</div>';
+  }
+  if(bad.length)uiLog(t('удаление с диска: не прочитано — ')+bad.join('; '));
+  $('delClipDiskConfirmBtn').disabled=false;
 }
 
 function delClipDiskBack(){
@@ -737,11 +803,16 @@ function delClipDiskBack(){
   $('delClipConfirm').style.display='none';
 }
 
+// Удаление по каждому клипу: ошибка одного не прерывает остальные, итог — тост и журнал
+// (сколько убрано и кто именно не удалился). Из списка убираем всех, кого пытались удалить:
+// файлы могли остаться на диске — их подхватит «Из папки результата».
 async function delClipDiskExecute(){
-  if(DEL_CLIP_IDX<0)return;
-  const i=DEL_CLIP_IDX;const c=CLIPS[i];DEL_CLIP_IDX=-1;
+  const list=DEL_CLIP_IDXS.slice();DEL_CLIP_IDXS=[];
+  if(!list.length)return;
   $('delClipDiskConfirmBtn').disabled=true;
-  if(c){
+  const bad=[];let nfiles=0,bytes=0;
+  for(const i of list){
+    const c=CLIPS[i];if(!c)continue;
     const jsxdir=(effOutdir(c)||AEGLOBAL||'').trim();
     try{
       const res=await fetch('/api/clip_delete',{
@@ -749,18 +820,20 @@ async function delClipDiskExecute(){
         body:JSON.stringify({xml:c.xml,jsxdir:jsxdir,dry:false})
       });
       const d=await res.json();
-      if(d.error){toast(errText(d));uiLog(t('Удаление клипа: ')+(d.error||''));}
-      else{
-        const mb=((d.bytes||0)/1048576).toFixed(2);
-        toast(t('Удалено файлов: {n} ({size} МБ)',{n:(d.files||[]).length,size:mb}));
-      }
-    }catch(e){
-      toast(t('Ошибка удаления с диска: ')+e);
-    }
+      if(d.error){bad.push(clipLabel(c)+': '+errText(d));continue;}
+      nfiles+=(d.files||[]).length;bytes+=d.bytes||0;
+    }catch(e){bad.push(clipLabel(c)+': '+e);}
   }
-  _spliceClip(i);
+  list.slice().sort((a,b)=>b-a).forEach(i=>_spliceClip(i));
+  SEL_ANCHOR=-1;
   closeModal('mbDelClip');
-  renderClips1();saveState();
+  renderClips1();renderClips2();renderClips3();syncNav();
+  saveState();
+  const mb=(bytes/1048576).toFixed(2);
+  toast(t('Удалено файлов: {n} ({size} МБ)',{n:nfiles,size:mb})
+    +(bad.length?t(' · ошибок: {m}',{m:bad.length}):''));
+  uiLog(t('удаление с диска: убрано файлов {n} ({size} МБ)',{n:nfiles,size:mb})
+    +(bad.length?t(' · ошибки: ')+bad.join('; '):''));
 }
 
 // Метла в шапке списка клипов шага 1: убрать ВСЕ клипы из списка — ТОЛЬКО CLIPS/UI.
@@ -771,6 +844,7 @@ async function clearClipsList(){
   if(!CLIPS.length)return;
   if(!await askConfirm(t('Убрать все клипы из списка? Файлы нарезки на диске НЕ удаляются — список подхватится заново кнопкой «Из папки результата».')))return;
   while(CLIPS.length)_spliceClip(0);   // индексы открытых клипов правит общий безопасный путь
+  SEL_ANCHOR=-1;                       // список перерисован — диапазон считать не от чего
   renderClips1();renderClips2();renderClips3();syncNav();
   saveState();
   uiLog(t('список клипов очищен — файлы на диске остались'));
@@ -785,6 +859,7 @@ async function removeSelClips(){
   if(!idx.length){toast(t('Ничего не отмечено — поставь галочки у клипов, которые убрать'));return;}
   if(!await askConfirm(t('Убрать отмеченных клипов из списка: {n}? Файлы нарезки на диске НЕ удаляются.',{n:idx.length})))return;
   idx.sort((a,b)=>b-a).forEach(i=>_spliceClip(i));   // индексы в обратном порядке — splice не съест соседей
+  SEL_ANCHOR=-1;                                     // список перерисован — диапазон считать не от чего
   // Убрали и сам открытый в панели клип: после _spliceClip curAE=-1, а данные панели
   // (AEXML/WORDS/INTRO) всё ещё про удалённый файл. При живых клипах панель
   // пересаживается на живой клип (как goStep(3)); при пустом списке selectAE звать

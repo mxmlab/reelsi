@@ -13,6 +13,22 @@ import subprocess
 
 from core import fileio, roto
 from core.app_meta import wrap_emit
+from core.xml2ae.parse import Cancelled
+
+
+def cam1_ranges(cams, fps):
+    """Участки исходника Камеры 1, реально показываемые в монтаже (сек): [(in_s, out_s), ...]."""
+    if not cams or not cams[0].get("clips"):
+        return []
+    fps0 = float(fps or 60)
+    ranges = []
+    for cl in cams[0].get("clips", []):
+        if len(cl) > 4 and cl[4] and cl[1] > cl[0]:
+            in_s = cl[2] / fps0
+            dur_s = (cl[1] - cl[0]) / fps0
+            ranges.append((in_s, in_s + dur_s))
+    return ranges
+
 
 
 def merge_ranges(ranges):
@@ -60,6 +76,9 @@ def track(video, ranges, emit=None, cancel=None, fps=10):
     if not w_src or not h_src:
         raise RuntimeError(f"ffprobe не отдал размеры видео: {video}")
 
+    if cancel and cancel():
+        raise Cancelled()
+
     merged = merge_ranges(ranges)
     if not merged:
         return {"v": 1, "fps": fps, "w": w_src, "h": h_src, "pts": []}
@@ -80,7 +99,7 @@ def track(video, ranges, emit=None, cancel=None, fps=10):
         with torch.inference_mode():
             for a, b in merged:
                 if cancel and cancel():
-                    break
+                    raise Cancelled()
                 rec = [None] * 4
                 dec = ["ffmpeg", "-v", "error"]
                 if dev == "cuda" and roto._nvdec_ok(video):
@@ -100,7 +119,7 @@ def track(video, ranges, emit=None, cancel=None, fps=10):
                 try:
                     while True:
                         if cancel and cancel():
-                            break
+                            raise Cancelled()
                         frames = []
                         for _ in range(chunk):
                             raw = roto._read_exact(p_dec.stdout, frame_bytes)
@@ -150,10 +169,11 @@ def track(video, ranges, emit=None, cancel=None, fps=10):
     return {"v": 1, "fps": fps, "w": w_src, "h": h_src, "pts": pts}
 
 
-def load_cached(xml_path, video):
+def load_cached(xml_path, video, ranges=None):
     """Проверить валидность сайдкара <стем>.head.json и вернуть данные или None.
 
     Годен, если файл существует, v == 1, путь, размер и mtime видео совпадают.
+    Если переданы ranges — кэш годен, только если cached['ranges'] покрывают ranges.
     """
     if not xml_path or not video:
         return None
@@ -171,6 +191,9 @@ def load_cached(xml_path, video):
         and data.get("size") == os.path.getsize(video)
         and abs(data.get("mtime", 0) - os.path.getmtime(video)) < 1e-4
     ):
+        if ranges is not None:
+            if not ranges_cover(data.get("ranges", []), ranges):
+                return None
         return data
     return None
 
@@ -186,8 +209,8 @@ def load_or_track(xml_path, video, ranges, emit=None, cancel=None, fps=10):
     head_path = os.path.splitext(xml_path)[0] + ".head.json" if xml_path else None
     merged_ranges = merge_ranges(ranges)
 
-    cached = load_cached(xml_path, video)
-    if cached is not None and ranges_cover(cached.get("ranges", []), merged_ranges):
+    cached = load_cached(xml_path, video, ranges=merged_ranges)
+    if cached is not None:
         if head_path:
             emit("  · трек головы: из кэша {path}", path=os.path.basename(head_path))
         return cached

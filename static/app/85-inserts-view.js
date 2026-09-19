@@ -19,12 +19,12 @@ let IPVMODE='clips';
 // applyInsMoved, сопоставления плана и драга в предпросмотре
 function normInsPath(s){return (s||'').replace(/\//g,'\\').toLowerCase();}
 // Ключ сопоставления вставки плана с карточкой списка. У вставки «на подложке» план несёт
-// путь КЭША <стем>.nobg.png (подмену делает план сцены, задание ZQ), а карточка хранит
+// путь КЭША <стем>.<расш>.nobg.png (подмену делает план сцены, задание ZQ), а карточка хранит
 // исходник — сравниваем без суффикса кэша, иначе подсветка играющей карточки гасла бы.
 // Файл для показа берётся из ПЛАНА как есть: второй копии правила «где лежит кэш» нет.
 function insCardKey(x){
   const p=normInsPath(x&&x.media);
-  return (x&&x.plate)?p.replace(/\.nobg(\.[^.\\\/]+)$/,'$1'):p;}
+  return (x&&x.plate)?p.replace(/\.nobg\.png$/,''):p;}
 // URL картинки-вставки для предпросмотра. У вставки с галкой «на подложке» просим тот же
 // кэш <стем>.nobg.png, что уедет в сборку (core/insertlib.nobg_path) — снятие фона одно на
 // превью и AE, второго расчёта в JS нет (задание ZK). Нужен он только там, где на руках
@@ -784,19 +784,21 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
     host.className='pvsubs_host';
     el.appendChild(host);
   }
-  const visKey=vis.map(sub=>(sub.s)+':'+(sub.gend)+':'+(sub.w||'')+':'+(sub.row||0)).join('|');
+  const visKey=vis.map(sub=>(sub.stack?'s':'r')+(sub.s)+':'+(sub.gend)+':'+(sub.w||'')+':'+(sub.row||0)).join('|');
   if(host.dataset.visKey!==visKey){
     host.dataset.visKey=visKey;
-    const rowMap=new Map();
+    // Элементы стопки подряд жёлтых (задание ZU) помечены в плане stack: они вышли из строк
+    // и рисуются каждый своей строкой, ровно как в режиме «по слову». Шаг у них HL_STEP
+    // (план.hl_step), а не SUB_STEP строк — общий rowMap склеил бы стопку со строкой текста
+    // в один ряд и поставил бы её по чужому шагу.
+    const rowMap=new Map(), stackMap=new Map();
     vis.forEach(sub=>{
+      const m=sub.stack?stackMap:rowMap;
       const r=sub.row||0;
-      if(!rowMap.has(r))rowMap.set(r,[]);
-      rowMap.get(r).push(sub);
+      if(!m.has(r))m.set(r,[]);
+      m.get(r).push(sub);
     });
-    let html='';
-    rowMap.forEach((rowSubs,r)=>{
-      const first=rowSubs[0];
-      const rowStep=first.sub_step||pl.sub_step||step;
+    const lineHtml=(rowSubs,rowStep,r)=>{
       const bot=((h-(posy+r*rowStep))/h*100).toFixed(2);
       let minFs=Infinity;
       rowSubs.forEach(s=>{if(s.fsize&&s.fsize<minFs)minFs=s.fsize;});
@@ -807,7 +809,10 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
           return sub.words.map(wd=>{
             const isY=(wd.color==='yellow');
             const wCss=isY?hlFvCss:baseFvCss;
-            return '<span class="pvsubw_wd'+(isY?' yel':'')+'" style="'+wCss+'">'+esc(wd.w)+'</span>';
+            // время появления жёлтого — из плана (t0, задание ZU): по нему ниже идут подъём,
+            // проявление и блюр. Своей формулы «когда слово произнесено» в превью нет.
+            const t0=(isY&&wd.t0!=null)?(' data-hl0="'+wd.t0+'"'):'';
+            return '<span class="pvsubw_wd'+(isY?' yel':'')+'"'+t0+' style="'+wCss+'">'+esc(wd.w)+'</span>';
           }).join(' ');
         }else{
           const isY=(sub.color==='yellow');
@@ -817,10 +822,31 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
       }).join(' ');
 
       const allYel=rowSubs.every(s=>s.color==='yellow');
-      html+='<span class="pvsubw'+(allYel?' yel':'')+'" style="bottom:'+bot+'%;'+fsStyle+'">'+wordsHtml+'</span>';
-    });
+      return '<span class="pvsubw'+(allYel?' yel':'')+'" style="bottom:'+bot+'%;'+fsStyle+'">'+wordsHtml+'</span>';
+    };
+    let html='';
+    rowMap.forEach((rowSubs,r)=>html+=lineHtml(rowSubs,rowSubs[0].sub_step||pl.sub_step||step,r));
+    stackMap.forEach((stSubs,r)=>html+=lineHtml(stSubs,step,r));
     host.innerHTML=html;
   }
+  // Появление жёлтого в строке (задание ZU): до своего момента слово невидимо, за HL_DUR
+  // поднимается на hl_rise и проявляется — та же кривая, что easePair в AE (keysAt с
+  // дефолтными 35/90 = aeEase). Числа и время появления — из плана, своей копии нет.
+  // Подъём — position:relative + top, а НЕ transform: .pvsubw_wd — обычный inline-span,
+  // а к inline-боксу transform не применяется вовсе (сдвиг просто пропал бы). relative
+  // раскладку строки не трогает — в отличие от inline-block, который ломает кернинг.
+  const rise=pl.hl_rise||0, hDur=(pl.hl_dur!=null?pl.hl_dur:0.35);
+  const blAmt=pl.hl_blur?(pl.hl_blur_amt||0):0;
+  const kpx=(el.clientWidth||w)/w;               // пиксели превью на пиксель кадра
+  host.querySelectorAll('.pvsubw_wd').forEach(wsp=>{
+    const t0=parseFloat(wsp.dataset&&wsp.dataset.hl0);
+    if(!(t0>=0))return;                          // у слова своей анимации нет — как было
+    const rem=(tm<t0+hDur)?keysAt([[t0,1],[t0+hDur,0]],null,tm):0;   // 1 -> 0 по кривой
+    wsp.style.position=rem>0?'relative':'';
+    wsp.style.top=rem>0?(rise*rem*kpx).toFixed(2)+'px':'';
+    wsp.style.opacity=rem>0?String(1-rem):'';
+    wsp.style.filter=(blAmt&&rem>0)?('blur('+(blAmt*rem*kpx).toFixed(2)+'px)'):'';
+  });
   if(sbg&&bgEl){
     let maxW_px=0;
     const textSpans=host.querySelectorAll('.pvsubw');

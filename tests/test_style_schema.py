@@ -64,9 +64,9 @@ def _apply_conv(val, conv, w=1080, h=1920):
 
 
 def test_every_base_key_accounted_for():
-    """styles.BASE имеет ровно 150 ключей; каждый в схеме или в EXTERNAL (без списков исключений)."""
+    """styles.BASE имеет ровно 154 ключа; каждый в схеме или в EXTERNAL (без списков исключений)."""
     base_keys = set(styles.BASE.keys())
-    assert len(base_keys) == 150, f"Ожидалось ровно 150 ключей в BASE, найдено {len(base_keys)}"
+    assert len(base_keys) == 154, f"Ожидалось ровно 154 ключа в BASE, найдено {len(base_keys)}"
 
     # Внешние ключи
     ext_keys = set(style_schema.EXTERNAL.keys())
@@ -91,11 +91,11 @@ def test_every_base_key_accounted_for():
 
     _walk_schema(callback_group=on_group, callback_field=on_field)
 
-    # Все ключи полей уникальны между собой (138 полей, 139 ключей: cam1_zoom_cx/cy)
+    # Все ключи полей уникальны между собой (142 поля, 143 ключа: cam1_zoom_cx/cy)
     field_counts = collections.Counter(field_keys)
     dup_fields = [k for k, c in field_counts.items() if c > 1]
     assert not dup_fields, f"Дубликаты ключей полей: {dup_fields}"
-    assert len(field_keys) == 139
+    assert len(field_keys) == 143
 
     # Все тумблеры уникальны между собой (10 тумблеров: 9 булевых + disclaimer)
     toggle_counts = collections.Counter(toggle_keys)
@@ -113,7 +113,7 @@ def test_every_base_key_accounted_for():
 
     # Схема + EXTERNAL строго покрывают BASE
     schema_keys = set(field_keys) | set(toggle_keys)
-    assert len(schema_keys) == 148
+    assert len(schema_keys) == 152
 
     assert not (schema_keys & ext_keys), f"Пересечение схемы и EXTERNAL: {schema_keys & ext_keys}"
     assert schema_keys | ext_keys == base_keys
@@ -244,14 +244,14 @@ def test_i18n_coverage_for_schema_strings():
 
 
 def test_api_style_schema_endpoint(client):
-    """GET /api/style_schema отдаёт ok: True, layers (10), external (2), base, 39 групп, 138 полей."""
+    """GET /api/style_schema отдаёт ok: True, layers (10), external (2), base, 39 групп, 142 поля."""
     res = client.get("/api/style_schema", headers=H)
     assert res.status_code == 200
     data = res.get_json()
 
     assert data.get("ok") is True
     assert "base" in data
-    assert len(data["base"]) == 150
+    assert len(data["base"]) == 154
 
     external = data.get("external")
     assert len(external) == 2
@@ -276,4 +276,4 @@ def test_api_style_schema_endpoint(client):
         count_items(layer.get("items", []))
 
     assert groups_count == 39
-    assert fields_count == 138
+    assert fields_count == 142

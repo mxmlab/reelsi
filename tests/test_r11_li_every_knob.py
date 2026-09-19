@@ -48,10 +48,13 @@ RICH_INSERTS = [
 ]
 
 # Разметка интро: группа на кам1 (нижняя половина кадра gy=600, акцент, back, глитч)
-# и группа на кам2 (перебивка с 2 строками для проверки intro_anchor2)
+# и группа на кам2 (перебивка с 2 строками для проверки intro_anchor2).
+# Строка «АКЦЕНТ» — с галкой «большое слева» (задание ZY): без неё ручки intro_big_gap,
+# intro_big_step и intro_big_over (доработка ZY-2) ни на что не влияют, и сторож «каждая
+# ручка» справедливо ругался бы на мёртвый ключ.
 RICH_INTRO = [
     {"words": ["ПЕРВОЕ"], "color": "white", "times": [T_CAM1], "gy": 600},
-    {"words": ["АКЦЕНТ"], "color": "accent", "accent": True, "times": [T_CAM1 + 0.5]},
+    {"words": ["АКЦЕНТ"], "color": "accent", "accent": True, "times": [T_CAM1 + 0.5], "big": True},
     {"words": ["ФОНОВОЕ"], "color": "white", "back": True, "times": [T_CAM1 + 1.0]},
     {"words": ["ГЛИТЧ"], "color": "white", "anim": "glitch", "times": [T_CAM1 + 1.5]},
     {"words": ["ВТОРАЯ", "КАМЕРА"], "color": "white", "times": [T_CAM2]},

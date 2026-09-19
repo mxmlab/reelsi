@@ -103,7 +103,10 @@ def test_front_reads_fonts_from_plan_and_space_text_node():
     introGroupWindows передаёт fonts, ipvIntro ставит между словами текстовый узел-пробел."""
     js = open(os.path.join(ROOT, "static", "app", "85-inserts-view.js"),
               "r", encoding="utf-8").read()
-    assert re.search(r"\.map\(g=>\(\{lines:g\.lines,[^}]*fonts:g\.fonts\}\)\)", js), \
+    # ZY положило в тот же объект окна ещё ключи lx/lk (большое слева) — они идут ПОСЛЕ
+    # fonts, поэтому требуем не «fonts последним ключом», а наличие ключа fonts и закрытие
+    # объекта окна: протаскивание fonts проверяется ровно так же строго.
+    assert re.search(r"\.map\(g=>\(\{lines:g\.lines,[^}]*fonts:g\.fonts[^}]*\}\)\)", js), \
         "introGroupWindows обязан протащить fonts из плана"
     assert "IPV.intro[gi].fonts" in js, "ipvIntro обязан читать шрифт из плана"
     assert "document.createTextNode(' ')" in js, \

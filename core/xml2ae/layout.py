@@ -8,6 +8,7 @@
 import heapq
 import math
 import os
+from core import fonts as _fonts
 from .jsutil import _r
 from .parse import is_out_dir
 
@@ -132,6 +133,22 @@ def _intro_group_window(times, gi, n_groups):
 HL_EASE_OUT, HL_EASE_IN = 35, 90    # cubic-bezier(0.35,0.01,0.10,0.99)
 EASE_DEFAULT = 33.3333              # Easy Ease по умолчанию (медленный откат большой←малый)
 INS_ENTER, INS_EXIT = 0.38, 0.47    # вход/выход cam2-вставки, сек
+# Появление жёлтого слова (задание MA): подъём на HL_RISE, проявление и блюр играют за
+# HL_DUR = 0.35 с, но короткое слово гаснет раньше, чем анимация доиграет (outPoint слоя
+# = gend): в ролике владельца у 49 слов из 140 видимое время меньше 0.35 с, минимум
+# 0.05 с — слово просто исчезало. Длительность d = min(HL_DUR, HL_FIT * видимое время):
+# при HL_FIT = 0.6 слово стоит неподвижно хотя бы 40 % своей жизни. Число одно на всю
+# сборку: шаблон получает HL_DUR подстановкой (template.py), план несёт его превью
+# (hl_dur), а короткие слова — своё hd.
+HL_DUR = 0.35
+HL_FIT = 0.6
+
+
+def hl_appear_dur(vis):
+    """Длительность появления жёлтого слова, с (задание MA): min(HL_DUR, HL_FIT*vis).
+    vis — видимое время слова (outPoint − момент появления), с. Округление до десятых
+    миллисекунды: столько же знаков, сколько у остальных чисел плана и .jsx."""
+    return round(min(HL_DUR, HL_FIT * float(vis)), 4)
 # Окна групп интро (ts/te) считает scene_plan — раньше это жило ДВУМЯ копиями:
 # introGroupWindows в предпросмотре и inAt/outEnd в AE_FULL, и они уже разошлись
 # (JS не учитывал max(gMax, inAt+F_DUR) для серединных групп). Константы — те же,
@@ -186,13 +203,128 @@ def _intro_i_dy(h, n_lines, gs, step_k=1.0):
     return 0.0
 
 
-def intro_line_ys(lines, back_step, any_back_in_clip=True, anchor="center",
-                  h=1920.0, step_k=1.0):
-    """Y базовых линий строк интро в координатах прекомпа (высота h), по числу строк
-    (задания A1, ZO, ZT).
+def _cap(ps, size):
+    """Высота заглавных (капитель) строки, px, задание ZY: верх «H» из контуров глифа —
+    у заглавной нет ни хвоста, ни выносов, поэтому её верх и есть верх строки. Шрифта,
+    файла или глифа нет — 0.72 кегля (та же запасная ветка, что была у чернил: раскладка
+    обязана строиться и без файла шрифта). Вторая копия формулы не заводится — сюда
+    смотрит и вертикаль большой строки, и верх блока."""
+    ext = _fonts.ink_extent(ps, "H", size)
+    if ext is None:
+        return 0.72 * size
+    return float(ext[0])
 
-    Шаг ДО строки заднего плана и шаг ПОСЛЕ неё к обычной строке — один и тот же
-    line_step * back_step, где line_step = INTRO_LINE_STEP * step_k (задание ZO).
+
+# Высота большого слова, % от высоты стопки (доработка ZY-2): дефолт ручки
+# intro_big_over из styles.BASE. Сборка всегда передаёт число из стиля — здесь оно для
+# прямых вызовов раскладки; совпадение с дефолтом ручки стережёт тест (test_intro_big.py),
+# чтобы второе число не разъехалось с первым молча.
+INTRO_BIG_OVER = 110.0
+
+
+def intro_big_layout(lines, ys_stack, fsize, fonts, back_scale, gap,
+                     over=INTRO_BIG_OVER):
+    """Раскладка «большое слева» (задание ZY): ПЕРВАЯ строка группы с флагом big встаёт
+    слева крупно, остальные строки группы — стопкой справа от неё, выровненные по левому
+    краю. Возвращает (lx, lk, ys) — три списка ТОЙ ЖЕ длины, что lines:
+
+    * ys — Y базовых линий в координатах прекомпа, по строке на элемент (большая строка
+      садится на БАЗОВУЮ линию последней строки стопки, строки стопки — готовые из ys_stack);
+    * lk — множитель кегля строки: у большой S/fsize, у строк стопки None;
+    * lx — левый край строки, px прекомпа ОТ ЦЕНТРА: у всех строк группы с большой
+      (и у большой, и у стопки — блок общий), у строк группы без большой None.
+
+    Вертикаль — типографская, по ЗАГЛАВНЫМ и базовой линии (правка ZY), а не по чернилам:
+    верх блока = y_first − cap(ps_first, size_first), низ = y_last — БАЗОВАЯ линия
+    последней строки стопки. Кегль большой подобран под эту высоту с ручкой
+    intro_big_over (доработка ZY-2): lk = over/100 · (y_last − верх)/cap(ps_big, fsize),
+    и стоит она на той же базовой линии: y_big = y_last. При over=100 верх капители
+    большой ровно совпадает с верхом блока, при дефолтных 110 — на 10 % выше стопки, как
+    у эталона владельца. Чернила большой строки (asc/desc) в вертикали больше не
+    участвуют: раньше низом считался низ ЧЕРНИЛ стопки, и хвост «Ц» в «ЗА МЕСЯЦ» (на
+    7 px ниже базовой линии) утаскивал «8» вниз, а кратка «Й»/«Ё» так же портила верх.
+    Кегль строки заднего плана — fsize·back_scale, как и прежде.
+
+    Ширины — core.fonts.text_width (большая при S, стопка — каждая своим кеглем), блок
+    центрирован: total = bigW + gap + max(stackW), lx_big = −total/2,
+    lx стопки = −total/2 + bigW + gap.
+
+    lines — строки группы ровно как уезжают в .jsx (поле big только у большой),
+    ys_stack — Y базовых линий строк СТОПКИ (все, кроме большой: большая шаг не занимает,
+    len(lines) − 1 значений). over — высота большого слова в % от высоты стопки (ручка
+    intro_big_over, доработка ZY-2); дефолт INTRO_BIG_OVER держится равным
+    styles.BASE["intro_big_over"] сторожем в тестах, сборка всегда передаёт число из стиля.
+    Шрифт/глиф не найден (ink_extent/text_width дали None) —
+    капитель 0.72 кегля, ширина 0.55 кегля на знак: раскладка строится и без файла шрифта
+    (как автофит поступает с неизвестной шириной). Группа из одной строки большой не
+    считается — флаг без эффекта, как и остальные big строки группы.
+    """
+    n = len(lines)
+    if n <= 0:
+        return [], [], []
+    big_i = None
+    for k in range(n):
+        if lines[k].get("big"):
+            big_i = k
+            break
+    if big_i is None or n < 2 or len(ys_stack) != n - 1:
+        # Группа без большой строки (или раскладывать не с чем): флага нет ни у кого —
+        # lx/lk пустые, ys отдаём как пришли (стопка целиком совпадает с lines).
+        return ([None] * n, [None] * n,
+                [round(float(y), 2) for y in ys_stack] if len(ys_stack) == n else [None] * n)
+
+    def _text(i):
+        return " ".join(str(w) for w in (lines[i].get("words") or []))
+
+    def _size(i):
+        """Кегль строки: задний план мельче, большая считается при fsize (её lk
+        подбирается отдельно) — как в шаблоне, где back-скейл применяется к слою."""
+        return fsize * back_scale if lines[i].get("back") else fsize
+
+    def _width(i, size):
+        wpx = _fonts.text_width(fonts[i], _text(i), size)
+        if wpx is None:
+            return 0.55 * size * len(_text(i))
+        return float(wpx)
+
+    stack_idx = [k for k in range(n) if k != big_i]
+    y_first, y_last = float(ys_stack[0]), float(ys_stack[-1])
+    # Верх блока — по капители ПЕРВОЙ строки стопки, низ — базовая линия ПОСЛЕДНЕЙ
+    # (задание ZY). Чернила тут не годятся: хвост «Ц» в «ЗА МЕСЯЦ» на 7 px ниже базовой
+    # линии, и большая строка, выровненная по низу чернил, висела ниже строки.
+    top = y_first - _cap(fonts[stack_idx[0]], _size(stack_idx[0]))
+    cap_big = _cap(fonts[big_i], fsize)
+    box_h = y_last - top
+    # Кегль большой — от высоты стопки и ручки «Большое выше стопки» (доработка ZY-2):
+    # over=100 — верх капители большой в верх блока, 110 (дефолт) — на десятую выше.
+    lk = (float(over) / 100.0 * box_h / cap_big) if (box_h > 0 and cap_big > 0) else 1.0
+    y_big = y_last                                  # та же базовая линия, что у стопки
+    big_w = _width(big_i, fsize * lk)
+    stack_w = [_width(k, _size(k)) for k in stack_idx]
+    total = big_w + gap + (max(stack_w) if stack_w else 0.0)
+    lx_big = -total / 2.0
+    lx_stack = -total / 2.0 + big_w + gap
+
+    lx, lks, ys = [None] * n, [None] * n, [None] * n
+    lx[big_i], lks[big_i], ys[big_i] = lx_big, lk, y_big
+    for j, k in enumerate(stack_idx):
+        lx[k], lks[k], ys[k] = lx_stack, None, float(ys_stack[j])
+    # Округление как у intro_line_ys: сотые — столько же знаков, сколько у остальных
+    # чисел .jsx; lk — четыре знака (масштаб слоя в .jsx всё равно печатается десятыми
+    # процента, k*100).
+    return ([None if v is None else round(v, 2) for v in lx],
+            [None if v is None else round(v, 4) for v in lks],
+            [None if v is None else round(v, 2) for v in ys])
+
+
+def intro_line_ys(lines, back_step, any_back_in_clip=True, anchor="center",
+                  h=1920.0, step_k=1.0, back_step_after=None):
+    """Y базовых линий строк интро в координатах прекомпа (высота h), по числу строк
+    (задания A1, ZO, ZT, ZZ).
+
+    Шаг ДО строки заднего плана и шаг МЕЖДУ строками заднего плана — line_step *
+    back_step, шаг ПОСЛЕ блока заднего плана к обычной строке — line_step *
+    back_step_after (задание ZZ), где line_step = INTRO_LINE_STEP * step_k (задание ZO).
     Минимума по чернилам (fonts.ink_extent) и зазора back_gap здесь больше нет (задание
     ZT): минимум (73.5 px на дефолтном шрифте) перекрывал шаг на малых back_step, и
     ручка «не меняла ничего», а жёсткие 0.75 после строки заднего плана вообще не
@@ -201,7 +333,9 @@ def intro_line_ys(lines, back_step, any_back_in_clip=True, anchor="center",
 
     lines — строки группы ровно как уезжают в .jsx (поле back только у настоящей строки
     заднего плана: акцент его перебивает), back_step — шаг строк заднего плана долей от
-    обычного шага.
+    обычного шага, back_step_after — шаг от заднего плана к обычной строке под ним;
+    None (ключа нет в стиле) — прежнее поведение: берётся back_step этого же стиля,
+    старые стили выглядят как раньше байт в байт.
 
     any_back_in_clip: в ролике есть строки заднего плана. Нет их — все шаги LINE_STEP и
     базовая линия по центру: ветка шаблона без back другой раскладки не знает, шаг по
@@ -230,7 +364,14 @@ def intro_line_ys(lines, back_step, any_back_in_clip=True, anchor="center",
             steps.append(line_step)
             continue
         if _back(i) or _back(i - 1):
-            base = line_step * back_step
+            # Шаг ПОСЛЕ блока заднего плана — своя ручка (задание ZZ): видимые зазоры над
+            # маленькой строкой и под ней разные (у владельца 53 и 23 px), а выровнять их
+            # одним числом нельзя — высота букв и хвосты зависят от слов. Шаг ДО строки
+            # заднего плана и между строками заднего плана остаётся общим back_step.
+            step_frac = back_step
+            if back_step_after is not None and _back(i - 1) and not _back(i):
+                step_frac = back_step_after
+            base = line_step * step_frac
         else:
             base = line_step
         steps.append(base)

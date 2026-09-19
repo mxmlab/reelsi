@@ -567,7 +567,10 @@ keyframes as the rise; the default **Blur amount** is 70.4. **consecutive yellow
 (the `hl_row_stack` key, off by default) takes a run of two or more yellow words in a row out
 of the rows and stacks them one word at a time, exactly as in the word-by-word mode — the
 same rise, the same stack step, one common end for the run; a lone yellow word stays in its
-row.
+row. The entrance itself — the rise, the fade-in and the blur — lasts min(0.35 s, 60 % of the
+time the word is visible), so a short word finishes its animation instead of going out in the
+middle of it; this holds in the one-word mode, with joined words and in the stack, and the
+preview shows the same numbers.
 **Limitations / price:** the animation is visible in the browser preview too: the moment a
 yellow word appears, its rise, its fade-in and its blur all come from the scene plan — the
 same numbers that go into the `.jsx`. With the stack checkbox off the `.jsx` is byte-for-byte
@@ -580,22 +583,41 @@ what it was before.
 
 **Where:** step 3 › style › **Text** › **Intro**.
 **How:** 1. Set **Line spacing, %** (100 is the usual distance). 2. In **Text › Background**
-set **Background line spacing, %** — the distance to a background line and after it. 3. Clear
-**intro moves with camera** if the intro should stay in place while the camera moves.
+set **Background line spacing above, %** and **Background line spacing below, %** — the step
+to a background line and back from it. 3. In the intro rows (clip preview › **Intro**) tick
+**Big on the left** if a row should stand large on the left of its group. 4. Clear **intro
+moves with camera** if the intro should stay in place while the camera moves.
 **Settings:** the intro works the same whether the rows mode (**words per row**) is on or
 off: its words are cut out of the subtitles, and its font size is the one the subtitles
 would have had without the auto-shrink of long rows, so in the rows mode the intro does not
 come out smaller. The fields sit in three groups: **Transform** holds the shared **Intro
-scale, %**, **Line spacing, %**, **Intro horizontal position** and the **intro moves with
-camera** checkbox; **Camera 1** holds **Intro vertical position** and **Intro anchor, camera
-1**; **Camera 2** holds **Intro on cam2 Y** and **Intro anchor, camera 2**. **intro moves
-with camera** keeps the intro on the camera 1 null, so it inherits the zoom, the frame offset
-and head tracking; cleared, the intro and the shade under it stand still in the frame.
-**Line spacing, %** multiplies the distance between the intro rows. **Background line
-spacing, %** (the `back_step` key, 10 to 300 %, 65 by default) is the distance to a background
-line and after it as a share of that same line spacing — one number for the build and for the
-preview. The old **Background step** with its glyph-based minimum and the small-row gap are
-gone; a `back_gap` left in a saved style is dropped when the style loads.
+scale, %**, **Line spacing, %**, the big-word fields, **Intro horizontal position** and the
+**intro moves with camera** checkbox; **Camera 1** holds **Intro vertical position** and
+**Intro anchor, camera 1**; **Camera 2** holds **Intro on cam2 Y** and **Intro anchor,
+camera 2**. **intro moves with camera** keeps the intro on the camera 1 null, so it inherits
+the zoom, the frame offset and head tracking; cleared, the intro and the shade under it stand
+still in the frame. **Line spacing, %** multiplies the distance between the intro rows.
+**Background line spacing above, %** (the `back_step` key, 10 to 300 %, 65 by default) is the
+step to a background line and between background lines; **Background line spacing below, %**
+(`back_step_after`) is the step from a background line to the regular line under it — both as
+a share of that same line spacing. There are two numbers because the visible gaps depend on
+the words (lowercase letters, descenders), and one number cannot make them equal; a style
+without the new key uses the "above" value, so saved styles look the same. The old
+**Background step** with its glyph-based minimum and the small-row gap are gone; a `back_gap`
+left in a saved style is dropped when the style loads.
+
+**Big on the left.** That checkbox in an intro row puts the row — one word or several — on
+the left in a large size, and the other rows of the group stack to its right, left-aligned.
+The big word stands on the baseline of the last stacked row, and its height is measured from
+the stack: from the cap height of the first stacked row to that baseline, times **Big word
+above stack, %** (`intro_big_over`, 110 by default; at 100 the top of the big word is level
+with the top of the stack). Letter tails (Ц, Д) hang below the baseline, as in typography.
+**Gap to big word, px** (`intro_big_gap`, 40) is the distance between the big word and the
+stack; **Stack line spacing, %** (`intro_big_step`, 80) is the step of the stacked rows and
+does not depend on the general line spacing. The layout is computed once, and the preview and
+After Effects take the same numbers. If several rows of a group are ticked, the big one is
+the first of them; a group of one row has no big word. A clip without such a row builds
+byte-for-byte as before.
 **Code:** `core/xml2ae/layout.py:189`, `core/styles.py:417`,
 `core/style_schema.py:479`, `static/app/94-stylepanel.js:110`
 
@@ -691,7 +713,9 @@ from the music folder at build time.
 served by `/api/scene` without GPU work. The style block moves into the preview's **Style**
 tab while it is open, and returns to the page when it closes. Preview volume is shared by
 all players, and the music and voice levels in the preview are the same numbers that end
-up in the `.jsx`.
+up in the `.jsx`. Preview video and sound are served in 4 MB pieces, so the browser's limit
+of six connections per server is not taken up and opening the preview or saving does not wait
+for seconds.
 **Limitations / price:** camera proxies are built once per camera file to keep seeking
 snappy; until a proxy is ready the preview plays the original. Fonts for the preview come
 from the installed system fonts.

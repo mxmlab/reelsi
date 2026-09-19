@@ -14,7 +14,7 @@ from core import styles as _styles
 from core.fileio import atomic_text_write
 
 from .jsutil import _asset_or, _fill_js, _jd, _js, _js_multiline, _r
-from .layout import (DEFAULT_DISCLAIMER, DISC_FIT_W, EASE_DEFAULT, HL_EASE_IN, HL_EASE_OUT,
+from .layout import (DEFAULT_DISCLAIMER, DISC_FIT_W, EASE_DEFAULT, HL_DUR, HL_EASE_IN, HL_EASE_OUT,
                      INS_C1_HIGH, INS_C2_BASE, INS_C2_PEAK, INS_EXIT,
                      INS_RISE_DY, INS_RISE_S0, INS_RISE_ENTER, INTRO_BASE_Y,
                      INTRO_F_DUR, INTRO_F_OUT, INTRO_FIT_W, INTRO_HOLD, INTRO_LINE_STEP,
@@ -31,7 +31,7 @@ from .layout import (DEFAULT_DISCLAIMER, DISC_FIT_W, EASE_DEFAULT, HL_EASE_IN, H
                      _intro_group_window, _intro_i_dy, _media_dims, _project_base,
                      _show_segments, _span_roto_plan, _stack_layout,
                      _zoom_key_eases, _zoom_key_holds, _zoom_max,
-                     intro_line_ys)
+                     hl_appear_dur, intro_big_layout, intro_line_ys)
 from .parse import Cancelled, HERE, _is_image, parse_full
 from .template import (AE_FULL, SUBS_LOOP_WORDS, SUBS_LOOP_ROWS, SUBS_LOOP_WORDS_JOINED,
                        SUBS_LOOP_STACK, SUBS_LOOP_STACK_JOINED)
@@ -200,7 +200,7 @@ def _intro_line_font(line, intro_font_ps, intro_hl_font_ps):
 
 
 def _intro_fit_ds(lines, ts, te, ds, w, G, cam_keys, fps, st, intro_font_ps,
-                  intro_hl_font_ps, fsize, holds=None, hold=None):
+                  intro_hl_font_ps, fsize, holds=None, hold=None, big_w=None):
     """Автофит группы интро (задание BP): широкая строка видна как lineW·(iSc/100)·G·Z
     (iSc = INTRO_SCALE·ds/100 — масштаб прекомпа, G — общий масштаб интро, Z — зум
     Камеры 1), и если с МАКСИМАЛЬНЫМ зумом на окне группы [ts, te] она шире 0.92·W,
@@ -208,17 +208,25 @@ def _intro_fit_ds(lines, ts, te, ds, w, G, cam_keys, fps, st, intro_font_ps,
     рука сильнее автофита — если gs != 100, группу масштабировали вручную).
     st нужен для back_scale; шрифты приходят готовыми (intro_font_ps/intro_hl_font_ps),
     свою лесенку автофит не заводит — иначе измерит не тот шрифт, что уйдёт в AE.
-    Шрифт не найден — ширины нет, группу не трогаем: ужать по неизвестной ширине хуже, чем не ужать."""
+    Шрифт не найден — ширины нет, группу не трогаем: ужать по неизвестной ширине хуже, чем не ужать.
+
+    big_w — ширина ВСЕГО блока группы с большой строкой (total из intro_big_layout,
+    задание ZY): у такой группы по горизонтали видно не самую длинную строку, а блок
+    «большое слово + зазор + стопка», и автофит обязан мерить именно его. None (группа
+    без большой строки) — прежний максимум по строкам."""
     if not lines:
         return ds
     linew = 0.0
-    for ln in lines:
-        ps = _intro_line_font(ln, intro_font_ps, intro_hl_font_ps)
-        fs = round(fsize * float(_sv(st, "back_scale"))) if ln.get("back") else fsize
-        wpx = _fonts.text_width(ps, " ".join(ln.get("words") or []), fs)
-        if wpx is None:
-            return ds
-        linew = max(linew, wpx)
+    if big_w is not None:
+        linew = float(big_w)
+    else:
+        for ln in lines:
+            ps = _intro_line_font(ln, intro_font_ps, intro_hl_font_ps)
+            fs = round(fsize * float(_sv(st, "back_scale"))) if ln.get("back") else fsize
+            wpx = _fonts.text_width(ps, " ".join(ln.get("words") or []), fs)
+            if wpx is None:
+                return ds
+            linew = max(linew, wpx)
     z = _zoom_max(cam_keys, fps, ts, te, holds=holds, hold=hold)
     fit = 100.0 * w * INTRO_FIT_W / (linew * (INTRO_SCALE / 100.0) * G * (z / 100.0))
     return min(ds, fit)
@@ -683,11 +691,20 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     intro_comp_shadow2_op = float(
         _sv(st, "intro_comp_shadow2_op"))
     back_step = float(_sv(st, "back_step"))
+    # Шаг ПОСЛЕ блока заднего плана (задание ZZ): своя ручка, ключа в стиле может не быть
+    # вовсе — тогда None, и раскладка берёт back_step (старые стили прежние байт в байт).
+    # Форма с `is not None`: ноль — ЗАДАННОЕ значение, как у прочих чтений через _sv.
+    _back_step_after = _sv(st, "back_step_after")
+    back_step_after = None if _back_step_after is None else float(_back_step_after)
     back_scale = float(_sv(st, "back_scale"))
     # Межстрочный интервал интро (задание ZO): ОДИН множитель k на оба места — шаги строк
     # и центровку блока в Python (intro_line_ys, _intro_i_dy) и var LINE_STEP в шаблоне.
     # 100 = прежние 160 px: подстановка печатает ровно «160», .jsx прежний (golden).
     _line_step_k = float(_sv(st, "intro_line_step")) / 100.0
+    # Межстрочный СТОПКИ группы с большой строкой (доработка ZY-2): свой множитель шага,
+    # % от тех же 160 px. От общей ручки не зависит: у эталона владельца стопка плотнее,
+    # а общий межстрочный двигает остальные группы.
+    _big_step_k = float(_sv(st, "intro_big_step")) / 100.0
     # Фейд-аут прекомпа интро (задание IK): единый ключ стиля intro_fade (дефолт 0.35).
     intro_fade = float(_sv(st, "intro_fade"))
     intro_fx_hold_add = float(_sv(st, "intro_fx_hold_add"))
@@ -765,6 +782,19 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     # задним планом не считается — у неё свой шрифт и свой регистр (тот же приоритет,
     # что в _intro_line_js: accent перебивает back).
     _any_back = any(bool(x.get("back") and not x.get("accent")) for g in _intro_groups for x in g)
+
+    def _grp_big_i(g):
+        """Индекс большой строки группы (первая с флагом big, задание ZY) или None.
+        Группа из одной строки большой не считается: раскладывать её не с чем, и флаг
+        остаётся без эффекта — .jsx такой группы прежний. Остальные строки с big в той
+        же группе — обычные строки стопки (шаг занимают как все)."""
+        if len(g) < 2:
+            return None
+        for _k, _x in enumerate(g):
+            if _x.get("big"):
+                return _k
+        return None
+    _any_big = any(_grp_big_i(g) is not None for g in _intro_groups)
     _glitch_word_times = []
     if _any_glitch:
         for _grp in _intro_groups:
@@ -823,6 +853,8 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     _intro_above_roto = []               # галка «интро над рото по положению» (задание C)
     _intro_anchor = []                   # якорь блока на группу: center | first (задание A1)
     _intro_ly = []                       # Y базовых линий строк на группу — в .jsx как INTRO_LY
+    _intro_lx = []                       # левый край строки на группу (большая строка, ZY)
+    _intro_lk = []                       # множитель кегля строки на группу (большая строка, ZY)
     riser = aset("intro_riser") if intro_riser else ""
     # Свой файл ризера (задание AA): строка в стиле перекрывает ассет-дефолт.
     _riser_file = (st.get("intro_riser_file") or "").strip()
@@ -953,10 +985,11 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     _posy = int(meta["h"] * float(_sv_or(st, "sub_y")))
     _hl_step = round(meta["h"] * 0.06224, 2)
     _hl_rise = round(meta["h"] * 0.06406, 2)
-    # Длительность подъёма/проявления жёлтых, с (задание ZU): ровно то число, что стоит
-    # литералом HL_DUR в шаблоне (template.py). План несёт его предпросмотру — своей копии
-    # числа в JS не заводится, как и у остальной геометрии субтитров.
-    _hl_dur = 0.35
+    # Длительность подъёма/проявления жёлтых, с (задания ZU/MA): ОДНО число на всю сборку —
+    # константа layout.HL_DUR. Шаблон получает его подстановкой (template.py), план несёт
+    # предпросмотру (hl_dur): своей копии числа в JS не заводится, как и у остальной
+    # геометрии субтитров.
+    _hl_dur = HL_DUR
     _fsize = max(60, int(meta["w"] * 0.13))
     # Кегль интро = кегль ДО ужатия строк (доработка ZL). В режиме строк автофит ужимает
     # _fsize под самую длинную строку, но интро — не строка субтитров: раньше оно брало
@@ -975,26 +1008,37 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
                     " когда слово произнесено; false — вместе со строкой"
                     % ("true" if _sv(st, "hl_row_anim") == "word" else "false")))
     # Блюр появления жёлтых (задание ZH): выключен — ни объявления, ни функции, ни вызовов,
-    # все три подстановки пусты и .jsx прежний байт в байт (golden).
+    # все три подстановки пусты и .jsx прежний байт в байт (golden). Сами hl_blur_fn и
+    # hl_blur_call собираются НИЖЕ: у короткого жёлтого (задание MA) и блюр играет свою
+    # длительность, а её до расчёта циклов ещё не знают.
     hl_blur_on = bool(_sv(st, "hl_blur"))
-    hl_blur_decl = hl_blur_fn = hl_blur_call = ""
+    hl_blur_call = " hlBlur(L, t0);" if hl_blur_on else ""      # цикл строк — как было
+    hl_blur_decl = hl_blur_fn = ""
     if hl_blur_on:
         hl_blur_decl = ("\n    var HL_BLUR = %g;   // сила блюра появления жёлтых, px"
                         " (Gaussian Blur, повтор краёв выключен)" % float(_sv(st, "hl_blur_amt")))
-        hl_blur_fn = (
-            "\n    // Блюр появления жёлтого (задание ZH): Gaussian Blur HL_BLUR -> 0 на ТЕХ ЖЕ"
-            "\n    // ключах, что подъём и проявление. Повтор краёв выключен — иначе размытие"
-            "\n    // подтягивало бы в кадр края текстового слоя."
-            "\n    function hlBlur(L, t0){"
-            "\n        try{"
-            "\n            var bl = L.property(\"ADBE Effect Parade\").addProperty(\"ADBE Gaussian Blur 2\");"
-            "\n            bl.property(\"ADBE Gaussian Blur 2-0003\").setValue(0);   // Repeat Edge Pixels = 0"
-            "\n            var bp = bl.property(\"ADBE Gaussian Blur 2-0001\");"
-            "\n            bp.setValueAtTime(t0, HL_BLUR); bp.setValueAtTime(t0+HL_DUR, 0);"
-            "\n            easePair(bp);"
-            "\n        }catch(e){ _LOG(\"блюр появления жёлтого: \" + e); }"
-            "\n    }")
-        hl_blur_call = " hlBlur(L, t0);"
+    # Короткое жёлтое слово (задание MA): подъём, проявление и блюр играли общие HL_DUR =
+    # 0.35 с, а слово с видимым временем меньше 0.35 с гасло (outPoint = gend) посреди
+    # анимации — «просто исчезало». Длительность d = min(HL_DUR, HL_FIT * видимое время)
+    # считает Python (layout.hl_appear_dur) для КАЖДОГО такого слова и кладёт её полем 7
+    # строки данных SUBS/SUB_STACK ([.., gend, cnt, hd] — сразу за полем счётчика: поле 6
+    # занято cnt_items, его не трогаем). Нет ни одного укороченного жёлтого — нет ни полей,
+    # ни функции hlDur, ни новых подстановок: .jsx побайтово как на main (golden).
+    _hl_hd = {}                     # индекс жёлтого слова -> своя длительность появления, с
+    hl_short_fn = ""
+
+    def _hl_loop(elem, **kw):
+        """Подстановки цикла субтитров для элемента `elem` (имя переменной строки данных):
+        длительность появления в ключах подъёма/проявления и вызов блюра. Пока укороченных
+        жёлтых нет — ровно прежний текст: HL_DUR и hlBlur(L, t0). У укороченного длительность
+        едет в блюр через HL_HD (сигнатура hlBlur(L, t0) — контракт задания ZH)."""
+        kw["hl_dur_js"] = ("hlDur(%s)" % elem) if _hl_hd else "HL_DUR"
+        if hl_blur_on:
+            kw["hl_blur_call"] = ((" HL_HD = hlDur(%s); hlBlur(L, t0);" % elem) if _hl_hd
+                                  else hl_blur_call)
+        else:
+            kw["hl_blur_call"] = ""
+        return kw
     from core.subs import build_sub_rows
     from core import fonts as _fonts
 
@@ -1010,6 +1054,13 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         subs_plan = []
         cnt_items = []
         any_sub_count = False
+        # Короткие жёлтые (задание MA): видимое время слова — от его появления до общего
+        # конца связки (outPoint слоя = gend). Кому общей HL_DUR не хватает — своя
+        # длительность: она уезжает и в данные цикла (поле 7), и в план (hd — превью).
+        for k in sorted(hl):
+            _d = hl_appear_dur((gend[k] - subs[k][0]) / _fps0)
+            if _d < _hl_dur:
+                _hl_hd[k] = _d
         for k, (s, e, w) in enumerate(subs):
             item_cnt = None
             if k in cnt:
@@ -1034,17 +1085,32 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             if item_cnt is not None:
                 item["cnt"] = item_cnt[0]
                 item["expr"] = item_cnt[1]
+            if k in _hl_hd:
+                item["hd"] = _hl_hd[k]
             if w_px is not None and w_px > max_line_w:
                 shrunk_fs = max(40, int(_fsize * max_line_w / w_px))
                 if shrunk_fs < _fsize:
                     item["fsize"] = shrunk_fs
             subs_plan.append(item)
 
+        def _sub_row(k, end, wd, hl_v):
+            """Строка данных цикла слов: [начало, конец, слово, hl, ряд, gend] плюс поле
+            счётчика (индекс 6) и — у укороченного жёлтого (задание MA) — поле длительности
+            появления (индекс 7). Пока укороченных нет, полей ровно шесть: .jsx прежний."""
+            r = [subs[k][0], end, wd, hl_v, rows[k], gend[k]]
+            if any_sub_count:
+                r.append(cnt_items[k])
+            if _hl_hd:
+                while len(r) < 7:
+                    r.append(None)              # поле счётчика: счётчиков в ролике нет
+                r.append(_hl_hd.get(k, _hl_dur))
+            return r
+
         any_joins = bool(joins)
         sub_tpl = SUBS_LOOP_WORDS_JOINED if any_joins else SUBS_LOOP_WORDS
+        subs_js = _jd([_sub_row(k, _endc(k), _sub_w(w), 1 if k in hl else 0)
+                       for k, (s, e, w) in enumerate(subs)])
         if any_sub_count:
-            subs_js = _jd([[s, _endc(k), _sub_w(w), 1 if k in hl else 0, rows[k], gend[k], cnt_items[k]]
-                           for k, (s, e, w) in enumerate(subs)])
             sub_count_code = (
                 '\n        var cnt = sw[6];\n'
                 '        if (cnt){\n'
@@ -1065,11 +1131,9 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
                 '            }catch(e){}\n'
                 '        }'
             )
-            sub_loop = sub_tpl % dict(sub_count_code=sub_count_code, hl_blur_call=hl_blur_call)
+            sub_loop = sub_tpl % _hl_loop("sw", sub_count_code=sub_count_code)
         else:
-            subs_js = _jd([[s, _endc(k), _sub_w(w), 1 if k in hl else 0, rows[k], gend[k]]
-                           for k, (s, e, w) in enumerate(subs)])
-            sub_loop = sub_tpl % dict(sub_count_code="", hl_blur_call=hl_blur_call)
+            sub_loop = sub_tpl % _hl_loop("sw", sub_count_code="")
         sub_rows_js = "[]"
     else:
         hl_row_stack = bool(_sv(st, "hl_row_stack"))
@@ -1086,6 +1150,14 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             for _k in hl:
                 _run_words[gend[_k]] = _run_words.get(gend[_k], 0) + 1
             stacked_indices = {_k for _k in hl if _run_words[gend[_k]] >= 2}
+            # Короткие жёлтые СТОПКИ (задание MA): стопка играет тем же циклом, что режим
+            # «по слову» (выезд на HL_RISE, проявление, блюр, общий конец), поэтому и
+            # длительность считается так же — от появления слова до gend стопки. Цикл
+            # СТРОК не трогаем: там момент появления уже зажат так, что анимация успевает.
+            for _k in sorted(stacked_indices):
+                _d = hl_appear_dur((gend[_k] - subs[_k][0]) / _fps0)
+                if _d < _hl_dur:
+                    _hl_hd[_k] = _d
 
         cut_bounds = set()
         for ci_cam in cams:
@@ -1209,6 +1281,8 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
                     "repl": k,
                     "stack": True,
                 }
+                if k in _hl_hd:
+                    item["hd"] = _hl_hd[k]
                 if w_px is not None and w_px > max_line_w:
                     shrunk_fs = max(40, int(_fsize * max_line_w / w_px))
                     if shrunk_fs < _fsize:
@@ -1222,20 +1296,20 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             # Данные цикла стопки — как SUBS в режиме «по слову»: [начало, конец, слово,
             # hl=1, ряд стопки, общий конец]. Слова серии рисует цикл SUBS_LOOP_STACK:
             # выезд на HL_RISE, проявление и общий конец стопки — второй копии анимации нет.
-            sub_stack_data = [
-                [
-                    subs[k][0],
-                    _endc(k),
-                    _sub_w(subs[k][2], k),
-                    1,
-                    rows[k],
-                    gend[k],
-                ]
-                for k in sorted(stacked_indices)
-            ]
+            # У укороченного жёлтого (задание MA) в конец строки уезжает его длительность
+            # появления: поле счётчика (6) в стопке пустое, длительность — поле 7.
+            sub_stack_data = []
+            for k in sorted(stacked_indices):
+                _sw = [subs[k][0], _endc(k), _sub_w(subs[k][2], k), 1, rows[k], gend[k]]
+                if _hl_hd:
+                    _sw.append(None)
+                    _sw.append(_hl_hd.get(k, _hl_dur))
+                sub_stack_data.append(_sw)
             sub_stack_js = _jd(sub_stack_data)
             stack_tpl = SUBS_LOOP_STACK_JOINED if any_joins else SUBS_LOOP_STACK
-            sub_stack_loop = stack_tpl % dict(sub_stack=sub_stack_js, hl_blur_call=hl_blur_call)
+            # В склейке второй проход цикла идёт по r_words, и строка данных там — `rsw`.
+            sub_stack_loop = stack_tpl % _hl_loop("rsw" if any_joins else "sw",
+                                                  sub_stack=sub_stack_js)
 
         # В SUBS (её читает только поп-SFX по индексу начала) у слов серии — их ряд стопки и
         # общий конец; у остальных слов поля прежние. Галка выключена — stacked_indices пуст,
@@ -1256,11 +1330,44 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             for line in raw_lines
         ]
         sub_rows_js = _jd(sub_rows_data)
+        # Цикл строк не трогаем: там момент появления зажат так, что анимация успевает
+        # (окно r_t1 - HL_DUR), и блюр играет общую длительность. Укороченные жёлтые едут
+        # в стопке — её цикл идёт следом и ставит HL_HD сам; здесь возвращаем общую.
+        rows_blur_call = (" HL_HD = HL_DUR; hlBlur(L, t0);" if (_hl_hd and hl_blur_on)
+                          else hl_blur_call)
         # Цикл стопки дописывается ПОСЛЕ цикла строк (в AE слои стопки встают поверх строк),
         # а не подстановкой внутрь SUBS_LOOP_ROWS: шаблон строк остаётся прежним, и его можно
         # подставлять по-старому (tests/test_template_sub_wide.py).
         sub_loop = SUBS_LOOP_ROWS % dict(sub_rows=sub_rows_js, sub_step=_sub_step,
-                                         hl_blur_call=hl_blur_call) + sub_stack_loop
+                                         hl_blur_call=rows_blur_call) + sub_stack_loop
+    # Циклы субтитров собраны, укороченные жёлтые известны — теперь функции шаблона. Обе
+    # пусты, пока в ролике нет ни одного такого слова: .jsx прежний побайтово (golden).
+    if _hl_hd:
+        hl_short_fn = (
+            "\n    // Короткое жёлтое слово (задание MA): появление не успевало доиграть до"
+            "\n    // outPoint — длительность кладёт Python полем 7 строки данных SUBS/SUB_STACK"
+            "\n    // ([start,end,word,hl,row,gend,cnt,hd]), и только словам, кому общей HL_DUR"
+            "\n    // не хватает."
+            # Сигнатура hlBlur(L, t0) — контракт задания ZH (её стережёт test_hl_anim),
+            # поэтому длительность блюра едет через HL_HD: цикл ставит переменную прямо
+            # перед вызовом, а цикл строк возвращает её к общей HL_DUR.
+            + ("\n    // Блюр берёт её из HL_HD — переменную ставит цикл ПЕРЕД вызовом."
+               "\n    var HL_HD = HL_DUR;" if hl_blur_on else "")
+            + "\n    function hlDur(sw){ return sw[7]; }")
+    if hl_blur_on:
+        hl_blur_fn = (
+            "\n    // Блюр появления жёлтого (задание ZH): Gaussian Blur HL_BLUR -> 0 на ТЕХ ЖЕ"
+            "\n    // ключах, что подъём и проявление. Повтор краёв выключен — иначе размытие"
+            "\n    // подтягивало бы в кадр края текстового слоя."
+            "\n    function hlBlur(L, t0){"
+            "\n        try{"
+            "\n            var bl = L.property(\"ADBE Effect Parade\").addProperty(\"ADBE Gaussian Blur 2\");"
+            "\n            bl.property(\"ADBE Gaussian Blur 2-0003\").setValue(0);   // Repeat Edge Pixels = 0"
+            "\n            var bp = bl.property(\"ADBE Gaussian Blur 2-0001\");"
+            "\n            bp.setValueAtTime(t0, HL_BLUR); bp.setValueAtTime(t0+%(blur_dur)s, 0);"
+            "\n            easePair(bp);"
+            "\n        }catch(e){ _LOG(\"блюр появления жёлтого: \" + e); }"
+            "\n    }" % {"blur_dur": "HL_HD" if _hl_hd else "HL_DUR"})
     _c1zoom = (_sv_or(st, "cam1_zoom"))         # pulse = наезд с откатом | jump = резкие скачки | drift = скачок+плавный дрейф 100–160% | none = нет зума
     if cam1_scale is None:                             # авто-зум по сменам кам1→кам2
         if _c1zoom == "none":
@@ -1517,6 +1624,12 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             if back_font_ps:
                 line["accent_font"] = back_font_ps
             line["words"] = [_accent_word(wd, back_case) for wd in line["words"]]
+        # «Большое слева» (задание ZY): флаг строки рядом с accent/back. Кладём ТОЛЬКО
+        # при True — иначе .jsx меняется на пустом месте (golden). Раскладку по нему
+        # считает intro_big_layout, в .jsx флаг нужен как признак строки (скейл и X
+        # берутся из INTRO_LK/INTRO_LX).
+        if x.get("big"):
+            line["big"] = True
         # Цвет интро (новые ключи стиля): color=="custom" несёт СВОЙ цвет строки в поле
         # fill [r,g,b] 0..1. Без fill строка color=="custom" рисуется как white (см.
         # _intro_fill_pick) — здесь просто ничего не кладём, JS сам подставит дефолт.
@@ -1676,6 +1789,42 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         _dy = float(_grp[0].get("gy") or 0) if _grp else 0.0
         _gs = float(_grp[0].get("gs") or 100) if _grp else 100.0
         _ds = _gs
+        # Шрифт каждой строки считает Python (та же лесенка, что у автофита и .jsx) —
+        # превью читает готовое и своей лесенки не держит. В сами строки (lines) поле не
+        # кладём: они уезжают в .jsx как INTRO_GROUPS, и он обязан остаться прежним (golden).
+        _line_fonts = [_intro_line_font(ln, intro_font_ps, intro_hl_font_ps) for ln in _lines]
+        # Y базовых линий строк (задания A1, ZT, ZZ): шаги задают back_step (доля обычного)
+        # и back_step_after (шаг от заднего плана к обычной строке под ним), а не жёсткие
+        # пиксели шаблона, плюс якорь блока. Считает Python — тем же числам едут и .jsx
+        # (INTRO_LY), и превью. В строки (lines) поле не кладём: INTRO_GROUPS
+        # обязан остаться прежним (golden).
+        # Группа с большой строкой (задание ZY): стопку раскладывает та же intro_line_ys,
+        # но только по строкам СТОПКИ (большая шаг не занимает), а большую сажает на её
+        # место intro_big_layout. Группа без большой — прежняя раскладка (lx/lk пустые).
+        _big_i = _grp_big_i(_lines)
+        _big_total = None
+        _lx = _lk = None
+        if _big_i is None:
+            _ys = intro_line_ys(_lines, back_step, _any_back, _anchor, meta["h"],
+                                step_k=_line_step_k, back_step_after=back_step_after)
+            _n_stack = len(_lines)
+        else:
+            _stack = [_ln for _k, _ln in enumerate(_lines) if _k != _big_i]
+            # Шаг СТОПКИ — свой (intro_big_step, доработка ZY-2), а не общий: большая
+            # строка шаг не занимает, и её кегль подбирается под высоту стопки.
+            _ys_stack = intro_line_ys(_stack, back_step, _any_back, _anchor, meta["h"],
+                                      step_k=_big_step_k, back_step_after=back_step_after)
+            _lx, _lk, _ys = intro_big_layout(_lines, _ys_stack, _fsize_base, _line_fonts,
+                                             back_scale, float(_sv(st, "intro_big_gap")),
+                                             float(_sv(st, "intro_big_over")))
+            # По горизонтали у такой группы видно не строку, а весь блок; ширина блока —
+            # из центровки: lx большой = −total/2 (intro_big_layout). Второй копии
+            # формулы не заводим, автофит мерит то же, что считает раскладка.
+            _big_total = -2.0 * float(_lx[_big_i])
+            _n_stack = len(_stack)
+        _intro_ly.append(_ys)
+        _intro_lx.append(_lx)
+        _intro_lk.append(_lk)
         # Базовая позиция блока интро (задание Q2): невзведённая (без зума) позиция по
         # вертикали от ЦЕНТРА кадра = INTRO_Y(+INTRO_Y2) − INTRO_BASE_Y + iDy. gDy НЕ
         # включаем — он уже живёт отдельным полем dy (задание E: драг правит dy в кэше
@@ -1687,7 +1836,9 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         # как у одной строки, добавленные строки свисают вниз и верх не поднимают.
         # Высота блока — по тому же межстрочному шагу, что у строк (step_k, задание ZO):
         # раздвинули строки — блок выше, и под SAFE_TOP его опускают сильнее.
-        _idy = _intro_i_dy(meta["h"], 1 if _anchor == "first" else len(_grp), _ds,
+        # Строк у группы с большой — по стопке: большая строка шаг не занимает, её кегль
+        # подогнан под стопку и выше блока не выходит (задание ZY).
+        _idy = _intro_i_dy(meta["h"], 1 if _anchor == "first" else _n_stack, _ds,
                            step_k=_line_step_k)
         # Автофит (задание BP / CF): применяется ТОЛЬКО если группу НЕ трогали руками
         # (_gs == 100). Если gs != 100 — пользователь явно задал масштаб рукой (рука
@@ -1698,7 +1849,7 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             _ds = _intro_fit_ds(_lines, _ts, _te, _ds, meta["w"], _G,
                                 cam1_scale if _intro_cam else [],
                                 meta["fps"], st, intro_font_ps, intro_hl_font_ps,
-                                _fsize_base, holds=holds)
+                                _fsize_base, holds=holds, big_w=_big_total)
         # ds головной строки = готовое значение автофита: шаблон читает GRP[0].ds,
         # превью — plan.intro[].ds, второй копии расчёта нет.
         if _lines:
@@ -1718,20 +1869,15 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             and (_y + _G * _dy) > 0
         _intro_above_roto.append(_above_roto)
         intro_idy.append(_idy)
-        # Шрифт каждой строки считает Python (та же лесенка, что у автофита и .jsx) —
-        # превью читает готовое и своей лесенки не держит. В сами строки (lines) поле не
-        # кладём: они уезжают в .jsx как INTRO_GROUPS, и он обязан остаться прежним (golden).
-        _line_fonts = [_intro_line_font(ln, intro_font_ps, intro_hl_font_ps) for ln in _lines]
-        # Y базовых линий строк (задания A1, ZT): шаг задаёт back_step (доля обычного),
-        # а не жёсткие пиксели шаблона, плюс якорь блока. Считает Python — тем же числам
-        # едут и .jsx (INTRO_LY), и превью. В строки (lines) поле не кладём: INTRO_GROUPS
-        # обязан остаться прежним (golden).
-        _ys = intro_line_ys(_lines, back_step, _any_back, _anchor, meta["h"],
-                            step_k=_line_step_k)
-        _intro_ly.append(_ys)
         intro_plan.append({"group": _g, "on2": bool(_on2),
                            "ts": _ts, "te": _te, "fade": _r(_fade), "lines": _lines,
                            "dx": _dx, "dy": _dy, "ds": _ds, "y": _y, "ys": _ys,
+                           # Большая строка группы (задание ZY): левый край каждой строки
+                           # (px прекомпа от центра) и множитель её кегля. Превью рисует
+                           # готовые числа. У групп без большой строки полей НЕТ вовсе —
+                           # в lines их тоже не кладём: INTRO_GROUPS обязан остаться
+                           # прежним (golden).
+                           **({"lx": _lx, "lk": _lk} if _big_i is not None else {}),
                            # Тень прекомпа этой группы (задание B): цвет и непрозрачность
                            # ТОЙ камеры, на которой группа (_on2). Тем же числом живёт
                            # превью (filter: drop-shadow), второй копии выбора камеры нет.
@@ -2185,6 +2331,9 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         "intro_hl_fill": list(intro_hl_fill) if intro_hl_fill else None,
         "back_scale": back_scale,
         "back_step": back_step,
+        # Шаг от заднего плана к обычной строке (задание ZZ) для предпросмотра: None —
+        # ключа в стиле нет, раскладка взяла back_step (превью читает готовые ys).
+        "back_step_after": back_step_after,
         "roto": [{"ci": p["ci"], "ts": _r(p["tl_start"]), "te": _r(p["tl_end"]),
                   "src_start": _r(p["src_start"]), "src_end": _r(p["src_end"]),
                   "scale": _r(p["scale"])} for p in roto_plan],
@@ -2301,13 +2450,57 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     # в .jsx массивом INTRO_LY и берутся оттуда — шаг знает back_step и якорь блока,
     # в шаблоне этого не сосчитать. Массив нужен, если в ролике есть строки
     # заднего плана (там шаг уже не LINE_STEP) ИЛИ хоть одна группа с якорем «first»
-    # (первая строка на месте). Ни того, ни другого — .jsx прежний байт в байт (golden).
+    # (первая строка на месте), ИЛИ группа с большой строкой (задание ZY: Y большой
+    # строки считает раскладка). Ничего из этого — .jsx прежний байт в байт (golden).
     _any_first = any(a == "first" for a in _intro_anchor)
     _intro_ly_decl = (
         "    var INTRO_LY=%s;    // [группа][строка] — Y базовой линии строки в прекомпе,"
         " считает Python (задание A1): шаг знает back_step и якорь блока\n"
         % _jd(_intro_ly)
-    ) if (_any_back or _any_first) else ""
+    ) if (_any_back or _any_first or _any_big) else ""
+    # Большая строка (задание ZY): левый край каждой строки (px прекомпа от центра) и
+    # множитель её кегля — массивами INTRO_LX/INTRO_LK, как INTRO_LY. У строк обычных
+    # групп там null. Нет большой строки — объявления нет вовсе, .jsx прежний (golden).
+    _intro_lx_decl = (
+        "    var INTRO_LX=%s, INTRO_LK=%s;    // [группа][строка] — левый край строки"
+        " (px прекомпа от центра) и множитель её кегля: строка с галкой «большое слева»"
+        " встаёт слева крупно, остальные строки — стопкой справа, считает Python (задание ZY)\n"
+        % (_jd(_intro_lx), _jd(_intro_lk))
+    ) if _any_big else ""
+
+    # Кусок «большая строка» для шаблона (задание ZY): функции чтения INTRO_LX/INTRO_LK,
+    # скейл слоя большой строки и её ширина. Все подстановки непустые ТОЛЬКО когда в
+    # ролике есть большая строка — без неё .jsx прежний байт в байт (golden). Большая
+    # строка задний-план-скейл НЕ получает: lk его заменяет, поэтому условия back-скейла
+    # и back-ширины дополнены проверкой «эта строка не большая» (_big_no).
+    _big_no = " && introBigK(gI,qi)==null" if _any_big else ""
+    _intro_big_fn = ""
+    _intro_big_qi_vars = ""
+    _intro_big_line = ""
+    _intro_big_line_pos = ""
+    _intro_big_word_x = ""
+    if _any_big:
+        _intro_big_fn = (
+            '\n        function introBigK(gI,qi){ try{ var a=INTRO_LK[gI];'
+            ' return (a&&a[qi]!=null)?a[qi]:null; }catch(e){ return null; } }'
+            '\n        function introBigX(gI,qi){ try{ var a=INTRO_LX[gI];'
+            ' return (a&&a[qi]!=null)?a[qi]:null; }catch(e){ return null; } }'
+            '\n        function introBigScale(L,k){ try{ '
+            'L.property("ADBE Transform Group").property("ADBE Scale")'
+            '.setValue([Math.round(k*1000)/10, Math.round(k*1000)/10, 100]); '
+            '}catch(e){} }'
+        )
+        # bigK/bigX — на строку, рядом с ln/wds/tms: дальше их читают и слова, и позиция
+        _intro_big_qi_vars = " var bigK=introBigK(gI,qi), bigX=introBigX(gI,qi);"
+        # построчно: текст выключен по центру, поэтому левый край = x − lineW/2
+        _intro_big_line = " if(bigK!=null) introBigScale(Ll,bigK);"
+        _intro_big_line_pos = (
+            " if(bigX!=null){ Ll.property(\"ADBE Transform Group\").property(\"ADBE Position\")"
+            ".setValue([IW/2+bigX+lineW/2, lineY]); }   // большое слева: левый край строки"
+            " на IW/2+lx (задание ZY)"
+        )
+        # пословно: старт строки — левый край блока, а не центр минус половина ширины
+        _intro_big_word_x = " if(bigX!=null) x=IW/2+bigX;"
 
     if _any_back:
         _intro_line_layout = (
@@ -2330,11 +2523,23 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             'L.property("ADBE Transform Group").property("ADBE Scale").setValue([Math.round(BACK_SCALE*1000)/10, Math.round(BACK_SCALE*1000)/10, 100]); '
             '}catch(e){} }'
         )
-        _intro_back_scale_line = " if(ln.back) introBackScale(Ll);"
-        _intro_back_scale_line_w = "var lineW=introW(Ll); if(ln.back) lineW*=BACK_SCALE; if(lineW>maxLineW) maxLineW=lineW;"
-        _intro_back_scale_tmp = " if(ln.back) lineW*=BACK_SCALE;"
-        _intro_back_scale_word = " if(ln.back) introBackScale(L2);"
-        _intro_back_scale_wpx = " if(ln.back) wpx*=BACK_SCALE;"
+        _intro_back_scale_line = (" if(ln.back%s) introBackScale(Ll);%s"
+                                  % (_big_no, _intro_big_line))
+        _intro_back_scale_line_w = (
+            "var lineW=introW(Ll); if(ln.back%s) lineW*=BACK_SCALE;"
+            " if(bigK!=null) lineW*=bigK; if(lineW>maxLineW) maxLineW=lineW;"
+            % _big_no if _any_big else
+            "var lineW=introW(Ll); if(ln.back) lineW*=BACK_SCALE; if(lineW>maxLineW) maxLineW=lineW;"
+        )
+        _intro_back_scale_tmp = (" if(ln.back%s) lineW*=BACK_SCALE; if(bigK!=null) lineW*=bigK;"
+                                 % _big_no if _any_big else
+                                 " if(ln.back) lineW*=BACK_SCALE;")
+        _intro_back_scale_word = (" if(ln.back%s) introBackScale(L2);"
+                                  " if(bigK!=null) introBigScale(L2,bigK);" % _big_no if _any_big else
+                                  " if(ln.back) introBackScale(L2);")
+        _intro_back_scale_wpx = (" if(ln.back%s) wpx*=BACK_SCALE; if(bigK!=null) wpx*=bigK;"
+                                 % _big_no if _any_big else
+                                 " if(ln.back) wpx*=BACK_SCALE;")
     elif _any_first:
         # Якорь «первая строка» без строк заднего плана: шаги — прежние LINE_STEP, но
         # отсчёт не от центра блока, а от первой строки, и добавленная строка верх не
@@ -2345,23 +2550,31 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             "                var ln=GRP[qi], wds=ln.words||[], tms=ln.times||[], lineY=INTRO_LY[gI][qi];"
         )
         _intro_back_scale_fn = ""
-        _intro_back_scale_line = ""
-        _intro_back_scale_line_w = "if(introW(Ll)>maxLineW) maxLineW=introW(Ll);"
-        _intro_back_scale_tmp = ""
-        _intro_back_scale_word = ""
-        _intro_back_scale_wpx = ""
+        _intro_back_scale_line = _intro_big_line
+        _intro_back_scale_line_w = (
+            "var lineW=introW(Ll); if(bigK!=null) lineW*=bigK; if(lineW>maxLineW) maxLineW=lineW;"
+            if _any_big else "if(introW(Ll)>maxLineW) maxLineW=introW(Ll);")
+        _intro_back_scale_tmp = (" if(bigK!=null) lineW*=bigK;" if _any_big else "")
+        _intro_back_scale_word = (" if(bigK!=null) introBigScale(L2,bigK);" if _any_big else "")
+        _intro_back_scale_wpx = (" if(bigK!=null) wpx*=bigK;" if _any_big else "")
     else:
         _intro_line_layout = (
             "var nL=GRP.length, cY=H/2 - (nL-1)/2*LINE_STEP, maxLineW=0;\n"
             "            for (var qi=0; qi<nL; qi++){\n"
             "                var ln=GRP[qi], wds=ln.words||[], tms=ln.times||[], lineY=cY+qi*LINE_STEP;"
+            # Большая строка (задание ZY): INTRO_LY при ней объявлен всегда — Y строк
+            # считает раскладка, из формулы cY+qi*LINE_STEP его не получить.
+            + ("\n                if(INTRO_LY[gI]&&INTRO_LY[gI][qi]!=null) lineY=INTRO_LY[gI][qi];"
+               if _any_big else "")
         )
         _intro_back_scale_fn = ""
-        _intro_back_scale_line = ""
-        _intro_back_scale_line_w = "if(introW(Ll)>maxLineW) maxLineW=introW(Ll);"
-        _intro_back_scale_tmp = ""
-        _intro_back_scale_word = ""
-        _intro_back_scale_wpx = ""
+        _intro_back_scale_line = _intro_big_line
+        _intro_back_scale_line_w = (
+            "var lineW=introW(Ll); if(bigK!=null) lineW*=bigK; if(lineW>maxLineW) maxLineW=lineW;"
+            if _any_big else "if(introW(Ll)>maxLineW) maxLineW=introW(Ll);")
+        _intro_back_scale_tmp = (" if(bigK!=null) lineW*=bigK;" if _any_big else "")
+        _intro_back_scale_word = (" if(bigK!=null) introBigScale(L2,bigK);" if _any_big else "")
+        _intro_back_scale_wpx = (" if(bigK!=null) wpx*=bigK;" if _any_big else "")
 
     # Подъём интро над видеовставкой (признак front на группу): хотя бы одна группа
     # попадает на видеовставку — в .jsx появляются массив INTRO_FRONT, introFrontLayers
@@ -2860,6 +3073,13 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         # Y базовых линий строк интро (задание A1): непусто при строках заднего плана
         # или якоре «first», иначе пусто — .jsx прежний байт в байт (golden).
         intro_ly_decl=_intro_ly_decl,
+        # Большая строка (задание ZY): массивы INTRO_LX/INTRO_LK и куски шаблона для неё.
+        # Нет большой строки ни в одной группе — все подстановки пустые (golden).
+        intro_lx_decl=_intro_lx_decl,
+        intro_big_fn=_intro_big_fn,
+        intro_big_qi_vars=_intro_big_qi_vars,
+        intro_big_line_pos=_intro_big_line_pos,
+        intro_big_word_x=_intro_big_word_x,
         sub_hide=_jd(sub_hide),
         sub_comp_name=_js(sub_comp_name),
         # готовые iDy каждой группы (задание Q2): шаблон больше не считает опускание
@@ -2981,11 +3201,13 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         lumetri_roto=(LUMETRI_ROTO_ON if lumetri else LUMETRI_ROTO_OFF),
         inserts=inserts_js, trans=_js(trans) if trans else '""',
         trans_sfx=_js(trans_sfx) if trans_sfx else '""',
-        hl_rise=_hl_rise, hl_step=_hl_step,
+        hl_rise=_hl_rise, hl_step=_hl_step, hl_dur=_hl_dur,
         hl_ease_out=HL_EASE_OUT, hl_ease_in=HL_EASE_IN,
-        # Жёлтые в строке и блюр появления (задание ZH): при дефолтах обе подстановки
-        # пусты — .jsx прежний байт в байт (golden).
+        # Жёлтые в строке, блюр появления (задание ZH) и длительность появления короткого
+        # жёлтого (задание MA): при дефолтах все подстановки пусты — .jsx прежний байт в
+        # байт (golden).
         hl_row_decl=hl_row_decl, hl_blur_decl=hl_blur_decl, hl_blur_fn=hl_blur_fn,
+        hl_short_fn=hl_short_fn,
         ease_default=EASE_DEFAULT,
         disclaimer=_js_multiline(disclaimer) if disclaimer else '""',
         # Кегль дисклеймера строкой: целое 47 печатается ровно «47» (было %d), ужатый под

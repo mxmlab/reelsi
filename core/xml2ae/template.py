@@ -27,9 +27,9 @@ SUBS_LOOP_WORDS = r"""    for (var i=0;i<SUBS.length;i++){
             var finalY = POSY + row*HL_STEP;
             L.outPoint = sw[5]/FPS;             // общий конец стопки — вся связка исчезает разом
             posP.setValueAtTime(t0,        [SW/2, finalY+HL_RISE]);
-            posP.setValueAtTime(t0+HL_DUR, [SW/2, finalY]);
+            posP.setValueAtTime(t0+%(hl_dur_js)s, [SW/2, finalY]);
             var op = L.property("ADBE Transform Group").property("ADBE Opacity");
-            op.setValueAtTime(t0, 0); op.setValueAtTime(t0+HL_DUR, 100);
+            op.setValueAtTime(t0, 0); op.setValueAtTime(t0+%(hl_dur_js)s, 100);
             easePair(posP); easePair(op);%(hl_blur_call)s
         } else {
             L.outPoint = sw[1]/FPS;
@@ -96,9 +96,9 @@ SUBS_LOOP_WORDS_JOINED = r"""    var i=0;
                 curX += r_widths[wi] + spc;
                 var posP = L.property("ADBE Transform Group").property("ADBE Position");
                 posP.setValueAtTime(t0,        [wCenter, finalY+HL_RISE]);
-                posP.setValueAtTime(t0+HL_DUR, [wCenter, finalY]);
+                posP.setValueAtTime(t0+%(hl_dur_js)s, [wCenter, finalY]);
                 var op = L.property("ADBE Transform Group").property("ADBE Opacity");
-                op.setValueAtTime(t0, 0); op.setValueAtTime(t0+HL_DUR, 100);
+                op.setValueAtTime(t0, 0); op.setValueAtTime(t0+%(hl_dur_js)s, 100);
                 easePair(posP); easePair(op);%(hl_blur_call)s%(sub_count_code)s
             }
             i = j + 1;
@@ -182,9 +182,9 @@ SUBS_LOOP_STACK = r"""
         var finalY = POSY + row*HL_STEP;
         L.outPoint = sw[5]/FPS;
         posP.setValueAtTime(t0,        [SW/2, finalY+HL_RISE]);
-        posP.setValueAtTime(t0+HL_DUR, [SW/2, finalY]);
+        posP.setValueAtTime(t0+%(hl_dur_js)s, [SW/2, finalY]);
         var op = L.property("ADBE Transform Group").property("ADBE Opacity");
-        op.setValueAtTime(t0, 0); op.setValueAtTime(t0+HL_DUR, 100);
+        op.setValueAtTime(t0, 0); op.setValueAtTime(t0+%(hl_dur_js)s, 100);
         easePair(posP); easePair(op);%(hl_blur_call)s
     }"""
 
@@ -233,9 +233,9 @@ SUBS_LOOP_STACK_JOINED = r"""
             curX += r_widths[wi] + spc;
             var posP = L.property("ADBE Transform Group").property("ADBE Position");
             posP.setValueAtTime(t0,        [wCenter, finalY+HL_RISE]);
-            posP.setValueAtTime(t0+HL_DUR, [wCenter, finalY]);
+            posP.setValueAtTime(t0+%(hl_dur_js)s, [wCenter, finalY]);
             var op = L.property("ADBE Transform Group").property("ADBE Opacity");
-            op.setValueAtTime(t0, 0); op.setValueAtTime(t0+HL_DUR, 100);
+            op.setValueAtTime(t0, 0); op.setValueAtTime(t0+%(hl_dur_js)s, 100);
             easePair(posP); easePair(op);%(hl_blur_call)s
         }
         si = sj + 1;
@@ -251,7 +251,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     var HL_BOLD = %(hl_bold)s;                 // искусственный жирный (fauxBold) на выделенных
     var FONT_SIZE = %(fsize)d, FILL = %(fill)s, POSY = %(posy)d;
     var HL_FILL = %(hlfill)s%(hlfill3_decl)s;                  // цвет выделения [r,g,b]
-    var HL_RISE = %(hl_rise)g, HL_DUR = 0.35;  // slide-up: снизу вверх на HL_RISE px за HL_DUR c%(hl_row_decl)s%(hl_blur_decl)s
+    var HL_RISE = %(hl_rise)g, HL_DUR = %(hl_dur)g;  // slide-up: снизу вверх на HL_RISE px за HL_DUR c%(hl_row_decl)s%(hl_blur_decl)s
     var HL_STEP = %(hl_step)g;                 // шаг вертикальной стопки для подряд идущих жёлтых
     var HL_EASE_OUT = %(hl_ease_out)d, HL_EASE_IN = %(hl_ease_in)d;     // cubic-bezier(0.35,0.01,0.10,0.99)
     var SH_OPACITY = %(sh_op)g, SH_DIR = %(sh_dir)g, SH_DIST = %(sh_dist)g, SH_SOFT = %(sh_soft)g;%(intro_shadow_decl)s
@@ -282,7 +282,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
                                     // интро: висят на нуле «интро», то есть двигают/масштабируют все прекомпы разом.
                                     // Опускание под INTRO_SAFE_TOP считает Python (задание Q2) — здесь только поправка Scale.
     var INTRO_ON2=%(intro_on2)s;    // [0|1 на группу] — группа появляется на перебивке (Камера 2): свой нул
-%(intro_front_decl)s%(intro_ly_decl)s%(intro_above_roto_decl)s%(intro_cam_decl)s    var INTRO_IDY=%(intro_idy)s;    // [px на группу] — опускание блока под INTRO_SAFE_TOP, считает Python (задание Q2)
+%(intro_front_decl)s%(intro_ly_decl)s%(intro_lx_decl)s%(intro_above_roto_decl)s%(intro_cam_decl)s    var INTRO_IDY=%(intro_idy)s;    // [px на группу] — опускание блока под INTRO_SAFE_TOP, считает Python (задание Q2)
     var INTRO_Y2=%(intro_y2)g;      // сдвиг по вертикали (px) нула «интро на кам2» ПОВЕРХ INTRO_Y:
                                     // на перебивке кадр другой, и текст за спиной просится ниже
     var INTRO_WIDE=3;               // ширина интро-прекомпа в долях кадра: прекомп шире кадра, чтобы
@@ -388,7 +388,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             prop.setInterpolationTypeAtKey(k, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER);
         if (prop.numKeys<2) return;
         temporalEase(prop, HL_EASE_IN, HL_EASE_OUT);   // Position 1-мерна — откат внутри (задание CE)
-    }%(hl_blur_fn)s
+    }%(hl_blur_fn)s%(hl_short_fn)s
 
     var main = app.project.items.addComp(%(name)s, W, H, 1.0, Math.max(DUR,1)%(comp_dur)s, FPS);
 
@@ -724,7 +724,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             try{dd.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
             sp.setValue(dd);
         }
-        function introW(tl){ try{ return tl.sourceRectAtTime(0,false).width; }catch(e){ return 0; } }%(intro_back_scale_fn)s%(intro_word_shadow_fn)s%(intro_anim_fx_fn)s%(intro_hl_glow_fn)s
+        function introW(tl){ try{ return tl.sourceRectAtTime(0,false).width; }catch(e){ return 0; } }%(intro_back_scale_fn)s%(intro_big_fn)s%(intro_word_shadow_fn)s%(intro_anim_fx_fn)s%(intro_hl_glow_fn)s
         for (var gI=0; gI<INTRO_GROUPS.length; gI++){
             var GRP=INTRO_GROUPS[gI]; if(!GRP.length) continue;%(intro_group_flags)s
             var gMax=0, gMin=1e9;
@@ -739,12 +739,12 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             var IW=Math.round(W*INTRO_WIDE);
             var ic=app.project.items.addComp("текст интро"+(INTRO_GROUPS.length>1?(" "+(gI+1)):""), IW, H, 1.0, Math.max(introDur,1), FPS);
             toBin(ic,"Интро");
-            %(intro_line_layout)s
+            %(intro_line_layout)s%(intro_big_qi_vars)s
                 if(!wds.length) continue;
                 if (INTRO_MODE=="line"){                        // одна строка = один слой (раскладка AE), фейд по 1-му слову
                     var Ll=ic.layers.addText(""); introDoc(Ll, wds.join(" "), ln.color%(accent_call)s%(fill_call)s);%(intro_back_scale_line)s%(intro_word_shadow_line)s
                     %(intro_back_scale_line_w)s
-                    Ll.property("ADBE Transform Group").property("ADBE Position").setValue([IW/2, lineY]);
+                    Ll.property("ADBE Transform Group").property("ADBE Position").setValue([IW/2, lineY]);%(intro_big_line_pos)s
                     var t0l=1e9; for(var z=0;z<tms.length;z++) if(tms[z]<t0l) t0l=tms[z]; if(t0l>=1e9)t0l=0; if(t0l<0)t0l=0;
                     %(intro_line_anim)s
                     continue;
@@ -758,7 +758,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
                     var wpx=introW(L2);%(intro_back_scale_wpx)s wl.push(L2); ww.push(wpx); sumW+=wpx;
                 }
                 var SPACE=(wds.length>1)?((lineW-sumW)/(wds.length-1)):0;
-                var x=IW/2 - lineW/2;
+                var x=IW/2 - lineW/2;%(intro_big_word_x)s
                 for (var wj2=0; wj2<wds.length; wj2++){
                     wl[wj2].property("ADBE Transform Group").property("ADBE Position").setValue([x+ww[wj2]/2, lineY]);
                     %(intro_word_anim)s

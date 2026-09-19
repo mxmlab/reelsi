@@ -812,12 +812,23 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
             // время появления жёлтого — из плана (t0, задание ZU): по нему ниже идут подъём,
             // проявление и блюр. Своей формулы «когда слово произнесено» в превью нет.
             const t0=(isY&&wd.t0!=null)?(' data-hl0="'+wd.t0+'"'):'';
-            return '<span class="pvsubw_wd'+(isY?' yel':'')+'"'+t0+' style="'+wCss+'">'+esc(wd.w)+'</span>';
+            // своя длительность появления у укороченного слова (hd, задание MA): в AE её
+            // играет цикл стопки/слов, а не этот — превью берёт готовое число из плана.
+            const hd=(isY&&wd.hd!=null)?(' data-hld="'+wd.hd+'"'):'';
+            return '<span class="pvsubw_wd'+(isY?' yel':'')+'"'+t0+hd+' style="'+wCss+'">'+esc(wd.w)+'</span>';
           }).join(' ');
         }else{
           const isY=(sub.color==='yellow');
           const wCss=isY?hlFvCss:baseFvCss;
-          return '<span class="pvsubw_wd'+(isY?' yel':'')+'" style="'+wCss+'">'+esc(sub.w)+'</span>';
+          // Жёлтое слово режима «по слову» и стопки въезжает так же, как его слой в AE
+          // (задание MA): момент — начало слова (s плана = inPoint слоя), у строки из одного
+          // слова — момент ZH из плана (words[0].t0). Длительность — hd плана, если план её
+          // знает (короткое слово); иначе превью берёт общую hl_dur, как и раньше.
+          const w0=(sub.words&&sub.words[0])||null;
+          const t0=isY?((w0&&w0.t0!=null)?w0.t0:sub.s):null;
+          const hl0=(isY&&t0!=null)?(' data-hl0="'+t0+'"'):'';
+          const hd=(isY&&sub.hd!=null)?(' data-hld="'+sub.hd+'"'):'';
+          return '<span class="pvsubw_wd'+(isY?' yel':'')+'"'+hl0+hd+' style="'+wCss+'">'+esc(sub.w)+'</span>';
         }
       }).join(' ');
 
@@ -832,6 +843,8 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
   // Появление жёлтого в строке (задание ZU): до своего момента слово невидимо, за HL_DUR
   // поднимается на hl_rise и проявляется — та же кривая, что easePair в AE (keysAt с
   // дефолтными 35/90 = aeEase). Числа и время появления — из плана, своей копии нет.
+  // Короткое жёлтое (задание MA) играет СВОЮ длительность hd из плана: общей HL_DUR слову
+  // с малым видимым временем не хватало, и анимация обрывалась его исчезновением.
   // Подъём — position:relative + top, а НЕ transform: .pvsubw_wd — обычный inline-span,
   // а к inline-боксу transform не применяется вовсе (сдвиг просто пропал бы). relative
   // раскладку строки не трогает — в отличие от inline-block, который ломает кернинг.
@@ -841,7 +854,9 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
   host.querySelectorAll('.pvsubw_wd').forEach(wsp=>{
     const t0=parseFloat(wsp.dataset&&wsp.dataset.hl0);
     if(!(t0>=0))return;                          // у слова своей анимации нет — как было
-    const rem=(tm<t0+hDur)?keysAt([[t0,1],[t0+hDur,0]],null,tm):0;   // 1 -> 0 по кривой
+    const hd=parseFloat(wsp.dataset&&wsp.dataset.hld);   // своя длительность — если план дал
+    const dur=(hd>0)?hd:hDur;                    // нет поля: общая hl_dur, как раньше
+    const rem=(tm<t0+dur)?keysAt([[t0,1],[t0+dur,0]],null,tm):0;   // 1 -> 0 по кривой
     wsp.style.position=rem>0?'relative':'';
     wsp.style.top=rem>0?(rise*rem*kpx).toFixed(2)+'px':'';
     wsp.style.opacity=rem>0?String(1-rem):'';
@@ -1236,7 +1251,11 @@ function ipvIntroGroups(){const pl=IPV.plan;
 function introGroupWindows(ir){
   const groups=Array.isArray(ir)?ir:((ir&&ir.lines)||[]);   // панель шага 2 шлёт {lines,splits}
   return groups.filter(g=>g.ts!=null&&g.te!=null)
-    .map(g=>({lines:g.lines,inAt:g.ts,outEnd:g.te,fade:g.fade,front:!!g.front,shadow:g.shadow,ys:g.ys,fonts:g.fonts}));}
+    .map(g=>({lines:g.lines,inAt:g.ts,outEnd:g.te,fade:g.fade,front:!!g.front,shadow:g.shadow,ys:g.ys,fonts:g.fonts,
+      // Большое слева (задание ZY): левый край и множитель кегля каждой строки — те же
+      // готовые числа, что уехали в .jsx (INTRO_LX/INTRO_LK). Это дверь: забытый тут
+      // ключ — и превью рисует большую строку по-старому, хотя план её уже посчитал.
+      lx:g.lx,lk:g.lk}));}
 // пересчёт интро на лету: правки в панели уходят в план (окна считает бэкенд), по затишью
 // перезапрашиваем — полоски на таймлайне и оверлей в кадре догоняют за ~0.4с
 function ipvIntroRefresh(){if(IPVMODE!=='ae')return;
@@ -1406,6 +1425,14 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
       // абсолютно; нет ys (старый бэкенд без перезапуска) — сегодняшний поток как есть.
       const yl=IPV.intro[gi].ys;
       const ys=(Array.isArray(yl)&&yl.length===lines.length)?yl:null;
+      // Большое слева (задание ZY): левый край строки и множитель её кегля — готовые
+      // числа плана (lx/lk группы). Своих чисел превью не считает: раскладку знает
+      // Python. Группа с lx раскладывается абсолютно ВСЕГДА — по центру потока такую
+      // строку не поставить.
+      const xl=IPV.intro[gi].lx;
+      const lxs=(Array.isArray(xl)&&xl.length===lines.length)?xl:null;
+      const kll=IPV.intro[gi].lk;
+      const kls=(Array.isArray(kll)&&kll.length===lines.length)?kll:null;
       lines.forEach((l,li)=>{const dv=document.createElement('div');
       // Цвет строки: yellow -> intro_hl_fill / hl_fill, accent -> hl_fill3, custom -> l.fill, white -> intro_fill
       let col='#ffffff';
@@ -1418,7 +1445,9 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
       }else{
         col=ipvToHex((pl&&pl.intro_fill)||(s&&s.intro_fill),'#ffffff');
       }
-      dv.className='iline'+(l.color==='yellow'?' yel':'')+(l.back?' back':'')+(l.color==='accent'?' accent':'')+(ys?' abs':'');
+      const lx=(lxs&&lxs[li]!=null)?lxs[li]:null;
+      const lk=(kls&&kls[li]!=null)?kls[li]:null;
+      dv.className='iline'+(l.color==='yellow'?' yel':'')+(l.back?' back':'')+(l.color==='accent'?' accent':'')+((ys||lxs)?' abs':'');
       dv.style.color=col;
       // Свечение (glow / glitch):
       if(l.fx==='glow'||l.anim==='glitch'){
@@ -1428,7 +1457,11 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
       }
       // Масштаб и межстрочный интервал для мелкого текста (back). В ветке ys (задание A2)
       // ручные marginTop не нужны: вертикаль строки целиком задаёт y из плана.
-      if(l.back){
+      // Большая строка (задание ZY) кегль берёт из плана (lk) — back-скейл её не касается,
+      // lk его заменяет, как и в .jsx.
+      if(lk!=null){
+        dv.style.fontSize='calc(var(--introsfs,8.4cqw) * '+lk+')';
+      }else if(l.back){
         const bsc=(pl&&pl.back_scale!=null)?pl.back_scale:(s.back_scale!=null?s.back_scale:0.69);
         dv.style.fontSize='calc(var(--introsfs,8.4cqw) * '+bsc+')';
         dv.style.lineHeight='1.15';
@@ -1498,13 +1531,21 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
       // своим (снято замером: до −51 px на группе с 0.941), да ещё от transform ПРЕДЫДУЩЕЙ
       // группы при построении — ошибка «прыгала». offsetTop опоры от transform не зависит:
       // её offsetParent — сама строка (.iline.abs — position:absolute).
-      if(ys){
+      if(ys||lxs){
         const pw=(pl&&pl.w)||1080,ph=(pl&&pl.h)||1920;
         const k=(io.clientWidth||pw)/pw;
         const cy=(io.clientHeight||0)/2;
         const rows=io.querySelectorAll('.iline');
-        for(let li=0;li<rows.length&&li<ys.length;li++){
+        for(let li=0;li<rows.length;li++){
           const dv=rows[li];
+          // Левый край строки большого блока (задание ZY): центр контейнера + lx в px
+          // превью (тот же коэффициент k, что у вертикали ниже). Текст идёт вправо от
+          // этого края, поэтому translateX(-50%) из .iline.abs снимаем.
+          if(lxs&&lxs[li]!=null){
+            dv.style.left=(((io.clientWidth||pw)/2+lxs[li]*k)).toFixed(2)+'px';
+            dv.style.transform='none';
+          }
+          if(!ys||li>=ys.length)continue;
           const strut=document.createElement('i');
           strut.className='pvcap_strut';
           dv.appendChild(strut);

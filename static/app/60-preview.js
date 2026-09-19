@@ -416,7 +416,7 @@ async function pvwOpen(xml,clip){
   const c=(clip>=0?CLIPS[clip]:null);
   if(c&&c.job&&Array.isArray(c.job.hl_count))PVW.cnt=new Set(c.job.hl_count);
   if(c&&c.job&&Array.isArray(c.job.hl_joins))PVW.jns=new Set(c.job.hl_joins);
-  PVW.intro=(c&&c.job&&Array.isArray(c.job.introRows))?c.job.introRows.map(r=>({count:r.count,color:r.color||'white',fill:r.fill||null,anim:(r.anim==='count'?'':(r.anim||'')),fx:r.fx||'',dec:parseInt(r.dec)||0,is_count:!!(r.is_count||r.anim==='count'),cnt_words:(Array.isArray(r.cnt_words)?r.cnt_words.slice():null),break:!!r.break,from:(r.from!=null?r.from:null),gx:r.gx||0,gy:r.gy||0,gs:r.gs||100,accent:!!r.accent,back:!!r.back})):[];
+  PVW.intro=(c&&c.job&&Array.isArray(c.job.introRows))?c.job.introRows.map(r=>({count:r.count,color:r.color||'white',fill:r.fill||null,anim:(r.anim==='count'?'':(r.anim||'')),fx:r.fx||'',dec:parseInt(r.dec)||0,is_count:!!(r.is_count||r.anim==='count'),cnt_words:(Array.isArray(r.cnt_words)?r.cnt_words.slice():null),break:!!r.break,from:(r.from!=null?r.from:null),gx:r.gx||0,gy:r.gy||0,gs:r.gs||100,accent:!!r.accent,back:!!r.back,big:!!r.big})):[];
   let d;try{d=await (await fetch('/api/words',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml})})).json();}
   catch(e){$('pvwords').innerHTML='<span class="hint">'+t('ошибка: ')+esc(''+e)+'</span>';return;}
   if(d.error||!Array.isArray(d.words)||!d.words.length){$('pvwords').innerHTML='<span class="hint">'+t('Нет субтитров — сначала сделай разметку (шаг 2).')+'</span>';$('pvwintro').style.display='none';return;}
@@ -726,7 +726,7 @@ async function pvwSaveYellow(){if(!PVW.words.length)return;const btn=$('pvwsave'
     uiLog(t('жёлтые (предпросмотр): ')+(d.colored||[]).length+(sk?t(', пропущено ')+sk:''));
   }catch(e){$('pvwres').className='err';$('pvwres').textContent='⚠ '+e;}finally{btn.disabled=false;}}
 function pvwCommitIntro(){const c=(PVW.clip>=0?CLIPS[PVW.clip]:null);if(!c)return;
-  c.job=c.job||defJob();c.job.introRows=PVW.intro.map(r=>({count:r.count,color:r.color||'white',fill:r.fill||null,anim:r.anim||'',fx:r.fx||'',dec:parseInt(r.dec)||0,is_count:!!r.is_count,cnt_words:(Array.isArray(r.cnt_words)?r.cnt_words.slice():null),break:!!r.break,from:(r.from!=null?r.from:null),gx:r.gx||0,gy:r.gy||0,gs:r.gs||100,accent:!!r.accent,back:!!r.back}));saveState();
+  c.job=c.job||defJob();c.job.introRows=PVW.intro.map(r=>({count:r.count,color:r.color||'white',fill:r.fill||null,anim:r.anim||'',fx:r.fx||'',dec:parseInt(r.dec)||0,is_count:!!r.is_count,cnt_words:(Array.isArray(r.cnt_words)?r.cnt_words.slice():null),break:!!r.break,from:(r.from!=null?r.from:null),gx:r.gx||0,gy:r.gy||0,gs:r.gs||100,accent:!!r.accent,back:!!r.back,big:!!r.big}));saveState();
   pvwPlanSoon();}   // правка интро догоняет план дебаунс-пересчётом (окна не считаем в JS)
 function pvwAddIntroLine(){PVW.intro.push({count:1,color:'white'});pvwCommitIntro();pvwRender();}
 function pvwAddMid(){PVW.intro.push({count:1,color:'yellow',break:true,from:null});PVW.pick=PVW.intro.length-1;pvwCommitIntro();pvwRender();
@@ -832,6 +832,7 @@ function introRowHtml(cfg,r,i,idxs,gi){
     +fxSelect
     +'<label class="chk" style="margin:0;padding:0 4px;flex-shrink:0" data-t="'+t('Акцентный шрифт: другой шрифт и регистр этой строки (accent_font стиля; пусто = выключено)')+'"><input type="checkbox" aria-label="'+t('Акцентный шрифт')+'" '+(r.accent?'checked':'')+' onchange="'+A+'['+i+'].accent=this.checked;this.blur();'+S+'"></label>'
     +'<label class="chk" style="margin:0;padding:0 4px;flex-shrink:0" data-t="'+t('Задний план: строка уходит на задний план (шрифт back_font и регистр back_case из стиля)')+'"><input type="checkbox" aria-label="'+t('Задний план')+'" '+(r.back?'checked':'')+' onchange="'+A+'['+i+'].back=this.checked;this.blur();'+S+'"></label>'
+    +'<label class="chk" style="margin:0;padding:0 4px;flex-shrink:0" data-t="'+t('Большое слева: строка встаёт слева крупно, остальные строки группы — стопкой справа (высота — по стопке)')+'"><input type="checkbox" aria-label="'+t('Большое слева')+'" '+(r.big?'checked':'')+' onchange="'+A+'['+i+'].big=this.checked;this.blur();'+S+'"></label>'
     +fromBadge
     // Слова строки — кликабельные: в общем списке их уже нет (introConsumed), и править
     // текст слова, ушедшего в интро, было негде вовсе. Клик = тот же /api/edit_word.

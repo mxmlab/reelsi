@@ -267,7 +267,7 @@ def test_schema_intro_transform_and_camera_groups():
             back_field = it
             break
     assert back_field is not None, "Поле back_step не найдено в intro.back"
-    assert back_field["label"] == "Межстрочный заднего плана, %"
+    assert back_field["label"] == "Межстрочный заднего плана сверху, %"
     assert back_field.get("conv") == "frac_pct_int"
     assert (back_field.get("min"), back_field.get("max")) == (10, 300)
     assert (back_field.get("lim_min"), back_field.get("lim_max")) == (10, 300)

@@ -123,12 +123,31 @@ function stRgb2hex(a) {
   return '#' + c(a[0]) + c(a[1]) + c(a[2]);
 }
 
+// Что панель ПОКАЗАЛА у парной ручки (fallback_key, задание ZZ): у back_step_after без
+// своего ключа в поле стоит значение back_step. Пока в поле ровно показанное — ключ не
+// заводится (иначе одно открытие панели оживило бы ключ, которого в стиле не было, и
+// «нет ключа → берётся значение пары» перестало бы работать); поменяли — значение другое,
+// и оно уезжает в стиль. Иначе «показано по паре» и «задано» не различить.
+let ST_FB_SHOWN = {};
+
 function stView(field, stored) {
   if (!field) return stored != null ? stored : '';
   // Общее правило: undefined (ключа нет) и null у НЕ-nullable поля → BASE.
   // У nullable-поля null остаётся «пусто».
   const base = (STSCHEMA && STSCHEMA.base) || {};
-  const baseDef = base[field.key];
+  let baseDef = base[field.key];
+  // Парная ручка: своего значения в стиле нет — показываем значение пары (back_step).
+  if (field.fallback_key && (stored === undefined || stored === null)) {
+    const pair = (typeof CURSTYLE !== 'undefined' && CURSTYLE) ? CURSTYLE[field.fallback_key] : null;
+    if (pair != null) {
+      stored = pair;
+      baseDef = pair;
+    }
+    // Запоминаем показ в единицах поля (у conv-ручек это проценты, а не доля).
+    const shown = stored != null ? stored : baseDef;
+    ST_FB_SHOWN[field.key] = (field.conv && stConv[field.conv])
+      ? stConv[field.conv].toView(shown) : shown;
+  }
   const missing = (stored === undefined || (stored === null && !field.nullable));
 
   if (field.conv && stConv[field.conv]) {
@@ -177,6 +196,12 @@ function stView(field, stored) {
 
 function stStore(field, view, opt) {
   if (!field) return view;
+  // Парная ручка (fallback_key, задание ZZ): ключа в стиле нет и в поле стоит ровно то, что
+  // панель показала (значение пары) — значит пользователь его не трогал, и ключ не заводим.
+  if (field.fallback_key && (opt == null || opt.orig == null)) {
+    const shown = ST_FB_SHOWN[field.key];
+    if (shown != null && parseFloat(shown) === parseFloat(view)) return null;
+  }
   if (field.conv && stConv[field.conv]) {
     return stConv[field.conv].toStore(view);
   }
@@ -1432,6 +1457,10 @@ function stEdit() {
 
         const opt = { hl_bold: hlBoldVal, orig: CURSTYLE[item.key] };
         CURSTYLE[item.key] = stStore(item, view, opt);
+        // Парная ручка без своего ключа (задание ZZ): показ берётся у пары, и после правки
+        // САМОЙ пары в поле осталось бы старое число. Обновляем показ сразу — иначе
+        // следующий stEdit прочитает из DOM устаревшее число и запишет его как заданное.
+        if (item.fallback_key && CURSTYLE[item.key] == null) stRefresh(item.key);
       } else if (item.type === 'group' || item.id) {
         if (item.toggle) {
           const chk = document.getElementById('st_' + item.toggle);

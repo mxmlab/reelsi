@@ -61,10 +61,15 @@ def _ipvintro_region(js_src):
 
 
 def _ys_block(js_src):
-    """Блок посадки строк по ys внутри ipvIntro — от `if(ys){` до парной закрывающей скобки."""
+    """Блок посадки строк по ys внутри ipvIntro — от `if(ys...){` до парной закрывающей скобки.
+
+    Условие ветки с ZY шире (`if(ys||lxs){`: по ys сажаются строки и большого блока),
+    поэтому ветка ищется регуляркой, а не точной строкой.
+    """
     region = _ipvintro_region(js_src)
-    idx = region.find("if(ys){")
-    assert idx >= 0, "не нашёлся блок посадки строк по ys (`if(ys){`) в ipvIntro"
+    m = re.search(r"if\(ys\b[^)]*\)\{", region)
+    assert m, "не нашёлся блок посадки строк по ys (`if(ys...){`) в ipvIntro"
+    idx = m.start()
     depth = 0
     for i in range(idx, len(region)):
         ch = region[i]

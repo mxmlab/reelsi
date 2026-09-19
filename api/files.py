@@ -364,6 +364,41 @@ ALLOWED_WAVE_EXTS = {
 }
 
 
+# Браузер держит не больше 6 соединений на хост, а <video>/<audio> просят
+# `Range: bytes=0-`, дочитывают до заполнения буфера и замолкают, НЕ закрывая
+# соединение. Превью открывает камеры, их дублёры, музыку, SFX и видеовставки —
+# шесть таких элементов съедали все соединения, и обычный fetch (/api/style_schema)
+# ждал 5.3 с вместо 0.3 с: «сервер встаёт при открытии превью» (задание MB).
+# Поэтому открытый (или заведомо длинный) диапазон режем до MEDIA_CHUNK: браузер
+# получает конец диапазона, дочитывает остаток сам и отпускает соединение.
+MEDIA_CHUNK = 4 * 1024 * 1024
+
+# Range на ОДИН диапазон: `bytes=S-` или `bytes=S-E`. Пробелы и регистр по RFC
+# не значимы. Суффиксный (`bytes=-N`), список диапазонов и мусор сюда не попадают.
+_RANGE_ONE_RE = re.compile(r"^\s*bytes\s*=\s*(\d+)\s*-\s*(\d*)\s*$", re.IGNORECASE)
+
+
+def _narrow_media_range(header, size):
+    """Сузить открытый/слишком длинный Range до MEDIA_CHUNK байт (задание MB).
+
+    Возвращает новый заголовок Range либо None — «трогать нечего»: суффиксный
+    диапазон, несколько диапазонов, битый заголовок, файл не больше куска,
+    заявленный диапазон и так короче куска, начало за концом файла (там 416
+    отдаёт сам werkzeug, как и раньше)."""
+    m = _RANGE_ONE_RE.match(header or "")
+    if not m:
+        return None
+    if not size or size <= MEDIA_CHUNK:
+        return None
+    start = int(m.group(1))
+    if start >= size:
+        return None
+    end_raw = m.group(2)
+    if end_raw and int(end_raw) - start + 1 <= MEDIA_CHUNK:
+        return None
+    return f"bytes={start}-{min(start + MEDIA_CHUNK, size) - 1}"
+
+
 @bp.route("/api/media")
 def api_media():
     """Serve a local media file with HTTP Range support so the browser <video> in
@@ -403,6 +438,16 @@ def api_media():
         return ("not found", 404)
     if request.args.get("dl"):
         return send_file(path, as_attachment=True, download_name=os.path.basename(path))
+    # Сужение — только для отдачи на месте и ПОСЛЕ проверок безопасности (расширение,
+    # realpath, _never_serve): подменяем заголовок в environ, чтобы 206 / Content-Range /
+    # Content-Length посчитал сам werkzeug. dl=1 отдаёт файл целиком, как раньше.
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        size = 0                    # файла уже нет — сужать нечего
+    narrowed = _narrow_media_range(request.environ.get("HTTP_RANGE"), size)
+    if narrowed:
+        request.environ["HTTP_RANGE"] = narrowed
     return send_file(path, conditional=True)
 
 

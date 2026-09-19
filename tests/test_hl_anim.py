@@ -172,19 +172,24 @@ def _rows_jsx(xml, tmp_path, name="rows.jsx", row_anim="word", **extra):
 
 
 def _stand_code(jsx):
-    """Выдержка из собранного .jsx: константы, функция блюра и цикл субтитров."""
+    """Выдержка из собранного .jsx: константы, функции появления и цикл субтитров."""
     constants = "\n".join(ln for ln in jsx.splitlines()
                           if any(ln.startswith(p) for p in _LINE_PREFIXES))
     starts = [jsx.index(m) for m in _LOOP_MARKERS if m in jsx]
     assert starts, "в .jsx не найден ни один цикл субтитров"
     i = min(starts)
     loop = jsx[i:jsx.index("    // ---- поп-SFX", i)]
-    fn = ""
+    fns = []
     if "    function hlBlur(L, t0){" in jsx:
         a = jsx.index("    function hlBlur(L, t0){")
         b = jsx.index("\n    }\n", a) + len("\n    }\n")
-        fn = jsx[a:b]
-    return "\n".join(x for x in (constants, fn, loop) if x)
+        fns.append(jsx[a:b])
+    # Длительность появления короткого жёлтого (задание MA): цикл зовёт hlDur(sw) — стенду
+    # она нужна так же, как hlBlur, иначе node падает на ReferenceError.
+    m = re.search(r"\n    function hlDur\(sw\)\{[^\n]*\}", jsx)
+    if m:
+        fns.append(m.group(0))
+    return "\n".join(x for x in (constants, "\n".join(fns), loop) if x)
 
 
 def _run(jsx, tmp_path, name):
@@ -335,8 +340,13 @@ def test_blur_keys_in_all_three_loops(xml_subs, tmp_path, mode):
     for lay in yellow:
         fx = lay["fx"]["ADBE Gaussian Blur 2"][0]
         t0 = lay["inPoint"]
+        # Подъём, проявление и блюр стоят на ОДНИХ ключах (контракт ZH). С задания MA
+        # длительность у каждого жёлтого своя (короткое слово играет появление за hlDur(sw)),
+        # поэтому конец берём у ключей проявления, а общая HL_DUR — только потолок.
+        op_end = lay["opacity"]["keys"][-1][0]
+        assert op_end <= t0 + dur, "появление жёлтого длиннее общей HL_DUR"
         assert fx["params"]["ADBE Gaussian Blur 2-0003"]["keys"] == [[None, 0]], "повтор краёв включён"
-        assert fx["params"]["ADBE Gaussian Blur 2-0001"]["keys"] == [[t0, 70.4], [t0 + dur, 0]]
+        assert fx["params"]["ADBE Gaussian Blur 2-0001"]["keys"] == [[t0, 70.4], [op_end, 0]]
         assert fx["params"]["ADBE Gaussian Blur 2-0001"]["eased"], "кривая блюра не easePair"
 
 

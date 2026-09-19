@@ -62,7 +62,7 @@ function selectAE(i){if(curAE>=0&&curAE!==i)captureAE();curAE=i;const c=CLIPS[i]
   HL=new Set(j.highlights||[]);BRK=new Set(j.hl_breaks||[]);CNT=new Set(j.hl_count||[]);JNS=new Set(j.hl_joins||[]);HLXML=j.hlxml||'';
   INS=(j.ins||[]).map(x=>({...x}));renderIns();
   // gx/gy/gs — геометрия группы: живёт на головной строке, таскаем со строкой
-  INTRO=(j.introRows||[]).map(r=>({count:r.count,color:r.color||'white',fill:r.fill||null,anim:(r.anim==='count'?'':(r.anim||'')),fx:r.fx||'',dec:parseInt(r.dec)||0,is_count:!!(r.is_count||r.anim==='count'),cnt_words:(Array.isArray(r.cnt_words)?r.cnt_words.slice():null),break:!!r.break,from:(r.from!=null?r.from:null),gx:r.gx||0,gy:r.gy||0,gs:r.gs||100,accent:!!r.accent,back:!!r.back}));INTRO_PICK=-1;
+  INTRO=(j.introRows||[]).map(r=>({count:r.count,color:r.color||'white',fill:r.fill||null,anim:(r.anim==='count'?'':(r.anim||'')),fx:r.fx||'',dec:parseInt(r.dec)||0,is_count:!!(r.is_count||r.anim==='count'),cnt_words:(Array.isArray(r.cnt_words)?r.cnt_words.slice():null),break:!!r.break,from:(r.from!=null?r.from:null),gx:r.gx||0,gy:r.gy||0,gs:r.gs||100,accent:!!r.accent,back:!!r.back,big:!!r.big}));INTRO_PICK=-1;
   $('aeexposure').value=j.exposure||0;$('censor').checked=j.censor!==false;
   const mm=$('musicmode');if(mm)mm.value=j.music_random?'random':(j.music?(/^https?:/i.test(j.music)?'url':'file'):'random');
   $('aemusic').value=j.music||'';musicUI();
@@ -93,7 +93,7 @@ function captureAE(){if(curAE<0)return;const c=CLIPS[curAE];if(!c){curAE=-1;retu
   const j=c.job||defJob();
   const ir=introResolve();
   j.highlights=(HLXML===c.xml)?[...HL]:[];j.hl_breaks=(HLXML===c.xml)?[...BRK]:[];j.hl_count=(HLXML===c.xml)?[...CNT]:[];j.hl_joins=(HLXML===c.xml)?[...JNS]:[];j.hlxml=HLXML;
-  j.introRows=INTRO.map(r=>({count:r.count,color:r.color||'white',fill:r.fill||null,anim:r.anim||'',fx:r.fx||'',dec:parseInt(r.dec)||0,is_count:!!r.is_count,cnt_words:(Array.isArray(r.cnt_words)?r.cnt_words.slice():null),break:!!r.break,from:(r.from!=null?r.from:null),gx:r.gx||0,gy:r.gy||0,gs:r.gs||100,accent:!!r.accent,back:!!r.back}));j.intromode=val('intromode');
+  j.introRows=INTRO.map(r=>({count:r.count,color:r.color||'white',fill:r.fill||null,anim:r.anim||'',fx:r.fx||'',dec:parseInt(r.dec)||0,is_count:!!r.is_count,cnt_words:(Array.isArray(r.cnt_words)?r.cnt_words.slice():null),break:!!r.break,from:(r.from!=null?r.from:null),gx:r.gx||0,gy:r.gy||0,gs:r.gs||100,accent:!!r.accent,back:!!r.back,big:!!r.big}));j.intromode=val('intromode');
   j.exposure=parseFloat(val('aeexposure'))||0;j.censor=$('censor').checked;
   j.music_random=(val('musicmode')==='random');j.music=j.music_random?'':val('aemusic').trim();
   // Копия стиля живёт в задании ТОЛЬКО у безымянного кастома: у именованного стиля
@@ -300,7 +300,7 @@ function resolveIntroFor(rows,words){let off=0;const lines=[],remove=[],splits=[
          if(/^[0-9\s]+$/.test(s)){decVal=0;break;}
        }
        lines.push({text:ws.join(' '),color:r.color||'white',fill:r.fill||null,anim:r.anim||'',fx:r.fx||'',dec:decVal,is_count:!!(r.is_count||r.anim==='count'),cnt_words:(Array.isArray(r.cnt_words)?r.cnt_words.slice():null),times:ts,words:ws,
-         gx:(head?(r.gx||0):0),gy:(head?(r.gy||0):0),gs:(head?(r.gs||100):100),accent:!!r.accent,back:!!r.back});}});
+         gx:(head?(r.gx||0):0),gy:(head?(r.gy||0):0),gs:(head?(r.gs||100):100),accent:!!r.accent,back:!!r.back,big:!!r.big});}});
   return {lines,remove,splits};}
 
 // ================= words / intro (ported) =================
@@ -388,10 +388,10 @@ function midCount(d){return ((d||{}).mid_groups||[]).filter(g=>g.break!==false).
 // строк — break:false, from:null (добирают слова подряд, встают в тот же прекомп).
 function introRowsFromAI(d){
   return (d.intro_rows||[]).map(r=>({count:r.count,color:r.color,break:!!r.break,
-      back:!!r.back,anim:r.anim||'',fx:r.fx||''}))
+      back:!!r.back,big:!!r.big,anim:r.anim||'',fx:r.fx||''}))
     .concat((d.mid_groups||[]).map(g=>({count:g.count,color:g.color,
       break:(g.break!==false),from:(g.from!=null?g.from:null),
-      back:!!g.back,anim:g.anim||'',fx:g.fx||''})));}
+      back:!!g.back,big:!!g.big,anim:g.anim||'',fx:g.fx||''})));}
 async function aiIntroRun(){if(uiBusyGuard())return;   // идёт пакетный прогон — второй вызов ИИ параллельно не пускаем
   if(curAE<0){toast(t('Выбери клип'));return;}const c=CLIPS[curAE];const el=$('introres');
   el.className='muted';el.textContent=t('ИИ размечает…');uiLog(t('интро (ИИ) для ')+c.name+t('…'));
@@ -431,7 +431,7 @@ async function aiIntroAllRun(list){
       c.job=c.job||defJob();c.job.introRows=introRowsFromAI(d);ok++;
       uiLog(t('  интро: ')+(d.intro_rows||[]).length+t(' строк, акцентов в середине: ')+midCount(d));
       // открытый в предпросмотре клип обновляем и в панели, иначе на экране осталась бы старая разметка
-      if(curAE>=0&&c===CLIPS[curAE]){INTRO=c.job.introRows.map(r=>({count:r.count,color:r.color||'white',fill:r.fill||null,anim:r.anim||'',fx:r.fx||'',dec:parseInt(r.dec)||0,is_count:!!r.is_count,cnt_words:(Array.isArray(r.cnt_words)?r.cnt_words.slice():null),break:!!r.break,from:(r.from!=null?r.from:null),gx:r.gx||0,gy:r.gy||0,gs:r.gs||100,accent:!!r.accent,back:!!r.back}));INTRO_PICK=-1;
+      if(curAE>=0&&c===CLIPS[curAE]){INTRO=c.job.introRows.map(r=>({count:r.count,color:r.color||'white',fill:r.fill||null,anim:r.anim||'',fx:r.fx||'',dec:parseInt(r.dec)||0,is_count:!!r.is_count,cnt_words:(Array.isArray(r.cnt_words)?r.cnt_words.slice():null),break:!!r.break,from:(r.from!=null?r.from:null),gx:r.gx||0,gy:r.gy||0,gs:r.gs||100,accent:!!r.accent,back:!!r.back,big:!!r.big}));INTRO_PICK=-1;
         renderIntro();captureAE();aewRender();}
     }catch(e){fail++;toast(t('интро · ')+c.name+t(': ')+e);uiLog(t('  ОШИБКА: ')+e);}
     saveState();await sleep(300);}

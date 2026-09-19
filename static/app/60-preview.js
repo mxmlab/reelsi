@@ -72,7 +72,16 @@ function vgDuck(tm,plan){if(!VG)return;
 function voiceWiring(v){if(!v||v.__wired)return;audioGraph();if(!VG)return;
   try{AUDIO.createMediaElementSource(v).connect(VG);v.__wired=true;}catch(e){}}
 function pvFmt(s){return fmtT(s);}
-async function openEditClip(i){curEdit=i;const xml=CLIPS[i].xml;openModal('mbPreview');await openPreview(xml);edOpen();}
+// Заголовок шага 1 — имя ОТКРЫТОГО файла (как оно видно в списке клипов), а не название
+// окна: у двух подряд открытых клипов заголовок был одинаковый и не говорил, что открыто.
+// aria-label — то же имя (диалог называется тем, что в нём открыто); статический
+// aria-label в разметке остаётся запасным — модалка всегда открывается отсюда.
+function pvTitle(name){
+  const ttl=$('mbPvTitle');if(!ttl)return;
+  ttl.textContent=name||'';
+  const dlg=ttl.closest('.modal');if(dlg&&name)dlg.setAttribute('aria-label',name);}
+async function openEditClip(i){curEdit=i;const xml=CLIPS[i].xml;pvTitle(clipLabel(CLIPS[i]));
+  openModal('mbPreview');await openPreview(xml);edOpen();}
 let curEdit=-1;
 // ===== превью-прокси камер =====
 // Материал 4:2:2 10 бит (Sony/Canon) браузер НЕ берёт на аппаратный декодер:
@@ -80,7 +89,7 @@ let curEdit=-1;
 // каждый seek на стыке сотни мс. Тот же материал в 720p 4:2:0 8 бит аппаратный.
 // Прокси собирается ОТ ИСХОДНИКА, один раз на файл камеры, и правками нарезки не
 // трогается (в отличие от черновика). Пока не готов — играем исходник, как раньше.
-let PVPX={map:{},xml:'',poll:0};
+let PVPX={map:{},xml:'',poll:0,watch:[]};   // watch — стойки плееров, ждущих прокси (см. pvProxyWatch)
 function pvSrc(path){return '/api/media?path='+encodeURIComponent(PVPX.map[path]||path);}
 async function pvProxyLoad(xml,build){
   try{const d=await (await fetch('/api/preview_proxy',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -92,14 +101,37 @@ async function pvProxyLoad(xml,build){
 // Карта копится, а не заменяется: PV/IPV/CPV открываются на разные клипы, а ключ —
 // абсолютный путь исходника, так что чужие записи только помогают.
 function pvProxyMerge(px){if(px)Object.assign(PVPX.map,px.map);return px;}
-function pvProxyNote(px){const el=$('pvcam');if(!el||!px)return;
-  const base=el.textContent.split(t('  —  прокси'))[0];
-  el.textContent=base+(px.building?t('  —  прокси камер: {n}/{m}, готовлю (один раз на файл)',{n:px.ready,m:px.total}):'');}
-function pvProxyWatch(){clearInterval(PVPX.poll);
-  PVPX.poll=setInterval(async()=>{
-    let s;try{s=await (await fetch('/api/preview_proxy_status')).json();}catch(e){return;}
-    if(s.running)return;
-    clearInterval(PVPX.poll);PVPX.poll=0;await pvProxyRefresh();},2000);}
+// Прогресс сборки — блоком ПОВЕРХ плеера (задание MD). PXJOB на сервере один, поэтому
+// блок рисует каждый плеер, который ждёт прокси (шаг 1 — монтаж, шаг 3 — вставки,
+// раскладка камер): pvProxyWatch запоминает стойку, pvProxyPoll раздаёт ей свежие
+// i/n/файл/процент. Пока сборка идёт — блок есть, кончилась — снимается.
+function pvProxyBlock(stage,st){
+  const pct=Math.max(0,Math.min(100,Math.round(+st.pct||0)));
+  let el=stage.querySelector('.pvpx');
+  if(!el){el=document.createElement('div');el.className='pvpx';
+    el.innerHTML='<div class="pvpx_bar"><span class="pvpx_fill"></span></div>'+
+      '<div class="pvpx_txt"></div><div class="pvpx_hint"></div>';
+    stage.appendChild(el);}
+  el.querySelector('.pvpx_fill').style.width=pct+'%';
+  el.querySelector('.pvpx_txt').textContent=
+    t('Готовлю прокси камеры {i}/{n}: {file} — {pct} %',
+      {i:st.i||0,n:st.n||0,file:st.cur||'',pct:pct});
+  el.querySelector('.pvpx_hint').textContent=t('один раз на файл, дальше из кэша');}
+function pvProxyStages(st){const on=!!(st&&st.running);
+  PVPX.watch=PVPX.watch.filter(id=>{
+    const stage=$(id);if(!stage)return false;
+    if(!on){const el=stage.querySelector('.pvpx');if(el)el.remove();return false;}
+    pvProxyBlock(stage,st);return true;});}
+function pvProxyWatch(stage){   // плеер ждёт прокси: следим за сборкой и показываем прогресс
+  if(stage&&PVPX.watch.indexOf(stage)<0)PVPX.watch.push(stage);
+  clearInterval(PVPX.poll);
+  pvProxyPoll();                                 // статус сразу: иначе блок появится через 2 с
+  PVPX.poll=setInterval(pvProxyPoll,2000);}
+async function pvProxyPoll(){
+  let s;try{s=await (await fetch('/api/preview_proxy_status')).json();}catch(e){return;}
+  pvProxyStages(s);
+  if(s.running)return;
+  clearInterval(PVPX.poll);PVPX.poll=0;await pvProxyRefresh();}
 function vLoaded(v){   // ждать метаданных после смены src (см. sparePrime/spareHandover)
   return new Promise(res=>{
     if(!v||v.readyState>=1)return res();
@@ -116,7 +148,7 @@ function vSeeked(v){   // дождаться, когда элемент отыг
 }
 async function pvProxyRefresh(){   // прокси дособрались — обновить карту; живому <video> src не трогаем
   const px=await pvProxyLoad(PVPX.xml);if(!px)return;
-  const was=JSON.stringify(PVPX.map);pvProxyMerge(px);pvProxyNote(px);
+  const was=JSON.stringify(PVPX.map);pvProxyMerge(px);
   if(JSON.stringify(PVPX.map)===was)return;
   // Переезд на прокси живому src не присваиваем: смена посреди игры сбрасывает элемент в
   // readyState 0 (чёрный кадр) и сдвигает время (баг, задание BE). Стоящий плеер переезжает
@@ -141,7 +173,7 @@ async function openPreview(xml){
   PV.bufs=[];bufMake(PV,stage,$('pvsub'),0,0);
   PV.delta=camDeltas(PV);camBufs(PV,stage,$('pvsub'));   // тут камера одна, но контракт общий
   $('pvcam').textContent=cams.map((c,ix)=>(ix+1)+': '+(c.name||t('кам'))+(ix===0?t(' (звук)'):'')).join('  ·  ')+'  —  '+d.segs.length+t(' склеек · ')+Math.round(PV.dur)+t('с');
-  pvProxyNote(px);if(px&&px.building)pvProxyWatch();
+  if(px&&px.building)pvProxyWatch('pvstage');
   pvSeekTo(0);
 }
 function pvSegAt(list,tm){for(let i=0;i<list.length;i++){if(tm<list[i].te-1e-3)return i;}return Math.max(0,list.length-1);}

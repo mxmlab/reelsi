@@ -51,7 +51,7 @@ async function cpvOpen(xml){
   // кнопки выбора звука
   $('cpvaudio').innerHTML=d.cams.map((c,ix)=>'<label class="'+(ix===0?'on':'')+'"><input type="radio" name="cpvaud" '+(ix===0?'checked':'')+' onchange="cpvAudio('+ix+')"> '+t('К')+(ix+1)+'</label>').join('');
   cpvSeekTo(0);
-  if(px&&px.building){PVPX.xml=xml;pvProxyWatch();}   // прокси готовятся — догнать их на переезде (BE)
+  if(px&&px.building){PVPX.xml=xml;pvProxyWatch('cpvstage');}   // прокси готовятся — догнать их на переезде (BE)
 }
 // Смена «слушаем К1/К2/К3»: дублёр звуковой камере больше не нужен отдельно — он у неё уже
 // есть (camBufs делает его каждой камере при открытии), поменять надо только кто звучит.

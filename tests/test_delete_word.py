@@ -3,7 +3,8 @@
 # Copyright (c) 2026 Maxim Si
 """Тесты удаления слова субтитров (delete_word) и переиндексации наборов.
 
-  * delete_word убирает слово из XML: слов стало на одно меньше, остальные те же и в том же порядке;
+  * delete_word убирает слово из XML: слов стало на одно меньше, остальные те же и в том же порядке
+    (а ближайшее следующее подхватывает начало удалённого — задание MJ, tests/test_delete_word_gap.py);
   * delete_word на несуществующем индексе возвращает error, XML не тронут;
   * резервная копия создаётся тем же механизмом, что у edit_word;
   * функция сдвига индексов: набор {2,5,7}, удалён 5 -> {2,6}; удалён 2 -> {4,6};
@@ -43,7 +44,9 @@ def client():
 
 
 def test_delete_word_removes_from_xml(xml_subs):
-    """delete_word убирает слово из XML: слов стало на одно меньше, остальные те же и в том же порядке."""
+    """delete_word убирает слово из XML: слов стало на одно меньше, остальные те же и в том же порядке.
+    Ближайшее следующее слово (в фикстуре слова идут впритык) подхватывает начало удалённого —
+    оно отдаёт своё время следующему, задание MJ, подробности в tests/test_delete_word_gap.py."""
     meta_before, cams_before, subs_before, ins_before = xml2ae.parse_full(xml_subs)
     orig_count = len(subs_before)
     target_idx = 4
@@ -61,11 +64,13 @@ def test_delete_word_removes_from_xml(xml_subs):
     for i in range(target_idx):
         assert subs_after[i] == subs_before[i]
 
-    # Слова после целевого индекса сдвинулись на 1 позицию, сохранив порядок и текст
+    # Слова после целевого индекса сдвинулись на 1 позицию, сохранив порядок, текст и конец
     for i in range(target_idx, len(subs_after)):
         assert subs_after[i][2] == subs_before[i + 1][2]
-        assert subs_after[i][0] == subs_before[i + 1][0]
         assert subs_after[i][1] == subs_before[i + 1][1]
+        # Начало: у подхватившего слово — от удалённого, у остальных своё
+        want_start = subs_before[target_idx][0] if i == target_idx else subs_before[i + 1][0]
+        assert subs_after[i][0] == want_start
 
 
 def test_delete_word_bad_index_returns_error_and_xml_untouched(xml_subs):

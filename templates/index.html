@@ -305,14 +305,14 @@
 <!-- ============ MODAL: preview + editor ============ -->
 <div class="backdrop" id="mbPreview" onclick="closeIfBack(event,'mbPreview')">
   <div class="modal wide" role="dialog" aria-modal="true" aria-label="Предпросмотр и правка нарезки">
-    <div class="mhead"><span class="t">Предпросмотр и правка нарезки</span>
+    <div class="mhead"><span class="t" id="mbPvTitle"></span>
       <button class="icon" data-close aria-label="Закрыть" data-t="Закрыть" onclick="closeModal('mbPreview')"><span data-ic="x"></span></button></div>
     <div class="mbody">
       <div class="edcols">
         <div class="pvstage" id="pvstage"><div id="pvsub" class="pvsub" data-noi18n></div></div>
         <div class="edside">
           <div class="edgrp">
-            <div class="edlbl">Монтаж — как будет в ролике</div>
+            <div class="edlbl">Монтаж</div>
             <div class="row" style="align-items:center">
               <button class="sm" id="pvplay" onclick="pvToggle()" style="min-width:44px" aria-label="Воспроизвести / пауза" data-t="Воспроизвести / пауза"><span data-ic="play"></span></button>
               <input type="range" id="pvseek" aria-label="Перемотка монтажа" min="0" max="1000" value="0" step="1" class="grow" oninput="pvScrub(this.value)" onpointerup="this.blur()" onchange="this.blur()">
@@ -322,7 +322,7 @@
             <div id="pvcam" class="muted" style="margin-top:6px;font-size:12px"></div>
           </div>
           <div class="edgrp grow2">
-            <div class="edlbl">Редактор — исходник камеры 1 <span class="i" data-t="Клик — курсор · тяни края блоков · двойной клик по серому — вернуть вырезанное · колесо — зум · Shift+колесо или линейка — прокрутка · пробел — играть · ←/→ — покадрово">!</span></div>
+            <div class="edlbl">Редактор <span class="i" data-t="Клик — курсор · тяни края блоков · двойной клик по серому — вернуть вырезанное · колесо — зум · Shift+колесо или линейка — прокрутка · пробел — играть · ←/→ — покадрово">!</span></div>
             <div class="row" style="align-items:center">
               <button class="sm" id="edplay" onclick="edToggle()" style="min-width:44px" aria-label="Воспроизвести / пауза" data-t="Воспроизвести / пауза"><span data-ic="play"></span></button>
               <span id="edtime" class="muted mono">0:00 / 0:00</span>

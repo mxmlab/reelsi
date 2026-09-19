@@ -18,7 +18,7 @@
 
 CLI:  python reelsi/draftrender.py "C:/.../01_C1295.xml" [--cpu] [--height 720] [--no-proxy]
 """
-import os, platform, subprocess
+import os, platform, subprocess, threading
 from core.app_meta import console_emit, wrap_emit
 
 
@@ -34,32 +34,94 @@ class RenderCancelled(Exception):
     «прервано», а не «ОШИБКА»."""
 
 
-def _run_ff(cmd, cancel=None, cwd=None, timeout=FFMPEG_TIMEOUT):
+def _run_ff(cmd, cancel=None, cwd=None, timeout=FFMPEG_TIMEOUT, on_progress=None):
     """subprocess.run для ffmpeg: с таймаутом И отменой.
 
     Возвращает CompletedProcess; None — отменено по `cancel()`; TimeoutExpired —
     процесс убит и выброшен (вызывающий решает, как донести «завис»). Процесс
-    добивается в обоих случаях: без этого он сиротеет и держит входные файлы."""
+    добивается в обоих случаях: без этого он сиротеет и держит входные файлы.
+
+    `on_progress` — необязательный приём НАКОПЛЕННОГО stdout: ffmpeg с
+    `-progress pipe:1` печатает туда ход сборки. С ним stdout читает отдельный поток
+    построчно (копилка под замком) и зовёт приём на каждую строку; stderr читает
+    второй поток — затем же, зачем его читал `communicate`: полный пайп останавливает
+    сам ffmpeg. На таймаут, отмену и перебор заходов не влияет. Без `on_progress`
+    путь прежний — `communicate`: разбирать нечего, и он не плодит потоки.
+
+    Почему не `communicate(timeout=1.0)`, как было: на Windows CPython ветка Windows
+    `Popen._communicate` при таймауте кладёт в `TimeoutExpired` output=None (на POSIX —
+    уже прочитанное), и с боевым ffmpeg прогресс не доходил до приёма НИКОГДА. Тесты
+    этого не видели: в них ffmpeg подменён, а подменённый отдаёт вывод как ему удобно."""
     import time as _t
     if cancel is not None and cancel():
         return None
+    if on_progress is None:
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             text=True, encoding="utf-8", errors="replace", cwd=cwd)
+        out, err = [], []
+        t0 = _t.time()
+        while True:
+            try:
+                o, e = p.communicate(timeout=1.0)
+                out.append(o); err.append(e)
+                return subprocess.CompletedProcess(cmd, p.returncode,
+                                                   "".join(out), "".join(err))
+            except subprocess.TimeoutExpired:
+                if cancel is not None and cancel():
+                    p.kill(); p.communicate()
+                    return None
+                if _t.time() - t0 > timeout:
+                    p.kill(); p.communicate()
+                    raise
+
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                          text=True, encoding="utf-8", errors="replace", cwd=cwd)
-    out, err = [], []
+    out, err = [], []                     # накопленное: кладут читатели, отдают — тоже они
+    lock = threading.Lock()
+    broken = []                           # слом приёма прогресса: молча не глотаем
+
+    def _reader(stream, sink, report):
+        try:
+            for line in stream:           # до EOF: иначе ffmpeg встанет на записи в пайп
+                with lock:
+                    sink.append(line)
+                    text = "".join(sink) if report else None
+                if text is not None:
+                    on_progress(text)     # накопленным — как отдавал прежний communicate
+        except Exception as ex:
+            broken.append(ex)             # процесс добьёт основной цикл
+
+    readers = [threading.Thread(target=_reader, args=(p.stdout, out, True), daemon=True),
+               threading.Thread(target=_reader, args=(p.stderr, err, False), daemon=True)]
+    for th in readers:
+        th.start()
+    cancelled = False
     t0 = _t.time()
     while True:
-        try:
-            o, e = p.communicate(timeout=1.0)
-            out.append(o); err.append(e)
-            return subprocess.CompletedProcess(cmd, p.returncode,
-                                               "".join(out), "".join(err))
-        except subprocess.TimeoutExpired:
-            if cancel is not None and cancel():
-                p.kill(); p.communicate()
-                return None
-            if _t.time() - t0 > timeout:
-                p.kill(); p.communicate()
-                raise
+        if p.poll() is not None:
+            break
+        if broken:
+            p.kill(); p.wait()
+            break
+        if cancel is not None and cancel():
+            cancelled = True
+            p.kill(); p.wait()
+            break
+        if _t.time() - t0 > timeout:
+            p.kill(); p.wait()
+            for th in readers:
+                th.join()
+            raise subprocess.TimeoutExpired(cmd, timeout)
+        _t.sleep(0.1)                     # опрос отмены/таймаута: вывод читают потоки
+    for th in readers:
+        th.join()                         # хвост пайпа и строка без последнего \n
+    with lock:
+        if broken:
+            raise broken[0]
+        if cancelled:
+            return None
+        return subprocess.CompletedProcess(cmd, p.returncode,
+                                           "".join(out), "".join(err))
 
 FADE = 0.010          # сек, микро-фейд звука на краях сегментов (как в .jsx)
 DRAFT_FPS = 30        # черновик — 30fps, хватает для оценки монтажа
@@ -384,6 +446,73 @@ def _src_fps(src):
         return 25.0
 
 
+_DUR_CACHE = {}           # (abspath, mtime, size) -> длительность, сек: ffprobe на каждый
+                          # кадр прогресса сборки не гоняем — один вызов на файл, дальше кэш
+
+
+def _src_dur(src):
+    """Длительность исходника, сек. 0.0 — не прочли (тогда процента не будет)."""
+    try:
+        st = os.stat(src)
+        ck = (os.path.abspath(src), int(st.st_mtime), st.st_size)
+        if ck in _DUR_CACHE:
+            return _DUR_CACHE[ck]
+        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                            "-of", "default=nw=1:nk=1", src],
+                           capture_output=True, text=True, encoding="utf-8",
+                           errors="replace", timeout=60)
+        dur = float((r.stdout or "").strip())
+        if dur <= 0:
+            return 0.0                          # не прочли — не кэшируем: файл мог ещё писаться
+        _DUR_CACHE[ck] = dur
+        return dur
+    except Exception:
+        return 0.0
+
+
+def ff_progress_us(chunk):
+    """Последний `out_time_us=` из потока ffmpeg `-progress pipe:1`. None — прогресса нет.
+
+    ffmpeg печатает блок полей раз в 0.5 с, то есть за сборку их набираются сотни:
+    интересен последний — он и есть текущее положение. `N/A` на первых кадрах —
+    не ошибка, просто пропускаем строку."""
+    us = None
+    for line in (chunk or "").splitlines():
+        line = line.strip()
+        if not line.startswith("out_time_us="):
+            continue
+        try:
+            us = int(line.split("=", 1)[1])
+        except ValueError:
+            continue
+    return us
+
+
+def ff_progress_pct(chunk, dur):
+    """Проценты готовности ТЕКУЩЕГО файла (0–100) по потоку `-progress pipe:1`.
+
+    None — длительность исходника неизвестна или прогресса ещё нет. Выше 100 не бывает:
+    out_time_us — уже записанный материал, а он не длиннее исходника."""
+    if not dur or dur <= 0:
+        return None
+    us = ff_progress_us(chunk)
+    if us is None or us < 0:
+        return None
+    return max(0.0, min(100.0, us / (dur * 1e6) * 100.0))
+
+
+def _progress_hook(progress, dur):
+    """Приём для _run_ff: накопленный stdout → проценты файла (None — приём не нужен)."""
+    if progress is None:
+        return None
+
+    def hook(text):
+        pct = ff_progress_pct(text, dur)
+        if pct is not None:
+            progress(pct)
+    return hook
+
+
 def _rot_key(src):
     """Довесок к ключу кэша для ПОВЁРНУТЫХ исходников.
 
@@ -410,7 +539,8 @@ def preview_path(src, height, tdir):
     return os.path.join(tdir, "pv_" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:12] + ".mp4")
 
 
-def build_preview_proxy(src, dst, height=720, force_cpu=False, emit=console_emit, cancel=None):
+def build_preview_proxy(src, dst, height=720, force_cpu=False, emit=console_emit,
+                        cancel=None, progress=None):
     """Прокси камеры ДЛЯ ПРЕДПРОСМОТРА В БРАУЗЕРЕ. Путь или None.
 
     Зачем отдельно от чернового прокси — три отличия, каждое обязательное:
@@ -425,7 +555,11 @@ def build_preview_proxy(src, dst, height=720, force_cpu=False, emit=console_emit
 
     Прокси — от ИСХОДНИКА, не от монтажа: собирается один раз на файл камеры и живёт в
     кэше. Правки нарезки его не трогают (в отличие от черновика, который надо
-    пересобирать после каждой правки)."""
+    пересобирать после каждой правки).
+
+    `progress` — необязательный приём процентов (0–100) готовности ЭТОГО файла: ffmpeg
+    идёт с `-progress pipe:1 -nostats`, а знаменатель — длительность исходника из
+    ffprobe. Значения приходят раз в секунду и могут повторяться."""
     emit = wrap_emit(emit)
     # height — КОРОТКАЯ сторона (как в render_draft): вертикаль 2160x3840 -> 720x1280,
     # горизонталь 3840x2160 -> 1280x720. Фиксированное «-2» по одной оси уронило бы
@@ -448,12 +582,16 @@ def build_preview_proxy(src, dst, height=720, force_cpu=False, emit=console_emit
     hwc = (_codec_args(hw, 28, "4M") + g) if hw else None
     tries = _decode_tries(src, vf_gpu, vf_cpu, hw, rot, hwc, x264)
     tmp = dst + ".part.mp4"
+    on_prog = None if progress is None else _progress_hook(progress, _src_dur(src))
     for inp, vf, codec in tries:
         if cancel is not None and cancel():
             return None
         try:
-            r = _run_ff(["ffmpeg", "-y", "-v", "error"] + inp + ["-vf", vf] + codec + aac +
-                        ["-movflags", "+faststart", tmp], cancel=cancel)
+            # -progress pipe:1 -nostats: ход сборки уходит в stdout (его разбирает
+            # _progress_hook), а не в stderr — там по-прежнему только ошибки (-v error).
+            r = _run_ff(["ffmpeg", "-y", "-v", "error", "-nostats", "-progress", "pipe:1"] +
+                        inp + ["-vf", vf] + codec + aac +
+                        ["-movflags", "+faststart", tmp], cancel=cancel, on_progress=on_prog)
         except subprocess.TimeoutExpired:
             emit("  ⚠ превью-прокси: ffmpeg завис ({timeout} с) — следующая попытка", timeout=FFMPEG_TIMEOUT)
             continue

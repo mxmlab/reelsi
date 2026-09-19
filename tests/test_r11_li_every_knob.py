@@ -8,7 +8,7 @@
 
 Здесь:
 1. Эталон: стиль BASE даёт побайтно тот же .jsx, что эталон golden_geometry.jsx.
-2. Каждая ручка схемы style_schema.py (все 118 ключей: key, key2, toggle)
+2. Каждая ручка схемы style_schema.py (все 121 ключей: key, key2, toggle)
    параметризованно проверяется на влияние на собранный .jsx.
    Все ручки подписи (13), интро (13), рото (4), видео (1) и звука (11)
    снабжаются нужными фикстурами и проверяются в деле.
@@ -34,7 +34,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE)
 
 from api import build  # noqa: E402
-from core import insertlib, roto, style_schema, styles, xml2ae  # noqa: E402
+from core import fonts, insertlib, roto, style_schema, styles, xml2ae  # noqa: E402
 from tests.test_geometry_python import _build, _mask_assets  # noqa: E402
 
 T_CAM1, T_CAM2 = 1.0, 8.3
@@ -52,18 +52,27 @@ RICH_INSERTS = [
 # Строка «АКЦЕНТ» — с галкой «большое слева» (задание ZY): без неё ручки intro_big_gap,
 # intro_big_step и intro_big_over (доработка ZY-2) ни на что не влияют, и сторож «каждая
 # ручка» справедливо ругался бы на мёртвый ключ.
+# Строка «ГЛИТЧ» — ЖЁЛТАЯ (задание MK): ручка intro_dg_with_glow меняет условие
+# жёлтой ветки Deep Glow, а без жёлтого глитча в сборке плагина нет вовсе — ручка
+# осталась бы без влияния на .jsx и выпала бы из сторожа молча.
 RICH_INTRO = [
     {"words": ["ПЕРВОЕ"], "color": "white", "times": [T_CAM1], "gy": 600},
     {"words": ["АКЦЕНТ"], "color": "accent", "accent": True, "times": [T_CAM1 + 0.5], "big": True},
     {"words": ["ФОНОВОЕ"], "color": "white", "back": True, "times": [T_CAM1 + 1.0]},
-    {"words": ["ГЛИТЧ"], "color": "white", "anim": "glitch", "times": [T_CAM1 + 1.5]},
+    {"words": ["ГЛИТЧ"], "color": "yellow", "anim": "glitch", "times": [T_CAM1 + 1.5]},
     {"words": ["ВТОРАЯ", "КАМЕРА"], "color": "white", "times": [T_CAM2]},
     {"words": ["ВТОРАЯ", "СТРОКА"], "color": "white", "times": [T_CAM2 + 0.5]},
 ]
 RICH_INTRO_SPLITS = [4]
 
+# Тёмный цвет жёлтой строки для сторожа ручки intro_dg_with_glow (доработка MK3): яркий
+# жёлтый, в том числе СТОКОВЫЙ, Deep Glow не берёт вовсе — на стоковом жёлтом ручке было бы
+# нечего менять в .jsx. Яркость 0.61 — ниже порога TRITONE_MAX_LUM, правило MK в силе.
+DG_DARK_HL_FILL = [0.0, 0.75, 1.0]
+
 # Ключи-исключения, не влияющие на сборку. В LI2 сокращены до 0:
-# все 118 ручек схемы проверяются в сборке.
+# все 121 ручек схемы проверяются в сборке (intro_dg_with_glow — в режиме Deep Glow 2,
+# см. dg в test_each_knob_affects_assembly).
 EXCEPTIONS = {}
 
 # Известные мёртвые ключи (ключ есть в схеме, но нигде не читается бэкендом).
@@ -219,7 +228,8 @@ ALL_SCHEMA_KEYS = sorted(SCHEMA_ITEMS.keys())
 TESTED_KEYS = [k for k in ALL_SCHEMA_KEYS if k not in EXCEPTIONS]
 
 
-def _build_source(xml, style=None, inserts=None, music_path=None, caption="Спикер Иван", highlights=None):
+def _build_source(xml, style=None, inserts=None, music_path=None, caption="Спикер Иван",
+                  highlights=None, glitch_glow="builtin"):
     """Сборка .jsx без записи на диск через to_ae_full(..., return_source=True)."""
     st = dict(style or {})
     music_val = float(st.get("music_db") if st.get("music_db") is not None else -20.0)
@@ -237,6 +247,7 @@ def _build_source(xml, style=None, inserts=None, music_path=None, caption="Сп�
         roto_bottom=build._roto_bottom_safe(st),
         roto_device=st.get("roto_device"),
         highlights=[0, 1] if highlights is None else highlights,
+        glitch_glow=glitch_glow,
         emit=lambda *a, **k: None,
     )
     return jsx
@@ -311,6 +322,11 @@ def _get_test_mutation(k, item, base_val, tmp_path):
         return st_setup, "upper"
     elif k == "intro_anchor2":
         return st_setup, "first"
+    elif k == "intro_fit_w":
+        # «Интро по ширине» (задание MI) работает только у ОТКРЕПЛЁННОГО интро:
+        # привязанное ужимается по константе INTRO_FIT_W, и ручка на него не влияет.
+        st_setup["intro_cam"] = False
+        return st_setup, 80.0
     elif k == "intro_riser_file":
         st_setup["intro_riser"] = True
         fake = str(tmp_path / "custom_riser.wav")
@@ -447,6 +463,12 @@ def test_exceptions_read_in_code_or_reported_as_dead():
 @pytest.mark.parametrize("knob_key", TESTED_KEYS)
 def test_each_knob_affects_assembly(knob_key, xml_subs, music_file, tmp_path, monkeypatch):
     """2. Каждая ручка влияет: изменение значения ключа меняет собранный .jsx относительно базы."""
+    if knob_key == "intro_fit_w":
+        # «Интро по ширине» (задание MI) подгоняет группу по ИЗМЕРЕННОЙ ширине строки:
+        # без метрики шрифта ручка мертва, а зависит она от того, какие шрифты стоят на
+        # машине. Буква = ровно кегль — как в test_intro_detach, числа не машины, а формулы.
+        monkeypatch.setattr(fonts, "text_width", lambda ps, text, size: float(size) * len(text))
+
     if knob_key.startswith("cam1_head_"):
         synthetic = {
             "v": 1,
@@ -503,6 +525,16 @@ def test_each_knob_affects_assembly(knob_key, xml_subs, music_file, tmp_path, mo
 
     hl = [0, 1, 11] if knob_key == "cam1_take_yellow" else None
     ins = None
+    dg = "builtin"
+    if knob_key == "intro_dg_with_glow":
+        # Ручка живёт только в режиме «Deep Glow 2» — это ГЛОБАЛЬНАЯ настройка ai_config
+        # (Настройки → Инструменты), не ключ стиля: в режиме «Встроенные» плагина нет
+        # вовсе (задание MK). Даём сборке режим, иначе ручка и вправду ни на что не влияет.
+        dg = "deepglow2"
+        # И тёмный цвет строки: с доработки MK3 Deep Glow не берёт НИ ОДИН яркий жёлтый
+        # (стоковый тоже), а без плагина в сборке ручке нечего менять в .jsx. Цвет — в
+        # обоих стилях, отличие остаётся ровно одно: значение ручки.
+        ref_st["hl_fill"] = test_st["hl_fill"] = DG_DARK_HL_FILL
     if knob_key in PLATE_KNOBS:
         # Подложка включается галкой У ВСТАВКИ (задание ZK), а не галкой стиля: без неё
         # ручки стиля (файл и масштаб плашки) на сборку не влияют вовсе. Картинка вставки
@@ -514,9 +546,9 @@ def test_each_knob_affects_assembly(knob_key, xml_subs, music_file, tmp_path, mo
         monkeypatch.setattr(insertlib, "remove_bg",
                             lambda data, trim=True, emit=None: _knob_png_bytes(320, 240))
     ref_jsx = _mask_assets(_build_source(xml_subs, style=ref_st, music_path=music_file,
-                                         highlights=hl, inserts=ins))
+                                         highlights=hl, inserts=ins, glitch_glow=dg))
     test_jsx = _mask_assets(_build_source(xml_subs, style=test_st, music_path=music_file,
-                                          highlights=hl, inserts=ins))
+                                          highlights=hl, inserts=ins, glitch_glow=dg))
 
     assert test_jsx != ref_jsx, f"Ручка {knob_key} ({it['kind']}) не повлияла на собранный .jsx"
 

@@ -260,7 +260,7 @@ def test_preview_proxy_gpu_lock_acquired_and_released(client, tmp_path, clean_st
     built = []
     lock_held_during_build = []
 
-    def mock_build(src, dst, height=720, emit=None):
+    def mock_build(src, dst, height=720, emit=None, progress=None):
         built.append((src, dst))
         # Проверяем, что лок занят (повторный acquire возвращает False)
         lock_held_during_build.append(_core._JOB_LOCK_FH is not None)

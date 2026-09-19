@@ -644,8 +644,8 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             if(ins.fit) try{ vl.property("ADBE Transform Group").property("ADBE Scale").setValue([ins.fit,ins.fit]); }catch(e){}
             // ландшафтное видео при fill вылезает по ширине в 1.5-3 раза — центр кадра почти
             // никогда не то, что надо показать; ix/iy = ручная панорама (в webui скраббером).
-            // X/y уже ЗАЖАТЫ клампом в Python (план сцены): дальше запаса не пускаем —
-            // там уже не кадр, а пустота (в предпросмотре так же).
+            // Позиция — ровно ix/iy пользователя: клампа нет (задание ME2), вставка ходит и
+            // за краем ролика — там открывается кадр камеры (в предпросмотре так же).
             if(ins.x||ins.y) try{ vl.property("ADBE Transform Group").property("ADBE Position")
                 .setValue([W/2+(ins.x||0), H/2+(ins.y||0)]); }catch(e){}
             if(ins.mosaic) addMosaic(vl, true);
@@ -712,7 +712,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     }
 
     // ---- интро-текст: по прекомпу на группу строк; между группами кросс-фейд по opacity ----
-    var introLayers = [];%(intro_front_arr_decl)s%(intro_above_roto_arr_decl)s%(intro_fx_decl)s
+    var introLayers = [];%(intro_front_arr_decl)s%(intro_above_roto_arr_decl)s%(intro_fx_decl)s%(intro_sub_fx_decl)s%(intro_sq_decl)s
     if (INTRO_GROUPS.length){
         var LINE_STEP=%(intro_line_step_px)g, F_DUR=0.3, HOLD=1.0, F_OUT=0.75, F_FADE=%(intro_fade)g;
         function introDoc(tl, txt, col%(accent_params)s%(fill_params)s){
@@ -724,7 +724,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             try{dd.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
             sp.setValue(dd);
         }
-        function introW(tl){ try{ return tl.sourceRectAtTime(0,false).width; }catch(e){ return 0; } }%(intro_back_scale_fn)s%(intro_big_fn)s%(intro_word_shadow_fn)s%(intro_anim_fx_fn)s%(intro_hl_glow_fn)s
+        function introW(tl){ try{ return tl.sourceRectAtTime(0,false).width; }catch(e){ return 0; } }%(intro_back_scale_fn)s%(intro_big_fn)s%(intro_word_shadow_fn)s%(intro_anim_fx_fn)s%(intro_sq_fn)s%(intro_hl_glow_fn)s
         for (var gI=0; gI<INTRO_GROUPS.length; gI++){
             var GRP=INTRO_GROUPS[gI]; if(!GRP.length) continue;%(intro_group_flags)s
             var gMax=0, gMin=1e9;
@@ -774,7 +774,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             // мгновенно вместо кросс-фейда (а при gMax чуть меньше inAt+F_DUR
             // выход начинался раньше входа).
             var outStart=last?(gMax+F_DUR+HOLD):Math.max(gMax, inAt+F_DUR);
-            var outEnd=outStart+F_OUT;%(intro_fx_out)s
+            var outEnd=outStart+F_OUT;%(intro_fx_out)s%(intro_sub_fx_out)s
             // слой живёт с момента появления СВОИХ слов (серединный акцент не тянется с начала компа)
             iL.inPoint=(gI==0&&inAt==0)?0:inAt; iL.outPoint=outEnd;
             // родитель — общий нул «интро» (привязан к Null Камеры 1): все интро-прекомпы едут за кам1.

@@ -39,7 +39,10 @@
      равно числу `big:!!r.big` (флаг терялся в любой не тронутой копии);
   7. node: introGroupWindows проносит lx/lk, превью сажает строку по плану
      (left = центр + lx в px превью, без translateX(-50%), кегль × lk) и раскладывает
-     группу абсолютно даже без ys.
+     группу абсолютно даже без ys;
+  8. масштаб появления (задание MG) — ключи ОТ БАЗЫ слоя: база = Scale, выставленный до
+     анимации (большая — lk*100, задний план — BACK_SCALE*100, обычная — 100), ключи
+     база*0.7 → база; у ролика без большой строки ветка прежняя (абсолютные 70→100).
 
 Шрифт в сборках намеренно несуществующий (`TestInk-Regular`): метрики берутся из
 запасной ветки раскладки, и числа не зависят от того, какие шрифты стоят на машине.
@@ -101,10 +104,11 @@ def _plan(xml, intro, style=None, splits=None):
                              style=dict(style or {}, font=PS), emit=lambda *a, **k: None)
 
 
-def _build_intro(xml, tmp_path, intro, style=None, splits=None, name="intro.jsx"):
+def _build_intro(xml, tmp_path, intro, style=None, splits=None, name="intro.jsx", mode="word"):
     path, _, _ = xml2ae.to_ae_full(xml, jsx_path=str(tmp_path / name), intro=intro,
                                    intro_splits=(splits or []),
                                    style=dict(style or {}, font=PS),
+                                   intro_mode=mode,
                                    disclaimer="", intro_riser=False,
                                    emit=lambda *a, **k: None)
     return open(path, encoding="utf-8-sig").read()
@@ -300,12 +304,18 @@ var app = { project: { items: { addComp: function(nm, w, h, par, dur, fps){
 
 
 def _jsx_decls(jsx):
-    """Объявления шаблона, нужные блоку интро: значения — данные (числа/строки/массивы)."""
+    """Объявления шаблона, нужные блоку интро: значения — данные (числа/строки/массивы).
+
+    BACK_SHADOW_OP — вторая строка объявления автотени (`intro_shadow_decl`): она
+    появляется вместе с INTRO_SHADOW_*, когда в сборке есть строка заднего плана;
+    HL_RISE/HL_DUR — анимации строк up/count (slide-up).
+    """
     out = []
     for ln in jsx.splitlines():
         s = ln.strip()
         if s.startswith("var ") and s[4:].startswith(
-                ("HL_BOLD", "FONT_SIZE", "HL_FILL", "W=", "INTRO_")):
+                ("HL_BOLD", "HL_RISE", "FONT_SIZE", "HL_FILL", "W=", "INTRO_",
+                 "BACK_SHADOW_OP")):
             out.append(s)
     assert any(x.startswith("var INTRO_GROUPS") for x in out), "INTRO_GROUPS не нашлись"
     return "\n".join(out)
@@ -678,3 +688,130 @@ def test_template_keeps_big_layout_wiring(xml_subs, tmp_path):
         {"words": ["ФОН"], "color": "white", "back": True, "times": [T_CAM1 + 0.9]}]
     jsx_back = _build_intro(xml_subs, tmp_path, intro_back, name="wiring_back.jsx")
     assert "introBigK(gI,qi)==null" in jsx_back, "нет страховки «строка не большая»"
+
+
+# ---- 8. масштаб появления — от базы слоя (задание MG) --------------------------------------
+
+# Фикстура: большая «8» слева, строка стопки «КИЛО» и строка заднего плана «ФОН» — у всех
+# одна и та же анимация, чтобы видеть, каких слоёв ветка introAnimFX касается.
+MG_LINES = [
+    {"words": ["8"], "color": "white", "times": [T_CAM1], "big": True},
+    {"words": ["КИЛО"], "color": "white", "times": [T_CAM1 + 0.3]},
+    {"words": ["ФОН"], "color": "white", "times": [T_CAM1 + 0.6], "back": True},
+]
+# "" — обычный фейд по Opacity (ветка else в introAnimFX); Scale слоя анимирует ТОЛЬКО
+# reveal. Ветка else в сборке появляется, только если у строки есть fx="glow": без
+# anim/fx/cnt introAnimFX в .jsx нет вовсе — тогда проверять нечего.
+MG_ANIMS = ("", "up", "left", "right", "reveal", "glitch")
+
+
+def _mg_intro(anim):
+    """Строки фикстуры с одной и той же анимацией (фейд приходит с fx="glow")."""
+    extra = {"fx": "glow"} if not anim else {}
+    return [dict(x, anim=anim, **extra) for x in MG_LINES]
+
+
+# Проверки для прогона в node: база слоя — Scale, выставленный ДО анимации, и ключи
+# появления не должны её перебивать. @PLK@ — множитель кегля большой строки из плана,
+# @BSC@ — BACK_SCALE из самой сборки, @ANIM@ — анимация строки.
+_MG_SCALE_CHECKS = r"""
+const PLK = @PLK@, BSC = @BSC@, ANIM = @ANIM@;
+// база большой строки — lk*100 (introBigScale), заднего плана — BACK_SCALE*100 (introBackScale)
+const bigBase = PLK*100, backBase = Math.round(BSC*1000)/10;
+function scaleKeys(L){
+  const p = L.props['ADBE Scale'];
+  return p ? p.keys.filter(function(k){ return k[0] !== null; }).map(function(k){ return k[1][0]; }) : [];
+}
+function staticScale(L){
+  const p = L.props['ADBE Scale'];
+  return (p && p.value) ? p.value[0] : null;
+}
+function near(a, b){ return typeof a === 'number' && Math.abs(a - b) < 0.1; }
+const bigL = _textLayers.filter(function(L){ return !L._removed && L.text === '8'; })[0];
+const stackL = _textLayers.filter(function(L){ return !L._removed && L.text === 'КИЛО'; })[0];
+// строка заднего плана едет строчными: регистр строки back правит Python (back_case)
+const backL = _textLayers.filter(function(L){ return !L._removed && L.text === 'фон'; })[0];
+assert(bigL && stackL && backL, 'слои строк не созданы: '
+  + _textLayers.map(function(L){ return (L._removed ? '-' : '') + L.text; }).join(','));
+
+// статичный Scale слоя база остаётся базой — анимация её не переписывает
+assert(near(staticScale(bigL), bigBase),
+  'база большой строки: ' + staticScale(bigL) + ' != ' + bigBase);
+assert(near(staticScale(backL), backBase),
+  'база заднего плана: ' + staticScale(backL) + ' != ' + backBase);
+
+const bk = scaleKeys(bigL), sk = scaleKeys(stackL), ck = scaleKeys(backL);
+if (ANIM === 'reveal'){
+  assert(bk.length === 2 && near(bk[0], bigBase*0.7) && near(bk[1], bigBase),
+    'ключи большого слова не от базы ' + bigBase + ': ' + JSON.stringify(bk));
+  assert(sk.length === 2 && near(sk[0], 70) && near(sk[1], 100),
+    'ключи строки стопки: ' + JSON.stringify(sk));
+  assert(ck.length === 2 && near(ck[0], backBase*0.7) && near(ck[1], backBase),
+    'ключи строки заднего плана: ' + JSON.stringify(ck));
+} else {
+  assert(bk.length === 0 && sk.length === 0 && ck.length === 0,
+    'анимация "' + ANIM + '" тронула Scale: ' + JSON.stringify([bk, sk, ck]));
+}
+console.log('OK: reveal scale keys from base (' + (ANIM || 'fade') + ')');
+"""
+
+
+def _mg_node(tmp_path, jsx, anim, plk, mode="word"):
+    """Прогон сборки в node стендом теста 4: масштаб появления — от базы слоя."""
+    bsc = float(re.search(r"BACK_SCALE=([0-9.]+)", jsx).group(1))
+    script = (
+        _NODE_STUB
+        + "\n" + _jsx_decls(jsx)
+        + "\n" + _intro_region(jsx)
+        + "\n" + _MG_SCALE_CHECKS
+        .replace("@PLK@", repr(plk)).replace("@BSC@", repr(bsc))
+        .replace("@ANIM@", json.dumps(anim))
+    )
+    tag = (anim or "fade") + ("_line" if mode == "line" else "")
+    res = _run_node(tmp_path, f"test_mg_{tag}.js", script)
+    assert res.returncode == 0, f"anim={anim!r} ({mode}): node failed: {res.stderr}\n{res.stdout}"
+    assert f"OK: reveal scale keys from base ({anim or 'fade'})" in res.stdout
+
+
+@node
+def test_reveal_scale_keys_go_from_layer_base(xml_subs, tmp_path):
+    """8. Ключи масштаба появления — ОТ БАЗЫ слоя, а не в абсолютных 70→100.
+
+    Большое слово: последний ключ Scale = lk*100, первый = lk*100*0.7 (±0.1); строка
+    стопки — 100 и 70; строка заднего плана — прежние числа (BACK_SCALE*100 и ×0.7).
+    Проверяются ВСЕ анимации строки: Scale анимирует только reveal, у остальных ключей
+    быть не должно (иначе они так же перебивали бы базу). Построчный режим — тот же
+    introAnimFX, но на слое строки (introBigScale(Ll, bigK)).
+    """
+    plan = _plan(xml_subs, MG_LINES)["intro"][0]
+    plk = plan["lk"][0]
+    assert plk and plk > 1, "фикстура без большой строки — тест ничего не проверяет"
+
+    for anim in MG_ANIMS:
+        intro = _mg_intro(anim)
+        jsx = _build_intro(xml_subs, tmp_path, intro, name=f"mg_{anim or 'fade'}.jsx")
+        assert "var base=(sc && sc.value" in jsx, (
+            f"anim={anim!r}: в .jsx нет ветки «масштаб от базы слоя»")
+        _mg_node(tmp_path, jsx, anim, plk)
+
+    jsx_line = _build_intro(xml_subs, tmp_path, _mg_intro("reveal"), name="mg_line.jsx",
+                            mode="line")
+    assert "introBigScale(Ll,bigK)" in jsx_line, "построчная сборка без скейла большой строки"
+    _mg_node(tmp_path, jsx_line, "reveal", plk, mode="line")
+
+
+def test_reveal_scale_no_big_keeps_absolute_branch(xml_subs, tmp_path):
+    """8б. Ролик без большой строки: ветка масштаба появления прежняя (абсолютные 70→100),
+    подстановки «от базы» в .jsx нет — сборка такого ролика не меняется вовсе."""
+    intro = [
+        dict(words=["ПЕРВОЕ"], color="white", times=[T_CAM1], anim="reveal"),
+        dict(words=["СДО*НУТЬ"], color="white", times=[T_CAM2], back=True, anim="reveal"),
+    ]
+    jsx = _build_intro(xml_subs, tmp_path, intro, splits=[1], name="mg_nobig.jsx")
+    assert "INTRO_LK" not in jsx, "фикстура не без большой строки"
+    assert "var base=(sc && sc.value" not in jsx, "ветка «от базы» уехала в сборку без большой"
+    assert "sc.setValueAtTime(t0,[70,70]); sc.setValueAtTime(t0+F_DUR,[100,100]);" in jsx, (
+        "прежняя ветка масштаба потерялась")
+    assert "sc.setValueAtTime(t0,[s0,s0]); sc.setValueAtTime(t0+F_DUR,[s1,s1]);" in jsx, (
+        "ветка заднего плана потерялась")
+

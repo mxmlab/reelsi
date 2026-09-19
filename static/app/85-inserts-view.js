@@ -13,7 +13,7 @@
 //   'clips' — вставки шага 2 (CLIPS[curIns].inserts, поля start_sec/duration_sec);
 //   'ae'    — AE-вставки шага 3 (INS, поля start_s+start_f/dur_s+dur_f) + оверлей ИНТРО.
 let IPV={vids:[],bufs:[],scrubbing:false,scrubT:0,
-  segs:[],audio:[],words:[],dur:0,fps:60,aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,playing:false,raf:0,xml:'',cur:-1,intro:[],introCur:-1,plan:null,insShift:null};
+  segs:[],audio:[],words:[],dur:0,fps:60,aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,playing:false,raf:0,xml:'',cur:-1,intro:[],introCur:-1,plan:null,insShift:null,insVids:new Map(),dims:new Map()};
 let IPVMODE='clips';
 // нормализация пути вставки (Windows: слеши и регистр) — ОДИН источник для ensureJobs,
 // applyInsMoved, сопоставления плана и драга в предпросмотре
@@ -80,6 +80,7 @@ async function ipvPlanFetch(){
   catch(e){return;}                       // план не критичен: плеер играет как раньше
   if(IPV.xml!==xml)return;                // модалку успели переоткрыть на другом клипе
   if(d.ok&&d.plan){IPV.plan=d.plan;IPV.insShift=null;   // свежий план сам несёт сдвиги — временный сброс не нужен
+    ipvSubsInvalidate();        // новый шрифт/положение — показать субтитры заново даже на паузе
     IPV.intro=ipvIntroGroups();
     sfxEnsure(d.plan);          // SFX: элементы под план (задание AB)
     IPV.cur=-2;IPV.introCur=-2;
@@ -168,7 +169,8 @@ function insLbl(x){return IPVMODE==='ae'?(((x.media||'').replace(/^.*[\\\/]/,'')
 function ipvAfterEdit(){if(IPVMODE==='ae'){renderIns();captureAE();itlDraw();ipvRefresh();}
   else{saveState();renderInsHost();syncClipLists();}}   // renderInsHost сам дёргает itlDraw+ipvRefresh
 async function ipvOpen(xml){
-  ipvPause();IPV={vids:[],bufs:[],scrubbing:false,scrubT:0,
+  ipvPause();insVidFreeAll();
+  IPV={vids:[],bufs:[],scrubbing:false,scrubT:0,
     segs:[],audio:[],words:[],dur:0,fps:60,aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,defAt:0,stats:{styk:0,swap:0,seek:0,cam:0,stale:0,back:0},playing:false,raf:0,xml:xml||'',cur:-1,intro:[],introCur:-1,plan:null,insShift:null};
   const stage=$('ipvstage');[...stage.querySelectorAll('video')].forEach(v=>v.remove());
   const oldCv=$('ipvcam');if(oldCv)oldCv.remove();   // старый canvas кадра мог остаться от прошлого клипа
@@ -194,8 +196,7 @@ async function ipvOpen(xml){
     v.volume=MEDIA_VOL;v.style.zIndex=(ix===0)?'2':'1';   // ракурс переключается порядком слоёв, см. camVisual
     if(ix===0)v.onerror=()=>uiLog(t('предпросмотр: не открылся исходник камеры 1 — ')+c.path);
     stage.insertBefore(v,io);voiceWiring(v);return v;});
-  // каждая камера — непрерывная дорожка со своим оффсетом и своим дублёром на склейки:
-  // к моменту смены ракурса она уже играет нужный кадр, показ = смена z-index (см. camApply)
+  // каждая камера — непрерывная дорожка со своим оффсетом и дублёром на склейки (camApply)
   IPV.bufs=[];bufMake(IPV,stage,io,0,0);
   IPV.delta=camDeltas(IPV);camBufs(IPV,stage,io);
   // кадр Камеры рисует canvas поверх видео (см. ipvCamPaint): CSS-зум видео дрожал, канвас нет
@@ -215,7 +216,7 @@ async function ipvOpen(xml){
   itlFit();ipvSeekTo(0);
   if(typeof zoomPickMark==='function')zoomPickMark();   // маркер точки наезда (задание Q)
   ipvPlanFetch();
-  if(px&&px.building){PVPX.xml=xml;pvProxyWatch();}   // прокси готовятся — догнать их на переезде (BE)
+  if(px&&px.building){PVPX.xml=xml;pvProxyWatch('ipvstage');}   // прокси готовятся — догнать их на переезде (BE)
 }
 // картинка активного ракурса — общая машина всех плееров (camApply в 60-preview.js):
 // разбег входящей камеры перед стыком, показ по готовности, дрейф гасится скоростью.
@@ -682,6 +683,14 @@ function ipvIntroChild(px,py,tm){
   return [cc[0],cc[1],s];
 }
 // ---- субтитры по плану: стопка по row, цвет по color, исчезновение группы по gend ----
+// План пришёл заново, а слова на паузе те же: ключ показа (visKey ниже) не меняется, и
+// ipvSubs оставлял старый DOM — правка шрифта или высоты в панели стиля не была видна,
+// пока не сменится слово. Ключ СНИМАЕМ (а не пишем пустую строку): пустое значение
+// совпало бы с ключом плана, у которого в этот момент нет видимых слов, и старые строки
+// остались бы на экране. Так следующая отрисовка перестраивает строки всегда —
+// ipvPlanFetch сам зовёт ipvUI, поэтому работает и на паузе.
+function ipvSubsInvalidate(){const el=$('ipvsub');const host=el&&el.querySelector('.pvsubs_host');
+  if(host)delete host.dataset.visKey;}
 function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
   const pl=IPV.plan;const subs=(pl&&pl.subs)||[];
   el.classList.toggle('plan',!!(pl&&subs.length));
@@ -722,12 +731,17 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
   }else{
     el.style.transform='';el.style.transformOrigin='';
   }
-  // кегль из плана: fsize задан в пикселях композиции, стойка её ширины — 100cqw
+  // кегль из плана: fsize задан в пикселях композиции, стойка её ширины — 100cqw.
+  // План поля не дал — переменную СНИМАЕМ: иначе на новом плане остался бы кегль
+  // прошлого (правка стиля шла бы мимо превью).
   if(pl.fsize)el.style.setProperty('--subfs',(pl.fsize/w*100).toFixed(3)+'cqw');
+  else el.style.removeProperty('--subfs');
   // цвет базовых субтитров из плана (задание CO): превью красит тем же, что AE.
   if(pl.sub_fill)el.style.setProperty('--subfc',rgb2hex(pl.sub_fill));
+  else el.style.removeProperty('--subfc');
   // цвет выделения из плана (задание CV): превью красит тем же, что AE (--subhl).
   if(pl.hl_fill)el.style.setProperty('--subhl',rgb2hex(pl.hl_fill));
+  else el.style.removeProperty('--subhl');
   // тень субтитров из плана (задание DK): при включённой плашке собственная тень текста снимается
   if(pl.sub_shadow===false){
     el.style.setProperty('--subsh','none');
@@ -963,13 +977,88 @@ function insPreviewBox(iw,ih,mw,mh,sc){const W=1080,H=1920,BW=1030,BH=528,SQ=2.2
 function insVideoFill(vw,vh,sc){const W=1080,H=1920;
   const f=Math.max(W/vw,H/vh)*((sc==null?100:sc)/100);
   return {w:vw*f,h:vh*f};}
-// панорама полноэкранной видеовставки: на сколько px ролик вылезает за кадр 1080×1920 при
-// заполнении — столько его и можно двигать (зеркало fillSlack в xml2ae.py). 16:9 по ширине
-// даёт ~1160 px в каждую сторону, по высоте — ноль: дальше начинается пустота, не кадр.
+// панорама полноэкранной видеовставки: позиция = x/y как их задал пользователь (px кадра),
+// ничем не зажата (задание ME2). Раньше сдвиг упирался в запас вылета ролика за кадр
+// (зеркало fillSlack в xml2ae): у вертикального 9:16 при sc=100 запаса нет вовсе — видео
+// не двигалось совсем, а 16:9 по высоте не двигалось никогда. sx/sy остаются в ответе
+// СПРАВКОЙ (сколько ролик вылезает за кадр), позицию они не режут.
 function insVideoPan(vw,vh,x,y){const W=1080,H=1920;
-  if(!vw||!vh)return {x:0,y:0,sx:0,sy:0};
+  if(!vw||!vh)return {x:x||0,y:y||0,sx:0,sy:0};
   const f=Math.max(W/vw,H/vh),sx=Math.max(0,(vw*f-W)/2),sy=Math.max(0,(vh*f-H)/2);
-  return {x:Math.max(-sx,Math.min(sx,x||0)),y:Math.max(-sy,Math.min(sy,y||0)),sx,sy};}
+  return {x:x||0,y:y||0,sx,sy};}
+// ---- видеовставки: ОДИН <video> на файл и размеры из плана (задание ME) ----
+// Моргание чёрным: перестройка оверлея (новый план после каждой правки, ipvRefresh сбрасывает
+// IPV.cur) чистила #ipvins и создавала НОВЫЙ <video> с тем же src — элемент показывает чёрное,
+// пока не загрузит первый кадр. Поэтому элементы живут в кэше по пути файла и переезжают из
+// обёртки в обёртку; src у живого элемента не переприсваивается вовсе.
+function insVidCache(){if(!IPV.insVids)IPV.insVids=new Map();return IPV.insVids;}
+function insVidDimsMap(){if(!IPV.dims)IPV.dims=new Map();return IPV.dims;}
+// ключ кэша: нормализованный путь файла; «#N» — N-й ОДНОВРЕМЕННЫЙ показ того же файла
+// (элемент нельзя вставить в два места DOM, а в кадре один и тот же ролик бывает дважды)
+function insVidKey(media,n){const k=normInsPath(media);return n?k+'#'+n:k;}
+// живой <video> этого файла. used — ключи, занятые текущей перестройкой: переиспользуем
+// готовый элемент (кадр уже декодирован), новый заводим только когда такого ещё нет
+function insVideoEl(media,used){
+  used=used||new Set();
+  for(let n=0;;n++){
+    const key=insVidKey(media,n),have=insVidCache().get(key);
+    if(have){if(!used.has(key)){used.add(key);return have;}continue;}   // занят другой вставкой в этом же кадре
+    const v=document.createElement('video');
+    v.src='/api/media?path='+encodeURIComponent(media);
+    v.muted=true;v.playsInline=true;v.preload='auto';
+    // Размеры файла приходят только с метаданными: запоминаем их и перерисовываем кадр, если
+    // план их не несёт (fitw/fith). Иначе вставка осталась бы вовсе без масштаба — и «Масштаб, %»
+    // не на что было бы умножать.
+    v.addEventListener('loadedmetadata',()=>{
+      insVidDimsPut(media,v.videoWidth,v.videoHeight);
+      if(IPV.plan&&!insVidPlanDims(media)&&typeof ipvUI==='function')ipvUI(ipvNow());});
+    insVidCache().set(key,v);used.add(key);return v;}
+}
+// освободить элемент: пауза, снятый src (файл перестаёт держать соединение, задание MB)
+// и load() — им браузер отпускает ресурс
+function insVidFree(v){if(!v)return;
+  try{v.pause();}catch(e){}
+  try{v.removeAttribute('src');}catch(e){}
+  try{v.load();}catch(e){}
+  if(v.parentNode&&v.parentNode.removeChild)try{v.parentNode.removeChild(v);}catch(e){}}
+// размеры файла (как _media_dims в Python): из кэша размеров, иначе с живого элемента
+function insVidDimsGet(media){
+  const m=insVidDimsMap().get(normInsPath(media));
+  if(m&&m.w&&m.h)return m;
+  const v=insVidCache().get(insVidKey(media,0));
+  return (v&&v.videoWidth&&v.videoHeight)?{w:v.videoWidth,h:v.videoHeight}:null;}
+function insVidDimsPut(media,w,h){w=+w||0;h=+h||0;
+  if(w&&h)insVidDimsMap().set(normInsPath(media),{w:w,h:h});}
+// несёт ли план размеры файла (fitw/fith): если да, перерисовка по метаданным не нужна
+function insVidPlanDims(media){const k=normInsPath(media);
+  const arr=(IPV.plan&&IPV.plan.inserts)||[];
+  return arr.some(x=>normInsPath(x.media)===k&&x.fitw&&x.fith);}
+// коробка заполнения видеовставки в px КОМПОЗИЦИИ: fitw/fith из плана (их считает Python из
+// размеров файла), иначе — по закэшированным размерам того же файла. null — размеров нет вовсе,
+// тогда размер поставит первый loadedmetadata (молча без масштаба не остаёмся)
+function ipvInsDims(x){
+  if(x.fitw&&x.fith)return {w:x.fitw,h:x.fith};
+  const d=insVidDimsGet(x.media);if(!d)return null;
+  const b=insVideoFill(d.w,d.h,100);return {w:b.w,h:b.h};}
+// ключи кэша, чьи вставки ещё есть в текущем клипе/плане: их элементы не освобождаем
+function insVidKeep(){
+  const out=[];
+  const add=media=>{if(!media)return;const base=normInsPath(media);let k=base,n=0;
+    while(out.indexOf(k)>=0){n++;k=base+'#'+n;}out.push(k);};
+  const arr=(IPV.plan&&IPV.plan.inserts)||null;
+  if(arr){for(const x of arr)if((x.t==='video'||x.type==='video')&&x.media)add(x.media);}
+  else{for(const x of ipvIns())if(x.type==='video'&&x.media)add(x.media);}   // плана нет — карточки/INS
+  return out;}
+// чего нет в клипе/плане — освободить (файл больше не держит соединение); что есть, но сейчас
+// не в кадре — на паузу: элемент живёт в кэше для повторного показа, а играть втихую не должен
+function insVidSweep(used){
+  const keep=insVidKeep();
+  insVidCache().forEach((v,key)=>{
+    if(keep.indexOf(key)<0){insVidFree(v);insVidCache().delete(key);return;}
+    if(!(used&&used.has(key))&&!v.paused)try{v.pause();}catch(e){}});}
+// ipvOpen на другом клипе: все элементы прошлого клипа освобождаем
+function insVidFreeAll(){if(!IPV.insVids)return;
+  IPV.insVids.forEach(v=>insVidFree(v));IPV.insVids.clear();}
 // tm, а не t: тело зовёт t('ФОТО') для заглушки «файл не выбран», и параметр-время
 // перекрывал функцию перевода. Падало ровно там, где перекрытие и надо было увидеть:
 // первая вставка успевала отрисоваться, вторая — нет, а классы .cur/.playing (по ним
@@ -986,6 +1075,7 @@ function ipvOverlay(tm){const ov=$('ipvins');if(!ov)return;
   const top=act.length?act[act.length-1]:-1;
   const sig=act.join(',');
   if(sig!==IPV.cur){IPV.cur=sig;ov.innerHTML='';ov.className='ipvins'+(act.length?' on':'');
+    const usedVid=new Set();                       // ключи кэша, занятые этой перестройкой
     for(let a=0;a<act.length;a++){const i=act[a],x=arr[i];const vid=x.type==='video';
       // «full» (object-fit:cover по кадру) годится, только пока видео кадр ЗАПОЛНЯЕТ:
       // ужатому (sc<100) размер ставим руками, иначе cover врал бы — показывал обрезанный
@@ -1008,8 +1098,7 @@ function ipvOverlay(tm){const ov=$('ipvins');if(!ov)return;
           const mk=document.createElement('div');mk.className='insmask';
           const im=document.createElement('img');im.src=insImgURL(x.media,x.plate);
           mk.appendChild(im);wr.appendChild(mk);}
-        else{const iv=document.createElement('video');iv.src='/api/media?path='+encodeURIComponent(x.media);
-          iv.muted=true;iv.playsInline=true;wr.appendChild(iv);}}
+        else{const iv=insVideoEl(x.media,usedVid);wr.appendChild(iv);}}
       else{const ph=document.createElement('div');ph.className='ph';
         ph.innerHTML='<b>'+(vid?t('ВИДЕО'):t('ФОТО'))+(x.mosaic?' · MOSAIC':'')+'</b>'
           +esc(IPVMODE==='ae'?t('файл не выбран'):(x.query||t('(без запроса)')));
@@ -1044,16 +1133,17 @@ function ipvOverlay(tm){const ov=$('ipvins');if(!ov)return;
           if(el.videoWidth)fit();else el.addEventListener('loadedmetadata',fit,{once:true});
           setPos();                                    // ужатая вставка ездит по x/y свободно — как в .jsx
         }
-        // Полноэкранное видео двигать целиком НЕЛЬЗЯ: коробка тут и есть кадр, и transform
-        // уводил ролик за край вместе с ней — в предпросмотре появлялась пустота, которой в
-        // AE нет. Двигаем КАРТИНКУ ВНУТРИ коробки (object-position) и ровно в тех пределах,
-        // на которые ролик вылезает за кадр при заполнении, — как fillSlack в .jsx.
+        // Полноэкранное видео двигаем КАРТИНКОЙ ВНУТРИ коробки (object-position), а не
+        // transform'ом обёртки: обёртка тут и есть кадр, и сдвиг её целиком выглядел бы как
+        // поехавший монтаж. Сдвиг — ровно x/y пользователя (px кадра × k), без клампа
+        // (задание ME2): уехав за край, ролик открывает то, что под ним, — кадр камеры.
         else if(fullVid){const pan=()=>{const p=insVideoPan(el.videoWidth,el.videoHeight,x.x,x.y);
             // k — коробка предпросмотра относительно кадра 1080: сдвиг тоже в её пикселях
             el.style.objectPosition='calc(50% + '+(p.x*k)+'px) calc(50% + '+(p.y*k)+'px)';};
           if(el.videoWidth)pan();else el.addEventListener('loadedmetadata',pan,{once:true});}
         else setPos();                                 // заглушка «файл не выбран» — как раньше
       }}
+    insVidSweep(usedVid);                              // лишнее — на паузу, чужое — освободить
     const cardSel=(IPVMODE==='ae')?'#inslist .inscard':'#insHost .inscard';
     document.querySelectorAll(cardSel).forEach((c,i)=>c.classList.toggle('playing',act.includes(i)));
     document.querySelectorAll('#itlblocks .itlblk:not(.intro):not(.roto)').forEach((b,i)=>b.classList.toggle('cur',act.includes(i)));
@@ -1079,6 +1169,7 @@ function ipvOverlayPlan(tm){const ov=$('ipvins');const arr=(IPV.plan&&IPV.plan.i
   act.sort((a,b)=>a.start-b.start);                                              // позже начавшаяся — выше в DOM/AE-стеке
   const sig=act.map(a=>a.isPlan?'p'+a.i:'c'+a.ci).join(',');
   if(sig!==IPV.cur){IPV.cur=sig;ov.innerHTML='';ov.className='ipvins ae'+(act.length?' on':'');
+    const usedVid=new Set();                       // ключи кэша, занятые этой перестройкой
     for(let a=0;a<act.length;a++){const item=act[a],x=item.x;const vid=(x.t==='video'||x.type==='video');
       const vidCard=vid&&x.media&&(x.sc==null?100:x.sc)!==100;
       const defOrder=['subs','video','roto','photo','intro'];
@@ -1115,13 +1206,13 @@ function ipvOverlayPlan(tm){const ov=$('ipvins');const arr=(IPV.plan&&IPV.plan.i
             const mk=document.createElement('div');mk.className='insmask';
             const im=document.createElement('img');im.src=insImgURL(x.media);
             mk.appendChild(im);wr.appendChild(mk);}}
-        else{const iv=document.createElement('video');iv.src='/api/media?path='+encodeURIComponent(x.media);
-          iv.muted=true;iv.playsInline=true;wr.appendChild(iv);}}
+        else{const iv=insVideoEl(x.media,usedVid);wr.appendChild(iv);}}
       else{const ph=document.createElement('div');ph.className='ph';
         ph.innerHTML='<b>'+(vid?t('ВИДЕО'):t('ФОТО'))+(x.mosaic?' · MOSAIC':'')+'</b>'
           +esc(IPVMODE==='ae'?t('файл не выбран'):(x.query||t('(без запроса)')));
         wr.appendChild(ph);}
       ov.appendChild(wr);}
+    insVidSweep(usedVid);                          // лишнее — на паузу, чужое — освободить
     const cardActs=[];
     for(let a=0;a<act.length;a++){const item=act[a];
       if(item.isPlan){
@@ -1161,23 +1252,24 @@ function ipvInsPlace(wr,x,tm){
   const sh=(IPV.insShift&&IPV.insShift.i===+wr.dataset.ins)?IPV.insShift:null;
   const sx=sh?sh.dx:0,sy=sh?sh.dy:0;
   const anim=x.anim;
-  if((x.t==='video'||x.type==='video')&&x.media){     // видео: заполнение × sc, панорама x/y из плана
+  if((x.t==='video'||x.type==='video')&&x.media){     // видео: коробка заполнения × sc, панорама x/y из плана
     const sc=(x.sc==null?100:x.sc);
-    if(sc>=100){                                     // во весь кадр: панорама внутри коробки (x/y зажаты)
-      el.style.maxWidth='';el.style.maxHeight='';el.style.objectFit='cover';
-      el.style.width='100%';el.style.height='100%';el.style.transform='none';
-      // панорама не выходит за края ролика (fillSlack из плана): план уже зажал x/y,
-      // драг-сдвиг может выйти за запас — упираемся в край, как при обычном показе
-      const px2=Math.max(-(x.slackx||0),Math.min(x.slackx||0,(x.x||0)+sx));
-      const py2=Math.max(-(x.slacky||0),Math.min(x.slacky||0,(x.y||0)+sy));
-      el.style.objectPosition='calc(50% + '+(px2*k)+'px) calc(50% + '+(py2*k)+'px)';
-    }else{                                           // ужатое: коробка заполнения при sc=100 × sc (fitw/fith)
-      const fw=(x.fitw||W),fh=(x.fith||H);
-      el.style.maxWidth='none';el.style.maxHeight='none';el.style.objectFit='fill';
-      el.style.width=(fw*sc/100*k)+'px';el.style.height=(fh*sc/100*k)+'px';
-      el.style.objectPosition='';
-      el.style.transform='translate('+(((x.x||0)+sx)*k)+'px,'+(((x.y||0)+sy)*k)+'px)';
-    }
+    // Коробка — ОДНА на все sc: заполнение кадра при sc=100 (fitw/fith) × sc/100. Раньше ветка
+    // sc>=100 жёстко ставила width/height 100% с object-fit:cover и sc не читала вовсе: «Масштаб, %»
+    // больше 100 не менял на экране ничего, а на sc≠100 обёртка теряла класс .full и элемент
+    // попадал под правило .ipvins video{max-width:72%;max-height:46%} — ролик рисовался МАЛЕНЬКОЙ
+    // обрезанной карточкой вместо кадра. Инлайновые max-width/max-height это правило и снимают.
+    // Размеры — из плана, иначе из кэша того же файла; нет ни там, ни там — поставит
+    // loadedmetadata (ipvInsDims не молчит: кадр перерисуется, а не останется без масштаба).
+    const d=ipvInsDims(x);
+    el.style.maxWidth='none';el.style.maxHeight='none';el.style.objectFit='fill';el.style.objectPosition='';
+    if(d){el.style.width=(d.w*sc/100*k)+'px';el.style.height=(d.h*sc/100*k)+'px';}
+    // Позиция — ровно x/y из плана + сдвиг драга, при ЛЮБОМ масштабе (задание ME2): клампа
+    // запасом вылета нет (план его и не зажимает — slackx/slacky там справка), поэтому
+    // вертикальное 9:16 при sc=100 тоже двигается. Коробка уезжает за край кадра — в
+    // проёме видно то, что под вставкой (кадр камеры), и в AE ровно так же.
+    const px2=(x.x||0)+sx,py2=(x.y||0)+sy;
+    el.style.transform='translate('+(px2*k)+'px,'+(py2*k)+'px)';
     return;}
   if(x.card){                                        // фото: окно маски из плана, масштаб — anim.scale
     const style=x.style||'cam2';
@@ -1255,7 +1347,11 @@ function introGroupWindows(ir){
       // Большое слева (задание ZY): левый край и множитель кегля каждой строки — те же
       // готовые числа, что уехали в .jsx (INTRO_LX/INTRO_LK). Это дверь: забытый тут
       // ключ — и превью рисует большую строку по-старому, хотя план её уже посчитал.
-      lx:g.lx,lk:g.lk}));}
+      lx:g.lx,lk:g.lk,
+      // Множитель длительности появления на слово (задание MH): [строка][слово], null —
+      // слово успевает доиграть до начала затухания. Числа считает Python, превью своей
+      // копии правила «когда слово успевает» не держит.
+      sq:g.sq}));}
 // пересчёт интро на лету: правки в панели уходят в план (окна считает бэкенд), по затишью
 // перезапрашиваем — полоски на таймлайне и оверлей в кадре догоняют за ~0.4с
 function ipvIntroRefresh(){if(IPVMODE!=='ae')return;
@@ -1433,6 +1529,10 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
       const lxs=(Array.isArray(xl)&&xl.length===lines.length)?xl:null;
       const kll=IPV.intro[gi].lk;
       const kls=(Array.isArray(kll)&&kll.length===lines.length)?kll:null;
+      // Множитель длительности появления (задание MH): готовые числа плана
+      // ([строка][слово]); null/нет поля — слово успевает доиграть, множитель 1.
+      const sql=IPV.intro[gi].sq;
+      const sqs=(Array.isArray(sql)&&sql.length===lines.length)?sql:null;
       lines.forEach((l,li)=>{const dv=document.createElement('div');
       // Цвет строки: yellow -> intro_hl_fill / hl_fill, accent -> hl_fill3, custom -> l.fill, white -> intro_fill
       let col='#ffffff';
@@ -1490,6 +1590,11 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
         sp.dataset.t=(l.times&&l.times[wi]!=null)?l.times[wi]:0;
         sp.dataset.anim=l.anim||'';
         sp.dataset.fx=l.fx||'';
+        // Сжатие появления (задание MH): множитель длительности у ЭТОГО слова — из плана.
+        // Больше нуля и меньше единицы — слово играет появление короче (числа те же, что
+        // уехали в INTRO_SQ для AE); нет множителя — анимация прежняя.
+        const sqw=(sqs&&sqs[li]&&sqs[li][wi]!=null)?sqs[li][wi]:0;
+        if(sqw>0&&sqw<1)sp.dataset.sq=sqw;
         // Счётчиков в строке может быть НЕСКОЛЬКО (cnts: [[позиция, цель, выражение, dec], ...]):
         // каждое слово считает от своего sp.dataset.t. Нет cnts — старое поведение по
         // is_count/cnt_idx (бэкенд, который ещё не перезапущен после обновления).
@@ -1593,6 +1698,9 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
       const dt=tm-tw;
       const anim=sp.dataset.anim||'';
       const isCount=(sp.dataset.isCount==='1');
+      // Множитель сжатия появления этого слова (задание MH): длительность анимации
+      // множится на него — ровно так же, как ключи в AE (INTRO_SQ в .jsx).
+      const sq=(+sp.dataset.sq>0&&+sp.dataset.sq<1)?+sp.dataset.sq:1;
       if(dt<0){
         sp._chText=null;
         sp.classList.remove('on');
@@ -1620,7 +1728,7 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
       // Расчёт числового значения счётчика (isCount) от 0 до cntTarget за HL_DUR=1.5с:
       let curText=sp.dataset.origWord;
       if(isCount){
-        const uCnt=Math.min(1,Math.max(0,dt/1.5));
+        const uCnt=Math.min(1,Math.max(0,dt/(1.5*sq)));
         const qCnt=ipvEase(uCnt);
         const curVal=(+sp.dataset.cntTarget)*qCnt;
         const dec=+sp.dataset.cntDec||0;
@@ -1639,8 +1747,8 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
       if(anim==='glitch'){
         const gP=anP.glitch||{};
         const gDur=(gP.dur!=null)?gP.dur:0;
-        if(gDur>0&&dt<gDur){
-          sp.style.opacity=ipvGlitchOp(dt).toFixed(3);
+        if(gDur>0&&dt<gDur*sq){
+          sp.style.opacity=ipvGlitchOp(dt/sq).toFixed(3);
           const jx=(Math.sin(dt*150+spi)*2.0).toFixed(1);
           const jy=(Math.cos(dt*200+spi)*1.0).toFixed(1);
           sp.style.transform='translate('+jx+'px,'+jy+'px)';
@@ -1648,7 +1756,7 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
           const fTick=Math.floor(dt*30);
           ipvRenderChars(sp,curText,(chEl,ci)=>{
             const hash=Math.abs(Math.sin(fTick*12.9898+ci*78.233+10)*43758.5453)%1;
-            const pVis=Math.min(1,Math.max(0.2,dt/gDur));
+            const pVis=Math.min(1,Math.max(0.2,dt/(gDur*sq)));
             chEl.style.opacity=(hash<pVis)?'1':'0';
           },'inline');
         }else{
@@ -1658,8 +1766,8 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
       }else if(anim==='reveal'){
         const rP=anP.reveal||{};
         const rDur=(rP.dur!=null)?rP.dur:0;
-        if(rDur>0&&dt<rDur){
-          const uL=Math.min(1,Math.max(0,dt/rDur));
+        if(rDur>0&&dt<rDur*sq){
+          const uL=Math.min(1,Math.max(0,dt/(rDur*sq)));
           const qL=ipvEase(uL);
           sp.style.opacity=qL.toFixed(3);
           const rBl=(rP.blur!=null)?rP.blur:0;
@@ -1681,7 +1789,7 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
         }
       }else if(anim==='up'){
         sp._chText=null;
-        const u=Math.min(1,Math.max(0,dt/0.3));
+        const u=Math.min(1,Math.max(0,dt/(0.3*sq)));
         const q=ipvEase(u);
         sp.textContent=curText;
         sp.style.transform='translateY('+((1-q)*100).toFixed(1)+'%)';
@@ -1689,7 +1797,7 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
         sp.style.filter='';
       }else if(anim==='left'){
         sp._chText=null;
-        const u=Math.min(1,Math.max(0,dt/0.3));
+        const u=Math.min(1,Math.max(0,dt/(0.3*sq)));
         const q=ipvEase(u);
         sp.textContent=curText;
         sp.style.transform='translateX('+((q-1)*100).toFixed(1)+'%)';
@@ -1697,7 +1805,7 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
         sp.style.filter='';
       }else if(anim==='right'){
         sp._chText=null;
-        const u=Math.min(1,Math.max(0,dt/0.3));
+        const u=Math.min(1,Math.max(0,dt/(0.3*sq)));
         const q=ipvEase(u);
         sp.textContent=curText;
         sp.style.transform='translateX('+((1-q)*100).toFixed(1)+'%)';
@@ -1706,7 +1814,7 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
       }else{
         sp._chText=null;
         sp.textContent=curText;
-        const dur=isCount?1.5:0.3;
+        const dur=(isCount?1.5:0.3)*sq;
         const u=Math.min(1,Math.max(0,dt/dur));
         const q=ipvEase(u);
         sp.style.opacity=q.toFixed(3);
@@ -1990,26 +2098,8 @@ const ipvIntroHitAt=function ipvIntroHitAt(x,y){
     return null;
   }
   return null;};
-// субтитры: вертикальный драг меняет sub_y СТИЛЯ (поле «Высота субтитров, % снизу») — один
-// источник, синхронно в обе стороны. Пока тянем — правим кэш плана (posy), по отпусканию —
-// стиль, и поле догоняет.
-$('ipvsub').addEventListener('pointerdown',e=>{
-  if(IPVMODE!=='ae'||!IPV.plan)return;
-  if(!e.target.closest('.pvsubw'))return;
-  const pl=IPV.plan;if(!(pl.subs&&pl.subs.length))return;
-  const el=$('ipvsub');if(!(el.clientHeight>0))return;   // контейнер ещё не разложился — драга нет
-  e.preventDefault();e.stopPropagation();
-  if(!CURSTYLE)CURSTYLE=JSON.parse(JSON.stringify(STYLES.base||{}));
-  const start=Math.min(0.98,Math.max(0.05,CURSTYLE.sub_y!=null?CURSTYLE.sub_y:0.5964));
-  const H=pl.h||1920;
-  const st={y0:e.clientY,sy:start};
-  const move=ev=>{const dy=(ev.clientY-st.y0)/el.clientHeight;
-    pl.posy=Math.round(H*Math.min(0.98,Math.max(0.05,st.sy+dy)));   // кэш плана — стопка едет
-    ipvSubs(ipvNow());};
-  const up=ev=>{window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',up);
-    const dy=(ev.clientY-st.y0)/el.clientHeight;
-    CURSTYLE.sub_y=Math.min(0.98,Math.max(0.05,st.sy+dy));
-    if(typeof stRefresh==='function')stRefresh('sub_y');
-    styleSubPos();captureAE();ipvPlanSoon();};
-  window.addEventListener('pointermove',move);window.addEventListener('pointerup',up);});
+// Субтитры в кадре мышью НЕ таскаются (задание MD): высота правится ползунком стиля
+// («Высота субтитров, % снизу»), а перехваченный клик по строке мешал работе с кадром.
+// Прежний драг правил CURSTYLE.sub_y через posy плана — от него остался только путь
+// через поле стиля (stEdit → ipvPlanSoon), он и есть единственный.
 

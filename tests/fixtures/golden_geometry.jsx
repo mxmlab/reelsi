@@ -429,8 +429,8 @@
             if(ins.fit) try{ vl.property("ADBE Transform Group").property("ADBE Scale").setValue([ins.fit,ins.fit]); }catch(e){}
             // ландшафтное видео при fill вылезает по ширине в 1.5-3 раза — центр кадра почти
             // никогда не то, что надо показать; ix/iy = ручная панорама (в webui скраббером).
-            // X/y уже ЗАЖАТЫ клампом в Python (план сцены): дальше запаса не пускаем —
-            // там уже не кадр, а пустота (в предпросмотре так же).
+            // Позиция — ровно ix/iy пользователя: клампа нет (задание ME2), вставка ходит и
+            // за краем ролика — там открывается кадр камеры (в предпросмотре так же).
             if(ins.x||ins.y) try{ vl.property("ADBE Transform Group").property("ADBE Position")
                 .setValue([W/2+(ins.x||0), H/2+(ins.y||0)]); }catch(e){}
             if(ins.mosaic) addMosaic(vl, true);

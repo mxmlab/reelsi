@@ -291,10 +291,12 @@ UI log. `.srt` files are written next to the XML.
 **Where:** step 2 (markup), then the clip preview › **Words** panel.
 **How:** 1. Run the highlight phase. 2. Click a word to highlight it — another click
 clears it. 3. Double-click sends a word to the intro. 4. Ctrl+click edits the word text
-straight in the XML.
+straight in the XML; clearing the text deletes the word.
 **Settings:** the highlight colour and bold are style keys; the third colour is used by
 intro rows marked as accents. From the keyboard: Enter highlights, Shift+Enter sends to
-intro, Ctrl+Enter edits.
+intro, Ctrl+Enter edits. A deleted word gives its time to the next one when the two went
+back to back (a pause of 0.3 s or less): the next word starts where the deleted one started
+and lasts longer. Gaps left by earlier deletions do not close by themselves.
 **Limitations / price:** highlights are written into the XML itself, so they survive a
 manual re-edit; a sidecar `.yellow.json` is kept as a fallback for words that could not be
 coloured.
@@ -310,7 +312,11 @@ video by hand, or remove a card. 4. Press the undo icon to bring the last remove
 back.
 **Settings:** **photo** and **video** buttons add cards manually; the placeholder in the
 preview marks where a new card will land. A video insert plays its whole length and is
-never trimmed.
+never trimmed; it is not rebuilt on every edit, so it does not blink black while a field
+is being changed. The **scale** scrubber works on every video insert and grows it from the
+centre of the frame, the way layer Scale does in After Effects; **X** and **Y** move a
+video insert freely at any scale, in the preview and in AE alike — a video that went past
+the edge of the frame uncovers the camera shot under it.
 
 **On a plate.** The **on plate** checkbox next to the mosaic one puts that single photo
 insert on the plate image from the style (**Inserts** › **Photo** › **Plate (file)**,
@@ -446,7 +452,8 @@ works the same in the row mode and in the word-by-word mode.
 
 **Where:** the clip preview › **Words** panel (the same panel as on step 2).
 **How:** 1. Click a word for a highlight. 2. Double-click for an intro accent. 3. Ctrl+
-click to fix the text.
+click to fix the text — an emptied field deletes the word, and the deleted word gives its
+time to the next one when they went back to back (see **Word highlights** above).
 **Settings:** a `|` typed between two words breaks the stack. A word that already went to
 the intro is edited in its group row above.
 **Code:** `static/app/85-inserts-view.js:587`, `static/app/85-inserts-view.js:609`,
@@ -596,7 +603,10 @@ scale, %**, **Line spacing, %**, the big-word fields, **Intro horizontal positio
 **Intro anchor, camera 1**; **Camera 2** holds **Intro on cam2 Y** and **Intro anchor,
 camera 2**. **intro moves with camera** keeps the intro on the camera 1 null, so it inherits
 the zoom, the frame offset and head tracking; cleared, the intro and the shade under it stand
-still in the frame. **Line spacing, %** multiplies the distance between the intro rows.
+still in the frame and the group is fitted to **Intro width, %** of the frame (`intro_fit_w`,
+92) — grown and shrunk alike, while the attached one is only shrunk; a group whose scale was
+set by hand is left alone either way. **Line spacing, %** multiplies the distance between the
+intro rows.
 **Background line spacing above, %** (the `back_step` key, 10 to 300 %, 65 by default) is the
 step to a background line and between background lines; **Background line spacing below, %**
 (`back_step_after`) is the step from a background line to the regular line under it — both as
@@ -606,12 +616,22 @@ without the new key uses the "above" value, so saved styles look the same. The o
 **Background step** with its glyph-based minimum and the small-row gap are gone; a `back_gap`
 left in a saved style is dropped when the style loads.
 
+**Fading out to a subtitle.** An intro group that stands at the subtitle level (by vertical
+position) and would outlive the next subtitle fades out exactly to it: over **Quick fade
+before subtitles, s** (`intro_sub_fade`, 0.15). The rule is on by default and is turned off
+by **Intro fades out to the subtitle** (`intro_sub_cut`). The last group of a clip is not
+touched — it holds to the end as before. An appearance that cannot finish before the fade
+starts is compressed, but not shorter than 0.1 s. **Intro fade-out, s** (`intro_fade`) is
+about something else: it moves the start of the fade, not the moment the group disappears.
+
 **Big on the left.** That checkbox in an intro row puts the row — one word or several — on
 the left in a large size, and the other rows of the group stack to its right, left-aligned.
 The big word stands on the baseline of the last stacked row, and its height is measured from
 the stack: from the cap height of the first stacked row to that baseline, times **Big word
 above stack, %** (`intro_big_over`, 110 by default; at 100 the top of the big word is level
 with the top of the stack). Letter tails (Ц, Д) hang below the baseline, as in typography.
+Appearing does not change its size: the animation grows the word from the layer's base, so a
+big word stays big.
 **Gap to big word, px** (`intro_big_gap`, 40) is the distance between the big word and the
 stack; **Stack line spacing, %** (`intro_big_step`, 80) is the step of the stacked rows and
 does not depend on the general line spacing. The layout is computed once, and the preview and
@@ -625,7 +645,7 @@ byte-for-byte as before.
 
 **Where:** Settings (⚙) › **Tools** › the **After Effects** block › **Glitch glow**.
 **How:** 1. Open ⚙ › **Tools**. 2. Under **After Effects**, choose between **Built-in (Blur + Glow)** and **Deep Glow 2 (plugin)**. 3. Rebuild `.jsx` scripts for clips if already exported.
-**Settings:** controls how yellow intro words with the "glitch" animation glow in the generated After Effects project. Built-in uses Gaussian Blur and Glow available in every AE install (default). Deep Glow 2 replaces them with the third-party plugin using pre-tuned parameters; accent lines and other lines remain untouched. Saved under the `glitch_glow` key in `ai_config.json` (`builtin` or `deepglow2`) and takes effect on the next build; already built `.jsx` scripts need to be rebuilt.
+**Settings:** controls how yellow intro words with the "glitch" animation glow in the generated After Effects project. Built-in uses Gaussian Blur and Glow available in every AE install (default). Deep Glow 2 replaces them with the third-party plugin using pre-tuned parameters; accent lines and other lines remain untouched. In this mode the plugin is not put on a line that has the line glow of its own (tick **Deep Glow with line glow**, `intro_dg_with_glow`, off by default, to get the old behaviour back) and not on a bright highlight colour — the same Rec.709 brightness threshold (above 0.7) as for Tritone, so such a word keeps the built-in Blur + Glow. Saved under the `glitch_glow` key in `ai_config.json` (`builtin` or `deepglow2`) and takes effect on the next build; already built `.jsx` scripts need to be rebuilt.
 **Limitations / price:** if Deep Glow 2 is selected but the plugin is not installed in After Effects, manual build shows a single dialog per file reporting the number of unstyled words, while headless rendering writes an error line to the log; words remain without glow. There is no automated pre-flight check or fallback to built-in effects.
 **Code:** `core/aicut/config.py:441`, `api/ai.py:334`, `core/xml2ae/build.py:256`, `core/xml2ae/build.py:2726`, `templates/index.html:988`, `static/app/10-settings.js:431`
 
@@ -705,19 +725,24 @@ from the music folder at build time.
 
 ### Scene preview in the browser
 
-**Where:** step 3 › **Preview — intro, highlights, inserts**.
+**Where:** step 3 › **Preview — intro, highlights, inserts**; the same player opens a clip
+from step 1, and there the window is titled with the name of the open file.
 **How:** 1. Open the preview. 2. Watch the edit with inserts, intro, subtitles and sound.
 3. Drag an insert block on the timeline to move it, drag its edges to change the duration.
 4. Drag the zoom target point.
 **Settings:** the preview uses the same scene plan that goes into the build — the plan is
-served by `/api/scene` without GPU work. The style block moves into the preview's **Style**
-tab while it is open, and returns to the page when it closes. Preview volume is shared by
-all players, and the music and voice levels in the preview are the same numbers that end
-up in the `.jsx`. Preview video and sound are served in 4 MB pieces, so the browser's limit
-of six connections per server is not taken up and opening the preview or saving does not wait
-for seconds.
+served by `/api/scene` without GPU work, and every style edit comes back as a new plan, so
+the subtitles change at once, on a paused player too. The subtitles do not drag with the
+mouse: their height is the style's **Subtitle height, % from bottom**. The style block moves
+into the preview's **Style** tab while it is open, and returns to the page when it closes;
+there the panel scrolls, so a long list of groups does not push the **Save** row out.
+Preview volume is shared by all players, and the music and voice levels in the preview are
+the same numbers that end up in the `.jsx`. Preview video and sound are served in 4 MB
+pieces, so the browser's limit of six connections per server is not taken up and opening the
+preview or saving does not wait for seconds.
 **Limitations / price:** camera proxies are built once per camera file to keep seeking
-snappy; until a proxy is ready the preview plays the original. Fonts for the preview come
+snappy; until a proxy is ready the preview plays the original, and a block with a progress
+bar and a percent sits over the player while the build runs. Fonts for the preview come
 from the installed system fonts.
 **Code:** `api/build.py:483`, `static/app/85-inserts-view.js:55`,
 `api/previewproxy.py:66`, `api/files.py:259`, `static/app/50-chrome.js:328`

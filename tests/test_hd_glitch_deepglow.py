@@ -38,7 +38,8 @@ node = pytest.mark.skipif(not shutil.which("node"), reason="требуется n
 
 # Тёмный цвет выделения для сборок с тритоном (задание ZN): красный, яркость мидтонов
 # 0.24 — тритон ставится. Дефолтный жёлтый (0.87) ярче порога TRITONE_MAX_LUM=0.7 —
-# там тритона нет.
+# там тритона нет. Этим же цветом собираются тесты, где Deep Glow ДОЛЖЕН ставиться
+# (доработка MK3): яркий жёлтый, в том числе стоковый, плагина не берёт вовсе.
 DARK_HL_FILL = [0.6863, 0.1216, 0.1216]
 
 
@@ -230,10 +231,17 @@ def test_3_golden_builtin_and_no_yellow_glitch(xml_subs, tmp_path):
 
 @node
 def test_4_message_modes_and_node_check(xml_subs, tmp_path):
-    """4. Режимы сообщения: ручной to_ae_full, с render_dir, comps_global, build_combined."""
+    """4. Режимы сообщения: ручной to_ae_full, с render_dir, comps_global, build_combined.
+
+    Цвет задан ТЁМНЫМ (DARK_HL_FILL): DG_MISS и сообщение бывают только там, где Deep Glow
+    вообще ставится, — на стоковом жёлтом плагина нет вовсе (доработка MK3, тесты 5 и 8 в
+    tests/test_deepglow_glow.py), и на style={} эта сборка была бы пустой по чужой причине.
+    """
     intro = _glow_intro()
+    dark = {"hl_fill": DARK_HL_FILL}
     # Ручной to_ae_full
-    jsx_manual, p_manual = _build(xml_subs, tmp_path, intro, glitch_glow="deepglow2", name="dg_manual.jsx")
+    jsx_manual, p_manual = _build(xml_subs, tmp_path, intro, style=dark,
+                                  glitch_glow="deepglow2", name="dg_manual.jsx")
     assert jsx_manual.startswith("$.global.REELSI_DG_MISS=0;")
     assert len([l for l in jsx_manual.splitlines() if "alert(" in l and "Deep Glow 2" in l]) == 1
 
@@ -246,21 +254,23 @@ def test_4_message_modes_and_node_check(xml_subs, tmp_path):
     # С render_dir (безголовый рендер одного ролика)
     rdir = str(tmp_path / "renders")
     os.makedirs(rdir, exist_ok=True)
-    jsx_rdir, _ = _build(xml_subs, tmp_path, intro, glitch_glow="deepglow2", render_dir=rdir, name="dg_rdir.jsx")
+    jsx_rdir, _ = _build(xml_subs, tmp_path, intro, style=dark, glitch_glow="deepglow2",
+                         render_dir=rdir, name="dg_rdir.jsx")
     assert '_LOG("ОШИБКА: ' in jsx_rdir
     assert not any("alert(" in l and "Deep Glow 2" in l for l in jsx_rdir.splitlines())
     assert "$.global.REELSI_DG_MISS=0;" not in jsx_rdir
 
     # С comps_global=True (таймлайн под мастером рендера)
-    jsx_comps, _ = _build(xml_subs, tmp_path, intro, glitch_glow="deepglow2", comps_global=True, name="dg_comps.jsx")
+    jsx_comps, _ = _build(xml_subs, tmp_path, intro, style=dark, glitch_glow="deepglow2",
+                          comps_global=True, name="dg_comps.jsx")
     assert "REELSI_MASTER_LOG" in jsx_comps
     assert "ОШИБКА:" in jsx_comps
     assert not any("alert(" in l and "Deep Glow 2" in l for l in jsx_comps.splitlines())
 
     # build_combined из двух ручных частей: ровно один alert с «Deep Glow 2» и один сброс в начале
-    job1 = dict(xml_path=xml_subs, intro=intro, intro_splits=[1], style={}, intro_mode="word",
+    job1 = dict(xml_path=xml_subs, intro=intro, intro_splits=[1], style=dark, intro_mode="word",
                 disclaimer="", glitch_glow="deepglow2")
-    job2 = dict(xml_path=xml_subs, intro=intro, intro_splits=[1], style={}, intro_mode="word",
+    job2 = dict(xml_path=xml_subs, intro=intro, intro_splits=[1], style=dark, intro_mode="word",
                 disclaimer="", glitch_glow="deepglow2")
     comb_path = str(tmp_path / "dg_combined.jsx")
     xml2ae.build_combined([job1, job2], comb_path, emit=lambda *a: None)

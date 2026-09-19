@@ -294,8 +294,114 @@ def edit_word(xml_path, index, text, out_path=None):
     return dict(ok=True, word=text)
 
 
+GAP_JOIN_SEC = 0.30   # Пауза, до которой слова считаются идущими ПОДРЯД. Удалил слово —
+                      # следующее подхватывает его время (задание MJ). Больше — это уже
+                      # реальная пауза в речи: на месте удалённого слова должна остаться
+                      # тишина, двигать следующее нельзя.
+
+
+def _seq_fps(seq, default=60):
+    """Частота секвенции (кадров/с) — в тех же единицах, что start/end клипов."""
+    rate = seq.find("rate") if seq is not None else None
+    if rate is None:
+        return default
+    try:
+        return int(_txt(rate, "timebase", str(default)) or default) or default
+    except (TypeError, ValueError):
+        return default
+
+
+def _track_word_clips(tr):
+    """Клипы-слова ОДНОЙ дорожки: [(start, clipitem), ...] по порядку start — так же,
+    как их собирает _sub_items (удалять надо соседа по своей дорожке, а не по таймлайну)."""
+    rows = []
+    for c in tr.findall("clipitem"):
+        eff = c.find(".//filter/effect")
+        if eff is None:
+            continue
+        word = html.unescape((_txt(eff, "name") or "").strip())
+        word = " ".join(word.replace("\r", "").replace("\n", "").split())
+        s = _txt(c, "start")
+        if word and s is not None:
+            rows.append((int(s), c))
+    rows.sort(key=lambda x: x[0])
+    return rows
+
+
+def _move_clip_head(c, new_start):
+    """Перенести начало клипа на new_start, НЕ трогая его конец.
+
+    `start` — то, что читают `_sub_items`/`parse_full` как начало слова. Вместе с ним
+    растягивается окно источника: `out = in + (end - start)` — ровно так субтитр-клипы
+    собирает `core.subs` (`GFX_IN` там ФИКСИРОВАННЫЙ in-point графики, а длина источника
+    равна длине клипа). Сам `in` поэтому не двигаем: до `GFX_IN` в источнике графики нет.
+    `pproTicksOut` пересчитываем тем же тактом, что уже записан в файле: Премьер читает
+    такты, и с прежним значением клип остался бы в нём коротким.
+    -> True, если начало реально сдвинулось."""
+    se, ee = c.find("start"), c.find("end")
+    if se is None or se.text is None or ee is None or ee.text is None:
+        return False
+    try:
+        old, end = int(se.text), int(ee.text)
+    except ValueError:
+        return False
+    new_start = int(new_start)
+    if new_start >= old:
+        return False
+    se.text = str(new_start)
+    ine, oue = c.find("in"), c.find("out")
+    try:
+        i0, o0 = int(ine.text), int(oue.text)
+    except (AttributeError, TypeError, ValueError):
+        return True                    # клипа без in/out не бывает, но падать из-за них нечем
+    if o0 > i0:
+        ti, to = c.find("pproTicksIn"), c.find("pproTicksOut")
+        try:
+            tpu = (int(to.text) - int(ti.text)) / (o0 - i0)     # тактов на единицу источника
+        except (AttributeError, TypeError, ValueError, ZeroDivisionError):
+            tpu = None
+        o1 = i0 + max(1, end - new_start)
+        oue.text = str(o1)
+        if tpu is not None:
+            try:
+                to.text = str(int(ti.text) + int(round((o1 - i0) * tpu)))
+            except (TypeError, ValueError):
+                pass
+    return True
+
+
+def _hand_over_start(tr, cur, start, end, fps):
+    """Отдать время удаляемого слова следующему слову ТОЙ ЖЕ дорожки.
+
+    Клип слова вынимается из дорожки, соседей это не двигает — на месте удалённого
+    оставалась дыра (в reelsi_batch.aep: 1.2 с тишины в субтитрах после «РЕКОМЕНДУЕТ»,
+    счётчик всплывал на секунду позже). Если следующее слово шло подряд (зазор не больше
+    GAP_JOIN_SEC), его начало переносится на начало удаляемого, а конец остаётся: слово
+    просто живёт дольше. Удаление нескольких слов подряд работает цепочкой — каждое
+    следующее подтягивается к началу ПЕРВОГО удалённого.
+    -> True, если начало следующего слова сдвинулось."""
+    try:
+        endv = int(end)
+    except (TypeError, ValueError):
+        return False                   # без конца удаляемого зазор не посчитать
+    rows = _track_word_clips(tr)
+    pos = next((k for k, (_s, cc) in enumerate(rows) if cc is cur), None)
+    if pos is None or pos + 1 >= len(rows):
+        return False                   # последнее слово дорожки — отдавать время некому
+    n_start, n_clip = rows[pos + 1]
+    gap = n_start - endv
+    if gap < 0 or gap > GAP_JOIN_SEC * fps:
+        return False                   # перехлёст или пауза — это не «слово шло подряд»
+    return _move_clip_head(n_clip, int(start))
+
+
 def delete_word(xml_path, index, out_path=None):
     """Удалить слово-субтитр #index (порядок parse_full) из XML целиком.
+
+    Слово отдаёт своё время следующему (задание MJ): если сразу за удаляемым в его
+    дорожке стоит клип-слово и зазор между ними не больше GAP_JOIN_SEC, начало
+    следующего переносится на начало удаляемого (конец не меняется). Иначе — как было.
+    Индексы наборов (HL/BRK/CNT/интро) сдвигает по-прежнему shift_indices.
     -> dict(ok=True, index=index, word=...) либо dict(error=...)."""
     try:
         root = ET.parse(xml_path).getroot()
@@ -308,6 +414,7 @@ def delete_word(xml_path, index, out_path=None):
     if index < 0 or index >= len(items):
         return dict(error="индекс вне диапазона")
     start, word, c, eff, tr = items[index]
+    _hand_over_start(tr, c, start, _txt(c, "end"), _seq_fps(seq))
     tr.remove(c)
     _write_xml_prolog(root, xml_path, out_path)
     return dict(ok=True, index=index, word=word)

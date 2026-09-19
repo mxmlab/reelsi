@@ -16,7 +16,7 @@ from flask import request, jsonify
 from ._core import bp, jstr, log_entry, umsg_err, _cross_lock_acquire, _cross_lock_release
 from core.umsg import umsg
 
-PXJOB = {"running": False, "done": False, "log": [], "cur": "", "i": 0, "n": 0}
+PXJOB = {"running": False, "done": False, "log": [], "cur": "", "i": 0, "n": 0, "pct": 0}
 PXLOCK = threading.Lock()
 
 
@@ -24,6 +24,16 @@ def _emit(line, **vars):
     with PXLOCK:
         entry = log_entry(line, vars)
         PXJOB["log"].append(entry)
+
+
+def _pct(value):
+    """Процент сборки ТЕКУЩЕГО файла.
+
+    Приходит из `build_preview_proxy` (ffmpeg идёт с `-progress pipe:1`, см.
+    `draftrender.ff_progress_pct`) — фронт рисует по нему полосу прогресса.
+    Округляем до целого: в интерфейсе показываются проценты, а не доли."""
+    with PXLOCK:
+        PXJOB["pct"] = int(max(0, min(100, round(value))))
 
 
 def _preview_proxy_plan(xml_path, height=720):
@@ -49,13 +59,14 @@ def _run_preview_proxy(plan, height):
     todo = [(s, d) for (s, d, ok) in plan if not ok]
     try:
         with PXLOCK:
-            PXJOB.update(running=True, done=False, log=[], i=0, n=len(todo), cur="")
+            PXJOB.update(running=True, done=False, log=[], i=0, n=len(todo), cur="", pct=0)
         for k, (src, dst) in enumerate(todo, 1):
             with PXLOCK:
-                PXJOB.update(i=k, cur=os.path.basename(src))
+                PXJOB.update(i=k, cur=os.path.basename(src), pct=0)
             _emit("превью-прокси {cur}/{total}: {name}",
                   cur=k, total=len(todo), name=os.path.basename(src))
-            draftrender.build_preview_proxy(src, dst, height=height, emit=_emit)
+            draftrender.build_preview_proxy(src, dst, height=height, emit=_emit,
+                                            progress=_pct)
     except Exception:
         import traceback
         with PXLOCK:
@@ -96,7 +107,7 @@ def api_preview_proxy():
             if d.get("build") and not busy and any(not ok for (_s, _d, ok) in plan):
                 if not _cross_lock_acquire():
                     raise SystemExit(umsg("busy", "Уже выполняется"))
-                PXJOB.update(running=True, done=False, log=[], i=0, n=0, cur="")
+                PXJOB.update(running=True, done=False, log=[], i=0, n=0, cur="", pct=0)
                 busy = True
                 start = True
         if start:
@@ -115,7 +126,8 @@ def api_preview_proxy():
 
 @bp.route("/api/preview_proxy_status")
 def api_preview_proxy_status():
-    """Прогресс фоновой сборки превью-прокси."""
+    """Прогресс фоновой сборки превью-прокси: i/n текущего файла, его имя (cur),
+    процент готовности (pct, 0–100) и хвост лога."""
     with PXLOCK:
         return jsonify(ok=True, **{k: v for k, v in PXJOB.items() if k != "log"},
                        log=PXJOB["log"][-40:])

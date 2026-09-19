@@ -1287,9 +1287,10 @@ def test_cam1_inserts_follow_camera_zoom_only_on_cam1(js):
 
 def test_frame_drag_writes_data_not_a_second_storage(js):
     """Перетаскивание в кадре (задание E, шаг 2) пишет в ИМЕЮЩИЕСЯ источники: вставка —
-    INS[].x/y, интро — gx/gy на головной строке, субтитры — CURSTYLE.sub_y. План-кэш
-    правится только как временный показ (insShift / plan.posy / plan.intro.dx) и сам
-    пересчитывается дебаунсом — второго хранилища значений нет.
+    INS[].x/y, интро — gx/gy на головной строке. План-кэш
+    правится только как временный показ (insShift / plan.intro.dx) и сам
+    пересчитывается дебаунсом — второго хранилища значений нет. Субтитры из списка
+    выпали: драга нет (задание MD), высота — поле стиля «% снизу» (stEdit → ipvPlanSoon).
 
     Главная ловушка — пересчёт координат: экранные px делятся на k (стойка/plan.w),
     а для вставки style=cam1 на Камере 1 ещё и на ipvZoomAt: она отрисована увеличенной
@@ -1327,10 +1328,10 @@ def test_frame_drag_writes_data_not_a_second_storage(js):
     assert "intro_scale" in pos and "G*" in pos, (
         "ipvIntroPos не множит на общий масштаб интро из плана (задание BG)")
 
-    sub = _fn_body(js, "$('ipvsub').addEventListener('pointerdown'")
-    assert "CURSTYLE.sub_y=" in sub, "субтитры пишут не в стиль (sub_y)"
-    assert "styleSubPos();captureAE();ipvPlanSoon()" in sub, (
-        "поле «% снизу» не синхронизируется после драга субтитров")
+    # Драга субтитров больше нет (задание MD): высота правится ползунком стиля, а
+    # перехваченный клик по строке мешал кадру. Здесь остаётся поле «% снизу».
+    assert "$('ipvsub').addEventListener('pointerdown'" not in js, (
+        "драг субтитров вернулся в предпросмотр (задание MD его убрало)")
 
     st = _fn_body(js, "function stEdit(")
     assert "ipvPlanSoon()" in st, (
@@ -1390,9 +1391,9 @@ def test_frame_drag_shift_locks_one_axis(js):
     а не ev.shiftKey: Shift можно отпустить за миг до кнопки мыши, и в данные уехало бы
     не то, что нарисовано.
     """
-    # тела обработчиков вырезаем по границам соседних (после insert'а идёт intro,
-    # после intro — субтитры): _fn_body тащит всё до следующего `function`, а тут
-    # обработчики — стрелки, и соседние попадали бы в один срез
+    # тела обработчиков вырезаем по границам соседних (после insert'а идёт intro, после
+    # intro — тела драга интро выражением const ipvIntroHitAt): _fn_body тащит всё до
+    # следующего `function`, а тут обработчики — стрелки, и соседние попадали бы в один срез
     ins = js[js.index("$('ipvins').addEventListener('pointerdown'"):js.index("$('ipvintro').addEventListener('pointerdown'")]
     ilocks = re.findall(r"axisLock\([^)]*\)", ins)
     assert len(ilocks) == 2, "драг вставки зовёт axisLock не в move и не в up"
@@ -1400,7 +1401,7 @@ def test_frame_drag_shift_locks_one_axis(js):
     assert "st.lock" in ilocks[1] and "ev.shiftKey" not in ilocks[1], (
         "up: применяется ИМЕННО st.lock, а не ev.shiftKey")
 
-    intro = js[js.index("$('ipvintro').addEventListener('pointerdown'"):js.index("$('ipvsub').addEventListener('pointerdown'")]
+    intro = js[js.index("$('ipvintro').addEventListener('pointerdown'"):js.index("const ipvIntroHitAt=function")]
     ilocks = re.findall(r"axisLock\([^)]*\)", intro)
     assert len(ilocks) == 2, "интро зовёт axisLock не в move и не в up"
     assert "ev.shiftKey" in ilocks[0] and "st.lock" in ilocks[1], (
@@ -2628,7 +2629,7 @@ def test_зеркало_состояния_успевает_между_тика�
 
 def test_no_triple_backslash_quote_in_on_attributes():
     """В static/app/*.js нет последовательности \\\' внутри строк, собирающих on…="…"-атрибуты,
-    а строка 811 в 60-preview.js содержит typeof hex2rgb===\\'function\\'."""
+    а экранированные кавычки в oninput строки цвета живы (typeof hex2rgb===\\'function\\')."""
     app_dir = os.path.join(ROOT, "static", "app")
     for fname in sorted(os.listdir(app_dir)):
         if not fname.endswith(".js"):
@@ -2639,9 +2640,12 @@ def test_no_triple_backslash_quote_in_on_attributes():
             if re.search(r'on[a-z]+="[^"]*\\{3}\'', line):
                 pytest.fail(f"Найдена последовательность \\\\\\' внутри on-атрибута в {fname}:{line_no}:\n{line.strip()}")
 
+    # Ищем по содержимому, а не по номеру строки: правка выше по файлу сдвигала 811-ю,
+    # и сторож падал на посторонней строке (задание MD добавило 30+ строк в 60-preview.js).
     preview_lines = open(os.path.join(app_dir, "60-preview.js"), "rb").read().decode("utf-8").splitlines()
-    line_811 = preview_lines[810]
-    assert r"typeof hex2rgb===\'function\'" in line_811
+    assert any(r"typeof hex2rgb===\'function\'" in line for line in preview_lines), (
+        "в 60-preview.js пропала строка с экранированными кавычками "
+        "typeof hex2rgb===\\'function\\'")
 
 
 def test_sfx_ensure_updates_src_on_media_change(js):

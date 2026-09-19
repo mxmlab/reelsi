@@ -88,7 +88,7 @@ def test_preview_proxy_status_json_safe(monkeypatch):
     err_inst = URLError("boom")
     path_inst = Path("/proxy/path")
 
-    def fake_build_preview_proxy(src, dst, height=720, emit=None):
+    def fake_build_preview_proxy(src, dst, height=720, emit=None, progress=None):
         if emit:
             emit("  ✗ {name}: {err} at {path}", name="test_proxy", err=err_inst, path=path_inst)
 

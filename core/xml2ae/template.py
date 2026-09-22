@@ -150,9 +150,9 @@ SUBS_LOOP_ROWS = r"""    var SUB_ROWS = %(sub_rows)s;
             if (r_words[wi][2]){
                 var t0 = r_t0s[wi];        // время появления посчитано выше (одно на оба прохода)
                 posP.setValueAtTime(t0,        [wCenter, lineY+HL_RISE]);
-                posP.setValueAtTime(t0+HL_DUR, [wCenter, lineY]);
+                posP.setValueAtTime(t0+%(hl_dur_js)s, [wCenter, lineY]);
                 var op = L.property("ADBE Transform Group").property("ADBE Opacity");
-                op.setValueAtTime(t0, 0); op.setValueAtTime(t0+HL_DUR, 100);
+                op.setValueAtTime(t0, 0); op.setValueAtTime(t0+%(hl_dur_js)s, 100);
                 easePair(posP); easePair(op);%(hl_blur_call)s
             } else {
                 posP.setValue([wCenter, lineY]);

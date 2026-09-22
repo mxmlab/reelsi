@@ -17,8 +17,9 @@
    слову»: у короткого последнего слова стопки ключи тоже ужимаются. Цикл СТРОК не
    тронут — там момент появления зажат так, что анимация успевает (ключи на w_t0 + 0.35).
 4. Ни одного короткого жёлтого — .jsx побайтово как на main: ни функции hlDur, ни поля
-   длительности, цикл субтитров совпадает со сборкой, где укорочения нет вовсе, а сборка
-   с дефолтами — с эталоном fixtures/golden_geometry.jsx (эталон только читается).
+   длительности, цикл субтитров без слова hlDur вовсе (укорочение включает само короткое
+   слово в данных, своего «выключено» у фичи нет — задание MQ), а сборка с дефолтами — с
+   эталоном fixtures/golden_geometry.jsx (эталон только читается).
 5. Превью: длительность появления берётся из плана (data-hld у слова), своего числа в JS
    нет — в середине короткой анимации прозрачность промежуточная, на t0+hd слово стоит
    полностью проявленным, а длинное в тот же момент ещё едет на общей hl_dur плана.
@@ -47,7 +48,6 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE)
 
 from core import xml2ae  # noqa: E402
-from core.xml2ae import layout  # noqa: E402
 from core.xml2ae.layout import HL_DUR, HL_FIT, hl_appear_dur  # noqa: E402
 from tests.test_geometry_python import _build, _mask_assets  # noqa: E402
 from tests.test_rows_yellow import _ipv_subs_code, _preview_plan  # noqa: E402
@@ -57,6 +57,10 @@ node = pytest.mark.skipif(not shutil.which("node"), reason="требуется n
 SERIES = [7, 8]        # серия подряд жёлтых: последнее слово серии короткое
 SHORT = 95             # «КТ»: 0.2 с — анимация 0.35 с в неё не влезает
 LONG = 11              # «МЕТКОНСЕКТ»: 0.95 с — длительность остаётся общей
+# Ролик без коротких жёлтых: отмечено только длинное слово — укорочать нечего, и .jsx
+# обязан быть прежним. Это и есть «выключенное» состояние фичи: своего флага у неё нет,
+# укорочение включает само короткое слово в разметке (задание MQ).
+NO_SHORT = [LONG]
 SHORT_W, LONG_W = "КТ", "МЕТКОНСЕКТ"
 BLUR = {"hl_blur": True, "hl_blur_amt": 70.4}
 GOLDEN = os.path.join(HERE, "fixtures", "golden_geometry.jsx")
@@ -198,11 +202,13 @@ _LINE_PREFIXES = (
 _LOOP_MARKERS = ("    var SUB_ROWS = ",
                  "    for (var i=0;i<SUBS.length;i++){",
                  "    var i=0;\n    while (i<SUBS.length){")
-# Функции появления: блюр (задание ZH, многострочный) и длительность короткого жёлтого
-# (задание MA, одной строкой) — обе уезжают в .jsx только когда реально нужны.
+# Функции появления: блюр (задание ZH, многострочный) и длительности короткого жёлтого
+# (задание MA — слова/стопка, задание MN — слово строки): уезжают в .jsx только когда
+# реально нужны, стенду нужны все объявленные.
 _FN_PATTERNS = (
     r"\n    function hlBlur.*?\n    \}\n",
     r"\n    function hlDur\(sw\)\{[^\n]*\}",
+    r"\n    function hlRowDur\(wd\)\{[^\n]*\}",
 )
 
 
@@ -364,22 +370,33 @@ def test_rows_stack_short_last_word_plays_its_own_time(xml_subs, tmp_path, joine
 
 
 # --------------------------------------- 4. ни одного короткого жёлтого — как на main
-def test_no_short_yellow_jsx_is_main(xml_subs, tmp_path, monkeypatch):
-    """Без укороченных жёлтых .jsx не несёт ни функции, ни поля длительности, а цикл
-    субтитров совпадает со сборкой, где укорочения нет вовсе."""
-    long_only = _jsx(xml_subs, tmp_path, "long.jsx", style=dict(BLUR), highlights=[LONG])
+def test_no_short_yellow_jsx_is_main(xml_subs, tmp_path):
+    """Ролик без коротких жёлтых (укорочать нечего) — .jsx как на main: ни функции, ни
+    поля длительности, а цикл субтитров не знает слова hlDur вовсе.
+
+    «Выключенного» состояния у фичи нет (задание MQ): раньше оно изображалось подменой
+    константы layout.HL_FIT = 1e6, и тест сторожил собственную подмену, а не данные.
+    Теперь выключено = в ролике нет коротких жёлтых (отмечено только длинное слово,
+    0.95 с): укорочение включает само слово в разметке, и это видно на той же фикстуре —
+    стоит отметить и короткое, в .jsx появляется hlDur и цикл субтитров меняется.
+    """
+    long_only = _jsx(xml_subs, tmp_path, "long.jsx", style=dict(BLUR), highlights=NO_SHORT)
     for token in ("hlDur", "data-hld"):
         assert token not in long_only, "в .jsx без коротких жёлтых остался %s" % token
+    assert "hlDur" not in _loop_code(long_only), "цикл субтитров зовёт чужую длительность"
     assert len(_yellow_rows(long_only)[0]) == 6, "у длинного жёлтого появилось лишнее поле"
     assert "function hlBlur(L, t0){" in long_only and "hlBlur(L, t0);" in long_only, \
         "вызов блюра уехал с прежней сигнатуры"
 
-    # Тот же ролик с коротким жёлтым, но укорочение выключено: подстановки обязаны стать
-    # прежними, и цикл совпасть со сборкой «только длинные жёлтые» байт в байт.
-    monkeypatch.setattr(layout, "HL_FIT", 1e6)
-    off = _jsx(xml_subs, tmp_path, "off.jsx", style=dict(BLUR), highlights=[SHORT, LONG])
-    assert "hlDur" not in off and len(_yellow_rows(off)[0]) == 6
-    assert _loop_code(off) == _loop_code(long_only), "выключенное укорочение меняет цикл"
+    # Та же фикстура, но отмечено и короткое жёлтое: укорочение включается ДАННЫМИ —
+    # функция длительности, поле у жёлтых и свой момент в цикле субтитров.
+    with_short = _jsx(xml_subs, tmp_path, "short.jsx", style=dict(BLUR),
+                      highlights=[SHORT, LONG])
+    assert "function hlDur(sw){ return sw[7]; }" in with_short, "нет функции длительности"
+    assert len(_yellow_rows(with_short)) == 2 and \
+        all(len(r) == 8 for r in _yellow_rows(with_short)), "нет поля длительности"
+    assert "hlDur(sw)" in _loop_code(with_short), "укорочение не доехало до цикла субтитров"
+    assert _loop_code(with_short) != _loop_code(long_only), "короткое слово не изменило цикл"
 
     # Полная сборка с дефолтами — эталон main (не перегенерируется, только читается).
     golden = _mask_assets(open(GOLDEN, encoding="utf-8-sig").read())

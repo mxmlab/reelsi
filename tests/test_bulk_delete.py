@@ -19,7 +19,10 @@
 3. «Стереть с диска»: dry:true и dry:false зовутся по каждому выбранному, ошибка одного
    клипа не останавливает остальные, итог уходит в toast и uiLog;
 4. кнопка «Удалить выбранные» неактивна при пустом выборе (пусто ≠ все, в отличие от
-   сборки) и без галочек ничего не открывает.
+   сборки) и без галочек ничего не открывает. Кнопки — НАСТОЯЩАЯ разметка шапок из
+   templates/index.html, атрибуты разобраны как в DOM: `disabled` там свойство элемента
+   (атрибут), а не подстрока в куске HTML, и проверяется оно по свойству, которое
+   выставляет боевой syncDelSel.
 
 Запуск: python -m pytest tests/test_bulk_delete.py -q
 """
@@ -75,13 +78,62 @@ def _let(src, name):
     return m.group(0)
 
 
+_ATTR_RE = re.compile(r'([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*"([^"]*)")?')
+
+
+def _attrs(open_tag):
+    """Атрибуты открывающего тега: {имя: значение} (флаг без значения -> "").
+
+    Разбор, а не поиск подстроки: `disabled` — это АТРИБУТ кнопки, а не слово в куске
+    разметки (на этом старый сторож пропускал любую подмену — задание MQ).
+    """
+    body = open_tag[open_tag.index(" ") + 1:open_tag.rindex(">")]
+    return {m.group(1): (m.group(2) if m.group(2) is not None else "")
+            for m in _ATTR_RE.finditer(body)}
+
+
+def _delsel_buttons(html=None):
+    """Разметка кнопок «Удалить выбранные» из шапок трёх шагов — куском HTML как есть."""
+    html = io.open(HTML, encoding="utf-8").read() if html is None else html
+    out = []
+    for m in re.finditer(r"<button\b", html):
+        end = html.find("</button>", m.start())
+        assert end > 0, "у кнопки шапки не нашлось закрывающего тега"
+        chunk = html[m.start():end + len("</button>")]
+        if "data-delsel" in _attrs(chunk[:chunk.index(">") + 1]):
+            out.append(chunk)
+    return out
+
+
 # Заглушки — только внешние двери (сервер, DOM, тосты). Всё, что проверяется, — боевые
 # функции из 40-queue.js: тест не должен сторожить свою копию логики.
+# Кнопки-корзины берутся из боевой разметки (templates/index.html) и разбираются как в
+# DOM: флаг `disabled` и `data-*` — атрибуты открывающего тега, доступные свойством.
 STUBS = r"""
 let TOASTS=[],LOGS=[],OPENED=[],CLOSED=[],SAVES=0,RENDERS={1:0,2:0,3:0};
 const ELS={};
 function $(id){if(!ELS[id])ELS[id]={id,style:{},textContent:'',innerHTML:'',disabled:false};return ELS[id];}
-const DELBTNS=[{disabled:false},{disabled:false},{disabled:false}];
+function parseAttrs(body){
+  const out={};
+  const re=/([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*"([^"]*)")?/g;
+  let m;
+  while((m=re.exec(body))!==null)out[m[1]]=(m[2]===undefined?'':m[2]);
+  return out;
+}
+function Button(html){
+  const open=html.slice(0,html.indexOf('>')+1);
+  const attrs=parseAttrs(open.slice(open.indexOf(' ')+1,open.length-1));
+  this.id=attrs.id||'';
+  this.attrs=attrs;
+  this.style={};
+  this.disabled=Object.prototype.hasOwnProperty.call(attrs,'disabled');
+  this.dataset={};
+  for(const k in attrs)if(k.indexOf('data-')===0)this.dataset[k.slice(5)]=attrs[k];
+  this.innerHTML=html.slice(open.length,html.lastIndexOf('</'));
+  this.getAttribute=n=>Object.prototype.hasOwnProperty.call(attrs,n)?attrs[n]:null;
+  this.hasAttribute=n=>Object.prototype.hasOwnProperty.call(attrs,n);
+}
+const DELBTNS=@DELBTNS@.map(h=>new Button(h));
 const document={querySelectorAll:sel=>(sel==='[data-delsel]'?DELBTNS:[])};
 function t(s,vars){return String(s).replace(/\{(\w+)\}/g,(m,k)=>String((vars||{})[k]));}
 function plur(n,one,few,many){n=Math.abs(n)%100;const d=n%10;return (n>10&&n<20)?many:(d>1&&d<5)?few:(d===1)?one:many;}
@@ -104,7 +156,7 @@ let curAE=-1,curEdit=-1,curIns=-1,AEGLOBAL='';
 def _run(tmp_path, name, funcs, body, decls=("CLIPS", "SEL_ANCHOR", "DEL_CLIP_IDXS")):
     """Заглушки + боевые объявления и функции + сценарий; вернуть разобранный JSON."""
     src = _src()
-    script = (STUBS + "\n"
+    script = (STUBS.replace("@DELBTNS@", json.dumps(_delsel_buttons(), ensure_ascii=False)) + "\n"
               + "\n".join(_let(src, d) for d in decls) + "\n"
               + "\n".join(_func(src, f) for f in funcs) + "\n"
               + body)
@@ -262,13 +314,24 @@ globalThis.fetch=async (url,opt)=>{const body=JSON.parse(opt.body);CALLS.push({u
 
 @node
 def test_delete_selected_button_is_dead_with_empty_selection(tmp_path):
-    """4. Кнопка неактивна при пустом выборе, а без галочек удаление не открывается вовсе.
+    """4. Кнопки «Удалить выбранные» — настоящая разметка шапок, и боевой syncDelSel
+    гасит и зажигает их по выбору: разметка приходит погашенной, пустой выбор оставляет
+    их погашенными, одна галка включает все три.
 
     Пусто у всех НЕ значит «все»: это семантика selClips() для сборки, у удаления она
     опасна — снесла бы весь список. С галочкой кнопка живая и открывает окно на список.
+    Раньше здесь стояла проверка подстроки (`"disabled" in seg`): она проходила при любом
+    вхождении слова в кусок HTML — теперь разбираются АТРИБУТЫ тега, а состояние кнопки
+    берётся из свойства `disabled`, которое выставляет боевая функция (задание MQ).
     """
     out = _run(tmp_path, "zs_button.js", ["syncDelSel", "delSelClips", "clipLabel", "delClips"], r"""
 CLIPS=[{name:'A',xml:'C:/out/A.xml'},{name:'B',xml:'C:/out/B.xml'}];
+const ids=DELBTNS.map(b=>b.id);
+const handlers=DELBTNS.map(b=>b.getAttribute('onclick'));
+const labels=DELBTNS.map(b=>!!b.getAttribute('aria-label'));
+const tips=DELBTNS.map(b=>!!b.getAttribute('data-t'));
+const icons=DELBTNS.map(b=>/<span[^>]*data-ic="trash"/.test(b.innerHTML));
+const markupDisabled=DELBTNS.map(b=>b.disabled);
 syncDelSel();
 const emptyDisabled=DELBTNS.map(b=>b.disabled);
 delSelClips();
@@ -277,9 +340,22 @@ CLIPS[1].sel=true;
 syncDelSel();
 const oneDisabled=DELBTNS.map(b=>b.disabled);
 delSelClips();
-console.log(JSON.stringify({emptyDisabled,oneDisabled,openedOnEmpty,toastEmpty,
+console.log(JSON.stringify({ids,handlers,labels,tips,icons,markupDisabled,emptyDisabled,
+  oneDisabled,openedOnEmpty,toastEmpty,
   opened:OPENED,title:$('delClipTitle').textContent,name:$('delClipName').textContent}));
 """)
+    # разметка: три кнопки, у каждой свой обработчик, справка и иконка из набора ico
+    assert out["ids"] == ["delSel1", "delSel2", "delSel3"], (
+        "кнопок «Удалить выбранные» не три: %r" % out["ids"])
+    assert out["handlers"] == ["delSelClips()"] * 3, (
+        "кнопки шапок зовут не delSelClips(): %r" % out["handlers"])
+    assert out["labels"] == [True, True, True], "у кнопки нет aria-label: %r" % out["labels"]
+    assert out["tips"] == [True, True, True], "у кнопки нет справки data-t: %r" % out["tips"]
+    assert out["icons"] == [True, True, True], "у кнопки не иконка из набора ico: %r" % out["icons"]
+
+    # поведение: разметка погашена, пустой выбор её не зажигает, галка — зажигает все три
+    assert out["markupDisabled"] == [True, True, True], (
+        "кнопки приходят из разметки живыми (нет атрибута disabled): %r" % out["markupDisabled"])
     assert out["emptyDisabled"] == [True, True, True], (
         "кнопки «Удалить выбранные» живые при пустом выборе: %r" % out["emptyDisabled"])
     assert out["openedOnEmpty"] == 0, "без галочек открылось окно удаления"
@@ -297,7 +373,8 @@ def test_step1_has_the_shared_checkbox_and_three_delete_buttons():
 
     Шаг 1 раньше галок не имел вовсе, а удаление было только крестиком. Теперь выбор общий
     (c.sel), Shift идёт через общий pickClip со сбросом точки отсчёта при удалении, а
-    кнопки-корзины стоят в шапке каждого из трёх шагов.
+    кнопки-корзины стоят в шапке каждого из трёх шагов (их разметку и поведение разбирает
+    тест 4 — здесь только число и то, что они вообще есть).
     """
     js = _src()
     html = io.open(HTML, encoding="utf-8").read()
@@ -327,13 +404,5 @@ def test_step1_has_the_shared_checkbox_and_three_delete_buttons():
     assert js.count("/api/clip_delete") == 2, (
         "удаление с диска обзавелось второй копией (ожидались сухой прогон + удаление)")
 
-    # кнопки-корзины: шапка каждого шага, погашены без выбора, справка и имя на месте
-    assert html.count("data-delsel") == 3, "кнопок «Удалить выбранные» не три"
-    for i in (1, 2, 3):
-        start = html.index('id="delSel%d"' % i)
-        seg = html[start:html.index("</button>", start)]
-        assert "delSelClips()" in seg, "кнопка шага %d не зовёт delSelClips()" % i
-        assert "disabled" in seg, "кнопка шага %d не погашена без выбора" % i
-        assert 'data-ic="trash"' in seg, "у кнопки шага %d не иконка из набора ico" % i
-        assert "aria-label=" in seg and "data-t=" in seg, (
-            "у кнопки шага %d нет имени/справки" % i)
+    # кнопки-корзины: по одной в шапке каждого шага (атрибуты и поведение — тест 4)
+    assert len(_delsel_buttons(html)) == 3, "кнопок «Удалить выбранные» не три"

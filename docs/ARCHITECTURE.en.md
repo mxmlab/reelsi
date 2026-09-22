@@ -588,7 +588,7 @@ over-the-shoulder fly-out loses its point, a deliberate choice).
 |---|---|
 | `core/cutstages.py` | **single source of truth for cutting stages** (`STAGES`, `DEFAULTS`, `DEFAULT_THRESHOLDS`), normalization, and `to_reelsi_opts` generation |
 | `core/gigaam_cut/` | **Engine 1 (main)**: GigaAM whole-file cutting: `tune` (thresholds), `takes` (takes + code post-pass), `asr` (transcription + alignment), `decide` (decision prompts), `pipeline` (run orchestrator). Thresholds are ONLY in `tune`, read via the module, never imported by name |
-| `core/xml2ae/` | export to After Effects: `to_ae_full()` assembles `.jsx`, `build_combined()` — several clips into one |
+| `core/xml2ae/` | export to After Effects: `to_ae_full()` assembles `.jsx`, `build_combined()` — several clips into one. `scene_plan` is the ASSEMBLER of the scene plan (parse the XML, call the block entry points, lay the result out by key); the plan maths itself is split into blocks (tasks MR–MW): `plan_subs` (subtitles), `plan_intro` (intro maths), `plan_intro_tpl` (intro template substitutions), `plan_inserts` (inserts), `plan_audio` (sound and censorship), `plan_camera` (camera: zoom, pan, roto markup, head follow) |
 | `core/aicut/` | LLM markup: yellow words / inserts / intro / cut decision; package since 2026-08-06; `llm.py` (begin_call, cancel_stream), `commands.py` (yellow_cmd, inserts_cmd, intro_cmd), `config.py` (profiles CRUD), `images.py`, `video.py` |
 | `core/omni_cut.py` | CLI/job of AI cutting: default `gigaam`, legacy `--mode old`; `--speaker`, `--selfcheck-model`, `--no-draft`; entry for both engines |
 | `core/xmlbuild.py` | Premiere xmeml assembly (cameras, segments, subtitles) |
@@ -616,7 +616,8 @@ over-the-shoulder fly-out loses its point, a deliberate choice).
 | `tools/webui_test.py` | isolated UI profile on port 5098 |
 | `core/umsg.py` | error codes for translation (`ERR_*` from `static/i18n/en.json`) |
 | `core/app_meta.py`, `core/device.py` | paths/environment, device selection (cuda → mps → cpu) |
-| `core/fileio.py` | atomic writing of JSON and text files (tmp + fsync + replace; target permissions and symlinks preserved) |
+| `core/fileio.py` | atomic writing of JSON and text files (tmp + fsync + replace; target permissions and symlinks preserved). RULE: atomic writing lives ONLY here — `os.replace` outside this file is forbidden (guarded by `tests/test_infra_dedup.py`) |
+| `core/media.py` | media duration: ONE ffprobe probe for every call site (`probe_duration`; `None` = "could not read" — no file, no ffprobe, a hang, a broken container; cached by path + mtime + size, 30 s timeout). There used to be five copies, and they diverged exactly on errors: some returned 0.0, others raised (task NB) |
 | `doctor.py` | environment diagnostics |
 | `core/insertlib.py` | insert library: XML + folder scan, `insertlib.json` index, semantic lookup; also `remove_bg` (rembg) and `nobg_path(media)` — ONE cache of a photo without background for the build and the preview (`<folder>/<stem>.nobg.png`; error of rembg or a non-image returns the source path and reports through `emit`) |
 | `api/` | **shared backend**: all `/api/*` (Blueprint), JOB/LOCK, jobs |
@@ -735,7 +736,9 @@ the full list of files and JSON schemas, from `Reelsi_out/` to `ai_config.json`.
 speaker presets, Premiere XML (cut output), user XML, `.jsx`, `.srt`, `.drp`) are
 written atomically (tmp + fsync + replace), see `core/fileio.py`; regenerable
 temporary artifacts (transcript caches, `_tmp/` intervals, proxy cache) are written
-directly — losing them costs nothing.
+directly — losing them costs nothing. One rule: atomic writing goes ONLY through
+`core/fileio.py`, `os.replace` outside it must not appear anywhere in `core/` and `api/`
+(guarded by `tests/test_infra_dedup.py`).
 
 **`ai_config.json` contracts** — server-side, not localStorage:
 - LLM profiles (LM Studio / Claude / OpenRouter / OpenAI-compatible),
@@ -846,6 +849,8 @@ with camera strings.
   filter (the real Lumetri formulas are closed).
 - `88-cams.js` — camera layout editor and CPV mini-player.
 - `90-ae.js` — After Effects step: words, intro, manual inserts.
+- `94-stylepanel.js` — style panel (Effect Controls) built from the `/api/style_schema`
+  answer; loads before `95-styles.js`.
 - `95-styles.js` — style presets, speaker profiles, color pickers, music, ASR engines.
 - `99-boot.js` — state persistence and UI boot.
 
@@ -1052,11 +1057,11 @@ pyannote/speechbrain); longform is windowed (~18s) with seams at the quietest po
   --mode gigaam`.
 - Classic CLI: `python reelsi/reelsi.py --cams 2|1` (or `--single`, `--no-cut`,
   `--aggressive`).
-- Tests: `python -m pytest reelsi/tests -q`.
+- Tests: `python -m pytest tests -q`.
 
 **PROJECT RULES** — comments and commits are IN RUSSIAN. Chat too.
 **PROJECT RULES** — the repository is the `reelsi/` folder, branch `main`.
-**PROJECT RULES** — before committing — `python -m pytest reelsi/tests -q`.
+**PROJECT RULES** — before committing — `python -m pytest tests -q`.
 
 ## See also
 

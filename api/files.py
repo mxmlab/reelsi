@@ -399,6 +399,25 @@ def _narrow_media_range(header, size):
     return f"bytes={start}-{min(start + MEDIA_CHUNK, size) - 1}"
 
 
+def _media_path_ok(path, exts):
+    """Годится ли путь к отдаче: расширение (и у присланного пути, и у realpath) +
+    денилист секретов (`_never_serve`).
+
+    Один набор проверок на все места, где путь к файлу формируется внутри роута
+    (задание MZ, п. 4): иначе копия проверок рядом с подменой рано или поздно
+    разъедется с основной.
+    """
+    if os.path.splitext(path)[1].lower().lstrip(".") not in exts:
+        return False
+    try:
+        real_ext = os.path.splitext(os.path.realpath(path))[1].lower().lstrip(".")
+    except Exception:
+        real_ext = ""
+    if real_ext not in exts:
+        return False
+    return not _never_serve(path)
+
+
 @bp.route("/api/media")
 def api_media():
     """Serve a local media file with HTTP Range support so the browser <video> in
@@ -414,15 +433,7 @@ def api_media():
     # Расширение должно быть допустимым и у присланного пути, и у realpath (задание LB):
     # иначе симлинк clip.mp4 -> notes.txt позволяет читать немедийные файлы.
     ext = os.path.splitext(path)[1].lower().lstrip(".")
-    if ext not in ALLOWED_MEDIA_EXTS:
-        return ("forbidden", 403)
-    try:
-        real_ext = os.path.splitext(os.path.realpath(path))[1].lower().lstrip(".")
-    except Exception:
-        real_ext = ""
-    if real_ext not in ALLOWED_MEDIA_EXTS:
-        return ("forbidden", 403)
-    if _never_serve(path):
+    if not _media_path_ok(path, ALLOWED_MEDIA_EXTS):
         return ("forbidden", 403)
     # «без фона» (задание ZI): предпросмотр фото-вставки просит nobg=1 — отдаём тот же
     # кэш, что уедет в сборку (insertlib.nobg_path), а не исходник с фоном. Только картинки:
@@ -434,6 +445,12 @@ def api_media():
                 path = nobg_path(path)
             except Exception:
                 pass                                     # нет rembg/модели — отдаём исходник
+    # Подмена nobg идёт ПОСЛЕ проверок, а путь берётся не из запроса, а из кэша рядом
+    # с исходником, — поэтому итоговый путь проходит ТЕ ЖЕ проверки ещё раз (задание
+    # MZ, п. 4): до этой правки расширение, realpath и `_never_serve` относились только
+    # к присланному пути, и вернувшаяся из nobg_path подмена отдавалась без проверок.
+    if not _media_path_ok(path, ALLOWED_MEDIA_EXTS):
+        return ("forbidden", 403)
     if not os.path.isfile(path):
         return ("not found", 404)
     if request.args.get("dl"):
@@ -534,7 +551,12 @@ def api_clip_delete():
         return jsonify(**umsg_err(SystemExit(umsg("no_folder", f"Нет папки: {xml_dir}", path=xml_dir))))
 
     jsxdir = jstr(d, "jsxdir").strip().strip('"')
-    dry = True if d.get("dry") is True or str(d.get("dry")).lower() in ("true", "1") else False
+    # dry по умолчанию True (задание MZ, п. 1): удаление — ТОЛЬКО при явном dry: false.
+    # Раньше отсутствие параметра означало «удалить», и вызов без dry (старый клиент,
+    # чужой скрипт, опечатка в теле) молча сносил файлы нарезки. Интерфейс передаёт dry
+    # явно в обоих вызовах (static/app/40-queue.js: {dry:true} — сухой прогон и список,
+    # {dry:false} — удаление), поэтому поведение UI не меняется.
+    dry = not (d.get("dry") is False or str(d.get("dry")).lower() in ("false", "0"))
 
     # Читаем project.json или сам XML, чтобы узнать исходные камеры
     xml_path = os.path.join(xml_dir, xml_name)

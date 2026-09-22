@@ -16,12 +16,18 @@ fetch ждал 5.3 с вместо 0.3 с — «сервер встаёт». П�
 6. Файл меньше куска, `bytes=0-` -> весь файл.
 7. Запрещённое расширение и `_never_serve` -> прежние 403 (сужение их не обходит).
 8. Суффиксный Range, список диапазонов, битый заголовок -> не трогаем.
+
+Число куска тест берёт СВОЁ (CHUNK = 4 МиБ), а не из реализации (задание MQ): пока
+ожидания читали MEDIA_CHUNK из api.files, мутация `MEDIA_CHUNK = 1024` проходила все
+восемь проверок — тест мерил реализацию ею же. Импорт остаётся только на сверку: сколько
+отдаёт роут, столько и заказано контрактом.
 """
 import pytest
 
 from api.files import MEDIA_CHUNK, _narrow_media_range
 
 H = {"Host": "127.0.0.1:5001"}
+CHUNK = 4 * 1024 * 1024          # 4 МиБ — кусок отдачи /api/media, число контракта (MB)
 SIZE = 10 * 1024 * 1024          # ~10 МБ: заведомо больше куска в 4 МБ
 
 
@@ -44,15 +50,22 @@ def big_mp4(tmp_path):
 
 
 def test_open_range_is_capped(client, big_mp4):
-    """1. `bytes=0-` -> 206, тело ровно MEDIA_CHUNK байт, Content-Range/Content-Length
-    считает werkzeug по суженному диапазону."""
+    """1. `bytes=0-` -> 206, тело ровно 4 МиБ, Content-Range/Content-Length
+    считает werkzeug по суженному диапазону.
+
+    Размер сверяется с числом контракта (CHUNK), а не с MEDIA_CHUNK из api.files; сам
+    MEDIA_CHUNK — отдельная проверка: он и есть то число, за которое тест держится.
+    """
+    assert MEDIA_CHUNK == CHUNK, "кусок отдачи /api/media уехал с 4 МиБ"
+    assert _narrow_media_range("bytes=0-", SIZE) == f"bytes=0-{CHUNK - 1}", (
+        "разбор Range режет открытый диапазон не по 4 МиБ")
     p, data = big_mp4
     r = client.get(f"/api/media?path={p}", headers={**H, "Range": "bytes=0-"})
     assert r.status_code == 206
-    assert r.headers["Content-Range"] == f"bytes 0-{MEDIA_CHUNK - 1}/{SIZE}"
-    assert r.headers["Content-Length"] == str(MEDIA_CHUNK)
-    assert len(r.data) == MEDIA_CHUNK
-    assert r.data == data[:MEDIA_CHUNK]
+    assert r.headers["Content-Range"] == f"bytes 0-{CHUNK - 1}/{SIZE}"
+    assert r.headers["Content-Length"] == str(CHUNK)
+    assert len(r.data) == CHUNK
+    assert r.data == data[:CHUNK]
 
 
 def test_open_range_from_tail_is_clamped_to_file_end(client, big_mp4):
@@ -77,13 +90,13 @@ def test_short_range_untouched(client, big_mp4):
 
 
 def test_explicit_whole_file_is_capped(client, big_mp4):
-    """4. `bytes=0-{size-1}` (весь файл явно) -> сужено до MEDIA_CHUNK: именно так
+    """4. `bytes=0-{size-1}` (весь файл явно) -> сужено до 4 МиБ: именно так
     просит видео, которому нужен весь файл."""
     p, _ = big_mp4
     r = client.get(f"/api/media?path={p}", headers={**H, "Range": f"bytes=0-{SIZE - 1}"})
     assert r.status_code == 206
-    assert r.headers["Content-Range"] == f"bytes 0-{MEDIA_CHUNK - 1}/{SIZE}"
-    assert len(r.data) == MEDIA_CHUNK
+    assert r.headers["Content-Range"] == f"bytes 0-{CHUNK - 1}/{SIZE}"
+    assert len(r.data) == CHUNK
 
 
 def test_no_range_and_download_are_whole(client, big_mp4):
@@ -104,7 +117,7 @@ def test_no_range_and_download_are_whole(client, big_mp4):
 def test_small_file_open_range_untouched(client, tmp_path):
     """6. Файл меньше куска: `bytes=0-` отдаёт его весь (206 или 200 — как решает
     werkzeug), обрезать нечего."""
-    data = bytes(range(256)) * 4              # 1 КБ < MEDIA_CHUNK
+    data = bytes(range(256)) * 4              # 1 КБ < CHUNK (4 МиБ)
     p = tmp_path / "small.mp4"
     p.write_bytes(data)
     r = client.get(f"/api/media?path={p}", headers={**H, "Range": "bytes=0-"})

@@ -2,12 +2,14 @@
 # Copyright (c) 2026 Maxim Si
 """Audio extraction + two-camera sync by cross-correlation."""
 import hashlib
+import io
 import os
 import subprocess
 import tempfile
 import time as _time
 import numpy as np
 from scipy.io import wavfile
+from core.fileio import atomic_bytes_write
 
 SR = 16000  # analysis sample rate (mono)
 
@@ -192,8 +194,10 @@ def video_envelope(video):
             os.unlink(wav)
         except OSError:
             pass
-    with open(p + ".part", "wb") as fh:
-        np.save(fh, e)
-    os.replace(p + ".part", p)
+    buf = io.BytesIO()
+    np.save(buf, e)
+    # Атомарно (core.fileio): огибающую читает и ДРУГОЙ процесс (подбор камер), а
+    # недописанный .npy он принял бы за готовый — np.load упал бы или отдал мусор
+    atomic_bytes_write(p, buf.getvalue())
     _prune_env_cache()   # чистим на записи: попадание в кэш остаётся без лишнего listdir
     return e, r

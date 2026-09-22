@@ -6,7 +6,8 @@ import os, threading, traceback, urllib.parse
 from flask import request, jsonify, send_file, Response
 from core.fileio import atomic_json_dump
 from ._core import (JOB, LOCK, bp, emit, item_done, item_fail, item_set, items_init, job_finish,
-                    job_start, set_progress, _never_serve, umsg_err, _cross_lock_release, jstr)
+                    job_start, journal_touch, set_progress, _never_serve, umsg_err,
+                    _cross_lock_release, jstr, sysexit_text)
 from core.umsg import umsg
 from .editor import _ensure_project, _sidecar_yellow, _sidecar_caption
 from .inserts import _adopt_inserts, _insert_dest
@@ -191,6 +192,9 @@ def _run_build_job(norm, mode, outdir):
                     for it in JOB.get("items", []):
                         if it.get("stage") == "wait":
                             it.update(stage="done", path=str(path), pct=None)
+                # Элементы очереди поменялись мимо item_done (результат-то один на набор,
+                # задание FA) — снимок в журнале заданий обновляем здесь же (задание NC).
+                journal_touch(JOB)
                 emit("-> {path} ({count} комп.)", path=path, count=n)
             except xml2ae.Cancelled:
                 emit("⏹ Остановлено пользователем — общий .jsx не записан "
@@ -228,11 +232,26 @@ def _run_build_job(norm, mode, outdir):
                 except xml2ae.Cancelled:
                     emit("  ⏹ Остановлено пользователем — файл не записан.")
                     break
+                except SystemExit as e:
+                    # «Рото не посчитано…» и прочие umsg-ошибки xml2ae — SystemExit, не
+                    # Exception: без этой ветки они уходили из потока мимо лога и failed,
+                    # и человек видел «Сборка завершена» без единого собранного файла
+                    # (задание MX). Путь провала тот же, текст — понятный, из umsg.
+                    txt = sysexit_text(e)
+                    emit("  ОШИБКА: {err}", err=txt)
+                    item_fail(JOB, LOCK, stem, txt)
                 except Exception:
                     tb = traceback.format_exc()
                     emit("  ОШИБКА:\n{tb}", tb=tb)
                     item_fail(JOB, LOCK, stem, tb.strip().splitlines()[-1])
         emit("\nСборка завершена.")
+    except SystemExit as e:
+        # Тот же путь, что у Exception ниже: печатаем причину и метим падение задания.
+        # «Сборка завершена» при этом не печатается — до неё управление не доходит.
+        txt = sysexit_text(e)
+        emit("ОШИБКА (сборка прервана): {err}", err=txt)
+        with LOCK:
+            JOB["failed"].append({"name": "сборка", "reason": txt})
     except Exception:
         tb = traceback.format_exc()
         emit("ОШИБКА (сборка прервана):\n{tb}", tb=tb)

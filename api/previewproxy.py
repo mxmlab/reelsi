@@ -13,7 +13,8 @@ mediaCapabilities отвечает powerEfficient=false, и 4K декодиру�
 """
 import os, threading
 from flask import request, jsonify
-from ._core import bp, jstr, log_entry, umsg_err, _cross_lock_acquire, _cross_lock_release
+from ._core import (bp, jstr, log_entry, umsg_err, _cross_lock_acquire, _cross_lock_release,
+                    sysexit_text)
 from core.umsg import umsg
 
 PXJOB = {"running": False, "done": False, "log": [], "cur": "", "i": 0, "n": 0, "pct": 0}
@@ -67,6 +68,11 @@ def _run_preview_proxy(plan, height):
                   cur=k, total=len(todo), name=os.path.basename(src))
             draftrender.build_preview_proxy(src, dst, height=height, emit=_emit,
                                             progress=_pct)
+    except SystemExit as e:
+        # SystemExit (umsg) — BaseException: без ветки сборка прокси вставала с пустым
+        # логом, и в статусе не было причины (задание MX).
+        with PXLOCK:
+            PXJOB["log"].append(sysexit_text(e))
     except Exception:
         import traceback
         with PXLOCK:

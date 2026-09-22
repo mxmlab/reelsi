@@ -8,11 +8,12 @@
 
 Здесь:
 1. Эталон: стиль BASE даёт побайтно тот же .jsx, что эталон golden_geometry.jsx.
-2. Каждая ручка схемы style_schema.py (все 121 ключей: key, key2, toggle)
-   параметризованно проверяется на влияние на собранный .jsx.
-   Все ручки подписи (13), интро (13), рото (4), видео (1) и звука (11)
-   снабжаются нужными фикстурами и проверяются в деле.
-3. Исключения (цель LI2 — <= 5, здесь 0) стерегутся: ни один ключ не теряется молча.
+2. Каждая ручка схемы style_schema.py (перечень key/key2/toggle собирается обходом
+   схемы, а не константой) параметризованно проверяется на влияние на собранный .jsx.
+   Ручки подписи, интро, рото, видео и звука снабжаются нужными фикстурами и
+   проверяются в деле.
+3. Исключения стерегутся: EXCEPTIONS обязан остаться пустым — ни один ключ не теряется
+   молча.
    Мёртвые ключи выявляются с учётом составных имён (_sfx_cfg: prefix + _db/_in/_out/_at).
 4. Масштаб полей с conv (доли/проценты/пиксели): значения приходят в scene_plan
    в правильных единицах, без умножения на 100; нормализация roto_bottom в api/build.py;
@@ -70,13 +71,13 @@ RICH_INTRO_SPLITS = [4]
 # нечего менять в .jsx. Яркость 0.61 — ниже порога TRITONE_MAX_LUM, правило MK в силе.
 DG_DARK_HL_FILL = [0.0, 0.75, 1.0]
 
-# Ключи-исключения, не влияющие на сборку. В LI2 сокращены до 0:
-# все 121 ручек схемы проверяются в сборке (intro_dg_with_glow — в режиме Deep Glow 2,
+# Ключи-исключения, не влияющие на сборку. В LI2 их не осталось:
+# все ручки схемы проверяются в сборке (intro_dg_with_glow — в режиме Deep Glow 2,
 # см. dg в test_each_knob_affects_assembly).
 EXCEPTIONS = {}
 
 # Известные мёртвые ключи (ключ есть в схеме, но нигде не читается бэкендом).
-# В LI2 pop_db реабилитирован (_sfx_cfg конкатенирует prefix + "_db"), мёртвых ключей 0.
+# В LI2 pop_db реабилитирован (_sfx_cfg конкатенирует prefix + "_db"), мёртвых ключей нет.
 KNOWN_DEAD_KEYS = set()
 
 # Префиксы и суффиксы для составного чтения ключей (_sfx_cfg)
@@ -327,6 +328,12 @@ def _get_test_mutation(k, item, base_val, tmp_path):
         # привязанное ужимается по константе INTRO_FIT_W, и ручка на него не влияет.
         st_setup["intro_cam"] = False
         return st_setup, 80.0
+    elif k == "intro_fit_max":
+        # «Потолок увеличения интро» (задание MO) — та же семья: только откреплённое интро.
+        # Значение заведомо ниже подгонки (её поднимает метрика в тесте ниже): иначе ручка
+        # не упёрлась бы в потолок и .jsx не изменился бы.
+        st_setup["intro_cam"] = False
+        return st_setup, 400.0
     elif k == "intro_riser_file":
         st_setup["intro_riser"] = True
         fake = str(tmp_path / "custom_riser.wav")
@@ -411,18 +418,24 @@ def test_base_style_matches_golden_reference(xml_subs, tmp_path):
 
 
 def test_schema_knobs_coverage_exact():
-    """3. Список исключений не растёт молча: каждый ключ либо тестируется, либо в EXCEPTIONS (цель <= 5)."""
+    """3. Сторож «каждая ручка»: перечень ключей собирается обходом схемы, не константой.
+
+    Число ключей тут не стережётся (задание NA): новая ручка обязана попасть в перечень
+    сама — она его и составляет, — а проверок «стало ровно столько-то» нет. Исключений
+    быть не должно: ключ в EXCEPTIONS — это ручка, которая на сборку не влияет (LI2 свёл
+    список к нулю, и он обязан остаться пустым).
+    """
     all_keys_set = set(ALL_SCHEMA_KEYS)
     tested_set = set(TESTED_KEYS)
-    exc_set = set(EXCEPTIONS.keys())
+    exc_set = set(EXCEPTIONS)
 
-    assert len(exc_set) <= 5, f"Число исключений ({len(exc_set)}) превышает цель (<= 5)"
-    assert tested_set | exc_set == all_keys_set, (
-        "В схеме появились новые ключи без тестов и исключений: %s"
-        % sorted(all_keys_set - (tested_set | exc_set))
+    assert not exc_set, (
+        "EXCEPTIONS обязан оставаться пустым, а в нём: %s — ручки, которые на сборку "
+        "не влияют" % sorted(exc_set)
     )
-    assert tested_set.isdisjoint(exc_set), (
-        "Ключи одновременно в проверенных и в исключениях: %s" % sorted(tested_set & exc_set)
+    assert tested_set == all_keys_set, (
+        "Перечень проверяемых ручек разошёлся со схемой — без проверки остались: %s"
+        % sorted(all_keys_set - tested_set)
     )
 
 
@@ -463,11 +476,15 @@ def test_exceptions_read_in_code_or_reported_as_dead():
 @pytest.mark.parametrize("knob_key", TESTED_KEYS)
 def test_each_knob_affects_assembly(knob_key, xml_subs, music_file, tmp_path, monkeypatch):
     """2. Каждая ручка влияет: изменение значения ключа меняет собранный .jsx относительно базы."""
-    if knob_key == "intro_fit_w":
-        # «Интро по ширине» (задание MI) подгоняет группу по ИЗМЕРЕННОЙ ширине строки:
-        # без метрики шрифта ручка мертва, а зависит она от того, какие шрифты стоят на
+    if knob_key in ("intro_fit_w", "intro_fit_max"):
+        # Ручки ОТКРЕПЛЁННОГО интро (задания MI, MO) подгоняют группу по ИЗМЕРЕННОЙ ширине
+        # строки: без метрики шрифта они мертвы, а зависит она от того, какие шрифты стоят на
         # машине. Буква = ровно кегль — как в test_intro_detach, числа не машины, а формулы.
-        monkeypatch.setattr(fonts, "text_width", lambda ps, text, size: float(size) * len(text))
+        # Потолку этого мало: строка фикстуры короткая, до ручки (400) подгонка не дотянулась
+        # бы, поэтому для него буква ещё уже — потолок обязан упереться.
+        width = (lambda ps, text, size: 1.0 * len(text)) if knob_key == "intro_fit_max" \
+            else (lambda ps, text, size: float(size) * len(text))
+        monkeypatch.setattr(fonts, "text_width", width)
 
     if knob_key.startswith("cam1_head_"):
         synthetic = {

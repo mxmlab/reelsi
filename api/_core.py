@@ -5,8 +5,9 @@
 Всё, что нужно ВСЕМ группам роутов и не относится ни к одной из них. Модули роутов
 импортируют отсюда `bp` и вешают на него свои @bp.route.
 """
-import json, os, subprocess, threading, time, traceback
+import json, os, signal, subprocess, threading, time, traceback
 from core import paths
+from core.fileio import atomic_json_dump
 
 # HERE — корень репозитория: личные файлы пользователя (job.lock, ui_state.json)
 # лежат там, а не в пакете. Корень считает ровно один модуль — core/paths.py,
@@ -65,6 +66,17 @@ def umsg_err(e):
     return {"error": str(e), "err": None, "err_vars": None}
 
 
+def sysexit_text(e):
+    """Понятный текст SystemExit для потоков заданий (задание MX).
+
+    `raise SystemExit(umsg('код', 'текст', var=…))` — принятый в проекте канал
+    ошибок (около 249 мест). Синхронные роуты ловят его и отдают через umsg_err, а
+    потоки заданий ловили только Exception, а SystemExit — BaseException: ошибка
+    («рото не посчитано…», «сборка прервана…») уходила из потока мимо лога и UI.
+    Разбор umsg живёт в ОДНОМ месте — umsg_err; второй копии тут нет."""
+    return umsg_err(e)["error"]
+
+
 def jstr(d, key, default=""):
     """Строковое значение поля JSON-тела запроса (задание HY).
 
@@ -81,12 +93,14 @@ def jstr(d, key, default=""):
 
 
 def kill_tree(p):
-    """Убить процесс ВМЕСТЕ С ДЕТЬМИ (задание IC, п. 6).
+    """Убить процесс ВМЕСТЕ С ДЕТЬМИ (задание IC, п. 6; POSIX — задание NC).
 
     Раньше эта функция была скопирована в трёх местах (api/gdrive.py, api/render.py,
     api/jobs.py) и копии разъезжались. Windows: `taskkill /F /T /PID` (две попытки —
     `/T` иногда таймаутит), затем `p.kill()` как последний шанс хотя бы за родителя.
-    Вне Windows taskkill нет вовсе: сразу `p.kill()`.
+    POSIX: свои процессы заданий стартуют в СВОЕЙ группе (см. task_popen_kwargs),
+    поэтому дерево гасится одним сигналом группе — иначе `p.kill()` снимал только
+    родителя, а внук (omni_asr с моделями) оставался жив с занятой видеопамятью.
     """
     if os.name == "nt":
         for _ in range(2):
@@ -97,10 +111,34 @@ def kill_tree(p):
                     return
             except Exception:
                 pass
+    else:
+        try:
+            pgid = os.getpgid(p.pid)
+        except OSError:                    # процесс уже кончился — ниже p.kill()
+            pgid = None
+        # Группу СЕРВЕРА не трогаем никогда: процесс, стартовавший без своей сессии
+        # (старый код, чужая обвязка), сидит в нашей группе — killpg убил бы и нас.
+        if pgid is not None and pgid != os.getpgrp():
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except OSError:
+                pass
     try:
         p.kill()
     except Exception:
         pass
+
+
+def task_popen_kwargs():
+    """Аргументы `subprocess.Popen` для процессов заданий (нарезка, рендер, rclone).
+
+    На POSIX задание стартует в СВОЕЙ группе процессов: «Стоп» гасит группу целиком
+    (`kill_tree` -> os.killpg), а без этого снимался только родитель, и внук
+    (omni_asr/AfterFX с моделями) оставался жив с занятой видеопамятью. На Windows
+    своя группа не нужна и не помогает: дерево там гасит `taskkill /T` по родству
+    процессов — поведение оставляем как было.
+    """
+    return {"start_new_session": True} if os.name == "posix" else {}
 
 
 # APP_NAME / APP_REFERER / app_out_dir самому _core не нужны — он их ПЕРЕЭКСПОРТИРУЕТ
@@ -176,6 +214,25 @@ def _host_is_local(host):
 _MUTATING_METHODS = ("POST", "PUT", "PATCH", "DELETE")
 _SITE_SAME = {"same-origin", "none"}
 
+# GET-роуты с ПОБОЧНЫМ действием (задание MZ, п. 5): открывают диалог выбора файла
+# (Tk-подпроцесс, /api/pick*) или пишут кэш волны РЯДОМ с файлом (/api/waveform).
+# Чужой странице хватало <img src> или <script src> на такой адрес — ответ ей не
+# прочитать, но диалог уже открылся, а файл на диске появился. Sec-Fetch-Site их и
+# так закрывал, а вот Origin проверялся только у изменяющих методов: браузер,
+# отправивший простой GET с Origin и без Sec-Fetch-Site, проходил. Поэтому у этих
+# путей Origin проверяется ровно как у POST. Остальные GET (статусы, списки) — как
+# раньше: чтение чужой странице ничего не даёт, а сломать его легко.
+_SIDE_EFFECT_GETS = ("/api/pickmedia", "/api/pickfiles", "/api/pickone",
+                     "/api/pickaudio", "/api/pickdir", "/api/waveform")
+
+
+def _origin_check_required():
+    """Проверять ли Origin у этого запроса: он обязателен у изменяющих методов и у
+    побочных GET (см. _SIDE_EFFECT_GETS)."""
+    if request.method in _MUTATING_METHODS:
+        return True
+    return request.method == "GET" and request.path in _SIDE_EFFECT_GETS
+
 
 def _origin_is_local(origin):
     """Origin (`схема://хост:порт`) — наш интерфейс? Сравниваем ХОСТ: схема и порт
@@ -204,7 +261,7 @@ def _block_dns_rebinding():
     if site is not None:
         if site.strip().lower() not in _SITE_SAME:
             return _forbidden_origin()
-    elif request.method in _MUTATING_METHODS:
+    elif _origin_check_required():
         origin = request.headers.get("Origin")
         if origin is not None and not _origin_is_local(origin):
             return _forbidden_origin()
@@ -302,7 +359,8 @@ def _never_serve(path):
 
 JOB = {"running": False, "log": [], "results": [], "failed": [], "done": False, "cancel": False,
        "log_base": 0,   # log_base = сколько строк срезано с начала (для ?since=)
-       "kind": "", "label": "", "progress": None}  # kind: cut|draft|build; progress: {"i","n"}
+       "kind": "", "label": "", "progress": None,  # kind: cut|draft|build; progress: {"i","n"}
+       "stalled": False}   # процесс нарезки молчит дольше CUT_STALL_S (задание NC)
 LOCK = threading.Lock()
 LOG_CAP = 4000          # ИИ-нарезка стримит тысячи строк — без кэпа лог растёт бесконечно
 
@@ -431,6 +489,7 @@ def job_finish():
     with LOCK:
         JOB["running"] = False
         JOB["done"] = True
+    journal_finish(JOB)          # закрытая запись в журнале: «не оборвано» (задание NC)
     _cross_lock_release()
 
 
@@ -442,7 +501,7 @@ def job_start(kind="", label="", **extra):
             return False
         JOB.update(running=True, log=[], results=[], failed=[], done=False, cancel=False,
                    log_base=0, kind=kind, label=label, progress=None, insmoved={},
-                   items=[], **extra)
+                   items=[], stalled=False, **extra)
     if not _cross_lock_acquire():          # соседний интерфейс уже что-то считает
         with LOCK:
             JOB["running"] = False
@@ -452,6 +511,9 @@ def job_start(kind="", label="", **extra):
         aicut.clear_cancel()   # прошлый «Стоп» не должен убивать ИИ-шаги нового джоба
     except Exception:
         pass
+    # Журнал заданий: снимок «что запущено» — сразу, до первого клипа (задание NC).
+    # После перезапуска сервера по нему видно, что задание было и на чём оборвалось.
+    journal_bind(JOB, kind=kind or "cut", label=label)
     return True
 
 
@@ -459,6 +521,149 @@ def set_progress(i, n):
     """Структурный прогресс джоба (клип i из n) — клиент рисует бар по нему."""
     with LOCK:
         JOB["progress"] = {"i": int(i), "n": int(n)}
+
+
+def set_stalled(flag):
+    """Флаг «процесс нарезки молчит дольше CUT_STALL_S» (задание NC).
+
+    Процесс при этом НЕ убивается: долгая ASR молчит законно. Клиент показывает
+    флаг в статусе, чтобы зависшая нарезка была видна, а не выглядела работой.
+    """
+    with LOCK:
+        JOB["stalled"] = bool(flag)
+
+
+# --------------------------------------------------------------------------- #
+# Журнал заданий: состояние переживает перезапуск сервера (задание NC)
+# --------------------------------------------------------------------------- #
+# JOB, RJOB и VJOB живут В ПАМЯТИ: после рестарта сервера /api/status отдавал
+# дефолты, и «задание не запускалось» было не отличить от «умерло на 90 %».
+# Журнал — маленький JSON со снимком последнего задания каждого вида: пишется на
+# старте, на смене элемента очереди и на финише. НЕ на каждую строку лога: строк
+# бывают тысячи, а журналу достаточно ответить «что шло и докуда дошло».
+JOB_STATE_PATH = env("JOB_STATE") or paths.root("job_state.json")
+JOURNAL_LOCK = threading.Lock()
+# Слот задания по его виду: JOB один на нарезку/сборку/черновик, у рендера и
+# генерации видео свои джобы — в журнале они не должны вытеснять друг друга
+# (генерация видео идёт в облаке и спокойно живёт параллельно нарезке).
+_SLOT_BY_KIND = {"cut": "job", "draft": "job", "build": "job",
+                 "render": "render", "video": "video"}
+# Стадии очереди, на которых файл реально в работе (не wait/done/error/stopped).
+_LIVE_STAGES = ("cut", "jsx", "check", "aep", "render")
+# id(job) -> запись привязки. Ключ — id(), поэтому рядом лежит и САМ словарь: без
+# ссылки он может быть собран сборщиком мусора, а его id — переиспользован чужим
+# словарём (и чужое состояние уехало бы в журнал под нашим именем).
+_JOURNAL_BOUND = {}
+# Слот -> запись, оборванная перезапуском сервера. Заполняется ОДИН раз на старте
+# (journal_boot) и снимается, когда в этот слот стартует новое задание.
+_JOB_INTERRUPTED = {}
+
+
+def _journal_read():
+    """Содержимое журнала (или {}): битый/отсутствующий файл — не повод падать статусу."""
+    try:
+        with open(JOB_STATE_PATH, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _journal_item(items):
+    """Имя элемента, на котором задание остановилось: сначала тот, что В РАБОТЕ,
+    иначе первый незавершённый. По нему UI говорит, докуда дошло."""
+    for it in items:
+        if it.get("stage") in _LIVE_STAGES:
+            return str(it.get("name") or "")
+    for it in items:
+        if it.get("stage") not in ("done", "error", "stopped"):
+            return str(it.get("name") or "")
+    return ""
+
+
+def journal_write(slot, kind, label="", status="running", items=None, progress=None,
+                  started=None):
+    """Записать снимок задания в журнал (атомарно, core.fileio).
+
+    Сбой записи не должен ронять задание: журнал вспомогательный, о неудаче
+    сообщаем в консоль и работаем дальше (как _vhist_write у истории видео)."""
+    items = [dict(it) for it in (items or []) if isinstance(it, dict)]
+    now = int(time.time())
+    rec = {"slot": slot, "kind": kind, "label": str(label or ""),
+           "started": int(started or now), "updated": now, "status": status,
+           "item": _journal_item(items), "items": items, "progress": progress}
+    with JOURNAL_LOCK:
+        jobs = _journal_read().get("jobs")
+        jobs = dict(jobs) if isinstance(jobs, dict) else {}
+        jobs[slot] = rec
+        if status == "running":
+            _JOB_INTERRUPTED.pop(slot, None)   # новое задание переписало оборванное
+        try:
+            # ensure_ascii=False уже внутри atomic_json_dump: кириллица в журнале
+            # остаётся читаемой, а повторный аргумент — ошибка вызова (ловилась тестом).
+            atomic_json_dump(JOB_STATE_PATH, {"version": 1, "jobs": jobs}, indent=1)
+        except Exception as e:
+            print("job state:", e)
+    return rec
+
+
+def journal_bind(job, kind, label="", progress_key="progress"):
+    """Привязать джоб к журналу: смена элементов очереди пойдёт в файл сама.
+
+    Привязка — по объекту джоба (id()), поэтому items_init/item_set/item_done/
+    item_fail пишут журнал ОДНИМ местом и для JOB, и для RJOB: отдельного хука на
+    два десятка вызовов не заводим (главный инвариант очереди этапов, задание FA)."""
+    entry = {"job": job, "slot": _SLOT_BY_KIND.get(kind, kind), "kind": kind,
+             "label": label, "progress_key": progress_key, "started": int(time.time())}
+    _JOURNAL_BOUND[id(job)] = entry
+    journal_write(entry["slot"], kind, label, "running",
+                  items=job.get("items") or [], progress=job.get(progress_key),
+                  started=entry["started"])
+    return entry
+
+
+def journal_touch(job, status="running"):
+    """Переписать журнал текущим состоянием ПРИВЯЗАННОГО джоба (смена элемента,
+    финиш). Джоб не привязан — молча выходим: журнал не про него."""
+    entry = _JOURNAL_BOUND.get(id(job))
+    if not entry or entry.get("job") is not job:
+        return
+    journal_write(entry["slot"], entry["kind"], entry["label"], status,
+                  items=job.get("items") or [], progress=job.get(entry["progress_key"]),
+                  started=entry["started"])
+
+
+def journal_finish(job):
+    """Финиш задания: в журнале остаётся закрытая запись (status=done)."""
+    journal_touch(job, status="done")
+
+
+def journal_interrupted(slot):
+    """Задание этого слота, оборванное перезапуском сервера (или None)."""
+    rec = _JOB_INTERRUPTED.get(slot)
+    return dict(rec) if rec else None
+
+
+def journal_boot():
+    """Старт сервера: незакрытая запись журнала — задание, оборванное перезапуском.
+
+    «running» в файле означает ровно это: задание писали, а финиша не было, значит
+    процесс сервера умер посреди работы. Помечаем такие записи в ПАМЯТИ (в файле
+    оставляем как есть: иначе следующий перезапуск счёл бы их закрытыми)."""
+    jobs = _journal_read().get("jobs")
+    if not isinstance(jobs, dict):
+        return {}
+    lost = {}
+    for slot, rec in jobs.items():
+        if isinstance(rec, dict) and rec.get("status") == "running":
+            r = dict(rec)
+            r["status"] = "interrupted"
+            lost[slot] = r
+    _JOB_INTERRUPTED.update(lost)
+    return lost
+
+
+journal_boot()
 
 
 # --- очередь этапов пофайловая (задание FA) ------------
@@ -483,6 +688,7 @@ def items_init(job, lock, names):
     with lock:
         job["items"] = [{"name": str(n), "stage": "wait", "pct": None,
                          "path": "", "reason": ""} for n in names]
+    journal_touch(job)          # снимок очереди в журнал заданий (задание NC)
 
 
 def item_set(job, lock, name, **kw):
@@ -492,6 +698,7 @@ def item_set(job, lock, name, **kw):
         if it is None:
             return
         it.update(kw)
+    journal_touch(job)
 
 
 def item_done(job, lock, name, path, bucket="results"):
@@ -504,6 +711,7 @@ def item_done(job, lock, name, path, bucket="results"):
         it = _item(job, name)
         if it is not None:
             it.update(stage="done", path=str(path), pct=None)
+    journal_touch(job)
 
 
 def item_fail(job, lock, name, reason, bucket="failed"):
@@ -516,6 +724,7 @@ def item_fail(job, lock, name, reason, bucket="failed"):
         it = _item(job, name)
         if it is not None:
             it.update(stage="error", reason=str(reason))
+    journal_touch(job)
 
 
 # Файл состояния UI. Переопределяется через REELSI_UI_STATE — иначе ЛЮБОЙ второй

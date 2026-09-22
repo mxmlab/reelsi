@@ -533,6 +533,9 @@ def probe_media(url, timeout=25):
         pr = subprocess.run(["ffprobe", "-v", "error", "-of", "json",
                              # без человеческого UA часть сайтов (Wikimedia) отдаёт 400
                              "-user_agent", "Mozilla/5.0 (compatible; Reelsi/1.0)",
+                             # длительность идёт ВМЕСТЕ с размером и кодеком: тип референса
+                             # решается по всем полям сразу, и второй заход ffprobe по той
+                             # же ссылке (core/media.probe_duration) был бы лишним запросом
                              "-show_entries", "format=duration:stream=width,height,codec_name",
                              url], capture_output=True, text=True, timeout=timeout)
         d = json.loads(pr.stdout or "{}")
@@ -1204,6 +1207,9 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
                     continue
 
                 out_path = f"{out_base}.webm" if is_webm else f"{out_base}.mp4"
+                # os.replace, а не core.fileio: ролик скачивается ПОТОКОМ и в памяти его
+                # нет, а публиковать можно только прошедшее проверки выше (Content-Type,
+                # Content-Length, сигнатура) — они же решают, идти ли к следующему URL
                 os.replace(tmp_path, out_path)
                 tmp_path = None
                 last = None

@@ -28,6 +28,7 @@ import os, re, json, math, threading, time, urllib.request
 from collections import Counter
 import numpy as np
 from core.fileio import atomic_bytes_write, atomic_json_dump
+from core.media import probe_duration
 
 from core import paths
 from core.app_meta import env, console_emit, http_req, wrap_emit
@@ -1630,12 +1631,8 @@ def _thumb_b64(path):
     try:
         cmd = ["ffmpeg", "-y", "-v", "error"]
         if _media_kind(path) == "video":
-            try:                                                # середина ролика
-                pr = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                                     "-of", "csv=p=0", path], capture_output=True, text=True, timeout=30)
-                mid = max(0.0, float((pr.stdout or "0").strip() or 0) / 2)
-            except Exception:
-                mid = 1.0
+            dur = probe_duration(path)                    # общая проба: кэш + таймаут
+            mid = max(0.0, dur / 2) if dur else 1.0       # середина ролика (не прочли — 1 с)
             cmd += ["-ss", f"{mid:.2f}", "-i", path, "-frames:v", "1"]
         else:
             cmd += ["-i", path, "-frames:v", "1"]

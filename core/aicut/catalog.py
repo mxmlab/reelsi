@@ -12,11 +12,12 @@
 себя как раньше (фолбэк-списки в config.py). Обновляется раз в сутки при первом
 обращении, кнопка «Обновить» в ⚙ тянет его силой (force).
 """
-import os, json, time, tempfile
+import os, json, time
 import urllib.request
 
 from .config import AI_CONFIG_PATH, APP_NAME, APP_REFERER
 from core.app_meta import env, http_req
+from core.fileio import atomic_json_dump
 
 CATALOG_URL = "https://models.dev/api.json"
 CATALOG_TTL = 86400        # раз в сутки
@@ -46,28 +47,15 @@ def _load_disk(path):
 
 
 def _save_disk(path, data):
-    """Записать кэш атомарно: уникальный временный файл + os.replace.
+    """Записать кэш атомарно (core.fileio.atomic_json_dump).
 
-    Имя tmp уникально (mkstemp), а не фиксированный path+".tmp": две одновременные
-    кнопки «Обновить список» (вкладка ИИ и вкладка Видео) писали в ОДИН и тот же
-    файл, и содержимое кэша перемешивалось. Приём тот же, что при скачивании
-    роликов — core/aicut/video.py."""
-    tmp = None
+    Имя tmp уникально (mkstemp внутри fileio), а не фиксированный path+".tmp": две
+    одновременные кнопки «Обновить список» (вкладка ИИ и вкладка Видео) писали в
+    ОДИН и тот же файл, и содержимое кэша перемешивалось — на этом и поймали."""
     try:
-        fd, tmp = tempfile.mkstemp(prefix=os.path.basename(path) + ".tmp.",
-                                   dir=os.path.dirname(path) or ".")
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
-        os.replace(tmp, path)
-        tmp = None
+        atomic_json_dump(path, data)
     except Exception:
         pass                                  # кэш — не критичный путь
-    finally:
-        if tmp:
-            try:
-                os.remove(tmp)                # replace не состоялся — убираем за собой
-            except Exception:
-                pass
 
 
 # Состояние каталога в памяти процесса: словарь и время загрузки. По ним не

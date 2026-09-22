@@ -126,7 +126,10 @@ def check_syntax(path, raw, rep):
     try:
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(raw)
-        p = subprocess.run(["node", "--check", tmp], capture_output=True, text=True)
+        # Таймаут: `node --check` на файле в сотни КБ отвечает за доли секунды, а
+        # зависший node держал бы всю проверку .jsx (её зовут и из сборки, и вручную)
+        p = subprocess.run(["node", "--check", tmp], capture_output=True, text=True,
+                           timeout=60)
         if p.returncode != 0:
             first = (p.stderr or "").strip().splitlines()
             rep.err("синтаксис JS битый: " + (first[1] if len(first) > 1 else (first[0] if first else "?")))

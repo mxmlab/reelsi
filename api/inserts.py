@@ -4,7 +4,7 @@
 """
 import os, threading
 from flask import request, jsonify
-from ._core import bp, umsg_err, jstr
+from ._core import bp, umsg_err, jstr, sysexit_text
 from core import paths
 from core.umsg import umsg
 
@@ -232,6 +232,11 @@ def api_insertlib_describe():
                 if r.get("error"):
                     with ILL_LOCK:
                         ILL_JOB["error"] = r["error"]
+            except SystemExit as e:
+                # SystemExit из insertlib (umsg) — BaseException: без ветки описание
+                # заканчивалось молча, и в статусе не было ни ошибки, ни причины (MX).
+                with ILL_LOCK:
+                    ILL_JOB["error"] = sysexit_text(e)
             except Exception as e:
                 with ILL_LOCK:
                     ILL_JOB["error"] = f"{type(e).__name__}: {e}"

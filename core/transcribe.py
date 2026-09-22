@@ -4,6 +4,7 @@
 import json, os, hashlib, re
 from core import cuda_env
 from core.device import ct2_device
+from core.fileio import atomic_json_dump
 cuda_env.setup()
 
 DEFAULT_MODEL_SIZE = "large-v3"
@@ -43,15 +44,10 @@ def load_words_cache(path):
 
 
 def save_words_cache(path, words):
-    """Атомарная запись кэша (tmp + os.replace): прерывание не оставляет огрызок."""
+    """Атомарная запись кэша (core.fileio.atomic_json_dump): прерывание не оставляет огрызок."""
     if not words:
         return                       # пустой транскрипт не кэшируем (см. load_words_cache)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(words, f, ensure_ascii=False)
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    atomic_json_dump(path, words)
 
 
 _MODEL = None  # cache (key, WhisperModel) so a batch loads large-v3 only once

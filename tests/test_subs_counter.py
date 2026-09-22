@@ -70,6 +70,22 @@ def _subs_data(jsx):
     return json.loads(m.group(1)) if m else None
 
 
+def _func(src, name):
+    """Вырезать `function name(...){...}` целиком по балансу скобок."""
+    m = re.search(r"function\s+%s\s*\(" % re.escape(name), src)
+    assert m, f"в исходнике не нашлась функция {name}"
+    i = src.index("{", m.end() - 1)
+    depth = 0
+    for j in range(i, len(src)):
+        if src[j] == "{":
+            depth += 1
+        elif src[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[m.start():j + 1]
+    raise AssertionError(f"не сошлись скобки у {name}")
+
+
 def test_golden_empty_hl_count_jsx_побайтово_прежний(xml_subs, tmp_path):
     """Golden: при пустом hl_count или None .jsx остаётся побайтово прежним."""
     jsx_none, _ = _build(xml_subs, tmp_path, hl_count=None, name="out_none.jsx")
@@ -150,10 +166,14 @@ def test_hl_count_remap_on_intro_remove(xml_subs, tmp_path):
     assert "ADBE Slider Control" not in jsx_removed
 
 
-def test_ten_doors_contain_hl_count():
-    """Все 10 дверей содержат поле hl_count рядом с hl_breaks."""
+def test_every_door_contains_hl_count():
+    """Все двери содержат поле hl_count рядом с hl_breaks.
+
+    Дверей было десять: панель слов предпросмотра нарезки (pvwSaveYellow) удалена
+    вместе со своими контейнерами, её дверь из списка ушла — остальные девять
+    проверяются как раньше.
+    """
     ae_js = open(os.path.join(ROOT, "static", "app", "90-ae.js"), encoding="utf-8").read()
-    pvw_js = open(os.path.join(ROOT, "static", "app", "60-preview.js"), encoding="utf-8").read()
     ins_js = open(os.path.join(ROOT, "static", "app", "85-inserts-view.js"), encoding="utf-8").read()
     api_build = open(os.path.join(ROOT, "api", "build.py"), encoding="utf-8").read()
     xml_build = open(os.path.join(ROOT, "core", "xml2ae", "build.py"), encoding="utf-8").read()
@@ -172,11 +192,9 @@ def test_ten_doors_contain_hl_count():
     assert re.search(r"hl_breaks:\(HLXML===xml\)\?\[\.\.\.BRK\]:\[\],\s*hl_count:\(HLXML===xml\)\?\[\.\.\.CNT\]:\[\]", ae_js)
     # 7. 85-inserts-view.js: ipvPlanBody
     assert re.search(r"hl_breaks:\(HLXML===xml\)\?\[\.\.\.BRK\]:\[\],[^\n\r]*\r?\n\s*hl_count:\(HLXML===xml\)\?\[\.\.\.CNT\]:\[\]", ins_js)
-    # 8. 60-preview.js: pvwSaveYellow
-    assert re.search(r"hl_breaks=\[\.\.\.PVW\.brk\];[^\n\r]*hl_count=\[\.\.\.PVW\.cnt\];", pvw_js)
-    # 9. api/build.py: _norm_build_jobs
+    # 8. api/build.py: _norm_build_jobs
     assert re.search(r"hl_breaks=j\.get\(\"hl_breaks\"\)[^\n\r]*,\r?\n\s*hl_count=j\.get\(\"hl_count\"\)", api_build)
-    # 10. xml2ae/build.py: scene_plan & parse
+    # 9. xml2ae/build.py: scene_plan & parse
     assert re.search(r"hl_breaks=None,\s*hl_count=None", xml_build)
     assert re.search(r"brk_raw\s*=.*?hl_breaks.*?\n\s*cnt_raw\s*=.*?hl_count", xml_build)
 
@@ -194,14 +212,16 @@ def test_subs_counter_syntax_node(xml_subs, tmp_path):
 
 
 def test_chip_cnt_css_class_and_no_inline_style():
-    """В pvwRender убран inline-стиль кнопки счётчика, а класс .chip-cnt описан в app.css."""
+    """Кнопка счётчика создаётся общей функцией, а класс .chip-cnt описан в app.css.
+
+    Панель слов предпросмотра нарезки (pvwRender) удалена — чипы рисует одна общая
+    функция wordChipEl, у неё и проверяем отсутствие inline-стиля.
+    """
     pvw_js = open(os.path.join(ROOT, "static", "app", "60-preview.js"), encoding="utf-8").read()
     css = open(os.path.join(ROOT, "static", "app.css"), encoding="utf-8").read()
 
-    m = re.search(r"function pvwRender\(\)\{[\s\S]*?function pvwToggleCount", pvw_js)
-    assert m, "pvwRender не найден в 60-preview.js"
-    render_code = m.group(0)
-    assert "cntBtn.style" not in render_code
+    chip = _func(pvw_js, "wordChipEl")
+    assert "cntBtn.style" not in chip, "стиль кнопки счётчика снова правится инлайном"
 
     assert ".chip-cnt" in css, "класс .chip-cnt не найден в app.css"
     assert ".chip-cnt.on" in css, "состояние .chip-cnt.on не найдено в app.css"
@@ -220,9 +240,7 @@ def test_chip_cnt_created_by_single_common_function():
     assert len(chip_cnt_creations) == 1, f"Ожидалось ровно одно создание .chip-cnt, найдено: {len(chip_cnt_creations)}"
 
     # Кнопка создаётся внутри общей функции wordChipEl
-    m = re.search(r"function wordChipEl\([\s\S]*?\n\}", pvw_js)
-    assert m, "wordChipEl не найден в 60-preview.js"
-    assert "chip-cnt" in m.group(0)
+    assert "chip-cnt" in _func(pvw_js, "wordChipEl")
 
 
 def test_is_number_word_single_instance():

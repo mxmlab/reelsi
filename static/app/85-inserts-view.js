@@ -837,11 +837,13 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
           // Жёлтое слово режима «по слову» и стопки въезжает так же, как его слой в AE
           // (задание MA): момент — начало слова (s плана = inPoint слоя), у строки из одного
           // слова — момент ZH из плана (words[0].t0). Длительность — hd плана, если план её
-          // знает (короткое слово); иначе превью берёт общую hl_dur, как и раньше.
+          // знает: у стопки/слова это поле элемента, у строки из ОДНОГО слова — поле слова
+          // (задание MN); нет её — превью берёт общую hl_dur, как и раньше.
           const w0=(sub.words&&sub.words[0])||null;
           const t0=isY?((w0&&w0.t0!=null)?w0.t0:sub.s):null;
           const hl0=(isY&&t0!=null)?(' data-hl0="'+t0+'"'):'';
-          const hd=(isY&&sub.hd!=null)?(' data-hld="'+sub.hd+'"'):'';
+          const wHd=(w0&&w0.hd!=null)?w0.hd:sub.hd;
+          const hd=(isY&&wHd!=null)?(' data-hld="'+wHd+'"'):'';
           return '<span class="pvsubw_wd'+(isY?' yel':'')+'"'+hl0+hd+' style="'+wCss+'">'+esc(sub.w)+'</span>';
         }
       }).join(' ');

@@ -75,6 +75,22 @@ def _subs_data(jsx):
     return json.loads(m.group(1)) if m else None
 
 
+def _func(src, name):
+    """Вырезать `function name(...){...}` целиком по балансу скобок."""
+    m = re.search(r"function\s+%s\s*\(" % re.escape(name), src)
+    assert m, f"в исходнике не нашлась функция {name}"
+    i = src.index("{", m.end() - 1)
+    depth = 0
+    for j in range(i, len(src)):
+        if src[j] == "{":
+            depth += 1
+        elif src[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[m.start():j + 1]
+    raise AssertionError(f"не сошлись скобки у {name}")
+
+
 def test_golden_empty_hl_joins_jsx_побайтово_прежний(xml_subs, tmp_path):
     """Golden: при пустом hl_joins или None .jsx остаётся побайтово прежним."""
     jsx_none, _ = _build(xml_subs, tmp_path, hl_joins=None, name="out_none.jsx")
@@ -174,10 +190,14 @@ def test_hl_joins_remap_on_intro_remove(xml_subs, tmp_path):
     assert "r_widths" in jsx
 
 
-def test_ten_doors_contain_hl_joins():
-    """Все 10 дверей содержат поле hl_joins рядом с hl_breaks / hl_count."""
+def test_every_door_contains_hl_joins():
+    """Все двери содержат поле hl_joins рядом с hl_breaks / hl_count.
+
+    Дверей было десять: панель слов предпросмотра нарезки (pvwSaveYellow) удалена
+    вместе со своими контейнерами, её дверь из списка ушла — остальные девять
+    проверяются как раньше.
+    """
     ae_js = open(os.path.join(ROOT, "static", "app", "90-ae.js"), encoding="utf-8").read()
-    pvw_js = open(os.path.join(ROOT, "static", "app", "60-preview.js"), encoding="utf-8").read()
     ins_js = open(os.path.join(ROOT, "static", "app", "85-inserts-view.js"), encoding="utf-8").read()
     api_build = open(os.path.join(ROOT, "api", "build.py"), encoding="utf-8").read()
     xml_build = open(os.path.join(ROOT, "core", "xml2ae", "build.py"), encoding="utf-8").read()
@@ -196,11 +216,9 @@ def test_ten_doors_contain_hl_joins():
     assert re.search(r"hl_joins:\s*\(HLXML===xml\)\s*\?\s*\[\.\.\.JNS\]\s*:\s*\[\]", ae_js)
     # 7. 85-inserts-view.js: ipvPlanBody
     assert re.search(r"hl_joins:\s*\(HLXML===xml\)\s*\?\s*\[\.\.\.JNS\]\s*:\s*\[\]", ins_js)
-    # 8. 60-preview.js: pvwSaveYellow
-    assert re.search(r"c\.job\.hl_joins\s*=\s*\[\.\.\.PVW\.jns\];", pvw_js)
-    # 9. api/build.py: _norm_build_jobs
+    # 8. api/build.py: _norm_build_jobs
     assert re.search(r"hl_joins\s*=\s*j\.get\(\"hl_joins\"\)", api_build)
-    # 10. xml2ae/build.py: scene_plan & to_ae_full
+    # 9. xml2ae/build.py: scene_plan & to_ae_full
     assert re.search(r"hl_joins\s*=\s*None", xml_build)
     assert re.search(r"joins_raw\s*=", xml_build)
 
@@ -217,14 +235,17 @@ def test_hl_joins_syntax_node(xml_subs, tmp_path):
     assert rep.ok, f"verify_jsx failed: {rep.errors}"
 
 
-def test_pvw_paint_join_no_dash_char():
-    """В pvwPaint при склейке (isJns) палочка исчезает: нет присваивания '—'."""
+def test_words_paint_join_no_dash_char():
+    """При склейке (isJns) палочка исчезает: нет присваивания '—'.
+
+    Панель слов предпросмотра нарезки (pvwPaint) удалена — отрисовка чипов и палочек
+    осталась ОДНОЙ общей функцией wordsPaint, её и стережём: у склейки textContent
+    пустой, у разрыва — «|».
+    """
     pvw_js = open(os.path.join(ROOT, "static", "app", "60-preview.js"), encoding="utf-8").read()
-    m = re.search(r"function pvwPaint\(\)\{[\s\S]*?\n\}", pvw_js)
-    assert m, "pvwPaint не найден в 60-preview.js"
-    paint_code = m.group(0)
-    assert "el.textContent='—'" not in paint_code
-    assert 'el.textContent="—"' not in paint_code
+    paint_code = _func(pvw_js, "wordsPaint")
+    assert "el.textContent=''" in paint_code, "у склейки палочка не гасится"
+    assert "el.textContent='|'" in paint_code, "у разрыва палочка не рисуется"
     assert "'—'" not in paint_code
     assert '"—"' not in paint_code
 

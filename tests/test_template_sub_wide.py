@@ -190,7 +190,7 @@ console.log(JSON.stringify(res));
 @pytest.mark.parametrize("loop_key, loop_code", [
     ("words", SUBS_LOOP_WORDS.replace("%(sub_count_code)s", "").replace("%(hl_blur_call)s", "").replace("%(hl_dur_js)s", "HL_DUR")),
     ("words_joined", SUBS_LOOP_WORDS_JOINED.replace("%(sub_count_code)s", "").replace("%(hl_blur_call)s", "").replace("%(hl_dur_js)s", "HL_DUR")),
-    ("rows", SUBS_LOOP_ROWS.replace("%(sub_rows)s", "_SUB_ROWS_DATA").replace("%(sub_step)g", "_SUB_STEP_DATA").replace("%(hl_blur_call)s", "")),
+    ("rows", SUBS_LOOP_ROWS.replace("%(sub_rows)s", "_SUB_ROWS_DATA").replace("%(sub_step)g", "_SUB_STEP_DATA").replace("%(hl_blur_call)s", "").replace("%(hl_dur_js)s", "HL_DUR")),
 ])
 def test_sub_wide_geometry_invariant_in_node(loop_key, loop_code, tmp_path):
     """Инвариант геометрии: для каждого слоя X(3) - (SW - W)/2 == X(1) с точностью 1e-6."""

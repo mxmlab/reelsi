@@ -212,20 +212,19 @@ def test_back_case_lower_as_is_upper(xml_subs, tmp_path):
 
 
 def test_поле_back_проходит_через_все_двери():
-    """Поле back проходит через все 6 дверей интерфейса (текстовая проверка исходников)."""
-    pvw_js = open(os.path.join(ROOT, "static", "app", "60-preview.js"), encoding="utf-8").read()
+    """Поле back проходит через все двери интерфейса (текстовая проверка исходников).
+
+    Двери панели слов предпросмотра нарезки (pvwOpen/pvwCommitIntro) удалены вместе
+    с её контейнерами — остались двери AE-панели, и поле обязано пройти каждую.
+    """
     ae_js = open(os.path.join(ROOT, "static", "app", "90-ae.js"), encoding="utf-8").read()
 
-    pvw_open = _func(pvw_js, "pvwOpen")
-    pvw_commit = _func(pvw_js, "pvwCommitIntro")
     select_ae = _func(ae_js, "selectAE")
     capture_ae = _func(ae_js, "captureAE")
     ai_intro = _func(ae_js, "aiIntroAllRun")
     resolve_intro = _func(ae_js, "resolveIntroFor")
 
     doors = [
-        ("60-preview.js: pvwOpen", pvw_open),
-        ("60-preview.js: pvwCommitIntro", pvw_commit),
         ("90-ae.js: selectAE", select_ae),
         ("90-ae.js: captureAE", capture_ae),
         ("90-ae.js: aiIntroAllRun", ai_intro),

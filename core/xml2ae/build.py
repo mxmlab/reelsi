@@ -4,7 +4,6 @@
 
 Здесь же virtual_edl — тот же разбор, но для черновика ffmpeg, без AE.
 """
-import json
 import os
 import re
 from core import paths
@@ -13,29 +12,33 @@ from core import fonts as _fonts
 from core import styles as _styles
 from core.fileio import atomic_text_write
 
-from .jsutil import _asset_or, _fill_js, _jd, _js, _js_multiline, _r
+from .jsutil import _fill_js, _jd, _js, _js_multiline, _r
 from .layout import (DEFAULT_DISCLAIMER, DISC_FIT_W, EASE_DEFAULT, HL_DUR, HL_EASE_IN, HL_EASE_OUT,
-                     INS_C1_HIGH, INS_C2_BASE, INS_C2_PEAK, INS_EXIT,
-                     INS_RISE_DY, INS_RISE_S0, INS_RISE_ENTER, INTRO_BASE_Y,
-                     INTRO_F_DUR, INTRO_F_OUT, INTRO_FIT_W, INTRO_HOLD, INTRO_LINE_STEP,
-                     INTRO_SCALE,
+                     INS_EXIT, INS_RISE_ENTER,
+                     INTRO_F_DUR, INTRO_FIT_W, INTRO_LINE_STEP, INTRO_SCALE,
                      SHADE_BLUR, SHADE_DY, SHADE_H, SHADE_OX, SHADE_OY, SHADE_REF_W, SHADE_SCALE,
                      SHADE_W, SHADE_X,
                      SUB_BG_SH_DIR, SUB_BG_SH_DIST,
                      SUB_BG_SH_OP, SUB_BG_SH_SOFT,
                      cover_sweep,
-                     _anim_keys,
-                     _blur_keys, _cam1_drift_keys, _cam1_jump_keys, _cam1_pos_keys,
-                     _cam1_zoom_keys, _cam1_follow_keys, _cam_change_frames, _censor_windows,
-                     _fill_slack, _fit_scale, _ins_card, _ins_enter_exit, _ins_plate, _ins_scale,
-                     _intro_group_window, _intro_i_dy, _media_dims, _project_base,
-                     _show_segments, _span_roto_plan, _stack_layout,
-                     _zoom_key_eases, _zoom_key_holds, _zoom_max,
-                     hl_appear_dur, intro_big_layout, intro_hits_subs,
-                     intro_line_sizes, intro_line_ys, intro_sub_window)
-from .parse import Cancelled, HERE, _is_image, parse_full
-from .template import (AE_FULL, SUBS_LOOP_WORDS, SUBS_LOOP_ROWS, SUBS_LOOP_WORDS_JOINED,
-                       SUBS_LOOP_STACK, SUBS_LOOP_STACK_JOINED)
+                     _cam_change_frames,
+                     _ins_enter_exit, _ins_scale,
+                     _media_dims, _project_base, _stack_layout,
+                     _zoom_max)
+from .parse import Cancelled, HERE, parse_full
+# Числа огибающей звука глитча переехали в plan_audio.py (этап 4 распила scene_plan), но
+# остаются контрактом сборки: их берут снаружи (tests/test_intro_anims_and_glitch_sound.py)
+# по-прежнему из build — второй копии чисел нет, это тот же объект.
+from .plan_audio import (GLITCH_SFX_ATTACK_S, GLITCH_SFX_HOLD_S,  # noqa: F401
+                         GLITCH_SFX_PRE_S, GLITCH_SFX_QUIET_DB, GLITCH_SFX_RELEASE_S,
+                         AudioInputs, plan_audio)
+from .plan_camera import CameraInputs, plan_camera
+from .plan_inserts import (InsertTimingInputs, InsertsInputs, plan_insert_timings,
+                           plan_inserts)
+from .plan_intro import IntroInputs, _g_at, _grp_big_i, plan_intro
+from .plan_intro_tpl import IntroTplInputs, plan_intro_tpl
+from .plan_subs import SubsInputs, plan_subs
+from .template import AE_FULL
 
 # Цвет камер через Lumetri (задание ZJ): ключ плана -> matchName эффекта в AE и подпись
 # для лога. Номера сняты архитектором с живого AE 26.2 по свойствам эффекта (ADBE Lumetri),
@@ -202,7 +205,7 @@ def _intro_line_font(line, intro_font_ps, intro_hl_font_ps):
 
 def _intro_fit_ds(lines, ts, te, ds, w, G, cam_keys, fps, st, intro_font_ps,
                   intro_hl_font_ps, fsize, holds=None, hold=None, big_w=None,
-                  fit_w=None, both_ways=False):
+                  fit_w=None, both_ways=False, fit_max=None):
     """Автофит группы интро (задание BP): строка видна как lineW·(iSc/100)·G·Z
     (iSc = INTRO_SCALE·ds/100 — масштаб прекомпа, G — общий масштаб интро, Z — зум
     Камеры 1), и ds подбирается так, чтобы эта ширина была ровно fit_w·W.
@@ -225,7 +228,13 @@ def _intro_fit_ds(lines, ts, te, ds, w, G, cam_keys, fps, st, intro_font_ps,
     его некому (зум Камеры 1 в расчёт не входит, cam_keys пуст), поэтому группа садится
     на ширину в ОБЕ стороны — ds = fit, и короткая строка растягивается, как раньше её
     растягивал зум. Привязанное (both_ways=False) по-прежнему только ужимается: потолок
-    ему задаёт ручной gs, а ширину — зум камеры."""
+    ему задаёт ручной gs, а ширину — зум камеры.
+
+    fit_max — «Потолок увеличения интро, %» (задание MO), проценты (100…1000):
+    ds = min(fit, fit_max) у откреплённого интро. Режется только УВЕЛИЧЕНИЕ: ужатие
+    длинной строки потолком не ограничивается (fit < 100 при любом потолке ≥ 100).
+    None — потолка нет (привязанное интро ручку не читает вовсе). Без потолка одно
+    короткое слово раздувалось до 667–819 % (≈780 px высотой)."""
     if not lines:
         return ds
     linew = 0.0
@@ -242,7 +251,10 @@ def _intro_fit_ds(lines, ts, te, ds, w, G, cam_keys, fps, st, intro_font_ps,
     z = _zoom_max(cam_keys, fps, ts, te, holds=holds, hold=hold)
     _fw = INTRO_FIT_W if fit_w is None else float(fit_w)
     fit = 100.0 * w * _fw / (linew * (INTRO_SCALE / 100.0) * G * (z / 100.0))
-    return fit if both_ways else min(ds, fit)
+    if both_ways:
+        # Потолок увеличения (задание MO): min(fit, потолок) — режет рост, ужатие нет.
+        return fit if fit_max is None else min(fit, float(fit_max))
+    return min(ds, fit)
 
 
 def _parse_intro_count(text, raw_dec=None):
@@ -409,19 +421,6 @@ def _intro_appear_dur(anim, count=False):
     return float(INTRO_F_DUR)
 
 
-# Звук глитча в секундах (не зависит от fps ролика): огибающая слоя на ГРУППУ глитч-слов
-# (ПРАВКА 1/2). Слой стартует за GLITCH_SFX_PRE_S до первого слова группы — это смещение
-# снято с эталона (17 кадров при 30 fps) и его не менять. До первого слова — тишина,
-# нарастание до glitch_db за GLITCH_SFX_ATTACK_S, полка, затем спад за
-# GLITCH_SFX_RELEASE_S до GLITCH_SFX_QUIET_DB; слой кончается через один кадр после
-# конца спада (в эталоне зазор 0.013–0.036 с).
-GLITCH_SFX_PRE_S = 0.567      # старт слоя за это время до первого слова группы, с
-GLITCH_SFX_ATTACK_S = 0.08    # нарастание от тишины до glitch_db у первого слова, с
-GLITCH_SFX_HOLD_S = 0.45      # полка звука после последнего слова группы, с
-GLITCH_SFX_RELEASE_S = 0.12   # спад до тишины, с
-GLITCH_SFX_QUIET_DB = -48.0   # уровень «тихо» (как у микро-фейдов клипов камеры), dB
-
-
 def _lumetri_decl(lum):
     """Объявление LUMETRI и функции applyLumetri для .jsx (задание ZJ).
 
@@ -528,114 +527,21 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
                     break
         return best
 
-    def _ins_t0(x):                                    # старт вставки в секундах (сек+кадры или легаси-кадры)
-        s, fr = x.get("start_s"), x.get("start_f")
-        if s is not None or fr is not None:
-            return float(s or 0) + float(fr or 0) / _fps0
-        return float(x.get("start") or 0) / _fps0
-
-    def _ins_t1(x):                                    # конец вставки в секундах (старт+длительность или явный конец)
-        if x.get("dur_s") is not None or x.get("dur_f") is not None:
-            return _ins_t0(x) + float(x.get("dur_s") or 0) + float(x.get("dur_f") or 0) / _fps0
-        s, fr = x.get("end_s"), x.get("end_f")
-        if s is not None or fr is not None:
-            return float(s or 0) + float(fr or 0) / _fps0
-        return float(x.get("end") or 0) / _fps0
-
     # Точки СМЕНЫ КАМЕРЫ (сек): где показываемая (верхняя включённая) камера меняется. Не каждый
-    # VAD-стык внутри одной камеры, а именно переход кам1↔кам2. По ним режем/прижимаем вставки.
+    # VAD-стык внутри одной камеры, а именно переход кам1↔кам2. По ним режем/прижимаем вставки
+    # (plan_inserts.py, задание MT) и ставим звуки переходов (plan_audio.py, задание MU) — точки
+    # считаются здесь ОДИН раз, второй копии правила нет.
     _cam_change_sec = [f / _fps0 for f in _cam_change_frames(cams)]
-    _snap = bool(_sv(st, "insert_snap_cut"))
-    # Вставка, стартующая ВПРИТЫК перед катом, доигрывала бы вход на уходящем кадре и обрывалась
-    # срезом. Прижимаем старт ровно к кату: вставка начинается уже на следующем кадре, вся анимация
-    # входа идёт по нему (и стиль фото авто-выбирается по НОВОЙ камере). Конец не двигаем.
-    SNAP_START_TOL = float(st.get("insert_snap_start", 0.35))   # сек до ката
-
-    def _snap_start(x):
-        if not _snap or SNAP_START_TOL <= 0:
-            return
-        t0, t1 = _ins_t0(x), _ins_t1(x)
-        for cp in _cam_change_sec:
-            if t0 < cp <= t0 + SNAP_START_TOL and cp < t1 - 1.5 / _fps0:
-                x["start_s"], x["start_f"] = cp, 0.0        # старт = кат
-                x["dur_s"], x["dur_f"] = t1 - cp, 0.0       # конец на месте
-                x.pop("start", None)
-                x.pop("end", None)
-                x.pop("end_s", None)
-                x.pop("end_f", None)
-                break
-
-    for x in inserts:
-        _snap_start(x)
-
-    # тип — ПО ФАЙЛУ, а не по тому, что просили у базы/ИИ: автоподбор мягкий (type_hint даёт
-    # +0.05 к score, а не фильтрует), поэтому под «фото» прилетает mp4, а под «видео» — jpg.
-    # А тип решает всё: фото = стоп-кадр с наездом, видео = футаж с переходом и whoosh.
-    for x in inserts:
-        if x.get("media"):
-            x["type"] = "photo" if _is_image(x["media"]) else "video"
-
-    # Вставок длиной в пару кадров в природе не бывает: старт прижимается к кату ещё на
-    # создании, и `_snap_start` выше делает то же самое здесь. Если после среза катом окно
-    # ВСЁ РАВНО схлопнулось — это не «короткая вставка», а НЕВЕРНЫЙ СТАРТ: её задумывали
-    # в новом шоте, а поставили за миг до ката. Переносим старт на кат и играем задуманную
-    # длительность там, где ей место. Делаем это ДО выбора стиля — иначе стиль фото
-    # («из-за спины» / «наезд») считался бы по старой, уходящей камере.
-    # ТОЛЬКО ФОТО-вставку (b-roll над головой), которая ПЕРЕХОДИТ на другую камеру, обрезаем ровно
-    # в точке смены и без анимации выхода (не тянется через смену ракурса). ВИДЕО НЕ режем посреди
-    # окна никогда — это полноэкранная вставка, играет весь свой хрон. Если стиль выключил snap —
-    # и фото не режем. ОТДЕЛЬНО: вставка (фото И видео), чей конец лежит на точке смены камеры
-    # (±SNAP_TOL — ИИ округляет тайминги до 0.1 c), считается СРЕЗАННОЙ катом: конец прижимаем к
-    # кату, выхода нет (у видео это же убирает выходной переход+whoosh).
-    SNAP_TOL = 0.12                                    # сек: конец «на кате» с учётом округления ИИ
-
-    def _clip_end(x, t0, t1):                          # -> (end_sec, noexit)
-        if _snap:
-            for cp in _cam_change_sec:                 # конец вставки на самом кате -> жёсткий срез
-                if abs(t1 - cp) <= SNAP_TOL and cp > t0 + 1.5 / _fps0:
-                    return min(t1, cp), True           # не переползаем смену ракурса
-            if (x.get("type") or "photo") == "photo":
-                for cp in _cam_change_sec:             # первая смена камеры ВНУТРИ окна фото
-                    if t0 + 1.5 / _fps0 < cp < t1 - 1.5 / _fps0:
-                        return cp, True                # обрезать в точке смены, жёсткий срез
-        return t1, False
-
-    MIN_INS_SEC = 0.85                                 # вход 0.38 + выход 0.47: короче анимацию не уложить
-    if _snap:
-        for x in inserts:
-            t0, t1raw = _ins_t0(x), _ins_t1(x)
-            cut, _ne = _clip_end(x, t0, t1raw)
-            if cut - t0 >= MIN_INS_SEC or t1raw - t0 < MIN_INS_SEC:
-                continue                               # окно нормальное либо вставка и была короткой
-            want = t1raw - t0                          # задуманная длительность
-            nxt = [cp for cp in _cam_change_sec if cp > cut + 1.5 / _fps0]
-            end = min(cut + want, nxt[0]) if nxt else cut + want
-            if end - cut < MIN_INS_SEC:
-                continue                               # и в новом шоте не помещается — оставляем как есть
-            emit("  вставка {name}: старт {t0:.2f}с срезался катом до {cut_diff:.2f}с — перенёс на кат {cut:.2f}с (похоже, неверный тайминг начала — проверь на шаге разметки)",
-                 name=os.path.basename(x.get('media') or '?'), t0=t0, cut_diff=cut - t0, cut=cut)
-            x["start_s"], x["start_f"] = cut, 0.0
-            x["dur_s"], x["dur_f"] = end - cut, 0.0
-            for k in ("start", "end", "end_s", "end_f"):
-                x.pop(k, None)
-
-    _instyle = (_sv_or(st, "insert_style"))      # стиль фотовставок: авто | cam1 | cam2
-    for x in inserts:                                  # стиль фото: force cam1/cam2 или АВТО по активной камере
-        if (x.get("type") or "photo") != "photo":
-            continue
-        _act = _active_cam_at(_ins_t0(x))
-        if _instyle in ("cam1", "cam2"):
-            sstyle = _instyle
-        else:                                          # auto: над кам1 → «из-за спины», над перебивкой → cam2
-            sstyle = "cam1" if _act == 0 else "cam2"
-        x["style"] = sstyle
-        # стиль «Кам 1» выставлен принудительно, а в кадре перебивка: в JSX такая вставка вешается
-        # на отдельный нул (без зума Камеры 1, которой в кадре нет) и сдвигается общими INS_C1_ON2_X/Y
-        x["oncam2"] = bool(sstyle == "cam1" and _act != 0)
-        # масштаб считаем по пропорциям картинки (см. _ins_scale), но РУЧНОЙ уже проставленный
-        # scale не затираем — иначе правка из webui умирала на каждой пересборке
-        if not x.get("scale_manual"):
-            x["scale"] = _ins_scale(x.get("media"), sstyle)
+    # ---- Вставки: тайминги вынесены в plan_inserts.py (задание MT, этап 3 распила scene_plan) ----
+    # Секунды старта/конца (сек+кадры и легаси-кадры), прижим старта к кату, срез окна катом
+    # (SNAP_TOL/_clip_end), перенос схлопнувшегося окна в новый шот, тип по файлу и стиль
+    # фото (cam1/cam2 по активной камере). Имена после вызова — прежние: `inserts` (его
+    # читают `_any_plate` ниже и звук — `has_video` в plan_audio.py) и `_clip_end` — им
+    # сборка данных режет окно.
+    _ins_t = plan_insert_timings(InsertTimingInputs(
+        inserts=inserts, fps=_fps0, cam_change_sec=_cam_change_sec,
+        active_cam_at=_active_cam_at, st=st, sv=_sv, sv_or=_sv_or, emit=emit))
+    inserts, _clip_end = _ins_t.inserts, _ins_t.clip_end
     hl_raw = set(int(x) for x in (highlights or []) if 0 <= int(x) < len(subs))
     brk_raw = set(int(x) for x in (hl_breaks or []) if 0 <= int(x) < len(subs))
     cnt_raw = set(int(x) for x in (hl_count or []) if 0 <= int(x) < len(subs))
@@ -748,14 +654,10 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     start_blur = float(_sv_or(st, "start_blur"))
     start_blur_dur = float(_sv_or(st, "start_blur_dur"))
     disc_end_on = bool(st.get("disclaimer_end")) and bool(disclaimer)
-    # Макет спикера (задание Q): точка наезда камеры, точка покоя вставок Кам2 и сдвиг
-    # интро по X. Дефолты = сегодняшнее поведение (0.5/0.5, 0.5/0.172, 0), при них
-    # плейсхолдеры шаблона пусты и .jsx не меняется ни на байт (golden).
-    cam1_cx = float(_sv(st, "cam1_zoom_cx"))
-    cam1_cy = float(_sv(st, "cam1_zoom_cy"))
-    pan_x = float(_sv_or(st, "cam1_pan_x"))
-    pan_y = float(_sv_or(st, "cam1_pan_y"))
-    rot = float(_sv_or(st, "cam1_rot"))
+    # Макет спикера (задание Q): точка покоя вставок Кам2 и сдвиг интро по X. Дефолты =
+    # сегодняшнее поведение (0.5/0.172, 0), при них плейсхолдеры шаблона пусты и .jsx не
+    # меняется ни на байт (golden). Точка наезда Камеры 1, сдвиг кадра (pan) и поворот
+    # камеры читаются в plan_camera.py (задание MW) — там же и их подстановки.
     ins_c2x = float(_sv(st, "insert_c2_x"))
     ins_c2y = float(_sv(st, "insert_c2_y"))
     # Общий сдвиг точки покоя вставок кам1 (задание CB), px. Дефолт 0/0 = как сегодня.
@@ -810,10 +712,8 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     _bounds = [0] + _splits + [len(_intro_lines)]
     _intro_groups = [_intro_lines[_bounds[k]:_bounds[k + 1]] for k in range(len(_bounds) - 1)]
 
-    # группы идут по таймингу: первая = самая ранняя (JS считает её началом ролика и держит её с 0)
-    def _g_at(g):
-        ts = [t for x in g for t in (x.get("times") or [])]
-        return min(ts) if ts else 0.0
+    # группы идут по таймингу: первая = самая ранняя (JS считает её началом ролика и держит её с 0).
+    # _g_at и _grp_big_i — расчёт интро и живут в plan_intro.py (задание MS): копии здесь нет.
     _intro_groups.sort(key=_g_at)
     _any_glitch = any(x.get("anim") == "glitch" for g in _intro_groups for x in g)
     # Галка стиля «Deep Glow вместе со свечением строки» (задание MK): по умолчанию строка
@@ -843,918 +743,100 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     # задним планом не считается — у неё свой шрифт и свой регистр (тот же приоритет,
     # что в _intro_line_js: accent перебивает back).
     _any_back = any(bool(x.get("back") and not x.get("accent")) for g in _intro_groups for x in g)
-
-    def _grp_big_i(g):
-        """Индекс большой строки группы (первая с флагом big, задание ZY) или None.
-        Группа из одной строки большой не считается: раскладывать её не с чем, и флаг
-        остаётся без эффекта — .jsx такой группы прежний. Остальные строки с big в той
-        же группе — обычные строки стопки (шаг занимают как все)."""
-        if len(g) < 2:
-            return None
-        for _k, _x in enumerate(g):
-            if _x.get("big"):
-                return _k
-        return None
     _any_big = any(_grp_big_i(g) is not None for g in _intro_groups)
-    _glitch_word_times = []
-    if _any_glitch:
-        for _grp in _intro_groups:
-            for _ln in _grp:
-                if _ln.get("anim") == "glitch":
-                    _wds = [str(_w) for _w in (_ln.get("words") or (_ln.get("text") or "").split())]
-                    _tms = list(_ln.get("times") or [])
-                    for _wi in range(len(_wds)):
-                        _wt = float(_tms[_wi]) if _wi < len(_tms) and _tms[_wi] is not None else 0.0
-                        if _wt < 0:
-                            _wt = 0.0
-                        _glitch_word_times.append(_wt)
-    # Звук глитча ставится на ГРУППУ слов, а не на слово (ПРАВКА 1): подряд идущие
-    # глитч-слова накрыты ОДНИМ растянутым звуком, своя группа начинается там, где
-    # следующее слово начинается НЕ раньше конца звука текущей группы (последнее слово
-    # группы + полка + спад + кадр). Границы прекомпов при группировке не учитываются —
-    # только время: идём по глитч-словам в порядке возрастания.
-    _glitch_sound_groups = []
-    if _glitch_word_times:
-        _frame = 1.0 / _fps0
-        for _t in sorted(float(t) for t in _glitch_word_times):
-            if (_glitch_sound_groups
-                    and _t < _glitch_sound_groups[-1][-1] + GLITCH_SFX_HOLD_S
-                    + GLITCH_SFX_RELEASE_S + _frame):
-                _glitch_sound_groups[-1].append(_t)
-            else:
-                _glitch_sound_groups.append([_t])
-    # Группа, которая появляется на перебивке, вешается в JSX на отдельный нул «интро на кам2»
-    # (там другой кадр — текст за спиной ставят ниже). Камеру считаем по БОЛЬШИНСТВУ окна
-    # группы, а не по моменту появления первого слова: группа живёт gMax+0.3+1.0+0.75 секунд,
-    # и кат через 40 мс после первого слова уводил её на нул камеры 1, хотя почти всё время
-    # она висит над кадром камеры 2. Ничья (ровно 50/50) — ПОЗДНЕЙ камере: группа доигрывает
-    # на ней, и глаз запоминает конец. Показ камер по времени — тот же источник, что camAt в JSX.
-    _intro_show_segs = [(a / _fps0, b / _fps0, ci) for a, b, ci in _show_segments(cams)]
-
-    def _intro_on2_at(ts, te):
-        win = te - ts
-        if win <= 0:
-            return 1 if _active_cam_at(ts) != 0 else 0
-        dur_c1 = 0.0
-        last_ci = 0
-        for a, b, ci in _intro_show_segs:
-            lo, hi = max(a, ts), min(b, te)
-            if lo < hi:
-                if ci == 0:
-                    dur_c1 += hi - lo
-                last_ci = ci
-        non_c1 = win - dur_c1
-        if non_c1 > win / 2:
-            return 1
-        if non_c1 < win / 2:
-            return 0
-        return 1 if last_ci != 0 else 0
-    _intro_on2 = []
-    _intro_front = []
-    _intro_above_roto = []               # галка «интро над рото по положению» (задание C)
-    _intro_anchor = []                   # якорь блока на группу: center | first (задание A1)
-    _intro_ly = []                       # Y базовых линий строк на группу — в .jsx как INTRO_LY
-    _intro_lx = []                       # левый край строки на группу (большая строка, ZY)
-    _intro_lk = []                       # множитель кегля строки на группу (большая строка, ZY)
-    _intro_sq = []                       # множитель длительности появления на слово (задание MH)
-    _intro_sub_fx = []                   # окно [начало затухания, конец] групп, гаснущих к субтитру (MH)
-    riser = aset("intro_riser") if intro_riser else ""
-    # Свой файл ризера (задание AA): строка в стиле перекрывает ассет-дефолт.
-    _riser_file = (st.get("intro_riser_file") or "").strip()
-    if _riser_file and intro_riser:
-        riser = _riser_file
-    pop = (_asset_or(st.get("pop"), "highlight_pop", aset)) if hl else ""
-    glitch_asset = (_asset_or(st.get("glitch"), "glitch", aset)) if _any_glitch else ""
-    glitch_db = float(_sv(st, "glitch_db"))
-    has_video = any((x.get("type") or "photo") == "video" for x in inserts)
-    trans = _asset_or(st.get("transition"), "transition", aset) if has_video else ""
-    trans_sfx = _asset_or(st.get("transition_sfx"), "whoosh", aset) if has_video else ""
-    # Звуки с обрезкой / точкой удара / громкостью (задание AA). Плоские ключи стиля:
-    # <звук>_in/_out/_at/_db (+ pop_lead в кадрах для «попа»). Дефолты = прежнее
-    # поведение: .jsx не меняется ни на байт (golden). Формула: слой ставится так,
-    # чтобы точка `at` файла попала на момент события (жёлтое слово / кат / старт).
-    def _g(v, d):
-        return v if v not in (None, "") else d
-    def _sfx_cfg(prefix, base_db, def_out):
-        return dict(in_s=float(_g(st.get(prefix + "_in"), 0)),
-                    out_s=(float(st[prefix + "_out"]) if st.get(prefix + "_out")
-                           not in (None, "") else None),
-                    at_s=float(_g(st.get(prefix + "_at"), 0)),
-                    db=float(_g(st.get(prefix + "_db"), 0)),
-                    base=base_db, def_out=def_out)
-    pop_cfg = _sfx_cfg("pop", -8.0, 0.1)          # поп по умолчанию обрезан до ~0.1с
-    wsfx_cfg = _sfx_cfg("transition_sfx", -10.0, None)
-    riser_cfg = _sfx_cfg("intro_riser", 0.0, None)
-    trans_cfg = _sfx_cfg("transition", 0.0, None)
-    pop_lead = int(_g(st.get("pop_lead"), 4)) or 0
-    # Звук задан «как вчера» (все ключи дефолтные) — шаблон работает прежним кодом.
-    def _plain(cfg, lead):
-        return (cfg["in_s"] == 0 and cfg["at_s"] == 0 and cfg["db"] == 0
-                and cfg["out_s"] is None and lead == 4)
-    pop_plain = _plain(pop_cfg, pop_lead)
-    wsfx_plain = _plain(wsfx_cfg, 4)
-    riser_plain = _plain(riser_cfg, 4)
-    trans_plain = _plain(trans_cfg, 4)
-    def _sfx_off(cfg):
-        """Сдвиг старта: момент_события − (at − in), как "+0.2" / "-0.3" / "". """
-        off = -(cfg["at_s"] - cfg["in_s"])
-        return "%+g" % off if abs(off) > 1e-9 else ""
-    def _sfx_tail(cfg, var):
-        """JS-хвост после startTime: inPoint / outPoint / громкость. var — имя слоя.
-        out не задан — базовая обрезка звука (def_out), как было (поп 0.1)."""
-        tail = ""
-        if abs(cfg["in_s"]) > 1e-9:
-            tail += "\n            try{ %s.inPoint=%s.startTime+%g; }catch(e){}" % (var, var, cfg["in_s"])
-        if cfg["out_s"] is not None:
-            tail += "\n            try{ %s.outPoint=%s.startTime+%g; }catch(e){}" % (var, var, cfg["out_s"])
-        elif cfg["def_out"] is not None:
-            tail += "\n            try{ %s.outPoint=%s.startTime+%g; }catch(e){}" % (var, var, cfg["def_out"])
-        if abs(cfg["db"]) > 1e-9:
-            lv = cfg["base"] + cfg["db"]
-            tail += ("\n            try{ %s.property(\"ADBE Audio Group\").property(\"ADBE Audio Levels\")"
-                     ".setValue([%g,%g]); }catch(e){}") % (var, lv, lv)
-        return tail
-    # Токены для шаблона: при дефолтах — прежние JS-строки (.jsx не меняется).
-    pop_place = ("pl.startTime=(SUBS[pi][0]+%d)/FPS%s;" % (pop_lead, _sfx_off(pop_cfg))
-                 if not pop_plain
-                 else "pl.startTime=(SUBS[pi][0]+4)/FPS;  // +4 кадра — звук лучше ложится")
-    pop_tail = (_sfx_tail(pop_cfg, "pl") if not pop_plain
-                else "try{ pl.outPoint=pl.startTime+0.1; }catch(e){}          // поп обрезан до ~0.1с\n            "
-                     "try{ pl.property(\"ADBE Audio Group\").property(\"ADBE Audio Levels\").setValue([-8,-8]); }catch(e){}")
-    wsfx_place = ("wl.startTime=cut-TR_IN-TR_SFX_LEAD%s;" % _sfx_off(wsfx_cfg)
-                  if not wsfx_plain else "wl.startTime=cut-TR_IN-TR_SFX_LEAD;")
-    wsfx_tail = (_sfx_tail(wsfx_cfg, "wl") if not wsfx_plain
-                 else "try{ wl.property(\"ADBE Audio Group\").property(\"ADBE Audio Levels\").setValue([-10,-10]); }catch(e){}")
-    riser_place = ("rl.startTime=%s;" % (_sfx_off(riser_cfg).lstrip("+") or "0") if not riser_plain else "rl.startTime=0;")
-    riser_tail = _sfx_tail(riser_cfg, "rl") if not riser_plain else ""
-    trans_place = ("tl.startTime=cut-TR_IN%s;" % _sfx_off(trans_cfg)
-                   if not trans_plain else "tl.startTime=cut-TR_IN;")
-    trans_tail = _sfx_tail(trans_cfg, "tl") if not trans_plain else ""
-    # Звуки в ПЛАН СЦЕНЫ (превью читает их, задание AB): события с ГОТОВЫМ стартом —
-    # t (монтажное время, когда звук начинает играть = ev − at + in), файловые in/out.
-    # JS старт не пересчитывает (задание AB): берёт числа из плана.
-    def _sfx_ev(ev, cfg):
-        return {"t": round(ev - cfg["at_s"] + cfg["in_s"], 3),
-                "in": cfg["in_s"], "out": cfg["out_s"]}
-    _hl_events = [s / _fps0 for k, (s, e, w) in enumerate(subs) if k in hl] if hl else []
-    sfx_plan = []
-    if pop and _hl_events:
-        sfx_plan.append({"kind": "pop", "media": pop,
-                         "events": [_sfx_ev(t + pop_lead / _fps0, pop_cfg)
-                                    for t in _hl_events],
-                         "db": pop_cfg["db"], "base": pop_cfg["base"]})
-    if trans_sfx:
-        sfx_plan.append({"kind": "whoosh", "media": trans_sfx,
-                         "events": [_sfx_ev(c - 0.386 - 0.083, wsfx_cfg)
-                                    for c in _cam_change_sec],
-                         "db": wsfx_cfg["db"], "base": wsfx_cfg["base"]})
-    if trans:
-        sfx_plan.append({"kind": "transition", "media": trans,
-                         "events": [_sfx_ev(c - 0.386, trans_cfg)
-                                    for c in _cam_change_sec],
-                         "db": trans_cfg["db"], "base": trans_cfg["base"]})
-    if riser:
-        sfx_plan.append({"kind": "riser", "media": riser,
-                         "events": [_sfx_ev(0.0, riser_cfg)],
-                         "db": riser_cfg["db"], "base": riser_cfg["base"]})
-    if glitch_asset and _glitch_word_times:
-        sfx_plan.append({"kind": "glitch", "media": glitch_asset,
-                         "events": [{"t": round(max(0.0, t - 0.3), 3),
-                                     "in": 0.0, "out": 1.05}
-                                    for t in _glitch_word_times],
-                         "db": glitch_db, "base": 0.0})
-    music_path = ""
-    _mdir = music_dir or os.path.join(base, "music")   # папка музыки (по умолчанию рядом с XML)
-    if music_random or music:
-        _ckpt("музыка")
-    if music_random:                                   # случайно из уже скачанных
-        from core import ytmusic
-        music_path = ytmusic.random_track(_mdir, emit=emit, seed=xml_path) or ""
-    elif music:                                        # ссылка YouTube (скачать) или путь к файлу
-        from core import ytmusic
-        music_path = ytmusic.resolve(music, _mdir, emit=emit)
+    # ---- Звук вынесен в plan_audio.py (задание MU, этап 4 распила scene_plan) ----
+    # Материалы и события SFX (поп жёлтых, глитч по группам слов, whoosh и переход на
+    # катах, ризер), обрезка/точка удара/громкость (<звук>_in/_out/_at/_db), музыка,
+    # цензура голоса, огибающая слоёв глитча и данные звука для шаблона. Имена ниже —
+    # ровно те, что читает остальной scene_plan: перенос построчный, порядок операций и
+    # подстановки не менялись.
+    _au = plan_audio(AudioInputs(
+        intro_groups=_intro_groups, any_glitch=_any_glitch, inserts=inserts,
+        subs=subs, hl=hl, cam_change_sec=_cam_change_sec, fps=_fps0,
+        st=st, sv=_sv, sv_or=_sv_or, aset=aset, intro_riser=intro_riser,
+        music=music, music_random=music_random, music_dir=music_dir,
+        base=base, xml_path=xml_path,
+        # Цензор считаем по ВСЕМ словам (censor_source): интро-слова звучат.
+        censor_source=censor_source, censor_audio=censor_audio, censor_fps=meta["fps"],
+        # Словарь плана: путь голоса (Камера 1) и громкость музыки знает только scene_plan.
+        voice_src=(cams[0].get("path") or "") if cams else "", music_db=music_db,
+        # Общее с другими блоками: точка «музыка» (этап в логе + проверка «Стоп») и лог.
+        ckpt=_ckpt, emit=emit))
+    riser, pop = _au.riser, _au.pop
+    trans, trans_sfx = _au.trans, _au.trans_sfx
+    music_path = _au.music_path
+    censor_js = _au.censor_js
+    audio, glitch_sfx = _au.audio, _au.glitch_sfx
+    pop_place, pop_tail = _au.pop_place, _au.pop_tail
+    wsfx_place, wsfx_tail = _au.wsfx_place, _au.wsfx_tail
+    riser_place, riser_tail = _au.riser_place, _au.riser_tail
+    trans_place, trans_tail = _au.trans_place, _au.trans_tail
+    voice_db, audio_fade = _au.voice_db, _au.audio_fade
     cams_plan = []
     for ci, c in enumerate(cams):
         cams_plan.append({"ci": ci, "path": c["path"] or "", "name": c["name"],
                           "clips": [[s, e, i, o, bool(en), _r(sc)]
                                     for s, e, i, o, en, sc in c["clips"]]})
     cams_js = _jd([{"path": c["path"], "name": c["name"], "clips": c["clips"]} for c in cams_plan])
-    # обрезаем конец слова по началу следующего, чтобы соседние (особ. мелкие «и/в») не накладывались
-    def _endc(k):
-        s, e, w = subs[k]
-        ns = subs[k + 1][0] if k + 1 < len(subs) else None
-        return min(e, ns) if (ns is not None and ns > s) else e
-
-    _posy = int(meta["h"] * float(_sv_or(st, "sub_y")))
-    _hl_step = round(meta["h"] * 0.06224, 2)
-    _hl_rise = round(meta["h"] * 0.06406, 2)
-    # Длительность подъёма/проявления жёлтых, с (задания ZU/MA): ОДНО число на всю сборку —
-    # константа layout.HL_DUR. Шаблон получает его подстановкой (template.py), план несёт
-    # предпросмотру (hl_dur): своей копии числа в JS не заводится, как и у остальной
-    # геометрии субтитров.
-    _hl_dur = HL_DUR
-    _fsize = max(60, int(meta["w"] * 0.13))
-    # Кегль интро = кегль ДО ужатия строк (доработка ZL). В режиме строк автофит ужимает
-    # _fsize под самую длинную строку, но интро — не строка субтитров: раньше оно брало
-    # ужатый кегль и выходило в 2.4 раза мельче, чем в режиме по слову. Запоминаем
-    # неужатый здесь, ДО ветки строк; в режиме по слову _fsize_base == _fsize и .jsx
-    # остаётся прежним байт в байт (golden).
-    _fsize_base = _fsize
-    _sub_step = round(_fsize * 1.18, 2)
-    # Масштаб СЛОЯ прекомпа субтитров (задание FE), %: кегль/раскладка не трогаются,
-    # 100 = как сегодня. При 100 подстановка в шаблон пуста — .jsx прежний (golden).
-    sub_scale = float(_sv(st, "sub_scale"))
-    # Жёлтые в режиме строк (задание ZH): HL_ROW_WORD нужен только циклу строк — в режиме
-    # «по слову» объявления нет вовсе, и .jsx остаётся прежним байт в байт (golden).
-    hl_row_decl = ("" if sub_words_per_row <= 1 else
-                   ("\n    var HL_ROW_WORD = %s;   // жёлтые в строке (hl_row_anim): true — въезжает,"
-                    " когда слово произнесено; false — вместе со строкой"
-                    % ("true" if _sv(st, "hl_row_anim") == "word" else "false")))
-    # Блюр появления жёлтых (задание ZH): выключен — ни объявления, ни функции, ни вызовов,
-    # все три подстановки пусты и .jsx прежний байт в байт (golden). Сами hl_blur_fn и
-    # hl_blur_call собираются НИЖЕ: у короткого жёлтого (задание MA) и блюр играет свою
-    # длительность, а её до расчёта циклов ещё не знают.
-    hl_blur_on = bool(_sv(st, "hl_blur"))
-    hl_blur_call = " hlBlur(L, t0);" if hl_blur_on else ""      # цикл строк — как было
-    hl_blur_decl = hl_blur_fn = ""
-    if hl_blur_on:
-        hl_blur_decl = ("\n    var HL_BLUR = %g;   // сила блюра появления жёлтых, px"
-                        " (Gaussian Blur, повтор краёв выключен)" % float(_sv(st, "hl_blur_amt")))
-    # Короткое жёлтое слово (задание MA): подъём, проявление и блюр играли общие HL_DUR =
-    # 0.35 с, а слово с видимым временем меньше 0.35 с гасло (outPoint = gend) посреди
-    # анимации — «просто исчезало». Длительность d = min(HL_DUR, HL_FIT * видимое время)
-    # считает Python (layout.hl_appear_dur) для КАЖДОГО такого слова и кладёт её полем 7
-    # строки данных SUBS/SUB_STACK ([.., gend, cnt, hd] — сразу за полем счётчика: поле 6
-    # занято cnt_items, его не трогаем). Нет ни одного укороченного жёлтого — нет ни полей,
-    # ни функции hlDur, ни новых подстановок: .jsx побайтово как на main (golden).
-    _hl_hd = {}                     # индекс жёлтого слова -> своя длительность появления, с
-    hl_short_fn = ""
-
-    def _hl_loop(elem, **kw):
-        """Подстановки цикла субтитров для элемента `elem` (имя переменной строки данных):
-        длительность появления в ключах подъёма/проявления и вызов блюра. Пока укороченных
-        жёлтых нет — ровно прежний текст: HL_DUR и hlBlur(L, t0). У укороченного длительность
-        едет в блюр через HL_HD (сигнатура hlBlur(L, t0) — контракт задания ZH)."""
-        kw["hl_dur_js"] = ("hlDur(%s)" % elem) if _hl_hd else "HL_DUR"
-        if hl_blur_on:
-            kw["hl_blur_call"] = ((" HL_HD = hlDur(%s); hlBlur(L, t0);" % elem) if _hl_hd
-                                  else hl_blur_call)
-        else:
-            kw["hl_blur_call"] = ""
-        return kw
-    from core.subs import build_sub_rows
-    from core import fonts as _fonts
-
-    if sub_words_per_row <= 1:
-        rows, gend = _stack_layout(subs, hl, brk, joins)
-        max_line_w = 0.92 * meta["w"]
-        # Регистр субтитров (задание CO): применяем к ГОТОВОМУ тексту в scene_plan — .jsx
-        # и превью читают преобразованное, второй копии правила нет. upper (дефолт) —
-        # слова из XML уже капсом, upper() их не меняет, .jsx прежний (golden). В
-        # покадровом режиме каждое слово — своя реплика, sentence = Заглавная на каждом.
-        def _sub_w(w):
-            return _accent_word(w, "title" if sub_case == "sentence" else sub_case)
-        subs_plan = []
-        cnt_items = []
-        any_sub_count = False
-        # Короткие жёлтые (задание MA): видимое время слова — от его появления до общего
-        # конца связки (outPoint слоя = gend). Кому общей HL_DUR не хватает — своя
-        # длительность: она уезжает и в данные цикла (поле 7), и в план (hd — превью).
-        for k in sorted(hl):
-            _d = hl_appear_dur((gend[k] - subs[k][0]) / _fps0)
-            if _d < _hl_dur:
-                _hl_hd[k] = _d
-        for k, (s, e, w) in enumerate(subs):
-            item_cnt = None
-            if k in cnt:
-                parsed = _parse_intro_count(_sub_w(w))
-                if parsed is not None:
-                    target, dec, expr, _ = parsed
-                    item_cnt = [target, expr]
-                    any_sub_count = True
-            cnt_items.append(item_cnt)
-            wd = _sub_w(w)
-            ps = hl_font_ps if k in hl else font_ps
-            w_px = _fonts.text_width(ps, w, _fsize)
-            item = {
-                "s": s / _fps0,
-                "e": _endc(k) / _fps0,
-                "w": wd,
-                "color": "yellow" if k in hl else "white",
-                "row": rows[k],
-                "gend": gend[k] / _fps0,
-                "repl": k,
-            }
-            if item_cnt is not None:
-                item["cnt"] = item_cnt[0]
-                item["expr"] = item_cnt[1]
-            if k in _hl_hd:
-                item["hd"] = _hl_hd[k]
-            if w_px is not None and w_px > max_line_w:
-                shrunk_fs = max(40, int(_fsize * max_line_w / w_px))
-                if shrunk_fs < _fsize:
-                    item["fsize"] = shrunk_fs
-            subs_plan.append(item)
-
-        def _sub_row(k, end, wd, hl_v):
-            """Строка данных цикла слов: [начало, конец, слово, hl, ряд, gend] плюс поле
-            счётчика (индекс 6) и — у укороченного жёлтого (задание MA) — поле длительности
-            появления (индекс 7). Пока укороченных нет, полей ровно шесть: .jsx прежний."""
-            r = [subs[k][0], end, wd, hl_v, rows[k], gend[k]]
-            if any_sub_count:
-                r.append(cnt_items[k])
-            if _hl_hd:
-                while len(r) < 7:
-                    r.append(None)              # поле счётчика: счётчиков в ролике нет
-                r.append(_hl_hd.get(k, _hl_dur))
-            return r
-
-        any_joins = bool(joins)
-        sub_tpl = SUBS_LOOP_WORDS_JOINED if any_joins else SUBS_LOOP_WORDS
-        subs_js = _jd([_sub_row(k, _endc(k), _sub_w(w), 1 if k in hl else 0)
-                       for k, (s, e, w) in enumerate(subs)])
-        if any_sub_count:
-            sub_count_code = (
-                '\n        var cnt = sw[6];\n'
-                '        if (cnt){\n'
-                '            try{\n'
-                '                var sl = addFX(L, "ADBE Slider Control");\n'
-                '                if (sl){\n'
-                '                    var slP = sl.property("ADBE Slider Control-0001");\n'
-                '                    if (slP){\n'
-                '                        slP.setValueAtTime(t0, 0);\n'
-                '                        slP.setValueAtTime(t0 + HL_DUR, cnt[0]);\n'
-                '                    }\n'
-                '                }\n'
-                '            }catch(e){}\n'
-                '            try{\n'
-                '                if (sp && cnt[1]){\n'
-                '                    sp.expression = cnt[1];\n'
-                '                }\n'
-                '            }catch(e){}\n'
-                '        }'
-            )
-            sub_loop = sub_tpl % _hl_loop("sw", sub_count_code=sub_count_code)
-        else:
-            sub_loop = sub_tpl % _hl_loop("sw", sub_count_code="")
-        sub_rows_js = "[]"
-    else:
-        hl_row_stack = bool(_sv(st, "hl_row_stack"))
-        # Стопка подряд жёлтых (задание ZU) раскладывается ТЕМ ЖЕ правилом, что работает в
-        # режиме «по слову»: _stack_layout даёт row/gend на каждое слово (серии с учётом
-        # склеек joins и ручных разделителей brk). Своей копии разбора серий здесь нет —
-        # иначе режимы разъехались бы. Серия — слова с ОДНИМ gend: он у всей серии общий
-        # (конец последнего слова), у одиночного жёлтого — свой собственный.
-        rows = gend = None
-        stacked_indices = set()
-        if hl_row_stack:
-            rows, gend = _stack_layout(subs, hl, brk, joins)
-            _run_words = {}
-            for _k in hl:
-                _run_words[gend[_k]] = _run_words.get(gend[_k], 0) + 1
-            stacked_indices = {_k for _k in hl if _run_words[gend[_k]] >= 2}
-            # Короткие жёлтые СТОПКИ (задание MA): стопка играет тем же циклом, что режим
-            # «по слову» (выезд на HL_RISE, проявление, блюр, общий конец), поэтому и
-            # длительность считается так же — от появления слова до gend стопки. Цикл
-            # СТРОК не трогаем: там момент появления уже зажат так, что анимация успевает.
-            for _k in sorted(stacked_indices):
-                _d = hl_appear_dur((gend[_k] - subs[_k][0]) / _fps0)
-                if _d < _hl_dur:
-                    _hl_hd[_k] = _d
-
-        cut_bounds = set()
-        for ci_cam in cams:
-            for cl in ci_cam.get("clips", []):
-                cut_bounds.add(int(cl[0]))
-                cut_bounds.add(int(cl[1]))
-        if stacked_indices:
-            words_for_rows = [
-                {"start": s, "end": e, "w": w, "idx": k}
-                for k, (s, e, w) in enumerate(subs)
-                if k not in stacked_indices
-            ]
-        else:
-            words_for_rows = subs
-        raw_lines = build_sub_rows(words_for_rows, per_row=sub_words_per_row, max_rows=sub_rows_max,
-                                   cut_bounds=cut_bounds, word_timings=word_timings)
-        max_line_w = 0.92 * meta["w"]
-
-        # Подбор единого кегля на весь ролик (задание CK):
-        # ширина строки = сумма ширин слов каждым своим шрифтом (базовый / hl_font) + пробелы
-        reqs = []
-        for line in raw_lines:
-            words = line.get("words") or []
-            if not words:
-                continue
-            spc = _fonts.text_width(font_ps, " ", _fsize)
-            tot_w = 0.0
-            meas_ok = True
-            for wd in words:
-                ps = hl_font_ps if wd.get("idx") in hl else font_ps
-                ww = _fonts.text_width(ps, wd.get("w") or "", _fsize)
-                if ww is None:
-                    meas_ok = False
-                    break
-                tot_w += ww
-            if meas_ok and len(words) > 1 and spc is not None:
-                tot_w += (len(words) - 1) * spc
-            if not meas_ok:
-                req_fs = _fsize
-            elif tot_w > max_line_w:
-                req_fs = max(40, int(_fsize * max_line_w / tot_w))
-            else:
-                req_fs = _fsize
-            reqs.append(req_fs)
-
-        if reqs:
-            _fsize = min(reqs)
-        _sub_step = round(_fsize * 1.18, 2)
-
-        # Регистр субтитров (задание CO): применяем к готовым словам — и план, и .jsx
-        # строятся из преобразованного текста, второй копии правила нет. sentence —
-        # «Как в предложении»: первое слово РЕПЛИКИ с заглавной, остальные строчные.
-        # upper (дефолт) слова из XML не меняет, .jsx прежний (golden).
-        repl_first = set()
-        _first_r = set()
-        for ln in raw_lines:
-            r = ln["repl"]
-            if r not in _first_r and ln.get("row") == 0 and ln.get("words"):
-                _first_r.add(r)
-                repl_first.add(ln["words"][0]["idx"])
-        def _sub_w(w, idx):
-            if sub_case == "sentence":
-                return _accent_word(w, "title" if idx in repl_first else "lower")
-            return _accent_word(w, sub_case)
-        subs_plan = []
-        hl_anim_mode = _sv(st, "hl_row_anim")
-        for line in raw_lines:
-            l_words = line["words"]
-            r_s = line["start"] / _fps0
-            r_e = line["end"] / _fps0
-            t_words = []
-            for x in l_words:
-                is_hl = x["idx"] in hl
-                w_s = x["start"] / _fps0
-                w_e = x["end"] / _fps0
-                tw = {
-                    "w": _sub_w(x["w"], x["idx"]),
-                    "color": "yellow" if is_hl else "white",
-                    "s": w_s,
-                    "e": w_e,
-                }
-                if is_hl:
-                    # Время появления жёлтого в строке (задание ZH, то же правило, что в
-                    # цикле строк шаблона): при "word" — время слова, зажатое в окно строки
-                    # (не раньше её начала и не позже, чем остаётся место на подъём), при
-                    # "row" — начало строки. Считает Python: превью берёт готовое t0.
-                    if hl_anim_mode == "word":
-                        tw["t0"] = round(min(max(w_s, r_s), max(r_s, r_e - _hl_dur)), 4)
-                    else:
-                        tw["t0"] = round(r_s, 4)
-                t_words.append(tw)
-            all_hl = all(x["idx"] in hl for x in l_words)
-            it = {
-                "s": r_s,
-                "e": r_e,
-                "w": " ".join(x["w"] for x in t_words),
-                "color": "yellow" if all_hl else "white",
-                "row": line["row"],
-                "gend": r_e,
-                "repl": line["repl"],
-                "words": t_words,
-            }
-            subs_plan.append(it)
-
-        if stacked_indices:
-            # Элементы стопки — ровно как элементы режима «по слову» (тот же состав полей и
-            # те же row/gend из _stack_layout), только с пометкой stack: по ней превью
-            # кладёт их отдельными строками по шагу HL_STEP, а не в строку текста.
-            for k in sorted(stacked_indices):
-                s, e, w = subs[k]
-                wd = _sub_w(w, k)
-                ps = hl_font_ps if k in hl else font_ps
-                w_px = _fonts.text_width(ps, w, _fsize)
-                item = {
-                    "s": s / _fps0,
-                    "e": _endc(k) / _fps0,
-                    "w": wd,
-                    "color": "yellow",
-                    "row": rows[k],
-                    "gend": gend[k] / _fps0,
-                    "repl": k,
-                    "stack": True,
-                }
-                if k in _hl_hd:
-                    item["hd"] = _hl_hd[k]
-                if w_px is not None and w_px > max_line_w:
-                    shrunk_fs = max(40, int(_fsize * max_line_w / w_px))
-                    if shrunk_fs < _fsize:
-                        item["fsize"] = shrunk_fs
-                subs_plan.append(item)
-            subs_plan.sort(key=lambda item: (item["s"], item.get("row", 0)))
-
-        sub_stack_loop = ""
-        if stacked_indices:
-            any_joins = bool(joins)
-            # Данные цикла стопки — как SUBS в режиме «по слову»: [начало, конец, слово,
-            # hl=1, ряд стопки, общий конец]. Слова серии рисует цикл SUBS_LOOP_STACK:
-            # выезд на HL_RISE, проявление и общий конец стопки — второй копии анимации нет.
-            # У укороченного жёлтого (задание MA) в конец строки уезжает его длительность
-            # появления: поле счётчика (6) в стопке пустое, длительность — поле 7.
-            sub_stack_data = []
-            for k in sorted(stacked_indices):
-                _sw = [subs[k][0], _endc(k), _sub_w(subs[k][2], k), 1, rows[k], gend[k]]
-                if _hl_hd:
-                    _sw.append(None)
-                    _sw.append(_hl_hd.get(k, _hl_dur))
-                sub_stack_data.append(_sw)
-            sub_stack_js = _jd(sub_stack_data)
-            stack_tpl = SUBS_LOOP_STACK_JOINED if any_joins else SUBS_LOOP_STACK
-            # В склейке второй проход цикла идёт по r_words, и строка данных там — `rsw`.
-            sub_stack_loop = stack_tpl % _hl_loop("rsw" if any_joins else "sw",
-                                                  sub_stack=sub_stack_js)
-
-        # В SUBS (её читает только поп-SFX по индексу начала) у слов серии — их ряд стопки и
-        # общий конец; у остальных слов поля прежние. Галка выключена — stacked_indices пуст,
-        # ветки не вычисляются, и SUBS побайтово прежний (golden).
-        subs_js = _jd([[s, _endc(k), _sub_w(w, k), 1 if k in hl else 0,
-                        rows[k] if k in stacked_indices else 0,
-                        gend[k] if k in stacked_indices else _endc(k)]
-                       for k, (s, e, w) in enumerate(subs)])
-        sub_rows_data = [
-            [
-                line["start"],
-                line["end"],
-                line["row"],
-                0,
-                [[x["start"], _sub_w(x["w"], x["idx"]), 1 if x["idx"] in hl else 0]
-                 for x in line["words"]]
-            ]
-            for line in raw_lines
-        ]
-        sub_rows_js = _jd(sub_rows_data)
-        # Цикл строк не трогаем: там момент появления зажат так, что анимация успевает
-        # (окно r_t1 - HL_DUR), и блюр играет общую длительность. Укороченные жёлтые едут
-        # в стопке — её цикл идёт следом и ставит HL_HD сам; здесь возвращаем общую.
-        rows_blur_call = (" HL_HD = HL_DUR; hlBlur(L, t0);" if (_hl_hd and hl_blur_on)
-                          else hl_blur_call)
-        # Цикл стопки дописывается ПОСЛЕ цикла строк (в AE слои стопки встают поверх строк),
-        # а не подстановкой внутрь SUBS_LOOP_ROWS: шаблон строк остаётся прежним, и его можно
-        # подставлять по-старому (tests/test_template_sub_wide.py).
-        sub_loop = SUBS_LOOP_ROWS % dict(sub_rows=sub_rows_js, sub_step=_sub_step,
-                                         hl_blur_call=rows_blur_call) + sub_stack_loop
-    # Циклы субтитров собраны, укороченные жёлтые известны — теперь функции шаблона. Обе
-    # пусты, пока в ролике нет ни одного такого слова: .jsx прежний побайтово (golden).
-    if _hl_hd:
-        hl_short_fn = (
-            "\n    // Короткое жёлтое слово (задание MA): появление не успевало доиграть до"
-            "\n    // outPoint — длительность кладёт Python полем 7 строки данных SUBS/SUB_STACK"
-            "\n    // ([start,end,word,hl,row,gend,cnt,hd]), и только словам, кому общей HL_DUR"
-            "\n    // не хватает."
-            # Сигнатура hlBlur(L, t0) — контракт задания ZH (её стережёт test_hl_anim),
-            # поэтому длительность блюра едет через HL_HD: цикл ставит переменную прямо
-            # перед вызовом, а цикл строк возвращает её к общей HL_DUR.
-            + ("\n    // Блюр берёт её из HL_HD — переменную ставит цикл ПЕРЕД вызовом."
-               "\n    var HL_HD = HL_DUR;" if hl_blur_on else "")
-            + "\n    function hlDur(sw){ return sw[7]; }")
-    if hl_blur_on:
-        hl_blur_fn = (
-            "\n    // Блюр появления жёлтого (задание ZH): Gaussian Blur HL_BLUR -> 0 на ТЕХ ЖЕ"
-            "\n    // ключах, что подъём и проявление. Повтор краёв выключен — иначе размытие"
-            "\n    // подтягивало бы в кадр края текстового слоя."
-            "\n    function hlBlur(L, t0){"
-            "\n        try{"
-            "\n            var bl = L.property(\"ADBE Effect Parade\").addProperty(\"ADBE Gaussian Blur 2\");"
-            "\n            bl.property(\"ADBE Gaussian Blur 2-0003\").setValue(0);   // Repeat Edge Pixels = 0"
-            "\n            var bp = bl.property(\"ADBE Gaussian Blur 2-0001\");"
-            "\n            bp.setValueAtTime(t0, HL_BLUR); bp.setValueAtTime(t0+%(blur_dur)s, 0);"
-            "\n            easePair(bp);"
-            "\n        }catch(e){ _LOG(\"блюр появления жёлтого: \" + e); }"
-            "\n    }" % {"blur_dur": "HL_HD" if _hl_hd else "HL_DUR"})
-    _c1zoom = (_sv_or(st, "cam1_zoom"))         # pulse = наезд с откатом | jump = резкие скачки | drift = скачок+плавный дрейф 100–160% | none = нет зума
-    if cam1_scale is None:                             # авто-зум по сменам кам1→кам2
-        if _c1zoom == "none":
-            cam1_scale = [(0, 100.0)]
-        else:
-            _zstart = _sv(st, "cam1_zoom_start")
-            _zbig = float(_sv_or(st, "cam1_zoom_big"))
-            _zlo = float(_sv_or(st, "cam1_zoom_lo"))
-            _zhi = float(_sv_or(st, "cam1_zoom_hi"))
-            if _c1zoom == "drift":
-                _zdlo = float(_sv_or(st, "cam1_drift_lo"))
-                _zdhi = float(_sv_or(st, "cam1_drift_hi"))
-                cam1_scale = _cam1_drift_keys(cams, lo=_zdlo, hi=_zdhi, fps=meta["fps"], big=_zbig, start=_zstart)
-            elif _c1zoom == "jump":
-                _ztake = None
-                if _sv(st, "cam1_take_zoom"):
-                    _ztake = {
-                        "min_s": float(_sv_or(st, "cam1_take_min")),
-                        "lo": float(_sv_or(st, "cam1_take_lo")),
-                        "hi": float(_sv_or(st, "cam1_take_hi")),
-                        "hold_s": float(_sv_or(st, "cam1_take_hold")),
-                    }
-                    if _sv(st, "cam1_take_yellow"):
-                        _ztake["words"] = sorted(subs[k][0] for k in hl)
-                cam1_scale = _cam1_jump_keys(cams, lo=_zlo, hi=_zhi, fps=meta["fps"], start=_zstart, big=_zbig, take=_ztake)
-            else:
-                cam1_scale = _cam1_zoom_keys(cams, big=_zbig, lo=_zlo, hi=_zhi, fps=meta["fps"], start=_zstart)
-    # «Заполнение кадра» (задание ZE) — общий множитель зума Камеры 1, и умножается он РОВНО
-    # ЗДЕСЬ, один раз. Раньше fit сидел в Scale слоёв клипа и рото, и кадр рос вокруг своего
-    # центра, а вставки кам1 с интро не росли вовсе — в превью кадр хороший, в AE уезжает на
-    # 240–335 px (ipvZoomAt множит fit на ключи и масштабирует ВСЁ вокруг точки наезда).
-    # Дальше ключи уже с fit берут все: CAM1_SCALE, автофит интро (_zoom_max), слежение
-    # (_cam1_follow_keys) и план. Второй копии умножения не заводить.
-    _fit_k = float(_sv_or(st, "cam1_fit")) / 100.0
-    if _fit_k != 1.0:
-        cam1_scale = [(f, round(v * _fit_k, 2), *rest) for f, v, *rest in (cam1_scale or [])]
-    holds = _zoom_key_holds(cam1_scale or [], legacy_hold=(_c1zoom == "jump"))
-    # 3-й элемент (mode: 1=HOLD, 0=BEZIER) эмитим только если он есть (drift); 2-элементные — легаси
-    cam1scale_js = _jd([([_r(f), _r(v)] + ([int(rest[0])] if rest else []))
-                        for f, v, *rest in (cam1_scale or [])])
-    # ease на каждый ключ зума: JS больше не смотрит соседей/режимы, а берёт готовые
-    # [in, out] влияния из данных (задание B)
-    cam1_ease_js = _jd(_zoom_key_eases(cam1_scale or []))
-    _fps = meta["fps"]
-
-    def _isec(x, k):                                   # поле «сек+кадры» -> секунды
-        s, f = x.get(k + "_s"), x.get(k + "_f")
-        if s is not None or f is not None:
-            return float(s or 0) + float(f or 0) / _fps
-        return float(x.get(k) or 0) / _fps             # легаси: целые кадры
-
-    def _win(x):                                       # -> (start_sec, end_sec)
-        st = _isec(x, "start")
-        if x.get("dur_s") is not None or x.get("dur_f") is not None:  # старт + длительность
-            return st, st + float(x.get("dur_s") or 0) + float(x.get("dur_f") or 0) / _fps
-        return st, _isec(x, "end")                     # легаси: явный конец
-
-    # _cam_change_sec и _snap посчитаны выше (там же прижимаем старт вставки к кату).
-    # ТОЛЬКО ФОТО-вставку (b-roll над головой), которая ПЕРЕХОДИТ на другую камеру, обрезаем ровно
-    # в точке смены и без анимации выхода (не тянется через смену ракурса). ВИДЕО НЕ режем посреди
-    # окна никогда — это полноэкранная вставка, играет весь свой хрон. Если стиль выключил snap —
-    # и фото не режем. ОТДЕЛЬНО: вставка (фото И видео), чей конец лежит на точке смены камеры
-    # (±SNAP_TOL — ИИ округляет тайминги до 0.1 c), считается СРЕЗАННОЙ катом: конец прижимаем к
-    # кату, выхода нет (у видео это же убирает выходной переход+whoosh).
-    # SNAP_TOL и _clip_end определены ВЫШЕ (до выбора стиля): по ним же чинится
-    # схлопнувшееся окно, а стиль должен считаться уже по исправленному старту.
-
-    # видеовставка: перед человеком (фул на весь кадр, дефолт) или за ним (рото сверху)
-    _vfront = bool(st.get("insert_video_front", True))
-
-    def _front(x):
-        return _vfront if x.get("front") is None else bool(x.get("front"))
-
+    # ---- Блок субтитров вынесен в plan_subs.py (задание MR, этап 1 распила scene_plan) ----
+    # Слова -> строки -> стопка подряд жёлтых -> появление жёлтых -> данные циклов
+    # SUBS/SUB_ROWS/SUB_STACK. Имена ниже — ровно те, что читает остальной код scene_plan:
+    # перенос построчный, поведение и подстановки шаблона не менялись.
+    _subs = plan_subs(SubsInputs(
+        subs=subs, hl=hl, brk=brk, cnt=cnt, joins=joins,
+        font_ps=font_ps, hl_font_ps=hl_font_ps, sub_case=sub_case,
+        sub_words_per_row=sub_words_per_row, sub_rows_max=sub_rows_max,
+        width=meta["w"], height=meta["h"], fps=_fps0, cams=cams,
+        word_timings=word_timings, st=st,
+        # Общие с другими блоками обёртки и правила остаются в build.py (задание MR).
+        sv=_sv, sv_or=_sv_or, accent_word=_accent_word, parse_count=_parse_intro_count))
+    subs_plan, subs_js, sub_loop = _subs.subs, _subs.subs_js, _subs.sub_loop
+    hl_row_decl, hl_blur_decl = _subs.hl_row_decl, _subs.hl_blur_decl
+    hl_blur_fn, hl_short_fn, hl_blur_on = _subs.hl_blur_fn, _subs.hl_short_fn, _subs.hl_blur_on
+    sub_scale, _hl_dur = _subs.sub_scale, _subs.hl_dur
+    _posy, _hl_step, _hl_rise = _subs.posy, _subs.hl_step, _subs.hl_rise
+    _fsize, _fsize_base, _sub_step = _subs.fsize, _subs.fsize_base, _subs.sub_step
+    # ---- Камера вынесена в plan_camera.py (задание MW, этап 6 распила scene_plan) ----
+    # Параметры точки наезда/pan/поворота, ключи зума по режимам («заполнение кадра»
+    # умножается на них РОВНО раз), holds, разметка рото и слежение за головой. Дверь
+    # одна: зависимого кода между частями камеры нет, а ключи нужны всем — шаблону
+    # (CAM1_SCALE), плану (предпросмотр) и автофиту интро (plan_intro.py). Имена ниже —
+    # ровно те, что читает остальной scene_plan: перенос построчный, порядок операций
+    # внутри камеры (ключи -> fit -> holds -> рото -> слежение) и подстановки не менялись.
+    _cam = plan_camera(CameraInputs(
+        cams=cams, meta=meta, fps=_fps0, subs=subs, hl=hl,
+        st=st, sv=_sv, sv_or=_sv_or,
+        # Ключи зума из kwarg (None — режим стиля), галка ротоскопа и путь XML
+        # (рядом с ним кэш трека головы) — камера решает по ним и разметку, и слежение.
+        cam1_scale=cam1_scale, roto=roto, xml_path=xml_path))
+    cam1_scale, holds = _cam.cam1_scale, _cam.holds
+    cam1scale_js, cam1_ease_js = _cam.cam1scale_js, _cam.cam1_ease_js
+    cam1holds_js = _cam.cam1holds_js
+    roto_plan, zoom_plan = _cam.roto, _cam.zoom
+    cam1_cx, cam1_cy = _cam.cam1_cx, _cam.cam1_cy
+    cam1_anchor = _cam.cam1_anchor
+    cam1_follow_decl, cam1_follow_js = _cam.cam1_follow_decl, _cam.cam1_follow_js
+    roto_pos_cc, roto_pos_mk = _cam.roto_pos_cc, _cam.roto_pos_mk
+    cam1_rot_decl, cam1_rot_cam = _cam.cam1_rot_decl, _cam.cam1_rot_cam
+    roto_rot_cc, roto_rot_mk = _cam.roto_rot_cc, _cam.roto_rot_mk
     _insert_anim = (_sv_or(st, "insert_anim")).strip()
+    # ---- Вставки: данные плана и подстановки вынесены в plan_inserts.py (задание MT) ----
+    # Окна показа (_isec/_win), подложка и «без фона», масштабы видео, готовые ключи
+    # анимаций (наезд, rise, none, вылет из-за спины) и строка INSERTS. Срез окна катом —
+    # то же правило, что в таймингах выше (`_clip_end` из plan_insert_timings).
+    _ip = plan_inserts(InsertsInputs(
+        inserts=inserts, meta=meta, fps=_fps0, clip_end=_clip_end,
+        media_dims=_media_dims, plate_path=_plate_path, plate_scale=_plate_scale,
+        insert_anim=_insert_anim, st=st, sv_or=_sv_or,
+        ins_c1x=ins_c1x, ins_c1y=ins_c1y, ins_c2x=ins_c2x, ins_c2y=ins_c2y, emit=emit))
+    inserts_plan, inserts_js = _ip.inserts, _ip.inserts_js
+    _video_segs = _ip.video_segs
 
-    def _ins_js(x):
-        t0, t1raw = _win(x)
-        t1, noexit = _clip_end(x, t0, t1raw)
-        # «Без фона» (задание ZQ): путь фото у вставки с галкой «на подложке» меняется
-        # ЗДЕСЬ, в плане сцены, — до _ins_plate и до всей остальной геометрии (у nobg_path
-        # свой кэш: второй раз на тот же файл rembg не зовётся). Раньше подмену делал
-        # _nobg_kw в to_ae_full, ДО scene_plan: в .jsx уезжал обрезанный PNG, а план для
-        # превью (/api/scene) считался по ИСХОДНИКУ — рамка карточки была по одним
-        # пропорциям, картинка по другим, и фото на подложке в превью сплющивалось
-        # (1408×768 -> 176×451). Теперь и .jsx, и превью читают ОДИН план: второй копии
-        # подмены в сборке не осталось.
-        media_src = x.get("media") or ""
-        media = media_src
-        if x.get("plate") and _plate_path and _is_image(media_src):
-            from core.insertlib import nobg_path
-            media = nobg_path(media_src, emit=emit)
-        out = {"t": x.get("type") or "photo", "style": x.get("style") or "cam2",
-               "media": media, "start": _r(t0), "end": _r(t1),
-               "scale": _r(x.get("scale") or 44), "mosaic": bool(x.get("mosaic")),
-               "x": _r(x.get("x") or 0), "y": _r(x.get("y") or 0),
-               # ручной масштаб, % от авто (фото — от карточки, видео — от заполнения кадра);
-               # держим отдельно от scale, потому что scale у фото пересчитывается по картинке
-               "sc": _r(x.get("sc") or 100),
-               # форма маски-карточки, % от авторасчёта (100 = как считает JSX сам)
-               "mw": _r(x.get("mw") or 100), "mh": _r(x.get("mh") or 100),
-               "sin": _r(x.get("sin") or 0), "noexit": bool(noexit), "front": bool(_front(x)),
-               "oncam2": bool(x.get("oncam2"))}
-        # геометрия из Python (задание B): видео — масштаб заполнения и запас панорамы
-        # (fit/slack — те же числа, что AE считал из item.width/height), фото — окна
-        # входа/выхода cam2-анимации. Размеры не прочитались -> полей нет: вставку
-        # не трогаем (старое if(!iw||!ih) return).
-        if (x.get("type") or "photo") == "video":
-            wh = _media_dims(media)
-            if wh:
-                k = _r(x.get("sc") or 100) / 100               # округлённый sc: как увидит JSX
-                iw, ih = wh
-                out["fit"] = _r(_fit_scale(iw, ih, True, meta["w"], meta["h"], k))
-                # запас вылета ролика за кадр — СПРАВКА для превью, а не граница позиции
-                # (задание ME2): x/y уходят в план и .jsx ровно такими, какими их задал
-                # пользователь. Раньше позиция зажималась этим запасом (`if k >= 1`), и у
-                # вертикального 9:16 при sc=100 запаса нет вовсе — X и Y обнулялись, видео
-                # не двигалось. Уехав за край, вставка открывает кадр камеры — как в AE.
-                sx, sy = _fill_slack(iw, ih, meta["w"], meta["h"], k)
-                out["slackx"], out["slacky"] = _r(sx), _r(sy)
-                # коробка заполнения при sc=100 (px в comp): ужатому видео (sc<100) предпросмотр
-                # рисует её × sc/100, не читая размеры файла (задание D)
-                f0 = _fit_scale(iw, ih, True, meta["w"], meta["h"], 1.0) / 100
-                out["fitw"], out["fith"] = _r(iw * f0, 2), _r(ih * f0, 2)
-        else:
-            # маска-карточка в comp-координатах (осевший масштаб): её масштабирует anim.scale
-            # (как Scale слоя в AE), и предпросмотру не нужны размеры картинки (задание D)
-            # Подложка — решение ВСТАВКИ, не стиля (задание ZK): у кого галки нет, тот идёт
-            # прежним путём (карточка, маска) даже при заданном в стиле файле подложки.
-            _plate = _ins_plate(media, _plate_path, out["style"], out.get("sc"),
-                                out.get("x"), out.get("y"), meta["w"], meta["h"],
-                                _plate_scale) if (x.get("plate") and _plate_path) else None
-            if _plate:
-                # Подложка (задание ZK): масштаб слоя прекомпа — плашка под карточку, фото
-                # вписано в неё, ручные сдвиг/масштаб уехали в px/py/ps ВНУТРЬ прекомпа.
-                # Анимация слоя (вылет кам1, выезд кам2, точка покоя) считается по
-                # нейтральному sc=100: подложка у всех таких вставок одного размера.
-                # plate в данных — признак для шаблона: слой подложки и отказ от маски
-                # достаются РОВНО этим вставкам.
-                out.update(_plate)
-                out["plate"] = True
-                # Сдвиг ВСЕЙ карточки — kx/ky (задание ZQ): точка покоя слоя и его
-                # ключи анимации считаются по ним, поэтому драг в превью двигает плашку
-                # вместе с фото. Ручные x/y со страницы вставок уехали в px/py (_ins_plate)
-                # и по-прежнему двигают только фото ВНУТРИ подложки (задание ZI).
-                out["x"] = _r(x.get("kx") or 0)
-                out["y"] = _r(x.get("ky") or 0)
-                out["sc"] = 100
-            else:
-                _card = _ins_card(media, out["style"], out.get("mw"), out.get("mh"),
-                                  out.get("sc"), meta["w"], meta["h"])
-                if _card:
-                    out["card"] = _card
-            # анимации вставок: готовые ключи вместо досчёта в ExtendScript (остаток задания B).
-            # Те же округлённые t0/t1 и en/ex, что ушли в JSX, — предпросмотр интерполирует их же.
-            t0r, t1r = _r(t0), _r(t1)
-            if out["style"] == "cam2":
-                S = float(out["scale"] or 44) * float(out["sc"] or 100) / 100
-                if _insert_anim == "rise":           # задание DD: выезд снизу + рост + фейд, без блюра
-                    en, ex = _ins_enter_exit(t0r, t1r, noexit, _fps0, enter=INS_RISE_ENTER, exit_=INS_EXIT)
-                    out["en"], out["ex"] = _r(en), _r(ex)
-                    enr, exr = _r(en), _r(ex)
-                    win = max(0.0, t1r - t0r)
-                    if win < 1 / float(_fps0):
-                        sc_keys = [[t0r, _r(S)]]
-                    else:
-                        sc_keys = [[t0r, _r(S * INS_RISE_S0)], [_r(t0r + enr), _r(S)]]
-                    ix, iy = float(out["x"] or 0), float(out["y"] or 0)
-                    rest_x = round(meta["w"] * ins_c2x) + ix
-                    rest_y = round(meta["h"] * ins_c2y) + iy
-                    pos_start = [_r(rest_x), _r(rest_y + INS_RISE_DY)]
-                    pos_end = [_r(rest_x), _r(rest_y)]
-                    if win < 1 / float(_fps0):
-                        pos_keys = [[t0r, pos_end]]
-                    else:
-                        pos_keys = [[t0r, pos_start], [_r(t0r + enr), pos_end]]
-                    out["anim"] = {
-                        "scale": sc_keys,
-                        "position": pos_keys,
-                        "opacity": _anim_keys(t0r, t1r, 0.0, 100.0, noexit, enr, exr, _fps0),
-                    }
-                elif _insert_anim == "none":         # задание FC: без анимации — слой просто есть
-                    # один ключ на свойство: слой стоит от t0 в осевшем масштабе S и полной
-                    # непрозрачности, вход/выход жёсткие; блюра и позиции нет вовсе
-                    out["anim"] = {"scale": [[t0r, _r(S)]], "opacity": [[t0r, 100.0]]}
-                else:                                # наезд от осевшего масштаба + opacity + блюр
-                    en, ex = _ins_enter_exit(t0r, t1r, noexit, _fps0)  # от округлённых t0/t1, как JSX
-                    out["en"], out["ex"] = _r(en), _r(ex)
-                    enr, exr = _r(en), _r(ex)
-                    pk = S * INS_C2_PEAK / INS_C2_BASE
-                    out["anim"] = {"scale": _anim_keys(t0r, t1r, pk, S, noexit, enr, exr, _fps0),
-                                   "opacity": _anim_keys(t0r, t1r, 0.0, 100.0, noexit, enr, exr, _fps0),
-                                   "blur": _blur_keys(t0r, t1r, noexit)}
-            else:                                    # cam1: вылет из-за спины (локально к нулу)
-                en, ex = _ins_enter_exit(t0r, t1r, noexit, _fps0)
-                out["en"], out["ex"] = _r(en), _r(ex)
-                ix, iy = float(out["x"] or 0), float(out["y"] or 0)
-                if out["oncam2"]:                    # общий сдвиг всех cam1-на-перебивке (INS_C1_ON2_X/Y)
-                    ix += float(_sv_or(st, "insert_c1on2_x"))
-                    iy += float(_sv_or(st, "insert_c1on2_y"))
-                if _insert_anim == "none":           # задание FC: без анимации — сразу точка покоя
-                    # up — точка ПОКОЯ из _cam1_pos_keys (layout.py), нижняя точка dn
-                    # (за спиной) не строится вовсе: слой просто стоит на месте
-                    out["anim"] = {"position": [[t0r, [_r(ins_c1x + ix),
-                                                       _r(ins_c1y - INS_C1_HIGH + iy)]]]}
-                else:                                # обычный вылет: подъём dn→up и спуск
-                    # общий сдвиг точки покоя вставок кам1 (задание CB): парный к insert_c2_x/y,
-                    # cx/cy _cam1_pos_keys и есть точка покоя — сдвиг считается здесь, в плане,
-                    # и превью рисует готовое (правило одного источника)
-                    out["anim"] = {"position": _cam1_pos_keys(t0r, t1r, noexit, ix, iy, _fps0,
-                                                              cx=ins_c1x, cy=ins_c1y)}
-        return out
+    # Цензура звука — окна мьюта голоса и их JS-литерал — считается в plan_audio.py
+    # (задание MU): там же события звуков, с которыми она едет в план и в шаблон.
+    # Разметка РОТО (`roto_plan`) — из plan_camera.py: там же правило «нужен исходник
+    # камеры», по которому фрагмент не попадает в маски.
 
-    inserts_plan = [_ins_js(x) for x in inserts]
-    inserts_js = _jd(inserts_plan)
-    _video_segs = [(ins["start"], ins["end"]) for ins in inserts_plan if ins.get("t") == "video"]
-
-    def _intro_front_at(ts, te):
-        for vs, ve in _video_segs:
-            if max(ts, vs) < min(te, ve):
-                return 1
-        return 0
-    censor_windows = _censor_windows(censor_source, meta["fps"]) if censor_audio else []
-    censor_js = _jd([[_r(a), _r(b)] for a, b in censor_windows])
-    # разметка РОТО (дешёвое, без масок — их делает to_ae_full на GPU): сплошная копия
-    # персонажа по видимой камере (EDL). Превью может опираться на те же фрагменты.
-    # Выключенный ротоскоп — пустая разметка. Флаг тут не спрашивали, и полоса «здесь
-    # рото» в предпросмотре оставалась гореть после «Авто-ротоскоп» выкл (жалоба
-    # 2026-08-12). Соседняя строка про цензуру флаг спрашивает — здесь его забыли.
-    roto_plan = [] if not roto else [
-        p for p in _span_roto_plan(cams, 0, int(meta["dur"]), meta["fps"])
-                 if cams[p["ci"]].get("path")]       # нужен исходник камеры
-    def _intro_line_js(x):
-        line = {"color": x.get("color") or "white",
-                "words": [str(wd) for wd in (x.get("words") or (x.get("text") or "").split())],
-                "times": [_r(t) for t in (x.get("times") or [])]}
-        # Геометрия ГРУППЫ живёт на головной строке. В .jsx проносим только
-        # ненулевое смещение и отличный от 100% масштаб: дефолт не меняет данные.
-        _dx, _dy = float(x.get("gx") or 0), float(x.get("gy") or 0)
-        if _dx or _dy:
-            line["dx"] = _r(_dx)
-            line["dy"] = _r(_dy)
-        _gs = float(x.get("gs") or 100)
-        if _gs != 100:
-            line["ds"] = _r(_gs)
-        # Акцентный шрифт (задание R): флаг живёт на СТРОКЕ рядом с color. Цвет строки
-        # не меняется — акцент это ТРЕТЬЕ состояние слова (шрифт + регистр). Регистр
-        # правится ЗДЕСЬ, в Python: и .jsx, и план получают готовый текст, второй
-        # копии трансформации нет. Пустой accent_font = выключено: галка ничего не
-        # делает (и это видно — строка остаётся как была).
-        if x.get("accent"):
-            if accent_font_ps:
-                line["accent_font"] = accent_font_ps
-                line["words"] = [_accent_word(wd, accent_case) for wd in line["words"]]
-        elif x.get("back"):
-            line["back"] = True
-            if back_font_ps:
-                line["accent_font"] = back_font_ps
-            line["words"] = [_accent_word(wd, back_case) for wd in line["words"]]
-        # «Большое слева» (задание ZY): флаг строки рядом с accent/back. Кладём ТОЛЬКО
-        # при True — иначе .jsx меняется на пустом месте (golden). Раскладку по нему
-        # считает intro_big_layout, в .jsx флаг нужен как признак строки (скейл и X
-        # берутся из INTRO_LK/INTRO_LX).
-        if x.get("big"):
-            line["big"] = True
-        # Цвет интро (новые ключи стиля): color=="custom" несёт СВОЙ цвет строки в поле
-        # fill [r,g,b] 0..1. Без fill строка color=="custom" рисуется как white (см.
-        # _intro_fill_pick) — здесь просто ничего не кладём, JS сам подставит дефолт.
-        if line["color"] == "custom":
-            _cf = x.get("fill")
-            if _cf:
-                line["fill"] = [_r(v) for v in list(_cf)[:3]]
-        if x.get("anim"):
-            line["anim"] = str(x["anim"])
-        if x.get("fx"):
-            line["fx"] = str(x["fx"])
-        if isinstance(x.get("cnt_words"), list):
-            # Новый формат: счётчик на КАЖДОЕ слово-число, позиции слов — в cnt_words.
-            # Скаляры cnt/expr/dec/cnt_idx остаются и равны ПЕРВОМУ счётчику: на них
-            # стоит строчный режим (один текстовый слой = один счётчик) и старые тесты.
-            wds = line["words"]
-            cnts = []
-            for _p in _intro_cnt_positions(x, len(wds)):
-                parsed = _parse_intro_count(wds[_p], x.get("dec"))
-                if parsed is not None:
-                    target, dec, expr, _ = parsed
-                    cnts.append([_p, _r(target), expr, dec])
-            if cnts:
-                line["cnts"] = cnts
-                line["cnt"] = cnts[0][1]
-                line["expr"] = cnts[0][2]
-                line["dec"] = cnts[0][3]
-                line["cnt_idx"] = cnts[0][0]
-                line["is_count"] = True
-            elif x.get("dec") is not None:
-                line["dec"] = int(x["dec"])
-        elif x.get("is_count") or x.get("anim") == "count":
-            # Легаси: флаг на строку без позиций — счётчик на первом числе строки
-            # (включая разбор всей строки целиком, когда отдельных чисел нет).
-            # cnts даёт один элемент — он же скаляры ниже.
-            wds = line["words"]
-            cnts = []
-            for wi, wd in enumerate(wds):
-                parsed = _parse_intro_count(wd, x.get("dec"))
-                if parsed is not None:
-                    target, dec, expr, _ = parsed
-                    cnts = [[wi, _r(target), expr, dec]]
-                    break
-            if not cnts:
-                parsed = _parse_intro_count(" ".join(wds).strip(), x.get("dec"))
-                if parsed is not None:
-                    target, dec, expr, _ = parsed
-                    cnts = [[0, _r(target), expr, dec]]
-            if cnts:
-                line["is_count"] = True
-                line["cnts"] = cnts
-                line["cnt"] = cnts[0][1]
-                line["expr"] = cnts[0][2]
-                line["dec"] = cnts[0][3]
-                line["cnt_idx"] = cnts[0][0]
-            elif x.get("dec") is not None:
-                line["dec"] = int(x["dec"])
-        elif x.get("dec") or (x.get("dec") is not None and x.get("dec") != ""):
-            line["dec"] = int(x["dec"])
-        return line
     # Новые цвета строки интро: считаем по СЫРЫМ данным групп, а не по _intro_line_js.
     # Используются, только если хоть одна строка в ЭТОЙ сборке реально просит accent/custom
     # (иначе плейсхолдеры шаблона пусты и .jsx не меняется ни на байт, golden).
@@ -1768,6 +850,10 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     # Доля ширины кадра для автофита ОТКРЕПЛЁННОГО интро (задание MI, ручка intro_fit_w).
     # Привязанное считается по константе INTRO_FIT_W: его ширину задаёт зум камеры.
     _fit_w = float(_sv_or(st, "intro_fit_w")) / 100.0
+    # Потолок увеличения того же откреплённого интро (задание MO, ручка intro_fit_max):
+    # без него одно короткое слово растягивалось до 667–819 % кадра. Привязанное ручку
+    # не читает — там потолок задаёт ручной gs, а ширину зум камеры.
+    _fit_max = float(_sv_or(st, "intro_fit_max"))
     # Открепление интро от Камеры 1 (задание ZM): галка «интро едет с камерой» снята —
     # нулы «интро» и «интро на кам2» (и затемнение под интро) НЕ привязываются к нулу
     # Камеры 1, а идут по уже существующей ветке else: позиция в координатах кадра.
@@ -1784,351 +870,43 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         "    // галка «интро едет с камерой» снята (задание ZM): затемнение открепляется вместе\n"
         "    // с интро — та же ветка else, координаты кадра\n"
     )
-    # Кегль интро = кегль субтитров ДО ужатия строк (в AE это один FONT_SIZE): тот же
-    # _fsize_base, что у стопки ниже, — автофит меряет ширину строки тем же размером
-    # (задание BP), а ужимание строк его не касается (доработка ZL).
-    # окна групп (ts/te) — здесь, в плане; превью их не считает (задание D). По тем же
-    # округлённым times, что ушли в .jsx, — иначе план и AE разойдутся на сотых.
-    intro_plan = []
-    intro_idy = []                       # готовые iDy для шаблона (задание Q2)
-    # Статистика каждой группы по ГОТОВЫМ строкам (тем же, что уедут в .jsx): все моменты
-    # слов и глитч-моменты. Окна фейд-аута прекомпов с глитчем (ПРАВКА 3/4) считаем один
-    # раз — план (превью) и шаблон (INTRO_FX) получают одни и те же числа.
-    _grp_stats = []
-    for _grp in _intro_groups:
-        _l = [_intro_line_js(x) for x in _grp]
-        _l_tms = [t for _x in _l for t in _x["times"]]
-        _l_gl = [t for _x in _l if _x.get("anim") == "glitch" for t in _x["times"]]
-        _grp_stats.append((_l, _l_tms, _l_gl))
-    _fx_fade = [None] * len(_grp_stats)   # спад прекомпа с глитчем (0.45/0.35), с
-    _fx_os = [None] * len(_grp_stats)     # момент начала фейд-аута (полка кончилась), с
-    _fx_oe = [None] * len(_grp_stats)     # конец спада = конец слоя прекомпа, с
-    for _g, (_l0, _l_tms, _l_gl) in enumerate(_grp_stats):
-        if not _l_gl:
-            continue
-        # ПРАВКА 3: полка прекомпа не наступает раньше конца анимации последнего
-        # глитч-слова (момент слова + длительность анимации из INTRO_ANIMS). Формула
-        # обычного окна — ровно та, что в AE_FULL (inAt/outStart), ПРАВКА её только
-        # продлевает: прекомп без глитча не меняется ни на сотую.
-        _gl_end = max(_l_gl) + INTRO_ANIMS["glitch"]["dur"]
-        _gmin = min(_l_tms) if _l_tms else 0.0
-        _gmax = max(_l_tms) if _l_tms else 0.0
-        _in_at = 0.0 if (_g == 0 and _gmin < 3) else _gmin
-        _ng = len(_grp_stats)
-        _out_js = (_gmax + INTRO_F_DUR + INTRO_HOLD) if _g == _ng - 1 \
-            else max(_gmax, _in_at + INTRO_F_DUR)
-        _out_s = max(_out_js, _gl_end)
-        # ПРАВКА 4 / IK: последний прекомп либо следующий начинается позже, чем через 2 с
-        # после конца этого, — полка дополнительно держится на intro_fx_hold_add;
-        # спад везде intro_fade (задание IK).
-        _far = _g == _ng - 1
-        if not _far and _g + 1 < _ng:
-            _nx_tms = _grp_stats[_g + 1][1]
-            _nx_in = min(_nx_tms) if _nx_tms else 0.0
-            if _nx_in - (_out_s + intro_fade) > 2.0:
-                _far = True
-        if _far:
-            _out_s += intro_fx_hold_add
-        _fx_fade[_g] = intro_fade
-        _fx_os[_g] = _r(_out_s)
-        _fx_oe[_g] = _r(_out_s + _fx_fade[_g])
+    # ---- Расчёт интро вынесен в plan_intro.py (задание MS, этап 2 распила scene_plan) ----
+    # Окна групп, автофит и ширина блока, безопасная зона, раскладка строк и «большое
+    # слева», затухание к субтитру (задание MH), сжатие появления, камера группы, тень
+    # прекомпа и подстановки шаблона. Имена ниже — ровно те, что читает остальной код
+    # scene_plan: перенос построчный, поведение и подстановки не менялись.
+    _intro = plan_intro(IntroInputs(
+        groups=_intro_groups, cams=cams, meta=meta, fps=_fps0,
+        active_cam_at=_active_cam_at, video_segs=_video_segs, subs=_subs,
+        font_ps=font_ps, intro_font_ps=intro_font_ps, intro_hl_font_ps=intro_hl_font_ps,
+        accent_font_ps=accent_font_ps, accent_case=accent_case,
+        back_font_ps=back_font_ps, back_case=back_case,
+        any_back=_any_back, any_glitch=_any_glitch,
+        st=st, sv=_sv, sv_or=_sv_or,
+        # Общие с другими блоками правила остаются в build.py (задание MS).
+        accent_word=_accent_word, parse_count=_parse_intro_count,
+        cnt_positions=_intro_cnt_positions, line_font=_intro_line_font,
+        fit_ds=_intro_fit_ds, appear_dur=_intro_appear_dur, anims=INTRO_ANIMS,
+        back_step=back_step, back_step_after=back_step_after, back_scale=back_scale,
+        line_step_k=_line_step_k, big_step_k=_big_step_k,
+        intro_fade=intro_fade, intro_fx_hold_add=intro_fx_hold_add,
+        intro_sub_cut=intro_sub_cut, intro_sub_fade=intro_sub_fade,
+        intro_scale_k=_G, fit_w=_fit_w, fit_max=_fit_max, intro_cam=_intro_cam,
+        cam1_scale=cam1_scale, holds=holds,
+        shadow_fill=intro_comp_shadow_fill, shadow_op=intro_comp_shadow_op,
+        shadow2_fill=intro_comp_shadow2_fill, shadow2_op=intro_comp_shadow2_op))
+    intro_plan, intro_groups_js = _intro.intro, _intro.groups_js
+    intro_idy = _intro.idy
+    _intro_on2, _intro_front = _intro.on2, _intro.front
+    _intro_above_roto, _intro_anchor = _intro.above_roto, _intro.anchor
+    _intro_ly, _intro_lx, _intro_lk = _intro.ly, _intro.lx, _intro.lk
+    _intro_sq, _intro_sub_fx = _intro.sq, _intro.sub_fx
+    _intro_fx_decl, _intro_fx_out = _intro.fx_decl, _intro.fx_out
+    _intro_sub_fx_decl, _intro_sub_fx_out = _intro.sub_fx_decl, _intro.sub_fx_out
+    _intro_sq_decl, _intro_sq_fn = _intro.sq_decl, _intro.sq_fn
+    _sq_used = _intro.sq_used
+    _accent_used = _intro.accent_used
 
-    # ---- Интро гаснет к субтитру, если стоит на его месте (задание MH) ----------------
-    # Моменты появления элементов субтитров — из ТЕХ ЖЕ данных, что уходят в .jsx и план
-    # (SUBS/SUB_ROWS/стопка): subs_plan собран выше и в режиме слов, и в режиме строк.
-    _sub_starts = sorted({it["s"] for it in subs_plan})
-
-    def _next_sub_after(times):
-        """Момент появления первого субтитра ПОСЛЕ последнего слова группы, сек (задание MH).
-        После группы субтитров нет вовсе — None (окно группы остаётся прежним)."""
-        if not times or not _sub_starts:
-            return None
-        gmax = max(times)
-        for s in _sub_starts:
-            if s > gmax + 1e-6:
-                return s
-        return None
-
-    def _sub_row_at(t):
-        """(ряд, шаг) элементов субтитров, видимых в момент t (задание MH): полоса
-        субтитров — не только posy и кегль, но и высота набранного: у стопки жёлтых
-        шаг свой (hl_step), у строк текста — шаг строк. Ряда нет — шаг не нужен."""
-        row, stack = 0, False
-        for it in subs_plan:
-            if it["s"] - 1e-6 <= t < it.get("gend", it["e"]) + 1e-6:
-                row = max(row, int(it.get("row") or 0))
-                if it.get("stack"):
-                    stack = True
-        if not row:
-            return 0, 0.0
-        return row, (_hl_step if stack else _sub_step)
-
-    for _g, (_grp, (_lines, _tms, _l_gl)) in enumerate(zip(_intro_groups, _grp_stats)):
-        _ts, _te = _intro_group_window(_tms, _g, len(_intro_groups))
-        _fade = min(intro_fade, INTRO_F_OUT)
-        if _fx_fade[_g] is not None:
-            _fade, _te = _fx_fade[_g], _fx_oe[_g]
-        # окно (ts/te) уже посчитано — камера группы по большинству этого окна (BR),
-        # а не по первому слову: иначе кат сразу после старта оставлял нул камеры 1.
-        _on2 = _intro_on2_at(_ts, _te)
-        _intro_on2.append(_on2)
-        _front = _intro_front_at(_ts, _te)
-        _intro_front.append(_front)
-        # Якорь блока интро этой группы (задание A1): на перебивке свой ключ стиля —
-        # группа висит на другом нуле (кам2) и «первая строка» там своя. "first" —
-        # первая строка стоит на месте, остальные ложатся ниже.
-        _anchor = str(_sv_or(st, "intro_anchor2" if _on2 else "intro_anchor"))
-        _intro_anchor.append(_anchor)
-        # Смещение ГРУППЫ (задание E): живёт на головной строке (первой в группе) и
-        # добавляется к позиции прекомпа в шаблоне. После разрезания/слияния групп
-        # оно остаётся у той строки, которая стала головной, — новая группа с чистой
-        # головы получает 0/0. Сюда же дублируем в plan (предпросмотр двигает мышью).
-        _dx = float(_grp[0].get("gx") or 0) if _grp else 0.0
-        _dy = float(_grp[0].get("gy") or 0) if _grp else 0.0
-        _gs = float(_grp[0].get("gs") or 100) if _grp else 100.0
-        _ds = _gs
-        # Шрифт каждой строки считает Python (та же лесенка, что у автофита и .jsx) —
-        # превью читает готовое и своей лесенки не держит. В сами строки (lines) поле не
-        # кладём: они уезжают в .jsx как INTRO_GROUPS, и он обязан остаться прежним (golden).
-        _line_fonts = [_intro_line_font(ln, intro_font_ps, intro_hl_font_ps) for ln in _lines]
-        # Y базовых линий строк (задания A1, ZT, ZZ): шаги задают back_step (доля обычного)
-        # и back_step_after (шаг от заднего плана к обычной строке под ним), а не жёсткие
-        # пиксели шаблона, плюс якорь блока. Считает Python — тем же числам едут и .jsx
-        # (INTRO_LY), и превью. В строки (lines) поле не кладём: INTRO_GROUPS
-        # обязан остаться прежним (golden).
-        # Группа с большой строкой (задание ZY): стопку раскладывает та же intro_line_ys,
-        # но только по строкам СТОПКИ (большая шаг не занимает), а большую сажает на её
-        # место intro_big_layout. Группа без большой — прежняя раскладка (lx/lk пустые).
-        _big_i = _grp_big_i(_lines)
-        _big_total = None
-        _lx = _lk = None
-        if _big_i is None:
-            _ys = intro_line_ys(_lines, back_step, _any_back, _anchor, meta["h"],
-                                step_k=_line_step_k, back_step_after=back_step_after)
-            _n_stack = len(_lines)
-        else:
-            _stack = [_ln for _k, _ln in enumerate(_lines) if _k != _big_i]
-            # Шаг СТОПКИ — свой (intro_big_step, доработка ZY-2), а не общий: большая
-            # строка шаг не занимает, и её кегль подбирается под высоту стопки.
-            _ys_stack = intro_line_ys(_stack, back_step, _any_back, _anchor, meta["h"],
-                                      step_k=_big_step_k, back_step_after=back_step_after)
-            _lx, _lk, _ys = intro_big_layout(_lines, _ys_stack, _fsize_base, _line_fonts,
-                                             back_scale, float(_sv(st, "intro_big_gap")),
-                                             float(_sv(st, "intro_big_over")))
-            # По горизонтали у такой группы видно не строку, а весь блок; ширина блока —
-            # из центровки: lx большой = −total/2 (intro_big_layout). Второй копии
-            # формулы не заводим, автофит мерит то же, что считает раскладка.
-            _big_total = -2.0 * float(_lx[_big_i])
-            _n_stack = len(_stack)
-        _intro_ly.append(_ys)
-        _intro_lx.append(_lx)
-        _intro_lk.append(_lk)
-        # Базовая позиция блока интро (задание Q2): невзведённая (без зума) позиция по
-        # вертикали от ЦЕНТРА кадра = INTRO_Y(+INTRO_Y2) − INTRO_BASE_Y + iDy. gDy НЕ
-        # включаем — он уже живёт отдельным полем dy (задание E: драг правит dy в кэше
-        # плана), а превью сложит y + dy. iDy (опускание под INTRO_SAFE_TOP) считает
-        # Python — шаблон берёт готовое число, CSS-позиция блока в превью уходит.
-        # От НЕУЖАТОГО масштаба у ПРИВЯЗАННОГО интро (граница задания BP): автофит там
-        # режет только Scale, и опускание от него не зависит. У ОТКРЕПЛЁННОГО — от
-        # фактического ds (задание MI): автофит его и увеличивает, а крупное интро без
-        # этого вылезало за верх кадра. При якоре «first» блок по числу строк не
-        # пересчитывается (задание A1): первая строка на месте, значит и центр блока —
-        # как у одной строки, добавленные строки свисают вниз и верх не поднимают.
-        # Высота блока — по тому же межстрочному шагу, что у строк (step_k, задание ZO):
-        # раздвинули строки — блок выше, и под SAFE_TOP его опускают сильнее.
-        # Строк у группы с большой — по стопке: большая строка шаг не занимает, её кегль
-        # подогнан под стопку и выше блока не выходит (задание ZY).
-        # Автофит (задание BP / CF / MI): применяется ТОЛЬКО если группу НЕ трогали руками
-        # (_gs == 100). Если gs != 100 — пользователь явно задал масштаб рукой (рука
-        # сильнее автофита), автофит не урезает его значение.
-        # Зум Камеры 1 в автофит входит, только пока интро к ней привязано (задание ZM):
-        # откреплённый текст её зумом не растёт — ключей нет, значит _zoom_max даёт 100.
-        # Откреплённое интро подгоняется к ширине кадра в ОБЕ стороны (задание MI):
-        # увеличивать его зумом больше некому, поэтому доля ширины — из ручки intro_fit_w.
-        if _gs == 100:
-            _ds = _intro_fit_ds(_lines, _ts, _te, _ds, meta["w"], _G,
-                                cam1_scale if _intro_cam else [],
-                                meta["fps"], st, intro_font_ps, intro_hl_font_ps,
-                                _fsize_base, holds=holds, big_w=_big_total,
-                                fit_w=None if _intro_cam else _fit_w,
-                                both_ways=not _intro_cam)
-        _idy = _intro_i_dy(meta["h"], 1 if _anchor == "first" else _n_stack,
-                           _gs if _intro_cam else _ds, step_k=_line_step_k)
-        # ds головной строки = готовое значение автофита: шаблон читает GRP[0].ds,
-        # превью — plan.intro[].ds, второй копии расчёта нет.
-        if _lines:
-            if _ds != 100:
-                _lines[0]["ds"] = _r(_ds)
-            else:
-                _lines[0].pop("ds", None)
-        _y = round((_sv_or(st, "intro_y")) + _G * (-INTRO_BASE_Y + _idy), 2)
-        if _on2:
-            _y = round(_y + (_sv_or(st, "intro_y2")), 2)
-        # ---- Задание MH: группа стоит на полосе субтитров — гаснет к появлению
-        # следующего. Решение — одна функция (layout.intro_hits_subs) на готовых числах
-        # плана: Y базовых линий и кегли строк группы (back_scale/lk), масштаб прекомпа
-        # (ds), позиция (y/dy), зум Камеры 1 в момент появления субтитра (пока интро к
-        # ней привязано) и полоса субтитров (posy, кегль, ряд стопки). Копии формул
-        # здесь нет: те же ys/кегли/ds/y читают превью и шаблон.
-        # Окно режется ПОСЛЕ автофита: автофит считает по своему (более длинному) окну,
-        # а полоса блока — по готовому ds. Глитч-группы (ПРАВКА 3/4) — то же правило
-        # поверх их окна: короче, но никогда не позже него.
-        # Последняя группа ролика под правило НЕ попадает: владелец держит её до конца
-        # нарочно — у неё своё окно с HOLD (+1.0) и запас F_OUT, а субтитр, идущий после
-        # интро, идёт уже по сценарию. Приёмка архитектора на 8 роликах: из 76 правленых
-        # руками групп он не тронул НИ ОДНОЙ из 7 последних, а правило срезало их на
-        # 1.5–1.9 с (C1459 гр.13, C1461-007 гр.14, C1462-004 гр.23). Вместе с окном
-        # отпадает и сжатие появления (п.2): его включает только укороченное окно, а у
-        # последней группы окно своё и длинное — анимации успевают до затухания с запасом.
-        _line_sizes = intro_line_sizes(_lines, _fsize_base, back_scale, _lk)
-        _fstart = _te - _fade
-        _sub_cut_win = None
-        _ns = _next_sub_after(_tms)
-        # Последняя группа — та же, что держит HOLD в _intro_group_window (gi == n−1).
-        _last_grp = _g == len(_intro_groups) - 1
-        if intro_sub_cut and not _last_grp and _ns is not None and _ns < _te - 1e-6:
-            _srow, _sstep = _sub_row_at(_ns)
-            if intro_hits_subs(
-                    _ys, _line_sizes, _posy, _fsize, h=meta["h"], ds=_ds, g=_G * 100.0,
-                    y=_y, dy=_dy,
-                    zoom=_zoom_max(cam1_scale if _intro_cam else [], meta["fps"],
-                                   _ns, _ns, holds=holds),
-                    intro_cam=_intro_cam, fonts=_line_fonts, sub_font=font_ps,
-                    sub_row=_srow, sub_step=_sstep):
-                _te, _fade, _fstart = intro_sub_window(_ts, _te, _ns, intro_sub_fade)
-                if _fade > intro_fade:
-                    # Общий фейд короче нового (intro_fade < intro_sub_fade): в шаблоне ключ
-                    # «100» ставится в max(outStart, outEnd−F_FADE), то есть игру укоротит
-                    # он, — и план обязан нести то же число, иначе превью покажет не то, что
-                    # соберётся в AE.
-                    _fade = intro_fade
-                    _fstart = _te - _fade
-                _sub_cut_win = [_r(_fstart), _r(_te)]
-        _intro_sub_fx.append(_sub_cut_win)
-        # ---- Слова успевают доиграть появление до начала затухания (задание MH). Слово,
-        # чья анимация появления (всё, что ставит introAnimFX: глитч INTRO_ANIMS, фейд и
-        # масштаб F_DUR, раскрытие, up/left/right, счётчик) заканчивается позже начала
-        # затухания группы, играет её за d = max(0.1, начало затухания − момент слова) —
-        # короче, но не короче 0.1 с. Коэффициент d/D на слово считает Python и отдаёт и
-        # в .jsx (INTRO_SQ), и в план (превью анимирует тем же числом). Владелец ровно это
-        # и правил руками: «глитч 0.27 → 0.17–0.19, фейд/масштаб 0.3 → 0.1–0.17 — чтобы
-        # хотя бы увидеть текст».
-        # В построчном режиме анимацию играет СЛОЙ строки от её первого слова — коэффициент
-        # нулевого слова считается по нему (t0l в шаблоне = min(times)).
-        _grp_sq = []
-        for _li, _ln in enumerate(_lines):
-            _dur = _intro_appear_dur(_ln.get("anim") or "", bool(_ln.get("is_count")))
-            _t_first = min(_ln["times"]) if _ln.get("times") else 0.0
-            _row_sq = []
-            for _wi, _tw in enumerate(_ln.get("times") or []):
-                _t_w = _t_first if _wi == 0 else float(_tw)
-                _k = 1.0
-                # Допуск 1 мс (1/16 кадра при 60 fps): времена плана округлены до
-                # десятитысячных, и слово, чья анимация кончается на сотые доли
-                # миллисекунды позже начала затухания, сжимать незачем — иначе .jsx
-                # получал бы INTRO_SQ с множителем 0.9999 на ровном месте (golden).
-                if _t_w + _dur > _fstart + 1e-3:
-                    _k = min(1.0, max(0.1, _fstart - _t_w) / _dur)
-                _row_sq.append(None if _k >= 1.0 else _r(_k))
-            _grp_sq.append(_row_sq)
-        _intro_sq.append(_grp_sq)
-        # Галка «интро над рото по положению» (задание C): группу Камеры 1, чей блок
-        # от центра кадра в НИЖНЕЙ половине (зона субтитров), в .jsx поднимают над
-        # рото; блок в верхней половине остаётся под ним. Зум камеры не учитываем —
-        # он множит позицию и сам блок одинаково, знак суммы (_y + _G*_dy) не меняется.
-        # Группы на перебивке (свой нул) и на видеовставке (им и так наверх) не трогаем.
-        _above_roto = bool(st.get("intro_roto_by_pos")) and not _on2 and not _front \
-            and (_y + _G * _dy) > 0
-        _intro_above_roto.append(_above_roto)
-        intro_idy.append(_idy)
-        intro_plan.append({"group": _g, "on2": bool(_on2),
-                           "ts": _ts, "te": _te, "fade": _r(_fade), "lines": _lines,
-                           "dx": _dx, "dy": _dy, "ds": _ds, "y": _y, "ys": _ys,
-                           # Множитель длительности появления (задание MH): [строка][слово],
-                           # null — слово успевает (его анимация не сжата). Поля НЕТ, когда
-                           # в группе сжимать нечего: превью читает отсутствие как 1, а
-                           # .jsx получает массив INTRO_SQ только при сжатых словах (golden).
-                           **({"sq": _grp_sq} if any(v is not None for _r_sq in _grp_sq
-                                                      for v in _r_sq) else {}),
-                           # Большая строка группы (задание ZY): левый край каждой строки
-                           # (px прекомпа от центра) и множитель её кегля. Превью рисует
-                           # готовые числа. У групп без большой строки полей НЕТ вовсе —
-                           # в lines их тоже не кладём: INTRO_GROUPS обязан остаться
-                           # прежним (golden).
-                           **({"lx": _lx, "lk": _lk} if _big_i is not None else {}),
-                           # Тень прекомпа этой группы (задание B): цвет и непрозрачность
-                           # ТОЙ камеры, на которой группа (_on2). Тем же числом живёт
-                           # превью (filter: drop-shadow), второй копии выбора камеры нет.
-                           "shadow": {"fill": (intro_comp_shadow2_fill if _on2
-                                               else intro_comp_shadow_fill),
-                                      "op": (intro_comp_shadow2_op if _on2
-                                             else intro_comp_shadow_op)},
-                           # Группа легла по времени на видеовставку: в AE её прекомп после
-                           # раскладки уносит moveToBeginning НАД всем (template.py,
-                           # intro_front_raise). Признак нужен и превью — без него слой интро
-                           # оставался под видео: текст был закрыт картинкой и не хватался
-                           # мышью, хотя в AE лежал сверху.
-                           # В строки (lines) поле не кладём: они уезжают в .jsx как
-                           # INTRO_GROUPS, и он обязан остаться прежним (golden).
-                           "front": bool(_front),
-                           # Галка «интро над рото в нижней половине» (задание C): блок
-                           # группы ниже центра кадра на Камере 1 — прекомп в .jsx
-                           # поднимается над рото (template.py, intro_above_roto_raise).
-                           # В строки (lines) поле не кладём: они уезжают в .jsx как
-                           # INTRO_GROUPS и обязаны остаться прежними (golden).
-                           "above_roto": _above_roto,
-                           # Шрифт каждой строки и Y базовых линий (готовые числа, задание A1):
-                           # в сами строки (lines) их не кладём — они уезжают в .jsx как
-                           # INTRO_GROUPS, и он обязан остаться прежним (golden).
-                           "fonts": _line_fonts})
-    # Готовые окна фейд-аута прекомпов с глитчем для шаблона (ПРАВКА 3/4): JS берёт
-    # числа из плана, второй копии расчёта не заводится. Без глитча подстановка пустая —
-    # .jsx прежний (golden).
-    _intro_fx_decl = ""
-    _intro_fx_out = ""
-    if _any_glitch:
-        _fx_js = _jd([None if _fx_os[_g] is None else [_fx_os[_g], _fx_oe[_g]]
-                      for _g in range(len(_grp_stats))])
-        _intro_fx_decl = ("\n    var INTRO_FX=%s;    // [группа] = [начало фейд-аута, конец слоя] прекомпа"
-                          " с глитчем: числа из плана (ПРАВКА 3/4)" % _fx_js)
-        _intro_fx_out = ("\n            if (INTRO_FX[gI]){ outStart=INTRO_FX[gI][0]; outEnd=INTRO_FX[gI][1]; }"
-                         "  // ПРАВКА 3/4: прекомп с глитчем держит полку и гасится своими числами")
-    # Группы, гаснущие к появлению следующего субтитра (задание MH): [группа] = [начало
-    # затухания, конец слоя] — то же, чем INTRO_FX живёт для глитча, только окно уже
-    # (next_sub) и спад короткий (intro_sub_fade). Проверка идёт ПОСЛЕ INTRO_FX: у группы
-    # с глитчем, попавшей на полосу субтитров, побеждает раннее затухание — оно не позже
-    # глитчевого окна. Ни одной такой группы — подстановки пусты, .jsx прежний (golden).
-    _intro_sub_fx_decl = ""
-    _intro_sub_fx_out = ""
-    if any(w is not None for w in _intro_sub_fx):
-        _sub_fx_js = _jd(_intro_sub_fx)
-        _intro_sub_fx_decl = ("\n    var INTRO_SUB_FX=%s;    // [группа] = [начало фейд-аута,"
-                              " конец слоя] группы, гаснущей к появлению субтитра: блок стоит на"
-                              " полосе субтитров (задание MH)" % _sub_fx_js)
-        _intro_sub_fx_out = ("\n            if (INTRO_SUB_FX[gI]){ outStart=INTRO_SUB_FX[gI][0];"
-                             " outEnd=INTRO_SUB_FX[gI][1]; }  // задание MH: гаснет к субтитру,"
-                             " когда стоит на его полосе")
-    # Множители длительности появления (задание MH): [группа][строка][слово], null — слово
-    # успевает доиграть до начала затухания. Объявляется только при сжатых словах: нет их —
-    # ни массива, ни функции, ни лишнего аргумента в вызовах, .jsx прежний (golden).
-    _intro_sq_decl = ""
-    _intro_sq_fn = ""
-    _sq_used = any(v is not None for _grp_sq in _intro_sq for _row_sq in _grp_sq for v in _row_sq)
-    if _sq_used:
-        _intro_sq_decl = ("\n    var INTRO_SQ=%s;    // [группа][строка][слово] — множитель"
-                          " длительности появления: слово, чья анимация не успевала до начала"
-                          " затухания группы, играет её короче (задание MH)" % _jd(_intro_sq))
-        _intro_sq_fn = (
-            '\n        function introSQ(gI,qi,wi){ try{ var a=INTRO_SQ[gI];'
-            ' if(!a) return 1; a=a[qi]; if(!a) return 1; var v=a[wi];'
-            ' return (v>0 && v<1)?v:1; }catch(e){ return 1; } }'
-        )
-    # .jsx-группы — из ГОТОВОГО плана (автофит уже в ds), чтобы .jsx и превью не
-    # разошлись на одном и том же значении.
-    intro_groups_js = _jd([p["lines"] for p in intro_plan])
-    # Акцент (задание R) или задний план: используются, только если хоть одна строка
-    # реально получила accent_font. Иначе плейсхолдеры шаблона пусты и .jsx не меняется ни на байт (golden).
-    _accent_used = any("accent_font" in ln for p in intro_plan for ln in p["lines"])
     # геометрия субтитров для предпросмотра: стопка живёт в comp-координатах, и JS не должен
     # досчитывать формулы из h (posy = sub_y*h, шаг = 0.06224*h — это контракт _ae ниже)
     _posy = int(meta["h"] * float(_sv_or(st, "sub_y")))
@@ -2441,43 +1219,8 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
             '.setValue([INTRO_SHADE.scale, INTRO_SHADE.scale]); }catch(e){}\n'
             "    }\n"
         )
-    follow_keys = []
-    if bool(st.get("cam1_head_follow")) and xml_path and cams and cams[0].get("path"):
-        from core import headtrack
-        ranges = headtrack.cam1_ranges(cams, _fps0)
-        try:
-            hdata = headtrack.load_cached(xml_path, cams[0]["path"], ranges=ranges)
-        except TypeError:
-            hdata = headtrack.load_cached(xml_path, cams[0]["path"])
-        if hdata is not None:
-            w_src = hdata.get("w") or meta["w"]
-            h_src = hdata.get("h") or meta["h"]
-            target = float(_sv(st, "cam1_head_x"))
-            smooth_s = float(_sv(st, "cam1_head_smooth"))
-            # Заполнение уже сидит в ключах зума (ZE): сюда 100 — слои клипа и рото кам1
-            # заполняют кадр ровно, а fit растит нул вместе с детьми. Порог слежения —
-            # в числах пользователя («150 — точка отсчёта для всего, пересчитывать в уме
-            # нельзя»), а сравнивается он с ключами, которые уже ×k, — значит и порог ×k.
-            min_scale = float(_sv(st, "cam1_head_min")) * _fit_k
-            follow_keys = _cam1_follow_keys(
-                cams=cams, pts=hdata.get("pts", []),
-                w_src=w_src, h_src=h_src,
-                zoom_keys=cam1_scale, holds=holds,
-                fps=_fps0, W=meta["w"], H=meta["h"],
-                cx=cam1_cx, pan_x=pan_x, cam1_fit=100.0,
-                target=target, smooth_s=smooth_s,
-                min_scale=min_scale,
-            )
-
-    # fit = 100 (ZE): заполнение живёт в ключах зума выше, а превью считает ровно так же —
-    # (fit/100)·(ключ/100). Вторая копия умножения развела бы превью и AE.
-    zoom_plan = {"holds": [1 if h else 0 for h in holds], "fit": 100.0,
-                 "cx": cam1_cx, "cy": cam1_cy,
-                 "pan": [pan_x, pan_y], "rot": rot,
-                 "keys": cam1_scale or [], "ease": _zoom_key_eases(cam1_scale or [])}
-    if follow_keys:
-        zoom_plan["follow"] = {"keys": [list(k) for k in follow_keys],
-                               "ease": [[EASE_DEFAULT, EASE_DEFAULT] for _ in follow_keys]}
+    # Слежение за головой (`follow_keys`) и `plan["zoom"]` — из plan_camera.py: кэш
+    # `<стем>.head.json` читается там же одной дверью с ключами зума (fit уже внутри них).
 
     plan = {
         "fps": meta["fps"], "w": meta["w"], "h": meta["h"], "name": meta["name"],
@@ -2542,14 +1285,13 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         # Шаг от заднего плана к обычной строке (задание ZZ) для предпросмотра: None —
         # ключа в стиле нет, раскладка взяла back_step (превью читает готовые ys).
         "back_step_after": back_step_after,
-        "roto": [{"ci": p["ci"], "ts": _r(p["tl_start"]), "te": _r(p["tl_end"]),
-                  "src_start": _r(p["src_start"]), "src_end": _r(p["src_end"]),
-                  "scale": _r(p["scale"])} for p in roto_plan],
-        "audio": {"voice_src": (cams[0].get("path") or "") if cams else "",
-                  "voice_db": float(_sv_or(st, "voice_db")),
-                  "music_path": music_path, "music_db": music_db,
-                  "censor": [[_r(a), _r(b)] for a, b in censor_windows],
-                  "sfx": sfx_plan},
+        # Разметка рото (задание MW): готовые фрагменты из plan_camera.py — маски по ним
+        # делает to_ae_full, предпросмотр читает их же для полосы «здесь рото».
+        "roto": roto_plan,
+        # Звук плана (задание MU): словарь собирается там же, где считаются его числа —
+        # plan_audio.py. Голос, музыка, окна цензуры и события SFX — из одного места,
+        # второй копии у .jsx и предпросмотра нет.
+        "audio": audio,
         # стопка субтитров и кегль — для отрисовки в предпросмотре (тот же источник, что _ae)
         # intro_fsize — кегль интро (до ужатия строк, доработка ZL): превью рисует им
         # интро, fsize (ужатым) — субтитры; в режиме по слову числа равны.
@@ -2580,674 +1322,51 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         plan["top_line"] = top_line_plan
     if caption_plan:
         plan["caption"] = caption_plan
-    # Цвета и тень текста интро (новые ключи стиля). Всё выключено при дефолтах — ниже
-    # собираются подстановки шаблона так, чтобы при выключенных ключах .jsx не менялся
-    # ни на байт (golden), тем же приёмом, что уже применён для accent_font (задание R).
-    # HL_FILL3 объявляется, только если строка color=="accent" реально есть в сборке.
-    _hlfill3_decl = (", HL_FILL3=%s" % _fill_js(hl_fill3)) if _accent_color_used else ""
-    # INTRO_FILL/INTRO_HL_FILL переопределяют белый/жёлтый ТОЛЬКО текста интро — от
-    # стиля, не от данных строки; None (дефолт) = подстановка пустая.
-    _intro_fill_decl = ((", INTRO_FILL=%s" % _fill_js(intro_fill)) if intro_fill is not None else "") \
-        + ((", INTRO_HL_FILL=%s" % _fill_js(intro_hl_fill)) if intro_hl_fill is not None else "")
-    # cf — аргумент introDoc с готовым fill строки color=="custom" (см. _intro_line_js);
-    # добавляется, только если такая строка есть в ЭТОЙ сборке.
-    _fill_params = ",cf" if _custom_color_used else ""
-    _fill_call = ",ln.fill" if _custom_color_used else ""
-    # Порядок цветов совпадает с приоритетом в данных: yellow (жёлтые субтитро-слова
-    # интро) первым, как и было; accent/custom дописываются ВНУТРЬ ветки "иначе", только
-    # если реально нужны — при их отсутствии выражение побайтово прежнее.
-    _white_expr = "INTRO_FILL" if intro_fill is not None else "[1,1,1]"
-    _yellow_expr = "INTRO_HL_FILL" if intro_hl_fill is not None else "HL_FILL"
-    # Ставить ли тритон на жёлтую строку — решено выше (_yellow_dark): цвет мидтонов у него
-    # тот же, что уезжает в подстановку _yellow_expr, и считается он по переменным сборки,
-    # а не по строке JS (задание ZN). Яркий цвет — тритон выбеливает букву, обе
-    # подстановки пустые.
-    _fill_inner = _white_expr
-    if _custom_color_used:
-        _fill_inner = '(col=="custom"?(cf||[1,1,1]):%s)' % _fill_inner
-    if _accent_color_used:
-        _fill_inner = '(col=="accent"?HL_FILL3:%s)' % _fill_inner
-    _intro_fill_pick = '(col=="yellow"?%s:%s)' % (_yellow_expr, _fill_inner)
-    # Эффекты появления строк интро (anim: glitch/reveal/left/right/up/count, fx: glow).
-    # Пока anim == "" и fx == "", подстановки пустые либо равны прежнему тексту (golden).
-    _any_glitch = any(x.get("anim") == "glitch" for g in _intro_groups for x in g)
-    _any_reveal = any(x.get("anim") == "reveal" for g in _intro_groups for x in g)
-    _any_left = any(x.get("anim") == "left" for g in _intro_groups for x in g)
-    _any_right = any(x.get("anim") == "right" for g in _intro_groups for x in g)
-    _any_up = any(x.get("anim") == "up" for g in _intro_groups for x in g)
-    _any_count = any(_has_valid_count(x) for g in _intro_groups for x in g)
-    _any_fx_glow = any(x.get("fx") == "glow" for g in _intro_groups for x in g)
-    _any_intro_yellow = any(x.get("color") == "yellow" for g in _intro_groups for x in g)
-    # Автотень — только у глитча и строк заднего плана. Свечение (fx=="glow") её больше
-    # НЕ приносит: у строки со свечением на слое слова остаются ровно Glo2 и (для жёлтой)
-    # тритон, иначе к свечению подмешивалась тень, которой пользователь не просил.
-    _any_auto_shadow = _any_glitch or _any_back
-    _shadow_needed = intro_shadow_on or _any_auto_shadow
-    _anim_fx_used = (
-        _any_glitch or _any_reveal or _any_fx_glow
-        or _any_left or _any_right or _any_up
-        or _any_count
-    )
-
-    # Тень (Drop Shadow) на КАЖДОМ слове/строке интро — пресет intro_shadow, либо
-    # автоматически для строк с anim=="glitch" и back==True (fx=="glow" — без тени).
-    _intro_shadow_decl = (
-        "\n    var INTRO_SHADOW_OP=%g, INTRO_SHADOW_DIR=%g, INTRO_SHADOW_DIST=%g, INTRO_SHADOW_SOFT=%g;"
-        "\n    var BACK_SHADOW_OP=%g, BACK_SHADOW_SOFT=%g;"
-        % (intro_shadow_op, intro_shadow_dir, intro_shadow_dist, intro_shadow_soft,
-           back_shadow_op, back_shadow_soft)
-    ) if _shadow_needed else ""
-    _intro_word_shadow_fn = (
-        "\n        function introWordShadow(L, isBack){ var ds=addFX(L,\"ADBE Drop Shadow\");"
-        " setP(ds,\"ADBE Drop Shadow-0002\",isBack?BACK_SHADOW_OP:INTRO_SHADOW_OP);"
-        " setP(ds,\"ADBE Drop Shadow-0003\",INTRO_SHADOW_DIR);"
-        " setP(ds,\"ADBE Drop Shadow-0004\",INTRO_SHADOW_DIST);"
-        " setP(ds,\"ADBE Drop Shadow-0005\",isBack?BACK_SHADOW_SOFT:INTRO_SHADOW_SOFT); }"
-    ) if _shadow_needed else ""
-    if intro_shadow_on:
-        _intro_word_shadow_line = " introWordShadow(Ll, ln.back);"
-        _intro_word_shadow_word = " introWordShadow(L2, ln.back);"
-    elif _any_auto_shadow:
-        _intro_word_shadow_line = ' if(ln.anim=="glitch"||ln.back) introWordShadow(Ll, ln.back);'
-        _intro_word_shadow_word = ' if(ln.anim=="glitch"||ln.back) introWordShadow(L2, ln.back);'
-    else:
-        _intro_word_shadow_line = ""
-        _intro_word_shadow_word = ""
-
-    # Раскладка строк интро по вертикали (задание A1): готовые Y базовых линий уезжают
-    # в .jsx массивом INTRO_LY и берутся оттуда — шаг знает back_step и якорь блока,
-    # в шаблоне этого не сосчитать. Массив нужен, если в ролике есть строки
-    # заднего плана (там шаг уже не LINE_STEP) ИЛИ хоть одна группа с якорем «first»
-    # (первая строка на месте), ИЛИ группа с большой строкой (задание ZY: Y большой
-    # строки считает раскладка). Ничего из этого — .jsx прежний байт в байт (golden).
-    _any_first = any(a == "first" for a in _intro_anchor)
-    _intro_ly_decl = (
-        "    var INTRO_LY=%s;    // [группа][строка] — Y базовой линии строки в прекомпе,"
-        " считает Python (задание A1): шаг знает back_step и якорь блока\n"
-        % _jd(_intro_ly)
-    ) if (_any_back or _any_first or _any_big) else ""
-    # Большая строка (задание ZY): левый край каждой строки (px прекомпа от центра) и
-    # множитель её кегля — массивами INTRO_LX/INTRO_LK, как INTRO_LY. У строк обычных
-    # групп там null. Нет большой строки — объявления нет вовсе, .jsx прежний (golden).
-    _intro_lx_decl = (
-        "    var INTRO_LX=%s, INTRO_LK=%s;    // [группа][строка] — левый край строки"
-        " (px прекомпа от центра) и множитель её кегля: строка с галкой «большое слева»"
-        " встаёт слева крупно, остальные строки — стопкой справа, считает Python (задание ZY)\n"
-        % (_jd(_intro_lx), _jd(_intro_lk))
-    ) if _any_big else ""
-
-    # Кусок «большая строка» для шаблона (задание ZY): функции чтения INTRO_LX/INTRO_LK,
-    # скейл слоя большой строки и её ширина. Все подстановки непустые ТОЛЬКО когда в
-    # ролике есть большая строка — без неё .jsx прежний байт в байт (golden). Большая
-    # строка задний-план-скейл НЕ получает: lk его заменяет, поэтому условия back-скейла
-    # и back-ширины дополнены проверкой «эта строка не большая» (_big_no).
-    _big_no = " && introBigK(gI,qi)==null" if _any_big else ""
-    _intro_big_fn = ""
-    _intro_big_qi_vars = ""
-    _intro_big_line = ""
-    _intro_big_line_pos = ""
-    _intro_big_word_x = ""
-    if _any_big:
-        _intro_big_fn = (
-            '\n        function introBigK(gI,qi){ try{ var a=INTRO_LK[gI];'
-            ' return (a&&a[qi]!=null)?a[qi]:null; }catch(e){ return null; } }'
-            '\n        function introBigX(gI,qi){ try{ var a=INTRO_LX[gI];'
-            ' return (a&&a[qi]!=null)?a[qi]:null; }catch(e){ return null; } }'
-            '\n        function introBigScale(L,k){ try{ '
-            'L.property("ADBE Transform Group").property("ADBE Scale")'
-            '.setValue([Math.round(k*1000)/10, Math.round(k*1000)/10, 100]); '
-            '}catch(e){} }'
-        )
-        # bigK/bigX — на строку, рядом с ln/wds/tms: дальше их читают и слова, и позиция
-        _intro_big_qi_vars = " var bigK=introBigK(gI,qi), bigX=introBigX(gI,qi);"
-        # построчно: текст выключен по центру, поэтому левый край = x − lineW/2
-        _intro_big_line = " if(bigK!=null) introBigScale(Ll,bigK);"
-        _intro_big_line_pos = (
-            " if(bigX!=null){ Ll.property(\"ADBE Transform Group\").property(\"ADBE Position\")"
-            ".setValue([IW/2+bigX+lineW/2, lineY]); }   // большое слева: левый край строки"
-            " на IW/2+lx (задание ZY)"
-        )
-        # пословно: старт строки — левый край блока, а не центр минус половина ширины
-        _intro_big_word_x = " if(bigX!=null) x=IW/2+bigX;"
-
-    if _any_back:
-        _intro_line_layout = (
-            "var nL=GRP.length, BACK_STEP=%g, BACK_SCALE=%g, maxLineW=0;\n"
-            "            var lineSteps=[0], totH=0;\n"
-            "            for(var si=1; si<nL; si++){\n"
-            "                var stp = LINE_STEP * ((GRP[si].back || GRP[si-1].back) ? BACK_STEP : 1.0);\n"
-            "                totH += stp;\n"
-            "                lineSteps.push(totH);\n"
-            "            }\n"
-            "            var cY = (!GRP[0].back && nL>1) ? (H/2 - (nL-1)*60) : (H/2 - totH/2);\n"
-            "            for (var qi=0; qi<nL; qi++){\n"
-            "                var ln=GRP[qi], wds=ln.words||[], tms=ln.times||[];\n"
-            "                var lineY=cY+lineSteps[qi];\n"
-            "                if(INTRO_LY[gI]&&INTRO_LY[gI][qi]!=null) lineY=INTRO_LY[gI][qi];"
-            % (back_step, back_scale)
-        )
-        _intro_back_scale_fn = (
-            '\n        function introBackScale(L){ try{ '
-            'L.property("ADBE Transform Group").property("ADBE Scale").setValue([Math.round(BACK_SCALE*1000)/10, Math.round(BACK_SCALE*1000)/10, 100]); '
-            '}catch(e){} }'
-        )
-        _intro_back_scale_line = (" if(ln.back%s) introBackScale(Ll);%s"
-                                  % (_big_no, _intro_big_line))
-        _intro_back_scale_line_w = (
-            "var lineW=introW(Ll); if(ln.back%s) lineW*=BACK_SCALE;"
-            " if(bigK!=null) lineW*=bigK; if(lineW>maxLineW) maxLineW=lineW;"
-            % _big_no if _any_big else
-            "var lineW=introW(Ll); if(ln.back) lineW*=BACK_SCALE; if(lineW>maxLineW) maxLineW=lineW;"
-        )
-        _intro_back_scale_tmp = (" if(ln.back%s) lineW*=BACK_SCALE; if(bigK!=null) lineW*=bigK;"
-                                 % _big_no if _any_big else
-                                 " if(ln.back) lineW*=BACK_SCALE;")
-        _intro_back_scale_word = (" if(ln.back%s) introBackScale(L2);"
-                                  " if(bigK!=null) introBigScale(L2,bigK);" % _big_no if _any_big else
-                                  " if(ln.back) introBackScale(L2);")
-        _intro_back_scale_wpx = (" if(ln.back%s) wpx*=BACK_SCALE; if(bigK!=null) wpx*=bigK;"
-                                 % _big_no if _any_big else
-                                 " if(ln.back) wpx*=BACK_SCALE;")
-    elif _any_first:
-        # Якорь «первая строка» без строк заднего плана: шаги — прежние LINE_STEP, но
-        # отсчёт не от центра блока, а от первой строки, и добавленная строка верх не
-        # поднимает — числа даёт Python.
-        _intro_line_layout = (
-            "var nL=GRP.length, maxLineW=0;\n"
-            "            for (var qi=0; qi<nL; qi++){\n"
-            "                var ln=GRP[qi], wds=ln.words||[], tms=ln.times||[], lineY=INTRO_LY[gI][qi];"
-        )
-        _intro_back_scale_fn = ""
-        _intro_back_scale_line = _intro_big_line
-        _intro_back_scale_line_w = (
-            "var lineW=introW(Ll); if(bigK!=null) lineW*=bigK; if(lineW>maxLineW) maxLineW=lineW;"
-            if _any_big else "if(introW(Ll)>maxLineW) maxLineW=introW(Ll);")
-        _intro_back_scale_tmp = (" if(bigK!=null) lineW*=bigK;" if _any_big else "")
-        _intro_back_scale_word = (" if(bigK!=null) introBigScale(L2,bigK);" if _any_big else "")
-        _intro_back_scale_wpx = (" if(bigK!=null) wpx*=bigK;" if _any_big else "")
-    else:
-        _intro_line_layout = (
-            "var nL=GRP.length, cY=H/2 - (nL-1)/2*LINE_STEP, maxLineW=0;\n"
-            "            for (var qi=0; qi<nL; qi++){\n"
-            "                var ln=GRP[qi], wds=ln.words||[], tms=ln.times||[], lineY=cY+qi*LINE_STEP;"
-            # Большая строка (задание ZY): INTRO_LY при ней объявлен всегда — Y строк
-            # считает раскладка, из формулы cY+qi*LINE_STEP его не получить.
-            + ("\n                if(INTRO_LY[gI]&&INTRO_LY[gI][qi]!=null) lineY=INTRO_LY[gI][qi];"
-               if _any_big else "")
-        )
-        _intro_back_scale_fn = ""
-        _intro_back_scale_line = _intro_big_line
-        _intro_back_scale_line_w = (
-            "var lineW=introW(Ll); if(bigK!=null) lineW*=bigK; if(lineW>maxLineW) maxLineW=lineW;"
-            if _any_big else "if(introW(Ll)>maxLineW) maxLineW=introW(Ll);")
-        _intro_back_scale_tmp = (" if(bigK!=null) lineW*=bigK;" if _any_big else "")
-        _intro_back_scale_word = (" if(bigK!=null) introBigScale(L2,bigK);" if _any_big else "")
-        _intro_back_scale_wpx = (" if(bigK!=null) wpx*=bigK;" if _any_big else "")
-
-    # Подъём интро над видеовставкой (признак front на группу): хотя бы одна группа
-    # попадает на видеовставку — в .jsx появляются массив INTRO_FRONT, introFrontLayers
-    # и маршрутизация push/raise. Ни одной — все четыре подстановки пустые, .jsx прежний (golden).
-    _any_front = any(f for f in _intro_front)
-    _intro_front_decl = (
-        "    var INTRO_FRONT=%s;    // [0|1 на группу] — группа попадает на видеовставку:"
-        " поднимается над рото и видео\n" % _jd(_intro_front)
-    ) if _any_front else ""
-    _intro_front_arr_decl = "\n    var introFrontLayers = [];" if _any_front else ""
-    _intro_front_route = (
-        "if (INTRO_FRONT[gI]) introFrontLayers.push(iL);\n"
-        "            else introLayers.push(iL);"
-    ) if _any_front else "introLayers.push(iL);"
-    _intro_front_raise = (
-        "    for (var fi = 0; fi < introFrontLayers.length; fi++){\n"
-        "        try{ introFrontLayers[fi].moveToBeginning(); }catch(e){}\n"
-        "    }\n"
-    ) if _any_front else ""
-
-    # Подъём интро над РОТО по положению (задание C): группа Камеры 1, чей блок в нижней
-    # половине кадра, после раскладки по layer_order переносится под самый верхний
-    # рото-слой (moveBefore), то есть встаёт сразу над рото. Ни одной такой группы —
-    # все четыре подстановки пустые, .jsx прежний (golden).
-    _any_above_roto = any(_intro_above_roto)
-    _intro_above_roto_decl = (
-        "    var INTRO_ABOVE_ROTO=%s;    // [0|1 на группу] — группа Камеры 1 в НИЖНЕЙ"
-        " половине кадра: поднимается над рото\n" % _jd(_intro_above_roto)
-    ) if _any_above_roto else ""
-    _intro_above_roto_arr_decl = "\n    var introAboveRoto = [];" if _any_above_roto else ""
-    _intro_above_roto_route = (
-        "\n            if (INTRO_ABOVE_ROTO[gI]) introAboveRoto.push(iL);"
-    ) if _any_above_roto else ""
-    _intro_above_roto_raise = (
-        "    // Интро над рото по положению (задание C): каждый слой из introAboveRoto\n"
-        "    // переносим ПЕРЕД самым верхним рото-слоем. Рото-слоёв нет — делать нечего.\n"
-        "    var topRoto = null;\n"
-        "    for (var ri3 = 0; ri3 < rotoLayers.length; ri3++){\n"
-        "        try{ if (!topRoto || rotoLayers[ri3].index < topRoto.index) topRoto = rotoLayers[ri3]; }catch(e){}\n"
-        "    }\n"
-        "    if (topRoto){\n"
-        "        for (var ai = 0; ai < introAboveRoto.length; ai++){\n"
-        "            try{ introAboveRoto[ai].moveBefore(topRoto); }catch(e){}\n"
-        "        }\n"
-        "    }\n"
-    ) if _any_above_roto else ""
-
-    if _anim_fx_used:
-        _g_an = INTRO_ANIMS["glitch"]
-        _r_an = INTRO_ANIMS["reveal"]
-        # Сжатие появления (задание MH): сжатые слова есть — все ключи анимации играют
-        # от t0 с множителем SQ (его даёт introSQ на слово), и в вызовы добавляется
-        # аргумент. Сжатых нет — ни множителя, ни аргумента: текст .jsx прежний (golden).
-        _sq = "*SQ" if _sq_used else ""
-        _sq_arg = ", SQ" if _sq_used else ""
-        _sq_guard = ("            if(SQ==null || !(SQ>0)) SQ=1;   // слово успевает — множитель 1\n"
-                     if _sq_used else "")
-        _gl_op_lines = []
-        for _kt, _kv in _g_an["op_keys"]:
-            _t_str = "t0" if _kt == 0 else f"t0+{_kt:g}{_sq}"
-            _gl_op_lines.append(f'                op.setValueAtTime({_t_str},{_kv:g});\n')
-        _gl_op_jsx = "".join(_gl_op_lines)
-        _sc_pct = int(round(_r_an["scale"] * 100))
-        _sc3d_str = ",".join(f"{x:g}" if x == int(x) else str(x) for x in _r_an["scale_3d"])
-        # Тритон на СЛОВЕ (задание G): у жёлтой строки со свечением/глитчем Midtones
-        # красится в цвет заливки жёлтой строки — то же выражение, что _yellow_expr
-        # (INTRO_HL_FILL, если он задан в стиле, иначе HL_FILL). Highlights/Shadows/
-        # смешивание — дефолтные. Ставится ПОСЛЕ Glo2; строк без глитча и свечения,
-        # как и белый/accent/custom цвет, он не касается. Нет таких строк в сборке —
-        # подстановка пустая, .jsx прежний. Яркий цвет (задание ZN) — тоже пустая:
-        # свечение выбеливает букву, и тритон гонит её в Highlights вместо мидтонов.
-        _tt_yellow = ""
-        if (_any_glitch or _any_fx_glow) and _yellow_dark:
-            _tt_yellow = (
-                '            if((anim=="glitch"||fx=="glow") && col=="yellow"){\n'
-                '                var tt=addFX(L,"ADBE Tritone"); setP(tt,"ADBE Tritone-0002",%s);\n'
-                '            }\n' % _yellow_expr
-            )
-        if _dg_on:
-            _dg_set_lines = ['var fxDg=addFX(L,"PEDG2"); if(!fxDg) DG_MISS++;']
-            for _mn, _val in DEEP_GLOW2_GLITCH:
-                _dg_set_lines.append(f'setP(fxDg,"{_mn}",{json.dumps(_val)});')
-            _dg_set_str = " ".join(_dg_set_lines)
-            # Строка со свечением (fx=="glow") Deep Glow не берёт (задание MK): вместо него
-            # ей ставится ровно то же, что жёлтому глитчу в режиме «Встроенные» — ветка
-            # else ниже (Gaussian Blur + Glo2). Условие в .jsx нужно и тогда, когда
-            # подходящие слова в сборке есть не только такие: решение по КАЖДОЙ строке
-            # принимает шаблон, как и раньше по col. Галка intro_dg_with_glow возвращает
-            # прежнее условие байт в байт — .jsx у неё как до задания. Яркий цвет (задание
-            # MK2/MK3) сюда не доходит вовсе: _dg_on уже выключен (_dg_bright), ветка else.
-            _dg_yellow_cond = ('col=="yellow"' if _dg_with_glow
-                               else 'col=="yellow" && fx!="glow"')
-            _glitch_fx_code = (
-                '            if(anim=="glitch"){\n'
-                f'                if({_dg_yellow_cond}){{ {_dg_set_str} }} else {{\n'
-                f'                    var fxGb=addFX(L,"ADBE Gaussian Blur 2"); setP(fxGb,"ADBE Gaussian Blur 2-0001",{_g_an["blur"]:g});\n'
-                '                    var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",149); setP(fxGl,"ADBE Glo2-0003",77); setP(fxGl,"ADBE Glo2-0004",0.62);\n'
-                '                }\n'
-                '            } else if(fx=="glow"){\n'
-                '                var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",149); setP(fxGl,"ADBE Glo2-0003",77); setP(fxGl,"ADBE Glo2-0004",0.62);\n'
-                '            }\n'
-            )
-            _dg_miss_decl = 'var DG_MISS=0;\n        '
-        else:
-            _glitch_fx_code = (
-                '            if(anim=="glitch"){\n'
-                f'                var fxGb=addFX(L,"ADBE Gaussian Blur 2"); setP(fxGb,"ADBE Gaussian Blur 2-0001",{_g_an["blur"]:g});\n'
-                '                var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",149); setP(fxGl,"ADBE Glo2-0003",77); setP(fxGl,"ADBE Glo2-0004",0.62);\n'
-                '            } else if(fx=="glow"){\n'
-                '                var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",149); setP(fxGl,"ADBE Glo2-0003",77); setP(fxGl,"ADBE Glo2-0004",0.62);\n'
-                '            }\n'
-            )
-            _dg_miss_decl = ''
-        # Масштаб появления (задание MG) — ОТ БАЗЫ слоя, а не в абсолютных 70→100.
-        # База — Scale, выставленный ДО анимации: у большой строки introBigScale (lk*100),
-        # у заднего плана introBackScale (BACK_SCALE*100), у обычной 100. Абсолютные ключи
-        # перебивали статичное значение, и большое слово сжималось до 100 % (в превью
-        # крупное, в AE обычного размера). Ветка только при _any_big: без большой строки
-        # .jsx прежний байт в байт, как у остальных подстановок ZY (числа там те же —
-        # обычная строка 100→70, задний план BACK_SCALE*100→×0.7, ключи от базы).
-        _rev_scale_jsx = (
-            '                    var sc=L.property("ADBE Transform Group").property("ADBE Scale");\n'
-            '                    var base=(sc && sc.value && !isNaN(sc.value[0])) ? sc.value[0]\n'
-            '                        : ((typeof isBack!=="undefined" && isBack'
-            ' && typeof BACK_SCALE!=="undefined") ? BACK_SCALE*100 : 100);\n'
-            f'                    var s1=Math.round(base*10)/10, s0=Math.round(base*{_r_an["scale"]:g}*10)/10;\n'
-            f'                    sc.setValueAtTime(t0,[s0,s0]); sc.setValueAtTime(t0+F_DUR{_sq},[s1,s1]);\n'
-        ) if _any_big else (
-            '                    var sc=L.property("ADBE Transform Group").property("ADBE Scale");\n'
-            '                    var isB=(typeof isBack!=="undefined"&&isBack)||(typeof BACK_SCALE!=="undefined"&&sc.value[0]<99);\n'
-            '                    if(isB){\n'
-            '                        var bSc=(typeof BACK_SCALE!=="undefined")?BACK_SCALE:0.69;\n'
-            '                        var s1=Math.round(bSc*1000)/10;\n'
-            f'                        var s0=Math.round(s1*{_r_an["scale"]:g}*10)/10;\n'
-            f'                        sc.setValueAtTime(t0,[s0,s0]); sc.setValueAtTime(t0+F_DUR{_sq},[s1,s1]);\n'
-            '                    }else{\n'
-            f'                        sc.setValueAtTime(t0,[{_sc_pct},{_sc_pct}]); sc.setValueAtTime(t0+F_DUR{_sq},[100,100]);\n'
-            '                    }\n'
-        )
-        _intro_anim_fx_fn = (
-            '\n        ' + _dg_miss_decl
-            + 'function introAnimFX(L, t0, anim, fx, w, target, expr, isBack, col%s){\n' % _sq_arg
-            + _sq_guard
-            + '            var hasCnt=(typeof target!=="undefined" && target!==null && !isNaN(target));\n'
-            '            if(hasCnt){\n'
-            '                try{\n'
-            '                    var sl=addFX(L,"ADBE Slider Control");\n'
-            '                    if(sl){\n'
-            '                        var slP=sl.property("ADBE Slider Control-0001");\n'
-            '                        if(slP){\n'
-            '                            slP.setValueAtTime(t0,0);\n'
-            f'                            slP.setValueAtTime(t0+HL_DUR{_sq},target);\n'
-            '                        }\n'
-            '                    }\n'
-            '                }catch(e){}\n'
-            '                try{\n'
-            '                    var sp=L.property("ADBE Text Properties").property("ADBE Text Document");\n'
-            '                    if(sp && expr){\n'
-            '                        sp.expression=expr;\n'
-            '                    }\n'
-            '                }catch(e){}\n'
-            '            }\n'
-            + _glitch_fx_code
-            + _tt_yellow +
-            '            if(anim=="glitch"){\n'
-            '                try{\n'
-            '                    var tp=L.property("ADBE Text Properties");\n'
-            '                    var anims=(tp?tp.property("ADBE Text Animators"):null)||L.property("ADBE Text Animators");\n'
-            '                    var tanim=anims.addProperty("ADBE Text Animator");\n'
-            '                    var sels=tanim.property("ADBE Text Selectors");\n'
-            '                    var sel=sels.addProperty("ADBE Text Selector");\n'
-            '                    try{\n'
-            '                        var pStart=sel.property("ADBE Text Percent Start");\n'
-            f'                        pStart.setValueAtTime(t0,0); pStart.setValueAtTime(t0+{_g_an["dur"]:g}{_sq},100);\n'
-            '                    }catch(e){}\n'
-            '                    try{\n'
-            '                        var pEnd=sel.property("ADBE Text Percent End");\n'
-            f'                        pEnd.setValueAtTime(t0+{_g_an["end_keys"][0][0]:g}{_sq},{_g_an["end_keys"][0][1]:g}); pEnd.setValueAtTime(t0+{_g_an["end_keys"][1][0]:g}{_sq},{_g_an["end_keys"][1][1]:g}); pEnd.setValueAtTime(t0+{_g_an["end_keys"][2][0]:g}{_sq},{_g_an["end_keys"][2][1]:g});\n'
-            '                    }catch(e){}\n'
-            '                    try{\n'
-            '                        var adv=sel.property("ADBE Text Range Advanced");\n'
-            '                        adv.property("ADBE Text Randomize Order").setValue(1);\n'
-            '                        adv.property("ADBE Text Random Seed").setValue(10);\n'
-            '                    }catch(e){}\n'
-            '                    try{\n'
-            '                        var aProps=tanim.property("ADBE Text Animator Properties");\n'
-            '                        var aOp=aProps.addProperty("ADBE Text Opacity");\n'
-            '                        aOp.setValue(0);\n'
-            '                    }catch(e){}\n'
-            '                }catch(e){}\n'
-            '                var op=L.property("ADBE Transform Group").property("ADBE Opacity");\n'
-            f'{_gl_op_jsx}'
-            '            }else if(anim=="reveal"){\n'
-            '                try{\n'
-            '                    var tp=L.property("ADBE Text Properties");\n'
-            '                    var anims=(tp?tp.property("ADBE Text Animators"):null)||L.property("ADBE Text Animators");\n'
-            '                    var tanim=anims.addProperty("ADBE Text Animator");\n'
-            '                    var sels=tanim.property("ADBE Text Selectors");\n'
-            '                    var sel=sels.addProperty("ADBE Text Selector");\n'
-            '                    try{\n'
-            '                        var pOff=sel.property("ADBE Text Percent Offset");\n'
-            f'                        pOff.setValueAtTime(t0,-100); pOff.setValueAtTime(t0+F_DUR{_sq},100);\n'
-            '                    }catch(e){}\n'
-            '                    try{\n'
-            '                        var adv=sel.property("ADBE Text Range Advanced");\n'
-            f'                        adv.property("ADBE Text Range Shape").setValue({_r_an["shape"]:d});\n'
-            f'                        adv.property("ADBE Text Selector Smoothness").setValue({_r_an["smoothness"]:d});\n'
-            f'                        adv.property("ADBE Text Levels Max Ease").setValue({_r_an["ease"][0]:d});\n'
-            f'                        adv.property("ADBE Text Levels Min Ease").setValue({_r_an["ease"][1]:d});\n'
-            '                    }catch(e){}\n'
-            '                    try{\n'
-            '                        var aProps=tanim.property("ADBE Text Animator Properties");\n'
-            '                        var aSc=aProps.addProperty("ADBE Text Scale 3D");\n'
-            f'                        aSc.setValue([{_sc3d_str}]);\n'
-            '                    }catch(e){}\n'
-            '                }catch(e){}\n'
-            '                try{\n'
-            '                    var gb=addFX(L,"ADBE Gaussian Blur 2");\n'
-            '                    if(gb){\n'
-            '                        var pBl=gb.property("ADBE Gaussian Blur 2-0001");\n'
-            f'                        pBl.setValueAtTime(t0,{_r_an["blur"]:g}); pBl.setValueAtTime(t0+F_DUR{_sq},0);\n'
-            '                    }\n'
-            '                }catch(e){}\n'
-            '                try{\n'
-            + _rev_scale_jsx +
-            '                }catch(e){}\n'
-            '                var op=L.property("ADBE Transform Group").property("ADBE Opacity");\n'
-            f'                op.setValueAtTime(t0,0); op.setValueAtTime(t0+F_DUR{_sq},100); easePair(op);\n'
-            '            }else if(anim=="left"){\n'
-            '                if(typeof w==="undefined" || w===null) w=introW(L);\n'
-            '                var pos=L.property("ADBE Transform Group").property("ADBE Position");\n'
-            '                var curP=pos.value, curX=curP[0], curY=curP[1];\n'
-            '                pos.setValueAtTime(t0, [curX-w, curY]);\n'
-            f'                pos.setValueAtTime(t0+F_DUR{_sq}, [curX, curY]);\n'
-            '                easePair(pos);\n'
-            '                var op=L.property("ADBE Transform Group").property("ADBE Opacity");\n'
-            f'                op.setValueAtTime(t0,0); op.setValueAtTime(t0+F_DUR{_sq},100); easePair(op);\n'
-            '            }else if(anim=="right"){\n'
-            '                if(typeof w==="undefined" || w===null) w=introW(L);\n'
-            '                var pos=L.property("ADBE Transform Group").property("ADBE Position");\n'
-            '                var curP=pos.value, curX=curP[0], curY=curP[1];\n'
-            '                pos.setValueAtTime(t0, [curX+w, curY]);\n'
-            f'                pos.setValueAtTime(t0+F_DUR{_sq}, [curX, curY]);\n'
-            '                easePair(pos);\n'
-            '                var op=L.property("ADBE Transform Group").property("ADBE Opacity");\n'
-            f'                op.setValueAtTime(t0,0); op.setValueAtTime(t0+F_DUR{_sq},100); easePair(op);\n'
-            '            }else if(anim=="up"){\n'
-            '                var pos=L.property("ADBE Transform Group").property("ADBE Position");\n'
-            '                var curP=pos.value, curX=curP[0], curY=curP[1];\n'
-            '                pos.setValueAtTime(t0, [curX, curY+HL_RISE]);\n'
-            f'                pos.setValueAtTime(t0+F_DUR{_sq}, [curX, curY]);\n'
-            '                easePair(pos);\n'
-            '                var op=L.property("ADBE Transform Group").property("ADBE Opacity");\n'
-            f'                op.setValueAtTime(t0,0); op.setValueAtTime(t0+F_DUR{_sq},100); easePair(op);\n'
-            '            }else if(hasCnt){\n'
-            '                var op=L.property("ADBE Transform Group").property("ADBE Opacity");\n'
-            f'                op.setValueAtTime(t0,0); op.setValueAtTime(t0+HL_DUR{_sq},100); easePair(op);\n'
-            '            }else{\n'
-            '                var op=L.property("ADBE Transform Group").property("ADBE Opacity");\n'
-            f'                op.setValueAtTime(t0,0); op.setValueAtTime(t0+F_DUR{_sq},100); easePair(op);\n'
-            '            }\n'
-            '        }'
-        )
-        # Коэффициент сжатия (задание MH) едет в вызов аргументом: слово — своё число из
-        # INTRO_SQ, строка построчного режима — нулевое (её анимацию играет слой строки
-        # от первого слова). Сжатых слов нет — аргумента нет, .jsx прежний (golden).
-        _sq_li = ", introSQ(gI,qi,0)" if _sq_used else ""
-        _sq_wi = ", introSQ(gI,qi,wj2)" if _sq_used else ""
-        if _any_count:
-            if _any_back:
-                _intro_line_anim = ("introAnimFX(Ll, t0l, ln.anim, ln.fx, null, ln.cnt, ln.expr,"
-                                    " ln.back, ln.color%s);" % _sq_li)
-                _intro_word_anim = (
-                    'var tw=(tms[wj2]!=null?tms[wj2]:0); if(tw<0)tw=0; '
-                    'var cw=null; if(ln.cnts){for(var ci=0;ci<ln.cnts.length;ci++){if(ln.cnts[ci][0]===wj2){cw=ln.cnts[ci];break;}}}\n'
-                    '                    introAnimFX(wl[wj2], tw, ln.anim, ln.fx, ww[wj2], cw?cw[1]:null, cw?cw[2]:null, ln.back, ln.color%s);' % _sq_wi
-                )
-            else:
-                _intro_line_anim = ("introAnimFX(Ll, t0l, ln.anim, ln.fx, null, ln.cnt, ln.expr,"
-                                    " null, ln.color%s);" % _sq_li)
-                _intro_word_anim = (
-                    'var tw=(tms[wj2]!=null?tms[wj2]:0); if(tw<0)tw=0; '
-                    'var cw=null; if(ln.cnts){for(var ci=0;ci<ln.cnts.length;ci++){if(ln.cnts[ci][0]===wj2){cw=ln.cnts[ci];break;}}}\n'
-                    '                    introAnimFX(wl[wj2], tw, ln.anim, ln.fx, ww[wj2], cw?cw[1]:null, cw?cw[2]:null, null, ln.color%s);' % _sq_wi
-                )
-        else:
-            if _any_back:
-                _intro_line_anim = ("introAnimFX(Ll, t0l, ln.anim, ln.fx, null, null, null,"
-                                    " ln.back, ln.color%s);" % _sq_li)
-                _intro_word_anim = (
-                    'var tw=(tms[wj2]!=null?tms[wj2]:0); if(tw<0)tw=0;\n'
-                    '                    introAnimFX(wl[wj2], tw, ln.anim, ln.fx, ww[wj2], null, null, ln.back, ln.color%s);' % _sq_wi
-                )
-            else:
-                _intro_line_anim = ("introAnimFX(Ll, t0l, ln.anim, ln.fx, null, null, null,"
-                                    " null, ln.color%s);" % _sq_li)
-                _intro_word_anim = (
-                    'var tw=(tms[wj2]!=null?tms[wj2]:0); if(tw<0)tw=0;\n'
-                    '                    introAnimFX(wl[wj2], tw, ln.anim, ln.fx, ww[wj2], null, null, null, ln.color%s);' % _sq_wi
-                )
-    else:
-        # Ветка вовсе без эффектов (обычный фейд): сжатым словам (задание MH) длительность
-        # укорочена тем же множителем — своим у слова и нулевым у строки построчного режима.
-        _intro_anim_fx_fn = ""
-        _sq_li_p = "*introSQ(gI,qi,0)" if _sq_used else ""
-        _sq_wi_v = ("var sq=introSQ(gI,qi,wj2); " if _sq_used else "")
-        _sq_wi_p = "*sq" if _sq_used else ""
-        _intro_line_anim = (
-            'var opL=Ll.property("ADBE Transform Group").property("ADBE Opacity");\n'
-            '                    opL.setValueAtTime(t0l,0); opL.setValueAtTime(t0l+F_DUR%s,100);'
-            ' easePair(opL);' % _sq_li_p
-        )
-        _intro_word_anim = (
-            'var op=wl[wj2].property("ADBE Transform Group").property("ADBE Opacity");\n'
-            '                    var tw=(tms[wj2]!=null?tms[wj2]:0); if(tw<0)tw=0;\n'
-            '                    %sop.setValueAtTime(tw, 0); op.setValueAtTime(tw+F_DUR%s, 100);'
-            ' easePair(op);' % (_sq_wi_v, _sq_wi_p)
-        )
-
-    # Вызовы свечения жёлтого хайлайта (задание GP): ставятся ПОСЛЕДНИМИ эффектами
-    # слоя строки/слова, только если в сборке есть жёлтая строка интро.
-    _hl_call_line = ' if(ln.color=="yellow" && !grpGlitch && ln.fx!="glow") introHlGlow(Ll);' if _any_intro_yellow else ""
-    _hl_call_word = ' if(ln.color=="yellow" && !grpGlitch && ln.fx!="glow") introHlGlow(wl[wj2]);' if _any_intro_yellow else ""
-    _intro_line_anim += _hl_call_line
-    _intro_word_anim += _hl_call_word
-
-    # Тритон в introHlGlow — вторая подстановка того же цвета (задание G); на ярком
-    # цвете её нет, сама функция со свечением (Glo2) остаётся (задание ZN).
-    _intro_hl_glow_fn = (
-        '\n        function introHlGlow(L){\n'
-        '            var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",149); setP(fxGl,"ADBE Glo2-0003",77); setP(fxGl,"ADBE Glo2-0004",0.62);\n'
-        + (f'            var tt=addFX(L,"ADBE Tritone"); setP(tt,"ADBE Tritone-0002",{_yellow_expr});\n'
-           if _yellow_dark else "")
-        + '        }'
-    ) if _any_intro_yellow else ""
-
-    if _any_intro_yellow:
-        _intro_group_flags = (
-            "\n            var grpGlitch=false, grpGlow=false, grpYellow=false;\n"
-            "            for(var gck=0; gck<GRP.length; gck++){\n"
-            '                if(GRP[gck].anim=="glitch") grpGlitch=true;\n'
-            '                if(GRP[gck].fx=="glow") grpGlow=true;\n'
-            '                if(GRP[gck].color=="yellow") grpYellow=true;\n'
-            "            }"
-        )
-        if _any_glitch or _any_fx_glow:
-            _intro_comp_glow = (
-                'if(grpGlitch || (!grpGlow && !grpYellow)){\n'
-                '                try{ var igl=iL.property("ADBE Effect Parade").addProperty("ADBE Glo2");\n'
-                '                     if(grpGlitch){\n'
-                '                         setP(igl,"ADBE Glo2-0002",211); setP(igl,"ADBE Glo2-0003",93); setP(igl,"ADBE Glo2-0004",0.42);\n'
-                '                     } else {\n'
-                '                         try{ igl.property("Glow Radius").setValue(42); }catch(e){}\n'
-                '                         try{ igl.property("Glow Intensity").setValue(INTRO_GLOW); }catch(e){}\n'
-                '                     }\n'
-                '                }catch(e){}\n'
-                '            }'
-            )
-        else:
-            _intro_comp_glow = (
-                'if(!grpYellow){\n'
-                '                try{ var igl=iL.property("ADBE Effect Parade").addProperty("ADBE Glo2");\n'
-                '                     try{ igl.property("Glow Radius").setValue(42); }catch(e){}\n'
-                '                     try{ igl.property("Glow Intensity").setValue(INTRO_GLOW); }catch(e){} }catch(e){}\n'
-                '            }'
-            )
-    else:
-        if _any_glitch or _any_fx_glow:
-            _intro_group_flags = (
-                "\n            var grpGlitch=false, grpGlow=false;\n"
-                "            for(var gck=0; gck<GRP.length; gck++){\n"
-                '                if(GRP[gck].anim=="glitch") grpGlitch=true;\n'
-                '                if(GRP[gck].fx=="glow") grpGlow=true;\n'
-                "            }"
-            )
-            _intro_comp_glow = (
-                'if(grpGlitch || !grpGlow){\n'
-                '                try{ var igl=iL.property("ADBE Effect Parade").addProperty("ADBE Glo2");\n'
-                '                     if(grpGlitch){\n'
-                '                         setP(igl,"ADBE Glo2-0002",211); setP(igl,"ADBE Glo2-0003",93); setP(igl,"ADBE Glo2-0004",0.42);\n'
-                '                     } else {\n'
-                '                         try{ igl.property("Glow Radius").setValue(42); }catch(e){}\n'
-                '                         try{ igl.property("Glow Intensity").setValue(INTRO_GLOW); }catch(e){}\n'
-                '                     }\n'
-                '                }catch(e){}\n'
-                '            }'
-            )
-        else:
-            _intro_group_flags = ""
-            _intro_comp_glow = (
-                'try{ var igl=iL.property("ADBE Effect Parade").addProperty("ADBE Glo2");\n'
-                '                 try{ igl.property("Glow Radius").setValue(42); }catch(e){}\n'
-                '                 try{ igl.property("Glow Intensity").setValue(INTRO_GLOW); }catch(e){} }catch(e){}'
-            )
-    # Тень ПРЕКОМПА интро (задание B): своя у камеры 1 и камеры 2 — направление/дистанция/
-    # мягкость те же, что у dropShadow (135/0/287), меняются только цвет и непрозрачность.
-    # Все четыре ключа на дефолтах (белая, 68) — подстановка ровно прежняя строка
-    # dropShadow(iL, 68); иначе в шаблон едет объявление introCompShadow и вызов с камерой
-    # группы (INTRO_ON2[gI]: 1 у группы на перебивке). Дефолтный .jsx не меняется (golden).
-    _ics_default = (intro_comp_shadow_fill == [1.0, 1.0, 1.0]
-                    and intro_comp_shadow_op == 68.0
-                    and intro_comp_shadow2_fill == [1.0, 1.0, 1.0]
-                    and intro_comp_shadow2_op == 68.0)
-
-    def _ics_rgb(fill):
-        return "%g,%g,%g" % (fill[0], fill[1], fill[2])
-
-    if _ics_default:
-        _intro_comp_shadow = "dropShadow(iL, 68);"
-        _intro_comp_shadow_fn = ""
-    else:
-        _intro_comp_shadow = "introCompShadow(iL, INTRO_ON2[gI]);"
-        _intro_comp_shadow_fn = (
-            "\n    function introCompShadow(L, on2){"
-            " var ds=addFX(L,\"ADBE Drop Shadow\");"
-            " setP(ds,\"ADBE Drop Shadow-0001\", on2?[%s]:[%s]);"
-            " setP(ds,\"ADBE Drop Shadow-0002\", on2?%g:%g);"
-            " setP(ds,\"ADBE Drop Shadow-0003\",135);"
-            " setP(ds,\"ADBE Drop Shadow-0004\",0);"
-            " setP(ds,\"ADBE Drop Shadow-0005\",287); }"
-            % (_ics_rgb(intro_comp_shadow2_fill), _ics_rgb(intro_comp_shadow_fill),
-               intro_comp_shadow2_op, intro_comp_shadow_op)
-        )
-    if _any_glitch and glitch_asset and _glitch_word_times:
-        gl_blocks = []
-        eff_db = 0.0 + glitch_db
-        _r4 = lambda v: round(v * 10000) / 10000
-        for _grp_t in _glitch_sound_groups:
-            # Один слой звука на ГРУППУ глитч-слов (ПРАВКА 1): startTime за 0.567 до
-            # ПЕРВОГО слова группы, дальше огибающая — тишина до первого слова, полка
-            # на glitch_db, спад за кадр до конца слоя (ПРАВКА 2).
-            _t_first, _t_last = _grp_t[0], _grp_t[-1]
-            st_val = _r4(_t_first - GLITCH_SFX_PRE_S)
-            in_val = _r4(_t_first)
-            out_val = _r4(_t_last + GLITCH_SFX_HOLD_S + GLITCH_SFX_RELEASE_S + 1.0 / _fps0)
-            atk_val = _r4(_t_first + GLITCH_SFX_ATTACK_S)
-            rel_s_val = _r4(_t_last + GLITCH_SFX_HOLD_S)
-            rel_e_val = _r4(_t_last + GLITCH_SFX_HOLD_S + GLITCH_SFX_RELEASE_S)
-            lines = [
-                '            var gl=main.layers.add(glitchItem); gl.name="Глитч";',
-                '            gl.startTime=%g; gl.inPoint=%g; gl.outPoint=%g;' % (st_val, in_val, out_val),
-                '            try{ var glAlv=gl.property("ADBE Audio Group").property("ADBE Audio Levels");',
-                '                 glAlv.setValue([%g, %g]);' % (eff_db, eff_db),
-                '                 // звук покрывает ВСЮ группу глитч-слов (ПРАВКА 1): тишина до',
-                '                 // первого слова, нарастание за 0.08, полка, спад до тишины',
-                '                 // за кадр до конца слоя',
-                '                 glAlv.setValueAtTime(%g, [%g, %g]);' % (in_val, GLITCH_SFX_QUIET_DB, GLITCH_SFX_QUIET_DB),
-                '                 glAlv.setValueAtTime(%g, [%g, %g]);' % (atk_val, eff_db, eff_db),
-                '                 glAlv.setValueAtTime(%g, [%g, %g]);' % (rel_s_val, eff_db, eff_db),
-                '                 glAlv.setValueAtTime(%g, [%g, %g]); }catch(e){}' % (rel_e_val, GLITCH_SFX_QUIET_DB, GLITCH_SFX_QUIET_DB),
-            ]
-            gl_blocks.append("\n".join(lines))
-        gl_body = "\n".join(gl_blocks)
-        glitch_sfx = (
-            '\n\n    // ---- звук глитча: один слой на ГРУППУ глитч-слов (ПРАВКА 1) ----\n'
-            f'    var GLITCH={_js(glitch_asset)};\n'
-            '    if (GLITCH){ var glitchItem=imp(GLITCH);\n'
-            '        if (glitchItem){\n'
-            '            toBin(glitchItem,"Интро");\n'
-            f'{gl_body}\n'
-            '        }\n'
-            '    }'
-        )
-    else:
-        glitch_sfx = ""
+    # ---- Подстановки шаблона интро вынесены в plan_intro_tpl.py (задание MV, этап 5) ----
+    # Готовые строки JS: цвета текста, тень слов/строк и прекомпа, раскладка строк (задний
+    # план, якорь «first», «большое слева»), эффекты появления (глитч/Deep Glow/Tritone/
+    # свечение) и маршрутизация слоёв над видеовставкой и рото. Имена ниже — ровно те, что
+    # читает остальной код scene_plan: перенос построчный, текст подстановок не менялся.
+    _itpl = plan_intro_tpl(IntroTplInputs(
+        groups=_intro_groups, intro=_intro,
+        any_glitch=_any_glitch, any_back=_any_back, any_big=_any_big,
+        accent_color_used=_accent_color_used, custom_color_used=_custom_color_used,
+        intro_fill=intro_fill, intro_hl_fill=intro_hl_fill, hl_fill3=hl_fill3,
+        yellow_dark=_yellow_dark, dg_on=_dg_on, dg_with_glow=_dg_with_glow,
+        shadow_on=intro_shadow_on, shadow_op=intro_shadow_op, shadow_dir=intro_shadow_dir,
+        shadow_dist=intro_shadow_dist, shadow_soft=intro_shadow_soft,
+        back_shadow_op=back_shadow_op, back_shadow_soft=back_shadow_soft,
+        comp_shadow_fill=intro_comp_shadow_fill, comp_shadow_op=intro_comp_shadow_op,
+        comp_shadow2_fill=intro_comp_shadow2_fill, comp_shadow2_op=intro_comp_shadow2_op,
+        back_step=back_step, back_scale=back_scale,
+        # Таблицы и правило счётчика остаются в build.py (задание MV): второй копии нет.
+        anims=INTRO_ANIMS, deep_glow=DEEP_GLOW2_GLITCH,
+        has_valid_count=_has_valid_count))
+    _hlfill3_decl, _intro_fill_decl = _itpl.hlfill3_decl, _itpl.fill_decl
+    _fill_params, _fill_call = _itpl.fill_params, _itpl.fill_call
+    _intro_fill_pick = _itpl.fill_pick
+    _intro_shadow_decl, _intro_word_shadow_fn = _itpl.shadow_decl, _itpl.word_shadow_fn
+    _intro_word_shadow_line = _itpl.word_shadow_line
+    _intro_word_shadow_word = _itpl.word_shadow_word
+    _intro_ly_decl, _intro_lx_decl = _itpl.ly_decl, _itpl.lx_decl
+    _intro_big_fn, _intro_big_qi_vars = _itpl.big_fn, _itpl.big_qi_vars
+    _intro_big_line_pos, _intro_big_word_x = _itpl.big_line_pos, _itpl.big_word_x
+    _intro_line_layout = _itpl.line_layout
+    _intro_back_scale_fn, _intro_back_scale_line = _itpl.back_scale_fn, _itpl.back_scale_line
+    _intro_back_scale_line_w = _itpl.back_scale_line_w
+    _intro_back_scale_tmp = _itpl.back_scale_tmp
+    _intro_back_scale_word, _intro_back_scale_wpx = _itpl.back_scale_word, _itpl.back_scale_wpx
+    _intro_front_decl, _intro_front_arr_decl = _itpl.front_decl, _itpl.front_arr_decl
+    _intro_front_route, _intro_front_raise = _itpl.front_route, _itpl.front_raise
+    _intro_above_roto_decl = _itpl.above_roto_decl
+    _intro_above_roto_arr_decl = _itpl.above_roto_arr_decl
+    _intro_above_roto_route, _intro_above_roto_raise = \
+        _itpl.above_roto_route, _itpl.above_roto_raise
+    _intro_anim_fx_fn = _itpl.anim_fx_fn
+    _intro_line_anim, _intro_word_anim = _itpl.line_anim, _itpl.word_anim
+    _intro_hl_glow_fn = _itpl.hl_glow_fn
+    _intro_group_flags, _intro_comp_glow = _itpl.group_flags, _itpl.comp_glow
+    _intro_comp_shadow, _intro_comp_shadow_fn = _itpl.comp_shadow, _itpl.comp_shadow_fn
     # Дисклеймер подстраивается под шрифт (задание E). Кегль: база int(H·0.0245), но самая
     # длинная строка не должна вылезать за DISC_FIT_W ширины кадра — у SF Pro Condensed при
     # 47 она давала ровно 0.992·W, у Oswald-Bold 1194 px (за краем кадра 1080) и пользователь
@@ -3280,32 +1399,14 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
     disc_lead_decl = (", DISC_LEAD=%g" % disc_lead) if disc_lead is not None else ""
     disc_lead_js = ("" if disc_lead is None else _disc_lead_code + "\n        ")
     disc_lead_js_tail = ("" if disc_lead is None else "\n    " + _disc_lead_code)
-    cam1_moved = (cam1_cx != 0.5 or cam1_cy != 0.5 or pan_x != 0 or pan_y != 0 or bool(follow_keys))
-    cam1_follow_decl = ("\n    var CAM1_FOLLOW=%s;" % _jd([list(k) for k in follow_keys])) if follow_keys else ""
-    cam1_follow_js = (
-        "\n    // слежение за головой по X (задание ZC): ключи на X-координату нула Камеры 1\n"
-        "    if (cam1null && typeof CAM1_FOLLOW !== \"undefined\" && CAM1_FOLLOW.length){\n"
-        "        var pos = cam1null.property(\"ADBE Transform Group\").property(\"ADBE Position\");\n"
-        "        pos.dimensionsSeparated = true;\n"
-        "        var posX = cam1null.property(\"ADBE Transform Group\").property(\"ADBE Position_0\");\n"
-        "        var base = posX.value;\n"
-        "        for (var fi = 0; fi < CAM1_FOLLOW.length; fi++)\n"
-        "            posX.setValueAtTime(CAM1_FOLLOW[fi][0] / FPS, base + CAM1_FOLLOW[fi][1]);\n"
-        "        for (var ki = 1; ki <= posX.numKeys; ki++)\n"
-        "            posX.setInterpolationTypeAtKey(ki, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER);\n"
-        "        var eIns = [], eOuts = [];\n"
-        "        for (var ki2 = 0; ki2 < posX.numKeys; ki2++){\n"
-        "            eIns.push(%(ease_default)g); eOuts.push(%(ease_default)g);\n"
-        "        }\n"
-        "        temporalEase(posX, eIns, eOuts);\n"
-        "    }\n"
-    ) % {"ease_default": EASE_DEFAULT} if follow_keys else ""
-    # служебное для сборки: готовые токены шаблона (не входят в контракт плана)
+    # Служебное для сборки: готовые токены шаблона (не входят в контракт плана).
+    # Подстановки камеры (cam1_moved/anchor/rot/рото-позиции, CAM1_FOLLOW) собраны в
+    # plan_camera.py — здесь они только разложены по ключам, второй копии формул нет.
     plan["_ae"] = dict(
         w=meta["w"], h=meta["h"], fps=_fps_js(meta["fps"]), dur=meta["dur"] / meta["fps"],
         name=_js(meta["name"]), cams=cams_js, subs=subs_js, cam1scale=cam1scale_js,
         cam1_ease=cam1_ease_js,
-        cam1holds=_jd([1 if h else 0 for h in holds]),
+        cam1holds=cam1holds_js,
         # Слои клипа и рото кам1 заполняют кадр ровно (задание ZE): их прежний масштаб
         # переехал в ключи зума нула, иначе фит растил бы кадр вокруг СВОЕГО центра.
         cam1_fit=100.0,
@@ -3372,30 +1473,15 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         # сдвиг интро по X. Дефолты пустые подстановки — .jsx прежний (golden).
         # Камера 1: якорь и позиция нула считаются от точки наезда (cx/cy доли кадра).
         # При дефолте 0.5/0.5 это ровно то, что AE ставит сам, — кода нет вовсе.
+        # Сами строки (якорь, позиции и повороты рото) собраны в plan_camera.py.
         cam1_cx=cam1_cx, cam1_cy=cam1_cy,
-        cam1_anchor=("" if not cam1_moved else
-                     ("\n    // точка наезда камеры (задание Q): anchor+position от неё, "
-                      "неподвижна именно она\n"
-                      "    if(cam1null){ cam1null.property(\"ADBE Transform Group\").property(\"ADBE Anchor Point\").setValue([%g,%g]);"
-                      " cam1null.property(\"ADBE Transform Group\").property(\"ADBE Position\").setValue([%g,%g]); }"
-                      % (cam1_cx * meta["w"] - meta["w"] / 2, cam1_cy * meta["h"] - meta["h"] / 2,
-                         cam1_cx * meta["w"] + pan_x, cam1_cy * meta["h"] + pan_y))),
-        # Рото привязывается к нулу ПОСЛЕ того, как нул получил якорь точки наезда и
-        # ключи зума (задание BK). AE при присвоении parent сохраняет мировое положение
-        # слоя и пересчитывает локальную Position ребёнка под трансформ нула на ТЕКУЩИЙ
-        # момент — без принудительной позиции рото уезжает на смещение точки наезда от
-        # центра кадра (Scale рядом уже перезадаётся по той же причине). При дефолтной
-        # точке 0.5/0.5 смещения нет — подстановки пустые, .jsx прежний (golden).
-        roto_pos_cc=("" if not cam1_moved else
-                     ("\n            // AE компенсирует позицию при привязке по трансформу нула на"
-                      "\n            // текущий момент, а нул уже несёт якорь точки наезда и ключи зума"
-                      "\n            try{ cc.property(\"ADBE Transform Group\").property(\"ADBE Position\").setValue([0,0]); }catch(e){}")),
-        roto_pos_mk=("" if not cam1_moved else
-                     ("\n            try{ mk.property(\"ADBE Transform Group\").property(\"ADBE Position\").setValue([0,0]); }catch(e){}")),
-        cam1_rot_decl=("\n    var CAM1_ROT=%g;" % rot if rot != 0 else ""),
-        cam1_rot_cam=(' if(!isSecond){ try{ lay.property("ADBE Transform Group").property("ADBE Rotate Z").setValue(CAM1_ROT); }catch(e){} }' if rot != 0 else ""),
-        roto_rot_cc=('\n            if(ci==0){ try{ cc.property("ADBE Transform Group").property("ADBE Rotate Z").setValue(CAM1_ROT); }catch(e){} }' if rot != 0 else ""),
-        roto_rot_mk=('\n            if(ci==0){ try{ mk.property("ADBE Transform Group").property("ADBE Rotate Z").setValue(CAM1_ROT); }catch(e){} }' if rot != 0 else ""),
+        cam1_anchor=cam1_anchor,
+        roto_pos_cc=roto_pos_cc,
+        roto_pos_mk=roto_pos_mk,
+        cam1_rot_decl=cam1_rot_decl,
+        cam1_rot_cam=cam1_rot_cam,
+        roto_rot_cc=roto_rot_cc,
+        roto_rot_mk=roto_rot_mk,
         # вставки Кам2: точка покоя по X и Y в px (в стиле insert_c2_x/y, долями кадра).
         # Дефолт 0.5/0.172 — X остаётся W/2, Y как INS_C2_Y_FR*H: объявление INS_C2_X
         # и подстановка в позицию пустые, .jsx прежний (golden).
@@ -3406,8 +1492,9 @@ def scene_plan(xml_path, cam1_scale=None,   # None -> авто по сменам
         intro_x_js=("%g" % intro_x_px if intro_x_px else "0"),
         intro_x_p=("+%g" % intro_x_px if intro_x_px else ""),
         music=_js(music_path) if music_path else '""', music_db=music_db,
-        voice_db=float(_sv_or(st, "voice_db")),
-        audio_fade=(0.010 if _sv(st, "audio_fades") else 0.0),
+        # Громкость голоса и микро-фейд клипов посчитаны в plan_audio.py (задание MU):
+        # те же числа уехали в plan["audio"], второй копии чтения стиля нет.
+        voice_db=voice_db, audio_fade=audio_fade,
         riser=_js(riser) if riser else '""',
         pop=_js(pop) if pop else '""', censor=censor_js, intro_groups=intro_groups_js,
         # Звуки с обрезкой/точкой удара/громкостью (задание AA): дефолты = прежние

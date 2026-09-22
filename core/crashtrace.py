@@ -26,6 +26,7 @@ import traceback
 
 from core import app_meta, paths
 from core.app_meta import APP_VERSION
+from core.fileio import atomic_json_dump
 
 _CRASH_FILE_HANDLE = None
 _ORIG_SYS_EXCEPTHOOK = None
@@ -231,7 +232,11 @@ def _check_previous_crash(log: logging.Logger, marker_path: str, crash_path: str
 
 
 def _write_marker(marker_path: str, port=None):
-    """Атомарная запись маркера запущенного сервера."""
+    """Атомарная запись маркера запущенного сервера (core.fileio.atomic_json_dump).
+
+    fileio — модуль-лист (json/os/stat/tempfile) и ничего из ядра не тянет, поэтому
+    его можно звать и отсюда: маркер читается при СЛЕДУЮЩЕМ запуске после нештатного
+    падения, и обрезанный означал бы «сервер то ли работает, то ли упал»."""
     data = {
         "pid": os.getpid(),
         "started": datetime.now().astimezone().isoformat(),
@@ -241,10 +246,7 @@ def _write_marker(marker_path: str, port=None):
     dir_name = os.path.dirname(marker_path)
     if dir_name:
         os.makedirs(dir_name, exist_ok=True)
-    tmp_path = f"{marker_path}.tmp.{os.getpid()}"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    os.replace(tmp_path, marker_path)
+    atomic_json_dump(marker_path, data, indent=2)
 
 
 def _remove_marker(marker_path: str = None, port=None):

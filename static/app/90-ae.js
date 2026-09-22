@@ -332,7 +332,6 @@ function introPlus(rows,i,call){return '<span class="introar">'
 function introAddInGroup(rows,i){const at=introGroupEnd(rows,i);
   rows.splice(at,0,{count:1,color:(rows[i]||{}).color||'white'});return at;}
 function aewAddLineIn(i){const at=introAddInGroup(INTRO,i);if(INTRO_PICK>=at)INTRO_PICK++;aewSync();}
-function pvwAddLineIn(i){const at=introAddInGroup(PVW.intro,i);if(PVW.pick>=at)PVW.pick++;pvwCommitIntro();pvwRender();}
 // ---- тайминг строк интро (как на карточках вставок: ▶ 1:02.4 (1.8с)) ----
 // ts = моменты слов строки. Пусто (count=0 / слова не загружены) — прочерк вместо кнопки.
 function introTimeBadge(ts){
@@ -346,12 +345,12 @@ function introTimeBadge(ts){
 let INTROPLAY=-2;
 function introMarkPlaying(gi){
   if(gi===INTROPLAY)return;INTROPLAY=gi;
-  ['aewintrolist','pvwintro'].forEach(id=>{const host=$(id);if(!host)return;
-    host.querySelectorAll('[data-ig]').forEach(e=>e.classList.toggle('playing',+e.dataset.ig===gi));});
-  if(gi<0)return;
-  const l=$('aewintrolist');   // компактный скролл-список — доводим текущую группу до глаз
-  if(l){const e=l.querySelector('.pchdr[data-ig="'+gi+'"],[data-ig="'+gi+'"]');
-    if(e)e.scrollIntoView({block:'nearest',behavior:'smooth'});}}
+  const l=$('aewintrolist');
+  if(l)l.querySelectorAll('[data-ig]').forEach(e=>e.classList.toggle('playing',+e.dataset.ig===gi));
+  if(gi<0||!l)return;
+  // компактный скролл-список: доводим текущую группу до глаз
+  const e=l.querySelector('.pchdr[data-ig="'+gi+'"],[data-ig="'+gi+'"]');
+  if(e)e.scrollIntoView({block:'nearest',behavior:'smooth'});}
 // ---- порядок интро по таймингу ----
 // Строка с `from` = якорь (группа с середины ролика); идущие за ней строки без `from` берут слова
 // подряд, т.е. это одна цепочка. Сортируем ЦЕПОЧКАМИ по слову-якорю: акцент, поставленный последним,
@@ -498,6 +497,45 @@ async function pickIns(i){try{const d=await (await fetch('/api/pickmedia')).json
     renderIns();captureAE();}}
   catch(e){toast(t('Не открылся выбор файла — сервер не ответил'));uiLog('pickmedia: '+e);}}
 
+// Пересчёт индексов после удаления слова (задание MY). Функции не про панель слов
+// предпросмотра, откуда их снесли вместе с мёртвой панелью, а про ВОТ ЭТО удаление:
+// ниже aewDeleteWord сдвигает ими наборы HL/BRK/CNT/JNS и строки интро. Без них
+// удаление слова на шаге AE падало в браузере ReferenceError. Тела — дословно прежние.
+function shiftIndices(target, delIdx){
+  if(target instanceof Set){
+    const next=new Set();
+    target.forEach(i=>{
+      const s=shiftIndices(i,delIdx);
+      if(s!=null)next.add(s);
+    });
+    target.clear();
+    next.forEach(i=>target.add(i));
+    return target;
+  }
+  if(Array.isArray(target)){
+    return target.map(i=>shiftIndices(i,delIdx)).filter(i=>i!=null);
+  }
+  if(target==null)return null;
+  if(target===delIdx)return null;
+  return target>delIdx?target-1:target;
+}
+function shiftIntroRows(rows, delIdx){
+  let off=0;
+  for(let i=0;i<rows.length;i++){
+    const r=rows[i];
+    if(r.from!=null&&r.from>=0)off=r.from;
+    const c=Math.max(0,r.count|0);
+    const inRow=(delIdx>=off&&delIdx<off+c);
+    off+=c;
+    if(inRow)r.count=c-1;
+    r.from=shiftIndices(r.from,delIdx);
+  }
+  for(let i=rows.length-1;i>=0;i--){
+    if((rows[i].count|0)<=0)rows.splice(i,1);
+  }
+  return rows;
+}
+
 // Правка / удаление слова в AE-панели:
 // пустое поле удаляет слово через /api/delete_word, сдвигает наборы и вызывает captureAE.
 async function aewDeleteWord(o){
@@ -521,19 +559,6 @@ async function aewDeleteWord(o){
     if(typeof IPV!=='undefined'&&IPV.words){
       const iwi=IPV.words.findIndex(w=>Math.abs(w.s-o.start)<0.05);
       if(iwi>=0)IPV.words.splice(iwi,1);
-    }
-    // Сдвиг в предпросмотре PVW если тот же клип
-    if(typeof PVW!=='undefined'&&PVW.xml===xml){
-      shiftIndices(PVW.hl,delIdx);
-      shiftIndices(PVW.brk,delIdx);
-      shiftIndices(PVW.cnt,delIdx);
-      shiftIndices(PVW.jns,delIdx);
-      shiftIntroRows(PVW.intro,delIdx);
-      const pwi=PVW.words.findIndex(w=>w.i===delIdx);
-      if(pwi>=0)PVW.words.splice(pwi,1);
-      PVW.words.forEach(w=>{if(w.i>delIdx)w.i--;});
-      if(typeof pvwCommitIntro==='function')pvwCommitIntro();
-      if(typeof pvwRender==='function')pvwRender();
     }
     captureAE();
     if($('aewres')){$('aewres').className='ok';$('aewres').textContent=t('слово удалено');}

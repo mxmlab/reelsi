@@ -12,8 +12,9 @@ import os, re, threading, queue, subprocess, shutil, hashlib, json, time as _tim
 from flask import request, jsonify
 from core.fileio import atomic_json_dump
 from ._core import (JOB, LOCK, bp, _cross_lock_acquire, _cross_lock_release,
-                    item_done, item_fail, item_set, items_init, jstr, kill_tree,
-                    log_entry, umsg_err)
+                    item_done, item_fail, item_set, items_init, jstr, journal_bind,
+                    journal_finish, journal_interrupted, kill_tree,
+                    log_entry, task_popen_kwargs, umsg_err, sysexit_text)
 from core.umsg import umsg
 from core import paths
 from core.app_meta import env
@@ -455,7 +456,8 @@ def _run_proc(cmd, total_frames=None, item_name=None, pct_base=0.0, pct_span=1.0
     try:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              text=True, encoding="utf-8", errors="replace",
-                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                             **task_popen_kwargs())
     except FileNotFoundError as e:
         remit("не найден исполняемый файл: {err}", err=str(e))
         return -1
@@ -588,7 +590,8 @@ def _run_proc_afx(cmd):
     try:
         p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              text=True, encoding="utf-8", errors="replace",
-                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                             **task_popen_kwargs())
     except FileNotFoundError as e:
         remit("не найден исполняемый файл: {err}", err=str(e))
         return -1
@@ -737,6 +740,13 @@ def _run_render_single(norm, outdir, render_dir):
             except xml2ae.Cancelled:
                 remit("⏹ Остановлено — рендер не запускался")
                 return
+            except SystemExit as e:
+                # Ошибка вида «рото не посчитано…» — это SystemExit (BaseException), и
+                # раньше она проскакивала мимо обоих except Exception: ролик не попадал
+                # ни в failed, ни в лог, а рендер продолжался с пустым набором (MX).
+                txt = sysexit_text(e)
+                remit("  ОШИБКА сборки: {err}", err=txt)
+                item_fail(RJOB, RLOCK, stem, txt, bucket="failed")
             except Exception as e:
                 remit("  ОШИБКА сборки: {err}", err=str(e))
                 # клип, у которого не собрался даже безголовый .jsx — item_fail (задание FA)
@@ -955,6 +965,14 @@ def _run_render_single(norm, outdir, render_dir):
                 RJOB["eta_total"] = None
             remit("Готово: {path}", path=mov)
             _save_render_stats(1, jsx_dur, aep_dur, render_dur)
+    except SystemExit as e:
+        # Глобальное падение того же рода, что Exception ниже, но текст — из umsg:
+        # traceback от «сними галку рото в стиле» человеку ничего не объясняет (MX).
+        txt = sysexit_text(e)
+        log.error("Рендер прерван: %s", txt)
+        remit("ОШИБКА: {err}", err=txt)
+        with RLOCK:
+            RJOB["failed"].append({"name": "рендер", "reason": txt})
     except Exception:
         log.exception("Сбой процесса рендера")
         import traceback
@@ -1035,6 +1053,14 @@ def _run_render_combined(batch, outdir, render_dir):
                                         comp_names_out=comp_names_out)
     except xml2ae.Cancelled:
         remit("⏹ Остановлено — рендер не запускался")
+        return
+    except SystemExit as e:
+        # Падение общее, а не поклиповое (.jsx один на весь набор), поэтому метим failed
+        # КАЖДЫЙ ролик — с понятным текстом из umsg вместо str(e) (задание MX).
+        txt = sysexit_text(e)
+        remit("  ОШИБКА сборки: {err}", err=txt)
+        for stem in stems:
+            item_fail(RJOB, RLOCK, stem, txt, bucket="failed")
         return
     except Exception as e:
         remit("  ОШИБКА сборки: {err}", err=str(e))
@@ -1245,7 +1271,8 @@ def _run_proc_master(afx, *args, good, render_dir, aelog_path,
         p = subprocess.Popen([afx] + list(args),
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              text=True, encoding="utf-8", errors="replace",
-                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                             **task_popen_kwargs())
     except FileNotFoundError as e:
         remit("не найден исполняемый файл: {err}", err=str(e))
         return -1
@@ -1517,7 +1544,8 @@ def _run_proc_batch(aer, aep_call, comps, render_dir,
         p = subprocess.Popen([aer, "-project", aep_call],
                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                              text=True, encoding="utf-8", errors="replace",
-                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                             **task_popen_kwargs())
     except FileNotFoundError as e:
         remit("не найден исполняемый файл: {err}", err=str(e))
         return -1
@@ -1783,6 +1811,14 @@ def _run_render_job(norm, outdir, render_dir):
             _mark_stopped_waits()
             return
         _run_render_combined(norm, outdir, render_dir)
+    except SystemExit as e:
+        # Последний рубеж диспетчера: тот же путь провала, что у Exception ниже, но в
+        # лог и RJOB["failed"] уходит понятный текст из umsg (задание MX).
+        txt = sysexit_text(e)
+        log.error("Рендер прерван: %s", txt)
+        remit("ОШИБКА: {err}", err=txt)
+        with RLOCK:
+            RJOB["failed"].append({"name": "рендер", "reason": txt})
     except Exception:
         log.exception("Сбой в потоке рендера")
         import traceback
@@ -1793,6 +1829,9 @@ def _run_render_job(norm, outdir, render_dir):
         with RLOCK:
             RJOB.update(running=False, done=True, cur="",
                         pct=(1.0 if RJOB["result"] and not RJOB["failed"] else (RJOB["pct"] or 0)))
+        # Журнал заданий: рендер закрыт (задание NC). Раньше состояние жило только в
+        # памяти, и после перезапуска сервера оборванный рендер выглядел как «не было».
+        journal_finish(RJOB)
         # Лок задач держим до самого конца рендера — включая «Стоп» и ошибку
         # (задание GZ, п. C: без него поверх рендера стартовала нарезка).
         _cross_lock_release()
@@ -1836,6 +1875,9 @@ def api_render_run():
                             items=[], eta=None, eta_phase=None, eta_total=None,
                             eta_preliminary=False, stage_label=None, stage_done=0,
                             stage_total=0)
+            # Журнал заданий (задание NC): после перезапуска сервера /api/render_status
+            # отдаёт рендер как interrupted — с клипом, на котором он оборвался.
+            journal_bind(RJOB, "render", "Рендер AE", "pct")
             threading.Thread(target=_run_render_job,
                              args=(norm, jstr(d, "outdir").strip().strip('"'),
                                    render_dir),
@@ -1852,7 +1894,8 @@ def api_render_run():
 
 @bp.route("/api/render_status")
 def api_render_status():
-    """Состояние рендер-джоба: running/done/pct/cur/ae/out_dir/result/failed/eta + лог."""
+    """Состояние рендер-джоба: running/done/pct/cur/ae/out_dir/result/failed/eta + лог.
+    interrupted — рендер, оборванный перезапуском сервера (журнал заданий, задание NC)."""
     with RLOCK:
         return jsonify(ok=True, running=RJOB["running"], done=RJOB["done"],
                        pct=RJOB["pct"], cur=RJOB["cur"], ae=RJOB["ae"],
@@ -1865,4 +1908,5 @@ def api_render_status():
                        stage_done=RJOB.get("stage_done", 0),
                        stage_total=RJOB.get("stage_total", 0),
                        default_dir=default_render_dir(),
+                       interrupted=journal_interrupted("render"),
                        log=RJOB["log"][-200:])

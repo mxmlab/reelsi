@@ -18,8 +18,8 @@
 Здесь:
   * `ink_extent` по контурам известной высоты: «A» 0..700, «g» −200..500 при upm 1000
     (функция живёт для дисклеймера — зазор `disc_gap`, задание E);
-  * шаги `intro_line_ys` совпадают с формулой шаблона в трёх раскладках — высоты букв
-    шрифта в них не входят вовсе;
+  * шаги `intro_line_ys` сверяются с посчитанными руками числами в трёх раскладках (в
+    тесте нет второй копии формулы — задание MQ) — высоты букв шрифта в них не входят вовсе;
   * шаг заднего плана = line_step * back_step, в том числе ПОСЛЕ строки заднего плана;
   * якорь «first»: первая строка в h/2 при 1, 2 и 3 строках, iDy — как для одной строки;
   * план: ys у группы, в строках его нет, группа камеры 2 берёт `intro_anchor2`;
@@ -131,42 +131,30 @@ def test_ink_extent_none_without_font_or_glyph(font):
 
 # ---- 2. шаги совпадают с формулой шаблона ---------------------------------------------------
 
-def _today_back(n, backs, back_step, h):
-    """Y по формуле шаблона (ветка со строками заднего плана)."""
-    steps = [0.0]
-    tot = 0.0
-    for i in range(1, n):
-        tot += INTRO_LINE_STEP * (back_step if (backs[i] or backs[i - 1]) else 1.0)
-        steps.append(tot)
-    cY = (h / 2 - (n - 1) * 60) if (not backs[0] and n > 1) else (h / 2 - tot / 2)
-    return [round(cY + s, 2) for s in steps]
-
-
-def _today_noback(n, h):
-    """Y по формуле шаблона (ветка без строк заднего плана)."""
-    cY = h / 2 - (n - 1) / 2 * INTRO_LINE_STEP
-    return [round(cY + i * INTRO_LINE_STEP, 2) for i in range(n)]
-
-
 def test_matches_template_formula():
-    """intro_line_ys повторяет формулу шаблона в трёх раскладках: без строк заднего
-    плана; с back и головой не-back; с back и головой back. Высоты букв шрифта в шаг
-    больше не входят (задание ZT) — шрифтового окружения тесту не нужно."""
+    """intro_line_ys в трёх раскладках — против чисел, посчитанных РУКАМИ (задание MQ).
+
+    Без строк заднего плана; с back и головой не-back; с back и головой back. Раньше здесь
+    стояли копии той же формулы (`_today_back`/`_today_noback`): ошибка в шаге одинаково
+    уезжала и в раскладку, и в ожидание, и тест зеленел. Теперь ожидание — константы:
+    h = 1920, line_step = 160, back_step = 0.45 (шаг 72 px), «60» центровки блока с back.
+
+    Высоты букв шрифта в шаг больше не входят (задание ZT) — шрифтового окружения
+    тесту не нужно.
+    """
     h, bstep = 1920.0, 0.45
-    # без строк back в ролике — все шаги LINE_STEP
-    lines = [_ln("A"), _ln("A"), _ln("A")]
-    ys = intro_line_ys(lines, bstep, False, "center", h)
-    assert ys == _today_noback(3, h)
 
-    # с back и головой не-back
-    lines = [_ln("A"), _ln("A", back=True), _ln("A")]
-    ys = intro_line_ys(lines, bstep, True, "center", h)
-    assert ys == _today_back(3, [False, True, False], bstep, h)
+    # без строк back в ролике: три строки по 160 px вокруг центра кадра (960)
+    ys = intro_line_ys([_ln("A"), _ln("A"), _ln("A")], bstep, False, "center", h)
+    assert ys == [800.0, 960.0, 1120.0]
 
-    # с back и головой back
-    lines = [_ln("A", back=True), _ln("A")]
-    ys = intro_line_ys(lines, bstep, True, "center", h)
-    assert ys == _today_back(2, [True, False], bstep, h)
+    # с back и головой не-back: голова встаёт на 960 − (3−1)·60 = 840, дальше шаги 72 и 72
+    ys = intro_line_ys([_ln("A"), _ln("A", back=True), _ln("A")], bstep, True, "center", h)
+    assert ys == [840.0, 912.0, 984.0]
+
+    # с back и головой back: блок центрируется по сумме шагов — 960 − 72/2 = 924
+    ys = intro_line_ys([_ln("A", back=True), _ln("A")], bstep, True, "center", h)
+    assert ys == [924.0, 996.0]
 
 
 # ---- 3. шаг заднего плана — ровно line_step * back_step --------------------------------------

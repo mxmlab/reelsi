@@ -179,9 +179,7 @@ async function openPreview(xml){
 function pvSegAt(list,tm){for(let i=0;i<list.length;i++){if(tm<list[i].te-1e-3)return i;}return Math.max(0,list.length-1);}
 function pvUI(tm){const seek=$('pvseek');if(document.activeElement!==seek)seek.value=PV.dur?Math.round(tm/PV.dur*1000):0;
   $('pvtime').textContent=pvFmt(tm)+' / '+pvFmt(PV.dur);
-  vgDuck(tm,PVW.plan);
-  let cur='';for(const w of PV.words){if(tm>=w.s&&tm<w.e){cur=w.w;break;}}$('pvsub').textContent=cur;
-  pvwHighlight(tm);}
+  let cur='';for(const w of PV.words){if(tm>=w.s&&tm<w.e){cur=w.w;break;}}$('pvsub').textContent=cur;}
 function pvApplyVisual(tm,play){camApply(PV,tm,play);}   // общая машина ракурсов, см. camApply
 function pvSeekTo(tm){if(!PV.audio.length)return;PV.aidx=pvSegAt(PV.audio,tm);PV.vidx=-1;PV.primed=-1;
   const a=PV.audio[PV.aidx];try{PV.vids[0].currentTime=a.src+Math.max(0,tm-a.ts);}catch(e){}
@@ -418,7 +416,8 @@ function pvScrub(v){const tm=v/1000*PV.dur;const was=PV.playing;
   pvPause();pvSeekTo(tm);if(was)pvPlay();
   PV.scrubT=setTimeout(()=>{PV.scrubbing=false;if(PV.playing)sparePrime(PV);},150);}
 
-// ===== панель слов в предпросмотре: жёлтые + интро + правка слова (независимо от шага AE) =====
+// Число ли слово — для кнопки счётчика «123» на чипе. Общая на панель слов шага AE
+// и на разметку строк интро; второй копии правила в JS нет.
 function isNumberWord(text){
   if(!text)return false;
   const s=(''+text).replace(/\s+/g,' ').trim();
@@ -440,81 +439,6 @@ function isNumberWord(text){
     return true;
   }
 }
-let PVW={xml:'',clip:-1,words:[],hl:new Set(),brk:new Set(),cnt:new Set(),jns:new Set(),intro:[],igw:[],plan:null,mode:'hl',pick:-1,cur:-1};
-async function pvwOpen(xml,clip){
-  if(!$('pvwords'))return;
-  PVW={xml,clip,words:[],hl:new Set(),brk:new Set(),cnt:new Set(),jns:new Set(),intro:[],igw:[],plan:null,pick:-1,cur:-1};
-  $('pvwords').innerHTML='<span class="hint">'+t('Читаю слова…')+'</span>';$('pvwres').textContent='';
-  const c=(clip>=0?CLIPS[clip]:null);
-  if(c&&c.job&&Array.isArray(c.job.hl_count))PVW.cnt=new Set(c.job.hl_count);
-  if(c&&c.job&&Array.isArray(c.job.hl_joins))PVW.jns=new Set(c.job.hl_joins);
-  PVW.intro=(c&&c.job&&Array.isArray(c.job.introRows))?c.job.introRows.map(r=>({count:r.count,color:r.color||'white',fill:r.fill||null,anim:(r.anim==='count'?'':(r.anim||'')),fx:r.fx||'',dec:parseInt(r.dec)||0,is_count:!!(r.is_count||r.anim==='count'),cnt_words:(Array.isArray(r.cnt_words)?r.cnt_words.slice():null),break:!!r.break,from:(r.from!=null?r.from:null),gx:r.gx||0,gy:r.gy||0,gs:r.gs||100,accent:!!r.accent,back:!!r.back,big:!!r.big})):[];
-  let d;try{d=await (await fetch('/api/words',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml})})).json();}
-  catch(e){$('pvwords').innerHTML='<span class="hint">'+t('ошибка: ')+esc(''+e)+'</span>';return;}
-  if(d.error||!Array.isArray(d.words)||!d.words.length){$('pvwords').innerHTML='<span class="hint">'+t('Нет субтитров — сначала сделай разметку (шаг 2).')+'</span>';$('pvwintro').style.display='none';return;}
-  PVW.words=d.words;
-  if(Array.isArray(d.yellow))PVW.hl=new Set(d.yellow);
-  if(Array.isArray(d.breaks))PVW.brk=new Set(d.breaks);
-  pvwRender();pvwPlanSoon();}
-// Подсветка группы интро по плейхеду — из плана сцены (задание K), как предпросмотр
-// шага 3 (ipvPlanFetch): ts/te окон считает scene_plan, панель их не досчитывает.
-// Правки интро догоняют план тем же дебаунс-пересчётом; плана нет — подсветки нет.
-let PVWPLAN_T=0;
-function pvwPlanSoon(){clearTimeout(PVWPLAN_T);PVWPLAN_T=setTimeout(pvwPlanFetch,300);}
-async function pvwPlanFetch(){
-  const xml=PVW.xml;if(!xml||!PVW.words.length)return;
-  let ir;try{ir=resolveIntroFor(PVW.intro,PVW.words);}catch(e){ir={lines:[],remove:[],splits:[]};}
-  let d;try{d=await (await fetch('/api/scene',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({xml,intro:ir.lines,intro_remove:ir.remove,intro_splits:ir.splits})})).json();}
-  catch(e){return;}                       // план не критичен: панель работает и без подсветки
-  if(PVW.xml!==xml)return;                // за время запроса открыли другой клип
-  if(d.ok&&d.plan){PVW.plan=d.plan;PVW.igw=introGroupWindows(d.plan.intro);}}
-// Вкладок «Жёлтые / Интро / Правка слов» тут тоже больше нет (2026-07-30) — жесты те же,
-// что в AE-превью: клик — жёлтое, двойной — в интро, Ctrl+клик — правка. Плюс Alt+клик —
-// перемотка (в старом режиме «Интро» это делал одиночный клик).
-function pvwIntroWalk(fn){const s=introSortRows(PVW.intro,PVW.words);
-  if(s){const pick=(PVW.pick>=0?PVW.intro[PVW.pick]:null);PVW.intro=s;PVW.pick=pick?s.indexOf(pick):-1;pvwCommitIntro();}
-  let off=0;PVW.intro.forEach((r,i)=>{
-  if(r.from!=null&&r.from>=0&&r.from<PVW.words.length)off=r.from;
-  const c=Math.max(0,r.count|0),idxs=[];for(let k=0;k<c&&off<PVW.words.length;k++){idxs.push(off);off++;}fn(r,i,idxs);});}
-function pvwConsumed(){const s=new Set();pvwIntroWalk((r,i,idxs)=>idxs.forEach(x=>s.add(PVW.words[x].i)));return s;}
-function pvwRender(){if(typeof applyStyleHlColor==='function')applyStyleHlColor();const host=$('pvwords');if(!host)return;host.innerHTML='';
-  const intro=$('pvwintro');
-  if(!PVW.words.length){host.innerHTML='<span class="hint">'+t('Нет субтитров.')+'</span>';intro.style.display='none';return;}
-  intro.style.display='';
-  // слова, ушедшие в интро, живут в списке групп выше; жёлтым интро-слово быть не может
-  const cons=pvwConsumed();
-  const shown=PVW.words.filter(o=>{if(cons.has(o.i)){PVW.hl.delete(o.i);PVW.brk.delete(o.i);PVW.cnt.delete(o.i);PVW.jns.delete(o.i);return false;}return true;});
-  // разрывы/склейки — между каждой парой, прячутся классом: структурная правка списка на первом
-  // клике съедает браузерный dblclick (см. aewPaint)
-  const cfg={
-    words:PVW.words,
-    hl:PVW.hl,
-    brk:PVW.brk,
-    cnt:PVW.cnt,
-    jns:PVW.jns,
-    syncBreak:()=>{
-      const c=(PVW.clip>=0?CLIPS[PVW.clip]:null);
-      if(c&&c.job){c.job.hl_breaks=[...PVW.brk];c.job.hl_joins=[...PVW.jns];saveState();}
-      pvwPaint();
-    },
-    syncCount:(wi,ev)=>pvwToggleCount(wi,ev),
-    tip:(o)=>t('{s}с · двойной клик — в интро · Ctrl+клик — правка · Alt+клик — перемотать',{s:o.start}),
-    chipClick:(o,wi,c,e)=>pvwChip(o,wi,c,e),
-    chipKeydown:(o,wi,c,e)=>{
-      if(e.ctrlKey||e.metaKey)pvwEditChip(o,wi,c);
-      else if(e.shiftKey)pvwToggleAccent(wi);
-      else pvwChip(o,wi,c,null);
-    }
-  };
-  shown.forEach((o,k)=>{const prev=shown[k-1];
-    if(prev)host.appendChild(wordBreakEl(cfg,prev,o));
-    host.appendChild(wordChipEl(cfg,o,k));});
-  host.ondblclick=(e)=>{const ch=e.target.closest&&e.target.closest('.chip');if(!ch)return;
-    if(e.ctrlKey||e.metaKey||e.altKey)return;      // у этих модификаторов своё действие на первом клике
-    const wi=+ch.dataset.wi,o=PVW.words[wi];if(!o)return;
-    e.preventDefault();pvwUndoClicks(o);pvwToggleAccent(wi);};
-  pvwPaint();pvwRenderIntro();}
 function wordBreakEl(cfg,prev,o){
   const b=document.createElement('span');
   b.className='brk';b.textContent='|';b.dataset.t=t('Стопка (клик — разрыв · Ctrl+клик — склейка)');
@@ -562,15 +486,6 @@ function wordChipEl(cfg,o,k){
     if(cfg.chipKeydown)cfg.chipKeydown(o,wi,c,e);};
   return c;
 }
-function pvwToggleCount(wi,ev){
-  if(ev){ev.stopPropagation();ev.preventDefault();}
-  const o=PVW.words[wi];if(!o)return;
-  if(PVW.cnt.has(o.i))PVW.cnt.delete(o.i);
-  else PVW.cnt.add(o.i);
-  const c=(PVW.clip>=0?CLIPS[PVW.clip]:null);
-  if(c&&c.job){c.job.hl_count=[...PVW.cnt];saveState();}
-  pvwPaint();
-}
 function wordsPaint(host,cfg){if(!host)return;
   const words=cfg.words,hl=cfg.hl,brk=cfg.brk,cnt=cfg.cnt,jns=cfg.jns;
   [...host.children].forEach(el=>{
@@ -613,167 +528,6 @@ function wordsPaint(host,cfg){if(!host)return;
       el.classList.remove('on','jns');
     }
   });}
-function pvwPaint(){const host=$('pvwords');wordsPaint(host,{words:PVW.words,hl:PVW.hl,brk:PVW.brk,cnt:PVW.cnt,jns:PVW.jns});}
-// снимок жёлтого до пары кликов — см. aewMark/aewUndoClicks, логика та же
-let PVWDBL=null,PVWDBLT=null;
-function pvwMark(o){
-  if(!PVWDBL||PVWDBL.i!==o.i)PVWDBL={i:o.i,hl:PVW.hl.has(o.i),brk:PVW.brk.has(o.i),jns:PVW.jns.has(o.i)};
-  if(PVWDBLT)clearTimeout(PVWDBLT);
-  PVWDBLT=setTimeout(()=>{PVWDBL=null;PVWDBLT=null;},450);}
-function pvwUndoClicks(o){
-  if(!PVWDBL||PVWDBL.i!==o.i)return;
-  PVWDBL.hl?PVW.hl.add(o.i):PVW.hl.delete(o.i);
-  PVWDBL.brk?PVW.brk.add(o.i):PVW.brk.delete(o.i);
-  PVWDBL.jns?PVW.jns.add(o.i):PVW.jns.delete(o.i);
-  PVWDBL=null;if(PVWDBLT){clearTimeout(PVWDBLT);PVWDBLT=null;}}
-function pvwToggleAccent(wi){
-  const at=PVW.intro.findIndex(r=>r.from===wi&&(r.count|0)===1&&r.break);
-  if(at>=0)PVW.intro.splice(at,1);                                       // повтор → снять акцент
-  else PVW.intro.push({count:1,color:'yellow',break:true,from:wi});
-  PVW.pick=-1;pvwCommitIntro();pvwRender();}
-function pvwChip(o,k,el,ev){
-  if(ev&&(ev.ctrlKey||ev.metaKey)){ev.preventDefault();pvwEditChip(o,k,el);return;}
-  if(ev&&ev.altKey){ev.preventDefault();pvSeekTo(o.start);return;}
-  // прицел «начать группу со слова» из строки интро — он взведён явно, жёлтый тут ни при чём
-  if(PVW.pick>=0&&PVW.intro[PVW.pick]){PVW.intro[PVW.pick].from=PVW.words.findIndex(x=>x.i===o.i);PVW.pick=-1;pvwCommitIntro();pvwRender();return;}
-  pvwMark(o);
-  if(PVW.hl.has(o.i)){PVW.hl.delete(o.i);PVW.brk.delete(o.i);PVW.jns.delete(o.i);}else PVW.hl.add(o.i);pvwPaint();}
-function pvwEditChip(o,k,el){if(el.tagName==='INPUT')return;
-  if(!el.isConnected)el=$('pvwords').querySelector('.chip[data-wi="'+PVW.words.indexOf(o)+'"]');
-  if(!el)return;
-  const inp=document.createElement('input');inp.type='text';inp.value=o.w;
-  inp.style.cssText='width:'+Math.max(60,o.w.length*11+20)+'px;font-size:13px';
-  let done=false;
-  const commit=()=>{if(done)return;done=true;pvwSaveWord(o,inp.value);};
-  inp.onkeydown=(e)=>{e.stopPropagation();
-    if(e.key==='Enter'){commit();}
-    else if(e.key==='Escape'){done=true;pvwRender();}};
-  inp.onblur=commit;                               // клик мимо = закрыть и сохранить
-  inp.onclick=(e)=>e.stopPropagation();
-  el.replaceWith(inp);inp.focus();inp.select();}
-function shiftIndices(target, delIdx){
-  if(target instanceof Set){
-    const next=new Set();
-    target.forEach(i=>{
-      const s=shiftIndices(i,delIdx);
-      if(s!=null)next.add(s);
-    });
-    target.clear();
-    next.forEach(i=>target.add(i));
-    return target;
-  }
-  if(Array.isArray(target)){
-    return target.map(i=>shiftIndices(i,delIdx)).filter(i=>i!=null);
-  }
-  if(target==null)return null;
-  if(target===delIdx)return null;
-  return target>delIdx?target-1:target;
-}
-function shiftIntroRows(rows, delIdx){
-  let off=0;
-  for(let i=0;i<rows.length;i++){
-    const r=rows[i];
-    if(r.from!=null&&r.from>=0)off=r.from;
-    const c=Math.max(0,r.count|0);
-    const inRow=(delIdx>=off&&delIdx<off+c);
-    off+=c;
-    if(inRow)r.count=c-1;
-    r.from=shiftIndices(r.from,delIdx);
-  }
-  for(let i=rows.length-1;i>=0;i--){
-    if((rows[i].count|0)<=0)rows.splice(i,1);
-  }
-  return rows;
-}
-async function pvwDeleteWord(o){
-  $('pvwres').className='muted';$('pvwres').textContent=t('удаляю…');
-  try{
-    const d=await (await fetch('/api/delete_word',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml:PVW.xml,index:o.i})})).json();
-    if(d.error){$('pvwres').className='err';$('pvwres').textContent='⚠ '+errText(d);pvwRender();return;}
-    const delIdx=d.index;
-    shiftIndices(PVW.hl,delIdx);
-    shiftIndices(PVW.brk,delIdx);
-    shiftIndices(PVW.cnt,delIdx);
-    shiftIndices(PVW.jns,delIdx);
-    shiftIntroRows(PVW.intro,delIdx);
-    const wi=PVW.words.findIndex(w=>w.i===delIdx);
-    if(wi>=0)PVW.words.splice(wi,1);
-    PVW.words.forEach(w=>{if(w.i>delIdx)w.i--;});
-    if(typeof PV!=='undefined'&&PV&&PV.words){
-      const pwi=PV.words.findIndex(w=>Math.abs(w.s-o.start)<0.05);
-      if(pwi>=0)PV.words.splice(pwi,1);
-    }
-    if(typeof HL!=='undefined'&&(HLXML===PVW.xml||(typeof curAE!=='undefined'&&curAE>=0&&CLIPS[curAE]&&CLIPS[curAE].xml===PVW.xml))){
-      shiftIndices(HL,delIdx);
-      shiftIndices(BRK,delIdx);
-      shiftIndices(CNT,delIdx);
-      shiftIndices(JNS,delIdx);
-      if(typeof INTRO!=='undefined')shiftIntroRows(INTRO,delIdx);
-      if(typeof WORDS!=='undefined'){
-        const wwi=WORDS.findIndex(w=>w.i===delIdx);
-        if(wwi>=0)WORDS.splice(wwi,1);
-        WORDS.forEach(w=>{if(w.i>delIdx)w.i--;});
-      }
-      if(typeof captureAE==='function')captureAE();
-      if(typeof aewRender==='function')aewRender();
-    }
-    const c=(PVW.clip>=0?CLIPS[PVW.clip]:null);
-    if(c&&c.job){
-      c.job.highlights=[...PVW.hl];
-      c.job.hl_breaks=[...PVW.brk];
-      c.job.hl_count=[...PVW.cnt];
-      c.job.hl_joins=[...PVW.jns];
-      c.job.hlxml=PVW.xml;
-    }
-    pvwCommitIntro();
-    await pvwSaveYellow();
-    $('pvwres').className='ok';$('pvwres').textContent=t('слово удалено');
-    pvwRender();
-    if(c)uiLog(t('удаление слова #{idx}: «{w}» ({name})',{idx:delIdx,w:d.word||o.w,name:c.name}));
-  }catch(e){$('pvwres').className='err';$('pvwres').textContent='⚠ '+e;pvwRender();}
-}
-async function pvwSaveWord(o,text){text=(text||'').trim();if(text===o.w){pvwRender();return;}if(!text){await pvwDeleteWord(o);return;}
-  $('pvwres').className='muted';$('pvwres').textContent=t('сохраняю…');
-  // was — что стояло до правки: если поправили на известный термин из словаря,
-  // сервер запомнит ослышку, и в следующих роликах она починится сама (terms.learn)
-  try{const d=await (await fetch('/api/edit_word',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml:PVW.xml,index:o.i,text,was:o.w})})).json();
-    if(d.error){$('pvwres').className='err';$('pvwres').textContent='⚠ '+errText(d);pvwRender();return;}
-    const was=o.w;
-    o.w=d.word;                              // патчим локально
-    const pw=PV.words.find(w=>Math.abs(w.s-o.start)<0.05);if(pw)pw.w=d.word;
-    $('pvwres').className='ok';$('pvwres').textContent=t('слово изменено');pvwRender();
-    const c=(PVW.clip>=0?CLIPS[PVW.clip]:null);if(c)uiLog(t('правка слова: «{t}» ({name})',{t:text,name:c.name}));
-    if(d.learned)uiLog(t('словарь терминов: запомнил «{w}» → «{l}»',{w:was,l:d.learned}));
-  }catch(e){$('pvwres').className='err';$('pvwres').textContent='⚠ '+e;pvwRender();}}
-async function pvwSaveYellow(){if(!PVW.words.length)return;const btn=$('pvwsave');btn.disabled=true;
-  $('pvwres').className='muted';$('pvwres').textContent=t('сохраняю…');
-  try{const idx=[...PVW.hl];const d=await (await fetch('/api/set_yellow',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml:PVW.xml,indices:idx})})).json();
-    if(d.error){$('pvwres').className='err';$('pvwres').textContent='⚠ '+errText(d);return;}
-    const c=(PVW.clip>=0?CLIPS[PVW.clip]:null);
-    if(c){c.status=c.status||{};c.status.colored=(d.colored||[]).length;
-      if(c.job){c.job.highlights=(d.colored||[]).slice();c.job.hl_breaks=[...PVW.brk];c.job.hl_count=[...PVW.cnt];c.job.hl_joins=[...PVW.jns];c.job.hlxml=PVW.xml;}
-      saveState();syncClipLists();}
-    const sk=(d.skipped||[]).length;
-    $('pvwres').className='ok';$('pvwres').textContent=t('жёлтых ')+(d.colored||[]).length+(sk?(t(' · пропущено ')+sk+t(' (длинные)')):'');
-    uiLog(t('жёлтые (предпросмотр): ')+(d.colored||[]).length+(sk?t(', пропущено ')+sk:''));
-  }catch(e){$('pvwres').className='err';$('pvwres').textContent='⚠ '+e;}finally{btn.disabled=false;}}
-function pvwCommitIntro(){const c=(PVW.clip>=0?CLIPS[PVW.clip]:null);if(!c)return;
-  c.job=c.job||defJob();c.job.introRows=PVW.intro.map(r=>({count:r.count,color:r.color||'white',fill:r.fill||null,anim:r.anim||'',fx:r.fx||'',dec:parseInt(r.dec)||0,is_count:!!r.is_count,cnt_words:(Array.isArray(r.cnt_words)?r.cnt_words.slice():null),break:!!r.break,from:(r.from!=null?r.from:null),gx:r.gx||0,gy:r.gy||0,gs:r.gs||100,accent:!!r.accent,back:!!r.back,big:!!r.big}));saveState();
-  pvwPlanSoon();}   // правка интро догоняет план дебаунс-пересчётом (окна не считаем в JS)
-function pvwAddIntroLine(){PVW.intro.push({count:1,color:'white'});pvwCommitIntro();pvwRender();}
-function pvwAddMid(){PVW.intro.push({count:1,color:'yellow',break:true,from:null});PVW.pick=PVW.intro.length-1;pvwCommitIntro();pvwRender();
-  toast(t('Кликни слово в списке ниже — акцент начнётся с него'));}
-function pvwIntroArm(i){PVW.pick=(PVW.pick===i)?-1:i;pvwRender();if(PVW.pick>=0)toast(t('Кликни слово ниже — группа начнётся с него'));}
-// ---- разметка строки интро: ОДНА на обе панели (предпросмотр нарезки и AE-превью) ----
-// Раньше это были две почти одинаковые простыни в pvwRenderIntro и aewRenderIntro, и они
-// уже разошлись (аудит 2026-07-23, E1). cfg описывает, ЧЕМ панель отличается:
-//   arr  — имя массива строк для инлайн-обработчиков ('INTRO' / 'PVW.intro')
-//   rows — сам массив (для introPlus: где голова прекомпа)
-//   sync — что вызвать после правки ('aewSync()' / 'pvwCommitIntro();pvwRender()')
-//   words, pick, clearPick, arm(i), add — слова, «жду клик по слову» и колбэк «+ строка»
-// Правка слова ПРЯМО В СТРОКЕ ИНТРО. Слово, ушедшее в интро, из общего списка убрано
-// (introConsumed), и Ctrl+клик по чипу до него уже не дотягивался — менять текст было негде.
-// Уходит тем же /api/edit_word; сохранение/откат разные у панелей, поэтому колбэками.
 function introWordEdit(el,word,save,cancel){
   if(!el||el.tagName==='INPUT')return;
   const inp=document.createElement('input');inp.type='text';inp.value=word;
@@ -788,8 +542,6 @@ function introWordEdit(el,word,save,cancel){
   el.replaceWith(inp);inp.focus();inp.select();}
 function aewEditIntroWord(el,wi){const o=WORDS[wi];if(!o)return;
   introWordEdit(el,o.w,s=>aewSaveWord(o,s),()=>aewRender());}
-function pvwEditIntroWord(el,wi){const o=PVW.words[wi];if(!o)return;
-  introWordEdit(el,o.w,s=>pvwSaveWord(o,s),()=>pvwRender());}
 // Счётчик — на КАЖДОЕ слово-число строки: cnt_words хранит ПОЗИЦИИ слов внутри строки
 // (0..count-1). Раньше это был один флаг строки на всё интро, и клик снимал счётчик со
 // ВСЕХ остальных строк (правило «один счётчик на интро»); оно отменено — строки и кнопки
@@ -887,26 +639,4 @@ function introRowHtml(cfg,r,i,idxs,gi){
       :'—')
     +'</span>'
     +'<span class="x" tabindex="0" role="button" aria-label="'+t('Удалить строку')+'" data-t="'+t('Удалить строку интро')+'" style="flex-shrink:0" onclick="'+A+'.splice('+i+',1);'+S+'">'+ico('x')+'</span></div>';}
-function pvwRenderIntro(){const host=$('pvwintro');if(!host)return;host.innerHTML='';let gi=0;
-  const cfg={arr:'PVW.intro',rows:PVW.intro,sync:'pvwCommitIntro();pvwRender()',words:PVW.words,
-    pick:PVW.pick,clearPick:'PVW.pick=-1',add:'pvwAddLineIn',arm:i=>'pvwIntroArm('+i+')',
-    edit:'pvwEditIntroWord'};
-  pvwIntroWalk((r,i,idxs)=>{if(introIsHead(PVW.intro,i))gi++;   // data-ig = номер прекомпа (подсветка по плейхеду)
-    host.insertAdjacentHTML('beforeend',introRowHtml(cfg,r,i,idxs,gi));});
-  host.insertAdjacentHTML('beforeend','<div class="row" style="margin-top:8px;gap:8px">'
-    +'<button class="sm" onclick="pvwAddIntroLine()">'+ico('plus')+t(' строка')+'</button>'
-    +'<button class="sm" onclick="pvwAddMid()">'+ico('target')+t(' акцент в середине')+'</button></div>');
-  // окна групп для подсветки по плейхеду ставит pvwPlanFetch (из plan.intro[].ts/te) —
-  // локальная копия формулы сюда не возвращается (задание K)
-  INTROPLAY=-2;}                                                     // строки перерисованы — навесить класс заново
-function pvwHighlight(tm){if(!PVW.words.length)return;
-  {const gw=PVW.igw||[];let g=-1;   // ведём и группу интро (какой прекомп сейчас за спиной)…
-   for(let k=0;k<gw.length;k++)if(tm>=gw[k].inAt&&tm<gw[k].outEnd)g=k;
-   introMarkPlaying(g);}
-  // …и текущее слово по плейхеду — раньше это были разные режимы панели
-  let k=-1;for(let i=0;i<PVW.words.length;i++){const s=PVW.words[i].start,ns=(i+1<PVW.words.length?PVW.words[i+1].start:1e9);
-    if(tm>=s&&tm<ns){k=i;break;}}
-  if(k===PVW.cur)return;PVW.cur=k;
-  const chips=$('pvwords').querySelectorAll('.chip');chips.forEach(ch=>ch.classList.remove('cur'));
-  if(k>=0){const w=PVW.words[k];const ch=[...chips].find(c=>c.textContent===w.w);if(ch)ch.classList.add('cur');}}
 

@@ -245,15 +245,19 @@ def test_caption_ui_elements():
     assert 'id="pvwcaptionsave"' not in index_html
     assert 'id="ipvcaption"' in index_html
 
-    # Поле подписи лежит в #aewpanel, а не в #pvwordsbox
+    # Поле подписи лежит в #aewpanel (панель слов шага AE), а не в панели
+    # предпросмотра: #pvwordsbox там больше нет вовсе, и find() по нему вернул бы −1,
+    # сделав срез пустым, а проверку — всегда истинной. Панель предпросмотра
+    # (#pvwords) в разметке не появилась заново — за это отвечает сторож id'шников
+    # (tests/test_ui_element_ids.py).
     aew_pos = index_html.find('id="aewpanel"')
     aew_words_pos = index_html.find('id="aewwords"')
     aew_cap_pos = index_html.find('id="aewcaption"')
-    assert aew_pos != -1 and aew_words_pos != -1 and aew_cap_pos != -1
+    assert aew_pos != -1 and aew_words_pos != -1 and aew_cap_pos != -1, (
+        "разметка панели слов шага AE изменилась — проверь порядок блоков заново")
     assert aew_pos < aew_cap_pos < aew_words_pos
-
-    pvw_pos = index_html.find('id="pvwordsbox"')
-    assert 'id="aewcaption"' not in index_html[pvw_pos:aew_pos]
+    assert 'id="pvwordsbox"' not in index_html, (
+        "вернулась отдельная панель слов предпросмотра — подпись снова может уехать в неё")
 
     app_css = open(os.path.join(ROOT, "static", "app.css"), "r", encoding="utf-8").read()
     assert ".ipvcaption" in app_css

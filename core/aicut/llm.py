@@ -16,6 +16,7 @@ from .config import (APP_NAME, APP_REFERER, DEFAULT_URL, REASONING_LEVELS,
                      REASONING_BUDGET,
                      apply_profile_headers, model_supports_caching, resolve_profile)
 from . import catalog
+from core.fileio import atomic_text_write
 from core.umsg import umsg
 from core.app_meta import console_emit, http_req, t
 
@@ -35,8 +36,9 @@ def ai_log_append(step, prof, ok, in_t=None, out_t=None, rt=None, finish=None,
 
     Авточистка: файл держим не больше AI_LOG_MAX_MB и не больше AI_LOG_CAP строк —
     при превышении переписываем, оставляя хвост (самое свежее). Чистка только при
-    росте размера, чтобы не переписывать файл на каждую строку. Пишем в tmp и
-    подменяем os.replace — запись не оставит полупустой файл, если что-то упадёт.
+    росте размера, чтобы не переписывать файл на каждую строку. Переписывает
+    core.fileio.atomic_text_write — запись не оставит полупустой файл, если что-то
+    упадёт.
     """
     entry = {
         "ts": int(time.time()), "step": step or "-",
@@ -69,10 +71,7 @@ def _ai_log_prune_if_big():
             lines = f.readlines()
         if len(lines) <= AI_LOG_CAP:
             return
-        tmp = AI_LOG_PATH + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            f.writelines(lines[-AI_LOG_CAP:])
-        os.replace(tmp, AI_LOG_PATH)
+        atomic_text_write(AI_LOG_PATH, "".join(lines[-AI_LOG_CAP:]))
     except Exception:
         pass                                   # чистка — не критичный путь
 

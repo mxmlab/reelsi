@@ -41,7 +41,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE)
 
-from core import style_schema, styles, xml2ae  # noqa: E402
+from core import styles, xml2ae  # noqa: E402
 from core.xml2ae.build import DEEP_GLOW2_GLITCH, TRITONE_MAX_LUM, _tritone_on  # noqa: E402
 
 T_CAM1, T_CAM2 = 1.0, 8.3
@@ -252,12 +252,15 @@ def test_3_галка_возвращает_deep_glow_на_строку_со_св
     assert styles.BASE["intro_dg_with_glow"] is False
 
 
-def test_4_сторож_каждая_ручка_и_счётчики_схемы():
-    """4. Сторож «каждая ручка» и счётчики схемы: новая галка посчитана везде.
+def test_4_сторож_каждая_ручка_знает_новую_галку():
+    """4. Сторож «каждая ручка» знает новую галку: она в схеме, переведена и не в исключениях.
 
     Ручка живёт в режиме Deep Glow (глобальная настройка ai_config), поэтому сторож
     tests/test_r11_li_every_knob.py кормит сборку этим режимом и держит в фикстуре жёлтый
     глитч: без жёлтой ветки ручка была бы «мёртвой» и выпала бы из проверки молча.
+    Числа ключей/полей/групп здесь не стерегутся (задание NA): перечень ручек сторож
+    собирает обходом схемы сам, а связку «BASE <-> схема <-> переводы» держат
+    tests/test_style_schema.py.
     """
     import test_r11_li_every_knob as r11
     import test_style_keys_in_ui as watcher
@@ -280,31 +283,6 @@ def test_4_сторож_каждая_ручка_и_счётчики_схемы()
     assert r11.EXCEPTIONS == {}
     assert any(x.get("anim") == "glitch" and x.get("color") == "yellow"
                for x in r11.RICH_INTRO), "в фикстуре сторожа нет жёлтого глитча"
-
-    # Счётчики схемы (те же числа стережёт tests/test_style_schema.py): +1 галка.
-    keys, groups, toggles, fields = [], [], [], 0
-
-    def walk(items):
-        nonlocal fields
-        for it in items:
-            if it.get("type") == "group":
-                groups.append(it["id"])
-                if it.get("toggle"):
-                    toggles.append(it["toggle"])
-                walk(it.get("items", []))
-            elif it.get("type") == "field":
-                fields += 1
-                keys.append(it["key"])
-                if it.get("key2"):
-                    keys.append(it["key2"])
-
-    for layer in style_schema.LAYERS:
-        if layer.get("toggle"):
-            toggles.append(layer["toggle"])
-        walk(layer.get("items", []))
-
-    assert len(styles.BASE) == 158, "ключей в styles.BASE стало не 158"
-    assert (len(keys), fields, len(groups), len(toggles)) == (147, 146, 39, 10)
 
 
 def test_5_яркий_цвет_жёлтого_deep_glow_не_ставится(xml_subs, tmp_path):

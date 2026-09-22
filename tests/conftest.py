@@ -39,6 +39,9 @@ os.environ["REELSI_OKWORDS"] = os.path.join(_TEST_LOG_DIR, "okwords.user.txt")
 os.environ["REELSI_INSERTLIB"] = os.path.join(_TEST_LOG_DIR, "insertlib.json")
 os.environ["REELSI_RENDER_STATS"] = os.path.join(_TEST_LOG_DIR, "render_stats.json")
 os.environ["REELSI_MODELS_DEV"] = os.path.join(_TEST_LOG_DIR, "models_dev.json")
+# Журнал заданий (job_state.json, задание NC): без своей переменной тесты писали бы
+# в боевой файл рабочей копии — а сторож изоляции внизу это заметит и завалит сессию.
+os.environ["REELSI_JOB_STATE"] = os.path.join(_TEST_LOG_DIR, "job_state.json")
 
 # Изоляция ai_config на уровне сессии тестов (задания LC2, LC3):
 # REELSI_AI_CONFIG указывает на путь в сессионном каталоге, но файл изначально не создаётся,
@@ -158,6 +161,7 @@ def isolate_state_files(tmp_path, monkeypatch):
     okwords_path = tmp_path / "okwords.user.txt"
     insertlib_path = tmp_path / "insertlib.json"
     ai_config_path = tmp_path / "ai_config.json"
+    job_state_path = tmp_path / "job_state.json"
 
     # Переменные окружения для функций, читающих их динамически
     monkeypatch.setenv("REELSI_RENDER_STATS", str(render_stats))
@@ -172,6 +176,7 @@ def isolate_state_files(tmp_path, monkeypatch):
     monkeypatch.setenv("REELSI_OKWORDS", str(okwords_path))
     monkeypatch.setenv("REELSI_INSERTLIB", str(insertlib_path))
     monkeypatch.setenv("REELSI_AI_CONFIG", str(ai_config_path))
+    monkeypatch.setenv("REELSI_JOB_STATE", str(job_state_path))
 
     # Подмена модульных констант (там, где модуль уже импортирован)
     for mod_name in ("core.aicut.config", "core.aicut", "core.aicut.catalog", "api.ai", "api"):
@@ -192,6 +197,8 @@ def isolate_state_files(tmp_path, monkeypatch):
             monkeypatch.setattr(m, "JOB_LOCK_PATH", str(job_lock))
         if m and hasattr(m, "UI_STATE_PATH"):
             monkeypatch.setattr(m, "UI_STATE_PATH", str(ui_state))
+        if m and hasattr(m, "JOB_STATE_PATH"):
+            monkeypatch.setattr(m, "JOB_STATE_PATH", str(job_state_path))
 
     for mod_name in ("api.videogen", "api"):
         m = sys.modules.get(mod_name)
@@ -221,6 +228,40 @@ def isolate_state_files(tmp_path, monkeypatch):
             monkeypatch.setattr(m, "INDEX_PATH", str(insertlib_path))
 
 
+# ---- Шрифт фикстуры для приёмочных тестов геометрии интро (задание MQ) -------
+# В CI системных шрифтов нет, и приёмочные тесты «большого слева» там просто
+# пропускались (pytest.skip, если не установлен шрифт стиля по умолчанию) — геометрия
+# новой фичи не проверялась никогда. Поэтому шрифт едет вместе с тестами: Oswald-Regular
+# (SIL OFL 1.1, кириллица, tests/fixtures/fonts/OFL.txt) — его каталог подставляется в
+# поиск шрифтов core.fonts на время теста. Продовый код не меняется: только monkeypatch
+# каталога и сброс кэша.
+FIXTURE_FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                "fixtures", "fonts")
+FIXTURE_FONT_PS = "Oswald-Regular"
+
+
+@pytest.fixture
+def fixture_font(monkeypatch):
+    """PostScript-имя шрифта из tests/fixtures/fonts, найденного поиском core.fonts.
+
+    Каталог системных шрифтов на время теста подменяется каталогом фикстуры: так
+    ожидания теста не зависят от того, что стоит на машине (и от того, стоит ли там
+    вообще хоть один шрифт). Кэш списка шрифтов сбрасывается и на входе, и на выходе:
+    monkeypatch вернёт каталог, но не кэш, а в кэше остался бы шрифт фикстуры.
+    """
+    from core import fonts
+    path = os.path.join(FIXTURE_FONT_DIR, FIXTURE_FONT_PS + ".ttf")
+    assert os.path.isfile(path), "нет шрифта фикстуры: %s" % path
+    monkeypatch.setattr(fonts, "_FONT_DIRS", [FIXTURE_FONT_DIR])
+    fonts.list_fonts(refresh=True)
+    rec = next((r for r in fonts.list_fonts() if r["ps"] == FIXTURE_FONT_PS), None)
+    assert rec, "шрифт фикстуры %s не нашёлся поиском core.fonts" % FIXTURE_FONT_PS
+    assert os.path.dirname(rec["file"]) == FIXTURE_FONT_DIR, (
+        "поиск шрифтов отдал не фикстуру, а системный файл: %s" % rec["file"])
+    yield FIXTURE_FONT_PS
+    fonts._CACHE = None
+
+
 def reset_all_job_state():
     """Сбросить флаги отмены, статус running и полное состояние джобов и кэшей в начальное состояние."""
     try:
@@ -232,6 +273,13 @@ def reset_all_job_state():
         with _core.LOCK:
             _core.JOB.clear()
             _core.JOB.update(copy.deepcopy(_INITIAL_JOB))
+    except Exception:
+        pass
+    try:
+        # Журнал заданий (задание NC): привязка джоба к журналу и записи «оборвано
+        # перезапуском» — тоже состояние в памяти, соседним тестам они не нужны.
+        _core._JOURNAL_BOUND.clear()
+        _core._JOB_INTERRUPTED.clear()
     except Exception:
         pass
     try:

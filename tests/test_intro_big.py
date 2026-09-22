@@ -34,9 +34,9 @@
   5. ручки intro_big_gap, intro_big_step и intro_big_over: подписи, диапазоны, дефолты и
      перевод en (ZY-2), шаг стопки — только у группы с большой строкой, высота большой —
      от высоты стопки при неподвижной базовой линии; плюс замер дефолтов: шаг стопки /
-     cap первой строки на шрифте стиля по умолчанию;
-  6. статический сторож дверей: в 60-preview.js и 90-ae.js число `back:!!r.back`
-     равно числу `big:!!r.big` (флаг терялся в любой не тронутой копии);
+     cap первой строки на шрифте фикстуры (Oswald-Regular), числами (задание MQ);
+  6. двери: все семь копий маппинга строки интро (60-preview.js, 90-ae.js) прогоняются в
+     node на строке с `big` — флаг обязан доехать (флаг терялся в любой не тронутой копии);
   7. node: introGroupWindows проносит lx/lk, превью сажает строку по плану
      (left = центр + lx в px превью, без translateX(-50%), кегль × lk) и раскладывает
      группу абсолютно даже без ys;
@@ -46,7 +46,10 @@
 
 Шрифт в сборках намеренно несуществующий (`TestInk-Regular`): метрики берутся из
 запасной ветки раскладки, и числа не зависят от того, какие шрифты стоят на машине.
-Живой шрифт нужен только тесту 1 — без него он пропускается.
+Приёмочные тесты геометрии (1 и 5г) собирают стиль на шрифте ФИКСТУРЫ —
+`tests/fixtures/fonts/Oswald-Regular.ttf` (SIL OFL 1.1, кириллица, фикстура
+`fixture_font`): раньше они пропускались, если на машине нет шрифта стиля по умолчанию,
+и в CI геометрия «большого слева» не проверялась вовсе (задание MQ).
 """
 import gzip
 import json
@@ -122,8 +125,12 @@ def _cap(ps, size):
     return ext[0] if ext else 0.72 * size
 
 
-def test_big_layout_caps_baseline_gap_and_center():
-    """1. intro_big_layout на РЕАЛЬНОМ шрифте стиля по умолчанию.
+def test_big_layout_caps_baseline_gap_and_center(fixture_font):
+    """1. intro_big_layout на РЕАЛЬНОМ шрифте — шрифте фикстуры (Oswald-Regular).
+
+    Шрифт едет вместе с тестами, поэтому тест не пропускается ни на чьей машине и в CI;
+    каталог системных шрифтов на время теста подменён каталогом фикстуры, так что числа
+    не зависят от установленного окружения.
 
     Вертикаль типографская (правка ZY): низ большой строки — БАЗОВАЯ линия последней
     строки стопки (y_big == y_last), верх её капители — верх блока, посчитанный по
@@ -135,9 +142,7 @@ def test_big_layout_caps_baseline_gap_and_center():
     lx всех строк стопки равны, зазор между большим словом и стопкой — из ручки (±0.5),
     блок центрирован (lx большой = −total/2).
     """
-    ps = styles.BASE["font"]
-    if not any(r["ps"] == ps for r in fonts.list_fonts()):
-        pytest.skip(f"шрифт стиля по умолчанию {ps} не установлен")
+    ps = fixture_font
 
     fsize, back_scale, gap, h = 140.0, 0.69, 40.0, 1920.0
     lines = [{"words": ["8"], "big": True}, {"words": ["КИЛО"]}, {"words": ["ЗА", "МЕСЯЦ"]}]
@@ -525,40 +530,147 @@ def test_knob_intro_big_over_moves_top_only(xml_subs):
         "дефолтное большое слово не на 10 % выше стопки")
 
 
-def test_default_big_step_ratio_to_cap(xml_subs):
-    """5г. Дефолты числом на шрифте стиля по умолчанию (эталон владельца): отношение шага
-    базовых линий стопки к высоте заглавных первой строки ≈ 1.26, допустимо 1.2…1.35.
+def test_default_big_step_ratio_to_cap(fixture_font, xml_subs):
+    """5г. Дефолты числом на шрифте фикстуры (Oswald-Regular): шаг стопки 128 px,
+    капитель «H» 113.4 px, отношение шага к капители 1.1287.
 
-    Числа берутся из ПЛАНА со стилем по умолчанию (шрифт стиля, а не подменённый): шаг
-    стопки — разность ys двух соседних строк стопки, капитель — «H» первой строки стопки.
+    Шаг стопки — разность ys двух соседних строк стопки, капитель — «H» первой строки
+    стопки из файла шрифта. Числа зафиксированы явно: раньше тест брал шрифт стиля по
+    умолчанию и пропускался, если его нет (в CI — всегда), а отношение считалось по
+    формуле, которую сам же и проверял.
+
+    Эталон владельца — шрифт стиля по умолчанию (SFPro-CondensedSemibold): там та же
+    ручка даёт ≈1.30 при коридоре 1.2…1.35. У Oswald капитель выше (0.81 кегля против
+    0.726), поэтому то же число шага даёт 1.1287 — ВНЕ коридора. Дефолт ручки
+    (intro_big_step=80) при этом не подгоняется: шаг 160×80 % от шрифта не зависит, а
+    коридор — свойство конкретного шрифта; здесь он выписан числом, а не подменён.
     """
-    ps = styles.BASE["font"]
-    if not any(r["ps"] == ps for r in fonts.list_fonts()):
-        pytest.skip(f"шрифт стиля по умолчанию {ps} не установлен")
-
+    ps = fixture_font
     plan = xml2ae.scene_plan(xml_subs, disclaimer="", intro_riser=False, intro=BIG_INTRO,
-                             intro_splits=[], style={}, emit=lambda *a, **k: None)
+                             intro_splits=[],
+                             style={"font": ps, "intro_font": ps},
+                             emit=lambda *a, **k: None)
     grp = plan["intro"][0]
     fsize = float(plan["intro_fsize"])
     step = grp["ys"][2] - grp["ys"][1]
-    ratio = step / _cap(ps, fsize)
+    cap = _cap(ps, fsize)
+    ratio = step / cap
+
+    assert fsize == 140.0, "кегль интро фикстуры уехал: %r" % fsize
+    assert abs(step - 128.0) <= 0.01, (
+        f"дефолтный шаг стопки не 160·{styles.BASE['intro_big_step']} %: {step}")
     assert abs(step - INTRO_LINE_STEP * styles.BASE["intro_big_step"] / 100.0) <= 0.01
-    assert 1.2 <= ratio <= 1.35, (
-        f"шаг стопки / cap = {ratio:.3f} при intro_big_step={styles.BASE['intro_big_step']} "
-        f"(эталон ≈1.26): подбери дефолт ручки")
+    assert cap == pytest.approx(113.4, abs=0.01), "капитель «H» Oswald уехала: %r" % cap
+    assert ratio == pytest.approx(1.1287, abs=0.001), (
+        f"шаг стопки / cap = {ratio:.4f} при intro_big_step={styles.BASE['intro_big_step']}")
 
 
 # ---- 6. двери: флаг не теряется по пути ----------------------------------------------------
 
-def test_back_flag_doors_have_big_twin():
-    """6. Сторож дверей: сколько раз в файле встречается `back:!!r.back`, столько же
-    должно быть `big:!!r.big` — флаг теряется в любой не тронутой копии строки."""
-    for rel in ("static/app/60-preview.js", "static/app/90-ae.js"):
+DOORS_SRC = ("static/app/60-preview.js", "static/app/90-ae.js")
+# 5 копий в 90-ae.js. В 60-preview.js их было две — в панели слов предпросмотра
+# нарезки (pvwOpen и pvwCommitIntro); панель удалена вместе с контейнерами, которые
+# она рисовала, её копии ушли. Общих функций разметки строк это не касается:
+# introRowHtml/introToggleCount живут здесь же и проверяются отдельно.
+DOORS_TOTAL = 5
+
+
+def _enclosing_object(src, pos):
+    """Начало объектного литерала `{`, внутри которого стоит позиция pos.
+
+    Скобки внутри строк в этих объектах не встречаются, поэтому баланс считается по
+    символам: назад — до первой `{` на нулевой вложенности."""
+    depth = 0
+    for i in range(pos - 1, -1, -1):
+        ch = src[i]
+        if ch in ")]}":
+            depth += 1
+        elif ch in "([{":
+            if depth == 0:
+                assert ch == "{", "строка интро не объектный литерал: %r" % src[i:i + 40]
+                return i
+            depth -= 1
+    raise AssertionError("не нашлось начало объекта строки интро")
+
+
+def _object_end(src, start):
+    """Позиция закрывающей `}` объекта, открытого в start."""
+    depth = 0
+    for j in range(start, len(src)):
+        if src[j] == "{":
+            depth += 1
+        elif src[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return j
+    raise AssertionError("объект строки интро не закрылся")
+
+
+def _intro_row_doors():
+    """Копии маппинга строки интро: [{file, line, src}] — по каждой `back:!!r.back`.
+
+    Строка интро едет из джоба в состояние и обратно семь раз, и в каждой копии флаг
+    `big` надо пронести руками. Считаем не литералы, а сами объекты: текст найденного
+    литерала уходит в node и исполняется (см. тест 6).
+    """
+    doors = []
+    for rel in DOORS_SRC:
         src = open(os.path.join(ROOT, *rel.split("/")), encoding="utf-8").read()
-        back = src.count("back:!!r.back")
-        big = src.count("big:!!r.big")
-        assert back > 0, f"{rel}: не нашлось ни одной двери back:!!r.back"
-        assert back == big, f"{rel}: дверей back:!!r.back {back}, а big:!!r.big {big}"
+        for m in re.finditer(r"back:!!r\.back", src):
+            i = _enclosing_object(src, m.start())
+            doors.append({"file": rel, "line": src[:m.start()].count("\n") + 1,
+                          "src": src[i:_object_end(src, i) + 1]})
+    return doors
+
+
+# Стенд: строка интро с `big` и `back`, имена, которые читает объект из 90-ae.js (там
+# маппинг живёт внутри функции разбора строк ИИ). Каждая копия ИСПОЛНЯЕТСЯ — тест падает
+# на ReferenceError, если копия вдруг начнёт читать что-то ещё.
+_DOOR_STAND = r"""
+const assert = require('assert');
+const r = {count: 1, color: 'white', fill: [1, 1, 1], anim: 'up', fx: 'glow', dec: 0,
+           is_count: false, cnt_words: ['A'], break: false, from: null, gx: 10, gy: 20,
+           gs: 100, accent: false, back: true, big: true, words: ['A'], times: [0.5],
+           text: 'A', sel: false};
+const head = true, decVal = 0, ws = ['A'], ts = [0.5];
+const doors = @DOORS@;
+assert.strictEqual(doors.length, @TOTAL@,
+  'копий маппинга строки интро не @TOTAL@: ' + doors.map(function(d){ return d.file; }).join(', '));
+const lost = [];
+for (const d of doors) {
+  const make = new Function('r', 'head', 'decVal', 'ws', 'ts',
+                            'return (' + d.src + ');');
+  const out = make(r, head, decVal, ws, ts);
+  if (out.big !== true) lost.push(d.file + ':' + d.line + ' (big)');
+  if (out.back !== true) lost.push(d.file + ':' + d.line + ' (back)');
+  if (out.big === true && out.anim !== 'up') lost.push(d.file + ':' + d.line + ' (чужие поля)');
+}
+assert.deepStrictEqual(lost, [],
+  'флаг строки интро не доехал в копиях: ' + lost.join(', '));
+console.log('OK: big arrives through every intro row door (' + doors.length + ')');
+"""
+
+
+@node
+def test_back_flag_doors_have_big_twin(tmp_path):
+    """6. Двери: каждая из семи копий маппинга строки интро ПРОГОНЯЕТСЯ в node на строке
+    с `big:true` — флаг обязан доехать до результата.
+
+    Раньше сторож сравнивал число вхождений двух литералов (`back:!!r.back` и
+    `big:!!r.big`): копия без обоих флагов или флаг, уехавший в чужое поле, проходили
+    молча. Теперь исполняется сам объект копии — как фронтовые функции в тесте 7.
+    """
+    doors = _intro_row_doors()
+    assert len(doors) == DOORS_TOTAL, (
+        "копий маппинга строки интро не %d: %s"
+        % (DOORS_TOTAL, ", ".join("%s:%d" % (d["file"], d["line"]) for d in doors)))
+
+    script = (_DOOR_STAND
+              .replace("@DOORS@", json.dumps(doors, ensure_ascii=False))
+              .replace("@TOTAL@", str(DOORS_TOTAL)))
+    res = _run_node(tmp_path, "test_big_doors.js", script)
+    assert res.returncode == 0, f"Node.js script failed: {res.stderr}\n{res.stdout}"
+    assert "OK: big arrives through every intro row door" in res.stdout
 
 
 # ---- 7. превью: окна проносят lx/lk, строка садится по плану --------------------------------

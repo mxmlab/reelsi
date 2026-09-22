@@ -72,8 +72,10 @@ def _doc_texts():
     texts = {}
     for rel in DOCS:
         p = ROOT / rel
-        if p.exists():
-            texts[rel] = p.read_text(encoding="utf-8")
+        # Пропавший документ — ошибка, а не тихий пропуск (задание ND, п. 1):
+        # раньше он просто выпадал из проверки, и расхождение никто не замечал.
+        assert p.is_file(), f"документ из списка проверяемых не найден: {rel}"
+        texts[rel] = p.read_text(encoding="utf-8")
     return texts
 
 
@@ -112,6 +114,19 @@ def _doc_routes():
         for m in _ROUTE_RE.finditer(text):
             routes.setdefault(m.group(1), rel)
     return routes
+
+
+def test_listed_docs_exist():
+    """Каждый документ из списка проверяемых лежит на диске.
+
+    Отдельным тестом, а не только assert'ом в `_doc_texts`: пропавший документ
+    должен быть виден в отчёте прогона, а не прятаться за «меньше проверок —
+    меньше ошибок» (задание ND, п. 1)."""
+    missing = [rel for rel in DOCS if not (ROOT / rel).is_file()]
+    assert not missing, (
+        f"документов из списка проверяемых нет ({len(missing)}): {missing} — "
+        f"верни документ или убери его из DOCS")
+    assert len(DOCS) >= 15, f"список проверяемых документов подозрительно короткий: {len(DOCS)}"
 
 
 def test_documented_modules_exist():

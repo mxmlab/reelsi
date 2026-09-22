@@ -16,7 +16,8 @@
 раньше: максимум ширины строк, у «большого слева» — весь блок (total, задание ZY).
 Опускание блока под INTRO_SAFE_TOP у откреплённого интро считается от ФАКТИЧЕСКОГО ds:
 растянутая группа выше, и от неужатого масштаба (как у привязанного) её верх уезжал
-за кадр.
+за кадр. С задания MO сдвиг считается ещё и по фактическому габариту блока
+(`intro_block_span`) — тест 6 сверяется тем же числом.
 
 Здесь:
   1. откреплённое + короткая строка: ds > 100, ширина строки·масштаб ≈ 0.92·W;
@@ -48,8 +49,9 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE)
 
 from core import fonts, styles, xml2ae  # noqa: E402
-from core.xml2ae.layout import (INTRO_BASE_Y, INTRO_FIT_W, INTRO_LINE_STEP,  # noqa: E402
-                                INTRO_SAFE_TOP, INTRO_SCALE, _intro_i_dy)
+from core.xml2ae.layout import (INTRO_BASE_Y, INTRO_FIT_W, INTRO_SAFE_TOP,  # noqa: E402
+                                INTRO_SCALE, _intro_i_dy, intro_block_span,
+                                intro_line_sizes)
 import test_style_keys_in_ui as watcher  # noqa: E402
 
 JS_REL = ("static", "app", "85-inserts-view.js")
@@ -120,9 +122,11 @@ def test_detached_short_line_stretches_to_the_frame_width(wide_font, xml_subs):
 
     Раньше автофит умел только min(ds, fit): строка «A» шириной 140 px так и осталась
     бы на ds = 100 (96.8 % кадра по высоте прекомпа, а по ширине — 12.5 % кадра).
-    Теперь ds = fit ≈ 733, и видимая ширина — ровно доля кадра из ручки.
+    Теперь ds = fit ≈ 733, и видимая ширина — ровно доля кадра из ручки. Потолок
+    увеличения (задание MO, дефолт 250) здесь поднят намеренно: он режет именно такой
+    рост, а проверяется подгонка MI — своё число потолка стережёт test_intro_fit_safe.
     """
-    g = _group(xml_subs, {"intro_cam": False})
+    g = _group(xml_subs, {"intro_cam": False, "intro_fit_max": 1000})
     ds = g["ds"]
 
     assert ds > 100, f"короткая строка не растянулась: ds={ds}"
@@ -194,16 +198,21 @@ def test_manual_group_scale_beats_the_fit_both_ways(wide_font, xml_subs):
 # ==================================================== 5. ручка intro_fit_w и сторож
 
 def test_intro_fit_w_knob_sets_the_frame_share(wide_font, xml_subs):
-    """5а. intro_fit_w = 80 — ширина цели 0.80·W, и вверх, и вниз."""
-    short = _group(xml_subs, {"intro_cam": False, "intro_fit_w": 80})
-    long_ = _group(xml_subs, {"intro_cam": False, "intro_fit_w": 80}, intro=LONG)
+    """5а. intro_fit_w = 80 — ширина цели 0.80·W, и вверх, и вниз.
+
+    Потолок увеличения (MO) поднят: у короткой строки подгонка (637–733 %) выше дефолтных
+    250, и с ними ручка меняла бы не ширину, а только упор в потолок.
+    """
+    hi = {"intro_cam": False, "intro_fit_max": 1000}
+    short = _group(xml_subs, dict(hi, intro_fit_w=80))
+    long_ = _group(xml_subs, dict(hi, intro_fit_w=80), intro=LONG)
 
     assert _visible(short["ds"], FSIZE) == pytest.approx(W * 0.80, rel=0.01)
     assert short["ds"] > 100
     assert _visible(long_["ds"], FSIZE * 10) == pytest.approx(W * 0.80, rel=0.01)
     assert long_["ds"] < 100
     # дефолт 92: у той же группы ds больше — ручка реально рулит шириной
-    assert short["ds"] < _group(xml_subs, {"intro_cam": False})["ds"]
+    assert short["ds"] < _group(xml_subs, hi)["ds"]
 
 
 def test_intro_fit_w_knob_lives_in_schema_base_and_assembly(wide_font, xml_subs, tmp_path):
@@ -218,9 +227,9 @@ def test_intro_fit_w_knob_lives_in_schema_base_and_assembly(wide_font, xml_subs,
     assert field.get("ctl") == "num", "intro_fit_w перестала быть числом"
     assert (field.get("min"), field.get("max"), field.get("step")) == (50, 100, 1)
     assert field.get("label") == "Интро по ширине, %"
-    assert field.get("tip") == ("открепленное от камеры интро подгоняется под эту долю "
-                                "ширины кадра (увеличивается и ужимается); группы с ручным "
-                                "масштабом не трогаются")
+    assert field.get("tip") == ("только у открепленного от камеры интро: группа подгоняется "
+                                "под эту долю ширины кадра (увеличивается и ужимается); "
+                                "группы с ручным масштабом не трогаются")
     assert "intro_fit_w" in watcher.schema_keys(), \
         "ручка не попадает в счётчики схемы (test_style_schema)"
 
@@ -232,8 +241,10 @@ def test_intro_fit_w_knob_lives_in_schema_base_and_assembly(wide_font, xml_subs,
     assert en.get(field["label"]) == "Intro width, %"
     assert en.get(field["tip"]), "тултип ручки остался без перевода"
 
-    ref = _build(xml_subs, tmp_path, {"intro_cam": False}, name="fit92.jsx")
-    mod = _build(xml_subs, tmp_path, {"intro_cam": False, "intro_fit_w": 80},
+    ref = _build(xml_subs, tmp_path, {"intro_cam": False, "intro_fit_max": 1000},
+                 name="fit92.jsx")
+    mod = _build(xml_subs, tmp_path, {"intro_cam": False, "intro_fit_w": 80,
+                                      "intro_fit_max": 1000},
                  name="fit80.jsx")
     assert ref != mod, "ручка intro_fit_w не изменила собранный .jsx"
     ds92 = _grp_ds(ref)
@@ -254,22 +265,32 @@ def _grp_ds(jsx):
 # ==================================================== 6. опускание под безопасную зону
 
 def test_grown_intro_is_dropped_under_the_safe_top(wide_font, xml_subs, tmp_path):
-    """6. iDy считается от ФАКТИЧЕСКОГО ds — верх растянутого блока садится на SAFE_TOP.
+    """6. Верх растянутого блока садится ровно на SAFE_TOP — по габариту блока (MO).
 
-    Блок интро стоит центром в H/2 − INTRO_BASE_Y + iDy, а его половина высоты
-    растёт вместе с масштабом прекомпа: при ds ≈ 733 (96.8·ds/100 ≈ 710 %) верх
-    уезжает на 128 px ЗА кадр. От неужатого gs=100 (так считает привязанное интро)
-    iDy был бы нулевым — проверка не на пустом месте.
+    Блок интро стоит центром в H/2 − INTRO_BASE_Y + iDy, а его половина высоты растёт
+    вместе с масштабом прекомпа: при ds = 250 (96.8·ds/100 = 242 %) верх блока был бы
+    на 200 px, то есть ВЫШЕ безопасной линии 285. Опускание считает сборка ПОСЛЕ
+    автофита и по фактическому габариту блока (`intro_block_span`, задание MO):
+    `_intro_i_dy` знает только n/2·LINE_STEP и верх недооценивает. Проверка берёт то же
+    число, что и сборка, — второй копии формулы в тесте нет.
     """
+    plan = _scene(xml_subs, {"intro_cam": False})
     jsx = _build(xml_subs, tmp_path, {"intro_cam": False}, name="safe.jsx")
     ds = _grp_ds(jsx)
     idy = json.loads(re.search(r"var INTRO_IDY=(\[.*?\]);", jsx).group(1))[0]
+    p = plan["intro"][0]
 
     assert ds > 100, "предпосылка теста: короткая строка обязана растянуться"
-    top = H / 2 - INTRO_BASE_Y - 0.5 * INTRO_LINE_STEP * (INTRO_SCALE * ds / 100.0 / 100.0) + idy
+    assert p["y"] == round(-INTRO_BASE_Y + idy, 2), \
+        "сдвиг не доехал одним числом до плана (y) и до .jsx (INTRO_IDY)"
+    sizes = intro_line_sizes(p["lines"], plan["intro_fsize"], plan["back_scale"], p.get("lk"))
+    top, _bot = intro_block_span(p["ys"], sizes, plan["h"], ds=ds, g=plan["intro_scale"],
+                                 y=p["y"], dy=p["dy"], zoom=100.0, intro_cam=False,
+                                 fonts=p["fonts"])
     assert top == pytest.approx(INTRO_SAFE_TOP, abs=0.01), \
         "верх растянутого блока не сел на INTRO_SAFE_TOP"
-    assert top - idy < 0, "верх блока и без опускания в кадре — проверка ничего не значит"
+    assert top - idy < INTRO_SAFE_TOP, \
+        "верх блока и без опускания под линией — проверка ничего не значит"
 
     assert _intro_i_dy(H, 1, 100.0) == 0.0, \
         "от неужатого масштаба опускание не срабатывает — именно эту дыру и закрыли"

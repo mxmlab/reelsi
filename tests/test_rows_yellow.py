@@ -217,9 +217,12 @@ def test_preview_animates_yellow_in_rows(xml_subs, tmp_path):
     st = {"hl_row_anim": "word", "hl_blur": True, "hl_blur_amt": 70.4}
     plan = _plan(xml_subs, style=st, highlights=[SINGLE])
 
-    # 1a. План несёт параметры анимации (превью своих чисел не заводит).
+    # 1a. План несёт параметры анимации (превью своих чисел не заводит). Высота подъёма
+    # на фикстуре (кадр 1920) — 123.0 px; число выписано явно, а не пересчитано тем же
+    # множителем, что стоит в реализации (задание MQ).
     assert plan["hl_row_anim"] == "word"
-    assert plan["hl_rise"] == round(plan["h"] * 0.06406, 2)
+    assert plan["h"] == 1920, "кадр фикстуры уехал — число подъёма ниже посчитано для него"
+    assert plan["hl_rise"] == 123.0, "высота подъёма жёлтого уехала из плана: %r" % plan["hl_rise"]
     assert plan["hl_dur"] == 0.35, "длительность подъёма уехала из плана"
     assert plan["hl_blur"] is True and plan["hl_blur_amt"] == 70.4
 

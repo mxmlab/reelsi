@@ -417,27 +417,6 @@ def test_editor_grabs_the_nearest_edge_not_the_first_one(js):
     assert "edS2X(b.s0))<" not in down, "в mousedown вернулся посимвольный перебор краёв"
 
 
-def test_editor_playback_drives_the_words_panel(js):
-    """Играешь в РЕДАКТОРЕ — панель слов и строка субтитра едут вместе с картинкой.
-
-    Пойманный баг (2026-08-11): редактор играет ИСХОДНИК (ED.cs), а слова и `#pvsub`
-    размечены по МОНТАЖНОМУ времени, и вёл их только pvTick монтажного плеера. Пока
-    правишь нарезку — а это и есть основной сценарий окна, — видео едет, слово под
-    ним висит прежнее, ни один чип не подсвечен.
-
-    Пересчёт идёт по ED.orig (раскладка ИЗ XML): PV.words сняты с неё, и
-    несохранённая правка блоков их тайминги не двигает — иначе подсветка уползала бы
-    на чужие слова ровно там, где её и смотрят.
-    """
-    assert "function edWords(" in js, "пересчёт слов под плейхед редактора пропал"
-    body = js[js.index("function edWords("):][:600]
-    assert "ED.orig" in body, "слова считаются по правленой раскладке, а не по той, что в XML"
-    assert "pvwHighlight(" in body, "панель слов не получает текущее слово"
-    assert "if(PV.playing)return" in body, "монтаж ведёт панель сам — второй раз не считаем"
-    ui = js[js.index("function edUI("):][:200]
-    assert "edWords()" in ui, "edUI — единственная точка, куда стекаются сдвиги плейхеда"
-
-
 def test_cleared_insert_is_not_refilled_by_itself(js):
     """Снял картинку крестиком — ни автоподбор из базы, ни автогенерация её не вернут.
 
@@ -1236,40 +1215,37 @@ def test_preview_ducks_voice_on_censor_windows_from_the_plan(js):
     assert "dbToGain(" in duck and "voice_db" in duck, (
         "вне окна voiceGain не возвращается к voice_db — заглушка останется навсегда")
 
+    # У монтажного плеера (pvUI) плана нет вовсе: /api/aicut_preview отдаёт EDL, а не
+    # план сцены. Пока панель слов предпросмотра нарезки существовала, вызов брал
+    # PVW.plan — он всегда был null, и вызвать vgDuck было не с чем. Теперь вызова
+    # нет: глушение голоса живёт в плеере вставок, у которого план есть.
     pv = _fn_body(js, "function pvUI(")
-    assert "vgDuck(tm,PVW.plan)" in pv, "монтажный плеер не глушит голос по плану"
+    assert "vgDuck(" not in pv, "монтажный плеер снова глушит голос по несуществующему плану"
     ipv = _fn_body(js, "function ipvUI(")
     assert "vgDuck(tm,IPV.plan)" in ipv, "плеер вставок не глушит голос по плану"
     # без плана (запрос не прошёл) duck обязан вернуть обычную громкость, не сломать плеер
     assert "if(!VG)return" in duck, "vgDuck падает без графа громкости"
 
 
-def test_words_panel_highlights_intro_from_the_plan(js):
-    """Панель слов редактора нарезки подсвечивает группу интро по плану (задание K).
+def test_editor_words_panel_shows_the_word_under_the_playhead(js):
+    """Строка субтитра в редакторе нарезки идёт за плейхедом (жалоба 2026-08-11).
 
-    Регрессия от D: introGroupWindows стала прослойкой над планом (ts/te считает
-    scene_plan), а панель слала ей локально посчитанные строки без ts/te — окна
-    были пустыми и подсветка тихо пропала. Чинить формулой в JS нельзя (две копии
-    уже разошлись): панель обязана запросить /api/scene тем же образцом, что
-    ipvPlanFetch, и строить окна по plan.intro[].ts/te. Правки интро догоняют план
-    дебаунс-пересчётом (pvwPlanSoon), а не мгновенным пересчётом в JS.
+    Редактор играет ИСХОДНИК (ED.cs), а PV.words размечены по МОНТАЖНОМУ времени:
+    без пересчёта слово под картинкой висит прежнее. Пересчёт — по ED.orig (раскладка
+    ИЗ XML): несохранённая правка блоков их тайминги не двигает.
+
+    Панель слов предпросмотра нарезки (#pvwords) и её подсветка чипов удалены — в
+    разметке этих контейнеров нет, и pvwHighlight не находил ни одного чипа. Здесь
+    остаётся то, что реально видно: текст #pvsub.
     """
-    fetch = _fn_body(js, "async function pvwPlanFetch(")
-    assert "/api/scene" in fetch, "панель не запрашивает /api/scene"
-    assert "PVW.igw=" in fetch and "introGroupWindows(" in fetch, (
-        "окна панели не разворачиваются из ts/te плана")
-    assert "catch" in fetch, "ошибка плана должна не ломать панель"
-    assert "if(d.ok&&d.plan)" in fetch, "план применяется только при ok"
-
-    open_ = _fn_body(js, "async function pvwOpen(")
-    assert "pvwPlanSoon(" in open_, "панель не тянет план при открытии"
-
-    commit = _fn_body(js, "function pvwCommitIntro(")
-    assert "pvwPlanSoon(" in commit, "правка интро не пересчитывает план дебаунсом"
-
-    render = _fn_body(js, "function pvwRenderIntro(")
-    assert "introGroupWindows(" not in render and "resolveIntroFor(" not in render, (
-        "панель снова считает окна групп сама — формула вернулась в JS")
+    body = _fn_body(js, "function edWords(")
+    assert "ED.orig" in body, "слова считаются по правленой раскладке, а не по той, что в XML"
+    assert "pvsub" in body and "textContent=cur" in body, (
+        "строка субтитра не получает слово под плейхедом")
+    assert "if(PV.playing)return" in body, "монтаж ведёт панель сам — второй раз не считаем"
+    assert "pvwHighlight(" not in body, "вернулась подсветка чипов удалённой панели"
+    ui = _fn_body(js, "function edUI(")
+    assert "edWords()" in ui, "edUI — единственная точка, куда стекаются сдвиги плейхеда"
 
 
 def test_cam1_inserts_follow_camera_zoom_only_on_cam1(js):

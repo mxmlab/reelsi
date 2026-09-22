@@ -12,7 +12,7 @@ Timeline model (validated against the real Timeline 2.xml):
   * cam2 source time = cam1 source time + delta, delta = -sync_offset.
 """
 import os, re, urllib.parse, subprocess, json
-from core import fileio
+from core import fileio, media
 from core.xmltext import xml_text as _esc
 
 FPS = 60
@@ -128,12 +128,20 @@ def probe(path, still_ok=True):
         key = None
     if key and key in _PROBE_CACHE:
         return _PROBE_CACHE[key]
-    # без belium_streams: таймкод может лежать в служебной дорожке (см. pick_timecode)
-    out = subprocess.run(
-        ["ffprobe", "-v", "error",
-         "-show_entries", "stream=width,height,codec_type,avg_frame_rate"
-                          ":stream_tags=timecode:format=duration:format_tags=timecode",
-         "-of", "json", path], capture_output=True, text=True, encoding="utf-8", errors="replace", check=True).stdout
+    # без belium_streams: таймкод может лежать в служебной дорожке (см. pick_timecode).
+    # Длительность берётся этим же вызовом — ВМЕСТЕ с размером кадра, кодеком и
+    # таймкодом: проба идёт на каждую камеру сборки, и отдельный заход
+    # core/media.probe_duration был бы вторым процессом на тот же вопрос.
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error",
+             "-show_entries", "stream=width,height,codec_type,avg_frame_rate"
+                              ":stream_tags=timecode:format=duration:format_tags=timecode",
+             "-of", "json", path], capture_output=True, text=True, encoding="utf-8",
+             errors="replace", check=True, timeout=60).stdout
+    except subprocess.TimeoutExpired:
+        # Зависшая проба — ошибка этой же операции (остальные сбои тут тоже RuntimeError)
+        raise RuntimeError(f"ffprobe завис (>60 с): {os.path.basename(path)}")
     d = json.loads(out)
     streams = d.get("streams") or []
     st = next((s for s in streams if s.get("codec_type") == "video"), None)
@@ -268,13 +276,8 @@ def _audio_clip(cid, mcid, name, dur_frames, start, end, tin, tout, file_ref,
 
 
 def probe_audio_dur(path):
-    out = subprocess.run(
-        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=nw=1:nk=1", path], capture_output=True, text=True, encoding="utf-8", errors="replace").stdout.strip()
-    try:
-        return float(out)
-    except ValueError:
-        return 0.0
+    """Длительность аудио, сек; 0.0 — не прочли (общая проба core/media.py)."""
+    return media.probe_duration(path) or 0.0
 
 
 def _music_file_def(file_id, name, url, dur_s):

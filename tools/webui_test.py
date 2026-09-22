@@ -37,6 +37,10 @@ def _own(env, name, seed_from=None):
 
 _own("REELSI_UI_STATE", "ui_state.test.json")
 _own("REELSI_JOB_LOCK", "job.test.lock")
+# журнал заданий (job_state.json): в нём состояние последнего задания и метка
+# «оборвано перезапуском» — у профиля он свой, иначе тестовая страница видела бы
+# оборванную нарезку боевого сервера
+_own("REELSI_JOB_STATE", "job_state.test.json")
 _own("REELSI_AI_CONFIG", "ai_config.test.json", paths.root("ai_config.json"))
 _own("REELSI_AI_LOG", "ai_calls.test.json")
 _own("REELSI_MODELS_DEV", "models_dev.test.json")

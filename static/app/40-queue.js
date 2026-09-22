@@ -127,13 +127,14 @@ async function newOnly(files){const box=$('newonly');
     if(!(d.new||[]).length)toast(t('Новых дублей нет — на все уже есть XML'));
     return d.new||[];
   }catch(e){uiLog(t('только новые: ')+e);return files;}}
-// Автоподбор вторичных камер по звуку: видео камеры 1 выбрано (sel0), для каждой
-// из камер 2..N ищем в её папке файл того же дубля — его звук коррелирует со звуком
-// кам1 (имена файлов у камер могут не совпадать, тогда «Авто-пары по имени» не
-// находит ничего). Нашлось всё — пара сразу уходит в очередь, как у авто-пар.
+// Автоподбор вторичных камер по звуку: видео камеры 1 выбрано (sel0 — id селекта
+// камеры 0, строится как 'sel'+k), для каждой из камер 2..N ищем в её папке файл того
+// же дубля — его звук коррелирует со звуком кам1 (имена файлов у камер могут не
+// совпадать, тогда «Авто-пары по имени» не находит ничего). Нашлось всё — пара сразу
+// уходит в очередь, как у авто-пар.
 async function camMatch(){
   const n=nCams();if(n<2)return;
-  const s0=$('sel0');if(!s0||!s0.value){toast(t('Сначала выбери видео камеры 1'));return;}
+  const s0=$('sel'+0);if(!s0||!s0.value){toast(t('Сначала выбери видео камеры 1'));return;}
   const dirs=CAMDIRS.slice(1,n).filter(x=>(x||'').trim());
   if(dirs.length!==n-1){toast(t('Задай папки камер 2..{n}',{n:n}));return;}
   const btn=$('cammatch');if(btn)btn.disabled=true;
@@ -268,7 +269,7 @@ async function gdSpread(){
     const files=(await (await fetch('/api/files?dir='+encodeURIComponent(dest))).json()).files||[];
     for(let k=0;k<n;k++){CAMDIRS[k]=dest;CAMFILES[k]=files;}
     buildCamRows();   // пересобрать селекты под папку загрузки, иначе в них старые списки
-    const sel0=$('sel0');if(sel0)sel0.value=s.value;
+    const sel0=$('sel'+0);if(sel0)sel0.value=s.value;
     // одна папка вместо отдельных камер: один и тот же «лучший» файл не занимает
     // две камеры разом — нашедшиеся уникальные подставляем, остальные доукомплектуй
     const used=new Set([s.value]);let found=1;
@@ -580,8 +581,19 @@ async function clearPart(i,part){const c=CLIPS[i];if(!c)return;
 // состояние берётся у текущей. Три списка рисуют одну и ту же c.sel, поэтому после правки
 // перерисовываем все три: иначе соседние галки в других списках разъедутся с состоянием.
 // saveState/syncBuildBtn/markupSelCount остаются в onchange — ровно как было до диапазона.
+// Списки перерисовываются целиком (innerHTML=''), поэтому галка, с которой человек работал
+// с клавиатуры, к моменту возврата уже выброшена из документа — вместе с ней уходил и фокус:
+// Tab/Space начинали с начала страницы, а Shift-выбор диапазона с клавиатуры рвался.
+// Поэтому галку и её список запоминаем ДО перерисовки и возвращаем фокус на ту же галку
+// (новый элемент) в том же списке. Список различаем по контейнеру строки клипа, клип — по
+// data-ci: имя списка строкой сломалось бы при первом же переименовании id. Фокус мог стоять
+// и не на галке (клик мышью по пустому месту) — тогда его не трогаем: перетаскивать фокус на
+// чужую галку нельзя.
 function pickClip(i,on,shift){
   if(!CLIPS[i])return;
+  const el=document.activeElement,row=el&&el.dataset&&el.dataset.ci!==undefined
+    ?(el.closest&&el.closest('[data-clips]')):null;
+  const from=row&&document.contains(el)?{list:row.getAttribute('data-clips'),ci:el.dataset.ci}:null;
   CLIPS[i].sel=!!on;
   const a=SEL_ANCHOR;
   if(shift&&a>=0&&a<CLIPS.length&&a!==i){
@@ -589,16 +601,22 @@ function pickClip(i,on,shift){
     for(let k=lo;k<=hi;k++)CLIPS[k].sel=!!on;
   }
   SEL_ANCHOR=i;
-  renderClips1();renderClips2();renderClips3();}
+  renderClips1();renderClips2();renderClips3();
+  // preventScroll — без него браузер дёрнул бы страницу к галке, которую человек и так видит
+  const back=from&&document.querySelector('[data-clips="'+from.list
+    +'"] input[type=checkbox][data-ci="'+from.ci+'"]');
+  if(back&&back.focus)back.focus({preventScroll:true});}
 // Кнопки-корзины «Удалить выбранные» в шапках трёх списков. Выбор общий, поэтому и кнопок
 // три, но правило одно: пусто у всех ≠ все (в отличие от сборки) — неотмеченное не удаляем.
 function syncDelSel(){const n=CLIPS.filter(c=>c.sel).length;
   document.querySelectorAll('[data-delsel]').forEach(b=>{b.disabled=!n;});}
+// data-clips на контейнере — признак списка, в котором стоит галка: по нему pickClip после
+// перерисовки находит тот же список (галки трёх шагов живут в разных контейнерах).
 function renderClips1(){const h=$('clips1');if(!h)return;h.innerHTML='';
   if(!CLIPS.length){h.innerHTML='<div class="empty">'+t('Пока пусто. Запусти ИИ-нарезку или добавь XML.')+'</div>';syncDelSel();syncNav();return;}
   CLIPS.forEach((c,i)=>{const el=document.createElement('div');el.className='clip';
     el.innerHTML='<label class="pickbox" data-t="'+t('Выбор клипов — общий для всех шагов')+'" onclick="event.stopPropagation()">'
-      +'<input type="checkbox" '+(c.sel?'checked':'')+' onchange="CLIPS['+i+'].sel=this.checked;pickClip('+i+',this.checked,SHIFT_HELD);saveState();syncBuildBtn();markupSelCount()"></label>'
+      +'<input type="checkbox" data-ci="'+i+'" '+(c.sel?'checked':'')+' onchange="CLIPS['+i+'].sel=this.checked;pickClip('+i+',this.checked,SHIFT_HELD);saveState();syncBuildBtn();markupSelCount()"></label>'
       +'<span class="idx">'+(i+1)+'</span><span class="nm grow" data-noi18n title="'+esc(c.xml)+'">'+esc(c.name)+'</span>'
       +'<span class="st">'+spkTagHTML(c)+(c.edited?'<span class="st">'+editedTag(c)+'</span>':'')+'</span>'+clipActs(i,1);
     h.appendChild(el);});
@@ -610,7 +628,7 @@ function renderClips2(){const h=$('clips2');if(!h)return;h.innerHTML='';
   // Зелёные остаются только сами теги — мелкие маркеры «поработал».
   CLIPS.forEach((c,i)=>{const el=document.createElement('div');el.className='clip';
     el.innerHTML='<label class="pickbox" data-t="'+t('Фазы разметки у выбранных клипов (пусто у всех = все). Отмеченное здесь — то же, что и на шаге сборки.')+'" onclick="event.stopPropagation()">'
-      +'<input type="checkbox" '+(c.sel?'checked':'')+' onchange="CLIPS['+i+'].sel=this.checked;pickClip('+i+',this.checked,SHIFT_HELD);saveState();syncBuildBtn();markupSelCount()"></label>'
+      +'<input type="checkbox" data-ci="'+i+'" '+(c.sel?'checked':'')+' onchange="CLIPS['+i+'].sel=this.checked;pickClip('+i+',this.checked,SHIFT_HELD);saveState();syncBuildBtn();markupSelCount()"></label>'
       +'<span class="idx">'+(i+1)+'</span><span class="nm" data-noi18n title="'+esc(c.xml)+'">'+esc(c.name)+'</span>'
       +'<span class="st grow">'+statusTags(c,true)+'</span>'+clipActs(i,2);
     h.appendChild(el);});
@@ -624,7 +642,7 @@ function renderClips3(){const h=$('clips3');if(!h)return;h.innerHTML='';
   CLIPS.forEach((c,i)=>{const el=document.createElement('div');
     el.className='clip pick'+(aeDone(c)?' done':clipReady(c)?' ready':'')+(i===curAE?' cur':'');
     el.innerHTML='<label class="pickbox" data-t="'+t('В сборку набора (пусто у всех = собрать все)')+'" onclick="event.stopPropagation()">'
-      +'<input type="checkbox" '+(c.sel?'checked':'')+' onchange="CLIPS['+i+'].sel=this.checked;pickClip('+i+',this.checked,SHIFT_HELD);saveState();syncBuildBtn()"></label>'
+      +'<input type="checkbox" data-ci="'+i+'" '+(c.sel?'checked':'')+' onchange="CLIPS['+i+'].sel=this.checked;pickClip('+i+',this.checked,SHIFT_HELD);saveState();syncBuildBtn()"></label>'
       +'<span class="idx">'+(i+1)+'</span>'+spkSelHTML(i,c)
       +'<span class="nm grow" data-noi18n title="'+esc(c.xml)+'">'+esc(c.name)+'</span>'
       +'<span class="st">'+spkTagHTML(c,false)+statusTags(c)+(aeDone(c)?'<span class="tag ok">'+t('готов к AE')+ico('check')+'</span>':'')+'</span>'

@@ -128,7 +128,8 @@ if(bootRaw==='video')openVideo(); else goStep(CLIPS.length?bootStep:1);
     VIDCANCEL=false;VIDCTX=ctx;VIDPOLL=true;VIDRETRY=0;pollVideo();}
   else if(d.done){if(ctx){VIDCTX=null;vidBusy(false);videoFinish(d,ctx);}
     else{insVideoForgetPending();if(d.result&&bootRaw==='video')vidShowResult(d.result);}}
-  else insVideoForgetPending();
+  else{if(d.interrupted)jobInterrupted(d.interrupted);   // генерация оборвана перезапуском
+    insVideoForgetPending();}
 }catch(e){}})();
 if(CLIPS.length)refreshStatuses();   // подтянуть ncams/статусы для восстановленных клипов (влияет на кнопку раскладки камер шага 1)
 illHdrPoll();                        // если описание базы уже идёт (запущено до F5) — показать прогресс в шапке
@@ -142,7 +143,9 @@ illHdrPoll();                        // если описание базы уж�
     progShow(label,t('возобновляю после перезагрузки…'));
     if(kind==='build')pollBuild();
     else if(kind==='draft')pollDraft();
-    else{CUTLABEL=label;cutBusy(true);pollAI();}}}catch(e){}})();
+    else{CUTLABEL=label;cutBusy(true);pollAI();}
+  }else if(d.interrupted)jobInterrupted(d.interrupted);   // задание оборвано перезапуском сервера
+}catch(e){}})();
 // рендер живёт в своём RJOB — после F5 подхватываем его отдельно
 (async()=>{try{const d=await (await fetch('/api/render_status')).json();
   queueRender(d);   // очередь этапов (задание FA): рендер — своя дверь, до проверки running
@@ -150,7 +153,9 @@ illHdrPoll();                        // если описание базы уж�
   // а не только в поле: загрузка спикеров (applySpeakerDirs -> renderRenderDirField)
   // идёт позже и перезаписала бы значение, оставленное только в DOM.
   if(d.default_dir&&!AERENDER){AERENDER=d.default_dir;renderRenderDirField();}
-  if(d.running){logReset();progShow(t('Рендер AE'),t('возобновляю после перезагрузки…'));uiBusySet(true);pollRender();}}catch(e){}})();
+  if(d.running){logReset();progShow(t('Рендер AE'),t('возобновляю после перезагрузки…'));uiBusySet(true);pollRender();}
+  else if(d.interrupted)jobInterrupted(d.interrupted);   // рендер оборван перезапуском сервера
+}catch(e){}})();
 // bfcache возвращает страницу целиком — вместе с застрявшим в «…» genBusy старого
 // сеанса: fetch, ушедший в зависший сервер, живёт ровно столько, сколько жила вкладка,
 // а гвардия двойного клика глотает все нажатия. Ручная перезагрузка чистит сама,

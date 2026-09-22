@@ -13,6 +13,7 @@ Qwen2.5-Omni-7B СМОТРИТ draft.mp4 кусками (~45с, видео+зв�
     python omni_review.py <draft.mp4> [--chunk 45] [--out X.review.json]
 """
 import sys, os, json, subprocess, argparse
+from core import media
 try:
     sys.stdout.reconfigure(encoding="utf-8")
 except Exception:
@@ -30,21 +31,20 @@ SYS = ("Ты — придирчивый ревьюер ЧЕРНОВОГО мон
 
 
 def _dur(path):
-    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                          "-of", "default=nw=1:nk=1", path],
-                         capture_output=True, text=True).stdout.strip()
-    try:
-        return float(out)
-    except ValueError:
-        return 0.0
+    """Длительность черновика, сек; 0.0 — не прочли (общая проба core/media.py)."""
+    return media.probe_duration(path) or 0.0
 
 
 def _cut_chunk(src, t0, t1, dst):
-    """Кусок черновика для Omni: маленький и быстрый (черновик уже 720p/30)."""
+    """Кусок черновика для Omni: маленький и быстрый (черновик уже 720p/30).
+
+    Таймаут: кусок 45 с в 480p собирается секундами, так что 600 с — это «ffmpeg
+    завис», а не «долгий кусок»; без него запущенный вручную ревьюер висел бы вечно."""
     subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", f"{t0:.2f}", "-i", src,
                     "-t", f"{t1 - t0:.2f}", "-vf", "scale=-2:480,fps=2",
                     "-c:v", "libx264", "-preset", "ultrafast", "-crf", "30",
-                    "-c:a", "aac", "-b:a", "64k", dst], check=True, capture_output=True)
+                    "-c:a", "aac", "-b:a", "64k", dst], check=True, capture_output=True,
+                    timeout=600)
     return dst
 
 

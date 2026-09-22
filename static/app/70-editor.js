@@ -85,17 +85,16 @@ function edDraw(){const c=$('edtl');if(!c||!ED.dur)return;const g=c.getContext('
 function edUI(){const el=$('edtime');if(el)el.textContent=fmtIns(edCutTime(ED.cs))+' / '+fmtIns(edTotal());edWords();}
 // Панель слов и строка субтитра идут по МОНТАЖНОМУ времени, а редактор играет ИСХОДНИК —
 // без пересчёта они стоят мёртвыми всё время, пока играешь в редакторе: картинка едет,
-// слово под ней прежнее, ни один чип не подсвечен (жалоба 2026-08-11 «строка не
-// проигрывается правильно»). Пересчитываем по ИСХОДНОЙ раскладке (ED.orig — то, что
-// лежит в XML): PV.words/PVW.words сняты с неё, и несохранённая правка их не двигает.
+// слово под ней прежнее (жалоба 2026-08-11 «строка не проигрывается правильно»).
+// Пересчитываем по ИСХОДНОЙ раскладке (ED.orig — то, что лежит в XML): PV.words сняты
+// с неё, и несохранённая правка их не двигает.
 // Ползунок и время монтажа НЕ трогаем — это состояние монтажного плеера, а он стоит:
 // подвинуть их значило бы соврать, откуда он поедет по своей кнопке.
 function edWords(){if(PV.playing)return;                      // монтаж играет сам и ведёт панель через pvUI
   const base=(ED.orig&&ED.orig.length)?ED.orig:ED.blocks;
   const mt=edCutOf(base,ED.cs);if(mt==null)return;            // курсор в вырезанном — подсветку не дёргаем
   const el=$('pvsub');
-  if(el){let cur='';for(const w of (PV.words||[])){if(mt>=w.s&&mt<w.e){cur=w.w;break;}}el.textContent=cur;}
-  pvwHighlight(mt);}
+  if(el){let cur='';for(const w of (PV.words||[])){if(mt>=w.s&&mt<w.e){cur=w.w;break;}}el.textContent=cur;}}
 function edSeek(s){ED.cs=Math.max(0,Math.min(ED.dur,s));
   if(PV.vids&&PV.vids[0]){try{PV.vids[0].currentTime=ED.cs;}catch(e){}}edDraw();edUI();}
 function edToggle(){ED.play?edPause():edPlay();}

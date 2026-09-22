@@ -111,7 +111,7 @@
       <button class="sm" onclick="addExternal()"><span data-ic="plus"></span> Добавить XML…</button>
       <button class="icon" id="delSel1" data-delsel onclick="delSelClips()" disabled aria-label="Удалить выбранные клипы" data-t="Удалить отмеченные галочками клипы — убрать из списка или стереть с диска файлы нарезки. Без отмеченных кнопка не работает."><span data-ic="trash"></span></button>
       <button class="icon" id="clipsClear" onclick="clearClipsList()" aria-label="Убрать все клипы из списка" data-t="Убрать все клипы из списка на этой странице. Файлы нарезки на диске НЕ удаляются — список подхватится заново кнопкой «Из папки результата»."><span data-ic="broom"></span></button></h2>
-    <div id="clips1" class="clips"></div>
+    <div id="clips1" class="clips" data-clips="1"></div>
     <div class="navbar">
       <button id="toStep2" onclick="goStep(2)">Далее → Разметка</button>
     </div>
@@ -134,7 +134,7 @@
       <button class="sm" onclick="markupPhase('yellow')" data-t="Жёлтые у отмеченных клипов (не отмечено ни одного = все): ИИ-разметка, субтитры и вставки не трогаются. Без субтитров клип пропускается.">Жёлтые (<span data-markupcnt></span>)</button>
       <button class="sm" onclick="markupPhase('inserts')" data-t="Вставки у отмеченных клипов (не отмечено ни одного = все): ИИ-подбор из базы, субтитры и жёлтые не трогаются. Без субтитров клип пропускается.">Вставки (<span data-markupcnt></span>)</button>
       <button class="primary" id="markupall" onclick="markupAll()"><span data-ic="ai"></span> Разметить всё</button></h2>
-    <div id="clips2" class="clips"></div>
+    <div id="clips2" class="clips" data-clips="2"></div>
     <div class="navbar">
       <button class="sm" onclick="goStep(1)">← Назад</button>
       <button onclick="goStep(3)">Перенос в After Effects →</button>
@@ -151,7 +151,7 @@
       <button class="icon" id="delSel3" data-delsel onclick="delSelClips()" disabled aria-label="Удалить выбранные клипы" data-t="Удалить отмеченные галочками клипы — убрать из списка или стереть с диска файлы нарезки. Без отмеченных кнопка не работает."><span data-ic="trash"></span></button>
       <button class="icon" id="rmSelClips" onclick="removeSelClips()" disabled aria-label="Убрать отмеченные клипы из списка" data-t="Убрать отмеченные галочками клипы из списка набора. Файлы нарезки на диске НЕ удаляются — подхватятся снова «Из папки результата». Без отмеченных кнопка не работает."><span data-ic="broom"></span></button>
       <button class="sm" id="introall" onclick="aiIntroAll()" data-t="Разметить интро ИИ сразу во всех отмеченных файлах: строки за спиной + 2–3 акцента в середине. Уже размеченное интро будет заменено — спросим перед стартом."><span data-ic="ai" data-cls="gold"></span> ИИ интро (<span data-introcnt></span>)</button></h2>
-    <div id="clips3" class="clips"></div>
+    <div id="clips3" class="clips" data-clips="3"></div>
     <div class="ae-buildbar sticky-build" id="aebuildbar">
       <div class="row actbar" style="align-items:center">
         <span id="buildscope" class="muted mono" aria-live="polite">Все клипы</span>

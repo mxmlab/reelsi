@@ -7,13 +7,14 @@ CURPROC ПЕРЕПРИСВАИВАЕТСЯ (global), а `from ._core import CURP
 раз, и «Стоп» убивал бы None вместо процесса. Читают его только run_omnicut_job и
 _kill_curproc — оба здесь.
 """
-import os, threading, argparse, traceback, subprocess, shutil, tempfile
+import os, queue, threading, time, argparse, traceback, subprocess, shutil, tempfile
 from flask import request, jsonify
 import reelsi
 from core import cutstages
 from ._core import (DEFAULT_BASE, JOB, LOCK, bp, emit, item_done, item_fail,
-                    item_set, items_init, job_finish, job_start, jstr, kill_tree,
-                    set_progress, umsg_err, _cross_lock_release)
+                    item_set, items_init, job_finish, job_start, jstr, journal_interrupted,
+                    kill_tree, set_progress, set_stalled, sysexit_text, task_popen_kwargs,
+                    umsg_err, _cross_lock_release)
 from core.umsg import umsg
 from core.app_meta import child_env, module_cmd
 from core.applog import get_logger
@@ -25,6 +26,11 @@ CURWORK = []            # рабочие каталоги задачи (omnicut_
                         # их маркером WORK_DIR= в stdout, а _kill_curproc удаляет — иначе
                         # WAV камер (сотни МБ) переживают «Стоп» в %TEMP%. Путь проверяется
                         # is_safe_work_dir: ту же строку печатает ответ модели — см. там
+# Сторож простоя процесса нарезки (задание NC): молчит дольше — в статус идёт флаг
+# stalled и строка в лог, но процесс НЕ убивается. Долгая ASR (GigaAM на 40-минутной
+# камере) молчит законно, и снимать её по тишине значило бы терять готовую работу.
+# Константа, а не настройка: значение про реальные тайминги моделей, а не про вкус.
+CUT_STALL_S = 20 * 60
 
 
 def build_pairs(camdirs, names_list):
@@ -87,6 +93,28 @@ def _kill_curproc():
         shutil.rmtree(w, ignore_errors=True)
 
 
+def _pump_stdout(p):
+    """Фоновый поток чтения stdout процесса нарезки в очередь (образец — api/render.py).
+
+    Пока главный поток сидит в `for line in p.stdout`, он не может ни заметить
+    простой процесса, ни среагировать на «Стоп» до следующей строки вывода: зависшая
+    нарезка висела бесконечно, а в статусе не было ни слова (задание NC). Строки
+    кладём в очередь — их разбирает тот же цикл, что и раньше, только с таймаутом."""
+    q = queue.Queue()
+
+    def _pump():
+        try:
+            for line in p.stdout:
+                q.put(line)
+        except Exception:
+            pass
+        finally:
+            q.put(None)          # EOF вывода: процесс закрыл stdout или умер
+
+    threading.Thread(target=_pump, daemon=True).start()
+    return q
+
+
 def _mark_stopped_waits():
     """«Стоп» по JOB["cancel"]: файлам, до которых работа не дошла (stage="wait"),
     проставить stage="stopped", чтобы очередь показывала их «остановлено», а не «в очереди»."""
@@ -141,6 +169,13 @@ def run_job(base, outdir, pairs, opts):
                 # Одно место записи «готово» (задание FA): item_done и кладёт путь в
                 # results, и переводит элемент в done — вторым местом их не развести.
                 item_done(JOB, LOCK, stem, os.path.basename(out_xml))
+            except SystemExit as e:
+                # reelsi.process_pair отвечает понятной ошибкой через SystemExit
+                # (umsg) — это BaseException, и он проходил мимо except Exception:
+                # клип не попадал в failed, а в логе оставалась пустота (задание MX).
+                txt = sysexit_text(e)
+                emit("  ОШИБКА: {err}", err=txt)
+                item_fail(JOB, LOCK, stem, txt)
             except Exception:
                 tb = traceback.format_exc()
                 emit("  ОШИБКА:\n{tb}", tb=tb)
@@ -181,6 +216,14 @@ def run_job(base, outdir, pairs, opts):
             for f in fails:
                 emit("  ✗ {name}: {reason}", name=f["name"], reason=f["reason"])
         emit("\nГотово. Файлы в: {outdir}", outdir=outdir)
+    except SystemExit as e:
+        # Тот же путь, что у Exception ниже: причина в лог, падение — в failed. Без
+        # этой ветки «Очередь пуста»/«Файла из очереди нет…» из середины потока
+        # выглядели как «Готово (файлов нет)» (задание MX).
+        txt = sysexit_text(e)
+        emit("ОШИБКА (нарезка прервана): {err}", err=txt)
+        with LOCK:
+            JOB["failed"].append({"name": "нарезка", "reason": txt})
     except Exception:
         # падение ВНЕ пер-клипового try (makedirs на отвалившемся диске, OOM при
         # загрузке Whisper, битый opts) иначе убивало поток молча: finally честно
@@ -286,7 +329,7 @@ def run_omnicut_job(outdir, pairs, model=None, draft=True, selfcheck=False, revi
                     CURWORK = []                # маркеры нового процесса ещё не печатались
                 p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      text=True, encoding="utf-8", errors="replace", bufsize=1,
-                                     env=child_env())
+                                     env=child_env(), **task_popen_kwargs())
                 with LOCK:
                     CURPROC = p
                 if JOB["cancel"]:            # «Стоп» успел проскочить между Popen и CURPROC=p
@@ -299,8 +342,30 @@ def run_omnicut_job(outdir, pairs, model=None, draft=True, selfcheck=False, revi
                 ERRSIG = ("ImportError", "ModuleNotFoundError", "requires the following",
                           "No module named", "pip install", "CUDA out of memory",
                           "SystemExit", "Error:", "не принимает аудио", "баланс")
-                for line in p.stdout:
-                    line = line.rstrip()
+                # Чтение — через очередь с таймаутом: пока ждём строку, проверяем тишину
+                # (сторож CUT_STALL_S). Раньше цикл сидел в блокирующем `for line in
+                # p.stdout` и на зависшем процессе не выходил никогда (задание NC).
+                q = _pump_stdout(p)
+                last_out = time.time()
+                stalled = False
+                while True:
+                    try:
+                        raw = q.get(timeout=0.5)
+                    except queue.Empty:
+                        if not stalled and time.time() - last_out >= CUT_STALL_S:
+                            stalled = True
+                            set_stalled(True)
+                            mins = int((time.time() - last_out) // 60) or 1
+                            emit("  ⚠ нет вывода {min} мин — процесс жив, жду "
+                                 "(долгая ASR может молчать)", min=mins)
+                        continue
+                    if raw is None:          # EOF stdout — процесс кончился (или убит «Стопом»)
+                        break
+                    last_out = time.time()
+                    if stalled:              # вывод пошёл — простой кончился
+                        stalled = False
+                        set_stalled(False)
+                    line = raw.rstrip()
                     if not line:
                         continue
                     if line.startswith("WORK_DIR="):
@@ -337,6 +402,12 @@ def run_omnicut_job(outdir, pairs, model=None, draft=True, selfcheck=False, revi
                         reason = f"код {p.returncode}: {reason}"
                     emit("  ⚠ XML не создан — {reason}", reason=reason)
                     item_fail(JOB, LOCK, stem, reason)
+            except SystemExit as e:
+                # SystemExit (umsg) — BaseException: без этой ветки понятная ошибка
+                # шага уходила из потока мимо лога и failed (задание MX).
+                txt = sysexit_text(e)
+                emit("  ОШИБКА: {err}", err=txt)
+                item_fail(JOB, LOCK, stem, txt)
             except Exception:
                 tb = traceback.format_exc()
                 emit("  ОШИБКА:\n{tb}", tb=tb)
@@ -344,6 +415,7 @@ def run_omnicut_job(outdir, pairs, model=None, draft=True, selfcheck=False, revi
             finally:
                 with LOCK:
                     CURPROC = None
+                set_stalled(False)   # процесс кончился — «молчит» больше не про что
         if JOB["cancel"]:
             _mark_stopped_waits()          # «Стоп»: до чего не дошло — «остановлено» (задание FA)
         fails = JOB["failed"]
@@ -355,6 +427,13 @@ def run_omnicut_job(outdir, pairs, model=None, draft=True, selfcheck=False, revi
             emit("\n⏹ Остановлено. Что успело собраться — в списке.")
         else:
             emit("\nГотово. Файлы в: {outdir}", outdir=outdir)
+    except SystemExit as e:
+        # см. run_job: SystemExit — тот же путь провала, что у Exception, но с текстом
+        # из umsg; без ветки задание заканчивалось «Готово» без единого клипа (MX).
+        txt = sysexit_text(e)
+        emit("ОШИБКА (ИИ-нарезка прервана): {err}", err=txt)
+        with LOCK:
+            JOB["failed"].append({"name": "ИИ-нарезка", "reason": txt})
     except Exception:
         # см. run_job: без except падение вне цикла по клипам выглядело как «Готово».
         tb = traceback.format_exc()
@@ -435,6 +514,10 @@ def api_draft_render():
                 JOB["results"].append(p)
         except draftrender.RenderCancelled:
             emit("⏹ Черновик прерван")
+        except SystemExit as e:
+            # draftrender отвечает понятной ошибкой через SystemExit — в лог идёт её
+            # текст, а не пустота: мимо except Exception он проходил молча (задание MX).
+            emit("ОШИБКА: {err}", err=sysexit_text(e))
         except Exception:
             emit("ОШИБКА:\n{tb}", tb=traceback.format_exc())
         finally:
@@ -604,7 +687,9 @@ def api_run():
 def api_status():
     """?since=N — отдать только строки лога после абсолютного индекса N (иначе весь лог).
     log_total — абсолютный счётчик строк (включая срезанные кэпом): клиент шлёт его
-    обратно как since; log_total < since у клиента = новый джоб, надо сбросить кэш."""
+    обратно как since; log_total < since у клиента = новый джоб, надо сбросить кэш.
+    stalled — процесс нарезки молчит дольше CUT_STALL_S (задание NC), interrupted —
+    задание, оборванное перезапуском сервера (журнал заданий, job_state.json)."""
     since = request.args.get("since", type=int)
     with LOCK:
         base = JOB["log_base"]
@@ -616,7 +701,9 @@ def api_status():
         return jsonify(running=JOB["running"], done=JOB["done"], log=log, log_total=total,
                        results=JOB["results"], failed=JOB["failed"],
                        kind=JOB["kind"], label=JOB["label"], progress=JOB["progress"],
-                       insmoved=JOB.get("insmoved") or {}, items=JOB.get("items") or [])
+                       insmoved=JOB.get("insmoved") or {}, items=JOB.get("items") or [],
+                       stalled=bool(JOB.get("stalled")),
+                       interrupted=journal_interrupted("job"))
 
 
 @bp.route("/api/cutstages")

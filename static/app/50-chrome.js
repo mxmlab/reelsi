@@ -106,7 +106,6 @@ function queueRender(d){
       }
     }
   }
-  const qc=$('qcount');if(qc)qc.textContent=t('готово {n} · в очереди {m} · ошибок {k}',{n:doneN,m:wait,k:bad});
 }
 function fmtEta(sec){
   sec=Math.max(0,Math.round(sec));

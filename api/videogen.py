@@ -8,8 +8,10 @@
 import os, json, threading, time
 import urllib.request
 from flask import request, jsonify
-from ._core import APP_NAME, APP_REFERER, LOG_CAP, bp, env, jstr, umsg_err
+from ._core import (APP_NAME, APP_REFERER, LOG_CAP, bp, env, jstr, journal_interrupted,
+                    journal_write, umsg_err)
 from core import paths
+from core.fileio import atomic_json_dump
 from core.umsg import umsg
 from core.app_meta import http_req
 
@@ -54,13 +56,11 @@ def _vhist_read():
 
 
 def _vhist_write(items):
-    """Атомарно (tmp+replace), как ui_state: рестарт посреди записи не оставит огрызок."""
+    """Атомарно (core.fileio.atomic_json_dump), как ui_state: рестарт посреди записи
+    не оставит огрызок."""
     try:
         os.makedirs(os.path.dirname(VIDEO_HIST_PATH), exist_ok=True)
-        tmp = VIDEO_HIST_PATH + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(items[-VHIST_CAP:], f, ensure_ascii=False, indent=1)
-        os.replace(tmp, VIDEO_HIST_PATH)
+        atomic_json_dump(VIDEO_HIST_PATH, items[-VHIST_CAP:], indent=1)
     except Exception as e:
         print("video history:", e)
 
@@ -205,6 +205,10 @@ def _video_worker(prompt, refs, opts, key=None):
             err = VJOB["error"]
             err_c = VJOB.get("err")
             err_v = VJOB.get("err_vars")
+            started = VJOB["started"]
+        # Журнал заданий (задание NC): генерация — свой слот, вложение в нарезку не
+        # мешает. После перезапуска сервера оборванная генерация видна как interrupted.
+        journal_write("video", "video", "Генерация видео", "done", started=started)
         vhist_put(key, status="done" if res_ok else ("cancelled" if stopped else "error"),
                   error="" if res_ok or stopped else err,
                   err=err_c if not res_ok else None,
@@ -319,6 +323,9 @@ def api_video_gen():
                 raise SystemExit(umsg("video_busy", "Генерация видео уже идёт"))
             VJOB.update(running=True, done=False, cancel=False, log=[], log_base=0,
                         result=None, error=None, started=now, key=key, context=context)
+        # Журнал заданий (задание NC): генерация идёт минутами и стоит денег — после
+        # перезапуска сервера по журналу видно, что задача была и не закрылась.
+        journal_write("video", "video", "Генерация видео", "running", started=now)
         # запись заводим ДО старта потока: задача, оборванная на первой же минуте, тоже
         # должна остаться видимой во вкладке — вместе с запросом и референсами
         vhist_put(key, ts=now, status="running", model=model, prompt=prompt,
@@ -340,7 +347,8 @@ def api_video_gen():
 
 @bp.route("/api/video_status")
 def api_video_status():
-    """Опрос генерации видео. ?since= — сколько строк лога уже у клиента."""
+    """Опрос генерации видео. ?since= — сколько строк лога уже у клиента.
+    interrupted — генерация, оборванная перезапуском сервера (журнал заданий, NC)."""
     try:
         since = int(request.args.get("since") or 0)
     except ValueError:
@@ -352,6 +360,7 @@ def api_video_status():
                        result=VJOB["result"], error=VJOB["error"],
                        err=VJOB.get("err"), err_vars=VJOB.get("err_vars"),
                        key=VJOB.get("key"), context=VJOB.get("context") or "",
+                       interrupted=journal_interrupted("video"),
                        elapsed=(int(time.time()) - VJOB["started"]) if VJOB["started"] else 0)
 
 

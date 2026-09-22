@@ -20,10 +20,11 @@ to it — otherwise a stem could never be REMOVED from the UI, and that is half 
 
 Lists reload when their file changes (by mtime), so edits take effect without a restart.
 """
-import os, re, tempfile
+import os, re
 
 from core import paths
 from core.app_meta import env
+from core.fileio import atomic_text_write
 
 BASE_PATHS = {"bad": paths.data("badwords.txt"),
               "ok": paths.data("okwords.txt")}
@@ -117,25 +118,11 @@ def write_text(kind, text):
     а не «вернуть как было»: возврат к поставочному — отдельное действие (reset).
     -> сколько стемов получилось."""
     text = (text or "").replace("\r\n", "\n").replace("\r", "\n").strip("\n")
-    # Атомарно (tmp в той же папке + os.replace): open(...,"w") усекал СПИСОК
-    # пользователя до записи, и падение в этот момент оставляло пустой файл, а
-    # пустой список в UI — это «ничего не цензурим» (GZ, п. A). В fileio.py
-    # атомарной записи ТЕКСТА нет, поэтому пишем сами, тем же порядком.
-    dst = USER_PATHS[kind]
-    fd, tmp = tempfile.mkstemp(prefix=os.path.basename(dst) + ".tmp.",
-                               dir=os.path.dirname(dst) or ".")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
-            f.write(text + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, dst)
-    except Exception:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise
+    # Атомарно (core.fileio): open(...,"w") усекал СПИСОК пользователя до записи, и
+    # падение в этот момент оставляло пустой файл, а пустой список в UI — это
+    # «ничего не цензурим» (GZ, п. A). newline="\n": список построчный, CRLF в нём
+    # не нужен (переводы строк уже нормализованы выше).
+    atomic_text_write(USER_PATHS[kind], text + "\n", newline="\n")
     _cache[kind] = (None, None, DEFAULTS[kind])   # mtime сменился — перечитаем с диска
     return len(_parse(text))
 

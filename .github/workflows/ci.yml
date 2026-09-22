@@ -1,5 +1,10 @@
 name: CI
 
+# CI гоняем только в этом репозитории: в зеркале, форке или приватной копии эти
+# задания съедали бы 90 % бесплатных минут GitHub Actions (Windows считается ×2),
+# а полный набор тестов там и так прогоняется локально перед пушем. У каждого
+# задания ниже — if на этот репозиторий: в остальных копиях они пропускаются.
+
 permissions:
   contents: read
 
@@ -16,6 +21,7 @@ concurrency:
 
 jobs:
   test:
+    if: github.repository == 'mxmlab/reelsi'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -65,6 +71,7 @@ jobs:
         run: python -m pytest tests -q
 
   test-windows:
+    if: github.repository == 'mxmlab/reelsi'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -95,6 +102,7 @@ jobs:
   # не зависит и идёт с ним параллельно — незачем ждать сборку torch, чтобы узнать
   # про утёкший ключ.
   scan:
+    if: github.repository == 'mxmlab/reelsi'
     runs-on: ubuntu-latest
     env:
       # Версия закреплена: в новой могут смениться правила, и сборка покраснеет
@@ -125,6 +133,7 @@ jobs:
           pip-audit -r requirements.txt
 
   smoke:
+    if: github.repository == 'mxmlab/reelsi'
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -160,6 +169,7 @@ jobs:
           python -m core.gigaam_cut --help
 
   requirements:
+    if: github.repository == 'mxmlab/reelsi'
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -180,6 +190,7 @@ jobs:
           python -c "import locale; enc = locale.getpreferredencoding(False); files = ('requirements.txt','requirements-optional.txt','requirements-dev.txt'); [open(f, encoding=enc).read() for f in files]; [open(f, encoding='utf-8-sig').read() for f in files]"
 
   jsx:
+    if: github.repository == 'mxmlab/reelsi'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -198,6 +209,24 @@ jobs:
           for f in $(git ls-files '*.jsx'); do
             cp "$f" "/tmp/$(basename "$f" .jsx).js"
             if node --check "/tmp/$(basename "$f" .jsx).js"; then
+              echo "ok   $f"
+            else
+              echo "FAIL $f"
+              status=1
+            fi
+          done
+          exit $status
+
+      # JS самого интерфейса — шаг в ТОЙ ЖЕ джобе, а не отдельная: node уже стоит.
+      # Раньше static/app/*.js не проверялся ничем: пятнадцать обычных <script> в общем
+      # скоупе, и синтаксическая ошибка в одном убивает страницу целиком, причём
+      # python-тесты её не видят — они читают код регулярками. Имена файлов те же, что
+      # грузит webui.py (_app_scripts собирает теги по содержимому папки).
+      - name: Check frontend JS syntax
+        run: |
+          status=0
+          for f in static/app/*.js; do
+            if node --check "$f"; then
               echo "ok   $f"
             else
               echo "FAIL $f"

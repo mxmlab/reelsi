@@ -7,7 +7,9 @@
    время строки. Теперь у него своё время появления — `hl_row_anim="word"` берёт
    время слова (`wd[0]`, но не раньше строки и не позже, чем остаётся место на
    подъём), `"row"` — время строки (`r_t0`); подъём и проявление стоят на том же
-   времени, что у жёлтых в режиме «по слову».
+   времени, что у жёлтых в режиме «по слову». Длительность появления — своя у
+   короткой строки (задание MN: видимое время до `r_t1`, поле 3 слова данных),
+   у длинной — общая HL_DUR.
 2. Блюр появления (`hl_blur`): `ADBE Gaussian Blur 2` на жёлтом слое, Repeat Edge
    Pixels (`-0003`) = 0, Blurriness (`-0001`) `HL_BLUR` -> 0 на тех же ключах, что
    подъём; вызов `hlBlur` есть во всех трёх циклах (по слову, склейка, строки).
@@ -34,6 +36,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE)
 
 from core import xml2ae  # noqa: E402
+from core.xml2ae.layout import hl_appear_dur  # noqa: E402
 from core.xml2ae.template import (SUBS_LOOP_ROWS,  # noqa: E402
                                   SUBS_LOOP_WORDS, SUBS_LOOP_WORDS_JOINED)
 from tests.test_geometry_python import _build, _mask_assets  # noqa: E402
@@ -41,8 +44,9 @@ from tests.test_geometry_python import _build, _mask_assets  # noqa: E402
 node = pytest.mark.skipif(not shutil.which("node"), reason="требуется node в PATH")
 
 # Слова фикстуры: 1 — «СУ», второй в КОРОТКОЙ строке (0..35 кадров: окно подъёма
-# 0.35 с в неё не влезает, работает кламп к концу строки); 11 — «МЕТКОНСЕКТ»,
-# второй в длинной строке (194..290 кадров: появление ровно в момент слова).
+# 0.35 с в неё не влезает, работает кламп к концу строки; видимое время 0.35 с —
+# появление играет 0.21 с, задание MN); 11 — «МЕТКОНСЕКТ», второй в длинной строке
+# (194..290 кадров: появление ровно в момент слова, длительность общая).
 HIGHLIGHTS = [1, 11]
 
 
@@ -184,11 +188,14 @@ def _stand_code(jsx):
         a = jsx.index("    function hlBlur(L, t0){")
         b = jsx.index("\n    }\n", a) + len("\n    }\n")
         fns.append(jsx[a:b])
-    # Длительность появления короткого жёлтого (задание MA): цикл зовёт hlDur(sw) — стенду
-    # она нужна так же, как hlBlur, иначе node падает на ReferenceError.
-    m = re.search(r"\n    function hlDur\(sw\)\{[^\n]*\}", jsx)
-    if m:
-        fns.append(m.group(0))
+    # Длительность появления короткого жёлтого: цикл «по слову»/стопки зовёт hlDur(sw)
+    # (задание MA), цикл строк — hlRowDur(wd) (задание MN). Стенду они нужны так же, как
+    # hlBlur, иначе node падает на ReferenceError.
+    for pat in (r"\n    function hlDur\(sw\)\{[^\n]*\}",
+                r"\n    function hlRowDur\(wd\)\{[^\n]*\}"):
+        m = re.search(pat, jsx)
+        if m:
+            fns.append(m.group(0))
     return "\n".join(x for x in (constants, "\n".join(fns), loop) if x)
 
 
@@ -236,6 +243,12 @@ def _pairs(data):
     return [(row, wd) for row in data for wd in row[4]]
 
 
+def _wd_dur(wd, dur):
+    """Длительность появления жёлтого слова строки: своя (поле 3, задание MN) или общая —
+    поле появляется в данных, только когда в ролике есть короткие строки."""
+    return wd[3] if len(wd) > 3 else dur
+
+
 def _expect_t0(row, wd, fps, dur, row_word):
     """Контракт ZH: время появления жёлтого = время слова (или строки), зажатое в окно строки."""
     r_t0, r_t1 = row[0] / fps, row[1] / fps
@@ -247,7 +260,8 @@ def _expect_t0(row, wd, fps, dur, row_word):
 # ------------------------------------------------------------------- режим строк
 @node
 def test_rows_word_anim_yellow_appears_when_spoken(xml_subs, tmp_path):
-    """hl_row_anim="word": жёлтое въезжает в момент слова, подъём/проявление — на нём же."""
+    """hl_row_anim="word": жёлтое въезжает в момент слова, подъём/проявление — на нём же,
+    а длительность появления (задание MN) — своя у короткой строки и общая у длинной."""
     jsx = _rows_jsx(xml_subs, tmp_path, row_anim="word")
     assert "var HL_ROW_WORD = true;" in jsx
     data, params = _rows_data(jsx), _rows_params(jsx)
@@ -271,11 +285,18 @@ def test_rows_word_anim_yellow_appears_when_spoken(xml_subs, tmp_path):
             continue
 
         t0 = _expect_t0(row, wd, fps, dur, row_word=True)
+        # Длительность появления (MN): та же функция, что у MA, — видимое время считается
+        # до конца СТРОКИ. Короткой строке общей HL_DUR не хватает, и цикл строк играет её
+        # поле 3 слова; длинной — общую.
+        d = hl_appear_dur(row[1] / fps - t0)
+        assert d <= dur
+        assert _wd_dur(wd, dur) == pytest.approx(d), "в данных строки не своя длительность появления"
         assert lay["inPoint"] == pytest.approx(t0)
         assert lay["position"]["keys"] == [[t0, [lay["position"]["keys"][0][1][0], lineY + rise]],
-                                           [t0 + dur, [lay["position"]["keys"][1][1][0], lineY]]]
+                                           [t0 + d, [lay["position"]["keys"][1][1][0], lineY]]]
         assert lay["position"]["keys"][0][1][0] == pytest.approx(lay["position"]["keys"][1][1][0])
-        assert lay["opacity"]["keys"] == [[t0, 0], [t0 + dur, 100]]
+        assert lay["opacity"]["keys"] == [[t0, 0], [t0 + d, 100]]
+        assert lay["opacity"]["keys"][-1][0] <= row[1] / fps, "появление вышло за конец строки"
         assert lay["position"]["eased"] and lay["opacity"]["eased"], "кривая easePair не применена"
         if wd[0] / fps > r_t0 and t0 == pytest.approx(wd[0] / fps):
             seen_word_time += 1
@@ -305,10 +326,14 @@ def test_rows_row_anim_yellow_appears_with_row(xml_subs, tmp_path):
             yellow_late += 1
         # время появления = время строки, даже когда слово произнесено позже
         assert lay["inPoint"] == pytest.approx(r_t0)
-        assert lay["opacity"]["keys"] == [[r_t0, 0], [r_t0 + dur, 100]]
+        # Длительность появления (MN) — как в цикле: своя у короткой строки, общая у длинной.
+        d = hl_appear_dur(row[1] / fps - r_t0)
+        assert d <= dur, "появление длиннее общей HL_DUR"
+        assert _wd_dur(wd, dur) == pytest.approx(d), "в данных строки не своя длительность появления"
+        assert lay["opacity"]["keys"] == [[r_t0, 0], [r_t0 + d, 100]]
         lineY = posy + row[2] * step
         assert lay["position"]["keys"] == [[r_t0, [lay["position"]["keys"][0][1][0], lineY + rise]],
-                                           [r_t0 + dur, [lay["position"]["keys"][1][1][0], lineY]]]
+                                           [r_t0 + d, [lay["position"]["keys"][1][1][0], lineY]]]
     assert yellow_late >= 1, "жёлтых, произнесённых не первыми в строке, в фикстуре нет"
 
 

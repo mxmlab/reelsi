@@ -132,25 +132,23 @@ def test_resolve_intro_for_carries_color_fill_anim_fx_dec():
     assert lines[3]["is_count"] is False
 
 
-def test_all_five_doors_list_new_fields_next_to_accent():
-    """Во всех 5 дверях к строкам интро новые поля перечислены рядом с accent."""
-    pvw_js = open(os.path.join(ROOT, "static", "app", "60-preview.js"), encoding="utf-8").read()
+def test_all_doors_list_new_fields_next_to_accent():
+    """Во всех дверях к строкам интро новые поля перечислены рядом с accent.
+
+    Дверей было пять: панель слов предпросмотра нарезки (pvwOpen/pvwCommitIntro)
+    удалена вместе со своими контейнерами — полей строк интро в ней больше нет.
+    Остались три двери AE-панели, и новая строка обязана пройти каждую.
+    """
     ae_js = open(os.path.join(ROOT, "static", "app", "90-ae.js"), encoding="utf-8").read()
 
-    # 1. pvwOpen (60-preview.js:396)
-    pvw_open = _func(pvw_js, "pvwOpen")
-    # 2. pvwCommitIntro (60-preview.js:525)
-    pvw_commit = _func(pvw_js, "pvwCommitIntro")
-    # 3. selectAE (90-ae.js:65)
+    # 1. selectAE (90-ae.js:65)
     select_ae = _func(ae_js, "selectAE")
-    # 4. aiIntroAllRun (90-ae.js:419)
+    # 2. aiIntroAllRun (90-ae.js:419)
     ai_intro = _func(ae_js, "aiIntroAllRun")
-    # 5. resolveIntroFor (90-ae.js:280)
+    # 3. resolveIntroFor (90-ae.js:280)
     resolve_intro = _func(ae_js, "resolveIntroFor")
 
     doors = [
-        ("60-preview.js: pvwOpen", pvw_open),
-        ("60-preview.js: pvwCommitIntro", pvw_commit),
         ("90-ae.js: selectAE", select_ae),
         ("90-ae.js: aiIntroAllRun", ai_intro),
         ("90-ae.js: resolveIntroFor", resolve_intro),

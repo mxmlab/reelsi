@@ -32,12 +32,12 @@ my_workspace/
 └── Reelsi_out/        ← cut results and sidecar files
 ```
 
-**Where:** step 1 › **Project folder (where the cameras are)**
+**Where:** step 1 › **Project folder (where cameras are)**
 **How:** 1. Put the repository next to the footage. 2. Set the project folder. 3. Press
 **Rescan folders** — Reelsi lists the camera folders it found.
 **Settings:** **Output folder** is where cut XML files and their sidecar files land. The
 `.jsx` folder is set on step 3.
-**Code:** `templates/index.html:52`, `api/files.py:16`, `webui.py:81`
+**Code:** `templates/index.html:52`, `api/files.py:30`, `webui.py:81`
 
 ### Speaker profiles
 
@@ -57,7 +57,7 @@ the ordinary slots by inserts with the **on plate** checkbox.
 **Limitations / price:** profiles are plain JSON in `speakers/`, which is gitignored. The
 style in a profile is a default — you can always pick another style on step 3.
 **Code:** `core/speakers.py:29`, `core/speakers.py:68`, `api/presets.py:85`,
-`templates/index.html:789`
+`templates/index.html:570`
 
 ### AI provider profiles
 
@@ -76,17 +76,18 @@ temperature, caching) come from the models.dev catalog, cached on disk for a day
 masked. Text calls cost pennies; images and video are billed by the provider for the model
 you pick. Local providers are free.
 **Code:** `core/aicut/config.py:41`, `api/ai.py:153`, `core/aicut/catalog.py:1`,
-`templates/index.html:1092`
+`templates/index.html:890`
 
 ### Model catalog and call statistics
 
-**Where:** ⚙ › **Connections** › **Diagnostics of AI calls**; the model list is in the
+**Where:** ⚙ › **Connections** › **AI call diagnostics**; the model list is in the
 **Model** field on the same tab.
 **How:** 1. Press **Refresh list** to ask the provider for its models. 2. Open the
 diagnostics panel to see what previous calls cost.
 **Settings:** the panel groups calls by model, step and reasoning level and shows medians
 of tokens, reasoning share and time. Failed calls are counted separately.
-**Code:** `api/ai.py:730`, `core/aicut/config.py:38`, `core/aicut/catalog.py:21`
+**Code:** `api/ai.py:524`, `api/ai.py:803`, `core/aicut/config.py:38`,
+`core/aicut/catalog.py:22`
 
 ### Image and video generation: what is bundled
 
@@ -106,7 +107,7 @@ can plug in a local backend at the extension points `core/aicut/images.py` and
 your browser. The form keeps its state between sessions.
 **Limitations / price:** downloads go through `rclone`, so large files are fine; progress
 is parsed from rclone's statistics.
-**Code:** `api/gdrive.py:271`, `api/gdrive.py:61`, `templates/index.html:32`
+**Code:** `api/gdrive.py:449`, `api/gdrive.py:47`, `templates/index.html:32`
 
 ### Project, camera count and the queue
 
@@ -119,17 +120,17 @@ folders by audio correlation; the threshold was measured on real footage, so "no
 similar found" means exactly that. **Match all by audio** repeats that for the whole
 camera 1 folder, and **new only** skips takes that already have an XML in the output
 folder.
-**Code:** `templates/index.html:49`, `api/files.py:56`, `core/sync.py:114`,
+**Code:** `templates/index.html:49`, `api/files.py:57`, `core/sync.py:113`,
 `core/sync.py:26`
 
 ### Audio sync
 
-**Where:** step 1 › **Project** (the **Cams** switch) — sync runs as part of the cut.
+**Where:** step 1 › **Project** (the **Cameras** switch) — sync runs as part of the cut.
 **How:** 1. Choose 2 or more cameras. 2. Queue the pairs. 3. Sound is aligned by
 cross-correlation before cutting.
 **Settings:** offsets are written to `<stem>.project.json` and can be seen in the camera
 layout window.
-**Code:** `core/sync.py:80`, `core/sync.py:40`
+**Code:** `core/sync.py:82`, `core/sync.py:42`
 
 ### AI cutting
 
@@ -139,7 +140,7 @@ layout window.
 timings. Then the text model gets the full transcript and returns the same text with the
 parts to drop in square brackets; the code aligns that answer back to the words. Silence
 longer than 0.8 s is always cut. The AI model and its reasoning level are set in ⚙ ›
-**Cutting**. A draft mp4 is built at the end of every cut.
+**Cut**. A draft mp4 is built at the end of every cut.
 **Limitations / price:** only text goes to the provider. VRAM holds one heavy model at a
 time, so GigaAM is unloaded before the LLM is called.
 **Code:** `core/gigaam_cut/asr.py:49`, `core/gigaam_cut/decide.py:26`,
@@ -168,7 +169,7 @@ of CTC word timings. The VAD thresholds (**Silence threshold (dB)**, **Min pause
 **Limitations / price:** the **Draft mp4** stage has no checkbox of its own; it is switched
 on together with **Omni review**.
 **Code:** `core/cutstages.py:16`, `core/cutstages.py:87`, `core/cutstages.py:149`,
-`templates/index.html:1003`, `static/app/40-queue.js:363`
+`templates/index.html:801`, `static/app/10-settings.js:243`
 
 ### Breath detector and the disputed-breath strip
 
@@ -181,7 +182,7 @@ never cut automatically. Retrain the model with `python tools/train_breath.py`.
 **Limitations / price:** three sources vote: Silero VAD, CED-tiny in isolation, and
 acoustics. If `silero-vad`, `transformers` or the model file is missing, the detector
 switches itself off and cutting proceeds as before.
-**Code:** `core/breath.py:40`, `core/breath.py:227`, `core/breath.py:252`,
+**Code:** `core/breath.py:40`, `core/breath.py:229`, `core/breath.py:254`,
 `api/editor.py:135`
 
 ### Cut editor
@@ -191,11 +192,11 @@ switches itself off and cutting proceeds as before.
 grey to bring cut material back. 3. Press **Save to XML**.
 **Settings:** wheel zooms, Shift+wheel or the ruler scrolls, Space plays, arrows step
 frame by frame. **Cut** (C), **Delete** (D) and **Undo** (Ctrl+Z) work on blocks. The
-**listen to the cut-out** checkbox plays the removed audio as well.
+**listen to the cut** checkbox plays the removed audio as well.
 **Limitations / price:** saving rewrites the XML and reprojects insert timings onto the new
 edit; the window warns before closing with unsaved changes.
-**Code:** `templates/index.html:524`, `static/app/70-editor.js:13`,
-`api/editor.py:232`
+**Code:** `templates/index.html:306`, `static/app/70-editor.js:13`,
+`api/editor.py:247`
 
 ### Camera layout
 
@@ -208,7 +209,7 @@ edit; the window warns before closing with unsaved changes.
 **Limitations / price:** with two cameras the layout alternates strictly and both the first
 and the last piece stay on camera 1. Do the layout before markup: rebuilding the XML for it
 erases subtitles.
-**Code:** `core/align.py:12`, `api/build.py:206`, `templates/index.html:677`
+**Code:** `core/align.py:14`, `api/build.py:340`, `templates/index.html:458`
 
 ### Draft mp4
 
@@ -220,17 +221,17 @@ while the queue continues. 3. Or run a custom cut with the **Draft mp4** stage.
 built once per camera file.
 **Limitations / price:** NVENC is used when available, with a fallback to CPU x264, which
 is slow; the log says so explicitly.
-**Code:** `core/draftrender.py:1`, `core/cutstages.py:71`, `api/jobs.py:379`,
+**Code:** `core/draftrender.py:1`, `core/cutstages.py:71`, `api/jobs.py:491`,
 `static/app/50-chrome.js:186`
 
 ### Temporary files
 
-**Where:** ⚙ › **Tools** › **Temporary files** › **Clean**.
+**Where:** ⚙ › **Tools** › **Temporary files** › **Clear**.
 **How:** 1. Open the dialog. 2. Confirm. 3. If preview proxies exist, answer the second
 question separately.
 **Settings:** the dialog shows the size before deleting. Drafts and the roto cache are left
 alone; preview proxies are a per-camera-file cache and are only removed if you say yes.
-**Code:** `api/jobs.py:413`, `api/jobs.py:456`, `static/app/50-chrome.js:194`
+**Code:** `api/jobs.py:537`, `api/jobs.py:580`, `static/app/50-chrome.js:194`
 
 ### Clips list
 
@@ -240,17 +241,20 @@ alone; preview proxies are a per-camera-file cache and are only removed if you s
 4. Tick clips and press the trash button to delete them.
 **Settings:** every clip carries a selection checkbox — the same one as in the step 2 and
 step 3 lists, because the choice is shared by all three. A click with Shift sets or clears
-the whole range from the last clicked checkbox to this one. The trash button **Delete the
-selected clips** in the list header (disabled while nothing is ticked) opens the same dialog
-as the cross on a clip row: **Remove from the list** or **Delete from disk…**; the second one
+the whole range from the last clicked checkbox to this one. The keyboard focus stays on the
+checkbox: all three lists are redrawn on every pick, so the checkbox a person was working
+with is put back into its own list afterwards — Tab, Space and a Shift range taken from the
+keyboard go on walking the list in order; a focus that stood elsewhere is not moved. The trash
+button **Delete the selected clips** in the list header (disabled while nothing is ticked) opens
+the same dialog as the cross on a clip row: **Remove from the list** or **Delete from disk…**; the second one
 shows the combined list of cut files with their sizes and then erases them together with
 every sidecar. The source camera video is never touched, and one failing clip does not stop
 the others. The list lives in browser state and in a server mirror, so it survives a reload
 and a browser change.
 **Limitations / price:** nothing ticked here does NOT mean "all", unlike the build: there is
 nothing to delete, so the button stays disabled.
-**Code:** `templates/index.html:112`, `static/app/40-queue.js:583`,
-`static/app/40-queue.js:720`, `api/files.py:472`
+**Code:** `templates/index.html:112`, `static/app/40-queue.js:592`,
+`static/app/40-queue.js:720`, `api/files.py:534`
 
 ## Step 2 — Markup and inserts
 
@@ -267,8 +271,8 @@ column here is the same shared selection as on steps 1 and 3 — a click with Sh
 whole range — and the trash button in the list header deletes the ticked clips.
 **Limitations / price:** clips without subtitles are skipped by the highlight and insert
 phases. Inserts target 10 photos and 3 videos per video, from 6 s and 10 s in.
-**Code:** `templates/index.html:122`, `static/app/70-editor.js:289`,
-`core/aicut/commands.py:133`, `core/aicut/commands.py:139`
+**Code:** `templates/index.html:122`, `static/app/70-editor.js:296`,
+`api/ai.py:21`, `api/ai.py:50`
 
 ### Subtitles
 
@@ -283,7 +287,7 @@ style keys with fields in the same tab.
 **Limitations / price:** words longer than the reference blobs allow used to disappear from
 the XML; the template now grows for them, and anything still skipped is reported in the
 UI log. `.srt` files are written next to the XML.
-**Code:** `core/asr_backends.py:44`, `api/editor.py:366`, `core/align.py:355`,
+**Code:** `core/asr_backends.py:44`, `api/editor.py:389`, `core/align.py:355`,
 `static/app/70-editor.js:323`
 
 ### Word highlights
@@ -300,8 +304,8 @@ and lasts longer. Gaps left by earlier deletions do not close by themselves.
 **Limitations / price:** highlights are written into the XML itself, so they survive a
 manual re-edit; a sidecar `.yellow.json` is kept as a fallback for words that could not be
 coloured.
-**Code:** `core/aicut/commands.py:50`, `static/app/85-inserts-view.js:587`,
-`api/editor.py:471`, `api/editor.py:538`
+**Code:** `core/aicut/commands.py:50`, `static/app/60-preview.js:469`,
+`api/editor.py:501`, `api/editor.py:574`
 
 ### Inserts editor
 
@@ -330,9 +334,9 @@ ordinary prompt, ordinary mask and effects.
 
 **Limitations / price:** the pick respects forbidden zones: nothing in the first seconds,
 nothing in the closing seconds, a minimum gap between inserts and a minimum duration.
-**Code:** `templates/index.html:572`, `core/aicut/commands.py:149`,
-`core/aicut/commands.py:174`, `static/app/80-inserts.js:350`,
-`static/app/85-inserts-view.js:1465`, `core/insertlib.py:954`
+**Code:** `templates/index.html:355`, `core/aicut/commands.py:149`,
+`core/aicut/commands.py:174`, `static/app/80-inserts.js:339`,
+`static/app/85-inserts-view.js:1983`, `core/insertlib.py:956`
 
 ### Generating images and video for inserts
 
@@ -343,14 +347,14 @@ fill every photo card that has no file. 4. For video, use the same numbered butt
 video card, or the **Video** tab.
 **Settings:** the image profile needs an image model; the video profile needs a provider
 and a video model. **Remove background** in the settings cuts the subject out of every
-generated image with `rembg` and saves a transparent PNG; **Drop background** does the same
+generated image with `rembg` and saves a transparent PNG; **Remove background** does the same
 for one file on a card. The speaker profile can add a suffix or prefix to the prompt for
 both image and video slots — that is what the numbers 1 and 2 choose.
 **Limitations / price:** this is the paid part: the provider bills per image and per video.
 The engine refuses to run without an image or video model, and generation is cancellable.
 Generated media is added to the insert library and is reused for free later.
-**Code:** `core/aicut/images.py:19`, `core/aicut/images.py:62`, `core/aicut/video.py:34`,
-`api/ai.py:580`, `api/ai.py:641`
+**Code:** `core/aicut/images.py:45`, `core/aicut/images.py:142`, `core/aicut/video.py:34`,
+`api/ai.py:653`, `api/ai.py:714`
 
 ### Video tab
 
@@ -365,8 +369,8 @@ references are supported by Seedance 2.0 with up to 3 clips and 15 s in total.
 **Limitations / price:** generation runs in the cloud and takes minutes; the task list
 survives a page reload, and **Retry** puts a task's prompt and settings back into the
 form. Removing a task removes its file too.
-**Code:** `templates/index.html:458`, `core/aicut/video.py:16`,
-`api/videogen.py:215`, `api/videogen.py:352`
+**Code:** `templates/index.html:240`, `core/aicut/video.py:16`,
+`api/videogen.py:218`, `api/videogen.py:348`
 
 ### Insert library
 
@@ -374,18 +378,18 @@ form. Removing a task removes its file too.
 **How:** 1. Press **Scan** to index past projects and media folders. 2. Search by name or
 description. 3. Press **Describe with AI** to have a vision model write descriptions for
 files that have none. 4. Use **Import** to move downloaded media into your library folder.
-**Settings:** scanned folders are typed one per line. **Auto-match after AI** makes
+**Settings:** scanned folders are typed one per line. **auto-pick after AI** makes
 generation pick a library file when it can. Descriptions are just text — edit them in
 place and matching follows.
 **Limitations / price:** matching is semantic through LM Studio embeddings, with a token
 fallback when no embedder is available. Service files are skipped: transitions, sounds,
 roto masks, drafts and camera sources.
-**Code:** `core/insertlib.py:1`, `api/inserts.py:85`, `api/inserts.py:127`,
-`api/inserts.py:198`, `templates/index.html:712`
+**Code:** `core/insertlib.py:1`, `api/inserts.py:89`, `api/inserts.py:208`,
+`api/inserts.py:177`, `templates/index.html:494`
 
 ### Censoring
 
-**Where:** ⚙ › **Words** › **Censorship**; the audio switch is in the same tab on step 3.
+**Where:** ⚙ › **Words** › **Censoring**; the audio switch is in the same tab on step 3.
 **How:** 1. Type bad stems, one per line. 2. Add ordinary words that merely contain a bad
 substring to **Exceptions**. 3. Tick **Censor audio** on step 3 if the voice should dip
 as well.
@@ -395,8 +399,8 @@ and replaces the shipped list; **Default** brings the shipped one back.
 **Limitations / price:** a censored word is written into subtitles with a star instead of
 its middle letter, and the audio is muted on those frames only if that switch is on. Lists
 are reloaded by file modification time, so no restart is needed.
-**Code:** `core/censor.py:87`, `core/censor.py:97`, `core/xml2ae/layout.py:443`,
-`api/presets.py:144`, `templates/index.html:1067`, `templates/index.html:438`
+**Code:** `core/censor.py:88`, `core/censor.py:98`, `core/xml2ae/layout.py:825`,
+`api/presets.py:157`, `templates/index.html:866`, `templates/index.html:220`
 
 ### Glossary of terms
 
@@ -411,7 +415,7 @@ term. Terms are applied inside speech recognition, so every engine benefits and 
 timings are not touched; the self-check disables them, because it compares words one to
 one.
 **Code:** `core/terms.py:203`, `core/terms.py:268`, `core/asr_backends.py:116`,
-`api/presets.py:124`
+`api/presets.py:137`
 
 ### Video caption
 
@@ -419,7 +423,7 @@ one.
 **How:** 1. Type the video caption. 2. Press **Save**.
 **Settings:** the video caption is a style block with its own font, size, casing, colours and a
 background plate.
-**Code:** `templates/index.html:643`, `api/editor.py:47`, `static/app/85-inserts-view.js:391`
+**Code:** `templates/index.html:426`, `api/editor.py:47`, `static/app/80-inserts.js:198`
 
 ## Step 3 — After Effects
 
@@ -433,20 +437,20 @@ whole range), and the trash button **Delete the selected clips** next to the bro
 the ticked clips from the list or erases their files from disk. The broom removes ticked
 clips from the list only; files on disk stay.
 **Code:** `templates/index.html:151`, `static/app/90-ae.js:280`,
-`static/app/40-queue.js:626`
+`static/app/40-queue.js:640`
 
 ### AI intro: hook and accents
 
 **Where:** step 3 › the clip preview › **Intro** bar, or **AI intro (n)** for the whole set.
 **How:** 1. Open a clip preview. 2. Press **AI intro**. 3. Check the rows: the first rows
 are the hook behind the speaker, the mid rows are accents.
-**Settings:** the intro appearance mode is **word by word** or **line by line**. Rows can
+**Settings:** the intro appearance mode is **per word** or **per line**. Rows can
 be added and reordered; picking a row and clicking a word moves the group start.
 **Limitations / price:** already marked-up intro is replaced after a confirmation. Intro
 words are cut out of the subtitles, so they do not show up in the subtitle rows either; this
 works the same in the row mode and in the word-by-word mode.
-**Code:** `api/ai.py:669`, `static/app/90-ae.js:392`, `core/aicut/commands.py:1`,
-`static/app/85-inserts-view.js:950`
+**Code:** `api/ai.py:742`, `static/app/90-ae.js:283`, `static/app/90-ae.js:392`,
+`core/aicut/commands.py:1`
 
 ### Editing word highlights
 
@@ -456,8 +460,8 @@ click to fix the text — an emptied field deletes the word, and the deleted wor
 time to the next one when they went back to back (see **Word highlights** above).
 **Settings:** a `|` typed between two words breaks the stack. A word that already went to
 the intro is edited in its group row above.
-**Code:** `static/app/85-inserts-view.js:587`, `static/app/85-inserts-view.js:609`,
-`api/editor.py:538`
+**Code:** `static/app/60-preview.js:442`, `static/app/60-preview.js:469`,
+`api/editor.py:574`
 
 ### Styles
 
@@ -489,39 +493,40 @@ every file in the set that uses that style. Built-in styles cannot be deleted.
 **drift 100–160% (smooth between cuts)** or **no zoom (static frame)**. 2. In the **hard
 jumps** mode set **punch-in at start**, **First punch-in, %**, the take zooms and the
 yellow-word zoom.
-**Settings:** in **hard jumps** the scale jumps to a random value from **Zoom-in from/to,
-%** at every cut. **punch-in at start** opens the clip with a smooth approach from **First
+**Settings:** in **hard jumps** the scale jumps to a random value between **Pullbacks from, %**
+and **Pullbacks up to, %** at every cut. **punch-in at start** opens the clip with a smooth approach from **First
 punch-in, %** down to the first jump instead of starting on a random value. **zoom-ins on
 long takes** adds one smooth approach inside every take longer than **Take longer than, s**:
-the camera moves in by **Zoom-in from/to, %** of that take's own value, holds it for **Hold
+the camera moves in by a value between **Zoom-in from, %** and **Zoom-in to, %** of that
+take's own value, holds it for **Hold
 zoom-in, s** and pulls back; if the next cut comes too soon it stays zoomed in and the cut
 resets it with a jump. **zoom-in on yellow words** lands that approach exactly on the first
 yellow word of the take instead of a fixed moment after the cut; a take without yellow words
 behaves as usual.
 **Limitations / price:** the take zooms and the yellow-word zoom work only in **hard
 jumps**; in the other modes their fields are hidden.
-**Code:** `core/xml2ae/layout.py:442`, `core/xml2ae/build.py:1185`, `core/styles.py:1`
+**Code:** `core/xml2ae/plan_camera.py:116`, `core/style_schema.py:1331`, `core/styles.py:184`
 
 ### Camera 1 frame: fill, zoom point, offset and horizon
 
 **Where:** step 3 › style › **Frame** › **Transform**.
 **How:** 1. Set **Frame fill, %**: 100 fills the frame exactly, 120 pushes in by 20%.
 2. Type the zoom point in percent of the frame (X and Y), or press the crosshair button and
-click the frame in the preview. 3. Use **Frame offset X/Y, px** to move the whole frame and
-**Horizon, °** to tilt it.
+click the frame in the preview. 3. Use **Frame offset X, px** and **Frame offset Y, px** to
+move the whole frame and **Horizon, °** to tilt it.
 **Settings:** the zoom point is what the zoom is measured from: it stays put while the
 camera moves in. Both of its numbers are dragged with the mouse like any other number field
 (Shift takes a ten times bigger step). **Frame fill, %** is a common multiplier of the
 camera 1 zoom: like the null's Scale it grows the frame together with the camera 1 inserts
-and the intro, and the zoom point stays put. **Frame offset** moves the whole frame (the
-null's Position), so camera 1 inserts and the intro travel with it, while the zoom point
-does not move. **Horizon** turns only the camera 1 picture and its rotoscope; inserts and
+and the intro, and the zoom point stays put. **Frame offset X, px** and **Frame offset Y, px**
+move the whole frame (the null's Position), so camera 1 inserts and the intro travel with it,
+while the zoom point does not move. **Horizon** turns only the camera 1 picture and its rotoscope; inserts and
 the intro stay straight, so at a zoom near 100 % the corners open up — keep some zoom in
 reserve.
 **Limitations / price:** the horizon field goes to ±10° (±45° in the extended range) and the
 frame offset to ±500 px (±2000 px in the extended range).
-**Code:** `core/xml2ae/build.py:2777`, `core/style_schema.py:1138`,
-`static/app/94-stylepanel.js:697`
+**Code:** `core/xml2ae/plan_camera.py:141`, `core/style_schema.py:1234`,
+`static/app/94-stylepanel.js:1314`
 
 ### Head tracking
 
@@ -541,8 +546,8 @@ intro travel with the frame.
 **Limitations / price:** the correction is limited by the frame itself: the edge of the
 picture never opens. Tracking needs the GPU and the matting model (downloaded on first use,
 as for rotoscope); if it fails, the build continues without tracking and says so in the log.
-**Code:** `core/headtrack.py:50`, `core/xml2ae/layout.py:901`,
-`core/xml2ae/build.py:3116`
+**Code:** `core/headtrack.py:201`, `core/xml2ae/layout.py:1156`,
+`core/xml2ae/build.py:1813`
 
 ### Colour (Lumetri)
 
@@ -557,7 +562,7 @@ the AE step is added to **Exposure**, so the two do not fight.
 **Limitations / price:** the browser preview shows an approximation — the real Lumetri
 formulas are closed — so it is good for judging the direction of the correction, not its
 exact value.
-**Code:** `core/xml2ae/build.py:41`, `core/style_schema.py:1390`,
+**Code:** `core/xml2ae/build.py:424`, `core/style_schema.py:1499`,
 `static/app/85-inserts-view.js:361`
 
 ### Yellow highlights in rows: animation and blur-in
@@ -576,20 +581,21 @@ of the rows and stacks them one word at a time, exactly as in the word-by-word m
 same rise, the same stack step, one common end for the run; a lone yellow word stays in its
 row. The entrance itself — the rise, the fade-in and the blur — lasts min(0.35 s, 60 % of the
 time the word is visible), so a short word finishes its animation instead of going out in the
-middle of it; this holds in the one-word mode, with joined words and in the stack, and the
+middle of it; this holds in the one-word mode, for a yellow word inside a multi-word row,
+for a run of consecutive yellows stacked out of the rows and for joined words alike, and the
 preview shows the same numbers.
 **Limitations / price:** the animation is visible in the browser preview too: the moment a
 yellow word appears, its rise, its fade-in and its blur all come from the scene plan — the
 same numbers that go into the `.jsx`. With the stack checkbox off the `.jsx` is byte-for-byte
 what it was before.
-**Code:** `core/xml2ae/build.py:1075`, `core/xml2ae/build.py:2204`,
-`core/xml2ae/template.py:254`, `static/app/85-inserts-view.js:838`,
-`core/style_schema.py:162`
+**Code:** `core/xml2ae/layout.py:143`, `core/xml2ae/layout.py:147`,
+`core/xml2ae/plan_subs.py:402`, `core/xml2ae/template.py:254`,
+`static/app/85-inserts-view.js:838`, `core/style_schema.py:162`
 
 ### Intro: several words in a row, camera link, line spacing
 
 **Where:** step 3 › style › **Text** › **Intro**.
-**How:** 1. Set **Line spacing, %** (100 is the usual distance). 2. In **Text › Background**
+**How:** 1. Set **Line spacing, %** (100 is the usual distance). 2. In **Text › Back plane**
 set **Background line spacing above, %** and **Background line spacing below, %** — the step
 to a background line and back from it. 3. In the intro rows (clip preview › **Intro**) tick
 **Big on the left** if a row should stand large on the left of its group. 4. Clear **intro
@@ -605,8 +611,14 @@ camera 2**. **intro moves with camera** keeps the intro on the camera 1 null, so
 the zoom, the frame offset and head tracking; cleared, the intro and the shade under it stand
 still in the frame and the group is fitted to **Intro width, %** of the frame (`intro_fit_w`,
 92) — grown and shrunk alike, while the attached one is only shrunk; a group whose scale was
-set by hand is left alone either way. **Line spacing, %** multiplies the distance between the
-intro rows.
+set by hand is left alone either way. The growth of a detached group is capped by **Intro max
+scale, %** (`intro_fit_max`, 250): without the cap one short word blew up to 667–819 % of the
+frame, while shrinking is not limited. Both fields are shown only for the detached intro — an
+attached group takes its width from the camera zoom. After the fit the group is lowered by its
+actual top, the big word included, and never rises above the safe line of the frame
+(`INTRO_SAFE_TOP`, 285 px of 1920): before the fix the lowering was counted before the fit, so
+the top of a large detached group climbed as high as 164 px where the line is 285.
+**Line spacing, %** multiplies the distance between the intro rows.
 **Background line spacing above, %** (the `back_step` key, 10 to 300 %, 65 by default) is the
 step to a background line and between background lines; **Background line spacing below, %**
 (`back_step_after`) is the step from a background line to the regular line under it — both as
@@ -638,8 +650,9 @@ does not depend on the general line spacing. The layout is computed once, and th
 After Effects take the same numbers. If several rows of a group are ticked, the big one is
 the first of them; a group of one row has no big word. A clip without such a row builds
 byte-for-byte as before.
-**Code:** `core/xml2ae/layout.py:189`, `core/styles.py:417`,
-`core/style_schema.py:479`, `static/app/94-stylepanel.js:110`
+**Code:** `core/xml2ae/layout.py:322`, `core/xml2ae/layout.py:166`,
+`core/styles.py:232`, `core/style_schema.py:479`, `core/style_schema.py:577`,
+`static/app/94-stylepanel.js:1514`
 
 ### Glitch glow: built-in or Deep Glow 2
 
@@ -647,7 +660,7 @@ byte-for-byte as before.
 **How:** 1. Open ⚙ › **Tools**. 2. Under **After Effects**, choose between **Built-in (Blur + Glow)** and **Deep Glow 2 (plugin)**. 3. Rebuild `.jsx` scripts for clips if already exported.
 **Settings:** controls how yellow intro words with the "glitch" animation glow in the generated After Effects project. Built-in uses Gaussian Blur and Glow available in every AE install (default). Deep Glow 2 replaces them with the third-party plugin using pre-tuned parameters; accent lines and other lines remain untouched. In this mode the plugin is not put on a line that has the line glow of its own (tick **Deep Glow with line glow**, `intro_dg_with_glow`, off by default, to get the old behaviour back) and not on a bright highlight colour — the same Rec.709 brightness threshold (above 0.7) as for Tritone, so such a word keeps the built-in Blur + Glow. Saved under the `glitch_glow` key in `ai_config.json` (`builtin` or `deepglow2`) and takes effect on the next build; already built `.jsx` scripts need to be rebuilt.
 **Limitations / price:** if Deep Glow 2 is selected but the plugin is not installed in After Effects, manual build shows a single dialog per file reporting the number of unstyled words, while headless rendering writes an error line to the log; words remain without glow. There is no automated pre-flight check or fallback to built-in effects.
-**Code:** `core/aicut/config.py:441`, `api/ai.py:334`, `core/xml2ae/build.py:256`, `core/xml2ae/build.py:2726`, `templates/index.html:988`, `static/app/10-settings.js:431`
+**Code:** `core/aicut/config.py:451`, `api/ai.py:349`, `core/xml2ae/build.py:736`, `core/xml2ae/build.py:1919`, `templates/index.html:783`, `static/app/10-settings.js:732`
 
 ### Subtitle scale
 
@@ -656,7 +669,7 @@ byte-for-byte as before.
 itself is untouched: line wrapping, auto-shrinking and the stack step stay as they are.
 **Settings:** the default is 100 %, the range is 20 to 200 %. It is a style key, so it is
 stored in the style and arrives in AE without a manual Scale.
-**Code:** `templates/index.html:198`, `core/styles.py:1`
+**Code:** `core/style_schema.py:223`, `core/styles.py:329`
 
 ### Attaching a style to a speaker
 
@@ -669,7 +682,7 @@ button warns about that.
 **Limitations / price:** the profile style is a default, not a binding: changing the style
 on step 3 does not write back into the profile.
 **Code:** `core/speakers.py:32`, `static/app/95-styles.js:228`,
-`static/app/95-styles.js:670`, `static/app/90-ae.js:114`
+`static/app/90-ae.js:114`
 
 ### Layer order
 
@@ -679,7 +692,7 @@ the lower ones.
 **Settings:** the layers are subtitles, video inserts, rotoscope, photo inserts and intro.
 The default order is subtitles, video, roto, photo, intro.
 **Code:** `static/app/95-styles.js:493`, `static/app/95-styles.js:496`,
-`templates/index.html:374`
+`static/app/95-styles.js:502`
 
 ### Photo inserts: animation, effects and position
 
@@ -696,7 +709,8 @@ that carry the **on plate** checkbox (see the inserts editor above).
 **Limitations / price:** while a rising insert is on screen the subtitles step aside. A
 photo that crosses a camera change is trimmed exactly at the change; video inserts are
 never trimmed.
-**Code:** `templates/index.html:351`, `static/app/85-inserts-view.js:696`
+**Code:** `core/style_schema.py:1598`, `core/style_schema.py:1649`,
+`static/app/85-inserts-view.js:1248`
 
 ### Rotoscope
 
@@ -709,19 +723,19 @@ percentage cuts the mask, and **Roto on Camera 1 only** skips camera 2 pieces.
 second build reuses them. On a VRAM shortage the build stops with a clear message and the
 XML is not overwritten. Add the photo and intro layers below roto to bring the person in
 front of them.
-**Code:** `core/roto.py:1`, `core/roto.py:41`, `templates/index.html:364`
+**Code:** `core/roto.py:1`, `core/roto.py:41`, `core/style_schema.py:1768`
 
 ### Music
 
-**Where:** step 3 › **Folders and settings** › **More — brightness, music, censoring, folders** › **Music (−20 dB)**.
+**Where:** step 3 › **Folders and parameters** › **More — brightness, music, censoring, folders** › **Music (−20 dB)**.
 **How:** 1. Choose **random from downloads**, **YouTube link** or **file**. 2. For a link,
 paste the URL. 3. For a file, press **Browse…**.
 **Settings:** the music folder for downloads is set next to it. The level lives in the
 style's **Sound** tab.
 **Limitations / price:** a YouTube link requires `yt-dlp`; a random track picks one file
 from the music folder at build time.
-**Code:** `templates/index.html:441`, `core/ytmusic.py:10`, `core/ytmusic.py:33`,
-`api/files.py:355`
+**Code:** `templates/index.html:223`, `core/ytmusic.py:10`, `core/ytmusic.py:34`,
+`api/files.py:471`
 
 ### Scene preview in the browser
 
@@ -744,8 +758,8 @@ preview or saving does not wait for seconds.
 snappy; until a proxy is ready the preview plays the original, and a block with a progress
 bar and a percent sits over the player while the build runs. Fonts for the preview come
 from the installed system fonts.
-**Code:** `api/build.py:483`, `static/app/85-inserts-view.js:55`,
-`api/previewproxy.py:66`, `api/files.py:259`, `static/app/50-chrome.js:328`
+**Code:** `api/build.py:639`, `static/app/85-inserts-view.js:55`,
+`api/previewproxy.py:66`, `api/files.py:261`, `static/app/50-chrome.js:328`
 
 ### Exporting `.jsx`
 
@@ -754,7 +768,7 @@ from the installed system fonts.
 **Build set**, or **Current only** for a single clip.
 **Settings:** the `.jsx` folder comes from the speaker profile when the clip has one, and
 from the shared field otherwise. An empty field puts the script next to its XML.
-**Code:** `templates/index.html:152`, `static/app/90-ae.js:140`,
+**Code:** `templates/index.html:155`, `static/app/90-ae.js:140`,
 `api/build.py:178`, `core/xml2ae/__main__.py:19`
 
 ### Premiere XML and DaVinci `.drp` export
@@ -768,8 +782,8 @@ the XML copy — Resolve positions clips by timecode.
 **Limitations / price:** both formats have known defects, documented with symptoms in
 [docs/KNOWN_ISSUES.md](KNOWN_ISSUES.md) and described byte by byte in
 [docs/DRP_SPEC.md](DRP_SPEC.md).
-**Code:** `api/build.py:375`, `api/build.py:402`, `core/drp.py:1`,
-`static/app/40-queue.js:503`
+**Code:** `api/build.py:506`, `api/build.py:549`, `core/drp.py:1`,
+`static/app/40-queue.js:508`
 
 ### Render without opening After Effects
 
@@ -787,7 +801,7 @@ better over time.
 headless run, so the job refuses to start. There is a stall watchdog, and an instant
 AfterFX exit is reported as a likely open AE copy. Rotoscoping runs during the build and is
 the longest stage.
-**Code:** `api/render.py:1943`, `api/render.py:1907`, `api/render.py:1635`,
+**Code:** `api/render.py:1840`, `api/render.py:42`, `api/render.py:1635`,
 `api/render.py:172`, `api/render.py:69`, `static/app/90-ae.js:176`
 
 ### Progress, queue and logs
@@ -797,9 +811,19 @@ the longest stage.
 for the raw output. 4. Press **Stop** to cancel.
 **Settings:** the log window has two tabs: **Build** for server-side output and **Page
 actions** for what the interface did. Queue rows show a per-file stage, a percentage during
-render and the reason for a failure.
-**Code:** `static/app/50-chrome.js:73`, `templates/index.html:748`,
-`templates/index.html:771`, `core/umsg.py:1`
+render and the reason for a failure — the readable text of the step ("roto was not computed
+for 2 of 3 chunks…"), which now reaches both the failed list and the job log instead of
+staying inside the worker thread. **Stop** kills the process tree: on Windows by parentage,
+on macOS and Linux by the process group, so a child model process does not stay alive
+holding video memory.
+**Limitations / price:** the last job of each kind (cut, build, render) is remembered on
+disk, so after a server restart the interface still shows it as interrupted by a server
+restart, with the item and the progress it stopped at. A cut whose process has printed
+nothing for 20 minutes is marked as silent in the status and in the log, but the process is
+never killed: a long speech recognition run is silent for a legitimate reason.
+**Code:** `static/app/50-chrome.js:73`, `templates/index.html:530`,
+`templates/index.html:553`, `core/umsg.py:1`, `api/_core.py:537`, `api/jobs.py:29`,
+`static/app/00-core.js:77`
 
 ## Settings and tools
 
@@ -850,7 +874,33 @@ After Effects — syntax, the `CAM/SUBS/ROTO/INTRO_GROUPS/INSERTS/CAM1_SCALE` st
 missing files, formats AE cannot import, and clip overlaps. `python tools/verify_ae.py
 project.inspect.json --jsx out.jsx` compares a real AE project with what the script asked
 for, using a dump taken with `tools/ae_inspect.jsx`.
+
+The same suite holds the seams that no single check can see: every `%(key)s` placeholder of
+the AE template is compared with the keys the build really passes; every style key must have
+its schema field and its translation (structural checks instead of "N keys" counters);
+every id the frontend looks up exists in the markup or is created by the JS, and every
+function the frontend calls is defined in it. `tests/test_docs_drift.py` watches the
+documentation (links with line numbers, the `static/app` file list) and
+`tests/test_infra_dedup.py` forbids second copies of the infrastructure (`os.replace` only
+in `core/fileio.py`, the `ffprobe` duration probe only in `core/media.py`, `subprocess.run`
+and `check_output` only with a timeout). CI runs all of this on Linux and Windows, plus
+`node --check` over every `static/app/*.js`: a syntax error in one of them kills the whole
+page, and no Python test sees it.
 **Code:** `core/verify_jsx.py:1`, `tools/verify_ae.py:1`, `tools/ae_inspect.jsx:1`
+
+### Local API protection
+
+**Where:** the server side; there is nothing to switch on.
+**How:** the backend answers only to a page opened on this machine: a request that came from
+another site is refused. The check covers the file pick dialogs (`/api/pickdir`,
+`/api/pickmedia` and their neighbours) and the waveform read (`/api/waveform`) exactly like
+a request that changes something — each of them opens a window or writes a cache file next
+to the source.
+**Settings:** deleting a clip needs an explicit confirmation in the request; without it the
+server only answers with the list of files it would delete, so a stray call cannot wipe the
+cut. The AI settings file, which holds the provider keys, is written with owner-only
+permissions (0600) on macOS and Linux.
+**Code:** `api/_core.py:217`, `api/files.py:534`, `core/aicut/config.py:264`
 
 ## Limitations
 

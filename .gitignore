@@ -63,6 +63,12 @@ ui_state.json.tmp
 render_stats.json
 render_stats.test.json
 render_stats*.json
+# журнал заданий (задание NC): состояние последнего задания для /api/status после
+# перезапуска; пишется на лету, у изолированного профиля свой (REELSI_JOB_STATE)
+job_state.json
+job_state.json.tmp.*
+job_state.test.json
+job_state*.json
 # обвязка отдельной рабочей копии (tools/wt.ps1): абсолютные пути и порт этой сессии
 env.ps1
 _*.log

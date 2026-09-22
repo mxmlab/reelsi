@@ -6,6 +6,11 @@ from core.app_meta import console_emit
 
 AUDIO_EXT = (".m4a", ".mp3", ".wav", ".aac", ".opus", ".flac", ".ogg")
 
+# Скачивание трека идёт минуты, но yt-dlp умеет и зависнуть навсегда (сеть, чужой
+# ответ, ретраи). Скачивание идёт СИНХРОННО внутри джоба нарезки — без таймаута
+# зависший yt-dlp держал бы JOB до перезапуска сервера.
+YTDLP_TIMEOUT = 1800
+
 
 def random_track(outdir, emit=console_emit, seed=None):
     """Случайный (или детерминированный по seed) аудиофайл из папки скачанной музыки (или None, если пусто)."""
@@ -40,10 +45,14 @@ def download_audio(url, outdir, fmt="m4a", emit=console_emit):
     stem = f"track_{n}"
     out_tmpl = os.path.join(outdir, stem + ".%(ext)s")
     emit("  скачиваю аудио с YouTube...")
-    r = subprocess.run(
-        [sys.executable, "-m", "yt_dlp", "-x", "--audio-format", fmt,
-         "--audio-quality", "0", "--no-playlist", "-o", out_tmpl, url],
-        capture_output=True)
+    try:
+        r = subprocess.run(
+            [sys.executable, "-m", "yt_dlp", "-x", "--audio-format", fmt,
+             "--audio-quality", "0", "--no-playlist", "-o", out_tmpl, url],
+            capture_output=True, timeout=YTDLP_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        raise RuntimeError("yt-dlp не смог скачать: превышен таймаут (%d мин)"
+                           % (YTDLP_TIMEOUT // 60))
     path = os.path.join(outdir, stem + "." + fmt)
     if r.returncode != 0 or not os.path.isfile(path):
         err = (r.stderr or b"").decode("utf-8", "replace")

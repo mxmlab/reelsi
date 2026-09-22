@@ -19,6 +19,7 @@
 CLI:  python reelsi/draftrender.py "C:/.../01_C1295.xml" [--cpu] [--height 720] [--no-proxy]
 """
 import os, platform, subprocess, threading
+from core import media
 from core.app_meta import console_emit, wrap_emit
 
 
@@ -346,7 +347,10 @@ def _build_proxy(src, dst, tw, th, force_cpu=False, emit=console_emit, cancel=No
         if r is None:
             return None
         if r.returncode == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
-            os.replace(tmp, dst)                   # .part -> готово: недописанный не подхватится
+            # os.replace, а не core.fileio: файл пишет САМ ffmpeg (внешний процесс), в
+            # памяти его нет — от общей инфраструктуры тут только публикация готового
+            # .part после проверки размера. Недописанный .part не подхватится.
+            os.replace(tmp, dst)
             return dst
     try:
         os.remove(tmp)
@@ -446,28 +450,12 @@ def _src_fps(src):
         return 25.0
 
 
-_DUR_CACHE = {}           # (abspath, mtime, size) -> длительность, сек: ffprobe на каждый
-                          # кадр прогресса сборки не гоняем — один вызов на файл, дальше кэш
-
-
 def _src_dur(src):
-    """Длительность исходника, сек. 0.0 — не прочли (тогда процента не будет)."""
-    try:
-        st = os.stat(src)
-        ck = (os.path.abspath(src), int(st.st_mtime), st.st_size)
-        if ck in _DUR_CACHE:
-            return _DUR_CACHE[ck]
-        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                            "-of", "default=nw=1:nk=1", src],
-                           capture_output=True, text=True, encoding="utf-8",
-                           errors="replace", timeout=60)
-        dur = float((r.stdout or "").strip())
-        if dur <= 0:
-            return 0.0                          # не прочли — не кэшируем: файл мог ещё писаться
-        _DUR_CACHE[ck] = dur
-        return dur
-    except Exception:
-        return 0.0
+    """Длительность исходника, сек. 0.0 — не прочли (тогда процента не будет).
+
+    Проба общая (core/media.py): там кэш по (путь, mtime, размер) и таймаут —
+    ffprobe иначе гонялся бы на каждый кадр прогресса сборки."""
+    return media.probe_duration(src) or 0.0
 
 
 def ff_progress_us(chunk):
@@ -598,6 +586,7 @@ def build_preview_proxy(src, dst, height=720, force_cpu=False, emit=console_emit
         if r is None:
             return None
         if r.returncode == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
+            # os.replace, а не core.fileio: см. _build_proxy — файл пишет ffmpeg, а не мы
             os.replace(tmp, dst)            # .part -> готово: недописанный не подхватится
             return dst
     try:

@@ -13,7 +13,7 @@ rclone. Секреты живут в конфиге rclone, в наши файл
 """
 import os, re, shutil, subprocess, threading, time
 from flask import request, jsonify
-from ._core import LOG_CAP, bp, jstr, kill_tree, umsg_err
+from ._core import LOG_CAP, bp, jstr, kill_tree, umsg_err, sysexit_text
 from core.applog import get_logger
 from core.umsg import umsg
 
@@ -108,6 +108,13 @@ def rclone_cmd(remote, url, dest):
     spec = parse_gdrive_link(url)
     if not spec:
         raise ValueError("не ссылка гугл-диска: " + str(url)[:80])
+    dest = str(dest)
+    # Путь назначения приходит из запроса, а значение, начинающееся с «-», rclone
+    # разберёт как ОПЦИЮ: `--config=<чужой конфиг>` увёл бы скачивание на чужие
+    # токены, `--dry-run` сделал бы вид, что скачали. Отказываем до всякого rclone
+    # (задание MZ, п. 3).
+    if dest.startswith("-"):
+        raise ValueError("путь назначения не может начинаться с «-»: " + dest[:80])
     # -v обязателен. rclone логирует статистику на уровне INFO (--stats-log-level,
     # по умолчанию INFO), а порог вывода по умолчанию — NOTICE, то есть с одним
     # --stats в лог не попадёт НИ ОДНОЙ строки прогресса и скачивание гигабайтов
@@ -116,13 +123,20 @@ def rclone_cmd(remote, url, dest):
     # странице, и раз в 5 секунд он выглядит подвисающим. Лог от этого не пухнет:
     # прогресс уходит в поля статуса, а в лог дублируется раз в 10%.
     args = ["rclone", "-v", "--config", rclone_conf(), "--stats", "2s"]
+    # `--` перед первым позиционным аргументом (задание MZ, п. 3): после него для
+    # rclone всё — значения, а не опции. Без него id из ссылки (маска допускает
+    # ведущий дефис) и путь назначения управляли бы разбором аргументов.
+    # У file-ветки первый позиционный — подкоманда `copyid`; у folder `--` идёт
+    # после опций, иначе --drive-root-folder-id сам стал бы позиционным и папка
+    # скачалась бы в корень remote, а не по id.
     if spec["kind"] == "file":
         d = dest.replace("\\", "/").rstrip("/") + "/"
-        args += ["backend", "copyid", remote + ":", spec["id"], d]
+        args += ["backend", "--", "copyid", remote + ":", spec["id"], d]
     else:
-        args += ["copy", "--drive-root-folder-id", spec["id"], remote + ":", dest]
+        args += ["copy", "--drive-root-folder-id", spec["id"]]
         if spec["resource_key"]:
             args += ["--drive-resource-key", spec["resource_key"]]
+        args += ["--", remote + ":", dest]
     return args
 
 
@@ -412,6 +426,13 @@ def _download_job(cmd, url):
         with GDLOCK:
             GDJOB["cur"] = cur
         _gemit(cur)          # чем кончилось — видно и в логе, не только в статусе
+    except SystemExit as e:
+        # SystemExit (umsg) — BaseException: без ветки скачивание отмечалось упавшим,
+        # но БЕЗ причины — ни в логе, ни в GDJOB["cur"] её не было (задание MX).
+        txt = sysexit_text(e)
+        _gemit(f"ОШИБКА: {txt}")
+        with GDLOCK:
+            GDJOB["cur"] = f"ошибка: {txt}"
     except Exception as e:
         _gemit(f"ОШИБКА: {type(e).__name__}: {e}")
         with GDLOCK:

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты контрактов авто-ротоскопа: передача failures, точность ключа кэша и SystemExit при сбоях."""
+"""Тесты контрактов авто-ротоскопа: передача failures, точность ключа кэша и ReelsiError при сбоях."""
 
 import json
 import os
@@ -9,6 +9,7 @@ import pytest
 from core import roto
 from core.xml2ae import Cancelled
 from core.xml2ae.build import _roto_js
+from core.umsg import ReelsiError
 
 
 @pytest.fixture
@@ -160,7 +161,7 @@ def test_mask_key_posix_case_sensitivity():
 
 
 def test_roto_js_missing_mask_raises(tmp_path, monkeypatch):
-    """_roto_js: одна маска из двух кусков -> SystemExit, текст содержит «1 из 2»."""
+    """_roto_js: одна маска из двух кусков -> ReelsiError, текст содержит «1 из 2»."""
     from core import roto as _roto
 
     plan = {
@@ -181,7 +182,7 @@ def test_roto_js_missing_mask_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(_roto, "release", lambda emit=None: None)
 
     kw = {"roto": True, "base": str(tmp_path)}
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(ReelsiError) as exc:
         _roto_js(plan, str(tmp_path / "test.xml"), kw, emit=lambda *a, **k: None, cancel=lambda: False)
 
     assert "1 из 2" in str(exc.value)
@@ -246,7 +247,7 @@ def test_roto_js_micro_chunk_skipped_without_error(tmp_path, monkeypatch):
 
 
 def test_roto_js_import_error_raises_roto_failed(tmp_path, monkeypatch):
-    """_roto_js: alpha_for_ranges бросает исключение -> SystemExit с «рото не удалось»."""
+    """_roto_js: alpha_for_ranges бросает исключение -> ReelsiError с «рото не удалось»."""
     from core import roto as _roto
 
     plan = {
@@ -263,7 +264,7 @@ def test_roto_js_import_error_raises_roto_failed(tmp_path, monkeypatch):
     monkeypatch.setattr(_roto, "release", lambda emit=None: None)
 
     kw = {"roto": True, "base": str(tmp_path)}
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(ReelsiError) as exc:
         _roto_js(plan, str(tmp_path / "test.xml"), kw, emit=lambda *a, **k: None, cancel=lambda: False)
 
     assert "рото не удалось" in str(exc.value)

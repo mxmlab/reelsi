@@ -129,7 +129,7 @@ def test_insert_jsx_scale_drives_animation(xml_nosubs, tmp_path):
     """Анимация считается ОТ масштаба, а не от констант: наезд кам2 берётся как
     PEAK/BASE от осевшего scale (иначе у крупной карточки пик оказывался меньше
     конечного размера), масштаб слоя = авторасчёт × sc, звук видеовставки выключен.
-    Ключи анимаций считает Python (задание C) — проверяем их в плане сцены."""
+    Ключи анимаций считает Python — проверяем их в плане сцены."""
     plan = xml2ae.scene_plan(xml_nosubs, inserts=[
         {"type": "photo", "media": "C:/x/a.png", "start_s": 80, "dur_s": 2},   # на перебивке → стиль cam2
     ])
@@ -158,7 +158,7 @@ def test_cam1_fit_is_frame_fill_not_premiere_scale(xml_nosubs, tmp_path):
     out = str(tmp_path / "fit.jsx")
     xml2ae.to_ae_full(xml_nosubs, out, style={"cam1_fit": 115})
     txt = open(out, encoding="utf-8-sig").read()
-    # задание ZE: заполнение переехало в ключи зума нула (как в превью), слои кам1 — ровно 100
+    # заполнение переехало в ключи зума нула (как в превью), слои кам1 — ровно 100
     assert re.search(r"var CAM1_FIT=100;", txt)
     assert "fitS = 100*Math.max(W/src.width, H/src.height)" in txt        # заполнение кадра
     assert "var csc = isSecond ? c[5] : fitS*CAM1_FIT/100;" in txt        # кам1 — от него, кам2 — как в Премьере

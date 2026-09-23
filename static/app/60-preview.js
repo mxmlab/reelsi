@@ -37,7 +37,7 @@ function applyMediaVol(){[PV,IPV,CPV].forEach(P=>{if(P&&P.vids)P.vids.forEach(v=
   // (жалоба 2026-08-12). MEDIA_VOL — громкость прослушивания, она обязана менять
   // оба источника одинаково; в .jsx она не уезжает вообще.
   if(typeof MUSIC_EL!=='undefined'&&MUSIC_EL)MUSIC_EL.volume=MEDIA_VOL;
-  if(typeof sfxSyncApply==='function')sfxSyncApply();}   // SFX-звуки тем же множителем (задание AB)
+  if(typeof sfxSyncApply==='function')sfxSyncApply();}   // SFX-звуки тем же множителем
 function setMediaVol(pct){MEDIA_VOL=Math.max(0,Math.min(1,(+pct||0)/100));
   try{localStorage.setItem('reelsi_vol',MEDIA_VOL);}catch(e){}
   applyMediaVol();syncVolUI();}
@@ -60,7 +60,7 @@ function dbToGain(db){return Math.pow(10,(+db||0)/20);}
 function applyDbGains(){if(!VG||!MG)return;const s=(typeof CURSTYLE!=='undefined'&&CURSTYLE)?CURSTYLE:{};
   VG.gain.value=dbToGain(s.voice_db!=null?s.voice_db:0);
   MG.gain.value=dbToGain(s.music_db!=null?s.music_db:-20);}
-// Цензура (задание I): в рендере голос ныряет voice_db→−100 на окнах audio.censor из плана
+// Цензура: в рендере голос ныряет voice_db→−100 на окнах audio.censor из плана
 // сцены. Окна считает scene_plan — здесь только «внутри окна или нет» и увод VG в ноль;
 // вторую формулу не заводим. Вне окна возвращаем обычную громкость голоса из стиля.
 function vgDuck(tm,plan){if(!VG)return;
@@ -101,7 +101,7 @@ async function pvProxyLoad(xml,build){
 // Карта копится, а не заменяется: PV/IPV/CPV открываются на разные клипы, а ключ —
 // абсолютный путь исходника, так что чужие записи только помогают.
 function pvProxyMerge(px){if(px)Object.assign(PVPX.map,px.map);return px;}
-// Прогресс сборки — блоком ПОВЕРХ плеера (задание MD). PXJOB на сервере один, поэтому
+// Прогресс сборки — блоком ПОВЕРХ плеера. PXJOB на сервере один, поэтому
 // блок рисует каждый плеер, который ждёт прокси (шаг 1 — монтаж, шаг 3 — вставки,
 // раскладка камер): pvProxyWatch запоминает стойку, pvProxyPoll раздаёт ей свежие
 // i/n/файл/процент. Пока сборка идёт — блок есть, кончилась — снимается.
@@ -151,7 +151,7 @@ async function pvProxyRefresh(){   // прокси дособрались — о
   const was=JSON.stringify(PVPX.map);pvProxyMerge(px);
   if(JSON.stringify(PVPX.map)===was)return;
   // Переезд на прокси живому src не присваиваем: смена посреди игры сбрасывает элемент в
-  // readyState 0 (чёрный кадр) и сдвигает время (баг, задание BE). Стоящий плеер переезжает
+  // readyState 0 (чёрный кадр) и сдвигает время (баг). Стоящий плеер переезжает
   // дублёром сразу, играющий — на ближайшем стыке (sparePrime подтянет свежий src сам).
   for(const P of [PV,IPV,CPV])if(P&&P.vids&&P.vids.length&&!P.playing)await spareHandover(P);}
 async function openPreview(xml){

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты к заданию KH:
+"""Тесты:
 - doctor видит whisper.cpp независимо от torch;
 - doctor отличает наличие моделей whisper.cpp от их отсутствия;
 - повторный запуск main() не накапливает ошибки;

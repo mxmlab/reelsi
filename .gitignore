@@ -63,7 +63,7 @@ ui_state.json.tmp
 render_stats.json
 render_stats.test.json
 render_stats*.json
-# журнал заданий (задание NC): состояние последнего задания для /api/status после
+# журнал заданий: состояние последнего задания для /api/status после
 # перезапуска; пишется на лету, у изолированного профиля свой (REELSI_JOB_STATE)
 job_state.json
 job_state.json.tmp.*

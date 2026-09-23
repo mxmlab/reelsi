@@ -4,7 +4,7 @@
 """Сквозной тест рендера набора роликов (_run_render_combined в api/render.py — живой путь).
 
 ПОЧЕМУ этот тест существует:
-В задании FJ функция _run_proc_master была объявлена с keyword-only параметрами:
+Функция _run_proc_master была объявлена с keyword-only параметрами:
     def _run_proc_master(afx, *args, good, render_dir, aelog_path):
 но вызов на строке 624 передавал good, render_dir и aelog позиционно.
 Из-за отсутствия сквозного теста на путь рендера набора (проверялись только отдельные
@@ -85,14 +85,14 @@ def test_combined_render_e2e_two_clips(batch_fixture, tmp_path, monkeypatch):
     with open(mov2, "wb") as f:
         f.write(b"quicktime_data")
 
-    # Подделка _find_ae
+    # Подделка find_ae
     monkeypatch.setattr(
-        render, "_find_ae",
+        render, "find_ae",
         lambda: ("fake_AfterFX.exe", "fake_aerender.exe", "Adobe After Effects 2026")
     )
     # Открытая копия After Effects останавливает прогон ДО запуска AfterFX (задание
     # AE-Hygiene) — в тесте AE «закрыт», иначе результат зависел бы от машины.
-    monkeypatch.setattr(render, "_ae_running", lambda: False)
+    monkeypatch.setattr(render, "ae_running", lambda: False)
 
     class FakePopen:
         def __init__(self, cmd, *args, **kwargs):
@@ -205,7 +205,7 @@ def test_combined_render_e2e_two_clips(batch_fixture, tmp_path, monkeypatch):
 def test_render_job_batch_dispatcher(batch_fixture, tmp_path, monkeypatch):
     """Сквозной прогон диспетчера _run_render_job с набором из 2 клипов:
     нормализация jobs -> items_init -> _run_render_combined -> RJOB['done']=True, RJOB['failed']=[]
-    (задание GQ: решение пользователя 2026-09-11 — набор всегда собирается в один Reelsi_all.jsx)."""
+    (решение пользователя 2026-09-11 — набор всегда собирается в один Reelsi_all.jsx)."""
     outdir = str(tmp_path / "jsx_out_job")
     render_dir = str(tmp_path / "exp_job")
     os.makedirs(outdir, exist_ok=True)
@@ -219,12 +219,12 @@ def test_render_job_batch_dispatcher(batch_fixture, tmp_path, monkeypatch):
         f.write(b"data")
 
     monkeypatch.setattr(
-        render, "_find_ae",
+        render, "find_ae",
         lambda: ("fake_AfterFX.exe", "fake_aerender.exe", "Adobe After Effects 2026")
     )
     # Открытая копия After Effects останавливает прогон ДО запуска AfterFX (задание
     # AE-Hygiene) — в тесте AE «закрыт», иначе результат зависел бы от машины.
-    monkeypatch.setattr(render, "_ae_running", lambda: False)
+    monkeypatch.setattr(render, "ae_running", lambda: False)
 
     class FakePopen:
         def __init__(self, cmd, *args, **kwargs):
@@ -302,7 +302,7 @@ def test_render_job_batch_dispatcher(batch_fixture, tmp_path, monkeypatch):
         {"xml": batch_fixture["xml1"], "outdir": outdir, "roto": False, "style": {"roto": False}},
         {"xml": batch_fixture["xml2"], "outdir": outdir, "roto": False, "style": {"roto": False}},
     ]
-    # api_render_run нормализует набор ДО старта потока (задание HU), поэтому прямой
+    # api_render_run нормализует набор ДО старта потока, поэтому прямой
     # вызов диспетчера получает тот же вид, что в бою, — нормализованный.
     from api.build import _norm_build_jobs
     jobs = _norm_build_jobs(jobs)

@@ -13,9 +13,6 @@ All pull requests require signing the [CLA](../docs/CLA.md). [CLA Assistant](htt
 | Code comments | Russian or English (do not translate existing) |
 | Internal specs in `docs/` | Russian |
 
-Comments and specs often cite task codes such as «задание GZ». They point to the maintainer's
-private task log and are kept as history; you do not need them to work on the code.
-
 ## Before writing code
 
 Read [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) first. For features beyond small bug fixes, open an issue first.

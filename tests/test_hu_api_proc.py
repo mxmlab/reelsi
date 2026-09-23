@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты для задания HU: API и процессы.
+"""Тесты: API и процессы.
 
 1. Allowlist /api/media (только медиафайлы, отказ для .txt/.bak).
 2. _block_dns_rebinding (Sec-Fetch-Site cross-site/same-site запрещены для любых методов).
@@ -291,7 +291,7 @@ def test_aerender_watchdog(monkeypatch):
                            items=[{"name": "clip1", "stage": "render", "pct": 0.0}])
 
     rc = render._run_proc(["fake", "aerender"], item_name="clip1")
-    assert rc == render._AE_STALLED
+    assert rc == render.AE_STALLED
     assert silent_p._killed is True
     # Проверяем, что в RJOB зафиксирована понятная ошибка
     failed_items = [it for it in render.RJOB.get("items", []) if it.get("stage") == "error"]

@@ -15,7 +15,7 @@ import os, threading
 from flask import request, jsonify
 from ._core import (bp, jstr, log_entry, umsg_err, _cross_lock_acquire, _cross_lock_release,
                     sysexit_text)
-from core.umsg import umsg
+from core.umsg import ReelsiError, umsg
 
 PXJOB = {"running": False, "done": False, "log": [], "cur": "", "i": 0, "n": 0, "pct": 0}
 PXLOCK = threading.Lock()
@@ -68,11 +68,12 @@ def _run_preview_proxy(plan, height):
                   cur=k, total=len(todo), name=os.path.basename(src))
             draftrender.build_preview_proxy(src, dst, height=height, emit=_emit,
                                             progress=_pct)
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         # SystemExit (umsg) — BaseException: без ветки сборка прокси вставала с пустым
-        # логом, и в статусе не было причины (задание MX).
+        # логом, и в статусе не было причины.
         with PXLOCK:
             PXJOB["log"].append(sysexit_text(e))
+    except ReelsiError: raise
     except Exception:
         import traceback
         with PXLOCK:
@@ -96,13 +97,14 @@ def api_preview_proxy():
     start = False
     try:
         if not os.path.isfile(xml_path):
-            raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml_path}",
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml_path}",
                                   path=xml_path))
         height = int(d.get("height") or 720)
         try:
             plan, tdir = _preview_proxy_plan(xml_path, height)
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("preview_plan_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("preview_plan_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
 
         # Два одновременных запроса (два таба) не должны запустить ДВА сборщика в один
@@ -112,13 +114,14 @@ def api_preview_proxy():
             busy = PXJOB["running"]
             if d.get("build") and not busy and any(not ok for (_s, _d, ok) in plan):
                 if not _cross_lock_acquire():
-                    raise SystemExit(umsg("busy", "Уже выполняется"))
+                    raise ReelsiError(umsg("busy", "Уже выполняется"))
                 PXJOB.update(running=True, done=False, log=[], i=0, n=0, cur="", pct=0)
                 busy = True
                 start = True
         if start:
             try:
                 threading.Thread(target=_run_preview_proxy, args=(plan, height), daemon=True).start()
+            except ReelsiError: raise
             except Exception:
                 _cross_lock_release()
                 with PXLOCK:
@@ -126,7 +129,7 @@ def api_preview_proxy():
                 raise
         return jsonify(ok=True, dir=tdir, building=busy,
                        cams=[{"path": s, "proxy": p, "ready": ok} for (s, p, ok) in plan])
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 

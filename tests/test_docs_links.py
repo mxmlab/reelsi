@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-r"""Сторож ссылок во всех публичных документах (задание DV, TASKS.md).
+r"""Сторож ссылок во всех публичных документах (TASKS.md).
 
 Обходит .md-файлы из `git ls-files` за вычетом `.publicignore` и проверяет
 локальные markdown-ссылки и картинки.

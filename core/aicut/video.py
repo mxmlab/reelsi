@@ -9,8 +9,11 @@
 import os, re, json, shutil, subprocess, math, tempfile
 import urllib.request, urllib.error
 from .config import APP_NAME, APP_REFERER, _profile_dict, apply_profile_headers, load_ai_config, save_ai_config
-from core.umsg import umsg
-from core.app_meta import console_emit, http_req
+from core.umsg import ReelsiError, umsg
+from core.app_meta import SafeRedirectHandler, console_emit, http_req, unsafe_url_reason
+from core.applog import get_logger
+
+log = get_logger(__name__)
 
 
 # ---- Генерация видео (Seedance 2 и др. на OpenRouter Video API) --------------
@@ -50,8 +53,9 @@ def resolve_video_prompt_cfg(slot="a", speaker=None):
                     pos = scfg.get("pos")
                     return {"extra": extra,
                             "pos": pos if pos in ("prefix", "suffix") else "suffix"}
+        except ReelsiError: raise
         except Exception:
-            pass
+            pass  # в стиле нет ключа промпта — берём пустую добавку
     return {"extra": "", "pos": "suffix"}
 
 
@@ -94,7 +98,7 @@ def video_insert_duration(duration_sec, model):
             allowed.append(duration)
     if allowed:
         return min(allowed)
-    raise SystemExit(umsg("video_insert_duration",
+    raise ReelsiError(umsg("video_insert_duration",
         f"Модель «{model}» не умеет ролик длиной {target}–4 с для видео-вставки",
         model=model, target=target))
 
@@ -459,6 +463,7 @@ def ensure_video_catalog(prof, emit=None):
         req = http_req(base + "/videos/models", headers=headers)
         with urllib.request.urlopen(req, timeout=20) as r:
             data = json.load(r)
+    except ReelsiError: raise
     except Exception:
         return
     entries = data.get("data") or data.get("models") or []
@@ -505,6 +510,7 @@ def _head_media(url, timeout=12):
                 except ValueError:
                     size = 0
                 return ct, size
+        except ReelsiError: raise
         except Exception:
             continue
     return "", 0
@@ -539,6 +545,7 @@ def probe_media(url, timeout=25):
                              "-show_entries", "format=duration:stream=width,height,codec_name",
                              url], capture_output=True, text=True, timeout=timeout)
         d = json.loads(pr.stdout or "{}")
+    except ReelsiError: raise
     except Exception:
         d = {}
     streams = d.get("streams") or []
@@ -793,8 +800,10 @@ def video_resolution_sync(model=None, prof=None):
             cfg["video_resolution"] = ""
             try:
                 save_ai_config(cfg)
-            except Exception:
-                pass
+            except ReelsiError: raise
+            except Exception as ex:
+                log.warning("не сохранил сброс разрешения видео: %s — "
+                            "в следующий раз оно уйдёт провайдеру снова", ex)
     return video_resolution_cfg(model, prof=prof)
 
 
@@ -914,13 +923,13 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
     refs — [{url, caption, role}] (url — ГОТОВАЯ https-ссылка; role: reference|
     first_frame|last_frame). opts — {duration, resolution, aspect_ratio, size, seed,
     audio, model}.
-    Возвращает {path, cost, id, ms}. Ошибка -> SystemExit с человеческим текстом."""
+    Возвращает {path, cost, id, ms}. Ошибка -> ReelsiError с человеческим текстом."""
     import time as _t
     prof = prof or resolve_video_profile()
     if prof is None:
-        raise SystemExit(umsg("video_disabled", "генерация видео выключена — выбери профиль «Видео» в ⚙"))
+        raise ReelsiError(umsg("video_disabled", "генерация видео выключена — выбери профиль «Видео» в ⚙"))
     if prof["provider"] in ("anthropic", "lmstudio"):
-        raise SystemExit(umsg("provider_no_video",
+        raise ReelsiError(umsg("provider_no_video",
                               f"провайдер «{prof['provider']}» не генерит видео — нужен "
                               f"OpenRouter/совместимый с видео-моделью (Seedance 2)",
                               provider=prof["provider"]))
@@ -950,7 +959,7 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
         resolve_refs(refs, emit=emit)
     bad = video_check(model, opts, refs, caps=caps, probe=True, prompt=prompt, prof=prof)
     if bad:
-        raise SystemExit(umsg("bad_opts", "; ".join(bad), list="; ".join(bad)))
+        raise ReelsiError(umsg("bad_opts", "; ".join(bad), list="; ".join(bad)))
     payload = {"model": model, "prompt": _video_prompt(prompt, refs)}
     for w in video_warnings(model, refs, caps=caps, prompt=prompt, prof=prof):
         emit("  видео: {warning}", warning=w)
@@ -966,8 +975,9 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
         try:
             _put("duration", int(opts["duration"]),
                  caps and caps["durations"] or None, "длина")
-        except (TypeError, ValueError):
-            pass
+        except (TypeError, ValueError) as ex:
+            log.warning("длина видео %r не число (%s) — параметр не шлю",
+                        opts.get("duration"), ex)
     if opts.get("resolution"):
         _put("resolution", str(opts["resolution"]),
              caps and caps["resolutions"] or None, "разрешение")
@@ -983,8 +993,9 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
         else:
             try:
                 payload["seed"] = int(opts["seed"])
-            except (TypeError, ValueError):
-                pass
+            except (TypeError, ValueError) as ex:
+                log.warning("seed %r не число (%s) — параметр не шлю",
+                            opts.get("seed"), ex)
     # generate_audio шлём ЯВНО (true/false). Если параметр не послать, модель решает
     # сама, а Seedance по умолчанию генерит СО ЗВУКОМ — из-за этого звук появлялся,
     # хотя галка снята. caps.audio False = модель звук вообще не умеет -> не шлём.
@@ -1054,14 +1065,14 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
     try:
         job = _post(base + "/videos", payload)
     except urllib.error.HTTPError as e:
-        raise SystemExit(_video_http_error(e, prof, "запрос генерации"))
+        raise ReelsiError(_video_http_error(e, prof, "запрос генерации"))
     except urllib.error.URLError as e:
-        raise SystemExit(umsg("provider_no_connection", f"нет связи с провайдером видео: {e}", err=e))
+        raise ReelsiError(umsg("provider_no_connection", f"нет связи с провайдером видео: {e}", err=e))
 
     vid = job.get("id") or job.get("job_id") or ""
     poll_url = job.get("polling_url") or (base + "/videos/" + vid if vid else "")
     if not poll_url:
-        raise SystemExit(umsg("no_task_id",
+        raise ReelsiError(umsg("no_task_id",
                               "провайдер не вернул id/polling_url: "
                               + json.dumps(job, ensure_ascii=False)[:200],
                               resp=json.dumps(job, ensure_ascii=False)[:200]))
@@ -1078,12 +1089,13 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
                 req = http_req(url, headers=headers, method=meth,
                                data=b"" if meth == "POST" else None)
                 with urllib.request.urlopen(req, timeout=20):
-                    return SystemExit("остановлено по кнопке — провайдер отменил задачу")
+                    return ReelsiError("остановлено по кнопке — провайдер отменил задачу")
+            except ReelsiError: raise
             except Exception:
                 continue
-        return SystemExit(f"остановлено по кнопке. ВНИМАНИЕ: провайдер отмену не принял — "
-                          f"задача {vid} может досчитаться и списаться; готовое видео "
-                          f"будет тут: {base}/videos/{vid}")
+        return ReelsiError(f"остановлено по кнопке. ВНИМАНИЕ: провайдер отмену не принял — "
+                           f"задача {vid} может досчитаться и списаться; готовое видео "
+                           f"будет тут: {base}/videos/{vid}")
 
     status, cost, urls = "", None, []
     errs = 0                                             # подряд идущие ошибки опроса
@@ -1101,7 +1113,7 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
             # ПОСЛЕ того как всё сгенерировал и списал деньги (было: 401 в самом конце)
             errs += 1
             if errs >= 4:
-                raise SystemExit(_video_http_error(e, prof, "опрос статуса"))
+                raise ReelsiError(_video_http_error(e, prof, "опрос статуса"))
             emit("  видео: опрос статуса {code} — повтор ({errs}/3)…",
                  code=e.code, errs=errs)
             continue
@@ -1111,7 +1123,7 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
             errs += 1
             reason = str(e) or e.__class__.__name__
             if errs >= 4:
-                raise SystemExit(umsg("video_poll_failed",
+                raise ReelsiError(umsg("video_poll_failed",
                                       f"опрос статуса не удался ({reason}). "
                                       f"Задача {vid} могла досчитаться и списаться — "
                                       f"проверь её у провайдера: {poll_url}",
@@ -1128,14 +1140,14 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
             err = st.get("error") or st.get("message") or json.dumps(st, ensure_ascii=False)
             msg, hint = _video_error_text(err if isinstance(err, str)
                                           else json.dumps(err, ensure_ascii=False))
-            raise SystemExit(umsg("video_status_failed",
+            raise ReelsiError(umsg("video_status_failed",
                                   (f"{hint}. Провайдер: {msg}" if hint else
                                    f"провайдер вернул статус «{status}»: {msg}"),
                                   status=status, msg=msg))
         emit("  видео: {status}… ({sec}с)",
              status=status or 'в очереди', sec=int(_t.time() - t0))
     else:
-        raise SystemExit(umsg("video_timeout", f"видео не готово за {max_wait}с — прервано по таймауту", max_wait=max_wait))
+        raise ReelsiError(umsg("video_timeout", f"видео не готово за {max_wait}с — прервано по таймауту", max_wait=max_wait))
 
     # СКАЧИВАНИЕ. Тонкость (из-за неё терялся уже ОПЛАЧЕННЫЙ результат): OpenRouter
     # отдаёт unsigned_urls, но по факту им НУЖЕН заголовок авторизации (иначе 401 —
@@ -1166,12 +1178,21 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
     out_path = f"{out_base}.mp4"
 
     last = None
+    # Открывалка ТОЛЬКО для скачивания ролика: адреса пришли в ответе провайдера, а
+    # не от пользователя, поэтому и стартовый адрес, и КАЖДЫЙ редирект проверяются
+    # одним стражем (SSRF: иначе честная ссылка уводит запрос на 127.0.0.1).
+    opener = urllib.request.build_opener(SafeRedirectHandler())
     for url, with_auth in tries:
         tmp_path = None
+        reason = unsafe_url_reason(url)
+        if reason:
+            # это причина не скачаться, а не падение: следующий адрес может быть годным
+            last = reason
+            continue
         try:
             h = apply_profile_headers({"Authorization": headers["Authorization"]} if "Authorization" in headers else {}, prof) if with_auth else {}
             req = http_req(url, headers=h)
-            with urllib.request.urlopen(req, timeout=600) as r:
+            with opener.open(req, timeout=600) as r:
                 fd, tmp_path = tempfile.mkstemp(dir=out_dir, prefix=".dl_", suffix=".part")
                 with os.fdopen(fd, "wb") as f:
                     shutil.copyfileobj(r, f)
@@ -1222,16 +1243,18 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
             last = str(e)
             break
         except (TimeoutError, OSError) as e:
+            # сюда же приходит UnsafeAddress от перехватчика редиректов: адрес не
+            # прошёл проверку — берём следующий из списка, задачу не роняем
             last = str(e) or e.__class__.__name__
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 try:
                     os.remove(tmp_path)
                 except OSError:
-                    pass
+                    pass  # временный файл уже убран
     if last is not None:
         # видео СГЕНЕРИРОВАНО и оплачено — не теряем его: отдаём прямую ссылку
-        raise SystemExit(umsg("video_download_failed",
+        raise ReelsiError(umsg("video_download_failed",
                               (f"видео СОЗДАНО (${cost:.3f}), но не скачалось ({last}). "
                                f"Оно доступно ~48ч — скачай вручную: {remote}  (задача {vid})"
                                if isinstance(cost, (int, float)) else
@@ -1284,6 +1307,7 @@ def _video_error_text(detail):
     for _ in range(4):                          # message в message в message
         try:
             d = json.loads(msg[msg.index("{"):])
+        except ReelsiError: raise
         except Exception:
             break
         m = d.get("error") if isinstance(d.get("error"), dict) else d
@@ -1301,9 +1325,10 @@ def _video_error_text(detail):
 
 
 def _video_http_error(e, prof, where):
-    """HTTPError видео-эндпоинта -> UMsg с кодом (для SystemExit)."""
+    """HTTPError видео-эндпоинта -> UMsg с кодом (для ReelsiError)."""
     try:
         detail = e.read().decode("utf-8", "replace")[:1200]
+    except ReelsiError: raise
     except Exception:
         detail = ""
     if e.code in (401, 403):

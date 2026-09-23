@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Сторож распила scene_plan: расчёт интро (задание MS, этап 2).
+"""Сторож распила scene_plan: расчёт интро (этап 2).
 
 Расчёт интро уехал из `scene_plan` в `core/xml2ae/plan_intro.py`. Сторож держит СТЫК двух
 дверей одной арифметики: `plan_intro`, вызванный НАПРЯМУЮ на фикстуре
@@ -10,7 +10,7 @@
 INTRO_FX, INTRO_SUB_FX, INTRO_SQ). Разъедутся — .jsx соберётся не по тому, что рисует
 предпросмотр, и увидеть это можно только в AE.
 
-Фикстура сторожа — три группы интро (как в задании): «большое слева» (задание ZY), глитч
+Фикстура сторожа — три группы интро (как в задании): «большое слева», глитч
 на полосе субтитров (ПРАВКИ 3/4 и правило MH: окно режется, появление слова сжимается) и
 хвост ролика (последняя группа — правило MH её не трогает).
 
@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 from core import styles, xml2ae  # noqa: E402
 from core.xml2ae.build import (INTRO_ANIMS, _accent_word, _intro_appear_dur,  # noqa: E402
                                _intro_cnt_positions, _intro_fit_ds, _intro_line_font,
-                               _parse_intro_count, _sv, _sv_or)
+                               _parse_intro_count, _sv, read_style)
 from core.xml2ae.jsutil import _jd  # noqa: E402
 from core.xml2ae.plan_intro import IntroInputs, _g_at, plan_intro  # noqa: E402
 from core.xml2ae.plan_subs import SubsInputs, plan_subs  # noqa: E402
@@ -122,17 +122,15 @@ def _inputs(xml, plan, style=None, intro=None, splits=None, highlights=None):
     """
     meta, cams, subs, _xml_inserts = xml2ae.parse_full(xml)
     st = styles.resolve(dict(style or {}, font=PS))
-    font_ps = _sv_or(st, "font")
-    hl_font_ps = st.get("hl_font") or font_ps
+    style_values = read_style(st)
+    font_ps = style_values.font
+    hl_font_ps = style_values.hl_font or font_ps
     hl = set(int(x) for x in (highlights or []) if 0 <= int(x) < len(subs))
     sp = plan_subs(SubsInputs(
         subs=subs, hl=hl, brk=set(), cnt=set(), joins=set(),
         font_ps=font_ps, hl_font_ps=hl_font_ps,
-        sub_case=(_sv_or(st, "sub_case")).strip(),
-        sub_words_per_row=max(1, int(_sv_or(st, "sub_words_per_row"))),
-        sub_rows_max=max(1, int(_sv_or(st, "sub_rows_max"))),
         width=meta["w"], height=meta["h"], fps=meta["fps"] or 60, cams=cams,
-        word_timings=None, st=st, sv=_sv, sv_or=_sv_or,
+        word_timings=None, style=style_values,
         accent_word=_accent_word, parse_count=_parse_intro_count))
     # интро разбиваем на группы по splits — ровно как scene_plan (до вызова блока)
     intro_lines = [x for x in (intro or []) if (x.get("words") or (x.get("text") or "").strip())]
@@ -147,39 +145,26 @@ def _inputs(xml, plan, style=None, intro=None, splits=None, highlights=None):
         video_segs=[(ins["start"], ins["end"]) for ins in plan["inserts"]
                     if ins.get("t") == "video"],
         subs=sp, font_ps=font_ps,
-        intro_font_ps=st.get("intro_font") or font_ps,
-        intro_hl_font_ps=st.get("intro_hl_font") or hl_font_ps,
-        accent_font_ps=(_sv_or(st, "accent_font")).strip(),
-        accent_case=(_sv_or(st, "accent_case")).strip(),
-        back_font_ps=(_sv_or(st, "back_font")).strip(),
-        back_case=(_sv_or(st, "back_case")).strip(),
+        intro_font_ps=style_values.intro_font or font_ps,
+        intro_hl_font_ps=style_values.intro_hl_font or hl_font_ps,
+        accent_font_ps=style_values.accent_font.strip(),
+        accent_case=style_values.accent_case.strip(),
+        back_font_ps=style_values.back_font.strip(),
+        back_case=style_values.back_case.strip(),
         any_back=any(bool(x.get("back") and not x.get("accent")) for g in groups for x in g),
         any_glitch=any(x.get("anim") == "glitch" for g in groups for x in g),
-        st=st, sv=_sv, sv_or=_sv_or,
-        # Правила, живущие в build.py (задание MS): своей копии у модуля нет.
+        # Стиль — структурой, как его читает scene_plan: второй копии
+        # поимённого чтения ключей у сторожа нет. Полку последней группы стиль отдаёт
+        # сырым ключом — читаем её тем же _sv, что и сборка (иначе вход сторожа разошёлся бы
+        # со scene_plan на этом ключе).
+        style=style_values,
+        intro_last_hold=float(_sv(st, "intro_last_hold")),
+        # Правила, живущие в build.py: своей копии у модуля нет.
         accent_word=_accent_word, parse_count=_parse_intro_count,
         cnt_positions=_intro_cnt_positions, line_font=_intro_line_font,
         fit_ds=_intro_fit_ds, appear_dur=_intro_appear_dur, anims=INTRO_ANIMS,
-        back_step=float(_sv(st, "back_step")),
-        back_step_after=(None if _sv(st, "back_step_after") is None
-                         else float(_sv(st, "back_step_after"))),
-        back_scale=float(_sv(st, "back_scale")),
-        line_step_k=float(_sv(st, "intro_line_step")) / 100.0,
-        big_step_k=float(_sv(st, "intro_big_step")) / 100.0,
-        intro_fade=float(_sv(st, "intro_fade")),
-        intro_fx_hold_add=float(_sv(st, "intro_fx_hold_add")),
-        intro_sub_cut=bool(_sv(st, "intro_sub_cut")),
-        intro_sub_fade=float(_sv(st, "intro_sub_fade")),
-        intro_scale_k=float(_sv_or(st, "intro_scale")) / 100,
-        fit_w=float(_sv_or(st, "intro_fit_w")) / 100.0,
-        fit_max=float(_sv_or(st, "intro_fit_max")),
-        intro_cam=bool(_sv(st, "intro_cam")),
         # Ключи зума и тип интерполяции — из плана: ровно те, с которыми звался блок.
-        cam1_scale=plan["zoom"]["keys"], holds=[bool(h) for h in plan["zoom"]["holds"]],
-        shadow_fill=[float(v) for v in (_sv_or(st, "intro_comp_shadow_fill"))],
-        shadow_op=float(_sv(st, "intro_comp_shadow_op")),
-        shadow2_fill=[float(v) for v in (_sv_or(st, "intro_comp_shadow2_fill"))],
-        shadow2_op=float(_sv(st, "intro_comp_shadow2_op")))
+        cam1_scale=plan["zoom"]["keys"], holds=[bool(h) for h in plan["zoom"]["holds"]])
 
 
 def _check(xml, intro=None, splits=None, style=None, highlights=None, inserts=None):

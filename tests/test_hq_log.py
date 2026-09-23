@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты задания HQ: лог в файл, atexit-уборка процессов, логирование исключений."""
+"""Тесты: лог в файл, atexit-уборка процессов, логирование исключений."""
 import json
 import logging
 from logging.handlers import RotatingFileHandler
@@ -205,7 +205,7 @@ def test_render_exception_logged(tmp_path, monkeypatch):
 
     batch = [{"xml_path": "clip1.xml"}]
     # Вызываем ветку с одиночным рендером в потоке (набор — уже нормализованный,
-    # как его отдаёт api_render_run, задание HU)
+    # как его отдаёт api_render_run)
     render._run_render_job(batch, str(tmp_path), str(tmp_path / "out"))
 
     for h in logging.getLogger("reelsi").handlers:

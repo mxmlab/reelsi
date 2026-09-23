@@ -51,7 +51,7 @@ ADDITIONS = {
     "Детекция и вырезание вздохов перед фразами": "Detection and cutting of breaths before phrases",
     "Черновик mp4": "Draft mp4",
     "Рендер быстрого чернового видео .draft.mp4 для предпросмотра нарезки": "Render quick draft video .draft.mp4 to preview cutting",
-    # --- модалка спикера (задание CS) ---
+    # --- модалка спикера ---
     "Стилевые приписки к промпту генерации картинок лично для этого спикера (слоты 1 и 2). Пусто — генерим предмет как есть.": "Style prompt additions for image generation specifically for this speaker (slots 1 and 2). Empty — generate the subject as is.",
     "Что дописывать к предмету при генерации картинки кнопкой 1 (Nano Banana): «3d icon», «photorealistic» и т.п. Клеится пробелом. Пусто — генерим предмет как есть.": "What to append to the subject when generating an image with button 1 (Nano Banana): “3d icon”, “photorealistic”, etc. Appended with a space. Empty — generate the subject as is.",
     "Вторая приписка под кнопку 2: второй стиль (например «с надписью на картинке» / «без надписи»). Пусто — генерим предмет как есть.": "Second addition for button 2: a second style (e.g. “with text on image” / “no text”). Empty — generate the subject as is.",

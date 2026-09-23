@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Сторож: в static/app/*.js нет двух объявлений function <имя> верхнего уровня с одним именем (задание HV)."""
+"""Сторож: в static/app/*.js нет двух объявлений function <имя> верхнего уровня с одним именем."""
 import glob
 import os
 import re

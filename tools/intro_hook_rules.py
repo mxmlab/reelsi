@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Снять правила ХУКА интро с ручных .jsx (задание BF, 2026-08-14).
+"""Снять правила ХУКА интро с ручных .jsx (2026-08-14).
 
 Данные: `AutoCut_out/*.jsx` — INTRO_GROUPS (прекомпы; строка = {words, color, times}).
 В .jsx лежат только СТАРТОВЫЕ тайминги слов, поэтому длительности прекомпов и разрывы

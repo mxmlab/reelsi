@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты защиты от отдачи секретов через жёсткие ссылки (LK).
+"""Тесты защиты от отдачи секретов через жёсткие ссылки.
 
 Жёсткая ссылка (os.link) оставляет безобидное имя файла и указывает напрямую на
 тот же inode/file index ФС, поэтому os.path.realpath не раскрывает исходный путь.
@@ -91,7 +91,7 @@ def test_media_hardlink_to_rclone_conf_rejected(client, tmp_path, monkeypatch):
     """Жёсткая ссылка на rclone.conf блокируется."""
     secret = tmp_path / "custom_rclone.conf"
     secret.write_text("token = fake_token", encoding="utf-8")
-    monkeypatch.setattr("api.gdrive.rclone_conf", lambda: str(secret))
+    monkeypatch.setattr("core.rclone.rclone_conf", lambda: str(secret))
 
     clip_mp4 = tmp_path / "clip_rc.mp4"
     _make_hardlink(secret, clip_mp4)

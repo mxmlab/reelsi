@@ -11,9 +11,12 @@ from flask import request, jsonify
 from ._core import (APP_NAME, APP_REFERER, LOG_CAP, bp, env, jstr, journal_interrupted,
                     journal_write, umsg_err)
 from core import paths
-from core.fileio import atomic_json_dump
-from core.umsg import umsg
+from core.fileio import atomic_json_dump, quarantine_unreadable
+from core.umsg import ReelsiError, umsg
 from core.app_meta import http_req
+from core.applog import get_logger
+
+log = get_logger(__name__)
 
 
 
@@ -51,16 +54,35 @@ def _vhist_read():
         with open(VIDEO_HIST_PATH, encoding="utf-8") as f:
             items = json.load(f)
         return [x for x in items if isinstance(x, dict)] if isinstance(items, list) else []
-    except Exception:
+    except ReelsiError: raise
+    except Exception as ex:
+        # Контракт (пустой список) сохраняем, но молчать нельзя: следующая же запись
+        # статуса завела бы журнал с нуля и стёрла историю задач.
+        if os.path.exists(VIDEO_HIST_PATH):
+            log.warning("журнал генераций не прочитан (%s): %s — при следующей записи будет "
+                        "отложен в %s.bad-…", VIDEO_HIST_PATH, ex, VIDEO_HIST_PATH)
         return []
+
+
+def _vhist_valid(data):
+    """Формат журнала — СПИСОК записей: объект или строка в файле — такая же поломка,
+    как обрыв записи, и история из него не собирается."""
+    return isinstance(data, list)
 
 
 def _vhist_write(items):
     """Атомарно (core.fileio.atomic_json_dump), как ui_state: рестарт посреди записи
-    не оставит огрызок."""
+    не оставит огрызок. Битый журнал ПЕРЕД записью откладывается в сторону
+    (core.fileio.quarantine_unreadable): без этого первая же запись статуса затирала
+    файл одной записью и стирала историю оплаченных генераций."""
     try:
         os.makedirs(os.path.dirname(VIDEO_HIST_PATH), exist_ok=True)
+        bad = quarantine_unreadable(VIDEO_HIST_PATH, valid=_vhist_valid)
+        if bad:
+            log.warning("журнал генераций не прочитан (%s) — отложен в %s, история начата "
+                        "заново", VIDEO_HIST_PATH, bad)
         atomic_json_dump(VIDEO_HIST_PATH, items[-VHIST_CAP:], indent=1)
+    except ReelsiError: raise
     except Exception as e:
         print("video history:", e)
 
@@ -140,6 +162,7 @@ def vemit(line, **vars):
     if vars:
         try:
             line = line.format(**vars)
+        except ReelsiError: raise
         except Exception:
             for key, value in vars.items():
                 line = line.replace("{" + str(key) + "}", str(value))
@@ -173,7 +196,7 @@ def _video_worker(prompt, refs, opts, key=None):
         vhist_put(key, status="done", path=res["path"], cost=res.get("cost"),
                   task=res.get("id") or "", ms=res.get("ms"), error="",
                   err=None, err_vars=None)
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         ue = umsg_err(e)
         with VLOCK:
             VJOB["error"] = ue["error"]
@@ -185,6 +208,7 @@ def _video_worker(prompt, refs, opts, key=None):
         # у провайдера, и это единственный след задачи, за которую могли списать
         vhist_put(key, status="cancelled" if stopped else "error", error=ue["error"],
                   err=ue.get("err"), err_vars=ue.get("err_vars"))
+    except ReelsiError: raise
     except Exception:
         tb = _tb.format_exc()
         with VLOCK:
@@ -206,7 +230,7 @@ def _video_worker(prompt, refs, opts, key=None):
             err_c = VJOB.get("err")
             err_v = VJOB.get("err_vars")
             started = VJOB["started"]
-        # Журнал заданий (задание NC): генерация — свой слот, вложение в нарезку не
+        # Журнал заданий: генерация — свой слот, вложение в нарезку не
         # мешает. После перезапуска сервера оборванная генерация видна как interrupted.
         journal_write("video", "video", "Генерация видео", "done", started=started)
         vhist_put(key, status="done" if res_ok else ("cancelled" if stopped else "error"),
@@ -228,7 +252,7 @@ def api_video_gen():
     try:
         prof = aicut.resolve_video_profile()
         if prof is None:
-            raise SystemExit(umsg("video_disabled",
+            raise ReelsiError(umsg("video_disabled",
                 "Генерация видео выключена — выбери профиль «Видео» в ⚙ → «Разметка и AE»"))
         # Модель и каталог провайдера нужны ДО нормализации: video_insert_duration/
         # video_resolution_cfg/video_auto_aspect/video_auto_shape считают по caps модели,
@@ -242,22 +266,23 @@ def api_video_gen():
             query = jstr(d, "query").strip()
             slot = jstr(d, "slot") or "a"
             if not query:
-                raise SystemExit(umsg("empty_query", "Пустой запрос — у вставки нет query"))
+                raise ReelsiError(umsg("empty_query", "Пустой запрос — у вставки нет query"))
             if slot not in aicut.VIDEO_PROMPT_SLOTS:
-                raise SystemExit(umsg("unknown_prompt_slot", f"Неизвестный слот промпта «{slot}»",
+                raise ReelsiError(umsg("unknown_prompt_slot", f"Неизвестный слот промпта «{slot}»",
                                       slot=slot))
             prompt = aicut.build_video_prompt(query, slot=slot, speaker=jstr(d, "speaker") or None)
             duration = aicut.video_insert_duration(d.get("insert_duration"), model)
             refs_in = []
             xml = jstr(d, "xml").strip().strip('"')
             if not xml or not os.path.isfile(xml):
-                raise SystemExit(umsg("file_not_found", f"Файл XML не найден: {xml}", path=xml))
+                raise ReelsiError(umsg("file_not_found", f"Файл XML не найден: {xml}", path=xml))
             try:
                 from core import xml2ae
                 meta, _, _, _ = xml2ae.parse_full(xml)
                 aspect = aicut.video_auto_aspect(meta.get("w"), meta.get("h"), model)
+            except ReelsiError: raise
             except Exception as e:
-                raise SystemExit(umsg("video_xml_failed", f"Не удалось прочитать XML: {e}",
+                raise ReelsiError(umsg("video_xml_failed", f"Не удалось прочитать XML: {e}",
                                       err=str(e)))
             opts = {"model": model, "duration": duration,
                     "resolution": aicut.video_resolution_cfg(model),
@@ -275,7 +300,7 @@ def api_video_gen():
                     "audio": bool(d.get("audio"))}
         # промпт обязателен у ВСЕХ моделей: запрос из одних референсов провайдер отвергает
         if not prompt:
-            raise SystemExit(umsg("empty_prompt",
+            raise ReelsiError(umsg("empty_prompt",
                 "Пустой запрос — напиши, что снять (одних референсов мало)"))
         refs = []
         for r in refs_in:
@@ -285,7 +310,7 @@ def api_video_gen():
             if not url:
                 continue                                   # пустую строку-референс просто пропускаем
             if not url.lower().startswith("https://"):
-                raise SystemExit(umsg("ref_not_https",
+                raise ReelsiError(umsg("ref_not_https",
                     f"Референс должен быть HTTPS-ссылкой (OpenRouter качает "
                     f"файл по URL, локальные не принимает): {url[:80]}", url=url[:80]))
             role = r.get("role") if r.get("role") in aicut.VIDEO_ROLES else "reference"
@@ -308,7 +333,7 @@ def api_video_gen():
         # полминуты 400-м от провайдера. Длинную (ffprobe по ссылкам) делает gen_video.
         bad = aicut.video_check(model, opts, refs, prompt=prompt)
         if bad:
-            raise SystemExit(umsg("bad_opts", "; ".join(bad), list="; ".join(bad)))
+            raise ReelsiError(umsg("bad_opts", "; ".join(bad), list="; ".join(bad)))
         now = int(time.time())
         key = "v%d" % int(time.time() * 1000)
         # Карточка передаёт непрозрачный токен только в заголовке. Он не попадает к
@@ -320,10 +345,10 @@ def api_video_gen():
         # не пройти оба. Валидация выше — только чтение, ей лок не нужен.
         with VLOCK:
             if VJOB["running"]:
-                raise SystemExit(umsg("video_busy", "Генерация видео уже идёт"))
+                raise ReelsiError(umsg("video_busy", "Генерация видео уже идёт"))
             VJOB.update(running=True, done=False, cancel=False, log=[], log_base=0,
                         result=None, error=None, started=now, key=key, context=context)
-        # Журнал заданий (задание NC): генерация идёт минутами и стоит денег — после
+        # Журнал заданий: генерация идёт минутами и стоит денег — после
         # перезапуска сервера по журналу видно, что задача была и не закрылась.
         journal_write("video", "video", "Генерация видео", "running", started=now)
         # запись заводим ДО старта потока: задача, оборванная на первой же минуте, тоже
@@ -333,6 +358,7 @@ def api_video_gen():
         try:
             threading.Thread(target=_video_worker, args=(prompt, refs, opts, key),
                              daemon=True).start()
+        except ReelsiError: raise
         except Exception:
             with VLOCK:
                 VJOB["running"] = False
@@ -341,7 +367,7 @@ def api_video_gen():
                        duration=opts.get("duration"),
                        aspect_ratio=opts.get("aspect_ratio"),
                        resolution=opts.get("resolution"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -378,11 +404,11 @@ def api_video_history():
         key = jstr(d, "key")
         try:
             if (jstr(d, "action") or "delete") != "delete" or not key:
-                raise SystemExit(umsg("need_delete_key", "нужен action=delete и key"))
+                raise ReelsiError(umsg("need_delete_key", "нужен action=delete и key"))
             with VLOCK:
                 busy = VJOB["running"] and VJOB.get("key") == key
             if busy:
-                raise SystemExit(umsg("video_running",
+                raise ReelsiError(umsg("video_running",
                     "Эта генерация ещё идёт — сначала останови её"))
             with VHIST_LOCK:
                 items = _vhist_read()
@@ -402,9 +428,9 @@ def api_video_history():
                     os.remove(p)
                     removed += 1
                 except OSError as e:
-                    raise SystemExit(umsg("del_failed", f"файл не удалился: {e}", err=str(e)))
+                    raise ReelsiError(umsg("del_failed", f"файл не удалился: {e}", err=str(e)))
             return jsonify(ok=True, removed=removed)
-        except SystemExit as e:
+        except (ReelsiError, SystemExit) as e:
             return jsonify(**umsg_err(e))
     with VHIST_LOCK:
         items = vhist_scan_files(_vhist_read())
@@ -446,7 +472,7 @@ def api_video_models():
     try:
         prof = aicut.resolve_video_profile()
         if prof is None:
-            raise SystemExit(umsg("video_profile_missing",
+            raise ReelsiError(umsg("video_profile_missing",
                 "Сначала выбери профиль «Видео» (OpenRouter-ключ и модель)"))
         model = jstr(d, "model").strip() or aicut.video_model_cfg()
         base = prof["base_url"].rstrip("/")
@@ -460,19 +486,21 @@ def api_video_models():
         except urllib.error.HTTPError as e:
             try:
                 detail = e.read().decode("utf-8", "replace")[:300]
+            except ReelsiError: raise
             except Exception:
                 detail = ""
             if e.code in (401, 403):
-                raise SystemExit(umsg("key_rejected",
+                raise ReelsiError(umsg("key_rejected",
                     f"Ключ не принят ({e.code}) — проверь профиль «{prof['name']}»",
                     code=e.code, name=prof['name']))
-            raise SystemExit(umsg("video_catalog_failed",
+            raise ReelsiError(umsg("video_catalog_failed",
                 f"Каталог видео-моделей не отдался: {e.code} {detail}",
                 code=e.code, detail=detail))
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("video_models_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("video_models_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
     entries = data.get("data") or data.get("models") or []
     key = aicut.video._catalog_key(prof)

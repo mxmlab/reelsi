@@ -228,7 +228,7 @@ def test_counter_word_row_starts_at_new_start(xml_subs, tmp_path):
     assert row[0] == new_start, "старт слова в .jsx не новый"
     assert row[0] != old_start, "старт слова остался прежним"
     assert row[1] == after[GAP_WORD][1], "конец слова уехал"
-    assert row[6] == [2.0, '(effect("Slider Control")("Slider")).toFixed(1)']
+    assert row[6] == [2.0, 'effect("Slider Control")("Slider").value.toFixed(1)']
 
     # Ключи счётчика — от старта слова, а не от своего сохранённого времени.
     assert "var t0 = sw[0]/FPS;" in jsx

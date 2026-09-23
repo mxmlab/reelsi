@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Смещение ГРУППЫ интро (задание E, шаг 1): gx/gy с головной строки доезжают до .jsx.
+"""Смещение ГРУППЫ интро (шаг 1): gx/gy с головной строки доезжают до .jsx.
 
 Поле новое — живёт в данных (job.introRows), поэтому задание начинается с Python и
 шаблона, а не с мыши. Здесь:
@@ -122,7 +122,7 @@ def test_offset_moves_only_its_group(xml_subs, tmp_path):
 
 
 def test_scene_plan_carries_dx_dy(xml_subs):
-    """plan.intro[] отдаёт dx/dy каждой группы — их возьмёт предпросмотр (шаг 2 задания E)."""
+    """plan.intro[] отдаёт dx/dy каждой группы — их возьмёт предпросмотр (шаг 2)."""
     plan = xml2ae.scene_plan(xml_subs, disclaimer="", intro=[
         dict(words=["ПЕРВОЕ"], color="white", times=[T_CAM1]),
         dict(words=["ВТОРОЕ"], color="white", times=[T_CAM2], gx=100, gy=-40, gs=125)],
@@ -177,7 +177,7 @@ def test_frontend_resolve_carries_gx_gy_on_head_rows():
 # ===== Задание BG — масштаб интро: gs доживает до плана, общий масштаб превью знает =====
 
 def test_scene_plan_carries_intro_scale(xml_subs):
-    """Общий масштаб интро доезжает до плана (задание BG): в AE он висит на нуле «интро»
+    """Общий масштаб интро доезжает до плана: в AE он висит на нуле «интро»
     (родителе прекомпа) и множит смещение ребёнка и его размер, а сдвиг самого нула
     (intro_y/intro_y2) не трогает. plan.intro_scale — в процентах, как в стиле; базовая
     позиция y уже учитывает G: дефолт 100% — ровно прежняя, G=0.6 — intro_y + 0.6*(-INTRO_BASE_Y + idy)."""
@@ -198,7 +198,7 @@ def test_scene_plan_carries_intro_scale(xml_subs):
 
 @node
 def test_frontend_intro_resolve_carries_gs_on_head_rows():
-    """introResolve проносит gs на головных строках (задание BG, 2026-08-14): раньше
+    """introResolve проносит gs на головных строках (2026-08-14): раньше
     терял — превью после рефетча плана возвращало блок к 100%, а в сборку текущего
     клипа (tojsx/startRender) масштаб группы не уезжал. Теперь это обёртка над
     resolveIntroFor, и числа те же, что у близнеца выше; поля середины отброшены."""

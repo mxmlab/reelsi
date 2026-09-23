@@ -18,6 +18,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core import aicut  # noqa: E402
+from core.umsg import ReelsiError
 
 
 def _ref(url, role="reference", kind=None, dur=0):
@@ -155,7 +156,7 @@ def test_video_insert_duration_uses_shortest_supported_length(seconds, model, wa
 
 def test_video_insert_duration_rejects_model_without_short_clip():
     """Hailuo начинается с 5 с: VJOB и оплаченный поток стартовать не должны."""
-    with pytest.raises(SystemExit) as exc:
+    with pytest.raises(ReelsiError) as exc:
         aicut.video_insert_duration(3, "minimax/hailuo-3")
     assert "видео-вставки" in str(exc.value)
 

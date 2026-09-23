@@ -26,6 +26,7 @@ import zlib
 
 from core import fileio, paths
 from core.xmltext import xml_text as _esc
+from core.umsg import ReelsiError
 
 SRC_FPS = 30000 / 1001                 # NTSC — в каком темпе считаются таймкоды камер
 
@@ -218,6 +219,7 @@ def new_pool_ids(element_xml):
                 head, data = unpack_fields(h)
                 return f"<{tag}>" + pack_fields(head, fresh(data)) + f"</{tag}>"
             return f"<{tag}>" + fresh(bytes.fromhex(h)).hex() + f"</{tag}>"
+        except ReelsiError: raise
         except Exception:
             return m.group(0)                  # чужой блоб — не трогаем
 

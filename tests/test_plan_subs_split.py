@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Сторож распила scene_plan: блок субтитров (задание MR, этап 1).
+"""Сторож распила scene_plan: блок субтитров (этап 1).
 
 Блок субтитров уехал из `scene_plan` в `core/xml2ae/plan_subs.py`. Сторож держит СТЫК
 двух дверей одной арифметики: `plan_subs`, вызванный НАПРЯМУЮ на фикстуре
@@ -29,7 +29,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 
 from core import styles  # noqa: E402
 from core import xml2ae  # noqa: E402
-from core.xml2ae.build import _accent_word, _parse_intro_count, _sv, _sv_or  # noqa: E402
+from core.xml2ae.build import _accent_word, _parse_intro_count, read_style  # noqa: E402
 from core.xml2ae.plan_subs import SubsInputs, plan_subs  # noqa: E402
 
 
@@ -46,9 +46,9 @@ def xml_subs(tmp_path):
 def _inputs(xml, style=None, highlights=None, hl_breaks=None, hl_count=None, hl_joins=None):
     """SubsInputs ровно такими, какими их собрал бы scene_plan к моменту вызова блока.
 
-    Повторяет только ЧТЕНИЯ scene_plan (разбор XML, резолв стиля, отсев индексов
-    разметки) — своей арифметики субтитров здесь нет намеренно: иначе сторож проверял бы
-    копию правила, а не стык.
+    Повторяет только ЧТЕНИЯ scene_plan (разбор XML, резолв стиля, чтение структуры
+    стиля `read_style`, отсев индексов разметки) — своей арифметики субтитров здесь нет
+    намеренно: иначе сторож проверял бы копию правила, а не стык.
     """
     meta, cams, subs, _xml_inserts = xml2ae.parse_full(xml)
     st = styles.resolve(style)
@@ -56,15 +56,13 @@ def _inputs(xml, style=None, highlights=None, hl_breaks=None, hl_count=None, hl_
     brk = set(int(x) for x in (hl_breaks or []) if 0 <= int(x) < len(subs))
     cnt = set(int(x) for x in (hl_count or []) if 0 <= int(x) < len(subs))
     joins = set(int(x) for x in (hl_joins or []) if 0 <= int(x) < len(subs)) - brk
-    font_ps = _sv_or(st, "font")
+    style_values = read_style(st)
+    font_ps = style_values.font
     return SubsInputs(
         subs=subs, hl=hl, brk=brk, cnt=cnt, joins=joins,
-        font_ps=font_ps, hl_font_ps=st.get("hl_font") or font_ps,
-        sub_case=(_sv_or(st, "sub_case")).strip(),
-        sub_words_per_row=max(1, int(_sv_or(st, "sub_words_per_row"))),
-        sub_rows_max=max(1, int(_sv_or(st, "sub_rows_max"))),
+        font_ps=font_ps, hl_font_ps=style_values.hl_font or font_ps,
         width=meta["w"], height=meta["h"], fps=meta["fps"] or 60, cams=cams,
-        word_timings=None, st=st, sv=_sv, sv_or=_sv_or,
+        word_timings=None, style=style_values,
         accent_word=_accent_word, parse_count=_parse_intro_count)
 
 
@@ -82,7 +80,7 @@ def _check(xml, **kw):
     assert sp.hl_blur_decl == ae["hl_blur_decl"]
     assert sp.hl_blur_fn == ae["hl_blur_fn"]
     assert sp.hl_short_fn == ae["hl_short_fn"]
-    # геометрия полосы: её читают план (предпросмотр), шаблон и окна интро (задание MH)
+    # геометрия полосы: её читают план (предпросмотр), шаблон и окна интро
     assert sp.hl_blur_on == plan["hl_blur"]
     assert sp.sub_scale == plan["sub_scale"]
     assert sp.posy == plan["posy"]
@@ -116,7 +114,7 @@ def test_plan_subs_matches_scene_plan_words(xml_subs):
 
 
 def test_plan_subs_matches_scene_plan_rows(xml_subs):
-    """Режим строк: раскладка по строкам, стопка подряд жёлтых, короткие жёлтые (MA/MN)."""
+    """Режим строк: раскладка по строкам, стопка подряд жёлтых, короткие жёлтые."""
     plan, sp = _check(xml_subs,
                       style={"sub_words_per_row": 3, "sub_rows_max": 2,
                              "hl_row_stack": True, "hl_blur": True},

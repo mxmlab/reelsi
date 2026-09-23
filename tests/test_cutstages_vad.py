@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты ветки «паузы по громкости»: построение opts для reelsi.py (задание GF).
+"""Тесты ветки «паузы по громкости»: построение opts для reelsi.py.
 
 ПОЧЕМУ этот тест существует:
 Ветку нарезки по энергии звука (reelsi.py / VAD) перевели на серверное построение opts

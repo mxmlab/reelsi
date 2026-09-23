@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты единого User-Agent во всех исходящих HTTP-запросах (задание GA).
+"""Тесты единого User-Agent во всех исходящих HTTP-запросах.
 
-1. http_req по умолчанию ставит User-Agent = APP_UA (Reelsi/0.1.0-beta).
+1. http_req по умолчанию ставит User-Agent = APP_UA (Reelsi/0.2.0-beta).
 2. http_req с явным User-Agent (в любом регистре) сохраняет переданный заголовок.
 3. Сторож: отсутствие прямых вызовов urllib.request.Request( в ключевых модулях.
 """

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты единого источника версии (задание DX).
+"""Тесты единого источника версии.
 
 Версия приложения объявлена в app_meta.APP_VERSION и нигде не дублируется константой.
 Этот сторож проверяет:
@@ -25,7 +25,7 @@ import webui
 def test_app_version_defined_and_exported():
     """app_meta.APP_VERSION объявлен и экспортирован в __all__."""
     assert hasattr(app_meta, "APP_VERSION")
-    assert app_meta.APP_VERSION == "0.1.0-beta"
+    assert app_meta.APP_VERSION == "0.2.0-beta"
     assert "APP_VERSION" in app_meta.__all__
 
 

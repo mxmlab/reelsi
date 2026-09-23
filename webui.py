@@ -10,20 +10,24 @@ static/app.css + static/app/*.js (правки фронта — там, серв
 """
 import os, sys, threading, webbrowser
 import json as _json
+
+# Импорт до первого try: сторож `except ReelsiError` ниже обязан видеть это имя.
+from core.umsg import ReelsiError, cli_error
 # Без консоли (пайп/сервис) stdout у Python — cp1251/cp1252: любой print() русского текста
 # (ytmusic «случайная музыка», roto и т.п.) валит запрос UnicodeEncodeError. Чиним на входе.
 for _s in (sys.stdout, sys.stderr):
     try:
         _s.reconfigure(encoding="utf-8", errors="replace")
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # поток без reconfigure — печатаем с errors=replace
 HERE = os.path.dirname(os.path.abspath(__file__))
 from flask import Flask
 from api import bp, DEFAULT_BASE
 from core.app_meta import app_js_files, APP_VERSION, ui_lang, dict_en_json, I18N_FILE
 
 app = Flask(__name__)
-# Защита от исчерпания памяти при отправке гигантских тел (задание HU).
+# Защита от исчерпания памяти при отправке гигантских тел.
 # Загрузок файлов нет — только JSON. Крупнейшие реальные JSON-тела (ui_state, наборы
 # рендера) занимают не более нескольких мегабайт, ссылки в генерации видео — URL,
 # поэтому 32 МБ даёт надёжный запас. 413 отдаёт JSON через @bp.errorhandler(Exception).
@@ -92,16 +96,18 @@ def _cleanup_on_exit():
     try:
         from api.jobs import _kill_curproc
         _kill_curproc()
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # активных процессов нет — гасить нечего
     try:
         from api.render import RPROC, RLOCK, _kill_proc
         with RLOCK:
             p = RPROC
         if p and getattr(p, "poll", lambda: None)() is None:
             _kill_proc(p)
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # рендер не запущен — гасить нечего
 
 
 def main():
@@ -126,4 +132,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except ReelsiError as e:
+        cli_error(e)

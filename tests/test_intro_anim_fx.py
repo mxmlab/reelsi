@@ -9,7 +9,7 @@
     с указанными значениями (+0.0, +0.05, +0.1, +0.1417, +0.1833, +0.225, +0.2667);
   * anim=="reveal" — есть Percent Offset -100/100, Scale 3D [11,11,91.66667],
     Blur 26.8->0 и Scale слоя 70->100;
-  * fx=="glow" — есть Glow 149 / 77 / 0.62 без Blur (жёлтая строка — ещё и Tritone, задание G);
+  * fx=="glow" — есть Glow 149 / 77 / 0.62 без Blur (жёлтая строка — ещё и Tritone);
   * прекомп с глитчем внутри получает Glow 211 / 93 / 0.42, прекомп без глитча — 42 и
     INTRO_GLOW, как раньше; группе со свечением без глитча Glo2 не добавляется вовсе;
   * сборка .jsx с глитчем проходит проверку синтаксиса через verify_jsx.check_syntax и node --check.
@@ -149,13 +149,19 @@ def test_anim_reveal_with_back(xml_subs, tmp_path):
     ]
     jsx, _ = _build(xml_subs, tmp_path, intro)
     assert "BACK_SCALE=0.69" in jsx
-    assert "introAnimFX(wl[wj2], tw, ln.anim, ln.fx, ww[wj2], null, null, ln.back, ln.color);" in jsx
-    assert "sc.setValueAtTime(t0,[s0,s0]); sc.setValueAtTime(t0+F_DUR,[s1,s1]);" in jsx
-    assert "sc.setValueAtTime(t0,[70,70]); sc.setValueAtTime(t0+F_DUR,[100,100]);" in jsx
+    # хвост вызова — либо «);», либо «, introSQ(gI,qi,wj2));»: фикстура плотная (вторая
+    # группа через 0.5 с после глитч-слова), и подрезка окна под старт следующей группы
+    # сжимает появление слова множителем INTRO_SQ. Само правило сжатия стережёт
+    # test_intro_sub_fade, здесь — ветка reveal+back.
+    assert "introAnimFX(wl[wj2], tw, ln.anim, ln.fx, ww[wj2], null, null, ln.back, ln.color" in jsx
+    # у той же плотной фикстуры ключи играют с множителем SQ (см. выше): длительность
+    # появления строки — F_DUR*SQ, база и цель скейла те же (0.7*BACK_SCALE -> BACK_SCALE)
+    assert "sc.setValueAtTime(t0,[s0,s0]); sc.setValueAtTime(t0+F_DUR*SQ,[s1,s1]);" in jsx
+    assert "sc.setValueAtTime(t0,[70,70]); sc.setValueAtTime(t0+F_DUR*SQ,[100,100]);" in jsx
 
 
 def test_fx_glow(xml_subs, tmp_path):
-    """fx=='glow': статичное свечение (Glow 149/77/0.62, без Blur — задание G)."""
+    """fx=='glow': статичное свечение (Glow 149/77/0.62, без Blur)."""
     intro = [
         dict(words=["ПЕРВОЕ"], color="white", times=[T_CAM1], fx="glow"),
         dict(words=["СДО*НУТЬ"], color="white", times=[T_CAM2])
@@ -341,7 +347,7 @@ def test_anim_count_1500(xml_subs, tmp_path):
     g1, g2 = _groups(jsx)
     assert g1[0].get("anim") == "count"
     assert g1[0].get("cnt") == 1500
-    assert g1[0].get("expr") == 'Math.round(effect("Slider Control")("Slider"))'
+    assert g1[0].get("expr") == 'Math.round(effect("Slider Control")("Slider").value)'
     assert "anim" not in g2[0]
 
     # Slider Control и ключи 0 и 1500
@@ -350,8 +356,8 @@ def test_anim_count_1500(xml_subs, tmp_path):
     assert "slP.setValueAtTime(t0,0);" in jsx
     assert "slP.setValueAtTime(t0+HL_DUR,target);" in jsx
 
-    # Выражение с Math.round в .jsx
-    assert 'Math.round(effect(\\"Slider Control\\")(\\"Slider\\"))' in jsx
+    # Выражение с Math.round в .jsx (.value — иначе в AE toFixed не функция)
+    assert 'Math.round(effect(\\"Slider Control\\")(\\"Slider\\").value)' in jsx
 
     # Opacity 0->100 за HL_DUR с easePair
     assert "op.setValueAtTime(t0,0); op.setValueAtTime(t0+HL_DUR,100); easePair(op);" in jsx
@@ -368,10 +374,34 @@ def test_anim_count_decimal_comma(xml_subs, tmp_path):
     assert g1[0].get("anim") == "count"
     assert g1[0].get("cnt") == 12.5
     assert g1[0].get("dec") == 1
-    assert g1[0].get("expr") == '(effect("Slider Control")("Slider")).toFixed(1).replace(".", ",")'
+    assert g1[0].get("expr") == 'effect("Slider Control")("Slider").value.toFixed(1).replace(".", ",")'
 
     assert 'toFixed(1).replace(\\".\\", \\",\\")' in jsx
     assert "op.setValueAtTime(t0,0); op.setValueAtTime(t0+HL_DUR,100); easePair(op);" in jsx
+
+
+def test_anim_count_decimal_value_via_property(xml_subs, tmp_path):
+    """Счётчик '5,2': значение берётся через .value — на объекте Property нет toFixed.
+
+    `effect("Slider Control")("Slider")` — объект Property, а не число: без `.value`
+    выражение падало в AE («toFixed is not a function») и слой показывал ошибку вместо
+    числа. Целые числа это не задевало — их спасал неявный привод в Math.round.
+    """
+    intro = [
+        dict(words=["5,2"], color="white", times=[T_CAM1], anim="count"),
+        dict(words=["СДО*НУТЬ"], color="white", times=[T_CAM2])
+    ]
+    jsx, _ = _build(xml_subs, tmp_path, intro)
+    g1, _ = _groups(jsx)
+    assert g1[0].get("cnt") == 5.2
+    assert g1[0].get("dec") == 1
+
+    expr = g1[0].get("expr")
+    assert ".value.toFixed(1)" in expr
+    assert '")).toFixed(' not in expr, "старая форма: toFixed зовётся на объекте Property"
+    # То же в самом .jsx: кавычки выражения там экранированы, поэтому ищем с ними.
+    assert '.value.toFixed(1)' in jsx
+    assert '(\\"Slider\\")).toFixed(' not in jsx, "в сборке осталась старая форма выражения"
 
 
 def test_anim_count_decimal_dot(xml_subs, tmp_path):
@@ -385,7 +415,7 @@ def test_anim_count_decimal_dot(xml_subs, tmp_path):
     assert g1[0].get("anim") == "count"
     assert g1[0].get("cnt") == 3.75
     assert g1[0].get("dec") == 2
-    assert g1[0].get("expr") == '(effect("Slider Control")("Slider")).toFixed(2)'
+    assert g1[0].get("expr") == 'effect("Slider Control")("Slider").value.toFixed(2)'
 
     assert 'toFixed(2)' in jsx
     assert '.replace' not in g1[0].get("expr", "")
@@ -401,9 +431,9 @@ def test_anim_count_auto_dec_integer(xml_subs, tmp_path):
     g1, _ = _groups(jsx)
     assert g1[0].get("cnt") == 1500
     assert g1[0].get("dec") == 0
-    assert g1[0].get("expr") == 'Math.round(effect("Slider Control")("Slider"))'
+    assert g1[0].get("expr") == 'Math.round(effect("Slider Control")("Slider").value)'
 
-    assert 'Math.round(effect(\\"Slider Control\\")(\\"Slider\\"))' in jsx
+    assert 'Math.round(effect(\\"Slider Control\\")(\\"Slider\\").value)' in jsx
 
 
 def test_anim_count_auto_dec_float(xml_subs, tmp_path):
@@ -416,10 +446,10 @@ def test_anim_count_auto_dec_float(xml_subs, tmp_path):
     g1, g2 = _groups(jsx)
     assert g1[0].get("cnt") == 2.5
     assert g1[0].get("dec") == 1
-    assert g1[0].get("expr") == '(effect("Slider Control")("Slider")).toFixed(1)'
+    assert g1[0].get("expr") == 'effect("Slider Control")("Slider").value.toFixed(1)'
     assert g2[0].get("cnt") == 2.5
     assert g2[0].get("dec") == 1
-    assert g2[0].get("expr") == '(effect("Slider Control")("Slider")).toFixed(1).replace(".", ",")'
+    assert g2[0].get("expr") == 'effect("Slider Control")("Slider").value.toFixed(1).replace(".", ",")'
 
 
 def test_anim_count_thousands_space(xml_subs, tmp_path):
@@ -432,8 +462,8 @@ def test_anim_count_thousands_space(xml_subs, tmp_path):
     g1, _ = _groups(jsx)
     assert g1[0].get("cnt") == 1500
     assert g1[0].get("dec") == 0
-    assert g1[0].get("expr") == 'Math.round(effect("Slider Control")("Slider"))'
-    assert 'Math.round(effect(\\"Slider Control\\")(\\"Slider\\"))' in jsx
+    assert g1[0].get("expr") == 'Math.round(effect("Slider Control")("Slider").value)'
+    assert 'Math.round(effect(\\"Slider Control\\")(\\"Slider\\").value)' in jsx
 
 
 def test_anim_count_non_number(xml_subs, tmp_path):
@@ -464,7 +494,7 @@ def test_anim_count_line_mode(xml_subs, tmp_path):
     jsx_num, _ = _build(xml_subs, tmp_path, intro_num, mode="line", name="line_count.jsx")
     assert "introAnimFX(Ll, t0l, ln.anim, ln.fx, null, ln.cnt, ln.expr, null, ln.color);" in jsx_num
     assert '"ADBE Slider Control"' in jsx_num
-    assert 'Math.round(effect(\\"Slider Control\\")(\\"Slider\\"))' in jsx_num
+    assert 'Math.round(effect(\\"Slider Control\\")(\\"Slider\\").value)' in jsx_num
     assert "op.setValueAtTime(t0,0); op.setValueAtTime(t0+HL_DUR,100); easePair(op);" in jsx_num
 
     # Не-число в line mode: никакого Slider Control, обычный фейд
@@ -508,7 +538,7 @@ def test_anim_glitch_авто_тень_и_свечение_без_галочки
     assert 'if(ln.anim=="glitch"||ln.back) introWordShadow(' in jsx
 
     # anim=="glitch" САМ приносит Gaussian Blur 3.4 и Glow 149 / 77 / 0.62 без выставления fx;
-    # ветка глитча и ветка свечения разделены (у свечения Blur нет — задание G)
+    # ветка глитча и ветка свечения разделены (у свечения Blur нет)
     assert 'if(anim=="glitch"){' in jsx
     assert '} else if(fx=="glow"){' in jsx
     assert 'setP(fxGb,"ADBE Gaussian Blur 2-0001",3.4);' in jsx
@@ -519,7 +549,7 @@ def test_anim_glitch_авто_тень_и_свечение_без_галочки
 
 def test_fx_glow_авто_тень_без_галочки_intro_shadow(xml_subs, tmp_path):
     """fx=='glow' при intro_shadow=False тени НЕ получает: автотень осталась только у
-    anim=='glitch' и у строк заднего плана (задание G — свечение её больше не приносит)."""
+    anim=='glitch' и у строк заднего плана (свечение её больше не приносит)."""
     intro = [
         dict(words=["СВЕЧЕНИЕ"], color="white", times=[T_CAM1], fx="glow"),
         dict(words=["ОБЫЧНОЕ"], color="white", times=[T_CAM2])
@@ -574,7 +604,7 @@ def test_одновременные_glitch_и_glow_добавляют_эффек
 
 def test_прекомп_только_с_glow_получает_мягкий_glow(xml_subs, tmp_path):
     """Прекомп с fx=='glow' без anim=='glitch' Glo2 не получает: усиленный Glow 211/93/0.42
-    на мастере включается ТОЛЬКО глитчем (задание G) — иначе свечение пересвечивало картинку."""
+    на мастере включается ТОЛЬКО глитчем — иначе свечение пересвечивало картинку."""
     intro = [
         dict(words=["ТОЛЬКО"], color="white", times=[T_CAM1], fx="glow"),
         dict(words=["БЕЗ ГЛИТЧА"], color="white", times=[T_CAM2])
@@ -582,7 +612,7 @@ def test_прекомп_только_с_glow_получает_мягкий_glow(
     jsx, _ = _build(xml_subs, tmp_path, intro)
 
     # grpGlitch — только по anim=="glitch", свечение идёт в grpGlow; группа «только свечение»
-    # Glo2 на прекомпе не получает вовсе (задание G): эффект добавляется под условием
+    # Glo2 на прекомпе не получает вовсе: эффект добавляется под условием
     # grpGlitch || !grpGlow, иначе пересвет.
     assert 'if(GRP[gck].anim=="glitch") grpGlitch=true;' in jsx
     assert 'if(GRP[gck].fx=="glow") grpGlow=true;' in jsx
@@ -635,7 +665,7 @@ def test_count_сочетается_с_глитчем_и_свечением(xml_
 
     # Slider Control от счётчика
     assert '"ADBE Slider Control"' in jsx
-    assert 'Math.round(effect(\\"Slider Control\\")(\\"Slider\\"))' in jsx
+    assert 'Math.round(effect(\\"Slider Control\\")(\\"Slider\\").value)' in jsx
 
     # Glitch Text Animator
     assert '"ADBE Text Randomize Order"' in jsx
@@ -763,7 +793,11 @@ def test_последний_прекомп_с_глитчем_полка_доль
 
 
 def test_прекомп_без_глитча_не_изменился(xml_subs, tmp_path):
-    """Без глитча: окно te прежнее, fade 0.35, .jsx прежний (INTRO_FX в шаблон не уезжает)."""
+    """Без глитча: окно te прежнее, fade 0.35, и те же числа уезжают в .jsx (INTRO_FX).
+
+    INTRO_FX с задания «окна групп не накладываются» — общий механизм: окно считает
+    Python ВСЕМ группам, а не только глитчевым (в шаблоне второй копии формулы нет).
+    Без глитча окна групп не меняются — прежняя формула inAt/outEnd и есть их числа."""
     intro = [
         dict(words=["ПЕРВОЕ"], color="white", times=[2.0]),
         dict(words=["ВТОРОЕ"], color="white", times=[8.3]),
@@ -775,8 +809,10 @@ def test_прекомп_без_глитча_не_изменился(xml_subs, tm
     assert g1["ts"] == 8.3 and g1["te"] == 10.35 and g1["fade"] == 0.35
 
     jsx, _ = _build(xml_subs, tmp_path, intro)
-    assert "var INTRO_FX=" not in jsx
-    assert "outStart=INTRO_FX" not in jsx
+    # окно окна группы: [начало затухания = te − fade, конец слоя = te], вторые группы
+    # далеко (8.3 > 2.75) — подрезки под старт следующей нет, числа прежние
+    assert "var INTRO_FX=[[2.4,2.75],[10,10.35]];" in jsx
+    assert "if (INTRO_FX[gI]){ outStart=INTRO_FX[gI][0]; outEnd=INTRO_FX[gI][1]; }" in jsx
 
 
 def test_прекомп_с_глитчем_окна_уезжают_в_jsx(xml_subs, tmp_path):
@@ -786,6 +822,28 @@ def test_прекомп_с_глитчем_окна_уезжают_в_jsx(xml_sub
         dict(words=["БЛИЗКО"], color="white", times=[5.0]),
     ]
     jsx, _ = _build(xml_subs, tmp_path, intro)
-    # из test_прекомп_с_глитчем_полка_не_раньше_конца_анимации: [[2.89, 3.24], null]
-    assert "var INTRO_FX=[[2.89,3.24],null];" in jsx
+    # из test_прекомп_с_глитчем_полка_не_раньше_конца_анимации: глитч-группа [2.89, 3.24];
+    # вторая группа — последняя, её окно своё (te = 5.0 + 0.3 + 1.0 + 0.75, fade 0.35)
+    assert "var INTRO_FX=[[2.89,3.24],[6.7,7.05]];" in jsx
     assert "if (INTRO_FX[gI]){ outStart=INTRO_FX[gI][0]; outEnd=INTRO_FX[gI][1]; }" in jsx
+
+
+def test_у_каждого_блюра_погашен_повтор_краёв(xml_subs, tmp_path):
+    """У КАЖДОГО Gaussian Blur сборки выключена галка «Repeat Edge Pixels» (…-0003).
+
+    В AE галка включена по умолчанию и портит края текста, поэтому код гасит её у всех
+    блюров, какие добавляет. Сборка несёт все три источника разом: анимации glitch и
+    reveal плюс размытие на старте (start_blur). Сколько раз эффект добавлен — столько
+    раз и погашен: считаем вхождения matchName и вхождения «…-0003 = 0».
+    """
+    intro = [
+        dict(words=["ГЛИТЧ"], color="white", times=[T_CAM1], anim="glitch"),
+        dict(words=["РАСКРЫТИЕ"], color="white", times=[T_CAM2], anim="reveal"),
+    ]
+    jsx, _ = _build(xml_subs, tmp_path, intro,
+                    style={"start_blur": 25, "start_blur_dur": 0.52}, name="blur_off.jsx")
+
+    adds = len(re.findall(r'ADBE Gaussian Blur 2"', jsx))
+    offs = len(re.findall(r'ADBE Gaussian Blur 2-0003"(?:,0|\)\.setValue\(0\))', jsx))
+    assert adds >= 3, "в сборке нет всех блюров: глитч, reveal, размытие на старте"
+    assert offs == adds, f"у {adds - offs} блюров галка «Repeat Edge Pixels» осталась включённой"

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты к заданию IY (круг 9): ядро.
+"""Тесты (круг 9): ядро.
 
 1. Отбраковка вставок: не-числовой start_sec получает шанс в _snap_to_phrase.
    Вставка с start_sec: NaN и цитатой из ленты остаётся со стартом цитаты;

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
-"""Тесты для задания DD: анимация вставок «rise» и уход субтитров."""
+"""Тесты: анимация вставок «rise» и уход субтитров."""
 
 import gzip
 import os

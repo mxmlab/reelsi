@@ -71,8 +71,8 @@ def _jobs(xmls, outdir):
 
 
 def _norm(jobs):
-    """api_render_run нормализует набор ДО ответа, а в поток отдаёт уже готовый
-    (задание HU), поэтому и прямой вызов диспетчера в тесте получает тот же вид,
+    """api_render_run нормализует набор ДО ответа, а в поток отдаёт уже готовый,
+    поэтому и прямой вызов диспетчера в тесте получает тот же вид,
     что в бою, — нормализованный."""
     from api.build import _norm_build_jobs
     return _norm_build_jobs(jobs)
@@ -103,12 +103,12 @@ def _log_text(rjob):
 def _env(monkeypatch, tmp_path):
     monkeypatch.setenv("REELSI_RENDER_STATS", str(tmp_path / "stats.json"))
     monkeypatch.setattr(
-        render, "_find_ae",
+        render, "find_ae",
         lambda: ("fake_AfterFX.exe", "fake_aerender.exe", "Adobe After Effects 2026")
     )
     # Открытая копия After Effects останавливает прогон ДО запуска AfterFX (задание
     # AE-Hygiene) — в тесте AE «закрыт», иначе результат зависел бы от машины.
-    monkeypatch.setattr(render, "_ae_running", lambda: False)
+    monkeypatch.setattr(render, "ae_running", lambda: False)
 
 
 # ---------------- (a,b) build_combined: comps_global, бины, имена композиций -------
@@ -144,7 +144,7 @@ def test_combined_build_default_byte_identical(xmls, tmp_path):
     emit = lambda *a, **k: None  # noqa: E731
     p_new, n = xml2ae.build_combined(jobs, str(tmp_path / "all.jsx"), emit=emit)
     assert n == 2
-    # «старое» поведение, собранное вручную, как build_combined собирал до задания C
+    # «старое» поведение, собранное вручную, как build_combined собирал раньше
     parts = []
     for j in jobs:
         kw = {k: v for k, v in j.items() if k != "xml_path"}
@@ -301,7 +301,7 @@ def test_render_combined_collects_one_file_and_master_single_path(xmls, tmp_path
     assert master.count(combined_jp.replace("\\", "/")) == 1, (
         "мастер должен получить ровно один путь — Reelsi_all.jsx")
     assert "01_C0233.jsx" not in master and "02_C0234.jsx" not in master
-    # «сборка проекта» — stage_total == 2 (по роликам набора), значения 1 нет (задание HC)
+    # «сборка проекта» — stage_total == 2 (по роликам набора), значения 1 нет
     project_steps = [st for _p, lbl, _sd, st in history if lbl == "сборка проекта"]
     assert project_steps and all(st == 2 for st in project_steps), (
         f"на этапе «сборка проекта» stage_total обязан быть 2: {project_steps}")
@@ -389,8 +389,8 @@ def test_start_render_does_not_send_mode_and_build_multi_reads_radio():
 
 def test_run_render_job_multiple_clips_always_calls_combined(tmp_path, monkeypatch):
     """_run_render_job с двумя роликами уходит в _run_render_combined и ни в какой
-    другой путь (задание GQ: решение пользователя 2026-09-11; клипового пути
-    _run_render_batch в коде нет — задание HO)."""
+    другой путь (решение пользователя 2026-09-11; клипового пути
+    _run_render_batch в коде нет)."""
     f1 = tmp_path / "01.xml"
     f2 = tmp_path / "02.xml"
     f1.write_text("<xml/>", encoding="utf-8")

@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Контракт таймаута генерации картинок и журнала ИИ-вызовов (задание IJ + дополнение 1).
+"""Контракт таймаута генерации картинок и журнала ИИ-вызовов (+ дополнение 1).
 
 1. Таймаут 40 с для Image API (_gen_image_openrouter, IMAGES_API_TIMEOUT_S)
    и 90 с для Chat completions (_gen_image_chat, IMAGE_TIMEOUT_S).
 2. При таймауте Image API происходит откат на Chat completions с emit-сообщением.
-3. При таймауте обоих путей поднимается SystemExit(umsg('img_timeout', ...))
+3. При таймауте обоих путей поднимается ReelsiError(umsg('img_timeout', ...))
    без повторных попыток запроса.
 4. gen_image логирует каждый вызов в ai_calls.jsonl (step='image', ok=True/False,
    ms=..., err=...).
@@ -28,7 +28,7 @@ sys.path.insert(0, ROOT)
 
 from core import aicut  # noqa: E402
 from core.aicut import config, images, llm  # noqa: E402
-from core.umsg import UMsg  # noqa: E402
+from core.umsg import ReelsiError, UMsg  # noqa: E402
 
 
 @pytest.fixture(autouse=True)
@@ -121,7 +121,7 @@ def test_images_timeout_fallback_to_chat_success(dummy_profile, _isolate_ai_log,
 
 
 def test_both_paths_timeout_raises_img_timeout(dummy_profile, _isolate_ai_log, monkeypatch):
-    """Оба пути бросают TimeoutError -> SystemExit с кодом img_timeout,
+    """Оба пути бросают TimeoutError -> ReelsiError с кодом img_timeout,
     каждый путь вызван ровно 1 раз, запись ok=False в журнале."""
     calls = []
 
@@ -132,10 +132,10 @@ def test_both_paths_timeout_raises_img_timeout(dummy_profile, _isolate_ai_log, m
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
 
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(ReelsiError) as exc_info:
         images.gen_image("prompt", prof=dummy_profile, retries=2)
 
-    err = exc_info.value.code
+    err = exc_info.value.umsg
     assert isinstance(err, UMsg), "ошибка должна быть UMsg"
     assert err.code == "img_timeout"
     assert "90" in str(exc_info.value), f"str(исключения) должно содержать число секунд: {exc_info.value}"
@@ -152,7 +152,7 @@ def test_both_paths_timeout_raises_img_timeout(dummy_profile, _isolate_ai_log, m
 
 
 def test_both_paths_socket_timeout_and_urlerror(dummy_profile, _isolate_ai_log, monkeypatch):
-    """socket.timeout и URLError(timeout) на обоих путях также дают SystemExit(img_timeout)."""
+    """socket.timeout и URLError(timeout) на обоих путях также дают ReelsiError(img_timeout)."""
     calls = []
 
     def fake_urlopen(req, timeout=None):
@@ -162,10 +162,10 @@ def test_both_paths_socket_timeout_and_urlerror(dummy_profile, _isolate_ai_log, 
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
 
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(ReelsiError) as exc_info:
         images.gen_image("prompt", prof=dummy_profile, retries=2)
 
-    err = exc_info.value.code
+    err = exc_info.value.umsg
     assert isinstance(err, UMsg)
     assert err.code == "img_timeout"
     assert "90" in str(exc_info.value)
@@ -267,10 +267,10 @@ def test_gen_image_fallback_to_chat_receives_timeout_90_and_logs(dummy_profile, 
 
 
 def test_img_cancellation_logs_ok_false(dummy_profile, _isolate_ai_log, monkeypatch):
-    """Отмена (cancelled()) поднимает SystemExit и пишет ok=False в журнал."""
+    """Отмена (cancelled()) поднимает ReelsiError и пишет ok=False в журнал."""
     monkeypatch.setattr(images, "cancelled", lambda: True)
 
-    with pytest.raises(SystemExit):
+    with pytest.raises(ReelsiError):
         images.gen_image("prompt", prof=dummy_profile)
 
     entries = _read_log_entries(_isolate_ai_log)

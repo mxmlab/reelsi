@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Предпросмотр шага 3 рисует ПЛАН сцены (задание D).
+"""Предпросмотр шага 3 рисует ПЛАН сцены.
 
 Главное правило серии заданий — у значения один источник: предпросмотр берёт всё из
 /api/scene и ничего не досчитывает. Здесь:
@@ -57,7 +57,7 @@ def _run_node(script):
 
 @node
 def test_ae_ease_pair_to_css_bezier():
-    """Пара влияний 35/90 даёт cubic-bezier(0.35, 0, 0.10, 1) — формула из шага 5 задания D."""
+    """Пара влияний 35/90 даёт cubic-bezier(0.35, 0, 0.10, 1) — формула из шага 5."""
     src = app_meta.app_js_text()
     out = _run_node("%s\nconsole.log(JSON.stringify(aeEase(35,90)));" % _func(src, "aeEase"))
     assert out == pytest.approx([0.35, 0, 0.10, 1], abs=1e-9)

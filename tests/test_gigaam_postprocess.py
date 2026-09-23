@@ -103,7 +103,7 @@ def test_decide_golden_markup_examples(monkeypatch):
 def run_pp(words, kept_idx, silence="auto", dedupe=True):
     """Пост-проход + текст итоговых кусков ('|' = граница куска в таймлайне).
     По умолчанию границы тишины считаются как в бою (_silence_bounds).
-    dedupe — флаг чистки дублей (задание CA): True = как раньше, False = только
+    dedupe — флаг чистки дублей: True = как раньше, False = только
     модель (пост-проход не режет дубли, остаётся только механика резов)."""
     if silence == "auto":
         silence = gc._silence_bounds(words)
@@ -117,7 +117,7 @@ def run_pp(words, kept_idx, silence="auto", dedupe=True):
 
 def test_adjacent_repeat_keeps_last():
     """dedupe=True — повтор чистится (последний заход остаётся); dedupe=False —
-    решает только модель, повтор остаётся как есть (задание CA)."""
+    решает только модель, повтор остаётся как есть."""
     words = mk("в организме в организме резко взлетает")
     assert run_pp(words, range(len(words))) == "в организме резко взлетает"
     assert run_pp(words, range(len(words)), dedupe=False) == \
@@ -402,7 +402,7 @@ def test_noop_on_clean_text(fn):
 
 
 # --------------------------------------------------------------------------- #
-# keep_parallel_runs (задание BB): анафора и антитеза не уходят в drop.
+# keep_parallel_runs: анафора и антитеза не уходят в drop.
 # --------------------------------------------------------------------------- #
 def pp_keep(words, drop_idx):
     """Что останется в drop после keep_parallel_runs."""
@@ -485,7 +485,7 @@ def test_anaphora_survives_postprocess_order():
 
 
 # --------------------------------------------------------------------------- #
-# dedupe-флаг (задание CA): выключено — чистки дублей не зовутся вовсе.
+# dedupe-флаг: выключено — чистки дублей не зовутся вовсе.
 # --------------------------------------------------------------------------- #
 def test_dedupe_off_skips_dedupe_cleanups(monkeypatch):
     """dedupe=False — force_takes/dedupe_repeats/dedupe_fragments/drop_truncated
@@ -508,7 +508,7 @@ def test_dedupe_off_skips_dedupe_cleanups(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# rule в .cuts.json (задание CA): кто снял кусок, видно в каждой записи.
+# rule в .cuts.json: кто снял кусок, видно в каждой записи.
 # --------------------------------------------------------------------------- #
 def test_cutlog_rule_on_every_record():
     """Каждая запись .cuts.json (gigaam-путь) несёт rule — имя функции/источника,
@@ -530,7 +530,7 @@ def test_cutlog_rule_on_every_record():
 
 def test_cutlog_structure_preserved_except_rule():
     """Структура записей при включённой чистке не меняется: ровно те же поля и
-    значения, что писались до задания CA, плюс rule — «совпадает побайтово,
+    значения, что писались раньше, плюс rule — «совпадает побайтово,
     кроме rule» на уровне записи."""
     words = mk("и список самых опасных и список для прически")
     kept, drop = set(range(len(words))), set()

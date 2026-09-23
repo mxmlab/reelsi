@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Сторож распила scene_plan: звук (задание MU, этап 4).
+"""Сторож распила scene_plan: звук (этап 4).
 
 Звук уехал из `scene_plan` в `core/xml2ae/plan_audio.py` одной дверью `plan_audio`:
 SFX (поп жёлтых, глитч по группам подряд идущих слов, whoosh и переход на катах, ризер),
@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 
 from core import assets, styles, xml2ae  # noqa: E402
 from core.xml2ae import build as build_mod  # noqa: E402
-from core.xml2ae.build import _sv, _sv_or  # noqa: E402
+from core.xml2ae.build import read_style  # noqa: E402
 from core.xml2ae.jsutil import _jd, _js, _r  # noqa: E402
 from core.xml2ae.layout import _cam_change_frames, _project_base  # noqa: E402
 from core.xml2ae.plan_audio import AudioInputs, plan_audio  # noqa: E402
@@ -149,22 +149,23 @@ def _door(xml, ckpt=None, **kw):
     st = styles.resolve(dict(kw.get("style") or {}))
     fps = meta["fps"] or 60
     hl = set(int(x) for x in (kw.get("highlights") or []) if 0 <= int(x) < len(subs))
+    style_values = read_style(st)
     ins = plan_insert_timings(InsertTimingInputs(
         inserts=[dict(x) for x in (kw.get("inserts") or [])], fps=fps,
         cam_change_sec=[f / fps for f in _cam_change_frames(cams)],
         active_cam_at=lambda t: _active_cam_at(cams, t, fps),
-        st=st, sv=_sv, sv_or=_sv_or, emit=lambda *a, **k: None)).inserts
+        style=style_values, emit=lambda *a, **k: None)).inserts
     # Галка ризера: стиль перебивает kwarg (правило scene_plan, до вызова блока).
     intro_riser = bool(kw.get("intro_riser", True))
-    if st.get("intro_riser") is not None:
-        intro_riser = bool(st["intro_riser"])
+    if style_values.intro_riser is not None:
+        intro_riser = bool(style_values.intro_riser)
     groups = _intro_groups(kw.get("intro"), kw.get("intro_splits"))
     return plan_audio(AudioInputs(
         intro_groups=groups,
         any_glitch=any(x.get("anim") == "glitch" for g in groups for x in g),
         inserts=ins, subs=subs, hl=hl,
         cam_change_sec=[f / fps for f in _cam_change_frames(cams)], fps=fps,
-        st=st, sv=_sv, sv_or=_sv_or, aset=_aset(xml), intro_riser=intro_riser,
+        style=style_values, aset=_aset(xml), intro_riser=intro_riser,
         music=kw.get("music"), music_random=bool(kw.get("music_random")),
         music_dir=kw.get("music_dir"), base=_project_base(xml), xml_path=xml,
         censor_source=list(subs), censor_audio=bool(kw.get("censor_audio", True)),

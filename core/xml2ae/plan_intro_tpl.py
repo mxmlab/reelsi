@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Подстановки шаблона интро (задание MV, этап 5 распила scene_plan).
+"""Подстановки шаблона интро (этап 5 распила scene_plan).
 
 `scene_plan` был одной функцией на 3253 строки, и её блоки выносились по этапам: субтитры
-(`plan_subs.py`, задание MR), расчёт интро (`plan_intro.py`, MS), вставки (`plan_inserts.py`,
-MT), звук (MU). Этап 5 выносит сюда ТЕКСТОВЫЕ ПОДСТАНОВКИ шаблона интро — готовые строки JS,
+(`plan_subs.py`), расчёт интро (`plan_intro.py`, MS), вставки (`plan_inserts.py`,
+MT), звук. Этап 5 выносит сюда ТЕКСТОВЫЕ ПОДСТАНОВКИ шаблона интро — готовые строки JS,
 которые `scene_plan` кладёт в `plan["_ae"]`, а `template.py` подставляет в AE_FULL:
 
 * цвета текста интро — HL_FILL3, INTRO_FILL/INTRO_HL_FILL, аргумент `cf` и выбор заливки
@@ -15,7 +15,7 @@ MT), звук (MU). Этап 5 выносит сюда ТЕКСТОВЫЕ ПОД
 * маршрутизацию слоёв интро — подъём над видеовставкой (front) и над рото по положению;
 * эффекты появления — функцию `introAnimFX` (глитч, Deep Glow 2, Tritone, свечение строки),
   её вызовы на строке и на слове, свечение жёлтого хайлайта и свечение прекомпа;
-* тень прекомпа интро — своя у камеры 1 и камеры 2 (задание B).
+* тень прекомпа интро — своя у камеры 1 и камеры 2.
 
 Перенос ПОСТРОЧНЫЙ: поведение, числа, порядок операций и ТЕКСТ подстановок не менялись ни
 на байт (проверяется эталоном fixtures/golden_geometry.jsx и побайтовым сравнением
@@ -27,8 +27,9 @@ MT), звук (MU). Этап 5 выносит сюда ТЕКСТОВЫЕ ПОД
 в `build.py` и приходит параметрами: флаги строк (`_any_glitch`/`_any_back`/`_any_big` — их же
 читают ассет и звук глитча), готовые массивы раскладки из `plan_intro`
 (INTRO_LY/LX/LK, ON2, FRONT, ABOVE_ROTO, ANCHOR), таблицы `INTRO_ANIMS` и `DEEP_GLOW2_GLITCH`,
-правило счётчика `_has_valid_count`. Цвета и тень — уже прочитанные числа стиля: второго
-чтения ключей стиля здесь нет.
+правило счётчика `_has_valid_count`. Цвета, тени, свечение и геометрия заднего плана —
+структурой `StyleValues` одним полем `style` (её читает один раз
+`plan_style.read_style`): второго чтения ключей стиля здесь нет.
 """
 import json
 from dataclasses import dataclass
@@ -36,20 +37,26 @@ from typing import Callable
 
 from .jsutil import _fill_js, _jd
 from .plan_intro import IntroPlan
+from .plan_style import StyleValues
 
 
 @dataclass(frozen=True)
 class IntroTplInputs:
     """Вход подстановок: всё, что `scene_plan` знает к моменту вызова.
 
-    Поля названы как локальные переменные scene_plan, а `intro` — результат `plan_intro`
-    (задание MS): из него берутся готовые массивы раскладки и признак сжатия появления.
+    Поля названы как локальные переменные scene_plan, а `intro` — результат `plan_intro`:
+    из него берутся готовые массивы раскладки и признак сжатия появления.
     """
     # Строки групп интро: уже разбиты по splits и отсортированы по таймингу. По ним
     # считаются флаги «есть строка с таким-то anim/fx/цветом» — разбора строк здесь нет.
     groups: list
     # Результат plan_intro: INTRO_LY/LX/LK, ON2, FRONT, ABOVE_ROTO, ANCHOR и sq_used.
     intro: IntroPlan
+    # Точка масштабирования прекомпа (intro_scale_anchor): режим на всю сборку и готовые
+    # числа на группу — Y якоря слоя (px прекомпа) и компенсация Position по Y (px слоя).
+    scale_anchor: str
+    anchor_y: list
+    anchor_dy: list
     # Флаги строк, посчитанные в build.py: их читает не только этот блок (ассет и звук
     # глитча) — второй копии правила нет.
     any_glitch: bool
@@ -58,30 +65,14 @@ class IntroTplInputs:
     # Строки со своим цветом: accent объявляет HL_FILL3, custom — аргумент cf у introDoc.
     accent_color_used: bool
     custom_color_used: bool
-    # Цвета текста интро из стиля: None — ключа нет, подстановка пустая (golden).
-    intro_fill: object
-    intro_hl_fill: object
-    hl_fill3: object
-    # Тёмный ли жёлтый (задания ZN/MK3): решает, ставить ли Tritone и Deep Glow.
+    # Тёмный ли жёлтый: решает, ставить ли Tritone и Deep Glow.
     yellow_dark: bool
     dg_on: bool
-    dg_with_glow: bool
-    # Тень слов и строк интро: галка стиля и числа её пресета (intro_shadow/back_shadow).
-    shadow_on: bool
-    shadow_op: float
-    shadow_dir: float
-    shadow_dist: float
-    shadow_soft: float
-    back_shadow_op: float
-    back_shadow_soft: float
-    # Тень прекомпа интро (задание B): цвет и непрозрачность у камеры 1 и камеры 2.
-    comp_shadow_fill: list
-    comp_shadow_op: float
-    comp_shadow2_fill: list
-    comp_shadow2_op: float
-    # Геометрия заднего плана: шаг строк и их кегль (задания A1/ZO) — числа ветки раскладки.
-    back_step: float
-    back_scale: float
+    # Резолвнутый и прочитанный стиль (plan_style.read_style): цвета текста,
+    # тень слов/строк и прекомпа, свечение (все четыре двери — intro_glitch_glow,
+    # intro_fx_glow и заведённые заданием «glowfix» intro_hl_glow/intro_comp_glow),
+    # галка Deep Glow и геометрия заднего плана.
+    style: StyleValues
     # Таблицы, общие с другими блоками: анимации интро и настройки Deep Glow 2.
     anims: dict
     deep_glow: list
@@ -110,6 +101,11 @@ class IntroTpl:
     # Раскладка строк: Y базовых линий, «большое слева», ветки шага и масштаба.
     ly_decl: str
     lx_decl: str
+    # Точка масштабирования прекомпа (intro_scale_anchor): объявление INTRO_ANCHOR_Y/
+    # INTRO_ANCHOR_DY, добавка компенсации к Position и установка Anchor Point.
+    anchor_decl: str
+    anchor_dy_js: str
+    anchor_set: str
     big_fn: str
     big_qi_vars: str
     big_line_pos: str
@@ -121,7 +117,7 @@ class IntroTpl:
     back_scale_tmp: str
     back_scale_word: str
     back_scale_wpx: str
-    # Маршрутизация слоёв интро: над видеовставкой (front) и над рото по положению (C).
+    # Маршрутизация слоёв интро: над видеовставкой (front) и над рото по положению.
     front_decl: str
     front_arr_decl: str
     front_route: str
@@ -138,7 +134,7 @@ class IntroTpl:
     hl_glow_fn: str
     group_flags: str
     comp_glow: str
-    # Тень прекомпа: готовая строка вызова и (при не-дефолте) её функция (задание B).
+    # Тень прекомпа: готовая строка вызова и (при не-дефолте) её функция.
     comp_shadow: str
     comp_shadow_fn: str
 
@@ -155,24 +151,43 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
     _intro_ly, _intro_lx, _intro_lk = _intro.ly, _intro.lx, _intro.lk
     _intro_front, _intro_above_roto = _intro.front, _intro.above_roto
     _intro_anchor = _intro.anchor
+    _scale_anchor = inp.scale_anchor
+    _anchor_y, _anchor_dy = inp.anchor_y, inp.anchor_dy
     _sq_used = _intro.sq_used
     _any_glitch, _any_back, _any_big = inp.any_glitch, inp.any_back, inp.any_big
     _accent_color_used, _custom_color_used = inp.accent_color_used, inp.custom_color_used
-    intro_fill, intro_hl_fill, hl_fill3 = inp.intro_fill, inp.intro_hl_fill, inp.hl_fill3
-    _yellow_dark, _dg_on, _dg_with_glow = inp.yellow_dark, inp.dg_on, inp.dg_with_glow
-    intro_shadow_on = inp.shadow_on
-    intro_shadow_op, intro_shadow_dir = inp.shadow_op, inp.shadow_dir
-    intro_shadow_dist, intro_shadow_soft = inp.shadow_dist, inp.shadow_soft
-    back_shadow_op, back_shadow_soft = inp.back_shadow_op, inp.back_shadow_soft
-    intro_comp_shadow_fill, intro_comp_shadow_op = inp.comp_shadow_fill, inp.comp_shadow_op
-    intro_comp_shadow2_fill, intro_comp_shadow2_op = inp.comp_shadow2_fill, inp.comp_shadow2_op
-    back_step, back_scale = inp.back_step, inp.back_scale
+    # Стиль — структурой, прочитанной один раз: цвета, тени, свечение
+    # (все четыре двери — intro_glitch_glow/intro_fx_glow и двери «glowfix»
+    # intro_hl_glow/intro_comp_glow), галка Deep Glow и геометрия заднего плана;
+    # имена локальных переменных прежние.
+    style = inp.style
+    intro_fill, intro_hl_fill, hl_fill3 = style.intro_fill, style.intro_hl_fill, style.hl_fill3
+    _yellow_dark, _dg_on, _dg_with_glow = inp.yellow_dark, inp.dg_on, style.dg_with_glow
+    intro_shadow_on = bool(style.intro_shadow)
+    intro_shadow_op, intro_shadow_dir = style.intro_shadow_op, style.intro_shadow_dir
+    intro_shadow_dist, intro_shadow_soft = style.intro_shadow_dist, style.intro_shadow_soft
+    back_shadow_op, back_shadow_soft = style.back_shadow_op, style.back_shadow_soft
+    intro_glitch_shadow, intro_back_shadow = style.intro_glitch_shadow, style.intro_back_shadow
+    intro_glitch_glow, intro_fx_glow = style.intro_glitch_glow, style.intro_fx_glow
+    # Третья и четвёртая двери свечения (задание «glowfix»): галки свечения жёлтого
+    # хайлайта и слоя прекомпа — рядом с соседними ключами свечения, из той же структуры.
+    intro_hl_glow, intro_comp_glow = style.intro_hl_glow, style.intro_comp_glow
+    intro_word_glow_thr, intro_word_glow_rad = style.intro_word_glow_thr, style.intro_word_glow_rad
+    intro_word_glow_int = style.intro_word_glow_int
+    intro_comp_shadow_fill = style.intro_comp_shadow_fill
+    intro_comp_shadow_op = style.intro_comp_shadow_op
+    intro_comp_shadow2_fill = style.intro_comp_shadow2_fill
+    intro_comp_shadow2_op = style.intro_comp_shadow2_op
+    intro_comp_shadow_dir, intro_comp_shadow_dist = (style.intro_comp_shadow_dir,
+                                                     style.intro_comp_shadow_dist)
+    intro_comp_shadow_soft = style.intro_comp_shadow_soft
+    back_step, back_scale = style.back_step, style.back_scale
     INTRO_ANIMS, DEEP_GLOW2_GLITCH = inp.anims, inp.deep_glow
     _has_valid_count = inp.has_valid_count
 
     # Цвета и тень текста интро (новые ключи стиля). Всё выключено при дефолтах — ниже
     # собираются подстановки шаблона так, чтобы при выключенных ключах .jsx не менялся
-    # ни на байт (golden), тем же приёмом, что уже применён для accent_font (задание R).
+    # ни на байт (golden), тем же приёмом, что уже применён для accent_font.
     # HL_FILL3 объявляется, только если строка color=="accent" реально есть в сборке.
     _hlfill3_decl = (", HL_FILL3=%s" % _fill_js(hl_fill3)) if _accent_color_used else ""
     # INTRO_FILL/INTRO_HL_FILL переопределяют белый/жёлтый ТОЛЬКО текста интро — от
@@ -190,7 +205,7 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
     _yellow_expr = "INTRO_HL_FILL" if intro_hl_fill is not None else "HL_FILL"
     # Ставить ли тритон на жёлтую строку — решено выше (_yellow_dark): цвет мидтонов у него
     # тот же, что уезжает в подстановку _yellow_expr, и считается он по переменным сборки,
-    # а не по строке JS (задание ZN). Яркий цвет — тритон выбеливает букву, обе
+    # а не по строке JS. Яркий цвет — тритон выбеливает букву, обе
     # подстановки пустые.
     _fill_inner = _white_expr
     if _custom_color_used:
@@ -207,10 +222,13 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
     _any_count = any(_has_valid_count(x) for g in _intro_groups for x in g)
     _any_fx_glow = any(x.get("fx") == "glow" for g in _intro_groups for x in g)
     _any_intro_yellow = any(x.get("color") == "yellow" for g in _intro_groups for x in g)
-    # Автотень — только у глитча и строк заднего плана. Свечение (fx=="glow") её больше
-    # НЕ приносит: у строки со свечением на слое слова остаются ровно Glo2 и (для жёлтой)
-    # тритон, иначе к свечению подмешивалась тень, которой пользователь не просил.
-    _any_auto_shadow = _any_glitch or _any_back
+    # Автотень — только у глитча и строк заднего плана, и только если её разрешает галка
+    # этого вида строк. Свечение (fx=="glow") её по-прежнему НЕ приносит:
+    # у строки со свечением на слое слова остаются ровно Glo2 и (для жёлтой) тритон,
+    # иначе к свечению подмешивалась тень, которой пользователь не просил.
+    _auto_glitch = _any_glitch and intro_glitch_shadow
+    _auto_back = _any_back and intro_back_shadow
+    _any_auto_shadow = _auto_glitch or _auto_back
     _shadow_needed = intro_shadow_on or _any_auto_shadow
     _anim_fx_used = (
         _any_glitch or _any_reveal or _any_fx_glow
@@ -219,7 +237,11 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
     )
 
     # Тень (Drop Shadow) на КАЖДОМ слове/строке интро — пресет intro_shadow, либо
-    # автоматически для строк с anim=="glitch" и back==True (fx=="glow" — без тени).
+    # автоматически для строк с anim=="glitch" (галка intro_glitch_shadow) и back==True
+    # (intro_back_shadow); fx=="glow" — без тени. Слово, которое и глитч, и строка заднего
+    # плана, получает тень, если разрешена ХОТЬ ОДНА из двух галочек: иначе строка заднего
+    # плана с глитчем теряла бы тень неожиданно. Обе галки на дефолте (True) дают ровно
+    # прежнее условие `ln.anim=="glitch"||ln.back` — .jsx байт в байт как раньше (golden).
     _intro_shadow_decl = (
         "\n    var INTRO_SHADOW_OP=%g, INTRO_SHADOW_DIR=%g, INTRO_SHADOW_DIST=%g, INTRO_SHADOW_SOFT=%g;"
         "\n    var BACK_SHADOW_OP=%g, BACK_SHADOW_SOFT=%g;"
@@ -237,35 +259,62 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
         _intro_word_shadow_line = " introWordShadow(Ll, ln.back);"
         _intro_word_shadow_word = " introWordShadow(L2, ln.back);"
     elif _any_auto_shadow:
-        _intro_word_shadow_line = ' if(ln.anim=="glitch"||ln.back) introWordShadow(Ll, ln.back);'
-        _intro_word_shadow_word = ' if(ln.anim=="glitch"||ln.back) introWordShadow(L2, ln.back);'
+        # Условие собирается из ГАЛОК, а не из факта наличия таких строк в сборке: при обеих
+        # включённых (дефолт) оно выходит ровно прежним `ln.anim=="glitch"||ln.back` в любом
+        # ролике — .jsx байт в байт как раньше. Снятая галка убирает из условия свою ветку.
+        _auto_shadow_cond = "||".join(
+            (['ln.anim=="glitch"'] if intro_glitch_shadow else [])
+            + (["ln.back"] if intro_back_shadow else []))
+        _intro_word_shadow_line = ' if(%s) introWordShadow(Ll, ln.back);' % _auto_shadow_cond
+        _intro_word_shadow_word = ' if(%s) introWordShadow(L2, ln.back);' % _auto_shadow_cond
     else:
         _intro_word_shadow_line = ""
         _intro_word_shadow_word = ""
 
-    # Раскладка строк интро по вертикали (задание A1): готовые Y базовых линий уезжают
+    # Раскладка строк интро по вертикали: готовые Y базовых линий уезжают
     # в .jsx массивом INTRO_LY и берутся оттуда — шаг знает back_step и якорь блока,
     # в шаблоне этого не сосчитать. Массив нужен, если в ролике есть строки
     # заднего плана (там шаг уже не LINE_STEP) ИЛИ хоть одна группа с якорем «first»
-    # (первая строка на месте), ИЛИ группа с большой строкой (задание ZY: Y большой
+    # (первая строка на месте), ИЛИ группа с большой строкой (Y большой
     # строки считает раскладка). Ничего из этого — .jsx прежний байт в байт (golden).
     _any_first = any(a == "first" for a in _intro_anchor)
     _intro_ly_decl = (
         "    var INTRO_LY=%s;    // [группа][строка] — Y базовой линии строки в прекомпе,"
-        " считает Python (задание A1): шаг знает back_step и якорь блока\n"
+        " считает Python: шаг знает back_step и якорь блока\n"
         % _jd(_intro_ly)
     ) if (_any_back or _any_first or _any_big) else ""
-    # Большая строка (задание ZY): левый край каждой строки (px прекомпа от центра) и
+    # Большая строка: левый край каждой строки (px прекомпа от центра) и
     # множитель её кегля — массивами INTRO_LX/INTRO_LK, как INTRO_LY. У строк обычных
     # групп там null. Нет большой строки — объявления нет вовсе, .jsx прежний (golden).
     _intro_lx_decl = (
         "    var INTRO_LX=%s, INTRO_LK=%s;    // [группа][строка] — левый край строки"
         " (px прекомпа от центра) и множитель её кегля: строка с галкой «большое слева»"
-        " встаёт слева крупно, остальные строки — стопкой справа, считает Python (задание ZY)\n"
+        " встаёт слева крупно, остальные строки — стопкой справа, считает Python\n"
         % (_jd(_intro_lx), _jd(_intro_lk))
     ) if _any_big else ""
 
-    # Кусок «большая строка» для шаблона (задание ZY): функции чтения INTRO_LX/INTRO_LK,
+    # Точка масштабирования прекомпа интро (intro_scale_anchor): готовые числа на группу —
+    # Y якоря слоя в прекомпе и компенсация Position по Y. Шаблон только применяет: Anchor
+    # Point ставится в [IW/2, INTRO_ANCHOR_Y[gI]], к Position добавляется
+    # INTRO_ANCHOR_DY[gI]. Всё это нужно, ТОЛЬКО когда режим не дефолтный: при "comp" (центр
+    # композиции прекомпа) ни объявления, ни установки якоря, ни добавки в .jsx нет — файл
+    # прежний байт в байт (golden), тем же приёмом собраны соседние подстановки.
+    _any_scale_anchor = _scale_anchor != "comp"
+    _intro_anchor_decl = (
+        "    var INTRO_ANCHOR_Y=%s, INTRO_ANCHOR_DY=%s;    // [группа] — Y якоря слоя"
+        " прекомпа и добавка к его Position по Y: точка масштабирования знает Y строк"
+        " блока, считает Python (intro_scale_anchor)\n"
+        % (_jd(_anchor_y), _jd(_anchor_dy))
+    ) if _any_scale_anchor else ""
+    _intro_anchor_dy_js = "+INTRO_ANCHOR_DY[gI]" if _any_scale_anchor else ""
+    _intro_anchor_set = (
+        "\n            // точка масштабирования прекомпа (intro_scale_anchor): якорь слоя —"
+        " на текст, Position уже компенсирован (INTRO_ANCHOR_DY), поэтому картинка стоит"
+        " на месте, а уменьшение идёт ОТ ТЕКСТА, а не от середины кадра\n"
+        "            iL.property(\"ADBE Transform Group\").property(\"ADBE Anchor Point\")"
+        ".setValue([IW/2, INTRO_ANCHOR_Y[gI]]);"
+    ) if _any_scale_anchor else ""
+    # Кусок «большая строка» для шаблона: функции чтения INTRO_LX/INTRO_LK,
     # скейл слоя большой строки и её ширина. Все подстановки непустые ТОЛЬКО когда в
     # ролике есть большая строка — без неё .jsx прежний байт в байт (golden). Большая
     # строка задний-план-скейл НЕ получает: lk его заменяет, поэтому условия back-скейла
@@ -294,7 +343,7 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
         _intro_big_line_pos = (
             " if(bigX!=null){ Ll.property(\"ADBE Transform Group\").property(\"ADBE Position\")"
             ".setValue([IW/2+bigX+lineW/2, lineY]); }   // большое слева: левый край строки"
-            " на IW/2+lx (задание ZY)"
+            " на IW/2+lx"
         )
         # пословно: старт строки — левый край блока, а не центр минус половина ширины
         _intro_big_word_x = " if(bigX!=null) x=IW/2+bigX;"
@@ -359,7 +408,7 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
             "var nL=GRP.length, cY=H/2 - (nL-1)/2*LINE_STEP, maxLineW=0;\n"
             "            for (var qi=0; qi<nL; qi++){\n"
             "                var ln=GRP[qi], wds=ln.words||[], tms=ln.times||[], lineY=cY+qi*LINE_STEP;"
-            # Большая строка (задание ZY): INTRO_LY при ней объявлен всегда — Y строк
+            # Большая строка: INTRO_LY при ней объявлен всегда — Y строк
             # считает раскладка, из формулы cY+qi*LINE_STEP его не получить.
             + ("\n                if(INTRO_LY[gI]&&INTRO_LY[gI][qi]!=null) lineY=INTRO_LY[gI][qi];"
                if _any_big else "")
@@ -392,7 +441,7 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
         "    }\n"
     ) if _any_front else ""
 
-    # Подъём интро над РОТО по положению (задание C): группа Камеры 1, чей блок в нижней
+    # Подъём интро над РОТО по положению: группа Камеры 1, чей блок в нижней
     # половине кадра, после раскладки по layer_order переносится под самый верхний
     # рото-слой (moveBefore), то есть встаёт сразу над рото. Ни одной такой группы —
     # все четыре подстановки пустые, .jsx прежний (golden).
@@ -406,7 +455,7 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
         "\n            if (INTRO_ABOVE_ROTO[gI]) introAboveRoto.push(iL);"
     ) if _any_above_roto else ""
     _intro_above_roto_raise = (
-        "    // Интро над рото по положению (задание C): каждый слой из introAboveRoto\n"
+        "    // Интро над рото по положению: каждый слой из introAboveRoto\n"
         "    // переносим ПЕРЕД самым верхним рото-слоем. Рото-слоёв нет — делать нечего.\n"
         "    var topRoto = null;\n"
         "    for (var ri3 = 0; ri3 < rotoLayers.length; ri3++){\n"
@@ -422,7 +471,7 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
     if _anim_fx_used:
         _g_an = INTRO_ANIMS["glitch"]
         _r_an = INTRO_ANIMS["reveal"]
-        # Сжатие появления (задание MH): сжатые слова есть — все ключи анимации играют
+        # Сжатие появления: сжатые слова есть — все ключи анимации играют
         # от t0 с множителем SQ (его даёт introSQ на слово), и в вызовы добавляется
         # аргумент. Сжатых нет — ни множителя, ни аргумента: текст .jsx прежний (golden).
         _sq = "*SQ" if _sq_used else ""
@@ -436,12 +485,12 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
         _gl_op_jsx = "".join(_gl_op_lines)
         _sc_pct = int(round(_r_an["scale"] * 100))
         _sc3d_str = ",".join(f"{x:g}" if x == int(x) else str(x) for x in _r_an["scale_3d"])
-        # Тритон на СЛОВЕ (задание G): у жёлтой строки со свечением/глитчем Midtones
+        # Тритон на СЛОВЕ: у жёлтой строки со свечением/глитчем Midtones
         # красится в цвет заливки жёлтой строки — то же выражение, что _yellow_expr
         # (INTRO_HL_FILL, если он задан в стиле, иначе HL_FILL). Highlights/Shadows/
         # смешивание — дефолтные. Ставится ПОСЛЕ Glo2; строк без глитча и свечения,
         # как и белый/accent/custom цвет, он не касается. Нет таких строк в сборке —
-        # подстановка пустая, .jsx прежний. Яркий цвет (задание ZN) — тоже пустая:
+        # подстановка пустая, .jsx прежний. Яркий цвет — тоже пустая:
         # свечение выбеливает букву, и тритон гонит её в Highlights вместо мидтонов.
         _tt_yellow = ""
         if (_any_glitch or _any_fx_glow) and _yellow_dark:
@@ -450,12 +499,26 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
                 '                var tt=addFX(L,"ADBE Tritone"); setP(tt,"ADBE Tritone-0002",%s);\n'
                 '            }\n' % _yellow_expr
             )
+        # Числа Glo2 на словах: три ключа стиля, ОДНИ И ТЕ ЖЕ в обеих ветках
+        # (глитч и fx=="glow"). %g печатает дефолты 149/77/0.62 ровно теми же литералами,
+        # что стояли в шаблоне: при дефолтах .jsx байт в байт прежний (golden).
+        _glow_set = ('var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",%g);'
+                     ' setP(fxGl,"ADBE Glo2-0003",%g); setP(fxGl,"ADBE Glo2-0004",%g);'
+                     % (intro_word_glow_thr, intro_word_glow_rad, intro_word_glow_int))
+        # Галка выключена — эффекта нет ВОВСЕ (а не «есть, но выключен»): строки Glo2 в
+        # ветке не остаётся, а пустая ветка fx=="glow" в шаблон не едет — там ей нечего
+        # делать. Gaussian Blur анимации глитча к свечению отношения не имеет и остаётся.
+        _glow_glitch_inner = f'                    {_glow_set}\n' if intro_glitch_glow else ''
+        _glow_glitch_line = f'                {_glow_set}\n' if intro_glitch_glow else ''
+        _fx_glow_branch = (' else if(fx=="glow"){\n'
+                           f'                {_glow_set}\n'
+                           '            }') if intro_fx_glow else ''
         if _dg_on:
             _dg_set_lines = ['var fxDg=addFX(L,"PEDG2"); if(!fxDg) DG_MISS++;']
             for _mn, _val in DEEP_GLOW2_GLITCH:
                 _dg_set_lines.append(f'setP(fxDg,"{_mn}",{json.dumps(_val)});')
             _dg_set_str = " ".join(_dg_set_lines)
-            # Строка со свечением (fx=="glow") Deep Glow не берёт (задание MK): вместо него
+            # Строка со свечением (fx=="glow") Deep Glow не берёт: вместо него
             # ей ставится ровно то же, что жёлтому глитчу в режиме «Встроенные» — ветка
             # else ниже (Gaussian Blur + Glo2). Условие в .jsx нужно и тогда, когда
             # подходящие слова в сборке есть не только такие: решение по КАЖДОЙ строке
@@ -467,25 +530,21 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
             _glitch_fx_code = (
                 '            if(anim=="glitch"){\n'
                 f'                if({_dg_yellow_cond}){{ {_dg_set_str} }} else {{\n'
-                f'                    var fxGb=addFX(L,"ADBE Gaussian Blur 2"); setP(fxGb,"ADBE Gaussian Blur 2-0001",{_g_an["blur"]:g});\n'
-                '                    var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",149); setP(fxGl,"ADBE Glo2-0003",77); setP(fxGl,"ADBE Glo2-0004",0.62);\n'
-                '                }\n'
-                '            } else if(fx=="glow"){\n'
-                '                var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",149); setP(fxGl,"ADBE Glo2-0003",77); setP(fxGl,"ADBE Glo2-0004",0.62);\n'
-                '            }\n'
+                f'                    var fxGb=addFX(L,"ADBE Gaussian Blur 2"); setP(fxGb,"ADBE Gaussian Blur 2-0001",{_g_an["blur"]:g}); setP(fxGb,"ADBE Gaussian Blur 2-0003",0);\n'  # -0003: Repeat Edge Pixels, в AE включён по умолчанию и портит края текста
+                + _glow_glitch_inner
+                + '                }\n'
+                '            }' + _fx_glow_branch + '\n'
             )
             _dg_miss_decl = 'var DG_MISS=0;\n        '
         else:
             _glitch_fx_code = (
                 '            if(anim=="glitch"){\n'
-                f'                var fxGb=addFX(L,"ADBE Gaussian Blur 2"); setP(fxGb,"ADBE Gaussian Blur 2-0001",{_g_an["blur"]:g});\n'
-                '                var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",149); setP(fxGl,"ADBE Glo2-0003",77); setP(fxGl,"ADBE Glo2-0004",0.62);\n'
-                '            } else if(fx=="glow"){\n'
-                '                var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",149); setP(fxGl,"ADBE Glo2-0003",77); setP(fxGl,"ADBE Glo2-0004",0.62);\n'
-                '            }\n'
+                f'                var fxGb=addFX(L,"ADBE Gaussian Blur 2"); setP(fxGb,"ADBE Gaussian Blur 2-0001",{_g_an["blur"]:g}); setP(fxGb,"ADBE Gaussian Blur 2-0003",0);\n'  # -0003: Repeat Edge Pixels, в AE включён по умолчанию и портит края текста
+                + _glow_glitch_line
+                + '            }' + _fx_glow_branch + '\n'
             )
             _dg_miss_decl = ''
-        # Масштаб появления (задание MG) — ОТ БАЗЫ слоя, а не в абсолютных 70→100.
+        # Масштаб появления — ОТ БАЗЫ слоя, а не в абсолютных 70→100.
         # База — Scale, выставленный ДО анимации: у большой строки introBigScale (lk*100),
         # у заднего плана introBackScale (BACK_SCALE*100), у обычной 100. Абсолютные ключи
         # перебивали статичное значение, и большое слово сжималось до 100 % (в превью
@@ -590,6 +649,7 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
             '                }catch(e){}\n'
             '                try{\n'
             '                    var gb=addFX(L,"ADBE Gaussian Blur 2");\n'
+            '                    setP(gb,"ADBE Gaussian Blur 2-0003",0);\n'   # Repeat Edge Pixels: в AE включён по умолчанию и портит края текста
             '                    if(gb){\n'
             '                        var pBl=gb.property("ADBE Gaussian Blur 2-0001");\n'
             f'                        pBl.setValueAtTime(t0,{_r_an["blur"]:g}); pBl.setValueAtTime(t0+F_DUR{_sq},0);\n'
@@ -635,7 +695,7 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
             '            }\n'
             '        }'
         )
-        # Коэффициент сжатия (задание MH) едет в вызов аргументом: слово — своё число из
+        # Коэффициент сжатия едет в вызов аргументом: слово — своё число из
         # INTRO_SQ, строка построчного режима — нулевое (её анимацию играет слой строки
         # от первого слова). Сжатых слов нет — аргумента нет, .jsx прежний (golden).
         _sq_li = ", introSQ(gI,qi,0)" if _sq_used else ""
@@ -673,7 +733,7 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
                     '                    introAnimFX(wl[wj2], tw, ln.anim, ln.fx, ww[wj2], null, null, null, ln.color%s);' % _sq_wi
                 )
     else:
-        # Ветка вовсе без эффектов (обычный фейд): сжатым словам (задание MH) длительность
+        # Ветка вовсе без эффектов (обычный фейд): сжатым словам длительность
         # укорочена тем же множителем — своим у слова и нулевым у строки построчного режима.
         _intro_anim_fx_fn = ""
         _sq_li_p = "*introSQ(gI,qi,0)" if _sq_used else ""
@@ -691,22 +751,34 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
             ' easePair(op);' % (_sq_wi_v, _sq_wi_p)
         )
 
-    # Вызовы свечения жёлтого хайлайта (задание GP): ставятся ПОСЛЕДНИМИ эффектами
+    # Вызовы свечения жёлтого хайлайта: ставятся ПОСЛЕДНИМИ эффектами
     # слоя строки/слова, только если в сборке есть жёлтая строка интро.
-    _hl_call_line = ' if(ln.color=="yellow" && !grpGlitch && ln.fx!="glow") introHlGlow(Ll);' if _any_intro_yellow else ""
-    _hl_call_word = ' if(ln.color=="yellow" && !grpGlitch && ln.fx!="glow") introHlGlow(wl[wj2]);' if _any_intro_yellow else ""
+    # Третья дверь свечения — галка intro_hl_glow (задание «glowfix»): раньше Glo2 на
+    # жёлтом слове ставился мимо всех галок стиля. Тритон внутри функции к свечению
+    # отношения не имеет (красит жёлтую букву на ярком цвете, _yellow_dark) — при снятой
+    # галке он нужен и остаётся. Ни свечения, ни тритона — ни функции, ни вызовов: в .jsx
+    # не остаётся ничего, чего в нём быть не должно.
+    _hl_needed = _any_intro_yellow and (intro_hl_glow or _yellow_dark)
+    _hl_call_line = ' if(ln.color=="yellow" && !grpGlitch && ln.fx!="glow") introHlGlow(Ll);' if _hl_needed else ""
+    _hl_call_word = ' if(ln.color=="yellow" && !grpGlitch && ln.fx!="glow") introHlGlow(wl[wj2]);' if _hl_needed else ""
     _intro_line_anim += _hl_call_line
     _intro_word_anim += _hl_call_word
 
-    # Тритон в introHlGlow — вторая подстановка того же цвета (задание G); на ярком
-    # цвете её нет, сама функция со свечением (Glo2) остаётся (задание ZN).
+    # Числа Glo2 у жёлтого хайлайта — те же три ключа стиля, что у свечения слов
+    # (intro_word_glow_thr/rad/int): при дефолтах 149/77/0.62 печатаются ровно прежними
+    # литералами — .jsx не меняется ни на байт (golden).
+    _hl_glow_set = ('var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",%g);'
+                    ' setP(fxGl,"ADBE Glo2-0003",%g); setP(fxGl,"ADBE Glo2-0004",%g);'
+                    % (intro_word_glow_thr, intro_word_glow_rad, intro_word_glow_int))
+    # Тритон в introHlGlow — вторая подстановка того же цвета; на ярком
+    # цвете её нет, сама функция со свечением (Glo2) остаётся.
     _intro_hl_glow_fn = (
         '\n        function introHlGlow(L){\n'
-        '            var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",149); setP(fxGl,"ADBE Glo2-0003",77); setP(fxGl,"ADBE Glo2-0004",0.62);\n'
+        + (f'            {_hl_glow_set}\n' if intro_hl_glow else "")
         + (f'            var tt=addFX(L,"ADBE Tritone"); setP(tt,"ADBE Tritone-0002",{_yellow_expr});\n'
            if _yellow_dark else "")
         + '        }'
-    ) if _any_intro_yellow else ""
+    ) if _hl_needed else ""
 
     if _any_intro_yellow:
         _intro_group_flags = (
@@ -766,15 +838,27 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
                 '                 try{ igl.property("Glow Radius").setValue(42); }catch(e){}\n'
                 '                 try{ igl.property("Glow Intensity").setValue(INTRO_GLOW); }catch(e){} }catch(e){}'
             )
-    # Тень ПРЕКОМПА интро (задание B): своя у камеры 1 и камеры 2 — направление/дистанция/
-    # мягкость те же, что у dropShadow (135/0/287), меняются только цвет и непрозрачность.
-    # Все четыре ключа на дефолтах (белая, 68) — подстановка ровно прежняя строка
-    # dropShadow(iL, 68); иначе в шаблон едет объявление introCompShadow и вызов с камерой
-    # группы (INTRO_ON2[gI]: 1 у группы на перебивке). Дефолтный .jsx не меняется (golden).
+    # Четвёртая дверь свечения — галка intro_comp_glow (задание «glowfix»): Glo2 на слое
+    # ПРЕКОМПА группы. Раньше эффект ставился всегда, а ключ intro_glow задавал только
+    # Intensity, — снять свечение со всего блока пересборкой было нельзя: владелец гасил
+    # Glo2 на слое слова, а светился прекомп. Галка снята — подстановка пустая, и Glo2 на
+    # прекомпе не появляется НИ В ОДНОЙ из веток: ни мягкий 42/INTRO_GLOW, ни усиленный
+    # 211/93/0.42 у группы с глитчем.
+    if not intro_comp_glow:
+        _intro_comp_glow = ""
+    # Тень ПРЕКОМПА интро: своя у камеры 1 и камеры 2 — цвет и непрозрачность
+    # у каждой свои, а направление/дистанция/мягкость общие (раньше стояли
+    # жёстко 135/0/287). Все СЕМЬ ключей на дефолтах (белая, 68, 135/0/287) — подстановка
+    # ровно прежняя строка dropShadow(iL, 68); иначе в шаблон едет объявление
+    # introCompShadow и вызов с камерой группы (INTRO_ON2[gI]: 1 у группы на перебивке).
+    # Дефолтный .jsx не меняется (golden).
     _ics_default = (intro_comp_shadow_fill == [1.0, 1.0, 1.0]
                     and intro_comp_shadow_op == 68.0
                     and intro_comp_shadow2_fill == [1.0, 1.0, 1.0]
-                    and intro_comp_shadow2_op == 68.0)
+                    and intro_comp_shadow2_op == 68.0
+                    and float(intro_comp_shadow_dir) == 135.0
+                    and float(intro_comp_shadow_dist) == 0.0
+                    and float(intro_comp_shadow_soft) == 287.0)
 
     def _ics_rgb(fill):
         return "%g,%g,%g" % (fill[0], fill[1], fill[2])
@@ -789,11 +873,12 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
             " var ds=addFX(L,\"ADBE Drop Shadow\");"
             " setP(ds,\"ADBE Drop Shadow-0001\", on2?[%s]:[%s]);"
             " setP(ds,\"ADBE Drop Shadow-0002\", on2?%g:%g);"
-            " setP(ds,\"ADBE Drop Shadow-0003\",135);"
-            " setP(ds,\"ADBE Drop Shadow-0004\",0);"
-            " setP(ds,\"ADBE Drop Shadow-0005\",287); }"
+            " setP(ds,\"ADBE Drop Shadow-0003\",%g);"
+            " setP(ds,\"ADBE Drop Shadow-0004\",%g);"
+            " setP(ds,\"ADBE Drop Shadow-0005\",%g); }"
             % (_ics_rgb(intro_comp_shadow2_fill), _ics_rgb(intro_comp_shadow_fill),
-               intro_comp_shadow2_op, intro_comp_shadow_op)
+               intro_comp_shadow2_op, intro_comp_shadow_op,
+               intro_comp_shadow_dir, intro_comp_shadow_dist, intro_comp_shadow_soft)
         )
 
     return IntroTpl(
@@ -808,6 +893,9 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
         word_shadow_word=_intro_word_shadow_word,
         ly_decl=_intro_ly_decl,
         lx_decl=_intro_lx_decl,
+        anchor_decl=_intro_anchor_decl,
+        anchor_dy_js=_intro_anchor_dy_js,
+        anchor_set=_intro_anchor_set,
         big_fn=_intro_big_fn,
         big_qi_vars=_intro_big_qi_vars,
         big_line_pos=_intro_big_line_pos,

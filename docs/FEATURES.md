@@ -75,7 +75,7 @@ temperature, caching) come from the models.dev catalog, cached on disk for a day
 **Limitations / price:** the key is stored on the server only and returned to the browser
 masked. Text calls cost pennies; images and video are billed by the provider for the model
 you pick. Local providers are free.
-**Code:** `core/aicut/config.py:41`, `api/ai.py:153`, `core/aicut/catalog.py:1`,
+**Code:** `core/aicut/config.py:41`, `core/aicut/config_actions.py:41`, `core/aicut/catalog.py:1`,
 `templates/index.html:890`
 
 ### Model catalog and call statistics
@@ -86,7 +86,7 @@ you pick. Local providers are free.
 diagnostics panel to see what previous calls cost.
 **Settings:** the panel groups calls by model, step and reasoning level and shows medians
 of tokens, reasoning share and time. Failed calls are counted separately.
-**Code:** `api/ai.py:524`, `api/ai.py:803`, `core/aicut/config.py:38`,
+**Code:** `api/ai.py:245`, `api/ai.py:524`, `core/aicut/config.py:38`,
 `core/aicut/catalog.py:22`
 
 ### Image and video generation: what is bundled
@@ -107,7 +107,7 @@ can plug in a local backend at the extension points `core/aicut/images.py` and
 your browser. The form keeps its state between sessions.
 **Limitations / price:** downloads go through `rclone`, so large files are fine; progress
 is parsed from rclone's statistics.
-**Code:** `api/gdrive.py:449`, `api/gdrive.py:47`, `templates/index.html:32`
+**Code:** `api/gdrive.py:244`, `core/rclone.py:46`, `templates/index.html:32`
 
 ### Project, camera count and the queue
 
@@ -196,7 +196,7 @@ frame by frame. **Cut** (C), **Delete** (D) and **Undo** (Ctrl+Z) work on blocks
 **Limitations / price:** saving rewrites the XML and reprojects insert timings onto the new
 edit; the window warns before closing with unsaved changes.
 **Code:** `templates/index.html:306`, `static/app/70-editor.js:13`,
-`api/editor.py:247`
+`api/editor.py:256`
 
 ### Camera layout
 
@@ -221,7 +221,7 @@ while the queue continues. 3. Or run a custom cut with the **Draft mp4** stage.
 built once per camera file.
 **Limitations / price:** NVENC is used when available, with a fallback to CPU x264, which
 is slow; the log says so explicitly.
-**Code:** `core/draftrender.py:1`, `core/cutstages.py:71`, `api/jobs.py:491`,
+**Code:** `core/draftrender.py:1`, `core/cutstages.py:71`, `api/jobs.py:504`,
 `static/app/50-chrome.js:186`
 
 ### Temporary files
@@ -231,7 +231,7 @@ is slow; the log says so explicitly.
 question separately.
 **Settings:** the dialog shows the size before deleting. Drafts and the roto cache are left
 alone; preview proxies are a per-camera-file cache and are only removed if you say yes.
-**Code:** `api/jobs.py:537`, `api/jobs.py:580`, `static/app/50-chrome.js:194`
+**Code:** `api/jobs.py:550`, `api/jobs.py:593`, `static/app/50-chrome.js:194`
 
 ### Clips list
 
@@ -272,7 +272,7 @@ whole range — and the trash button in the list header deletes the ticked clips
 **Limitations / price:** clips without subtitles are skipped by the highlight and insert
 phases. Inserts target 10 photos and 3 videos per video, from 6 s and 10 s in.
 **Code:** `templates/index.html:122`, `static/app/70-editor.js:296`,
-`api/ai.py:21`, `api/ai.py:50`
+`api/ai.py:32`, `api/ai.py:61`
 
 ### Subtitles
 
@@ -287,7 +287,7 @@ style keys with fields in the same tab.
 **Limitations / price:** words longer than the reference blobs allow used to disappear from
 the XML; the template now grows for them, and anything still skipped is reported in the
 UI log. `.srt` files are written next to the XML.
-**Code:** `core/asr_backends.py:44`, `api/editor.py:389`, `core/align.py:355`,
+**Code:** `core/asr_backends.py:44`, `api/editor.py:398`, `core/align.py:355`,
 `static/app/70-editor.js:323`
 
 ### Word highlights
@@ -305,7 +305,7 @@ and lasts longer. Gaps left by earlier deletions do not close by themselves.
 manual re-edit; a sidecar `.yellow.json` is kept as a fallback for words that could not be
 coloured.
 **Code:** `core/aicut/commands.py:50`, `static/app/60-preview.js:469`,
-`api/editor.py:501`, `api/editor.py:574`
+`api/editor.py:510`, `api/editor.py:583`
 
 ### Inserts editor
 
@@ -354,7 +354,7 @@ both image and video slots — that is what the numbers 1 and 2 choose.
 The engine refuses to run without an image or video model, and generation is cancellable.
 Generated media is added to the insert library and is reused for free later.
 **Code:** `core/aicut/images.py:45`, `core/aicut/images.py:142`, `core/aicut/video.py:34`,
-`api/ai.py:653`, `api/ai.py:714`
+`api/ai.py:374`, `api/ai.py:435`
 
 ### Video tab
 
@@ -400,7 +400,7 @@ and replaces the shipped list; **Default** brings the shipped one back.
 its middle letter, and the audio is muted on those frames only if that switch is on. Lists
 are reloaded by file modification time, so no restart is needed.
 **Code:** `core/censor.py:88`, `core/censor.py:98`, `core/xml2ae/layout.py:825`,
-`api/presets.py:157`, `templates/index.html:866`, `templates/index.html:220`
+`api/presets.py:171`, `templates/index.html:866`, `templates/index.html:220`
 
 ### Glossary of terms
 
@@ -449,7 +449,7 @@ be added and reordered; picking a row and clicking a word moves the group start.
 **Limitations / price:** already marked-up intro is replaced after a confirmation. Intro
 words are cut out of the subtitles, so they do not show up in the subtitle rows either; this
 works the same in the row mode and in the word-by-word mode.
-**Code:** `api/ai.py:742`, `static/app/90-ae.js:283`, `static/app/90-ae.js:392`,
+**Code:** `api/ai.py:463`, `static/app/90-ae.js:283`, `static/app/90-ae.js:392`,
 `core/aicut/commands.py:1`
 
 ### Editing word highlights
@@ -461,7 +461,7 @@ time to the next one when they went back to back (see **Word highlights** above)
 **Settings:** a `|` typed between two words breaks the stack. A word that already went to
 the intro is edited in its group row above.
 **Code:** `static/app/60-preview.js:442`, `static/app/60-preview.js:469`,
-`api/editor.py:574`
+`api/editor.py:583`
 
 ### Styles
 
@@ -505,7 +505,7 @@ yellow word of the take instead of a fixed moment after the cut; a take without 
 behaves as usual.
 **Limitations / price:** the take zooms and the yellow-word zoom work only in **hard
 jumps**; in the other modes their fields are hidden.
-**Code:** `core/xml2ae/plan_camera.py:116`, `core/style_schema.py:1331`, `core/styles.py:184`
+**Code:** `core/xml2ae/plan_camera.py:118`, `core/style_schema.py:1331`, `core/styles.py:184`
 
 ### Camera 1 frame: fill, zoom point, offset and horizon
 
@@ -525,7 +525,7 @@ the intro stay straight, so at a zoom near 100 % the corners open up — keep so
 reserve.
 **Limitations / price:** the horizon field goes to ±10° (±45° in the extended range) and the
 frame offset to ±500 px (±2000 px in the extended range).
-**Code:** `core/xml2ae/plan_camera.py:141`, `core/style_schema.py:1234`,
+**Code:** `core/xml2ae/plan_camera.py:143`, `core/style_schema.py:1234`,
 `static/app/94-stylepanel.js:1314`
 
 ### Head tracking
@@ -547,7 +547,7 @@ intro travel with the frame.
 picture never opens. Tracking needs the GPU and the matting model (downloaded on first use,
 as for rotoscope); if it fails, the build continues without tracking and says so in the log.
 **Code:** `core/headtrack.py:201`, `core/xml2ae/layout.py:1156`,
-`core/xml2ae/build.py:1813`
+`core/xml2ae/build.py:1756`
 
 ### Colour (Lumetri)
 
@@ -562,7 +562,7 @@ the AE step is added to **Exposure**, so the two do not fight.
 **Limitations / price:** the browser preview shows an approximation — the real Lumetri
 formulas are closed — so it is good for judging the direction of the correction, not its
 exact value.
-**Code:** `core/xml2ae/build.py:424`, `core/style_schema.py:1499`,
+**Code:** `core/xml2ae/build.py:414`, `core/style_schema.py:1499`,
 `static/app/85-inserts-view.js:361`
 
 ### Yellow highlights in rows: animation and blur-in
@@ -660,7 +660,7 @@ byte-for-byte as before.
 **How:** 1. Open ⚙ › **Tools**. 2. Under **After Effects**, choose between **Built-in (Blur + Glow)** and **Deep Glow 2 (plugin)**. 3. Rebuild `.jsx` scripts for clips if already exported.
 **Settings:** controls how yellow intro words with the "glitch" animation glow in the generated After Effects project. Built-in uses Gaussian Blur and Glow available in every AE install (default). Deep Glow 2 replaces them with the third-party plugin using pre-tuned parameters; accent lines and other lines remain untouched. In this mode the plugin is not put on a line that has the line glow of its own (tick **Deep Glow with line glow**, `intro_dg_with_glow`, off by default, to get the old behaviour back) and not on a bright highlight colour — the same Rec.709 brightness threshold (above 0.7) as for Tritone, so such a word keeps the built-in Blur + Glow. Saved under the `glitch_glow` key in `ai_config.json` (`builtin` or `deepglow2`) and takes effect on the next build; already built `.jsx` scripts need to be rebuilt.
 **Limitations / price:** if Deep Glow 2 is selected but the plugin is not installed in After Effects, manual build shows a single dialog per file reporting the number of unstyled words, while headless rendering writes an error line to the log; words remain without glow. There is no automated pre-flight check or fallback to built-in effects.
-**Code:** `core/aicut/config.py:451`, `api/ai.py:349`, `core/xml2ae/build.py:736`, `core/xml2ae/build.py:1919`, `templates/index.html:783`, `static/app/10-settings.js:732`
+**Code:** `core/aicut/config.py:509`, `core/aicut/config_actions.py:219`, `core/xml2ae/build.py:663`, `core/xml2ae/build.py:1866`, `templates/index.html:783`, `static/app/10-settings.js:732`
 
 ### Subtitle scale
 
@@ -801,8 +801,8 @@ better over time.
 headless run, so the job refuses to start. There is a stall watchdog, and an instant
 AfterFX exit is reported as a likely open AE copy. Rotoscoping runs during the build and is
 the longest stage.
-**Code:** `api/render.py:1840`, `api/render.py:42`, `api/render.py:1635`,
-`api/render.py:172`, `api/render.py:69`, `static/app/90-ae.js:176`
+**Code:** `api/render.py:1445`, `core/aerender.py:34`, `api/render.py:1240`,
+`core/aerender.py:151`, `core/aerender.py:49`, `static/app/90-ae.js:176`
 
 ### Progress, queue and logs
 
@@ -822,7 +822,7 @@ restart, with the item and the progress it stopped at. A cut whose process has p
 nothing for 20 minutes is marked as silent in the status and in the log, but the process is
 never killed: a long speech recognition run is silent for a legitimate reason.
 **Code:** `static/app/50-chrome.js:73`, `templates/index.html:530`,
-`templates/index.html:553`, `core/umsg.py:1`, `api/_core.py:537`, `api/jobs.py:29`,
+`templates/index.html:553`, `core/umsg.py:1`, `api/_core.py:537`, `api/jobs.py:31`,
 `static/app/00-core.js:77`
 
 ## Settings and tools
@@ -842,7 +842,7 @@ Russian is the source language, so a missing translation simply stays Russian.
 **How:** Run it. Red rows are what stops Reelsi from starting, yellow rows are missing
 optional pieces, each named together with the feature it disables.
 **Limitations / price:** exit code 0 means you can work, 1 means there is something red.
-**Code:** `doctor.py:1`, `doctor.py:369`
+**Code:** `doctor.py:1`, `doctor.py:371`
 
 ### Installer
 
@@ -863,7 +863,7 @@ script, `python -m core.gigaam_cut` runs the cutting engine, and `python doctor.
 the environment.
 **Settings:** `reelsi.py --single` for one camera and `--no-cut` for subtitles only;
 `core.xml2ae` accepts music and a render folder.
-**Code:** `reelsi.py:278`, `core/aicut/__init__.py:11`, `core/xml2ae/__main__.py:19`,
+**Code:** `core/cutjob.py:245`, `core/aicut/__init__.py:11`, `core/xml2ae/__main__.py:19`,
 `core/gigaam_cut/__main__.py:1`
 
 ### Build verification (for developers)

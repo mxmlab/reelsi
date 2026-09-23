@@ -94,7 +94,7 @@ def test_render_run_thread_fail_resets_running(client, tmp_path, clean_state, no
 
     render_dir = tmp_path / "renders"
     # Файл набора обязан существовать: api_render_run нормализует набор ДО старта
-    # потока и на пропаже отвечает внятной ошибкой, не доходя до рождения потока (HU).
+    # потока и на пропаже отвечает внятной ошибкой, не доходя до рождения потока.
     xml = tmp_path / "clip.xml"
     xml.write_text("<xml/>", encoding="utf-8")
     body = {"jobs": [{"xml": str(xml)}], "render_dir": str(render_dir)}

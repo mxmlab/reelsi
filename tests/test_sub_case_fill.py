@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты задания CO: регистр и цвет субтитров (sub_case / sub_fill).
+"""Тесты: регистр и цвет субтитров (sub_case / sub_fill).
 
 Регистр применяется в scene_plan к ГОТОВОМУ тексту — .jsx и превью читают одно и то же.
 Дефолты (upper + белый) не меняют .jsx ни на байт; жёлтые (hl_fill) не трогаются.

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Межстрочный заднего плана отдельно сверху и снизу (задание ZZ).
+"""Межстрочный заднего плана отдельно сверху и снизу.
 
 Одна ручка `back_step` ставила ОДИН шаг базовых линий и НА строку заднего плана, и С неё,
 а видимые зазоры при этом разные (у владельца над маленькой строкой 53 px, под ней 23 px):
@@ -69,7 +69,7 @@ def _ln(word, back=False):
 
 
 def _main_ys(lines, back_step, h, step_k=1.0):
-    """Y по формуле main (задание ZT): шаг с заднего плана и после него — ОДИН back_step."""
+    """Y по формуле main: шаг с заднего плана и после него — ОДИН back_step."""
     n = len(lines)
     step = INTRO_LINE_STEP * step_k
     backs = [bool(ln.get("back")) for ln in lines]
@@ -175,7 +175,7 @@ def test_plan_without_key_is_like_main(xml_subs):
 
 def test_plan_knob_changes_only_step_below(xml_subs):
     """3б. С ключом меняется ТОЛЬКО шаг «задний план → обычная»: шаг до маленькой строки и
-    её Y прежние (голова не back — центровка от шагов не зависит, задание A1)."""
+    её Y прежние (голова не back — центровка от шагов не зависит)."""
     before = _plan(xml_subs, BACK_INTRO)["intro"][0]
     after = _plan(xml_subs, BACK_INTRO, style={"back_step_after": 1.5})
     grp = after["intro"][0]

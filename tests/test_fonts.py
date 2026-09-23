@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""fonts.py — список установленных шрифтов для превью интро (задания AD/BO).
+"""fonts.py — список установленных шрифтов для превью интро.
 
 Смысл теста: вариативный шрифт перечисляется по именованным экземплярам fvar, а не
 только по nameID 6. Без этого превью не видит `SFPro-CondensedSemibold`, который AE

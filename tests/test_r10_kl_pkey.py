@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты ключа пути pkey и инвалидации кэша индекса вставок (задание KL).
+"""Тесты ключа пути pkey и инвалидации кэша индекса вставок.
 
 Проверяет:
 1. Инвариант на текущей машине: pkey(p) == os.path.normcase(p).

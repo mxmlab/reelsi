@@ -62,7 +62,7 @@ function applyState(s){try{
   if(Array.isArray(s.QUEUE))QUEUE=s.QUEUE;
   if(s.newonly!=null)$('newonly').checked=!!s.newonly;   // «только новые» — рабочая настройка, а не разовая галка
   if(s.cut_stages&&typeof s.cut_stages==='object')CUT_STAGES=Object.assign({},s.cut_stages);
-  if(s.dedupe!=null&&(CUT_STAGES.dedupe===undefined||!s.cut_stages))CUT_STAGES.dedupe=!!s.dedupe;   // «чистка дублей» (задание CA) — переживает F5, как соседние галки
+  if(s.dedupe!=null&&(CUT_STAGES.dedupe===undefined||!s.cut_stages))CUT_STAGES.dedupe=!!s.dedupe;   // «чистка дублей» — переживает F5, как соседние галки
   if(s.cut_thresholds&&typeof s.cut_thresholds==='object')CUT_THRESHOLDS=Object.assign({},s.cut_thresholds);
   if(Array.isArray(s.CLIPS)){CLIPS=s.CLIPS;
     // Старое состояние могло сохранить залипшую «…» (genBusy в JSON, поймано
@@ -110,7 +110,7 @@ document.addEventListener('keydown',e=>{
 segUI();musicUI();syncVolUI();
 restoreState();
 LASTCAMS=nCams();      // база для отката радио, если юзер откажется чистить очередь
-loadCutStages();       // загрузка ступеней нарезки с сервера (задание GG)
+loadCutStages();       // загрузка ступеней нарезки с сервера
 loadASREngines();      // после restoreState: он кладёт выбранный движок в ASRWANT
 loadCams();
 loadAIProfiles();
@@ -135,7 +135,7 @@ if(CLIPS.length)refreshStatuses();   // подтянуть ncams/статусы 
 illHdrPoll();                        // если описание базы уже идёт (запущено до F5) — показать прогресс в шапке
 // если на сервере уже крутится задача (F5 посреди сборки/нарезки) — подхватываем её индикацию
 (async()=>{try{const d=await (await fetch('/api/status')).json();
-  queueRender(d);   // очередь этапов (задание FA): после F5 виден и итог уже закончившейся
+  queueRender(d);   // очередь этапов: после F5 виден и итог уже закончившейся
   if(d.running){
     // kind/label приходят структурно из JOB (сниффинг лога — только фолбэк для старого сервера)
     const kind=d.kind||((d.log||[]).some(l=>fmtLog(l).indexOf('=== Сборка')===0)?'build':'cut');
@@ -148,7 +148,7 @@ illHdrPoll();                        // если описание базы уж�
 }catch(e){}})();
 // рендер живёт в своём RJOB — после F5 подхватываем его отдельно
 (async()=>{try{const d=await (await fetch('/api/render_status')).json();
-  queueRender(d);   // очередь этапов (задание FA): рендер — своя дверь, до проверки running
+  queueRender(d);   // очередь этапов: рендер — своя дверь, до проверки running
   // дефолт папки вывода рендера — один источник на сервере. Кладём в AERENDER,
   // а не только в поле: загрузка спикеров (applySpeakerDirs -> renderRenderDirField)
   // идёт позже и перезаписала бы значение, оставленное только в DOM.

@@ -37,7 +37,7 @@ async function cpvOpen(xml){
   if(d.error||!(d.cams||[]).length||!d.cams[0].path){uiLog(t('раскладка камер: предпросмотр — ')+(d.error||t('нет камер')));return;}
   CPV.xml=xml;CPV.segs=d.segs||[];CPV.audio=(d.audio&&d.audio.length?d.audio:d.segs)||[];
   CPV.words=d.words||[];CPV.dur=d.dur||(CPV.audio.length?CPV.audio[CPV.audio.length-1].te:0);CPV.audioCi=0;
-  CPV.cams=d.cams;   // дублёру нужны пути камер, чтобы переезжать на прокси (задание BE)
+  CPV.cams=d.cams;   // дублёру нужны пути камер, чтобы переезжать на прокси
   const stage=$('cpvstage');[...stage.querySelectorAll('video')].forEach(v=>v.remove());
   const px=await pvProxyLoad(xml,true);pvProxyMerge(px);   // прокси камер: без него 4:2:2 10 бит встаёт на каждом стыке
   CPV.vids=d.cams.map((c,ix)=>{const v=document.createElement('video');
@@ -51,7 +51,7 @@ async function cpvOpen(xml){
   // кнопки выбора звука
   $('cpvaudio').innerHTML=d.cams.map((c,ix)=>'<label class="'+(ix===0?'on':'')+'"><input type="radio" name="cpvaud" '+(ix===0?'checked':'')+' onchange="cpvAudio('+ix+')"> '+t('К')+(ix+1)+'</label>').join('');
   cpvSeekTo(0);
-  if(px&&px.building){PVPX.xml=xml;pvProxyWatch('cpvstage');}   // прокси готовятся — догнать их на переезде (BE)
+  if(px&&px.building){PVPX.xml=xml;pvProxyWatch('cpvstage');}   // прокси готовятся — догнать их на переезде
 }
 // Смена «слушаем К1/К2/К3»: дублёр звуковой камере больше не нужен отдельно — он у неё уже
 // есть (camBufs делает его каждой камере при открытии), поменять надо только кто звучит.

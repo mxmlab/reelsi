@@ -93,7 +93,7 @@ def test_anim_none_cam1_single_key_rest_point(xml_subs):
 
 
 def test_anim_none_cam1_respects_common_shift(xml_subs):
-    """Точка покоя cam1 при none учитывает общий сдвиг insert_c1_x/y (задание CB)."""
+    """Точка покоя cam1 при none учитывает общий сдвиг insert_c1_x/y."""
     plan = xml2ae.scene_plan(xml_subs, inserts=[_ins_cam1()], style={
         "insert_anim": "none", "insert_style": "cam1", "insert_snap_cut": False,
         "intro_riser": False, "roto": False,
@@ -170,10 +170,10 @@ def _keys_at_script():
 def test_preview_draws_single_key_animation_as_static():
     """Однокейфреймовая анимация (insert_anim='none') в предпросмотре — статика.
 
-    Предпросмотр интерполирует готовые ключи плана функцией keysAt (задание C):
+    Предпросмотр интерполирует готовые ключи плана функцией keysAt:
     массив из ОДНОГО ключа [[t0, S]] обязан давать S на любом времени — до, в и после
     окна вставки. Если интерполятор начнёт что-то «досчитывать» на одном ключе, фото
-    будет прыгать — а задание FC требует, чтобы оно просто стояло."""
+    будет прыгать — а требуется, чтобы оно просто стояло."""
     helper = _keys_at_script()
     out = subprocess.run(
         ["node", "-e",

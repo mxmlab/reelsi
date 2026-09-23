@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Подложка фото-вставок из стиля и «без фона» (задания ZI/ZK).
+"""Подложка фото-вставок из стиля и «без фона».
 
 Плашка: у вставки с галкой «на подложке» (поле plate) снизу картинка из стиля
 (insert_plate_file), фото ложится поверх неё. Масштаб и положение со страницы вставок
 двигают только фото ВНУТРИ плашки, подложка стоит на месте, маска-скругление не вешается.
-Решение — по ВСТАВКЕ (задание ZK): галок стиля insert_plate/insert_nobg больше нет, у
+Решение — по ВСТАВКЕ: галок стиля insert_plate/insert_nobg больше нет, у
 вставки без галки всё как раньше. «Без фона» — одна функция (insertlib.nobg_path) на
 сборку и предпросмотр, кэш рядом с файлом.
 
@@ -230,7 +230,7 @@ def test_nobg_path_caches_and_falls_back(tmp_path, monkeypatch):
 
 def test_nobg_path_survives_system_exit_from_remove_bg(tmp_path, monkeypatch):
     """5. Без rembg/onnxruntime remove_bg кидает SystemExit, а не Exception: nobg_path
-    обязан вернуть ИСХОДНЫЙ путь и сказать об этом в emit. До правки (задание ZK)
+    обязан вернуть ИСХОДНЫЙ путь и сказать об этом в emit. До правки
     SystemExit проходил насквозь и ронял всю сборку со вставкой «на подложке»."""
     src = _png(tmp_path / "pic.png", 40, 30)
     log = []

@@ -21,19 +21,18 @@
       объявлен здесь, а не только инлайном, — иначе var() молча работает на фолбэке
       (см. test_css_variables_all_declared). */
    --lvl:0;
-   /* Цвет базовых субтитров в предпросмотре: ставится из плана сцены (sub_fill, задание
-      CO), здесь — белый фолбэк «плана нет». */
+   /* Цвет базовых субтитров в предпросмотре: ставится из плана сцены (sub_fill), здесь — белый фолбэк «плана нет». */
    --subfc:#fff;
-   /* Цвет выделения субтитров в предпросмотре (задание CV): ставится из плана сцены
+   /* Цвет выделения субтитров в предпросмотре: ставится из плана сцены
       (hl_fill), здесь — фолбэк «плана нет» (--yel). */
     --subhl:#f5c518;
     --subhl-tx:#111;
     --introhl:var(--subhl);
     --subhl3:#af1f1f;
-   /* Тень субтитров в предпросмотре (задание DK): снимается при sub_bg,
+   /* Тень субтитров в предпросмотре: снимается при sub_bg,
       здесь — фолбэк по умолчанию. */
    --subsh:0 2px 7px #000, 0 0 3px #000;
-   /* Кегль интро-строк в предпросмотре (задание AD): как --subfs, ставится из плана
+   /* Кегль интро-строк в предпросмотре: как --subfs, ставится из плана
       (fsize/w — в AE у интро и субтитров один FONT_SIZE); здесь — фолбэк «плана нет». */
    --introsfs:8.4cqw}
 *{box-sizing:border-box}
@@ -77,11 +76,11 @@ header.top{position:sticky;top:0;z-index:30;background:var(--bg);border-bottom:1
 .card h2 .k{font-family:ui-monospace,monospace;color:var(--mut2);font-size:12px}
 .sect{font-size:12px;font-weight:400;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);
   border-bottom:1px solid var(--bd);padding-bottom:6px;margin:20px 0 12px}
-/* окно раздела панели стиля (задание AC2): не модалка — панель с полями раздела, в
+/* окно раздела панели стиля: не модалка — панель с полями раздела, в
    предпросмотре живёт в правой колонке рядом с кадром, кадр не затемняется и играет.
    Одно окно за раз; закрытие по Esc и клику мимо (кнопка «x» ушла вместе с заголовком,
-   задание CP1). */
-/* Инспектор свойств стиля (задание JB: Effect Controls / Premiere-style компактная панель) */
+ ). */
+/* Инспектор свойств стиля (Effect Controls / Premiere-style компактная панель) */
 #stylebox{display:flex;flex-direction:column}
 #stylecustom{display:flex;flex-direction:column}
 /* Панель растёт по содержимому (без overflow/flex/min-height); прокручивается страница/модалка */
@@ -198,14 +197,14 @@ header.top{position:sticky;top:0;z-index:30;background:var(--bg);border-bottom:1
 /* Сброс группы — текст 11px --mut без рамки и фона, hover --tx, в колонке значений */
 #stpanel .streset,.streset{height:20px !important;min-height:0 !important;max-height:20px !important;font-size:11px !important;color:var(--mut) !important;background:none !important;border:none !important;box-shadow:none !important;cursor:pointer !important;padding:0 2px !important;user-select:none !important;line-height:20px !important;border-radius:0;text-align:left !important;width:auto !important}
 #stpanel .streset:hover,.streset:hover{color:var(--tx) !important;background:none !important;border:none !important}
-/* Доступность с клавиатуры в панели стиля (задание LF) */
+/* Доступность с клавиатуры в панели стиля */
 #stpanel .stnum-val:focus-visible{outline:1px solid var(--mut);outline-offset:1px;border-radius:var(--r-sm);color:#fff;border-bottom-color:var(--tx)}
 #stpanel .sttw:focus-visible{outline:1px solid var(--mut);outline-offset:1px;border-radius:var(--r-sm)}
 #stpanel .sttw:focus-visible::before{border-left-color:var(--tx)}
 #stpanel .stdot:focus-visible{outline:1px solid var(--mut);outline-offset:1px;border-radius:var(--r-sm)}
 #stpanel .stgroup:focus-visible,#stpanel .stlayer:focus-visible{outline:1px solid var(--mut);outline-offset:-1px}
 
-/* Ряд сохранения стиля: прижат низом панели (sticky), виден всегда (задание CP3) */
+/* Ряд сохранения стиля: прижат низом панели (sticky), виден всегда */
 .stactbar{position:sticky;bottom:0;z-index:5;background:var(--panel);padding:10px 0 4px;margin-top:auto}
 #aewstyle .stactbar{background:var(--bg2)}
 .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end}
@@ -404,7 +403,7 @@ summary:hover{color:var(--tx)}
 .spkgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(206px,1fr));gap:10px 12px}
 .spkgrid label{margin-bottom:4px}
 .spkgrid input{width:100%}
-/* чекбокс-порог не должен растягиваться на всю ячейку грида (задание V): ширина 100%
+/* чекбокс-порог не должен растягиваться на всю ячейку грида: ширина 100%
    делала его высотой строки и «лапой» на всю колонку */
 .spkgrid label.chk{margin:0;width:auto;justify-self:start}
 .backdrop.on .modal{animation:pop .18s ease}
@@ -418,7 +417,7 @@ summary:hover{color:var(--tx)}
 .pvstage{position:relative;background:#000;border-radius:var(--r);overflow:hidden;width:100%;max-width:320px;margin:0 auto;aspect-ratio:9/16;
   container-type:inline-size}
 .pvstage video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
-/* Прогресс сборки превью-прокси поверх плеера (задание MD): сборка идёт десятки секунд,
+/* Прогресс сборки превью-прокси поверх плеера: сборка идёт десятки секунд,
    и раньше её было видно только хвостом подписи камер без процента. Блок висит у низа
    кадра (z-index 20 — выше субтитров/вставок), клики не перехватывает: pointer-events
    none, поэтому драг вставок и интро под ним работает как раньше. Зелёный не используем —
@@ -431,7 +430,7 @@ summary:hover{color:var(--tx)}
 .pvpx_txt{font-size:12px;line-height:1.35;color:var(--tx)}
 .pvpx_hint{font-size:11px;line-height:1.3;color:var(--mut)}
 .pvstage.zoompick{cursor:crosshair}
-/* маркер точки наезда (задание Q, часть 4): перекрестие в долях кадра */
+/* маркер точки наезда (часть 4): перекрестие в долях кадра */
 .zoommark{position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;pointer-events:none;z-index:20;
   border-radius:50%;box-shadow:0 0 0 1px rgba(0,0,0,.8);background:
     linear-gradient(var(--acc),var(--acc)) 50% 0/1px 100%,
@@ -439,7 +438,7 @@ summary:hover{color:var(--tx)}
 .zoommark::after{content:'';position:absolute;inset:8px;border-radius:50%;background:var(--acc);box-shadow:0 0 0 1px rgba(0,0,0,.8)}
 .pvsub{position:absolute;left:0;right:0;bottom:11%;text-align:center;font-size:21px;font-size:7.7cqw;line-height:1.1;
   color:#fff;text-shadow:var(--subsh,0 2px 7px #000,0 0 3px #000);padding:0 5.2cqw;z-index:5;pointer-events:none}
-/* стопка субтитров ПО ПЛАНУ (задание D): #ipvsub накрывает кадр целиком, слово — по своему
+/* стопка субтитров ПО ПЛАНУ: #ipvsub накрывает кадр целиком, слово — по своему
    ряду (row*hl_step от posy). Позиции в %: стойка 9:16 == комп 9:16, проценты совпадают. */
 /* bottom:auto здесь БЫЛ и ломал всё: inset:0 задаёт четыре стороны, а bottom:auto тут же
    снимал нижнюю — высота контейнера становилась авто, абсолютные слова в неё не считаются,
@@ -722,7 +721,7 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 .ipvins img,.ipvins video{max-width:72%;max-height:46%;object-fit:contain;filter:drop-shadow(0 6px 18px rgba(0,0,0,.6))}
 .ipvins .ipvwrap.full img,.ipvins .ipvwrap.full video{max-width:100%;max-height:100%;width:100%;height:100%;object-fit:cover;filter:none}
 .ipvins .ipvwrap.mosaic img,.ipvins .ipvwrap.mosaic video{filter:blur(10px)}
-/* Видеовставка — ФЛЕКС-элемент обёртки, а не абсолютная коробка кадра (задание MF).
+/* Видеовставка — ФЛЕКС-элемент обёртки, а не абсолютная коробка кадра.
    Правило .pvstage video написано для камер: position:absolute;inset:0 прижимало
    видео вставки к левому верхнему углу — абсолютного ребёнка .ipvwrap не центрирует,
    и «Масштаб, %» рос от угла, тогда как в AE рост идёт от центра (Position=W/2+x,
@@ -739,31 +738,31 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
   max-width:none;max-height:none;object-fit:fill;filter:none}
 .ipvins .ipvwrap.mosaic .insmask img{filter:blur(10px)}
 #ipvsub{z-index:5}
-/* ===== Затемнение под интро (задание IL) =====
+/* ===== Затемнение под интро =====
    Слой-фигура из .jsx: мягкое чёрное затемнение снизу кадра под текстом интро. Живёт в
    системе координат нула Камеры 1 и едет с её зумом, но НИЖЕ интро (z-index 6+ из
    layer_order) и вставок и ВЫШЕ картинки камеры (canvas — 3): затемнять надо кадр, а не
    текст. Размер, позицию, размытие и прозрачность ставит ipvShade из plan.shade. */
 .ipvshade{position:absolute;left:50%;top:50%;background:#000;pointer-events:none;z-index:4}
-/* ===== Верхняя строка-прогресс (задание DF) ===== */
+/* ===== Верхняя строка-прогресс ===== */
 .ipvtopline{position:absolute;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:6;overflow:hidden}
 .ipvtopline .pvtl_track{position:absolute;inset:0;pointer-events:none}
 .ipvtopline .pvtl_prog{position:absolute;left:0;top:0;bottom:0;pointer-events:none}
-/* ===== Подпись о ролике (задание DG) ===== */
+/* ===== Подпись о ролике ===== */
 .ipvcaption{position:absolute;pointer-events:none;z-index:7;white-space:nowrap;line-height:1}
 .ipvcaption .pvcap_inner{position:absolute;box-sizing:border-box}
 .ipvcaption .pvcap_text{position:absolute;left:0;top:0;white-space:nowrap;line-height:1.4125}
 .ipvcaption .pvcap_strut{display:inline-block;width:0;height:0;vertical-align:baseline}
 /* интро-текст в предпросмотре AE: блок «за спиной» ~23% сверху, слова проявляются по таймингам.
-   Кегль — ИЗ ПЛАНА, как у субтитров (задание AD): в AE и интро, и субтитры используют один
+   Кегль — ИЗ ПЛАНА, как у субтитров: в AE и интро, и субтитры используют один
    FONT_SIZE, поэтому --introsfs ставит ipvIntro из plan.fsize; 8.4cqw — фолбэк «плана нет». */
 .ipvintro{position:absolute;inset:0;z-index:3;pointer-events:none;display:none;flex-direction:column;
-  align-items:center;justify-content:center}   /* база блока из плана (задание Q2): translate двигает центр от центра кадра */
+  align-items:center;justify-content:center}   /* база блока из плана: translate двигает центр от центра кадра */
 .ipvintro .iline{position:relative;font-size:23px;font-size:var(--introsfs,8.4cqw);line-height:1.45;color:#fff;text-align:center;
   text-shadow:0 2px 10px rgba(0,0,0,.75);white-space:nowrap}
 .ipvintro .iline.yel{color:var(--introhl,var(--subhl,var(--yel)))}
 .ipvintro .iline.back{font-size:calc(var(--introsfs,8.4cqw) * 0.69);line-height:1.15}
-/* строка, посаженная базовой линией по готовым y из плана (задание A2): вне CSS-потока,
+/* строка, посаженная базовой линией по готовым y из плана: вне CSS-потока,
    по центру блока; вертикаль (top) ставит ipvIntro из plan.intro[].ys */
 .ipvintro .iline.abs{position:absolute;left:50%;top:0;transform:translateX(-50%)}
 /* опора базовой линии для замера в ipvIntro — тот же приём, что у подписи (pvcap_strut) */
@@ -774,7 +773,7 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
    (template.py считает SPACE по метрике строки): margin-left:.32em давал +9 % на строке
    из трёх слов. Анимации glitch/reveal раскладывают слово на span'ы букв .ich, поэтому
    отступ задаётся только МЕЖДУ словами (прямыми детьми .iline), а не между буквами */
-/* перетаскивание в кадре (задание E, шаг 2): хватать вставки/интро/субтитры мышью и
+/* перетаскивание в кадре (шаг 2): хватать вставки/интро/субтитры мышью и
    пальцем (touch-action:none — иначе тач скроллит страницу вместо драга). Оверлей —
    pointer-events:none, включаем приём ТОЛЬКО у перетаскиваемого содержимого. */
 .ipvins.ae .ipvwrap{pointer-events:auto;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none}
@@ -782,11 +781,11 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 .ipvintro .iline{pointer-events:auto;cursor:grab;touch-action:none;user-select:none;-webkit-user-select:none}
 .ipvintro .iline:active{cursor:grabbing}
 .ipvintro .intro-scale-handle{position:absolute;left:50%;top:100%;width:32px;height:3px;border-radius:var(--r-sm);background:var(--mut);transform:translate(-50%,6px);cursor:ew-resize;pointer-events:auto;touch-action:none}
-/* Субтитры в превью мышью не таскаются (задание MD): высота правится ползунком стиля,
+/* Субтитры в превью мышью не таскаются: высота правится ползунком стиля,
    а не драгом. pointer-events:none — строка не перехватывает клик по кадру (было auto
    с курсором ns-resize). */
 #ipvsub .pvsubw{pointer-events:none;touch-action:none;user-select:none;-webkit-user-select:none}
-/* режим AE-предпросмотра: модалка ограничена окном, скроллится только правая колонка (задание CW) */
+/* режим AE-предпросмотра: модалка ограничена окном, скроллится только правая колонка */
 .modal.aemode{height:94vh;max-height:94vh;display:flex;flex-direction:column}
 .modal.aemode .mbody{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
 .modal.aemode .inscols{flex:1;min-height:0}
@@ -795,10 +794,10 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 .aewpanel{flex:1;min-width:0;display:none}
 .modal.aemode .aewpanel{display:flex;flex-direction:column;align-self:stretch;min-height:0}
 .aewpanel .words{flex:1;min-height:0;max-height:none;overflow:auto;margin-top:8px}
-/* вкладка «Стиль» в предпросмотре: занимает всю доступную высоту колонки (задание CP3) */
+/* вкладка «Стиль» в предпросмотре: занимает всю доступную высоту колонки */
 #aewstyle{flex:1;min-height:0;overflow:hidden;margin-top:10px;padding-right:6px}
 #aewstyle #stylebox,#aewstyle #stylecustom{display:flex;flex-direction:column;max-height:100%;height:100%}
-/* Прокручивается САМА панель, а не модалка (задание MD): раскрытых групп много, и они
+/* Прокручивается САМА панель, а не модалка: раскрытых групп много, и они
    уходили за нижний край без возможности долистать. Селектор из двух id — чтобы перебить
    `.stpanel{overflow:visible !important}` общей панели; строка «Сохранить» (#styleSaveRow)
    остаётся видимой внизу — она flex:none, а высоту забирает панель. Панель на главной
@@ -894,7 +893,7 @@ button.icon .ic{width:16px;height:16px;vertical-align:-3.5px}
 .dlfmt-wrap .dlfmt{min-width:0;width:78px;min-height:var(--h-sm,26px);font-size:11.5px;
   padding:2px 4px}
 
-/* ===== Вкладка «Сабы» на шаге 2 (задание CI) ===== */
+/* ===== Вкладка «Сабы» на шаге 2 ===== */
 .subrowslist{max-height:48vh;overflow-y:auto;display:flex;flex-direction:column;gap:4px;padding-right:4px}
 .subrow-item{display:flex;align-items:baseline;gap:10px;padding:6px 10px;border:1px solid var(--bd2);border-radius:var(--r);background:var(--bg2);cursor:pointer;transition:border-color .12s,background .12s}
 .subrow-item:hover,.subrow-item:focus-visible{border-color:var(--mut);outline:none}
@@ -903,7 +902,7 @@ button.icon .ic{width:16px;height:16px;vertical-align:-3.5px}
 .subrow-time{font-size:11.5px;min-width:88px;flex:none;color:var(--mut)}
 .subrow-text{font-size:13px;color:var(--tx);flex:1;word-break:break-word}
 
-/* ===== Очередь этапов пофайловая (задания FA, FP) ===== */
+/* ===== Очередь этапов пофайловая ===== */
 /* Один список items на нарезку/сборку/рендер прямо в оверлее прогресса.
    Зелёный #98ff38 (--ok) — ТОЛЬКО у done, это статус «готово», а не украшение (правило DESIGN.md). */
 #qwrap{margin-top:14px;text-align:left}
@@ -919,7 +918,7 @@ button.icon .ic{width:16px;height:16px;vertical-align:-3.5px}
 .qpath{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ok)}
 .qreason{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dng)}
 
-/* ===== Порядок слоёв в стиле (задание FM, KP) ===== */
+/* ===== Порядок слоёв в стиле ===== */
 .layer-order-list{display:flex;flex-direction:column;width:100%;box-sizing:border-box;
   padding:0 6px 0 calc(6px + var(--lvl,0) * 14px);margin:0}
 .layer-order-item{display:flex;align-items:center;gap:6px;height:24px;min-height:24px;max-height:24px;

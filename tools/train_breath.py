@@ -34,6 +34,7 @@ from core import paths   # noqa: E402
 from core import arrowfix  # noqa: F401  # предзагрузка pyarrow до torch во избежание краша arrow.dll, не переставлять ниже
 from core import breath
 from core import align
+from core.project_file import read_project  # noqa: E402
 
 
 def _clips(dirs):
@@ -47,8 +48,10 @@ def _clips(dirs):
             if os.path.getmtime(p) - os.path.getmtime(c) <= 60:
                 continue
             try:
-                pj = json.load(open(p, encoding="utf-8"))
+                pj = read_project(p)
             except Exception:
+                continue
+            if pj is None:
                 continue
             cam = (pj.get("cams") or [None])[0]
             if cam and os.path.exists(cam) and pj.get("keep"):

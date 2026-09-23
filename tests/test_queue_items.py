@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Общая пофайловая очередь этапов (задание FA) — помощники из api/_core.py.
+"""Общая пофайловая очередь этапов — помощники из api/_core.py.
 
 Одна механика на нарезку, сборку .jsx и рендер (JOB и RJOB): у джоба есть список
 items — по одному элементу на файл набора. «Готово/ошибка» решается ровно одним
@@ -86,7 +86,7 @@ def test_item_done_unknown_name_still_writes_bucket():
 
 
 def test_render_invariant_counts_match_buckets():
-    """Инвариант на рендере (задание FA): после прогона число элементов в done равно
+    """Инвариант на рендере: после прогона число элементов в done равно
     длине RJOB["result"], число error — длине RJOB["failed"] за вычетом глобальных
     записей БЕЗ клипа (AE не найден, внутренняя ошибка рендера)."""
     render.RJOB.update(running=False, done=False, log=[], pct=None, cur="", ae="",
@@ -111,7 +111,7 @@ def test_render_invariant_counts_match_buckets():
 
 
 def test_render_mark_stopped_waits_flips_wait_not_done():
-    """«Стоп» на рендере (задание FA): _mark_stopped_waits оставляет done как есть,
+    """«Стоп» на рендере: _mark_stopped_waits оставляет done как есть,
     а все, кто ещё в wait, помечает stopped, чтобы очередь не показывала их «в очереди»."""
     render.RJOB.update(running=False, done=False, log=[], pct=None, cur="", ae="",
                        out_dir="", result=[], failed=[], cancel=True, items=[])

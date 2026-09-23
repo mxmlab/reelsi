@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Макет спикера (задание Q): ползунки, точка наезда, зум интро.
+"""Макет спикера: ползунки, точка наезда, зум интро.
 
 Часть 1: интро в превью наследует зум Камеры 1 — правило экран = C + s*(p−C) живёт
 в ОДНОЙ функции ipvCamChild, зовётся из вставок кам1 и из интро, второй копии нет.
@@ -191,8 +191,7 @@ def _intro_ids(xml, tmp_path, style, groups, splits=None):
 
 def test_q2_план_несёт_базовую_позицию_y(xml_subs):
     """plan.intro[].y — невзведённая позиция блока от центра кадра: INTRO_Y − 520.7894
-    + iDy (+ INTRO_Y2 для кам2). gDy НЕ включаем — он живёт отдельным полем dy (задание
-    E: драг правит dy в кэше), превью сложит y + dy."""
+    + iDy (+ INTRO_Y2 для кам2). gDy НЕ включаем — он живёт отдельным полем dy (драг правит dy в кэше), превью сложит y + dy."""
     plan = xml2ae.scene_plan(xml_subs, disclaimer="", intro=[
         dict(words=["ПЕРВОЕ"], color="white", times=[1.0]),
         dict(words=["ВТОРОЕ"], color="white", times=[8.3])],
@@ -227,7 +226,7 @@ def test_q2_idy_совпадает_со_старой_формулой(xml_subs, 
 
 
 def test_q2_gdy_не_в_y_а_в_dy(xml_subs):
-    """Смещение группы (задание E) не дублируется в y — оно отдельным полем dy, и превью
+    """Смещение группы не дублируется в y — оно отдельным полем dy, и превью
     сложит y + dy. Иначе драг (правит dy в кэше плана) получил бы двойной счёт."""
     plan = xml2ae.scene_plan(xml_subs, disclaimer="", intro=[
         dict(words=["ПЕРВОЕ"], color="white", times=[1.0]),
@@ -244,7 +243,7 @@ def test_q2_превью_берёт_y_из_плана():
     src = app_meta.app_js_text()
     intro = _func(src, "ipvIntroPos")
     assert "g.y" in intro and "g.dy" in intro
-    # задание ZM: точка идёт через общий выбор ipvIntroChild (внутри — ipvCamChild)
+    # точка идёт через общий выбор ipvIntroChild (внутри — ipvCamChild)
     assert "ipvIntroChild(" in intro
     css = open(os.path.join(os.path.dirname(HERE), "static", "app.css"),
                encoding="utf-8").read()

@@ -13,6 +13,7 @@ from .prompts import (INSERTS_SCHEMA, INSERTS_SYSTEM, INTRO_SCHEMA, INTRO_SYSTEM
                       YELLOW_SCHEMA, YELLOW_SYSTEM)
 from core.app_meta import console_emit
 from core.fileio import atomic_json_dump
+from core.umsg import ReelsiError
 
 
 def _words_from_xml(xml_path):
@@ -163,7 +164,7 @@ def ins_target(dur):
     return INS_TARGET
 
 
-# Зона конца — как зона начала: числом, а не словами (BX). Доля 6% длины в интервале
+# Зона конца — как зона начала: числом, а не словами. Доля 6% длины в интервале
 # [4, 9] с. До BX «самый конец (призыв подписаться)» каждая модель толковала по-своему,
 # и на длинных роликах зона растягивалась на 30 с пустоты.
 INS_END_ZONE = (0.06, 4.0, 9.0)
@@ -259,7 +260,7 @@ def cmd_inserts(xml_path, system=None, dry=False, model=None, url=None, emit=con
     мест, не повторяя avoid (список уже выбранных: {type,start_sec,query}). При частичном
     доборе сайдкар .inserts.json НЕ перезаписываем (он держит полный набор).
     window=(t0,t1) — добор ТОЛЬКО в указанный промежуток секунд: та же проверка
-    покрытия, что у «добор выброшенного», но для пустого хвоста ролика (BX).
+    покрытия, что у «добор выброшенного», но для пустого хвоста ролика.
     rejected — память правок: предложения, которые юзер УДАЛЯЛ раньше
     ({type,start_sec,query}) — модель просим не повторять, похожие фильтруем кодом."""
     words = _words_from_xml(xml_path)
@@ -333,8 +334,8 @@ def cmd_inserts(xml_path, system=None, dry=False, model=None, url=None, emit=con
     # Числа из ответа модели — такие же данные, а не гарантия, как и типы: `NaN` и
     # `Infinity` проходят и `float()`, и сортировку ниже. Не-числовой start_sec сбрасываем
     # в None до привязки: _snap_to_phrase получает шанс привязать вставку к цитате.
-    # Вставку, чей старт и после привязки не стал конечным числом, отбрасываем (IY, п. 1).
-    # Нечисловая длительность — 0, дальше штатный кламп (IB, п. 4).
+    # Вставку, чей старт и после привязки не стал конечным числом, отбрасываем.
+    # Нечисловая длительность — 0, дальше штатный кламп.
     for it in ins:
         if _finite_float(it.get("start_sec")) is None:
             it["start_sec"] = None
@@ -426,6 +427,7 @@ def cmd_inserts(xml_path, system=None, dry=False, model=None, url=None, emit=con
         try:
             extra = (cmd_inserts(xml_path, system=system, model=model, url=url, emit=emit,
                                  count=need, avoid=av, rejected=rejected) or {}).get("inserts") or []
+        except ReelsiError: raise
         except Exception as e:                       # добор не критичен: отдаём что есть
             emit("  ! добор не удался: {err_type}: {err}", err_type=type(e).__name__, err=e)
             extra = []
@@ -451,6 +453,7 @@ def cmd_inserts(xml_path, system=None, dry=False, model=None, url=None, emit=con
                 extra2 = (cmd_inserts(xml_path, system=system, model=model, url=url,
                                       emit=emit, count=need2, avoid=av2, rejected=rejected,
                                       window=(last, tail_at)) or {}).get("inserts") or []
+            except ReelsiError: raise
             except Exception as e:
                 emit("  ! добор окна не удался: {err_type}: {err}", err_type=type(e).__name__, err=e)
                 extra2 = []
@@ -549,7 +552,7 @@ INTRO_HOOK_ROW_MAX_CHARS = 14
 # приходят из XML. ОДИН список на весь модуль: им же считается доля строк хука,
 # кончающихся служебным словом (tools/intro_hook_check.py). Нужен, потому что строка не
 # должна кончаться предлогом или союзом, оторванным от своего слова: ИИ после BF стал
-# рвать фразу где попало («БОЛЬШИНСТВО НА / КУРСЕ», хвост «СТАВЯТ ПО») — задание BF2.
+# рвать фразу где попало («БОЛЬШИНСТВО НА / КУРСЕ», хвост «СТАВЯТ ПО»).
 INTRO_FUNC_WORDS = frozenset({
     # предлоги
     "БЕЗ", "БЛАГОДАРЯ", "В", "ВДОЛЬ", "ВМЕСТО", "ВНУТРИ", "ВО", "ВОКРУГ", "ВРОДЕ",
@@ -660,7 +663,7 @@ def _hook_trim(rows, words, start):
 
 
 def _intro_defunc(rows, words):
-    """Служебное слово не остаётся последним в строке (задание BF2, 2026-08-14).
+    """Служебное слово не остаётся последним в строке (2026-08-14).
 
     Модель поняла «до 14 символов» как цель и рвёт фразу где попало: «СТАВЯТ / ПО»,
     «ДЛЯ / ПРОФЕССИОНАЛЬНЫХ». _split_words такие строки не чинит — они короче лимита
@@ -821,6 +824,7 @@ def cmd_intro(xml_path, system=None, dry=False, model=None, url=None, emit=conso
         side = os.path.splitext(xml_path)[0] + ".inserts.json"
         try:
             inserts = json.load(open(side, encoding="utf-8")).get("inserts") or []
+        except ReelsiError: raise
         except Exception:
             inserts = []
     # Цель считается ПО СВОБОДНЫМ ОКНАМ, а не по длине ролика: смысл текста за спиной —

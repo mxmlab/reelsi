@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Maxim Si
 """Единственный источник путей: корень репозитория, данные репозитория, примеры.
 
-ПОЧЕМУ этот модуль есть (задание GU). Движок переехал в пакет `core/`, и
+ПОЧЕМУ этот модуль есть. Движок переехал в пакет `core/`, и
 `os.path.dirname(os.path.abspath(__file__))` из любого его модуля стал указывать
 на `core/`, а не на корень репозитория. А в корне лежат ЛИЧНЫЕ файлы
 пользователя: `ai_config.json` с ключами провайдеров, `insertlib.json` — база
@@ -16,6 +16,7 @@
 """
 import os
 import posixpath
+from core.umsg import ReelsiError
 
 # Корень репозитория — на уровень выше самого пакета core/.
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,17 +26,17 @@ DATA = os.path.join(ROOT, "data")
 EXAMPLES = os.path.join(ROOT, "examples")
 
 
-def root(*parts):
+def root(*parts: str) -> str:
     """Путь к личному файлу или папке пользователя — они живут в корне репозитория."""
     return os.path.join(ROOT, *parts)
 
 
-def data(*parts):
+def data(*parts: str) -> str:
     """Путь к данным, которые лежат в репозитории (data/)."""
     return os.path.join(DATA, *parts)
 
 
-def require_source_tree():
+def require_source_tree() -> None:
     """Проверяет, что Reelsi запущен из клона репозитория (editable install).
 
     Обычный `pip install .` в site-packages не поддерживается: templates/, static/
@@ -43,7 +44,7 @@ def require_source_tree():
     """
     missing = [d for d in ("templates", "static", "data") if not os.path.isdir(os.path.join(ROOT, d))]
     if missing:
-        raise SystemExit(
+        raise ReelsiError(
             f"Error: Reelsi must be run from a git clone repository (editable install).\n"
             f"Please run 'pip install -e .' from the repository root.\n"
             f"Missing required source directories in {ROOT}: {', '.join(missing)}."
@@ -143,7 +144,7 @@ def _is_fs_case_insensitive(path: str) -> bool:
 def pkey(path: str | os.PathLike) -> str:
     """Возвращает ключ пути для словарей и индексов с учётом файловой системы.
 
-    ПОЧЕМУ эта функция есть (задание KL). Стандартный `os.path.normcase` смотрит
+    ПОЧЕМУ эта функция есть. Стандартный `os.path.normcase` смотрит
     на платформу (ОС), а не на файловую систему. На Windows он приводит пути к
     нижнему регистру, а на Linux и macOS оставляет как есть. Но на macOS файловая
     система по умолчанию (APFS) нечувствительна к регистру (case-insensitive).

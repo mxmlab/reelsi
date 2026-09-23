@@ -287,10 +287,10 @@ async function markupOne(i){if(uiBusyGuard())return;const c=CLIPS[i];progShow(t(
 // пофазно — 1 своп на весь набор. UICANCEL (кнопка «Остановить») рвёт цикл между шагами.
 async function markupAll(){if(uiBusyGuard())return;const subeng=val('subengine')||'whisper';const list=selClips();if(!list.length){toast(t('Нет клипов'));return;}
   progShow(t('Разметка'),'—');uiBusySet(true);
-  // «Разметить всё» молча пропускает уже готовое, как до задания FD: вопрос о
+  // «Разметить всё» молча пропускает уже готовое, как раньше: вопрос о
   // перезаписи — только у явного запуска ОДНОЙ фазы (кнопки «Субтитры/Жёлтые/Вставки»).
   try{await markupAllRun(subeng,list,['subs','yellow','inserts']);}finally{uiBusySet(false);}}
-// Отдельная фаза разметки на выбранных клипах (задание FD): те же галочки, что и в
+// Отдельная фаза разметки на выбранных клипах: те же галочки, что и в
 // сборке (selClips: пусто у всех = все), прогресс делится на число выбранных фаз.
 // Явный запуск фазы — ask=true: если фаза уже сделана, спросим о перезаписи.
 async function markupPhase(phase){if(uiBusyGuard())return;const subeng=val('subengine')||'whisper';const list=selClips();if(!list.length){toast(t('Нет клипов'));return;}
@@ -306,14 +306,17 @@ async function markupAllRun(subeng,list,phases,ask){
   const phase=async(no,title,dep,has,call)=>{
     // Перезапись спрашивается ТОЛЬКО при явном запуске одной фазы (ask=true, кнопки
     // «Субтитры/Жёлтые/Вставки»). «Разметить всё» (ask=false) молча пропускает готовое,
-    // как до задания FD — без единого вопроса: уже сделано = пропуск.
+    // как раньше — без единого вопроса: уже сделано = пропуск.
     // «Да» (force) — фаза считается заново у ВСЕХ, пропуск по «уже есть» не действует;
     // зависимость (нет субтитров) остаётся. «Нет» — готовые пропускаются, как обычно.
     const already=ask?list.filter(c=>!fail.has(c)&&has(c)):[];
     const force=ask&&already.length&&await askConfirm(t('Уже размечено у {n}: {names}.\nФаза «{title}» будет пересчитана заново. Продолжить?',{n:already.length,names:already.map(c=>c.name).join(', '),title:title}));
     for(let i=0;i<N;i++){if(UICANCEL)return;const c=list[i];
       if(fail.has(c)||dep(c)||(!force&&has(c)))continue;
-      progUpdate((no-1)/P+i/N/P,c.name,t('Разметка {n}/{P} — {title}',{n:no,P:P,title:title}),t('клип {n} из {m}',{n:i+1,m:N}));
+      // Контекст очереди — отдельно от этапа: заголовок фазы и «клип i из N · имя» держатся,
+      // пока идёт клип, а что считается прямо сейчас — говорит progStep (и хвост лога в aiPost).
+      progQueue(t('Разметка {n}/{P} — {title}',{n:no,P:P,title:title}),i+1,N,c.name);
+      progStep(title,(no-1)/P+i/N/P);
       uiLog('▸ '+c.name+' — '+title+'…');
       try{await call(c);}catch(e){toast(title+' · '+c.name+': '+e);uiLog(t('  ОШИБКА: ')+e);fail.add(c);}
       renderClips2();saveState();await sleep(300);}};
@@ -335,7 +338,12 @@ async function markupAllRun(subeng,list,phases,ask){
   else if(ok===N)progDone(t('Размечено клипов: ')+ok);
   else{progDone(t('Размечено {n} из {m} — см. логи/сообщения',{n:ok,m:N}));$('progFill').className='progfill';}}
 // субтитры с нуля -> жёлтые -> вставки; статусы читаем через xml_state, вставки в clip.inserts
-async function markupClip(c){const xml=c.xml;const subeng=val('subengine')||'whisper';uiLog('▸ '+c.name+t(' — разметка'));
+async function markupClip(c){const xml=c.xml;const subeng=val('subengine')||'whisper';
+  // Разметка одного клипа — очередь из одного: своего контекста ещё нет, ставим его сами.
+  // Из пакета (markupAllRun) контекст уже выставлен снаружи — тогда его НЕ перетираем:
+  // иначе на экране вместо «клип 3 из 8 · имя» появилось бы «клип 1 из 1».
+  if(!PROGQ)progQueue(t('Разметка'),1,1,c.name);
+  uiLog('▸ '+c.name+t(' — разметка'));
   const stop=()=>{if(UICANCEL){uiLog(t('  остановлено по кнопке'));return true;}return false;};
   if(stop())return false;
   let st={};try{st=await (await fetch('/api/xml_state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml})})).json();}catch(e){toast(''+e);uiLog(t('  ошибка: ')+e);return false;}
@@ -343,14 +351,14 @@ async function markupClip(c){const xml=c.xml;const subeng=val('subengine')||'whi
   c.status={subs:st.subs,colored:st.colored,ncams:st.ncams};
   // 1. субтитры
   const subLbl=engLabel(subeng);
-  if(!(st.subs>0)){progUpdate(null,t('субтитры с нуля (')+subLbl+')…');uiLog(t('  субтитры с нуля (')+subLbl+')…');
+  if(!(st.subs>0)){progStep(t('субтитры с нуля (')+subLbl+')…');uiLog(t('  субтитры с нуля (')+subLbl+')…');
     const d=await (await fetch('/api/gen_subs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml,subengine:subeng})})).json();
     if(d.error){toast(t('субтитры: ')+errText(d));uiLog(t('  субтитры: ОШИБКА — ')+d.error);return false;}
     c.status.subs=d.subs;uiLog(t('  субтитры: ')+d.subs+subSkipped(d));await sleep(700);}
   else uiLog(t('  субтитры уже есть ({n}) — пропуск',{n:st.subs}));
   if(stop())return false;
   // 2. жёлтые — при ошибке НЕ идём дальше молча (частая причина: LM Studio не успел свапнуть модель)
-  if(!(c.status.colored>0)){progUpdate(null,t('жёлтые слова (ИИ)…'));uiLog(t('  жёлтые (ИИ)…'));
+  if(!(c.status.colored>0)){progStep(t('жёлтые слова (ИИ)…'));uiLog(t('  жёлтые (ИИ)…'));
     const d=await aiPost('/api/ai_yellow',{xml},t('жёлтые (ИИ)'));
     if(d.error){toast(t('жёлтые: ')+errText(d));uiLog(t('  жёлтые: ОШИБКА — ')+d.error);return false;}
     c.status.colored=(d.colored||d.yellow||[]).length;uiLog(t('  жёлтых: ')+c.status.colored);
@@ -358,7 +366,7 @@ async function markupClip(c){const xml=c.xml;const subeng=val('subengine')||'whi
   else uiLog(t('  жёлтые уже есть ({n}) — пропуск',{n:c.status.colored}));
   if(stop())return false;
   // 3. вставки (если уже есть — не перегенерируем, выбранные файлы не теряем)
-  if(!(c.inserts||[]).length){progUpdate(null,t('вставки (ИИ)…'));uiLog(t('  вставки (ИИ)…'));
+  if(!(c.inserts||[]).length){progStep(t('вставки (ИИ)…'));uiLog(t('  вставки (ИИ)…'));
     const d=await aiPost('/api/ai_inserts',{xml,rejected:c.ins_rejected||[]},t('вставки (ИИ)'));
     if(d.error){toast(t('вставки: ')+errText(d));uiLog(t('  вставки: ОШИБКА — ')+d.error);return false;}
     c.inserts=(d.inserts||[]).map(x=>({...x,media:''}));c.insTarget=Math.max(d.insTarget||0,c.inserts.length);insLog(d);uiLog(t('  вставок: ')+c.inserts.length);

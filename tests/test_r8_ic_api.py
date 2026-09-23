@@ -3,7 +3,7 @@
 # Copyright (c) 2026 Maxim Si
 """Задание IC: API и процессы — тело запроса, наборы, сторож rclone и aerender.
 
-Файл бьёт по пунктам задания IC (о метках заданий — `.github/CONTRIBUTING.md`):
+Файл бьёт по пунктам:
 
 1. `/api/render_run` и `/api/build_run`: кривой набор — внятный `umsg` и НИКОГДА
    не 500; «файл не найден» — только про пропавший файл.
@@ -299,7 +299,7 @@ def _run_fake(lines, monkeypatch, kill_log, stall=0.5, code=0):
 
 class _StalledProc(_Proc):
     """rclone, который печатает ОДИН И ТОТ ЖЕ блок статистики по таймеру:
-    ровно то, ради чего сторож переделан (задание IC, п. 4).
+    ровно то, ради чего сторож переделан.
 
     Строк конечное число и печатаются они медленно: на новом коде передача
     признаётся вставшей за RCLONE_STALL_SEC, на старом «активность» обновлялась
@@ -472,7 +472,7 @@ def test_run_proc_batch_stall_watchdog(monkeypatch, tmp_path):
     render.item_set(render.RJOB, render.RLOCK, "01_C0233", stage="render")
 
     rc = render._run_proc_batch("aerender.exe", "набор.aep", comps, str(tmp_path))
-    assert rc == render._AE_STALLED
+    assert rc == render.AE_STALLED
     assert any("не отвечает" in str(e) for e in render.RJOB["log"]), render.RJOB["log"]
     assert any("не отвечает" in f.get("reason", "") for f in render.RJOB["failed"])
 

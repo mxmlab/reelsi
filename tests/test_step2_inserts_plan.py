@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Вставки шага 2 в плане сцены scene_plan (задание DP).
+"""Вставки шага 2 в плане сцены scene_plan.
 
 Баг, ради которого тест: на шаге 2 карточки вставок хранят start_sec/duration_sec,
 а scene_plan читает start_s/start_f/dur_s/dur_f. Без конвертера cardToIns все вставки
@@ -64,7 +64,7 @@ def test_step2_insert_style_cam1_on_cam2(xml_subs):
 
 
 def test_step2_insert_duration_zero_fallback(xml_subs):
-    """При duration_sec=0 карточка получает дефолтную длительность dur_s=2, не 0 (задание DP-хвост)."""
+    """При duration_sec=0 карточка получает дефолтную длительность dur_s=2, не 0 ()."""
     # Симуляция выхода cardToIns при x.duration_sec=0: dur_s = round((0 || 2)*100)/100 = 2.0
     # При dur_s=2.0 вставка сохраняется в плане с нормальным окном
     ins = [dict(type="photo", media="test.jpg", start_s=12.0, start_f=0,

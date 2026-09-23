@@ -136,7 +136,7 @@ def test_jsx_with_shade_builds_figure_with_blur(xml_subs, tmp_path):
         'shadeLayer.property("ADBE Transform Group").property("ADBE Position")'
         '.setValue([INTRO_SHADE.x, INTRO_SHADE.y])')
 
-    # заливка слоя затемнения: единая форма _fill_js (3 компонента в AE, задание KG)
+    # заливка слоя затемнения: единая форма _fill_js (3 компонента в AE)
     assert ('shadeCtx.addProperty("ADBE Vector Graphic - Fill")'
             '.property("ADBE Vector Fill Color").setValue([0,0,0])') in jsx
     assert "[0,0,0,1]" not in jsx
@@ -153,7 +153,7 @@ def test_shade_layer_keeps_its_place_in_the_stack(xml_subs, tmp_path):
     """Порядок слоёв: затемнение выше клипов камер и ниже интро, вставок, рото, субтитров.
 
     Проверка не «на глаз»: .jsx исполняется в node с моком AE, который ведёт настоящий
-    стек слоёв композиции (тот же simulate_jsx_stack, что у задания FM).
+    стек слоёв композиции (тот же simulate_jsx_stack, что у).
     """
     intro = [dict(words=["ПЕРВОЕ", "ВТОРОЕ"], times=[0.5, 1.0])]
     inserts = [dict(type="photo", style="cam2", media="C:/x/a.png", start_s=1.0, dur_s=2.0)]

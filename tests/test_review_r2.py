@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты задания ZW: исправления по итогам внешнего ревью раунда 2.
+"""Тесты: исправления по итогам внешнего ревью раунда 2.
 
 1. Трек головы:
    - load_or_track с cancel бросает Cancelled, сайдкар не пишется;

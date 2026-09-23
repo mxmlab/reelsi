@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Пустой монтаж не затирает нарезку (задание MB, п. 1).
+"""Пустой монтаж не затирает нарезку.
 
 ПОЧЕМУ эти тесты существуют. `xmlbuild.build` с пустым `segments` (и с кусками короче
 кадра) не отказывал: цикл по кускам просто не выполнялся, и `fileio.atomic_text_write`
@@ -28,6 +28,8 @@ import pytest
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
+
+from core.umsg import ReelsiError  # noqa: E402
 
 os.environ.setdefault("REELSI_NO_BROWSER", "1")
 
@@ -87,13 +89,13 @@ def _state(path):
     [(0.0, 0.001), (10.0, 10.001)],
 ])
 def test_пустой_монтаж_отказывает_и_не_трогает_файл(tmp_path, fake_probe, segments):
-    """Ни одного куска длиннее кадра — SystemExit, и ни байта файла, ни mtime."""
+    """Ни одного куска длиннее кадра — ReelsiError, и ни байта файла, ни mtime."""
     from core import xmlbuild
     out = tmp_path / "out.xml"
     out.write_bytes("<xmeml>прошлая нарезка</xmeml>".encode("utf-8"))
     before = _state(out)
 
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(ReelsiError) as e:
         xmlbuild.build([_cam(tmp_path)], segments, [0.0], str(out))
 
     assert "Ничего не перезаписываю" in str(e.value), str(e.value)
@@ -127,8 +129,9 @@ def test_роут_editor_save_с_пустым_keep_отказывает(client, 
     assert r.status_code == 200, r.data[:200]
     assert d.get("ok") is not True and d.get("error"), d
     assert "Ничего не перезаписываю" in d["error"], d
-    # не «SystemExit: …» и не «ValueError: …» — человеку показываем сам отказ
-    assert "SystemExit" not in d["error"] and "ValueError" not in d["error"], d
+    # не «ReelsiError: …» и не «ValueError: …» — человеку показываем сам отказ
+    assert ("ReelsiError" not in d["error"] and "SystemExit" not in d["error"]
+            and "ValueError" not in d["error"]), d
     assert _state(xml_subs) == before, "XML перезаписан пустым таймлайном"
     assert not os.path.exists(xml_subs + ".bak"), "отказ не должен трогать и копию оригинала"
 
@@ -139,6 +142,7 @@ def test_роут_editor_save_с_пустым_keep_отказывает(client, 
 def test_нарезка_без_речи_не_перезаписывает_xml(tmp_path, monkeypatch, fake_probe):
     """vad вернул [] (немой дубль/скринкаст): прошлый XML цел, «готово» не печатаем."""
     import reelsi
+    from core import cutjob
     from core import sync, vad
 
     cam = _cam(tmp_path)
@@ -159,7 +163,7 @@ def test_нарезка_без_речи_не_перезаписывает_xml(tm
         ["--cam1", cam, "--single", "--no-subs", "--no-dedup"])
 
     with pytest.raises(RuntimeError) as e:
-        reelsi.process_pair([cam], str(out), args, emit=emit)
+        cutjob.process_pair([cam], str(out), cutjob.CutOptions.from_namespace(args), emit=emit)
 
     assert "Собирать нечего" in str(e.value), str(e.value)
     assert _state(out) == before, "XML перезаписан пустым таймлайном"

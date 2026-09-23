@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты контракта выгрузки моделей LM Studio (задание EC).
+"""Тесты контракта выгрузки моделей LM Studio.
 
 Reelsi выгружает ТОЛЬКО то, что загрузил сам (_OUR_MODELS), и не трогает сторонние
 процессы/модели пользователя в LM Studio.

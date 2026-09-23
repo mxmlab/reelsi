@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=69"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "reelsi"
-version = "0.1.0b0"
+version = "0.2.0b0"
 description = "AI video editor on top of Premiere and After Effects: multicam cut, word-by-word subtitles, AE assembly"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -26,3 +26,57 @@ include = ["core*", "api*"]
 dependencies = {file = ["requirements.txt"]}
 optional-dependencies.optional = {file = ["requirements-optional.txt"]}
 optional-dependencies.dev = {file = ["requirements-dev.txt"]}
+
+# Строгая типизация на ГРАНИЦЕ ядра (внешнее ревью 2026-09-22).
+#
+# Сплошь аннотировать 110 тысяч строк бессмысленно: это работа на месяцы и
+# гарантированные ошибки переноса. Поэтому строгий список — это модули, которые
+# зовут все остальные (пути, файловый ввод-вывод, медиа, метаданные приложения,
+# рендер, работа с камерой, .project.json), и храповик
+# (tests/test_typing_ratchet.py), который не даёт списку сжиматься.
+#
+# follow_imports = silent: чужие модули разбираются, но их ошибки НЕ показываются.
+# Без этого `mypy` тонул бы в замечаниях к 110 тысячам неаннотированных строк и
+# «ноль ошибок» стало бы недостижимо ни при какой правке.
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+follow_imports = "silent"
+files = [
+    "core/umsg.py",
+    "core/fileio.py",
+    "core/media.py",
+    "core/paths.py",
+    "core/app_meta.py",
+    "core/aerender.py",
+    "core/cams.py",
+    "core/rclone.py",
+    "core/xml2ae/plan_style.py",
+    "core/aicut/config_actions.py",
+    "core/project_file.py",
+    "core/cutjob.py",
+    "api/_core.py",
+]
+
+# disallow_untyped_defs — ровно для строгого списка: публичные функции и методы
+# обязаны быть аннотированы полностью, иначе список «проходит mypy» и ничего не
+# значит. Остальной код живёт как жил.
+[[tool.mypy.overrides]]
+module = [
+    "core.umsg",
+    "core.fileio",
+    "core.media",
+    "core.paths",
+    "core.app_meta",
+    "core.aerender",
+    "core.cams",
+    "core.rclone",
+    "core.xml2ae.plan_style",
+    "core.aicut.config_actions",
+    "core.project_file",
+    "core.cutjob",
+    "api._core",
+]
+disallow_untyped_defs = true

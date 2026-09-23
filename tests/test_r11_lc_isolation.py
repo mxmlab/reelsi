@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты изоляции окружения (задание LC).
+"""Тесты изоляции окружения.
 
 Проверяет, что:
 1. Модульные константы файлов состояния указывают во временный каталог, а не в корень репозитория.
@@ -10,8 +10,8 @@
 """
 import os
 
-from api import _core, render, videogen
-from core import censor, insertlib, paths, terms
+from api import _core, videogen
+from core import aerender, censor, insertlib, paths, terms
 from core.aicut import catalog, config
 from core.gigaam_cut import tune
 
@@ -37,13 +37,13 @@ def test_constants_point_outside_repo_root():
     assert not is_in_root(censor.USER_PATHS["bad"]), f"USER_PATHS['bad'] указывает в корень: {censor.USER_PATHS['bad']}"
     assert not is_in_root(censor.USER_PATHS["ok"]), f"USER_PATHS['ok'] указывает в корень: {censor.USER_PATHS['ok']}"
     assert not is_in_root(insertlib.INDEX_PATH), f"INDEX_PATH указывает в корень: {insertlib.INDEX_PATH}"
-    assert not is_in_root(render._get_stats_path()), f"render_stats указывает в корень: {render._get_stats_path()}"
+    assert not is_in_root(aerender.get_stats_path()), f"render_stats указывает в корень: {aerender.get_stats_path()}"
     assert not is_in_root(catalog.catalog_cache_path()), f"models_dev указывает в корень: {catalog.catalog_cache_path()}"
     assert not is_in_root(config.AI_CONFIG_PATH), f"AI_CONFIG_PATH указывает в корень: {config.AI_CONFIG_PATH}"
 
 
 def test_ai_config_paths_do_not_exist_initially():
-    """Сессионный и потестовый путь конфига не существуют в начале теста (задание LC3).
+    """Сессионный и потестовый путь конфига не существуют в начале теста.
 
     ПОЧЕМУ: личные шаблоны и боевые файлы конфига (ai_config.test.json, ai_config.json)
     могут содержать настоящие API-ключи. Тестовое окружение не засевает конфиг:
@@ -76,7 +76,7 @@ def test_ai_config_save_writes_to_tmp_path(tmp_path):
     """save_ai_config пишет во временный каталог теста (tmp_path), а не в корень репозитория.
 
     ПОЧЕМУ: ai_config.json содержит боевые API-ключи пользователя; любые вызовы API
-    внутри тестов обязаны быть изолированы во tmp_path каждого теста (задание LC2).
+    внутри тестов обязаны быть изолированы во tmp_path каждого теста.
     """
     root_cfg = os.path.join(paths.ROOT, "ai_config.json")
     root_mtime_before = os.stat(root_cfg).st_mtime_ns if os.path.exists(root_cfg) else None

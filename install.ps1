@@ -134,10 +134,19 @@ if (-not $NoOptional) {
 }
 
 Step "Verification"
+# Упавшая проверка не должна валить установку, но и молчать о ней нельзя: код
+# возврата сохраняем и говорим вслух (установка по-прежнему завершается успехом).
 & $py (Join-Path $here "doctor.py")
+$doctorRc = $LASTEXITCODE
 # bootstrap переехал в пакет core/: из корня он запускается как модуль, а не по пути
 # к файлу — иначе `core.paths` не найдётся и личные файлы заведутся не там.
 Push-Location $here
 try { & $py -m core.bootstrap } finally { Pop-Location }
+$bootstrapRc = $LASTEXITCODE
+
+if ($doctorRc -ne 0 -or $bootstrapRc -ne 0) {
+    Write-Host "`n  WARNING: the environment check found problems — see above." -ForegroundColor Yellow
+    Write-Host "  Reelsi is installed, but fix them before the first run." -ForegroundColor Yellow
+}
 
 Write-Host "`nRun:  & `"$py`" reelsi\webui.py" -ForegroundColor Green

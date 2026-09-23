@@ -19,6 +19,7 @@ Public API:
 import re, base64, json, os, struct
 
 from core import paths
+from core.umsg import ReelsiError, cli_error
 
 TEXT_OFF = 0x168  # constant offset of the Source Text length-prefix in every blob
 # Хвост FlatBuffer после текстовой области идентичен во ВСЕХ реальных блобах — разной
@@ -161,11 +162,13 @@ def harvest_coloured(xml_paths, out_json=None):
     for xp in xml_paths:
         try:
             txt = open(xp, encoding="utf-8").read()
+        except ReelsiError: raise
         except Exception:
             continue
         for name, val in _EFFECT_RE.findall(txt):
             try:
                 b = base64.b64decode(val)
+            except ReelsiError: raise
             except Exception:
                 continue
             w = _read_text(b)
@@ -201,34 +204,38 @@ def library():
 
 
 if __name__ == "__main__":
-    xml = os.path.join(os.path.dirname(paths.ROOT), "Timeline 2.xml")
-    lib = BlobLibrary.from_reference(xml)
-    lib.save(paths.data("refblobs.json"))
+    try:
+        xml = os.path.join(os.path.dirname(paths.ROOT), "Timeline 2.xml")
+        lib = BlobLibrary.from_reference(xml)
+        lib.save(paths.data("refblobs.json"))
 
-    log = open(paths.root("blob_selftest.txt"), "w", encoding="utf-8")
-    def p(*a): print(*a, file=log)
-    p(f"harvested template lengths (bytes): {lib.lengths}")
-    p(f"count: {len(lib.lengths)}  max: {lib.max_len}")
+        log = open(paths.root("blob_selftest.txt"), "w", encoding="utf-8")
+        def p(*a): print(*a, file=log)
+        p(f"harvested template lengths (bytes): {lib.lengths}")
+        p(f"count: {len(lib.lengths)}  max: {lib.max_len}")
 
-    # 1) Round-trip: every template must reproduce its own word exactly.
-    bad = 0
-    for L, b in lib.by_len.items():
-        w = _read_text(b)
-        rt = _read_text(base64.b64decode(lib.make(w)))
-        if rt != w:
-            bad += 1; p(f"  ROUNDTRIP FAIL L={L} {w!r} -> {rt!r}")
-    p(f"roundtrip exact-length: {len(lib.by_len)-bad}/{len(lib.by_len)} OK")
+        # 1) Round-trip: every template must reproduce its own word exactly.
+        bad = 0
+        for L, b in lib.by_len.items():
+            w = _read_text(b)
+            rt = _read_text(base64.b64decode(lib.make(w)))
+            if rt != w:
+                bad += 1; p(f"  ROUNDTRIP FAIL L={L} {w!r} -> {rt!r}")
+        p(f"roundtrip exact-length: {len(lib.by_len)-bad}/{len(lib.by_len)} OK")
 
-    # 2) Arbitrary words incl. lengths NOT present in library.
-    tests = ["ПРИВЕТ", "ТЕСТОСТЕРОН", "Я", "ну", "это", "ДЛИННОЕ СЛОВО ТУТ",
-             "qwerty", "АБВ", "12345", "Ё", "переносимость", "X"]
-    for w in tests:
-        try:
-            out = lib.make(w)
-            back = _read_text(base64.b64decode(out))
-            status = "OK" if back == w else f"MISMATCH->{back!r}"
-        except Exception as e:
-            status = f"ERR {e}"
-        p(f"  make({w!r:24}) L={len(w.encode('utf-8')):2d} -> {status}")
-    log.close()
-    print("selftest written")
+        # 2) Arbitrary words incl. lengths NOT present in library.
+        tests = ["ПРИВЕТ", "ТЕСТОСТЕРОН", "Я", "ну", "это", "ДЛИННОЕ СЛОВО ТУТ",
+                 "qwerty", "АБВ", "12345", "Ё", "переносимость", "X"]
+        for w in tests:
+            try:
+                out = lib.make(w)
+                back = _read_text(base64.b64decode(out))
+                status = "OK" if back == w else f"MISMATCH->{back!r}"
+            except ReelsiError: raise
+            except Exception as e:
+                status = f"ERR {e}"
+            p(f"  make({w!r:24}) L={len(w.encode('utf-8')):2d} -> {status}")
+        log.close()
+        print("selftest written")
+    except ReelsiError as e:
+        cli_error(e)

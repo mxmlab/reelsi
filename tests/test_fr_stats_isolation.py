@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тест-сторож изоляции файлов состояния и render_stats.json (задание FR).
+"""Тест-сторож изоляции файлов состояния и render_stats.json.
 
 ПОЧЕМУ этот тест существует:
 Прогон тестов не должен писать в боевые файлы состояния (render_stats.json,
@@ -24,7 +24,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
-import api.render as render  # noqa: E402
+from core import aerender  # noqa: E402
 
 
 def _file_state(path):
@@ -56,7 +56,7 @@ def test_guard_render_stats_not_in_repo_root():
 
 def test_guard_render_stats_path_is_isolated():
     """Сторож: _get_stats_path() указывает на изолированный временный файл, а не на корень."""
-    stats_path = render._get_stats_path()
+    stats_path = aerender.get_stats_path()
     repo_stats = os.path.join(ROOT, "render_stats.json")
     assert stats_path != repo_stats, (
         f"_get_stats_path() вернул боевой путь {repo_stats} вместо изолированного tmp_path"
@@ -71,10 +71,10 @@ def test_guard_render_stats_path_is_isolated():
 def test_guard_save_stats_writes_to_isolated_file_only():
     """Сторож: вызов _save_render_stats пишет в изолированный файл и не трогает корень."""
     repo_stats = os.path.join(ROOT, "render_stats.json")
-    stats_path = render._get_stats_path()
+    stats_path = aerender.get_stats_path()
     before = _file_state(repo_stats)
 
-    render._save_render_stats(10, 50.0, 360.0, 830.0)
+    aerender.save_render_stats(10, 50.0, 360.0, 830.0)
 
     assert os.path.isfile(stats_path), "Статистика не записалась в изолированный файл"
     after = _file_state(repo_stats)

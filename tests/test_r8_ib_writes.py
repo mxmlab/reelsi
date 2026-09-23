@@ -25,7 +25,7 @@ sys.path.insert(0, str(ROOT))
 
 from core import align, fileio, omni_cut, speakers, styles, subs, subtitle_xml  # noqa: E402
 
-# Прямые записи, которые задание IB переводит на core.fileio (файл: запрещённый текст).
+# Прямые записи, которые переведены на core.fileio (файл: запрещённый текст).
 FORBIDDEN_WRITES = {
     "core/styles.py": ['open(p, "w", encoding="utf-8")', 'open(target, "w", encoding="utf-8")'],
     "core/speakers.py": ['open(path, "w", encoding="utf-8", newline="\\r\\n")'],

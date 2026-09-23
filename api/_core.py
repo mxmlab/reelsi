@@ -5,7 +5,9 @@
 Всё, что нужно ВСЕМ группам роутов и не относится ни к одной из них. Модули роутов
 импортируют отсюда `bp` и вешают на него свои @bp.route.
 """
-import json, os, signal, subprocess, threading, time, traceback
+import glob, json, os, signal, subprocess, threading, time, traceback
+from typing import IO, Any, Iterable
+
 from core import paths
 from core.fileio import atomic_json_dump
 
@@ -13,16 +15,17 @@ from core.fileio import atomic_json_dump
 # лежат там, а не в пакете. Корень считает ровно один модуль — core/paths.py,
 # поэтому и sys.path тут больше не правится: пакет импортируется из корня.
 HERE = paths.ROOT
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, Response, request, jsonify
 from werkzeug.exceptions import HTTPException
-import reelsi
-from core.umsg import UMsg, umsg
+from core.cams import DEFAULT_BASE
+from core.umsg import ReelsiError, UMsg, umsg
+from core.applog import get_logger
 
-DEFAULT_BASE = reelsi.DEFAULT_BASE
+log = get_logger(__name__)
 
 
-def _json_safe(obj):
-    """Приводит структуру к JSON-сериализуемому виду (задание HF).
+def _json_safe(obj: Any) -> Any:
+    """Приводит структуру к JSON-сериализуемому виду.
 
     Объекты, которые json.dumps не умеет сериализовать (URLError, Exception,
     Path и т. п.), заменяются на str(значение)."""
@@ -37,8 +40,9 @@ def _json_safe(obj):
         return str(obj)
 
 
-def log_entry(line, vars=None, **extra):
-    """Сборка записи лога со структурными переменными (задание HH).
+def log_entry(line: str, vars: dict[str, Any] | None = None,
+              **extra: Any) -> dict[str, Any] | str:
+    """Сборка записи лога со структурными переменными.
 
     Возвращает dict(t=str(line), v=_json_safe(vars)) при непустых vars,
     иначе str(line). Не-JSON объекты (Exception, Path и т. п.) приводятся
@@ -52,33 +56,47 @@ def log_entry(line, vars=None, **extra):
     return str(line)
 
 
-def umsg_err(e):
-    """SystemExit из aicut/omni_asr/insertlib в ответ API.
+def _umsg_of(e: BaseException) -> UMsg | None:
+    """UMsg пользовательской ошибки: ReelsiError хранит его сам, SystemExit — в args[0].
 
-    `raise SystemExit(umsg('код', 'текст', var=…))` — динамическое пользовательское
+    Второй канал нужен, пока в коде остаются броски SystemExit (настоящие выходы
+    процесса и вызовы чужого кода): разбор один на оба класса."""
+    u = getattr(e, "umsg", None)
+    if isinstance(u, UMsg):
+        return u
+    a = e.args[0] if getattr(e, "args", None) else None
+    return a if isinstance(a, UMsg) else None
+
+
+def umsg_err(e: BaseException) -> dict[str, Any]:
+    """ReelsiError (или SystemExit) из aicut/omni_asr/insertlib в ответ API.
+
+    `raise ReelsiError(umsg('код', 'текст', var=…))` — динамическое пользовательское
     сообщение: отдаём текст (русский fallback) плюс код и переменные, по которым
-    фронт берёт перевод ERR_<код> из словаря. Обычный SystemExit("текст") отдаём
-    как раньше — одним текстом."""
-    a = e.args[0] if e.args else None
-    if isinstance(a, UMsg):
+    фронт берёт перевод ERR_<код> из словаря. Ошибку со строкой отдаём как раньше —
+    одним текстом. SystemExit понимается наравне: он ещё живёт в чужих вызовах и
+    настоящих выходах процесса, а ответ пользователю у них один и тот же."""
+    a = _umsg_of(e)
+    if a is not None:
         safe_vars = _json_safe(a.vars) if a.vars else {}
         return {"error": a.msg, "err": a.code, "err_vars": safe_vars}
     return {"error": str(e), "err": None, "err_vars": None}
 
 
-def sysexit_text(e):
-    """Понятный текст SystemExit для потоков заданий (задание MX).
+def sysexit_text(e: BaseException) -> str:
+    """Понятный текст пользовательской ошибки для потоков заданий.
 
-    `raise SystemExit(umsg('код', 'текст', var=…))` — принятый в проекте канал
-    ошибок (около 249 мест). Синхронные роуты ловят его и отдают через umsg_err, а
-    потоки заданий ловили только Exception, а SystemExit — BaseException: ошибка
-    («рото не посчитано…», «сборка прервана…») уходила из потока мимо лога и UI.
-    Разбор umsg живёт в ОДНОМ месте — umsg_err; второй копии тут нет."""
+    `raise ReelsiError(umsg('код', 'текст', var=…))` — принятый в проекте канал
+    ошибок (около 250 мест; раньше это был SystemExit). Синхронные роуты
+    ловят её и отдают через umsg_err, а потоки заданий ловили только Exception, а
+    SystemExit — BaseException: ошибка («рото не посчитано…», «сборка прервана…»)
+    уходила из потока мимо лога и UI. Разбор umsg живёт в ОДНОМ месте — umsg_err;
+    второй копии тут нет."""
     return umsg_err(e)["error"]
 
 
-def jstr(d, key, default=""):
-    """Строковое значение поля JSON-тела запроса (задание HY).
+def jstr(d: Any, key: str, default: str = "") -> str:
+    """Строковое значение поля JSON-тела запроса.
 
     Если d — словарь и значение по ключу key является строкой (str), возвращает
     его. В противном случае (ключа нет, значение None, число, список, словарь
@@ -92,8 +110,8 @@ def jstr(d, key, default=""):
     return default
 
 
-def kill_tree(p):
-    """Убить процесс ВМЕСТЕ С ДЕТЬМИ (задание IC, п. 6; POSIX — задание NC).
+def kill_tree(p: subprocess.Popen[Any]) -> None:
+    """Убить процесс ВМЕСТЕ С ДЕТЬМИ (POSIX).
 
     Раньше эта функция была скопирована в трёх местах (api/gdrive.py, api/render.py,
     api/jobs.py) и копии разъезжались. Windows: `taskkill /F /T /PID` (две попытки —
@@ -109,27 +127,37 @@ def kill_tree(p):
                                capture_output=True, timeout=15)
                 if p.poll() is not None:
                     return
+            except ReelsiError: raise
             except Exception:
-                pass
+                pass  # процесс уже убит или не убивается — ниже добираем p.kill()
     else:
+        # getattr, а не прямые имена: в типах эти POSIX-функции объявлены только для
+        # не-Windows сборок Python, а mypy проверяет ОБЕ ветки (os.name он не сужает) —
+        # прямой вызов дал бы [attr-defined] на Windows-хосте, а `# type: ignore` на
+        # Linux оказался бы лишним и упал бы на warn_unused_ignores.
+        getpgid = getattr(os, "getpgid")
+        getpgrp = getattr(os, "getpgrp")
+        killpg = getattr(os, "killpg")
+        sigkill = getattr(signal, "SIGKILL")
         try:
-            pgid = os.getpgid(p.pid)
+            pgid = getpgid(p.pid)
         except OSError:                    # процесс уже кончился — ниже p.kill()
             pgid = None
         # Группу СЕРВЕРА не трогаем никогда: процесс, стартовавший без своей сессии
         # (старый код, чужая обвязка), сидит в нашей группе — killpg убил бы и нас.
-        if pgid is not None and pgid != os.getpgrp():
+        if pgid is not None and pgid != getpgrp():
             try:
-                os.killpg(pgid, signal.SIGKILL)
+                killpg(pgid, sigkill)
             except OSError:
-                pass
+                pass  # группы уже нет (процесс умер сам) — дерево добирает p.kill() ниже
     try:
         p.kill()
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # процесс уже мёртв (гонка с выходом) — убивать нечего
 
 
-def task_popen_kwargs():
+def task_popen_kwargs() -> dict[str, Any]:
     """Аргументы `subprocess.Popen` для процессов заданий (нарезка, рендер, rclone).
 
     На POSIX задание стартует в СВОЕЙ группе процессов: «Стоп» гасит группу целиком
@@ -142,13 +170,12 @@ def task_popen_kwargs():
 
 
 # APP_NAME / APP_REFERER / app_out_dir самому _core не нужны — он их ПЕРЕЭКСПОРТИРУЕТ
-# модулям роутов, чтобы у тех не расползался этот try/except по всему пакету.
-try:
-    from core.app_meta import (APP_REFERER, APP_NAME, env,   # noqa: F401
-                          out_dir as app_out_dir)
-except ImportError:
-    from reelsi.app_meta import (APP_REFERER, APP_NAME, env,   # noqa: F401
-                                 out_dir as app_out_dir)
+# модулям роутов, чтобы у тех не расползался этот импорт по всему пакету.
+# Запасной ветки `from reelsi.app_meta import …` тут больше нет: она
+# осталась от времён, когда ядро лежало в пакете `reelsi/`, и сработать уже не могла —
+# `reelsi` это модуль CLI, а не пакет. Заодно api/ больше не импортирует CLI вовсе.
+from core.app_meta import (APP_REFERER, APP_NAME, env,   # noqa: F401
+                           out_dir as app_out_dir)
 
 bp = Blueprint("api", __name__)
 
@@ -156,8 +183,20 @@ bp = Blueprint("api", __name__)
 # --------------------------------------------------------------------------- #
 # Необработанное исключение в роуте — JSON, а не HTML-страница
 # --------------------------------------------------------------------------- #
+@bp.errorhandler(ReelsiError)
+def _json_reelsi_error(e: ReelsiError) -> Response:
+    """Пользовательская ошибка из роута, который её не поймал, — JSON, а не 500.
+
+    Такой роут раньше обрывал запрос вовсе: SystemExit — не Exception, и Flask его
+    не ловил, а фронт на сетевой ошибке не показывал ни текста, ни кода. Отдаём
+    ровно тот же ответ, что роут отдал бы сам через `umsg_err` (и тот же код 200,
+    что у соседних роутов с `jsonify(**umsg_err(e))`): это ошибка пользователя, а
+    не сбой сервера, — в `internal_error` её заворачивать нельзя."""
+    return jsonify(**umsg_err(e))
+
+
 @bp.errorhandler(Exception)
-def _json_error(e):
+def _json_error(e: Exception) -> Response | tuple[Response, int]:
     """Роут упал необработанным исключением — отдать JSON в форме umsg_err.
 
     Фронт на любой ответ делает `.json()` и читает {error, err, err_vars}
@@ -169,13 +208,13 @@ def _json_error(e):
     """
     if isinstance(e, HTTPException):
         code = getattr(e, "code", None) or 500
-        return jsonify(**umsg_err(SystemExit(umsg("http_error", f"Ошибка запроса ({code})",
-                                                  code=code)))), code
+        return jsonify(**umsg_err(ReelsiError(umsg("http_error", f"Ошибка запроса ({code})",
+                                                   code=code)))), code
     traceback.print_exc()
     err = f"{type(e).__name__}: {e}"
-    return jsonify(**umsg_err(SystemExit(umsg("internal_error",
-                                              f"Внутренняя ошибка сервера: {err}",
-                                              err=err)))), 500
+    return jsonify(**umsg_err(ReelsiError(umsg("internal_error",
+                                               f"Внутренняя ошибка сервера: {err}",
+                                               err=err)))), 500
 
 
 # --------------------------------------------------------------------------- #
@@ -194,7 +233,7 @@ def _json_error(e):
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
 
 
-def _host_is_local(host):
+def _host_is_local(host: str) -> bool:
     if not host:
         return False                     # HTTP/1.1 без Host — не браузер и не наш UI
     h = host.rsplit(":", 1)[0] if not host.endswith("]") else host
@@ -214,7 +253,7 @@ def _host_is_local(host):
 _MUTATING_METHODS = ("POST", "PUT", "PATCH", "DELETE")
 _SITE_SAME = {"same-origin", "none"}
 
-# GET-роуты с ПОБОЧНЫМ действием (задание MZ, п. 5): открывают диалог выбора файла
+# GET-роуты с ПОБОЧНЫМ действием: открывают диалог выбора файла
 # (Tk-подпроцесс, /api/pick*) или пишут кэш волны РЯДОМ с файлом (/api/waveform).
 # Чужой странице хватало <img src> или <script src> на такой адрес — ответ ей не
 # прочитать, но диалог уже открылся, а файл на диске появился. Sec-Fetch-Site их и
@@ -226,7 +265,7 @@ _SIDE_EFFECT_GETS = ("/api/pickmedia", "/api/pickfiles", "/api/pickone",
                      "/api/pickaudio", "/api/pickdir", "/api/waveform")
 
 
-def _origin_check_required():
+def _origin_check_required() -> bool:
     """Проверять ли Origin у этого запроса: он обязателен у изменяющих методов и у
     побочных GET (см. _SIDE_EFFECT_GETS)."""
     if request.method in _MUTATING_METHODS:
@@ -234,7 +273,7 @@ def _origin_check_required():
     return request.method == "GET" and request.path in _SIDE_EFFECT_GETS
 
 
-def _origin_is_local(origin):
+def _origin_is_local(origin: str) -> bool:
     """Origin (`схема://хост:порт`) — наш интерфейс? Сравниваем ХОСТ: схема и порт
     к локальности не относятся (тестовый профиль живёт на 5098)."""
     if not origin:
@@ -244,18 +283,20 @@ def _origin_is_local(origin):
         h = urlsplit(origin).hostname
     except ValueError:            # битый Origin (например «http://[») — не наш
         return False
-    return bool(h) and h.strip().lower() in _LOCAL_HOSTS
+    if not h:                     # схема без хоста («file:///») — не наш origin
+        return False
+    return h.strip().lower() in _LOCAL_HOSTS
 
 
-def _forbidden_origin():
-    r = umsg_err(SystemExit(umsg("forbidden_origin", "запрос пришёл с чужого сайта")))
+def _forbidden_origin() -> tuple[Response, int]:
+    r = umsg_err(ReelsiError(umsg("forbidden_origin", "запрос пришёл с чужого сайта")))
     return jsonify(**r), 403
 
 
 @bp.before_request
-def _block_dns_rebinding():
+def _block_dns_rebinding() -> Response | tuple[Response, int] | None:
     if not _host_is_local(request.host):
-        r = umsg_err(SystemExit(umsg("localhost_only", "только с localhost")))
+        r = umsg_err(ReelsiError(umsg("localhost_only", "только с localhost")))
         return jsonify(**r), 403
     site = request.headers.get("Sec-Fetch-Site")
     if site is not None:
@@ -265,11 +306,12 @@ def _block_dns_rebinding():
         origin = request.headers.get("Origin")
         if origin is not None and not _origin_is_local(origin):
             return _forbidden_origin()
+    return None          # «не блокируем» — у before_request это и есть None
 
 
 @bp.before_request
-def _check_json_body():
-    """Тело запроса обязано быть JSON-объектом (задание IW, п. 1).
+def _check_json_body() -> tuple[Response, int] | None:
+    """Тело запроса обязано быть JSON-объектом.
 
     Тела-массивы (`[1, 2]`), строки (`"x"`), числа (`5`) роняли 18 роутов в 500:
     каждый роут ждёт словарь и делает `d.get(...)`. Пустые тела и не-JSON не
@@ -283,11 +325,13 @@ def _check_json_body():
             try:
                 import json
                 data = json.loads(request.data)
+            except ReelsiError: raise
             except Exception:
                 data = None
         if data is not None and not isinstance(data, dict):
-            r = umsg_err(SystemExit(umsg("bad_body", "Тело запроса должно быть JSON-объектом")))
+            r = umsg_err(ReelsiError(umsg("bad_body", "Тело запроса должно быть JSON-объектом")))
             return jsonify(**r), 400
+    return None          # тело не проверяем — «пропускаем запрос», как и раньше
 
 
 # Файлы, которые /api/media не отдаёт никогда. Он умеет отдать что угодно с диска —
@@ -297,17 +341,17 @@ def _check_json_body():
 _NEVER_SERVE = ("ai_config.json", "ai_config.test.json", "rclone.conf")
 
 
-def _never_serve(path):
+def _never_serve(path: str) -> bool:
     """Секрет ли это. Помимо имён из _NEVER_SERVE сверяем РЕАЛЬНЫЙ путь конфига rclone:
     он переезжает переменной REELSI_RCLONE_CONF (изолированный профиль на 5098), и там
     лежат токены гугл-диска — по одному имени такой файл не поймать.
 
-    Сверяем basename и присланного пути, и его os.path.realpath (задание LB): симлинк с
+    Сверяем basename и присланного пути, и его os.path.realpath: симлинк с
     безобидным именем (например, harmless.png -> ai_config.json) иначе обходит денилист
     секретов. Сегодня сервер и так слушает только localhost (см. _block_dns_rebinding),
     но эта проверка — последний рубеж, который переживёт вынос интерфейса наружу (REMOTE_PLAN).
 
-    Сравнение через os.path.samefile с известными существующими секретами (задание LK):
+    Сравнение через os.path.samefile с известными существующими секретами:
     жёсткая ссылка (os.link) оставляет безобидное имя (clip.mp4) и не раскрывается через
     os.path.realpath (указывает напрямую на тот же inode/file index ФС). Сравнение
     по samefile ловит и симлинки, и жёсткие ссылки. Любое OSError при проверке означает,
@@ -318,33 +362,37 @@ def _never_serve(path):
         return True
     try:
         real = os.path.realpath(path)
+    except ReelsiError: raise
     except Exception:
         real = path
     if os.path.basename(real).lower() in _NEVER_SERVE:
         return True
-    rc_conf = None
+    rc_conf: str | None = None
     try:
-        from .gdrive import rclone_conf
+        from core.rclone import rclone_conf
         rc_conf = rclone_conf()
         if rc_conf and real == os.path.realpath(rc_conf):
             return True
+    except ReelsiError: raise
     except Exception:      # конфига нет / путь не разрешается — имени выше достаточно
-        pass
+        pass  # конфига rclone нет / путь не разрешается — проверки по имени выше хватило
     try:
         if os.path.exists(path):
-            candidates = []
+            candidates: list[str] = []
             try:
                 import core.aicut.config as _ai_config
                 ai_cfg = getattr(_ai_config, "AI_CONFIG_PATH", None)
                 if ai_cfg:
                     candidates.append(ai_cfg)
+            except ReelsiError: raise
             except Exception:
-                pass
+                pass  # модуль конфига ИИ не импортировался — путь добавят следующие строки
             try:
                 candidates.append(paths.root("ai_config.json"))
                 candidates.append(paths.root("ai_config.test.json"))
+            except ReelsiError: raise
             except Exception:
-                pass
+                pass  # путь конфига не построился — в списке секретов его просто не будет
             if rc_conf:
                 candidates.append(rc_conf)
             for secret in candidates:
@@ -354,18 +402,78 @@ def _never_serve(path):
                 except OSError:
                     continue
     except OSError:
-        pass
+        pass  # сравнить пути не удалось — считаем, что это не секрет
     return False
 
-JOB = {"running": False, "log": [], "results": [], "failed": [], "done": False, "cancel": False,
-       "log_base": 0,   # log_base = сколько строк срезано с начала (для ?since=)
-       "kind": "", "label": "", "progress": None,  # kind: cut|draft|build; progress: {"i","n"}
-       "stalled": False}   # процесс нарезки молчит дольше CUT_STALL_S (задание NC)
+
+def is_reelsi_target(path: Any, kind: str) -> bool:
+    """Своя ли цель у роута, который по ней УДАЛЯЕТ: нарезка (`kind="cut"`) или папка вывода (`kind="outdir"`).
+
+    ПОЧЕМУ отдельная функция: путь приезжает в ТЕЛЕ ЗАПРОСА, то есть это данные
+    снаружи, а роут по нему сносит файлы. `/api/clip_delete` считал stem от любого
+    имени и удалял всё `<stem>.*` рядом — тело `{"xml": ".../Documents/notes.txt"}`
+    уносило notes.txt и notes.<что угодно> (внешнее ревью 2026-09-22, P0-2).
+    `/api/clean_tmp` отдавал присланный каталог в `draftrender.clean_tmp` и в
+    `shutil.rmtree` по `roto/_cache`, то есть чистил чужую папку (P0-3). Последним
+    рубежом оставались только localhost и проверка Origin — это защита от чужой
+    страницы, а не проверка цели: опечатка в теле, старый клиент или свой скрипт на
+    той же машине проходили насквозь. Следующий удаляющий роут должен брать готовое
+    отсюда, а не писать заново.
+
+    `cut` — цель обязана быть файлом `.xml` (ровно; регистр не важен), файл
+    существует, и это выход нарезки: рядом лежит `<stem>.project.json` ЛИБО корень
+    самого XML — `xmeml` (не разобрался ElementTree — не нарезка).
+
+    `outdir` — цель обязана быть каталогом и либо совпадать с папкой вывода
+    приложения (`app_out_dir`, как её берут соседние роуты) или лежать ВНУТРИ неё,
+    либо содержать хоть один `*.project.json`. Чужая папка под это не подходит, а
+    своя пустая (свежая `Reelsi_out` без нарезок) — подходит по пути.
+
+    Функция только отвечает «можно ли трогать»: ничего не удаляет и не бросает
+    исключений на кривом пути. Текст ошибки и её umsg-код (`not_a_cut` /
+    `not_out_dir`) — дело роута, чтобы сухой прогон и удаление отбивались одинаково.
+    """
+    if not isinstance(path, str) or not path.strip():
+        return False
+    if kind == "cut":
+        try:
+            if os.path.splitext(path)[1].lower() != ".xml" or not os.path.isfile(path):
+                return False
+            stem = os.path.splitext(os.path.basename(path))[0]
+            if os.path.isfile(os.path.join(os.path.dirname(os.path.abspath(path)),
+                                           stem + ".project.json")):
+                return True
+            import xml.etree.ElementTree as ET
+            # Локальное имя тега: `{ns}xmeml` — всё ещё xmeml, а любая другая
+            # ошибка разбора означает мусор, а не нарезку.
+            tag = str(ET.parse(path).getroot().tag).split("}")[-1]
+        except ReelsiError: raise
+        except Exception:
+            return False
+        return tag.strip().lower() == "xmeml"
+    if kind == "outdir":
+        if not os.path.isdir(path):
+            return False
+        try:
+            real = os.path.normcase(os.path.realpath(path))
+            own = os.path.normcase(os.path.realpath(app_out_dir(DEFAULT_BASE)))
+        except (OSError, ValueError):
+            real = own = ""
+        if own and (real == own or real.startswith(own + os.sep)):
+            return True
+        return bool(glob.glob(os.path.join(path, "*.project.json")))
+    return False
+
+JOB: dict[str, Any] = {
+    "running": False, "log": [], "results": [], "failed": [], "done": False, "cancel": False,
+    "log_base": 0,   # log_base = сколько строк срезано с начала (для ?since=)
+    "kind": "", "label": "", "progress": None,  # kind: cut|draft|build; progress: {"i","n"}
+    "stalled": False}   # процесс нарезки молчит дольше CUT_STALL_S
 LOCK = threading.Lock()
 LOG_CAP = 4000          # ИИ-нарезка стримит тысячи строк — без кэпа лог растёт бесконечно
 
 
-def emit(line, **vars):
+def emit(line: str, **vars: Any) -> None:
     with LOCK:
         entry = log_entry(line, vars)
         JOB["log"].append(entry)
@@ -384,7 +492,7 @@ AI_ACTIVE = 0
 AI_WAIT_SEC = 25
 
 
-def _ai_begin(label=""):
+def _ai_begin(label: str = "") -> int:
     """Занять одиночный ИИ-вызов. Отменяет предыдущий (по epoch) и ждёт, пока его
     поток реально умрёт. Возвращает номер вызова для _ai_end."""
     global AI_ACTIVE
@@ -411,7 +519,7 @@ def _ai_begin(label=""):
     return ep
 
 
-def _ai_end(ep, unload=False):
+def _ai_end(ep: int, unload: bool = False) -> None:
     """Освободить вызов. Выгружаем модель ТОЛЬКО если вызов всё ещё актуален —
     устаревший поток этим убил бы генерацию того, кто стартовал после него."""
     global AI_ACTIVE
@@ -421,8 +529,10 @@ def _ai_end(ep, unload=False):
     if unload and aicut.is_current(ep):
         try:
             aicut.unload_ours()      # освободить VRAM после генерации (только наши модели)
-        except Exception:
-            pass
+        except ReelsiError: raise
+        except Exception as ex:
+            log.warning("модели ИИ не выгрузились после генерации: %s — "
+                        "видеопамять остаётся занятой", ex)
 
 
 # Межпроцессный лок. LOCK/JOB живут В ПРОЦЕССЕ: два запущенных webui (случайно, или
@@ -431,15 +541,15 @@ def _ai_end(ep, unload=False):
 # с OOM», а повисшая машина. Лок держим ОТКРЫТЫМ ХЭНДЛОМ: если процесс умрёт, ОС
 # снимет его сама — никаких зависших lock-файлов после аварии.
 JOB_LOCK_PATH = env("JOB_LOCK") or paths.root("job.lock")
-_JOB_LOCK_FH = None
+_JOB_LOCK_FH: IO[bytes] | None = None
 
 
-def _cross_lock_acquire():
+def _cross_lock_acquire() -> bool:
     global _JOB_LOCK_FH
     # Раньше здесь стоял короткий путь «лок уже наш (в этом процессе) — значит взяли».
     # Он делал межпроцессный лок НЕВИДИМЫМ внутри процесса: рендер (api/render.py)
     # держит его всё время работы, а параллельный job_start нарезки/сборки получал
-    # True и стартовал вторую тяжёлую задачу на той же видеокарте (задание GZ, п. C).
+    # True и стартовал вторую тяжёлую задачу на той же видеокарте.
     # ОС лок не реентерабелен и в одном процессе: второй хэндл на тот же файл
     # получает отказ (замер на Windows: PermissionError), поэтому короткий путь не нужен.
     fh = None
@@ -448,22 +558,29 @@ def _cross_lock_acquire():
         fh.seek(0)
         if os.name == "nt":
             import msvcrt
-            msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+            # getattr — по той же причине, что в kill_tree: в типах msvcrt объявлен
+            # только для Windows-сборок Python, а mypy проверяет обе ветки.
+            getattr(msvcrt, "locking")(fh.fileno(), getattr(msvcrt, "LK_NBLCK"), 1)
         else:
             import fcntl
-            fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            # getattr — по той же причине, что в kill_tree: в типах fcntl объявлен
+            # только для не-Windows сборок Python.
+            getattr(fcntl, "flock")(fh.fileno(),
+                                    getattr(fcntl, "LOCK_EX") | getattr(fcntl, "LOCK_NB"))
+    except ReelsiError: raise
     except Exception:
         if fh is not None:
             try:
                 fh.close()
+            except ReelsiError: raise
             except Exception:
-                pass
+                pass  # закрыть не удалось — файл всё равно не наш, дескриптор освободит GC
         return False
     _JOB_LOCK_FH = fh
     return True
 
 
-def _cross_lock_release():
+def _cross_lock_release() -> None:
     global _JOB_LOCK_FH
     fh, _JOB_LOCK_FH = _JOB_LOCK_FH, None
     if fh is None:
@@ -472,28 +589,30 @@ def _cross_lock_release():
         fh.seek(0)
         if os.name == "nt":
             import msvcrt
-            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+            getattr(msvcrt, "locking")(fh.fileno(), getattr(msvcrt, "LK_UNLCK"), 1)
         else:
             import fcntl
-            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+            getattr(fcntl, "flock")(fh.fileno(), getattr(fcntl, "LOCK_UN"))
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # явное снятие блокировки не удалось — ниже fh.close() отпускает её сам
     try:
         fh.close()
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # дескриптор закроет GC — блокировка уже снята
 
 
-def job_finish():
+def job_finish() -> None:
     """Джоб закончился: снять running и отпустить межпроцессный лок."""
     with LOCK:
         JOB["running"] = False
         JOB["done"] = True
-    journal_finish(JOB)          # закрытая запись в журнале: «не оборвано» (задание NC)
+    journal_finish(JOB)          # закрытая запись в журнале: «не оборвано»
     _cross_lock_release()
 
 
-def job_start(kind="", label="", **extra):
+def job_start(kind: str = "", label: str = "", **extra: Any) -> bool:
     """Атомарно занять JOB (защита от двойного клика). True = заняли, False = уже идёт.
     kind/label — структурный тип задачи для клиента (никакого сниффинга лога)."""
     with LOCK:
@@ -509,22 +628,32 @@ def job_start(kind="", label="", **extra):
     try:
         from core import aicut
         aicut.clear_cancel()   # прошлый «Стоп» не должен убивать ИИ-шаги нового джоба
-    except Exception:
-        pass
-    # Журнал заданий: снимок «что запущено» — сразу, до первого клипа (задание NC).
+    except ReelsiError: raise
+    except Exception as ex:
+        log.warning("прошлый «Стоп» не сбросился (%s) — новый джоб "
+                    "может прерваться на первом ИИ-шаге", ex)
+    # Журнал заданий: снимок «что запущено» — сразу, до первого клипа.
     # После перезапуска сервера по нему видно, что задание было и на чём оборвалось.
     journal_bind(JOB, kind=kind or "cut", label=label)
     return True
 
 
-def set_progress(i, n):
-    """Структурный прогресс джоба (клип i из n) — клиент рисует бар по нему."""
+def set_progress(i: int, n: int, name: str | None = None) -> None:
+    """Структурный прогресс джоба (клип i из n) — клиент рисует бар по нему.
+
+    name — имя обрабатываемого файла: без него в оверлее видно «клип i из n», но не
+    видно, над каким клипом идёт работа (задание «единый прогресс»). Старые вызовы с
+    двумя аргументами работают как раньше: ключа name в прогрессе просто нет.
+    """
     with LOCK:
-        JOB["progress"] = {"i": int(i), "n": int(n)}
+        prog: dict[str, Any] = {"i": int(i), "n": int(n)}
+        if name is not None:
+            prog["name"] = str(name)
+        JOB["progress"] = prog
 
 
-def set_stalled(flag):
-    """Флаг «процесс нарезки молчит дольше CUT_STALL_S» (задание NC).
+def set_stalled(flag: bool) -> None:
+    """Флаг «процесс нарезки молчит дольше CUT_STALL_S».
 
     Процесс при этом НЕ убивается: долгая ASR молчит законно. Клиент показывает
     флаг в статусе, чтобы зависшая нарезка была видна, а не выглядела работой.
@@ -534,7 +663,7 @@ def set_stalled(flag):
 
 
 # --------------------------------------------------------------------------- #
-# Журнал заданий: состояние переживает перезапуск сервера (задание NC)
+# Журнал заданий: состояние переживает перезапуск сервера
 # --------------------------------------------------------------------------- #
 # JOB, RJOB и VJOB живут В ПАМЯТИ: после рестарта сервера /api/status отдавал
 # дефолты, и «задание не запускалось» было не отличить от «умерло на 90 %».
@@ -553,23 +682,24 @@ _LIVE_STAGES = ("cut", "jsx", "check", "aep", "render")
 # id(job) -> запись привязки. Ключ — id(), поэтому рядом лежит и САМ словарь: без
 # ссылки он может быть собран сборщиком мусора, а его id — переиспользован чужим
 # словарём (и чужое состояние уехало бы в журнал под нашим именем).
-_JOURNAL_BOUND = {}
+_JOURNAL_BOUND: dict[int, dict[str, Any]] = {}
 # Слот -> запись, оборванная перезапуском сервера. Заполняется ОДИН раз на старте
 # (journal_boot) и снимается, когда в этот слот стартует новое задание.
-_JOB_INTERRUPTED = {}
+_JOB_INTERRUPTED: dict[str, dict[str, Any]] = {}
 
 
-def _journal_read():
+def _journal_read() -> dict[str, Any]:
     """Содержимое журнала (или {}): битый/отсутствующий файл — не повод падать статусу."""
     try:
         with open(JOB_STATE_PATH, encoding="utf-8") as f:
             data = json.load(f)
+    except ReelsiError: raise
     except Exception:
         return {}
     return data if isinstance(data, dict) else {}
 
 
-def _journal_item(items):
+def _journal_item(items: list[dict[str, Any]]) -> str:
     """Имя элемента, на котором задание остановилось: сначала тот, что В РАБОТЕ,
     иначе первый незавершённый. По нему UI говорит, докуда дошло."""
     for it in items:
@@ -581,17 +711,18 @@ def _journal_item(items):
     return ""
 
 
-def journal_write(slot, kind, label="", status="running", items=None, progress=None,
-                  started=None):
+def journal_write(slot: str, kind: str, label: str = "", status: str = "running",
+                  items: list[dict[str, Any]] | None = None,
+                  progress: Any = None, started: int | float | None = None) -> dict[str, Any]:
     """Записать снимок задания в журнал (атомарно, core.fileio).
 
     Сбой записи не должен ронять задание: журнал вспомогательный, о неудаче
     сообщаем в консоль и работаем дальше (как _vhist_write у истории видео)."""
     items = [dict(it) for it in (items or []) if isinstance(it, dict)]
     now = int(time.time())
-    rec = {"slot": slot, "kind": kind, "label": str(label or ""),
-           "started": int(started or now), "updated": now, "status": status,
-           "item": _journal_item(items), "items": items, "progress": progress}
+    rec: dict[str, Any] = {"slot": slot, "kind": kind, "label": str(label or ""),
+                           "started": int(started or now), "updated": now, "status": status,
+                           "item": _journal_item(items), "items": items, "progress": progress}
     with JOURNAL_LOCK:
         jobs = _journal_read().get("jobs")
         jobs = dict(jobs) if isinstance(jobs, dict) else {}
@@ -602,19 +733,22 @@ def journal_write(slot, kind, label="", status="running", items=None, progress=N
             # ensure_ascii=False уже внутри atomic_json_dump: кириллица в журнале
             # остаётся читаемой, а повторный аргумент — ошибка вызова (ловилась тестом).
             atomic_json_dump(JOB_STATE_PATH, {"version": 1, "jobs": jobs}, indent=1)
+        except ReelsiError: raise
         except Exception as e:
             print("job state:", e)
     return rec
 
 
-def journal_bind(job, kind, label="", progress_key="progress"):
+def journal_bind(job: dict[str, Any], kind: str, label: str = "",
+                 progress_key: str = "progress") -> dict[str, Any]:
     """Привязать джоб к журналу: смена элементов очереди пойдёт в файл сама.
 
     Привязка — по объекту джоба (id()), поэтому items_init/item_set/item_done/
     item_fail пишут журнал ОДНИМ местом и для JOB, и для RJOB: отдельного хука на
-    два десятка вызовов не заводим (главный инвариант очереди этапов, задание FA)."""
-    entry = {"job": job, "slot": _SLOT_BY_KIND.get(kind, kind), "kind": kind,
-             "label": label, "progress_key": progress_key, "started": int(time.time())}
+    два десятка вызовов не заводим (главный инвариант очереди этапов)."""
+    entry: dict[str, Any] = {"job": job, "slot": _SLOT_BY_KIND.get(kind, kind), "kind": kind,
+                             "label": label, "progress_key": progress_key,
+                             "started": int(time.time())}
     _JOURNAL_BOUND[id(job)] = entry
     journal_write(entry["slot"], kind, label, "running",
                   items=job.get("items") or [], progress=job.get(progress_key),
@@ -622,7 +756,7 @@ def journal_bind(job, kind, label="", progress_key="progress"):
     return entry
 
 
-def journal_touch(job, status="running"):
+def journal_touch(job: dict[str, Any], status: str = "running") -> None:
     """Переписать журнал текущим состоянием ПРИВЯЗАННОГО джоба (смена элемента,
     финиш). Джоб не привязан — молча выходим: журнал не про него."""
     entry = _JOURNAL_BOUND.get(id(job))
@@ -633,18 +767,18 @@ def journal_touch(job, status="running"):
                   started=entry["started"])
 
 
-def journal_finish(job):
+def journal_finish(job: dict[str, Any]) -> None:
     """Финиш задания: в журнале остаётся закрытая запись (status=done)."""
     journal_touch(job, status="done")
 
 
-def journal_interrupted(slot):
+def journal_interrupted(slot: str) -> dict[str, Any] | None:
     """Задание этого слота, оборванное перезапуском сервера (или None)."""
     rec = _JOB_INTERRUPTED.get(slot)
     return dict(rec) if rec else None
 
 
-def journal_boot():
+def journal_boot() -> dict[str, Any]:
     """Старт сервера: незакрытая запись журнала — задание, оборванное перезапуском.
 
     «running» в файле означает ровно это: задание писали, а финиша не было, значит
@@ -653,7 +787,7 @@ def journal_boot():
     jobs = _journal_read().get("jobs")
     if not isinstance(jobs, dict):
         return {}
-    lost = {}
+    lost: dict[str, dict[str, Any]] = {}
     for slot, rec in jobs.items():
         if isinstance(rec, dict) and rec.get("status") == "running":
             r = dict(rec)
@@ -666,7 +800,7 @@ def journal_boot():
 journal_boot()
 
 
-# --- очередь этапов пофайловая (задание FA) ------------
+# --- очередь этапов пофайловая ------------
 # Механика ОДНА на нарезку, сборку .jsx и рендер (JOB и RJOB). У джоба появляется
 # список items — по одному элементу на файл набора, в порядке набора:
 #   {"name": "<стем>", "stage": <код>, "pct": null, "path": "", "reason": ""}
@@ -675,7 +809,7 @@ journal_boot()
 # item_done/item_fail, ровно там, где УЖЕ пишутся results/failed, тем же локом.
 # Джоб и лок передаются аргументами, имя списка результатов — параметром:
 # у JOB это results, у RJOB — result (существующие ключи переименовывать нельзя).
-def _item(job, name):
+def _item(job: dict[str, Any], name: str) -> dict[str, Any] | None:
     """Найти элемент очереди по имени стема. Нет такого — None (молча выйти)."""
     for it in job.get("items", []):
         if it.get("name") == name:
@@ -683,15 +817,15 @@ def _item(job, name):
     return None
 
 
-def items_init(job, lock, names):
+def items_init(job: dict[str, Any], lock: threading.Lock, names: Iterable[str]) -> None:
     """Завести список items: по одному элементу в порядке набора, все stage="wait"."""
     with lock:
         job["items"] = [{"name": str(n), "stage": "wait", "pct": None,
                          "path": "", "reason": ""} for n in names]
-    journal_touch(job)          # снимок очереди в журнал заданий (задание NC)
+    journal_touch(job)          # снимок очереди в журнал заданий
 
 
-def item_set(job, lock, name, **kw):
+def item_set(job: dict[str, Any], lock: threading.Lock, name: str, **kw: Any) -> None:
     """Поменять поля одного элемента очереди. Нет такого имени — молча выйти."""
     with lock:
         it = _item(job, name)
@@ -701,7 +835,8 @@ def item_set(job, lock, name, **kw):
     journal_touch(job)
 
 
-def item_done(job, lock, name, path, bucket="results"):
+def item_done(job: dict[str, Any], lock: threading.Lock, name: str, path: Any,
+              bucket: str = "results") -> None:
     """Закончить работу над файлом: bucket.append(path) + stage="done", path=path.
     Единственный способ отметить «готово» вместе с записью результата.
     Запись в bucket — ВСЕГДА: готовый файл не должен пропасть из results, даже если
@@ -714,7 +849,8 @@ def item_done(job, lock, name, path, bucket="results"):
     journal_touch(job)
 
 
-def item_fail(job, lock, name, reason, bucket="failed"):
+def item_fail(job: dict[str, Any], lock: threading.Lock, name: str, reason: Any,
+              bucket: str = "failed") -> None:
     """Упасть с файлом: bucket.append({"name","reason"}) + stage="error", reason=reason.
     Единственный способ отметить «ошибку» вместе с записью в failed.
     Запись в bucket — ВСЕГДА: падение не должно пропасть из failed, даже если

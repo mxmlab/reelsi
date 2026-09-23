@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Сторож распила scene_plan: камера (задание MW, этап 6).
+"""Сторож распила scene_plan: камера (этап 6).
 
 Камера уехала из `scene_plan` в `core/xml2ae/plan_camera.py` одной дверью `plan_camera`:
 параметры Камеры 1 из стиля (точка наезда, pan, поворот), ключи зума по режимам
@@ -35,7 +35,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
 from core import styles, xml2ae  # noqa: E402
-from core.xml2ae.build import _sv, _sv_or  # noqa: E402
+from core.xml2ae.build import read_style  # noqa: E402
 from core.xml2ae.jsutil import _jd, _r  # noqa: E402
 from core.xml2ae.layout import _span_roto_plan  # noqa: E402
 from core.xml2ae.plan_camera import CameraInputs, plan_camera  # noqa: E402
@@ -76,9 +76,9 @@ def _call(style=None, **kw):
 def _door(xml, style=None, highlights=None, **kw):
     """Дверь камеры с входами ровно такими, какими их собрал бы scene_plan.
 
-    Повторяет только ЧТЕНИЯ scene_plan: разбор XML, резолв стиля, индексы жёлтых
-    (по ним ставятся наезды в тейках) и путь XML (кэш трека головы). Своей копии
-    арифметики камеры здесь нет намеренно.
+    Повторяет только ЧТЕНИЯ scene_plan: разбор XML, резолв стиля, чтение структуры
+    стиля (`read_style`), индексы жёлтых (по ним ставятся наезды в тейках) и путь XML
+    (кэш трека головы). Своей копии арифметики камеры здесь нет намеренно.
     """
     meta, cams, subs, _xi = xml2ae.parse_full(xml)
     st = styles.resolve(dict(style or {}))
@@ -86,7 +86,7 @@ def _door(xml, style=None, highlights=None, **kw):
     hl = set(int(x) for x in (highlights or []) if 0 <= int(x) < len(subs))
     return plan_camera(CameraInputs(
         cams=cams, meta=meta, fps=fps, subs=subs, hl=hl,
-        st=st, sv=_sv, sv_or=_sv_or,
+        style=read_style(st),
         cam1_scale=kw.get("cam1_scale"), roto=bool(kw.get("roto")), xml_path=xml))
 
 

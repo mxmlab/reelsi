@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты фейд-аута интро (задание IK):
+"""Тесты фейд-аута интро:
 - единая настройка стиля intro_fade (дефолт 0.35 с);
 - обычные группы: окно выхода te не меняется, короче только фейд;
 - глитч-группы: спад intro_fade, te = outStart + intro_fade;

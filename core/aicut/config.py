@@ -18,6 +18,10 @@ _SAVE_LOCK = threading.Lock()
 # HERE — корень репозитория, а НЕ папка пакета: ai_config.json всегда лежал
 # рядом с aicut.py, и пакет не должен этого менять.
 from core import paths
+from core.umsg import ReelsiError
+from core.applog import get_logger
+
+log = get_logger(__name__)
 
 HERE = paths.ROOT
 
@@ -108,6 +112,7 @@ def step_reasoning(step):
                         return lvl
                 elif lvl in REASONING_LEVELS or lvl == "off":
                     return lvl
+            except ReelsiError: raise
             except Exception:
                 pass                        # каталог недоступен — как раньше, дальше по цепочке
     lvl = (cfg.get("reasoning_steps") or {}).get(step)
@@ -118,6 +123,7 @@ def step_reasoning(step):
             from . import catalog
             if catalog.valid_level(pp.get("provider"), pp.get("model"), lvl):
                 return lvl
+        except ReelsiError: raise
         except Exception:
             pass                        # каталог недоступен — дефолт, не падать
     return STEP_REASONING_DEFAULT.get(step, "off")
@@ -137,6 +143,7 @@ def effective_step_reasoning(step):
         from . import catalog
         return catalog.nearest_supported_level(pp.get("provider"), pp.get("model"),
                                                step_reasoning(step))
+    except ReelsiError: raise
     except Exception:
         return step_reasoning(step)         # каталог недоступен — как раньше
 
@@ -236,8 +243,10 @@ def _seed_ai_config():
     try:
         import shutil
         shutil.copyfile(real, AI_CONFIG_PATH)
-    except Exception:
-        pass
+    except ReelsiError: raise
+    except Exception as ex:
+        log.warning("не скопировал боевой ai_config.json в %s: %s — "
+                    "профиль останется без ключей", AI_CONFIG_PATH, ex)
 
 
 def load_ai_config():
@@ -246,18 +255,22 @@ def load_ai_config():
     try:
         cfg = json.load(open(AI_CONFIG_PATH, encoding="utf-8"))
         if isinstance(cfg.get("profiles"), dict) and cfg["profiles"]:
-            # Миграция (задание CS): приписки к промптам генерации живут ТОЛЬКО
+            # Миграция: приписки к промптам генерации живут ТОЛЬКО
             # в профилях спикеров. Убираем устаревшие ключи из ai_config.json.
             if "image_prompt" in cfg or "image_prompt_b" in cfg:
                 cfg.pop("image_prompt", None)
                 cfg.pop("image_prompt_b", None)
                 try:
                     save_ai_config(cfg)
-                except Exception:
-                    pass
+                except ReelsiError: raise
+                except Exception as ex:
+                    log.warning("не переписал ai_config.json после чистки "
+                                "старых промптов: %s", ex)
             return cfg
-    except Exception:
-        pass
+    except ReelsiError: raise
+    except Exception as ex:
+        log.warning("ai_config.json не прочитан (%s): %s — "
+                    "беру настройки по умолчанию", AI_CONFIG_PATH, ex)
     return _default_ai_config()
 
 
@@ -271,7 +284,7 @@ def save_ai_config(cfg):
     # (замер: 6 потоков по 30 записей — 36 падений), поэтому запись сериализуем.
     with _SAVE_LOCK:
         atomic_json_dump(AI_CONFIG_PATH, cfg, indent=1)
-        # 0600 на POSIX (задание MZ, п. 2): в конфиге лежат API-ключи провайдеров, а
+        # 0600 на POSIX: в конфиге лежат API-ключи провайдеров, а
         # SECURITY.md обещает защиту правами ОС. atomic_json_dump новому файлу ставит
         # права по umask (обычно 0644) — то есть ключи читал бы любой пользователь
         # машины. На Windows прав user/group нет вовсе, os.chmod управляет только
@@ -305,6 +318,64 @@ def resolve_key(value):
     if name is not None:
         return os.environ.get(name, "")
     return value
+
+
+# ---- Маска ключа наружу ------------------------------------------------------
+# Ключ уходит в интерфейс ТОЛЬКО маской «•••xxxx»: браузер — не место для секрета
+# (localStorage, история, devtools, чужое расширение). Маска необратима и НИКОГДА не
+# сохраняется вместо ключа: «•••xxxx», записанная в файл, — это потерянный ключ, а
+# профиль с ней интерфейс показал бы как рабочий. Обратно маска принимается только
+# как «ключ не менял» и подменяется СОХРАНЁННЫМ ключом профиля.
+
+
+def mask_ai_key(k):
+    """Ключ наружу: «•••xxxx» (последние 4 символа).
+
+    env:VAR не маскируется: это имя переменной окружения, а не секрет (значение
+    подставит resolve_key уже на сервере)."""
+    if k and key_env_name(k) is not None:
+        return k
+    return ("•••" + k[-4:]) if k else ""
+
+
+def masked_profiles(cfg):
+    """Профили для интерфейса: те же поля, но ключ закрыт маской.
+
+    У env-ключа добавляется key_env_ok — «переменная есть в окружении сервера»:
+    без него интерфейс не отличит рабочий профиль от профиля с забытой переменной."""
+    res = {}
+    for n, p in (cfg.get("profiles") or {}).items():
+        k = p.get("api_key") or ""
+        env_name = key_env_name(k)
+        item = {**p, "api_key": mask_ai_key(k)}
+        if env_name is not None:
+            val = os.environ.get(env_name, "")
+            item["key_env_ok"] = bool(val.strip() if isinstance(val, str) else val)
+        res[n] = item
+    return res
+
+
+def unmask_ai_key(key, saved_name):
+    """Ключ из формы: маска «•••…» = «не менял» -> вернуть сохранённый ключ профиля."""
+    key = (key or "").strip()
+    if key.startswith("•••"):
+        saved = load_ai_config()["profiles"].get(saved_name or "", {})
+        return saved.get("api_key") or ""
+    return key
+
+
+def saved_profile_for_masked(p, name):
+    """Профиль из формы с ключом-маской: отдать СОХРАНЁННЫЙ профиль целиком, иначе None.
+
+    Маска значит «ключ не менял», но base_url и headers из тела запроса — это данные
+    запроса, их подставляет кто угодно, а ключ к ним подставлялся настоящий. Снаружи
+    это закрыто гвардом Sec-Fetch-Site, но вместе с XSS в интерфейсе
+    давало увод сохранённого ключа на чужой адрес: /api/ai_test и /api/ai_models ходят
+    туда, куда сказано в теле. Профиля нет — None, поведение как раньше.
+    """
+    if not (p.get("api_key") or "").strip().startswith("•••"):
+        return None
+    return load_ai_config()["profiles"].get(name or "") or None
 
 
 def normalize_base_url(u):
@@ -422,7 +493,7 @@ def omni_local_engine():
 
 
 def cut_asr_engine(emit=None):
-    """Какой ASR-движок делает пословные тайминги для нарезки (задание GH).
+    """Какой ASR-движок делает пословные тайминги для нарезки.
 
     Берётся из ai_config.json (active_cut_asr), дефолт 'gigaam'.
     Если сохранённый движок отсутствует в каталоге или не годен под рез (cut != True),
@@ -439,12 +510,14 @@ def cut_asr_engine(emit=None):
             emit(msg)
         else:
             print(msg, flush=True)
-    except Exception:
-        pass
+    except ReelsiError: raise
+    except Exception as ex:
+        log.warning("движок нарезки «%s» не проверен: %s — беру gigaam",
+                    engine, ex)
     return "gigaam"
 
 
-# Свечение жёлтого глитча интро (задание HD): встроенные эффекты или Deep Glow 2
+# Свечение жёлтого глитча интро: встроенные эффекты или Deep Glow 2
 GLITCH_GLOW_MODES = ("builtin", "deepglow2")
 
 

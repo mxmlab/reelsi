@@ -113,7 +113,7 @@ def parse_full(xml_path, ncams=None):
             try:
                 ends.append(int(_txt(c, "end", "0") or 0))
             except (TypeError, ValueError):
-                pass
+                pass  # битый атрибут end — длительность соберём по остальным клипам
         dur = max(ends) if ends else 0
 
     # file id -> pathurl (pathurl appears only on a file's first use)

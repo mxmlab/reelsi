@@ -15,6 +15,7 @@ from core.app_meta import console_emit, env, wrap_emit
 from .takes import _tok, _words_text
 
 from .tune import _ranges, _sys
+from core.umsg import ReelsiError
 # Размышления ТОЛЬКО для шага нарезки (жёлтым/вставкам/интро они не нужны — там
 # reasoning жёг весь бюджет, см. ARCHITECTURE). Замер на C1353, режим разметки:
 # без размышлений модель систематически брала в скобки ПОЗДНИЙ заход дубля и
@@ -208,7 +209,7 @@ def decide_markup(words, full_text, model=None, emit=console_emit, silence_bound
     drop, cover = align_markup(words, marked, emit=emit)
     min_cover = MIN_COVER_NO_CUT if not drop else MIN_COVER
     if cover < min_cover:
-        raise SystemExit(
+        raise ReelsiError(
             f"ответ модели не про этот ролик (совпало {100 * cover:.0f}%) — "
             f"ничего не перезаписываю — прошлая нарезка цела. "
             f"Проверь модель и промпт в настройках ⚙ и запусти ещё раз.")

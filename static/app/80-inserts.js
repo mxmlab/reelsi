@@ -177,7 +177,7 @@ function styleHome(){const box=$('stylebox'),slot=$('styleslot');if(!box||!slot)
   const aw=$('styleaway');if(aw)aw.style.display='none';
   rotoMaskHide();}   // маска рото не должна висеть после ухода со вкладки «Стиль»
 function aewSync(){renderIntro();captureAE();aewRender();}   // изменение → джоб + таймлайн + панель
-// ---- подпись о ролике в панели AE (задание DJ) ----
+// ---- подпись о ролике в панели AE ----
 function aewUpdateCaptionUI(){
   const box=$('aewcaption');if(!box)return;
   const on=!!(AEWMODE==='words'&&IPV.plan&&IPV.plan.caption);
@@ -415,7 +415,7 @@ function insGenBtns(i,x){
   const c=(curIns>=0&&CLIPS[curIns])?CLIPS[curIns]:null;
   const spkKey=(c&&c.job&&c.job.speaker)||(val('speaker')||'').trim()||'';
   const video=x.type==='video',ips=video?videoPrompts(spkKey):imgPrompts(spkKey);
-  // у вставки с галкой «на подложке» кнопки 1/2 шлют слоты pa/pb (задание ZK): в тултипе
+  // у вставки с галкой «на подложке» кнопки 1/2 шлют слоты pa/pb: в тултипе
   // должна быть видна ТА приписка, которая реально уйдёт в генерацию
   const keys=(!video&&x.plate)?['pa','pb']:['a','b'];
   const action=video?'insGenVideo':'insGenOne',kind=video?t('видео'):t('картинку');
@@ -448,7 +448,7 @@ function renderInsHost(){const host=$('insHost');if(!host)return;host.innerHTML=
       +(vid?scrubSin('CLIPS[curIns].inserts['+i+']',x.sin,'ipvRefresh()','saveState()')            // у видео — откуда играть файл
            :((CURSTYLE&&(CURSTYLE.insert_fx||'card')==='card')                                                // у фото — форма маски, но только при «card» (дефолт как в сборке)
              ?scrubMask('CLIPS[curIns].inserts['+i+']',x.mw,x.mh,'ipvRefresh()','saveState()'):''))      +'<label class="chk" style="display:flex;gap:6px;align-items:center;margin:0"><input type="checkbox" '+(x.mosaic?'checked':'')+' onchange="CLIPS[curIns].inserts['+i+'].mosaic=this.checked;this.blur();saveState();ipvRefresh()"> mosaic</label>'
-      // галка «на подложке» (задание ZK) — рядом с mosaic, тот же путь сохранения: вставка
+      // галка «на подложке» — рядом с mosaic, тот же путь сохранения: вставка
       // едет на картинке-подложке из стиля, фон с фото снимается, промпт — свой (pa/pb)
       +'<label class="chk" style="display:flex;gap:6px;align-items:center;margin:0" data-t="'+t('вставка встаёт на картинку-подложку из стиля («Подложка (файл)»), фон с фото снимается, а промпт генерации берётся из «Подложка: приписка к промпту 1/2» профиля спикера')+'"><input type="checkbox" '+(x.plate?'checked':'')+' onchange="CLIPS[curIns].inserts['+i+'].plate=this.checked;this.blur();saveState();ipvRefresh()"> '+t('на подложке')+'</label>'
       +'<span class="grow"></span><span class="del" tabindex="0" role="button" aria-label="'+t('Удалить вставку')+'" data-t="'+t('Удалить вставку целиком')+'" onclick="insDel('+i+')">'+ico('x')+'</span></div>'

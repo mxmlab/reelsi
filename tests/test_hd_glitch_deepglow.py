@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты задания HD: свечение жёлтого глитча (встроенные Blur + Glo2 или Deep Glow 2)."""
+"""Тесты: свечение жёлтого глитча (встроенные Blur + Glo2 или Deep Glow 2)."""
 import gzip
 import json
 import os
@@ -36,7 +36,7 @@ def html():
 
 node = pytest.mark.skipif(not shutil.which("node"), reason="требуется node в PATH")
 
-# Тёмный цвет выделения для сборок с тритоном (задание ZN): красный, яркость мидтонов
+# Тёмный цвет выделения для сборок с тритоном: красный, яркость мидтонов
 # 0.24 — тритон ставится. Дефолтный жёлтый (0.87) ярче порога TRITONE_MAX_LUM=0.7 —
 # там тритона нет. Этим же цветом собираются тесты, где Deep Glow ДОЛЖЕН ставиться
 # (доработка MK3): яркий жёлтый, в том числе стоковый, плагина не берёт вовсе.
@@ -187,6 +187,7 @@ def test_1_deepglow2_yellow_glitch_and_accent_glitch(xml_subs, tmp_path):
     assert got["yellow_glitch"] == expected_yellow
     assert got["accent_glitch"] == [
         "add:ADBE Gaussian Blur 2", "set:ADBE Gaussian Blur 2-0001=3.4",
+        "set:ADBE Gaussian Blur 2-0003=0",
         "add:ADBE Glo2", "set:ADBE Glo2-0002=149", "set:ADBE Glo2-0003=77",
         "set:ADBE Glo2-0004=0.62",
     ]

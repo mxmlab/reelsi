@@ -47,7 +47,7 @@ def test_every_layer_and_group_has_title_and_toggle():
             assert it.get("id"), "у группы нет id — состояние раскрытия негде хранить"
         if it.get("items"):
             assert it["items"], f"{it.get('id')}: пустое тело группы"
-    # панель рисует строку-заголовок с треугольником и aria-expanded (задание JB п. 4)
+    # панель рисует строку-заголовок с треугольником и aria-expanded
     assert "'role', 'treeitem'" in PANEL
     assert "aria-expanded" in PANEL and "sttw" in PANEL
 

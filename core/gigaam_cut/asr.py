@@ -11,6 +11,7 @@ import numpy as np
 import soundfile as sf
 from .tune import CHUNK, SR
 from core.app_meta import console_emit, wrap_emit
+from core.umsg import ReelsiError
 
 
 
@@ -24,8 +25,9 @@ def _free_torch():
         import torch
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # torch/GPU недоступны — чистить нечего
 
 
 def _norm(t):
@@ -78,7 +80,7 @@ def transcribe_words_whole(wav_path, emit=console_emit, model_name="v3_ctc"):
 
 
 def transcribe_words_for_cut(wav_path, engine="gigaam", emit=console_emit):
-    """Единая точка входа для нарезки: распознавание слов с родными таймингами (задание GH).
+    """Единая точка входа для нарезки: распознавание слов с родными таймингами.
 
     Принимает движок с признаком cut=True из каталога asr_backends (CTC):
     - gigaam* -> transcribe_words_whole(wav_path, emit=emit, model_name=<голова из поля 'gigaam'>);
@@ -153,13 +155,14 @@ def _transcribe_words_manual(model, wav_path, emit=console_emit, win=18.0, searc
                 if w.text:
                     words.append(_word(w, t0))
             nwin += 1
+        except ReelsiError: raise
         except Exception as ex:
             emit("  окно {sec}s не расшифровалось: {err}", sec=pos // sr, err=str(ex), flush=True)
         finally:
             try:
                 os.remove(tmp)
             except OSError:
-                pass
+                pass  # временное окно уже убрано
             _free_torch()                        # держим VRAM в узде (Windows WDDM)
         if nwin % 20 == 0 and nwin:
             emit("  longform-окна (тихие швы): {cur}/~{est}…", cur=nwin, est=est, flush=True)
@@ -264,6 +267,7 @@ def align_full(wav_path, text, emit=console_emit, device="cuda"):
                 word_times[wk][1] = max(word_times[wk][1], end_sec)
             else:
                 word_times[wk] = [start_sec, end_sec]
+    except ReelsiError: raise
     except Exception as e:
         emit("  align_full не удался ({err_type}: {err}) — фолбэк по окнам",
              err_type=type(e).__name__, err=str(e), flush=True)
@@ -305,6 +309,7 @@ def _align_full_chunked(audio, words, dur, emit=console_emit, device="cuda"):
         clip = audio[a0:a1].cpu().numpy().astype("float32")
         try:
             sw = falign.align_text(clip, " ".join(seg))
+        except ReelsiError: raise
         except Exception:
             sw = []
         for w in sw:

@@ -31,6 +31,7 @@ sys.path.insert(0, ROOT)
 
 from core import xml2ae  # noqa: E402
 from api import render  # noqa: E402
+from core import aerender  # noqa: E402
 from core.xml2ae.build import _write_master  # noqa: E402
 
 
@@ -73,16 +74,16 @@ def test_finished_composition_maps_by_comp_name():
     """Разбор строки «Finished composition: ИМЯ» находит ролик по ИМЕНИ КОМПОЗИЦИИ
     (meta["name"]), а не по стему .jsx."""
     comps = [("01_C0233", "C0233", 1000), ("02_рилс", "РИЛС 9 22.08", 2000)]
-    assert render._comp_to_stem("C0233", comps) == "01_C0233"
-    assert render._comp_to_stem("РИЛС 9 22.08", comps) == "02_рилс"
-    assert render._comp_to_stem("Reelsi", comps) is None      # нет такого имени
-    assert render._comp_to_stem(None, comps) is None
+    assert aerender.comp_to_stem("C0233", comps) == "01_C0233"
+    assert aerender.comp_to_stem("РИЛС 9 22.08", comps) == "02_рилс"
+    assert aerender.comp_to_stem("Reelsi", comps) is None      # нет такого имени
+    assert aerender.comp_to_stem(None, comps) is None
 
 
 def test_master_reopens_log_after_each_clip(tmp_path):
     """Мастер-скрипт закрывает и заново открывает лог на дозапись ВНУТРИ цикла
     роликов — иначе ExtendScript буферизует файл до close() и Python нечего читать,
-    пока AfterFX работает (задание FJ)."""
+    пока AfterFX работает."""
     jsx1 = str(tmp_path / "a.jsx")
     jsx2 = str(tmp_path / "b.jsx")
     open(jsx1, "w", encoding="utf-8-sig").write("var a=1;")
@@ -116,7 +117,7 @@ def test_batch_stages_aep_then_render(xml_mismatch, tmp_path, monkeypatch):
     render.RJOB.update(running=True, done=False, log=[], pct=None, cur="", ae="",
                        out_dir="", result=[], failed=[], cancel=False, items=[])
     render.items_init(render.RJOB, render.RLOCK, ["01_C0233"])
-    monkeypatch.setattr(render, "_find_ae",
+    monkeypatch.setattr(render, "find_ae",
                         lambda: ("AFX.EXE", "AER.EXE", "AE"))
     calls = []
 

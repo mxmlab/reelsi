@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты распознавания (KD): фильтр титров, парсинг asr_engines.json, сбой GigaAM."""
+"""Тесты распознавания: фильтр титров, парсинг asr_engines.json, сбой GigaAM."""
 import json
 import subprocess
 import sys

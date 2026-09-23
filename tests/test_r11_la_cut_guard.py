@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты санитарного гарда нарезки и сброса профиля спикера (задание LA).
+"""Тесты санитарного гарда нарезки и сброса профиля спикера.
 
 ПОЧЕМУ эти тесты существуют:
 1. Если модель забраковала весь текст или оставила меньше 25% речи,
@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 from core import cutstages, speakers
 from core.gigaam_cut import pipeline, tune
+from core.umsg import ReelsiError
 
 _WORDS_VOCAB = [
     "первый", "второй", "третий", "четвертый", "пятый", "шестой", "седьмой", "восьмой",
@@ -69,7 +70,7 @@ def _make_dummy_words(count=20, dur_per_word=1.0):
     return text, words
 
 
-def test_model_drops_all_words_dedupe_true_raises_system_exit(monkeypatch, tmp_path, _mock_pipeline_env):
+def test_model_drops_all_words_dedupe_true_raises_reelsierror(monkeypatch, tmp_path, _mock_pipeline_env):
     """Модель забраковала все слова при dedupe=True -> отказ ДО чистки кодом, out.xml не тронут."""
     text, words = _make_dummy_words(count=20, dur_per_word=1.0)
     monkeypatch.setattr(pipeline, "transcribe_words_whole", lambda *a, **k: (text, words))
@@ -79,7 +80,7 @@ def test_model_drops_all_words_dedupe_true_raises_system_exit(monkeypatch, tmp_p
     out_xml = tmp_path / "out.xml"
     out_xml.write_bytes(b"<xml>original_cut</xml>")
 
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(ReelsiError) as exc_info:
         pipeline.run(
             "dummy.wav", ["cam1.mp4"], [0.0], str(out_xml), 50.4,
             stages={"draft": False, "sense": True, "dedupe": True},
@@ -94,7 +95,7 @@ def test_model_drops_all_words_dedupe_true_raises_system_exit(monkeypatch, tmp_p
     assert not (tmp_path / "out.cuts.json").exists()
 
 
-def test_model_drops_all_words_dedupe_false_raises_system_exit(monkeypatch, tmp_path, _mock_pipeline_env):
+def test_model_drops_all_words_dedupe_false_raises_reelsierror(monkeypatch, tmp_path, _mock_pipeline_env):
     """Модель забраковала все слова при dedupe=False -> отказ, out.xml не тронут."""
     text, words = _make_dummy_words(count=20, dur_per_word=1.0)
     monkeypatch.setattr(pipeline, "transcribe_words_whole", lambda *a, **k: (text, words))
@@ -103,7 +104,7 @@ def test_model_drops_all_words_dedupe_false_raises_system_exit(monkeypatch, tmp_
     out_xml = tmp_path / "out.xml"
     out_xml.write_bytes(b"<xml>original_cut</xml>")
 
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(ReelsiError) as exc_info:
         pipeline.run(
             "dummy.wav", ["cam1.mp4"], [0.0], str(out_xml), 50.4,
             stages={"draft": False, "sense": True, "dedupe": False},
@@ -116,7 +117,7 @@ def test_model_drops_all_words_dedupe_false_raises_system_exit(monkeypatch, tmp_
     assert not (tmp_path / "out.cuts.json").exists()
 
 
-def test_model_leaves_10_percent_dedupe_true_raises_system_exit(monkeypatch, tmp_path, _mock_pipeline_env):
+def test_model_leaves_10_percent_dedupe_true_raises_reelsierror(monkeypatch, tmp_path, _mock_pipeline_env):
     """Модель оставила 10% речи при dedupe=True -> гард срабатывает ДО veto_unique_drops."""
     text, words = _make_dummy_words(count=20, dur_per_word=1.0)
     monkeypatch.setattr(pipeline, "transcribe_words_whole", lambda *a, **k: (text, words))
@@ -128,7 +129,7 @@ def test_model_leaves_10_percent_dedupe_true_raises_system_exit(monkeypatch, tmp
     out_xml = tmp_path / "out.xml"
     out_xml.write_bytes(b"<xml>original_cut</xml>")
 
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(ReelsiError) as exc_info:
         pipeline.run(
             "dummy.wav", ["cam1.mp4"], [0.0], str(out_xml), 50.4,
             stages={"draft": False, "sense": True, "dedupe": True},

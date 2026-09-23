@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Единый список ступеней нарезки, нормализация контракта stages и построение opts (задания GE, GF).
+"""Единый список ступеней нарезки, нормализация контракта stages и построение opts.
 
 Единственный источник правды для бэкенда и интерфейса.
 Каждая ступень описывает:
@@ -186,7 +186,7 @@ def to_reelsi_opts(
         "subs": False,
         "srt": False,
         "no_cut": norm_stages.get("pauses") == "off",
-        # Умолчание берём из описания ступени (False), а не литералом True (задание LA):
+        # Умолчание берём из описания ступени (False), а не литералом True:
         # как зафиксировано в подсказке ступени, с умной моделью dedupe только портит.
         "dedup": bool(norm_stages.get("dedupe", DEFAULTS["dedupe"])),
         "ae": False,

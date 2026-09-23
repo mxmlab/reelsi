@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""У каждого ключа стиля есть ручка, и ручка теперь одна — строка в схеме (задание JB).
+"""У каждого ключа стиля есть ручка, и ручка теперь одна — строка в схеме.
 
 До JB ручка стиля заводилась ВРУЧНУЮ в трёх местах (templates/index.html — сам элемент,
 fillStyleFields() — значение из стиля в поле, stEdit() — значение из поля обратно в
@@ -41,7 +41,7 @@ def _js_text():
 
 
 def _panel_js():
-    """Код панели стиля — единственная дверь полей (задание JB)."""
+    """Код панели стиля — единственная дверь полей."""
     return _read(PANEL_JS)
 
 
@@ -129,7 +129,7 @@ def test_fields_are_wired_only_in_the_panel():
 
 
 def test_index_html_has_no_old_style_markup():
-    """Полей стиля в разметке больше нет: их строит панель по схеме (задание JB п. 1)."""
+    """Полей стиля в разметке больше нет: их строит панель по схеме."""
     html = _read(os.path.join(ROOT, "templates", "index.html"))
     for token in ("stylepart_", "stsec_", "stfold", "stylegrid", "stylemats"):
         assert token not in html, "в index.html осталась старая разметка стиля: " + token

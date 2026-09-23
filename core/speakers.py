@@ -60,6 +60,7 @@ import os, json, re, copy
 
 from core import paths
 from core.fileio import atomic_text_write
+from core.umsg import ReelsiError
 
 SPEAKER_DIR = paths.root("speakers")
 
@@ -85,10 +86,10 @@ CUT_DEFAULTS = {
     "min_island": 0.35,   # сек: кусок короче — мусор при любом числе слов
     # --- ритм речи ---
     "silence_sec": 0.80,  # сек: пауза дольше — «полное молчание», режется всегда
-    # --- чистка дублей кодом (задание CA) ---
+    # --- чистка дублей кодом ---
     # Галка «чистка дублей» на шаге 1 перекрывает профиль на этот прогон —
     # как остальные поля шага 1. Здесь живёт дефолт для CLI/без галочки.
-    # Умолчание False (задание LA): в подсказке cutstages зафиксировано,
+    # Умолчание False: в подсказке cutstages зафиксировано,
     # что умной модели чистка дублей только вредит (режет перечисления и роли).
     "dedupe":     False,
 }
@@ -130,6 +131,7 @@ def all_speakers():
         try:
             with open(os.path.join(SPEAKER_DIR, f), encoding="utf-8") as fh:
                 d = json.load(fh)
+        except ReelsiError: raise
         except Exception:
             continue
         if not isinstance(d, dict):

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты задания ZA: резкие скачки (cam1_zoom='jump').
+"""Тесты: резкие скачки (cam1_zoom='jump').
 
 - Наезд в начале (кадр 0 -> punch кадров);
 - Наезды внутри длинных тейков;
@@ -13,6 +13,7 @@
 import gzip
 import json
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -27,18 +28,24 @@ sys.path.insert(0, HERE)
 
 from core.xml2ae.layout import (  # noqa: E402
     ZOOM_BIG, ZOOM_PUNCH, TAKE_TAIL_S,
-    _cam1_jump_keys, _zoom_max,
+    _cam1_jump_keys, _zoom_cut_frames, _zoom_max,
 )
 from test_cam1_zoom_start import _build_jsx, _cam1_scale_from_jsx  # noqa: E402
 
 node = pytest.mark.skipif(not shutil.which("node"), reason="контракт фронта требует node в PATH")
 
+# Первое число — значение НУЛЕВОГО сегмента: старт jump доходит ровно до 100 %,
+# а не до случайного из [lo, hi] (раньше здесь стояло 126.9, и у стиля с big=100
+# камера в начале ролика отъезжала вместо наезда). Дальше — значения на катах:
+# нулевой сегмент больше не тратит розыгрыш random, поэтому числа сдвинулись на
+# один кат (сами значения — прежние, с main), правило прежнее: случайное из
+# [lo, hi], отличающееся от соседа не меньше чем на min_diff.
 BASELINE_JUMP_KEYS = [
-    [0, 126.9], [443, 117.3], [651, 132.6], [856, 112.1], [1609, 134.7],
-    [1645, 114.7], [1779, 129], [2054, 122], [2341, 139.1], [2412, 125],
-    [2751, 139.9], [2921, 113.6], [3161, 126.3], [3422, 138.9], [3691, 125.8],
-    [3750, 119.9], [3989, 136.3], [4604, 114.1], [4860, 131.6], [5117, 117],
-    [5326, 138.8], [5653, 124.5], [5877, 116], [6307, 131.6], [6503, 117]
+    [0, 100.0], [443, 126.9], [651, 117.3], [856, 132.6], [1609, 112.1],
+    [1645, 134.7], [1779, 114.7], [2054, 129], [2341, 122], [2412, 139.1],
+    [2751, 125], [2921, 139.9], [3161, 113.6], [3422, 126.3], [3691, 138.9],
+    [3750, 125.8], [3989, 119.9], [4604, 136.3], [4860, 114.1], [5117, 131.6],
+    [5326, 117], [5653, 138.8], [5877, 124.5], [6307, 116], [6503, 131.6]
 ]
 
 
@@ -58,8 +65,9 @@ def _cam1_holds_from_jsx(jsx):
 
 
 def test_jump_start_keys_and_cut_values(xml_subs, tmp_path):
-    """1. jump + start: CAM1_SCALE[0] == [0, big, 1], второй ключ [pe, v1, 2];
-    значения на катах (у ключей с hold=1) совпадают с прежними числами с main."""
+    """1. jump + start: CAM1_SCALE[0] == [0, big, 1], второй ключ [pe, 100, 2] —
+    старт доходит ровно до 100 %; дальше значения на катах (у ключей с hold=1)
+    воспроизводимы: числа те же, что с main, сдвинутые на один кат."""
     out_jsx = str(tmp_path / "jump_start.jsx")
     jsx = _build_jsx(xml_subs, out_jsx, style={"cam1_zoom": "jump", "cam1_zoom_start": True})
     keys = _cam1_scale_from_jsx(jsx)
@@ -70,7 +78,7 @@ def test_jump_start_keys_and_cut_values(xml_subs, tmp_path):
 
     pe = min(ZOOM_PUNCH, max(1, 443 - 2))
     assert keys[1][0] == pe
-    assert keys[1][1] == BASELINE_JUMP_KEYS[0][1]
+    assert keys[1][1] == BASELINE_JUMP_KEYS[0][1] == 100.0
     assert keys[1][2] == 2
 
     # Проверяем значения на последующих катах (без учета наездов в тейках, т.к. take_zoom выключен)
@@ -98,6 +106,7 @@ def test_cam1_holds_in_jsx(xml_subs, tmp_path):
 def test_cam1_jump_keys_synthetic():
     """3. _cam1_jump_keys на синтетических cams:
     - take=None: только ключи старта и катов
+    - старт (кадр 0): наезд от big ровно к 100, первый сегмент живёт на 100
     - take включён: в длинном тейке 4 доп. ключа (a,v,1,0),(b,vm,2,1),(c,vm,1,0),(d,v,2,1)
     - короткий тейк без доп. ключей
     - тейк, где отъезд не влезает: 2 доп. ключа."""
@@ -118,6 +127,9 @@ def test_cam1_jump_keys_synthetic():
     assert 0 in frames_no_take
     assert 1500 in frames_no_take
     assert 1620 in frames_no_take
+    # Старт: наезд от big и приход РОВНО в 100 % (значение нулевого сегмента)
+    assert keys_no_take[0] == (0, ZOOM_BIG, 1, 0)
+    assert keys_no_take[1][1] == 100.0
 
     # take включен: min_s=8, lo=25, hi=40, hold_s=2.0
     take_cfg = {"min_s": 8.0, "lo": 25.0, "hi": 40.0, "hold_s": 2.0}
@@ -128,7 +140,8 @@ def test_cam1_jump_keys_synthetic():
     extra_keys = [k for k in keys_take if 0 < k[0] < 1500 and k[0] != keys_no_take[1][0]]
     assert len(extra_keys) == 4
     k_a, k_b, k_c, k_d = extra_keys
-    v = keys_no_take[1][1]  # значение первого тейка
+    v = keys_no_take[1][1]  # значение нулевого сегмента — теперь всегда 100 %
+    assert v == 100.0
     vm = k_b[1]
 
     # порядок (a,v,1,0), (b,vm,2,1), (c,vm,1,0), (d,v,2,1)
@@ -154,6 +167,59 @@ def test_cam1_jump_keys_synthetic():
     assert len(extra_no_tail) == 2
     assert extra_no_tail[0][3] == 0
     assert extra_no_tail[1][3] == 1
+
+
+def _cams_from_cuts(cuts):
+    """Синтетический мультикам по списку катов: кам1 и кам2 идут встык, начиная с кам1."""
+    cams = [{"clips": []}, {"clips": []}]
+    edges = [0] + list(cuts)
+    for i, (a, b) in enumerate(zip(edges, edges[1:])):
+        cams[i % 2]["clips"].append([a, b, 0, "cam%d.mov" % (i % 2 + 1), True])
+    return cams
+
+
+def test_cam1_jump_start_always_lands_on_100():
+    """Старт jump доходит РОВНО до 100 %, а не до случайного числа из [lo, hi].
+    Раскладок катов несколько — чтобы было видно, что это не совпадение сида:
+    старое значение (розыгрыш rng) для одной из них заведомо не 100."""
+    fps = 60.0
+    layouts = [[1500, 1620, 2100], [443, 900, 1500, 2600],
+               [300, 700, 1100, 1600, 2200], [1900, 2400]]
+    old_values = []
+    for cuts in layouts:
+        cams = _cams_from_cuts(cuts)
+        keys = _cam1_jump_keys(cams, lo=100.0, hi=130.0, fps=fps, start=True, big=140.0)
+
+        assert keys[0] == (0, 140.0, 1, 0), "старт — плавный наезд от big"
+        assert keys[1][0] == min(ZOOM_PUNCH, max(1, cuts[0] - 2)), "откат за punch кадров"
+        assert keys[1][1:] == (100.0, 2, 1), "старт обязан прийти ровно в 100 %"
+        # prev после нулевого сегмента = 100: следующий кат отличается от него на min_diff
+        assert abs(keys[2][1] - 100.0) >= 12.0, "кат после старта ближе min_diff к 100 %"
+
+        # что дала бы прежняя строка keys.append((pe, v, 2, 1)) — случайное из [lo, hi]:
+        # seed у rng тот же, что в _cam1_jump_keys (кадры реза), поэтому число воспроизводимо
+        frames = sorted(set([0] + _zoom_cut_frames(cams, fps=fps)))
+        old_values.append(round(random.Random(",".join(str(f) for f in frames))
+                                .uniform(100.0, 130.0), 1))
+
+    assert any(x != 100.0 for x in old_values), \
+        "во всех раскладках розыгрыш дал ровно 100 — тест ничего не ловит"
+
+
+def test_cam1_jump_start_big_100_single_key():
+    """big == 100: наезжать некуда — в кадре 0 РОВНО ОДИН ключ 100 %.
+    Второго ключа на punch-кадре быть не должно: в AE это два одинаковых ключа
+    подряд с пустым разгоном между ними (стиль «мясников»: big = lo = 100)."""
+    fps = 60.0
+    cuts = [1500, 1620, 2100]
+    cams = _cams_from_cuts(cuts)
+    keys = _cam1_jump_keys(cams, lo=100.0, hi=130.0, fps=fps, start=True, big=100.0)
+
+    assert keys[0] == (0, 100.0, 0, 1)
+    assert len([k for k in keys if k[0] == 0]) == 1
+    # кадры ключей: 0 и каты — ключа на punch-кадре нет
+    assert [k[0] for k in keys] == sorted(set([0] + _zoom_cut_frames(cams, fps=fps)))
+    assert all(k[0] != ZOOM_PUNCH for k in keys)
 
 
 def test_zoom_max_mixed_holds():

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Геометрия переехала из AE_FULL в layout.py (задание B): .jsx несёт готовые
+"""Геометрия переехала из AE_FULL в layout.py: .jsx несёт готовые
 числа (fit/slackx/slacky у видео, en/ex у фото, CAM1_EASE у зума), шаблон только
 применяет. Здесь:
 

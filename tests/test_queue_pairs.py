@@ -19,19 +19,19 @@ sys.path.insert(0, ROOT)
 os.environ.setdefault("REELSI_NO_BROWSER", "1")
 
 from api.jobs import build_pairs  # noqa: E402
-from core.umsg import UMsg  # noqa: E402
+from core.umsg import ReelsiError, UMsg  # noqa: E402
 
 
 def test_build_pairs_validates_file_existence(tmp_path):
-    """Несуществующий файл даёт SystemExit(queue_file_missing), существующий отдаёт полные пути."""
+    """Несуществующий файл даёт ReelsiError(queue_file_missing), существующий отдаёт полные пути."""
     cam1 = tmp_path / "cam1"
     cam1.mkdir()
     camdirs = [str(cam1)]
 
-    # 1. Несуществующий файл -> SystemExit с кодом queue_file_missing
-    with pytest.raises(SystemExit) as exc_info:
+    # 1. Несуществующий файл -> ReelsiError с кодом queue_file_missing
+    with pytest.raises(ReelsiError) as exc_info:
         build_pairs(camdirs, [["missing_clip.mp4"]])
-    err = exc_info.value.code
+    err = exc_info.value.umsg
     assert isinstance(err, UMsg), "ошибка должна быть обёрнута в UMsg"
     assert err.code == "queue_file_missing"
     assert "missing_clip.mp4" in err.vars.get("path", "")

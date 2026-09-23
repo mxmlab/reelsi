@@ -26,7 +26,7 @@ sys.path.insert(0, ROOT)
 os.environ.setdefault("REELSI_NO_BROWSER", "1")
 
 import api  # noqa: E402
-import reelsi  # noqa: E402
+from core import cams  # noqa: E402
 from core import sync  # noqa: E402
 
 SR = 16000
@@ -195,7 +195,7 @@ def test_cammatch_picks_the_best_and_skips_itself(client, tmp_path, monkeypatch,
     }
     monkeypatch.setattr(sync, "video_envelope",
                         lambda v: envs[os.path.basename(v)])
-    monkeypatch.setattr(reelsi, "list_videos", lambda d: sorted(os.listdir(d)))
+    monkeypatch.setattr(cams, "list_videos", lambda d: sorted(os.listdir(d)))
     d = client.post("/api/cammatch", json={"cam1": str(cam / "main.mp4"),
                                            "dirs": [str(other)]}).get_json()
     assert d["ok"], d
@@ -213,7 +213,7 @@ def test_cammatch_reports_no_match_below_threshold(client, tmp_path, monkeypatch
     # всё — «чужой» материал: пик корреляции не дотянет до MATCH_MIN
     monkeypatch.setattr(sync, "video_envelope",
                         lambda v: (np.array([1.0, -1.0] * 5), 100.0))
-    monkeypatch.setattr(reelsi, "list_videos", lambda d: sorted(os.listdir(d)))
+    monkeypatch.setattr(cams, "list_videos", lambda d: sorted(os.listdir(d)))
     d = client.post("/api/cammatch", json={"cam1": str(cam / "main.mp4"),
                                            "dirs": [str(other)]}).get_json()
     # cam1 сюда не входит (другой каталог), у кандидата огибающая — переменный
@@ -240,7 +240,7 @@ def test_cammatch_joins_dir_and_name_on_the_server(client, tmp_path, monkeypatch
     (cam / "main.mp4").write_bytes(b"x")
     (other / "ok.mp4").write_bytes(b"x")
     monkeypatch.setattr(sync, "video_envelope", lambda v: (np.ones(10), 100.0))
-    monkeypatch.setattr(reelsi, "list_videos", lambda d: sorted(os.listdir(d)))
+    monkeypatch.setattr(cams, "list_videos", lambda d: sorted(os.listdir(d)))
 
     d = client.post("/api/cammatch", json={"cam1dir": str(cam), "cam1": "main.mp4",
                                            "dirs": [str(other)]}).get_json()

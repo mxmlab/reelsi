@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Запасные значения ключей стиля в сборке берутся из styles.BASE, а не из литерала (задание JC).
+"""Запасные значения ключей стиля в сборке берутся из styles.BASE, а не из литерала.
 
 Дефолт ключа стиля жил в ДВУХ местах: в core/styles.py:BASE и числом-запасом рядом с
 чтением в core/xml2ae/build.py — `st.get("sub_bg_op") if st.get("sub_bg_op") is not None
@@ -33,7 +33,7 @@ from core import styles  # noqa: E402
 
 BUILD_PY = os.path.join(ROOT, "core", "xml2ae", "build.py")
 
-# запас ≠ BASE, решение владельца ждёт (задание JC, п. 2)
+# запас ≠ BASE, решение владельца ждёт
 # intro_riser_file: в BASE None («файл не задан»), а в сборке `or ""` — это не дефолт
 # файла, а подготовка строки к .strip(): None.strip() упал бы.
 ZAPAS_NE_BASE = {"intro_riser_file"}

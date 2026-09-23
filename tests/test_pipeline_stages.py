@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты пропуска ступеней пайплайна нарезки gigaam_cut (задание GE).
+"""Тесты пропуска ступеней пайплайна нарезки gigaam_cut.
 
 ПОЧЕМУ этот тест существует:
 Каждая ступень нарезки (pauses, sense, dedupe, refine, breath, draft) может быть
@@ -17,6 +17,7 @@
 """
 import pytest
 from core.gigaam_cut import pipeline as pipeline
+from core.umsg import ReelsiError
 
 
 @pytest.fixture(autouse=True)
@@ -228,8 +229,8 @@ def test_guards_disabled_when_stages_off_long_segment_passes(monkeypatch, tmp_pa
 
 def test_guards_regression_when_sense_enabled(monkeypatch, tmp_path):
     """Регрессионные тесты санитарных гардов при включённых ступенях:
-    1) sense=True: если ИИ вырезал > 75% ролика -> отказ SystemExit;
-    2) sense=True, refine=True: если ролик > 30с вышел одним куском -> отказ SystemExit."""
+    1) sense=True: если ИИ вырезал > 75% ролика -> отказ ReelsiError;
+    2) sense=True, refine=True: если ролик > 30с вышел одним куском -> отказ ReelsiError."""
     out_xml = str(tmp_path / "out.xml")
 
     # 1. Гард: вырезано > 75% ролика
@@ -250,7 +251,7 @@ def test_guards_regression_when_sense_enabled(monkeypatch, tmp_path):
         "breath": True,
         "draft": False,
     }
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(ReelsiError) as exc_info:
         pipeline._run(
             "dummy.wav", ["cam1.mp4"], [0.0], out_xml, 50.4,
             stages=stages_cut_all, emit=lambda *a, **k: None
@@ -264,7 +265,7 @@ def test_guards_regression_when_sense_enabled(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, "refine_keep", lambda k, *a, **kw: (k, list(range(len(k)))))
     monkeypatch.setattr(pipeline, "_cut_breaths", lambda k, a, *args, **kw: (k, a, []))
 
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(ReelsiError) as exc_info:
         pipeline._run(
             "dummy.wav", ["cam1.mp4"], [0.0], out_xml, 50.4,
             stages=stages_cut_all, emit=lambda *a, **k: None

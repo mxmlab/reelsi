@@ -17,6 +17,10 @@
 """
 import os
 from core.app_meta import console_emit, wrap_emit
+from core.umsg import ReelsiError
+from core.applog import get_logger
+
+log = get_logger(__name__)
 
 
 PAD_STEP = 0.08      # сек: на сколько расширять проблемную границу (в тишину)
@@ -186,6 +190,7 @@ def check_and_fix(wav_path, keep, emit=console_emit, model=None, model_size=None
     try:
         import soundfile as sf
         total_dur = sf.info(wav_path).duration
+    except ReelsiError: raise
     except Exception:
         total_dur = max(e for _s, e in keep) + 1.0
     whisper = engine.startswith("whisper")
@@ -238,12 +243,14 @@ def check_and_fix(wav_path, keep, emit=console_emit, model=None, model_size=None
     try:
         os.remove(cw)
     except OSError:
-        pass
+        pass  # временный wav уже убран
     if release_after and model is None and engine.startswith("whisper"):
         try:
             from core import transcribe as tr
             if tr.release_model():
                 emit("  self-check: Whisper выгружен")
-        except Exception:
-            pass
+        except ReelsiError: raise
+        except Exception as ex:
+            log.warning("Whisper не выгрузился после self-check: %s — "
+                        "видеопамять остаётся занятой", ex)
     return keep, report

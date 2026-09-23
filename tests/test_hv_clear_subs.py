@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты роута /api/clear_subs (задание HV): удаляет yellow.json и пересобирает без sub_words, чужие файлы целы."""
+"""Тесты роута /api/clear_subs: удаляет yellow.json и пересобирает без sub_words, чужие файлы целы."""
 import json
 import pytest
 from flask import Flask

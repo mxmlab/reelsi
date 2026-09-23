@@ -7,15 +7,17 @@ CURPROC ПЕРЕПРИСВАИВАЕТСЯ (global), а `from ._core import CURP
 раз, и «Стоп» убивал бы None вместо процесса. Читают его только run_omnicut_job и
 _kill_curproc — оба здесь.
 """
-import os, queue, threading, time, argparse, traceback, subprocess, shutil, tempfile
+import os, queue, threading, time, traceback, subprocess, shutil, tempfile
 from flask import request, jsonify
-import reelsi
+from core import cams
+from core import cutjob
 from core import cutstages
-from ._core import (DEFAULT_BASE, JOB, LOCK, bp, emit, item_done, item_fail,
-                    item_set, items_init, job_finish, job_start, jstr, journal_interrupted,
-                    kill_tree, set_progress, set_stalled, sysexit_text, task_popen_kwargs,
-                    umsg_err, _cross_lock_release)
-from core.umsg import umsg
+from core.cutjob import CutOptions
+from ._core import (DEFAULT_BASE, JOB, LOCK, bp, emit, is_reelsi_target, item_done,
+                    item_fail, item_set, items_init, job_finish, job_start, jstr,
+                    journal_interrupted, kill_tree, set_progress, set_stalled,
+                    sysexit_text, task_popen_kwargs, umsg_err, _cross_lock_release)
+from core.umsg import ReelsiError, umsg
 from core.app_meta import child_env, module_cmd
 from core.applog import get_logger
 from .videogen import VJOB, VLOCK
@@ -26,7 +28,7 @@ CURWORK = []            # рабочие каталоги задачи (omnicut_
                         # их маркером WORK_DIR= в stdout, а _kill_curproc удаляет — иначе
                         # WAV камер (сотни МБ) переживают «Стоп» в %TEMP%. Путь проверяется
                         # is_safe_work_dir: ту же строку печатает ответ модели — см. там
-# Сторож простоя процесса нарезки (задание NC): молчит дольше — в статус идёт флаг
+# Сторож простоя процесса нарезки: молчит дольше — в статус идёт флаг
 # stalled и строка в лог, но процесс НЕ убивается. Долгая ASR (GigaAM на 40-минутной
 # камере) молчит законно, и снимать её по тишине значило бы терять готовую работу.
 # Константа, а не настройка: значение про реальные тайминги моделей, а не про вкус.
@@ -42,16 +44,16 @@ def build_pairs(camdirs, names_list):
     4294967294»), и по логу нельзя было понять, что дело в папке (жалоба 2026-08-20:
     очередь Адилета, папка «камера1»). Проверяем ЗДЕСЬ и говорим прямым текстом."""
     if any(len(names) > len(camdirs) for names in names_list):
-        raise SystemExit(umsg("queue_desync",
+        raise ReelsiError(umsg("queue_desync",
             "Рассинхрон очереди: файлов в паре больше, чем папок камер"))
     pairs = [[os.path.join(camdirs[k], names[k]) for k in range(len(names))]
              for names in names_list]
     if not pairs:
-        raise SystemExit(umsg("queue_empty", "Очередь пуста"))
+        raise ReelsiError(umsg("queue_empty", "Очередь пуста"))
     missing = [p for cams in pairs for p in cams if p and not os.path.isfile(p)]
     if missing:
         lst = "; ".join(missing[:3]) + (f" (и ещё {len(missing) - 3})" if len(missing) > 3 else "")
-        raise SystemExit(umsg("queue_file_missing",
+        raise ReelsiError(umsg("queue_file_missing",
             f"Файла из очереди нет в папке камеры: {lst}. "
             "Очередь хранит только имена — проверьте папки камер.", path=lst))
     return pairs
@@ -63,7 +65,7 @@ def is_safe_work_dir(path):
     Маркер печатают свои же движки (core/omni_cut.py, core/gigaam_cut/pipeline.py),
     но в тот же stdout уходит и СЫРОЙ ответ модели: перевод строки в `notes` давал
     строку «WORK_DIR=<любой путь>», она попадала в CURWORK, и «Стоп» сносил этот
-    путь целиком через shutil.rmtree (п. 1 задания HL). Поэтому пускаем дальше
+    путь целиком через shutil.rmtree. Поэтому пускаем дальше
     только каталог, который движок реально создаёт: tempfile.mkdtemp(prefix=…) —
     realpath лежит ПРЯМО в temp (никаких «..» и симлинков наружу) и имя начинается
     с omnicut_ или gigaamcut_. Всё прочее — обычная строка лога.
@@ -82,8 +84,8 @@ def is_safe_work_dir(path):
 
 def _kill_curproc():
     """Убить текущий subprocess вместе с детьми (omni_cut порождает omni_asr — им VRAM),
-    и убрать его рабочие каталоги (см. CURWORK). Дерево убивает общая `_core.kill_tree`
-    (задание IC, п. 6): раньше та же функция была скопирована здесь третьим экземпляром."""
+    и убрать его рабочие каталоги (см. CURWORK). Дерево убивает общая `_core.kill_tree`:
+    раньше та же функция была скопирована здесь третьим экземпляром."""
     with LOCK:
         p = CURPROC
         works = list(CURWORK)
@@ -98,7 +100,7 @@ def _pump_stdout(p):
 
     Пока главный поток сидит в `for line in p.stdout`, он не может ни заметить
     простой процесса, ни среагировать на «Стоп» до следующей строки вывода: зависшая
-    нарезка висела бесконечно, а в статусе не было ни слова (задание NC). Строки
+    нарезка висела бесконечно, а в статусе не было ни слова. Строки
     кладём в очередь — их разбирает тот же цикл, что и раньше, только с таймаутом."""
     q = queue.Queue()
 
@@ -106,8 +108,9 @@ def _pump_stdout(p):
         try:
             for line in p.stdout:
                 q.put(line)
+        except ReelsiError: raise
         except Exception:
-            pass
+            pass  # поток вывода оборвался (процесс умер) — EOF отдаём в finally
         finally:
             q.put(None)          # EOF вывода: процесс закрыл stdout или умер
 
@@ -124,24 +127,35 @@ def _mark_stopped_waits():
                 it["stage"] = "stopped"
 
 
+def cut_options(opts):
+    """opts запроса (/api/run) -> CutOptions.
+
+    Умолчания тут не выписываются: чего в opts нет — берётся из самого класса
+    (core/cutjob.CutOptions), иначе те же числа завелись бы второй копией, как
+    было с `argparse.Namespace` раньше.
+    """
+    d = dict(opts or {})
+    return CutOptions(
+        no_subs=not d["subs"], no_dedup=not d["dedup"],
+        no_srt=not d["srt"], ae=d["ae"], keep=d["keep"],
+        model=d["model"], scale=float(d["scale"]),
+        vad_thresh=float(d["vad_thresh"]),
+        min_silence=float(d["min_silence"]), pad=float(d["pad"]),
+        no_cut=bool(d.get("no_cut")),
+        aggressive=bool(d.get("aggressive")),
+        restarts=bool(d.get("restarts")),        # ИИ-нарезка: детектор рестартов вместо точных повторов
+        forced_align=bool(d.get("forced_align")),  # точные тайминги (wav2vec2) для резов и субтитров
+        cam_return=int(d.get("cam_return") or CutOptions.cam_return),
+        big_chunk=float(d.get("big_chunk") or CutOptions.big_chunk))
+
+
 def run_job(base, outdir, pairs, opts):
     try:
         os.makedirs(outdir, exist_ok=True)
-        args = argparse.Namespace(
-            no_subs=not opts["subs"], no_dedup=not opts["dedup"],
-            no_srt=not opts["srt"], ae=opts["ae"], keep=opts["keep"],
-            model=opts["model"], scale=float(opts["scale"]),
-            vad_thresh=float(opts["vad_thresh"]),
-            min_silence=float(opts["min_silence"]), pad=float(opts["pad"]),
-            no_cut=bool(opts.get("no_cut")),
-            aggressive=bool(opts.get("aggressive")),
-            restarts=bool(opts.get("restarts")),        # ИИ-нарезка: детектор рестартов вместо точных повторов
-            forced_align=bool(opts.get("forced_align")),  # точные тайминги (wav2vec2) для резов и субтитров
-            cam_return=int(opts.get("cam_return") or 2),
-            big_chunk=float(opts.get("big_chunk") or 6.0))
+        options = cut_options(opts)
         model = None
         made = []                                   # (out_xml) успешно собранные — для фазы 2
-        # Очередь этапов по стемам набора (задание FA): заводим ДО начала цикла, все — wait.
+        # Очередь этапов по стемам набора: заводим ДО начала цикла, все — wait.
         items_init(JOB, LOCK, [os.path.splitext(os.path.basename(cams[0]))[0] for cams in pairs])
         # ФАЗА 1 — нарезка (Whisper в VRAM). Сначала освобождаем VRAM от LM Studio.
         if opts["subs"] or opts["dedup"]:
@@ -149,6 +163,7 @@ def run_job(base, outdir, pairs, opts):
                 from core import aicut
                 aicut.unload_ours(emit=emit)        # чтобы Whisper влез (16 ГБ впритык)
                 aicut.warn_foreign_models(emit=emit)  # предупредить, если висит чужая модель
+            except ReelsiError: raise
             except Exception:
                 log.warning("Не удалось выгрузить модели aicut перед Whisper", exc_info=True)
             emit("Гружу модель Whisper {model} (один раз)...", model=opts["model"])
@@ -161,21 +176,22 @@ def run_job(base, outdir, pairs, opts):
             stem = os.path.splitext(os.path.basename(cams[0]))[0]
             out_xml = os.path.join(outdir, f"{i:02d}_{stem}.xml")
             emit("[{i}/{n}] {stem}", i=i, n=len(pairs), stem=stem)
-            set_progress(i, len(pairs))
+            set_progress(i, len(pairs), stem)
             item_set(JOB, LOCK, stem, stage="cut")
             try:
-                reelsi.process_pair(cams, out_xml, args, model=model, emit=emit)
+                cutjob.process_pair(cams, out_xml, options, model=model, emit=emit)
                 made.append(out_xml)
-                # Одно место записи «готово» (задание FA): item_done и кладёт путь в
+                # Одно место записи «готово»: item_done и кладёт путь в
                 # results, и переводит элемент в done — вторым местом их не развести.
                 item_done(JOB, LOCK, stem, os.path.basename(out_xml))
-            except SystemExit as e:
-                # reelsi.process_pair отвечает понятной ошибкой через SystemExit
+            except (ReelsiError, SystemExit) as e:
+                # cutjob.process_pair отвечает понятной ошибкой через SystemExit
                 # (umsg) — это BaseException, и он проходил мимо except Exception:
-                # клип не попадал в failed, а в логе оставалась пустота (задание MX).
+                # клип не попадал в failed, а в логе оставалась пустота.
                 txt = sysexit_text(e)
                 emit("  ОШИБКА: {err}", err=txt)
                 item_fail(JOB, LOCK, stem, txt)
+            except ReelsiError: raise
             except Exception:
                 tb = traceback.format_exc()
                 emit("  ОШИБКА:\n{tb}", tb=tb)
@@ -186,8 +202,10 @@ def run_job(base, outdir, pairs, opts):
             from core import transcribe
             if transcribe.release_model():
                 emit("Модель Whisper выгружена, видеопамять освобождена.")
-        except Exception:
-            pass
+        except ReelsiError: raise
+        except Exception as ex:
+            log.warning("Whisper не выгрузился перед ИИ-шагами: %s — "
+                        "видеопамять остаётся занятой", ex)
         # ФАЗА 2 — ИИ-шаги на LM Studio (жёлтые). Whisper уже выгружен.
         if opts.get("ai_yellow") and opts["subs"] and made and not JOB["cancel"]:
             from core import aicut
@@ -200,30 +218,33 @@ def run_job(base, outdir, pairs, opts):
                     emit("  🤖 ИИ жёлтые: {count}/{total} -> {path}",
                          count=len(res["yellow"]), total=res["total"],
                          path=os.path.basename(res["path"]))
-                except SystemExit as e:
+                except (ReelsiError, SystemExit) as e:
                     emit("  🤖 ИИ жёлтые пропущены: {reason}", reason=str(e))
+                except ReelsiError: raise
                 except Exception:
                     emit("  🤖 ИИ жёлтые — ОШИБКА:\n{tb}", tb=traceback.format_exc())
             try:
                 aicut.unload_ours(emit=emit)         # освободить VRAM после ИИ-шагов
+            except ReelsiError: raise
             except Exception:
                 log.warning("Не удалось выгрузить модели aicut после ИИ-шагов", exc_info=True)
         if JOB["cancel"]:
-            _mark_stopped_waits()          # «Стоп»: до чего не дошло — «остановлено» (задание FA)
+            _mark_stopped_waits()          # «Стоп»: до чего не дошло — «остановлено»
         fails = JOB["failed"]
         if fails:
             emit("\n⚠ Не собрались ({n}):", n=len(fails))
             for f in fails:
                 emit("  ✗ {name}: {reason}", name=f["name"], reason=f["reason"])
         emit("\nГотово. Файлы в: {outdir}", outdir=outdir)
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         # Тот же путь, что у Exception ниже: причина в лог, падение — в failed. Без
         # этой ветки «Очередь пуста»/«Файла из очереди нет…» из середины потока
-        # выглядели как «Готово (файлов нет)» (задание MX).
+        # выглядели как «Готово (файлов нет)».
         txt = sysexit_text(e)
         emit("ОШИБКА (нарезка прервана): {err}", err=txt)
         with LOCK:
             JOB["failed"].append({"name": "нарезка", "reason": txt})
+    except ReelsiError: raise
     except Exception:
         # падение ВНЕ пер-клипового try (makedirs на отвалившемся диске, OOM при
         # загрузке Whisper, битый opts) иначе убивало поток молча: finally честно
@@ -237,14 +258,16 @@ def run_job(base, outdir, pairs, opts):
             from core import transcribe
             if transcribe.release_model():
                 emit("Модель Whisper выгружена, видеопамять освобождена.")
-        except Exception:
-            pass
+        except ReelsiError: raise
+        except Exception as ex:
+            log.warning("Whisper не выгрузился после задания: %s — "
+                        "видеопамять остаётся занятой", ex)
         job_finish()
 
 
 def run_omnicut_job(outdir, pairs, model=None, draft=True, selfcheck=False, review=False, mode="gigaam", selfcheck_model="whisper:large-v3", speaker=None, dedupe=None, stages=None):
     """ИИ-нарезка через omni_cut.py (Omni + LLM + SSM) — как subprocess, стримим лог.
-    stages — словарь ступеней нарезки (задание GE); если задан, draft и dedupe берутся из него.
+    stages — словарь ступеней нарезки; если задан, draft и dedupe берутся из него.
     draft — параметр сохранён для совместимости сигнатуры, в теле ни на что не влияет (черновик — производная Omni-ревью);
     review — Omni-ревью черновика (эксперимент, ВЫКЛ по умолчанию).
     mode — общий «Режим нарезки» (флоу): 'gigaam' (основной, цельный файл
@@ -257,7 +280,7 @@ def run_omnicut_job(outdir, pairs, model=None, draft=True, selfcheck=False, revi
     задача из ROADMAP, а не забытый флаг.
     speaker — профиль спикера (speakers/*.json): свои пороги нарезки под его
     студию и говор; применяется в режиме gigaam.
-    dedupe — чистка дублей кодом (задание CA): None = не передавать флаг (работает профиль
+    dedupe — чистка дублей кодом: None = не передавать флаг (работает профиль
     спикера); явный bool перекрывает профиль спикера (см. omni_cut --dedupe/--no-dedupe)."""
     global CURPROC, CURWORK       # CURWORK тоже ПЕРЕПРИСВАИВАЕТСЯ ниже: без global он
                                   # становился локальным на всю функцию, и WORK_DIR=
@@ -277,9 +300,10 @@ def run_omnicut_job(outdir, pairs, model=None, draft=True, selfcheck=False, revi
         try:
             from core import draftrender
             draftrender.clean_tmp(outdir, emit=emit)   # авто-очистка _tmp перед новой нарезкой
+        except ReelsiError: raise
         except Exception:
-            pass
-        # Очередь этапов по стемам набора (задание FA): заводим ДО начала цикла, все — wait.
+            pass  # уборка _tmp не удалась — нарезку из-за мусора не останавливаем
+        # Очередь этапов по стемам набора: заводим ДО начала цикла, все — wait.
         items_init(JOB, LOCK, [os.path.splitext(os.path.basename(cams[0]))[0] for cams in pairs])
         for i, cams in enumerate(pairs, 1):
             if JOB["cancel"]:
@@ -288,7 +312,7 @@ def run_omnicut_job(outdir, pairs, model=None, draft=True, selfcheck=False, revi
             out_xml = os.path.join(outdir, f"{i:02d}_{stem}.xml")
             emit("[{i}/{n}] {stem} — ИИ-нарезка (Omni + LLM + SSM), ~5–10 мин",
                  i=i, n=len(pairs), stem=stem)
-            set_progress(i, len(pairs))
+            set_progress(i, len(pairs), stem)
             item_set(JOB, LOCK, stem, stage="cut")
             cmd = module_cmd("omni_cut", "--ssm", "--out", out_xml)
             if not norm_stages.get("draft", False):
@@ -307,12 +331,12 @@ def run_omnicut_job(outdir, pairs, model=None, draft=True, selfcheck=False, revi
             cmd += ["--selfcheck-model", selfcheck_model]
             if speaker:
                 cmd += ["--speaker", speaker]
-            # чистка дублей (задание CA): явный флаг только когда задан явно (дефект 2),
+            # чистка дублей: явный флаг только когда задан явно (дефект 2),
             # чтобы без флага действовал профиль спикера
             explicit_dedupe = raw_stages.get("dedupe")
             if explicit_dedupe is not None:
                 cmd += ["--dedupe"] if bool(explicit_dedupe) else ["--no-dedupe"]
-            # флаги пропуска ступеней нарезки (задание GE)
+            # флаги пропуска ступеней нарезки
             if not norm_stages.get("sense", True):
                 cmd += ["--no-sense"]
             if not norm_stages.get("refine", True):
@@ -344,7 +368,7 @@ def run_omnicut_job(outdir, pairs, model=None, draft=True, selfcheck=False, revi
                           "SystemExit", "Error:", "не принимает аудио", "баланс")
                 # Чтение — через очередь с таймаутом: пока ждём строку, проверяем тишину
                 # (сторож CUT_STALL_S). Раньше цикл сидел в блокирующем `for line in
-                # p.stdout` и на зависшем процессе не выходил никогда (задание NC).
+                # p.stdout` и на зависшем процессе не выходил никогда.
                 q = _pump_stdout(p)
                 last_out = time.time()
                 stalled = False
@@ -393,7 +417,7 @@ def run_omnicut_job(outdir, pairs, model=None, draft=True, selfcheck=False, revi
                 if JOB["cancel"]:
                     emit("  ⏹ клип прерван")
                 elif os.path.isfile(out_xml):
-                    # Одно место записи «готово» (задание FA): item_done и кладёт путь
+                    # Одно место записи «готово»: item_done и кладёт путь
                     # в results, и переводит элемент в done — вторым местом их не развести.
                     item_done(JOB, LOCK, stem, os.path.basename(out_xml))
                 else:
@@ -402,12 +426,13 @@ def run_omnicut_job(outdir, pairs, model=None, draft=True, selfcheck=False, revi
                         reason = f"код {p.returncode}: {reason}"
                     emit("  ⚠ XML не создан — {reason}", reason=reason)
                     item_fail(JOB, LOCK, stem, reason)
-            except SystemExit as e:
+            except (ReelsiError, SystemExit) as e:
                 # SystemExit (umsg) — BaseException: без этой ветки понятная ошибка
-                # шага уходила из потока мимо лога и failed (задание MX).
+                # шага уходила из потока мимо лога и failed.
                 txt = sysexit_text(e)
                 emit("  ОШИБКА: {err}", err=txt)
                 item_fail(JOB, LOCK, stem, txt)
+            except ReelsiError: raise
             except Exception:
                 tb = traceback.format_exc()
                 emit("  ОШИБКА:\n{tb}", tb=tb)
@@ -417,7 +442,7 @@ def run_omnicut_job(outdir, pairs, model=None, draft=True, selfcheck=False, revi
                     CURPROC = None
                 set_stalled(False)   # процесс кончился — «молчит» больше не про что
         if JOB["cancel"]:
-            _mark_stopped_waits()          # «Стоп»: до чего не дошло — «остановлено» (задание FA)
+            _mark_stopped_waits()          # «Стоп»: до чего не дошло — «остановлено»
         fails = JOB["failed"]
         if fails:
             emit("\n⚠ Не собрались ({n}):", n=len(fails))
@@ -427,13 +452,14 @@ def run_omnicut_job(outdir, pairs, model=None, draft=True, selfcheck=False, revi
             emit("\n⏹ Остановлено. Что успело собраться — в списке.")
         else:
             emit("\nГотово. Файлы в: {outdir}", outdir=outdir)
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         # см. run_job: SystemExit — тот же путь провала, что у Exception, но с текстом
-        # из umsg; без ветки задание заканчивалось «Готово» без единого клипа (MX).
+        # из umsg; без ветки задание заканчивалось «Готово» без единого клипа.
         txt = sysexit_text(e)
         emit("ОШИБКА (ИИ-нарезка прервана): {err}", err=txt)
         with LOCK:
             JOB["failed"].append({"name": "ИИ-нарезка", "reason": txt})
+    except ReelsiError: raise
     except Exception:
         # см. run_job: без except падение вне цикла по клипам выглядело как «Готово».
         tb = traceback.format_exc()
@@ -452,10 +478,10 @@ def api_omnicut_run():
     outdir = jstr(d, "outdir").strip().strip('"')
     try:
         if not outdir:
-            raise SystemExit(umsg("no_result_dir", "Не задана папка результата"))
+            raise ReelsiError(umsg("no_result_dir", "Не задана папка результата"))
         pairs = build_pairs(d.get("camdirs") or [], d.get("pairs") or [])
         if not job_start(kind="cut", label="ИИ-нарезка"):
-            raise SystemExit(umsg("busy", "Уже выполняется"))
+            raise ReelsiError(umsg("busy", "Уже выполняется"))
         raw_stages = d.get("stages")
         if raw_stages is None:
             raw_stages = {}
@@ -475,6 +501,7 @@ def api_omnicut_run():
                                    raw_stages.get("dedupe"),
                                    raw_stages),
                              daemon=True).start()
+        except ReelsiError: raise
         except Exception:
             # Поток не родился (RuntimeError: can't start new thread) — отпускаем ровно
             # то, что занял job_start: иначе лок и JOB["running"] висели бы до перезапуска
@@ -484,7 +511,7 @@ def api_omnicut_run():
             _cross_lock_release()
             raise
         return jsonify(ok=True)
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -496,11 +523,11 @@ def api_draft_render():
     xml_path = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml_path):
-            raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml_path}",
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml_path}",
                                   path=xml_path))
         if not job_start(kind="draft", label="Черновик mp4"):
-            raise SystemExit(umsg("busy_other", "Уже выполняется другая задача"))
-    except SystemExit as e:
+            raise ReelsiError(umsg("busy_other", "Уже выполняется другая задача"))
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
     def _run():
@@ -514,10 +541,11 @@ def api_draft_render():
                 JOB["results"].append(p)
         except draftrender.RenderCancelled:
             emit("⏹ Черновик прерван")
-        except SystemExit as e:
+        except (ReelsiError, SystemExit) as e:
             # draftrender отвечает понятной ошибкой через SystemExit — в лог идёт её
-            # текст, а не пустота: мимо except Exception он проходил молча (задание MX).
+            # текст, а не пустота: мимо except Exception он проходил молча.
             emit("ОШИБКА: {err}", err=sysexit_text(e))
+        except ReelsiError: raise
         except Exception:
             emit("ОШИБКА:\n{tb}", tb=traceback.format_exc())
         finally:
@@ -525,6 +553,7 @@ def api_draft_render():
 
     try:
         threading.Thread(target=_run, daemon=True).start()
+    except ReelsiError: raise
     except Exception:
         # см. api_omnicut_run: поток не родился — отдаём лок и JOB["running"] обратно
         with LOCK:
@@ -544,7 +573,15 @@ def api_clean_tmp():
     outdir = jstr(d, "outdir").strip().strip('"')
     try:
         if not os.path.isdir(outdir):
-            raise SystemExit(umsg("no_folder", f"Нет папки: {outdir}", path=outdir))
+            raise ReelsiError(umsg("no_folder", f"Нет папки: {outdir}", path=outdir))
+        # Цель обязана быть папкой вывода Reelsi: до этой проверки
+        # присланный каталог уходил в draftrender.clean_tmp и в shutil.rmtree по
+        # roto/_cache — то есть кнопка «очистить» чистила любую папку на диске.
+        # Проверка стоит ДО обеих чисток: не прошла — ни _tmp, ни roto/_cache не
+        # трогаются, включая <родитель outdir>/roto/_cache.
+        if not is_reelsi_target(outdir, "outdir"):
+            raise ReelsiError(umsg("not_out_dir",
+                f"Это не папка вывода Reelsi: {outdir}", path=outdir))
         try:
             from core import draftrender
             import shutil, glob
@@ -557,7 +594,7 @@ def api_clean_tmp():
                         freed += os.path.getsize(f)
                         os.remove(f)
                     except OSError:
-                        pass
+                        pass  # файл исчез между обходом и удалением — освобождать нечего
             if d.get("roto"):
                 rd = os.path.join(os.path.dirname(outdir.rstrip("\\/")) or outdir, "roto", "_cache")
                 for base in {rd, os.path.join(outdir, "roto", "_cache")}:
@@ -567,13 +604,14 @@ def api_clean_tmp():
                                 try:
                                     freed += os.path.getsize(os.path.join(root, f))
                                 except OSError:
-                                    pass
+                                    pass  # файл исчез между обходом и замером — в объём не попадёт
                         shutil.rmtree(base, ignore_errors=True)
             return jsonify(ok=True, freed_mb=round(freed / 1e6, 1))
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("clean_tmp_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("clean_tmp_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -584,7 +622,7 @@ def api_tmp_info():
     outdir = (request.args.get("outdir") or "").strip().strip('"')
     try:
         if not os.path.isdir(outdir):
-            raise SystemExit(umsg("no_folder", f"Нет папки: {outdir}", path=outdir))
+            raise ReelsiError(umsg("no_folder", f"Нет папки: {outdir}", path=outdir))
         try:
             from core import draftrender
             t = os.path.join(outdir, "_tmp")
@@ -594,15 +632,16 @@ def api_tmp_info():
                     try:
                         total += os.path.getsize(os.path.join(root, f))
                     except OSError:
-                        pass
+                        pass  # файл исчез между обходом и замером — в объём не попадёт
             prox = draftrender.proxy_size(outdir)
             return jsonify(ok=True, total_mb=round(total / 1e6, 1),
                            proxy_mb=round(prox / 1e6, 1),
                            other_mb=round((total - prox) / 1e6, 1))
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("tmp_info_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("tmp_info_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -617,10 +656,10 @@ def api_cancel():
     if JOB["running"]:
         emit("⏹ Останавливаю… (текущий шаг может дорабатывать несколько секунд)")
     # Рендер в AE живёт в своём RJOB и своим subprocess'ом — «Стоп» обязан убить
-    # aerender с деревом (задание BD), иначе процесс досчитает минуты в фоне.
+    # aerender с деревом, иначе процесс досчитает минуты в фоне.
     from .render import render_kill
     render_kill()
-    # Скачивание с гугл-диска живёт в GDJOB и процессе rclone (задание HU):
+    # Скачивание с гугл-диска живёт в GDJOB и процессе rclone:
     from .gdrive import gdrive_kill
     gdrive_kill()
     # Генерация видео живёт в своём VJOB, и раньше общая кнопка её не касалась: облачный
@@ -637,9 +676,11 @@ def api_cancel():
             try:
                 if aicut.is_current(ep):
                     aicut.unload_ours()
+            except ReelsiError: raise
             except Exception:
                 log.warning("Не удалось выгрузить модели aicut при отмене", exc_info=True)
         threading.Thread(target=_unload, daemon=True).start()  # освободить VRAM LM Studio
+    except ReelsiError: raise
     except Exception:
         log.warning("Сбой отмены вызова aicut при cancel", exc_info=True)
     return jsonify(ok=True)
@@ -652,12 +693,12 @@ def api_run():
     outdir = jstr(d, "outdir").strip().strip('"')
     try:
         if not outdir:
-            raise SystemExit(umsg("no_result_dir", "Не задана папка результата"))
+            raise ReelsiError(umsg("no_result_dir", "Не задана папка результата"))
         camdirs = d.get("camdirs") or []
         if not camdirs:
-            camdirs = [p for p in reelsi.find_cam_dirs(base)]
+            camdirs = [p for p in cams.find_cam_dirs(base)]
         pairs = build_pairs(camdirs, d.get("pairs") or [])
-        # Если пришли stages (задание GF), строим opts на сервере из единого контракта cutstages.
+        # Если пришли stages, строим opts на сервере из единого контракта cutstages.
         # Старое поле opts остаётся как fallback для обратной совместимости.
         raw_stages = d.get("stages")
         if raw_stages is not None and isinstance(raw_stages, dict):
@@ -666,12 +707,13 @@ def api_run():
         else:
             opts = d.get("opts")
             if not isinstance(opts, dict):
-                raise SystemExit(umsg("no_opts", "Нет параметров нарезки (opts)"))
+                raise ReelsiError(umsg("no_opts", "Нет параметров нарезки (opts)"))
         if not job_start(kind="cut", label="Классическая нарезка"):
-            raise SystemExit(umsg("busy", "Уже выполняется"))
+            raise ReelsiError(umsg("busy", "Уже выполняется"))
         try:
             threading.Thread(target=run_job, args=(base, outdir, pairs, opts),
                              daemon=True).start()
+        except ReelsiError: raise
         except Exception:
             # см. api_omnicut_run: поток не родился — отдаём лок и JOB["running"] обратно
             with LOCK:
@@ -679,7 +721,7 @@ def api_run():
             _cross_lock_release()
             raise
         return jsonify(ok=True)
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -688,7 +730,7 @@ def api_status():
     """?since=N — отдать только строки лога после абсолютного индекса N (иначе весь лог).
     log_total — абсолютный счётчик строк (включая срезанные кэпом): клиент шлёт его
     обратно как since; log_total < since у клиента = новый джоб, надо сбросить кэш.
-    stalled — процесс нарезки молчит дольше CUT_STALL_S (задание NC), interrupted —
+    stalled — процесс нарезки молчит дольше CUT_STALL_S, interrupted —
     задание, оборванное перезапуском сервера (журнал заданий, job_state.json)."""
     since = request.args.get("since", type=int)
     with LOCK:
@@ -708,7 +750,7 @@ def api_status():
 
 @bp.route("/api/cutstages")
 def api_cutstages():
-    """Отдать единый список ступеней нарезки и дефолты (задание GG).
+    """Отдать единый список ступеней нарезки и дефолты.
 
     Интерфейс рисует ступени по ответу сервера, своей копии списка не держит.
     """

@@ -27,7 +27,7 @@ from core.aicut import catalog as catalog  # noqa: E402
 from core.aicut import config as config  # noqa: E402
 
 
-# Записи каталога в формате models.dev api.json (пара из задания BY): у luna
+# Записи каталога в формате models.dev api.json (пара из): у luna
 # шесть усилий, у deepseek-v4-flash — low/high/max (medium в них нет).
 FIXTURE = {
     "openrouter": {

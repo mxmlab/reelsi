@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты движков нарезки и флага cut в каталоге asr_backends (задание GH)."""
+"""Тесты движков нарезки и флага cut в каталоге asr_backends."""
 import json
 import os
 import sys

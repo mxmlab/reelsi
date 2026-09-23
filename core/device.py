@@ -16,6 +16,7 @@ ROCm (AMD) отдельной ветки не требует: сборка PyTor
 """
 import os
 import platform
+from core.umsg import ReelsiError
 
 # MPS покрывает не все операции, и без этой переменной инференс падает на первой же
 # неподдержанной вместо того, чтобы досчитать её на CPU. Ставим ДО импорта torch —
@@ -38,8 +39,9 @@ def pick_device(force=None):
         mps = getattr(torch.backends, "mps", None)
         if mps is not None and mps.is_available():
             return "mps"
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # torch недоступен/без GPU — работаем на CPU
     return "cpu"
 
 
@@ -72,8 +74,9 @@ def ct2_device(device=None, compute_type=None):
         import torch
         if torch.cuda.is_available():
             return "cuda", (compute_type or "float16")
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # torch недоступен/без GPU — работаем на CPU
     return "cpu", (compute_type or "int8")
 
 
@@ -89,5 +92,6 @@ def empty_cache(dev=None):
             if mps is not None and getattr(torch.backends, "mps", None) and \
                     torch.backends.mps.is_available():
                 mps.empty_cache()
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # torch/GPU недоступны — чистить нечего

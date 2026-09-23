@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Сторожа для задания HH: защита логов от падения в 500 при не-JSON объектах.
+"""Сторожа: защита логов от падения в 500 при не-JSON объектах.
 
 Проверяют:
 1. Запись в JOB['log'] через api._core.emit с err=URLError и path=Path отдаётся в
@@ -136,7 +136,9 @@ def test_log_entry_single_gate():
     assert len(core_matches) == 1, (
         f"api/_core.py должен содержать {{'t': ровно 1 раз (внутри log_entry), найдено: {len(core_matches)}"
     )
-    log_entry_match = re.search(r'def log_entry\([^)]*\):.*?(?=\ndef |\Z)', core_content, re.DOTALL)
+    # [^:]*: — подпись может нести аннотацию возврата (log_entry в строгом
+    # списке mypy, и `def log_entry(...) -> dict[str, Any] | str:` под `\):` уже не подходит).
+    log_entry_match = re.search(r'def log_entry\([^)]*\)[^:]*:.*?(?=\ndef |\Z)', core_content, re.DOTALL)
     assert log_entry_match is not None, "В api/_core.py не найдена функция log_entry"
     assert pattern.search(log_entry_match.group(0)) is not None, (
         "Литерал {'t': в api/_core.py должен находиться внутри log_entry"

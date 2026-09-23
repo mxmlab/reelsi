@@ -5,24 +5,25 @@
 """
 import os, re, sys, json, subprocess
 from flask import request, jsonify, send_file
-from core.fileio import atomic_json_dump, json_load_soft
-import reelsi
+from core.fileio import atomic_json_dump
+from core.project_file import read_project
+from core import cams
 from core import sync
 from core import xmlbuild
-from ._core import (DEFAULT_BASE, UI_STATE_PATH, _never_serve, app_out_dir, bp, jstr,
-                    umsg_err)
-from core.umsg import umsg
+from ._core import (DEFAULT_BASE, UI_STATE_PATH, _never_serve, app_out_dir, bp,
+                    is_reelsi_target, jstr, umsg_err)
+from core.umsg import ReelsiError, umsg
 
 
 def _cams_response(base):
     """Ответ /api/cams: найденные папки камер (или ошибка «нет папок»).
     Отдельной функцией, чтобы его переиспользовал /api/cams_make — после создания
     папок ответ должен быть ровно тем же, что и при ручном выборе."""
-    paths = reelsi.find_cam_dirs(base)
+    paths = cams.find_cam_dirs(base)
     if not paths:
-        return jsonify(**umsg_err(SystemExit(umsg("no_cam_folders",
+        return jsonify(**umsg_err(ReelsiError(umsg("no_cam_folders",
             f"В {base} нет папок камер ('камер*' / 'camera*') — создай или выбери вручную", base=base))))
-    dirs = [{"name": os.path.basename(p), "path": p, "files": reelsi.list_videos(p)}
+    dirs = [{"name": os.path.basename(p), "path": p, "files": cams.list_videos(p)}
             for p in paths[:4]]
     return jsonify(base=base, outdir=app_out_dir(base), dirs=dirs)
 
@@ -32,8 +33,9 @@ def api_cams():
     base = request.args.get("base", DEFAULT_BASE)
     try:
         return _cams_response(base)
+    except ReelsiError: raise
     except Exception as e:
-        return jsonify(**umsg_err(SystemExit(umsg("cams_failed", str(e)))))
+        return jsonify(**umsg_err(ReelsiError(umsg("cams_failed", str(e)))))
 
 
 @bp.route("/api/cams_make", methods=["POST"])
@@ -50,8 +52,9 @@ def api_cams_make():
         for k in range(1, n + 1):
             os.makedirs(os.path.join(base, f"{prefix}{k}"), exist_ok=True)
         return _cams_response(base)
+    except ReelsiError: raise
     except Exception as e:
-        return jsonify(**umsg_err(SystemExit(umsg("cams_make_failed", str(e)))))
+        return jsonify(**umsg_err(ReelsiError(umsg("cams_make_failed", str(e)))))
 
 
 @bp.route("/api/cammatch", methods=["POST"])
@@ -76,22 +79,23 @@ def api_cammatch():
     dirs = [x.strip().strip('"') for x in (d.get("dirs") or [])
             if isinstance(x, str) and x.strip()]
     if not cam1 or not os.path.isfile(cam1):
-        return jsonify(**umsg_err(SystemExit(umsg("cam1_not_found", "нет видео камеры 1"))))
+        return jsonify(**umsg_err(ReelsiError(umsg("cam1_not_found", "нет видео камеры 1"))))
     if not dirs:
-        return jsonify(**umsg_err(SystemExit(umsg("no_dirs", "нет папок камер 2..N"))))
+        return jsonify(**umsg_err(ReelsiError(umsg("no_dirs", "нет папок камер 2..N"))))
     try:
         ea, rate = sync.video_envelope(cam1)
         out = []
         for folder in dirs:
             best = None
             if os.path.isdir(folder):
-                for f in reelsi.list_videos(folder):
+                for f in cams.list_videos(folder):
                     full = os.path.join(folder, f)
                     if os.path.abspath(full).lower() == os.path.abspath(cam1).lower():
                         continue   # сам себя не подбираем
                     try:
                         eb, _ = sync.video_envelope(full)
                         off, sc = sync.match_score(ea, eb, rate)
+                    except ReelsiError: raise
                     except Exception:
                         continue   # без звука/битый — не кандидат
                     if best is None or sc > best["score"]:
@@ -101,8 +105,9 @@ def api_cammatch():
                         "offset": best["offset"] if best else 0.0,
                         "score": best["score"] if best else 0.0})
         return jsonify(ok=True, cam1=os.path.basename(cam1), matches=out)
+    except ReelsiError: raise
     except Exception as e:
-        return jsonify(**umsg_err(SystemExit(umsg("cammatch_failed", f"{type(e).__name__}: {e}"))))
+        return jsonify(**umsg_err(ReelsiError(umsg("cammatch_failed", f"{type(e).__name__}: {e}"))))
 
 
 # Префикс очереди в имени результата: nn_<имя исходника>.xml (см. run_omnicut_job)
@@ -122,7 +127,7 @@ def _clip_cams(xml_path):
     Сначала пробует `<stem>.project.json`. Если сайдкара нет (XML добавлен
     руками) или cams пустой — читает теги `<pathurl>` из самого XML-файла.
     """
-    proj = json_load_soft(os.path.splitext(xml_path)[0] + ".project.json") or {}
+    proj = read_project(os.path.splitext(xml_path)[0] + ".project.json") or {}
     cams = [c for c in (proj.get("cams") or []) if c and str(c).strip()]
     if cams:
         return cams
@@ -179,8 +184,8 @@ def api_newtakes():
     if not files:
         dir_ = jstr(d, "dir").strip().strip('"')
         if not os.path.isdir(dir_):
-            return jsonify(**umsg_err(SystemExit(umsg("no_folder", f"Нет папки: {dir_}", path=dir_))))
-        files = reelsi.list_videos(dir_)
+            return jsonify(**umsg_err(ReelsiError(umsg("no_folder", f"Нет папки: {dir_}", path=dir_))))
+        files = cams.list_videos(dir_)
     if not os.path.isdir(outdir):
         return jsonify(ok=True, new=files, done=[], no_outdir=True)
     try:
@@ -191,8 +196,9 @@ def api_newtakes():
             cut = base in names or os.path.splitext(base)[0] in stems
             (done if cut else new).append(f)
         return jsonify(ok=True, new=new, done=done)
+    except ReelsiError: raise
     except Exception as e:
-        return jsonify(**umsg_err(SystemExit(umsg("newtakes_failed", f"{type(e).__name__}: {e}"))))
+        return jsonify(**umsg_err(ReelsiError(umsg("newtakes_failed", f"{type(e).__name__}: {e}"))))
 
 
 @bp.route("/api/files")
@@ -200,8 +206,8 @@ def api_files():
     d = request.args.get("dir", "").strip().strip('"')
     if not os.path.isdir(d):
         # files=[] рядом с ошибкой: фронт рисует пустой список, а не падает
-        return jsonify(files=[], **umsg_err(SystemExit(umsg("no_folder", "нет папки"))))
-    return jsonify(files=reelsi.list_videos(d), name=os.path.basename(d))
+        return jsonify(files=[], **umsg_err(ReelsiError(umsg("no_folder", "нет папки"))))
+    return jsonify(files=cams.list_videos(d), name=os.path.basename(d))
 
 
 @bp.route("/api/ui_state", methods=["GET", "POST"])
@@ -215,21 +221,23 @@ def api_ui_state():
                 with open(UI_STATE_PATH, encoding="utf-8") as f:
                     return jsonify(ok=True, state=json.load(f))
             return jsonify(ok=True, state=None)
+        except ReelsiError: raise
         except Exception as e:
-            return jsonify(**umsg_err(SystemExit(umsg("ui_state_load_failed", f"{type(e).__name__}: {e}"))))
+            return jsonify(**umsg_err(ReelsiError(umsg("ui_state_load_failed", f"{type(e).__name__}: {e}"))))
     d = request.get_json(silent=True) or {}
     # тело без JSON давало d.get("state") is None, и зеркало перезаписывалось
     # значением null — состояние пользователя пропадало молча
     if not isinstance(d, dict) or d.get("state") is None:
-        return jsonify(**umsg_err(SystemExit(umsg("ui_state_empty",
+        return jsonify(**umsg_err(ReelsiError(umsg("ui_state_empty",
             "пустое или повреждённое тело запроса — состояние не перезаписано"))))
     try:
         # Общий tmp на два одновременных запроса (два таба) перемешивал половины:
         # каждый open(tmp,"w") усекал файл другого. mkstemp — свой tmp на запись.
         atomic_json_dump(UI_STATE_PATH, d.get("state"))
         return jsonify(ok=True)
+    except ReelsiError: raise
     except Exception as e:
-        return jsonify(**umsg_err(SystemExit(umsg("ui_state_save_failed", f"{type(e).__name__}: {e}"))))
+        return jsonify(**umsg_err(ReelsiError(umsg("ui_state_save_failed", f"{type(e).__name__}: {e}"))))
 
 
 def _native_pick(dialog_call):
@@ -254,8 +262,9 @@ def api_pickmedia():
             # поэтому на сборке они молча перекодируются в PNG (insertlib.to_ae_image)
             "filetypes=[('Медиа','*.png *.jpg *.jpeg *.webp *.avif *.gif "
             "*.mp4 *.mov *.m4v *.webm'),('Все файлы','*.*')])"))
+    except ReelsiError: raise
     except Exception as e:
-        return jsonify(**umsg_err(SystemExit(umsg("pickmedia_failed", str(e)))))
+        return jsonify(**umsg_err(ReelsiError(umsg("pickmedia_failed", str(e)))))
 
 
 @bp.route("/api/fonts")
@@ -264,13 +273,14 @@ def api_fonts():
     try:
         from core import fonts
         return jsonify(ok=True, fonts=fonts.list_fonts())
+    except ReelsiError: raise
     except Exception as e:
         return jsonify(ok=True, fonts=[], note=str(e))   # деградируем до свободного ввода
 
 
 @bp.route("/api/fontfile/<path:ps_name>")
 def api_fontfile(ps_name):
-    """Отдать файл шрифта по PostScript-имени из таблицы шрифтов (задание DB).
+    """Отдать файл шрифта по PostScript-имени из таблицы шрифтов.
 
     Только чтение, только файлы из list_fonts() — прямой путь из запроса не
     принимается (защита от чтения произвольных файлов).
@@ -296,6 +306,7 @@ def api_fontfile(ps_name):
         }.get(ext, "application/octet-stream")
 
         return send_file(file_path, mimetype=mime, conditional=True)
+    except ReelsiError: raise
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
 
@@ -308,8 +319,9 @@ def api_pickfiles():
         raw = _native_pick("'|'.join(filedialog.askopenfilenames(title='Выбери XML', "
                            "filetypes=[('XML','*.xml'),('Все файлы','*.*')]))")
         return jsonify(paths=[p for p in raw.split("|") if p.strip()])
+    except ReelsiError: raise
     except Exception as e:
-        return jsonify(**umsg_err(SystemExit(umsg("pickfiles_failed", str(e)))))
+        return jsonify(**umsg_err(ReelsiError(umsg("pickfiles_failed", str(e)))))
 
 
 @bp.route("/api/pickone")
@@ -318,8 +330,9 @@ def api_pickone():
     try:
         p = _native_pick("filedialog.askopenfilename(title='Выбери файл')")
         return jsonify(path=p)
+    except ReelsiError: raise
     except Exception as e:
-        return jsonify(**umsg_err(SystemExit(umsg("pickone_failed", str(e)))))
+        return jsonify(**umsg_err(ReelsiError(umsg("pickone_failed", str(e)))))
 
 
 @bp.route("/api/pickaudio")
@@ -328,19 +341,21 @@ def api_pickaudio():
         return jsonify(path=_native_pick(
             "filedialog.askopenfilename(title='Выбери аудио', "
             "filetypes=[('Аудио','*.m4a *.mp3 *.wav *.aac *.opus *.flac *.ogg'),('Все файлы','*.*')])"))
+    except ReelsiError: raise
     except Exception as e:
-        return jsonify(**umsg_err(SystemExit(umsg("pickaudio_failed", str(e)))))
+        return jsonify(**umsg_err(ReelsiError(umsg("pickaudio_failed", str(e)))))
 
 
 @bp.route("/api/pickdir")
 def api_pickdir():
     try:
         return jsonify(path=_native_pick("filedialog.askdirectory(title='Выбери папку')"))
+    except ReelsiError: raise
     except Exception as e:
-        return jsonify(**umsg_err(SystemExit(umsg("pickdir_failed", str(e)))))
+        return jsonify(**umsg_err(ReelsiError(umsg("pickdir_failed", str(e)))))
 
 
-# Allowlist расширений для /api/media: видео, картинки, звук (задание HU).
+# Allowlist расширений для /api/media: видео, картинки, звук.
 # Фронт использует /api/media для стриминга видео (в т.ч. прокси pv_*.mp4),
 # показа картинок-вставок и воспроизведения музыки/SFX.
 ALLOWED_MEDIA_EXTS = {
@@ -352,7 +367,7 @@ ALLOWED_MEDIA_EXTS = {
     "wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "aif", "aiff",
 }
 
-# Allowlist /api/waveform (задание MC): только звук и видео — то, откуда волна
+# Allowlist /api/waveform: только звук и видео — то, откуда волна
 # вообще берётся. Картинки из списка выше исключены нарочно: волны из них не
 # выйдет, а кэш роут пишет РЯДОМ С ЦЕЛЬЮ (<путь>.peaks<pps>.json) — по просьбе
 # страницы он создавал файл рядом с любым файлом на диске.
@@ -368,7 +383,7 @@ ALLOWED_WAVE_EXTS = {
 # `Range: bytes=0-`, дочитывают до заполнения буфера и замолкают, НЕ закрывая
 # соединение. Превью открывает камеры, их дублёры, музыку, SFX и видеовставки —
 # шесть таких элементов съедали все соединения, и обычный fetch (/api/style_schema)
-# ждал 5.3 с вместо 0.3 с: «сервер встаёт при открытии превью» (задание MB).
+# ждал 5.3 с вместо 0.3 с: «сервер встаёт при открытии превью».
 # Поэтому открытый (или заведомо длинный) диапазон режем до MEDIA_CHUNK: браузер
 # получает конец диапазона, дочитывает остаток сам и отпускает соединение.
 MEDIA_CHUNK = 4 * 1024 * 1024
@@ -379,7 +394,7 @@ _RANGE_ONE_RE = re.compile(r"^\s*bytes\s*=\s*(\d+)\s*-\s*(\d*)\s*$", re.IGNORECA
 
 
 def _narrow_media_range(header, size):
-    """Сузить открытый/слишком длинный Range до MEDIA_CHUNK байт (задание MB).
+    """Сузить открытый/слишком длинный Range до MEDIA_CHUNK байт.
 
     Возвращает новый заголовок Range либо None — «трогать нечего»: суффиксный
     диапазон, несколько диапазонов, битый заголовок, файл не больше куска,
@@ -403,14 +418,15 @@ def _media_path_ok(path, exts):
     """Годится ли путь к отдаче: расширение (и у присланного пути, и у realpath) +
     денилист секретов (`_never_serve`).
 
-    Один набор проверок на все места, где путь к файлу формируется внутри роута
-    (задание MZ, п. 4): иначе копия проверок рядом с подменой рано или поздно
+    Один набор проверок на все места, где путь к файлу формируется внутри роута:
+    иначе копия проверок рядом с подменой рано или поздно
     разъедется с основной.
     """
     if os.path.splitext(path)[1].lower().lstrip(".") not in exts:
         return False
     try:
         real_ext = os.path.splitext(os.path.realpath(path))[1].lower().lstrip(".")
+    except ReelsiError: raise
     except Exception:
         real_ext = ""
     if real_ext not in exts:
@@ -425,17 +441,17 @@ def api_media():
     path = (request.args.get("path") or "").strip().strip('"')
     if not path:
         return ("not found", 404)
-    # Порядок проверок — расширение, секрет, существование (задание IC, п. 8).
+    # Порядок проверок — расширение, секрет, существование.
     # Раньше `isfile` стоял ПЕРВЫМ и отвечал 404/403 в зависимости от того, есть ли
     # файл на диске: посторонний клиент узнавал про существование любого файла, а
     # `_never_serve` для СВОИХ имён (`ai_config.json` без расширения из allowlist)
     # был недостижим — до него просто не доходили.
-    # Расширение должно быть допустимым и у присланного пути, и у realpath (задание LB):
+    # Расширение должно быть допустимым и у присланного пути, и у realpath:
     # иначе симлинк clip.mp4 -> notes.txt позволяет читать немедийные файлы.
     ext = os.path.splitext(path)[1].lower().lstrip(".")
     if not _media_path_ok(path, ALLOWED_MEDIA_EXTS):
         return ("forbidden", 403)
-    # «без фона» (задание ZI): предпросмотр фото-вставки просит nobg=1 — отдаём тот же
+    # «без фона»: предпросмотр фото-вставки просит nobg=1 — отдаём тот же
     # кэш, что уедет в сборку (insertlib.nobg_path), а не исходник с фоном. Только картинки:
     # видео не трогаем. Фон снять не удалось — nobg_path вернёт исходный путь.
     if (request.args.get("nobg") or "").strip() not in ("", "0"):
@@ -443,6 +459,7 @@ def api_media():
         if ("." + ext) in IMG_EXT:
             try:
                 path = nobg_path(path)
+            except ReelsiError: raise
             except Exception:
                 pass                                     # нет rembg/модели — отдаём исходник
     # Подмена nobg идёт ПОСЛЕ проверок, а путь берётся не из запроса, а из кэша рядом
@@ -479,8 +496,9 @@ def api_music_random():
     try:
         from core import ytmusic
         return jsonify(path=ytmusic.random_track(dir_, seed=seed) or "")
+    except ReelsiError: raise
     except Exception as e:
-        return jsonify(path="", **umsg_err(SystemExit(umsg("music_random_failed", f"{type(e).__name__}: {e}"))))
+        return jsonify(path="", **umsg_err(ReelsiError(umsg("music_random_failed", f"{type(e).__name__}: {e}"))))
 
 
 @bp.route("/api/waveform")
@@ -490,9 +508,9 @@ def api_waveform():
     try:
         pps = int(request.args.get("pps") or 80)
     except (TypeError, ValueError):
-        pps = 80                     # ?pps=abc роняло роут в HTML-500 (задание HL)
-    pps = max(10, min(1000, pps))    # ограничение [10, 1000] от раздувания кэша (задание HU)
-    # Те же проверки, что у /api/media (задание MC). Это был единственный файловый
+        pps = 80                     # ?pps=abc роняло роут в HTML-500
+    pps = max(10, min(1000, pps))    # ограничение [10, 1000] от раздувания кэша
+    # Те же проверки, что у /api/media. Это был единственный файловый
     # маршрут без них, а он не только читает файл, но и пишет кэш РЯДОМ с ним —
     # то есть по просьбе страницы создавал файл рядом с любым файлом на диске.
     # Расширение должно быть допустимым и у присланного пути, и у realpath: иначе
@@ -502,6 +520,7 @@ def api_waveform():
         return ("forbidden", 403)
     try:
         real_ext = os.path.splitext(os.path.realpath(path))[1].lower().lstrip(".")
+    except ReelsiError: raise
     except Exception:
         real_ext = ""
     if real_ext not in ALLOWED_WAVE_EXTS:
@@ -509,13 +528,14 @@ def api_waveform():
     if _never_serve(path):
         return ("forbidden", 403)
     if not os.path.isfile(path):
-        return jsonify(**umsg_err(SystemExit(umsg("no_file", "нет файла"))))
+        return jsonify(**umsg_err(ReelsiError(umsg("no_file", "нет файла"))))
     cache = path + f".peaks{pps}.json"
     if os.path.isfile(cache):
         try:
             return jsonify(json.load(open(cache, encoding="utf-8")))
+        except ReelsiError: raise
         except Exception:
-            pass
+            pass  # кэш пиков битый — пересчитаем ниже
     try:
         import numpy as np, librosa
         y, sr = librosa.load(path, sr=16000, mono=True)
@@ -524,11 +544,13 @@ def api_waveform():
         res = {"ok": True, "dur": round(len(y)/sr, 3), "pps": pps, "peaks": peaks}
         try:
             json.dump(res, open(cache, "w", encoding="utf-8"))
+        except ReelsiError: raise
         except Exception:
-            pass
+            pass  # кэш пиков не записался — в следующий раз просто пересчитаем
         return jsonify(res)
+    except ReelsiError: raise
     except Exception as e:
-        return jsonify(**umsg_err(SystemExit(umsg("waveform_failed", f"{type(e).__name__}: {e}"))))
+        return jsonify(**umsg_err(ReelsiError(umsg("waveform_failed", f"{type(e).__name__}: {e}"))))
 
 
 @bp.route("/api/clip_delete", methods=["POST"])
@@ -540,18 +562,27 @@ def api_clip_delete():
     d = request.get_json(silent=True) or {}
     xml = jstr(d, "xml").strip().strip('"')
     if not xml:
-        return jsonify(**umsg_err(SystemExit(umsg("no_xml", "не указан путь к XML"))))
+        return jsonify(**umsg_err(ReelsiError(umsg("no_xml", "не указан путь к XML"))))
 
     xml_dir = os.path.dirname(os.path.abspath(xml))
     xml_name = _basename(xml)
     stem = os.path.splitext(xml_name)[0]
     if not stem or not xml_dir:
-        return jsonify(**umsg_err(SystemExit(umsg("bad_xml_path", f"Некорректный путь к XML: {xml}", path=xml))))
+        return jsonify(**umsg_err(ReelsiError(umsg("bad_xml_path", f"Некорректный путь к XML: {xml}", path=xml))))
     if not os.path.isdir(xml_dir):
-        return jsonify(**umsg_err(SystemExit(umsg("no_folder", f"Нет папки: {xml_dir}", path=xml_dir))))
+        return jsonify(**umsg_err(ReelsiError(umsg("no_folder", f"Нет папки: {xml_dir}", path=xml_dir))))
+
+    # Цель обязана быть нарезкой Reelsi. До этой проверки тело
+    # {"xml": ".../Documents/notes.txt"} уносило из папки все notes.* — роут не
+    # смотрел ни на расширение, ни на существование файла, ни на признаки нарезки.
+    # Отбиваем и сухой прогон: список «что было бы удалено» по чужому пути и сам
+    # по себе врёт про намерение и уходит в интерфейс как готовый ответ.
+    if not is_reelsi_target(xml, "cut"):
+        return jsonify(**umsg_err(ReelsiError(umsg("not_a_cut",
+            f"Это не нарезка Reelsi: {xml}", path=xml))))
 
     jsxdir = jstr(d, "jsxdir").strip().strip('"')
-    # dry по умолчанию True (задание MZ, п. 1): удаление — ТОЛЬКО при явном dry: false.
+    # dry по умолчанию True: удаление — ТОЛЬКО при явном dry: false.
     # Раньше отсутствие параметра означало «удалить», и вызов без dry (старый клиент,
     # чужой скрипт, опечатка в теле) молча сносил файлы нарезки. Интерфейс передаёт dry
     # явно в обоих вызовах (static/app/40-queue.js: {dry:true} — сухой прогон и список,
@@ -569,8 +600,9 @@ def api_clip_delete():
             cam_basenames.add(_basename(c_str).lower())
             try:
                 cam_realpaths.add(os.path.realpath(c_str).lower())
+            except ReelsiError: raise
             except Exception:
-                pass
+                pass  # realpath не разрешился — базовое имя камеры уже в наборе защищённых
 
     prefix = stem.lower() + "."
     files_to_delete = []
@@ -580,8 +612,9 @@ def api_clip_delete():
     # 1. Сканируем папку XML (только файлы первого уровня, без рекурсии)
     try:
         entries = sorted(os.listdir(xml_dir))
+    except ReelsiError: raise
     except Exception as e:
-        return jsonify(**umsg_err(SystemExit(umsg("list_dir_failed", f"Не удалось прочитать папку: {e}", err=str(e)))))
+        return jsonify(**umsg_err(ReelsiError(umsg("list_dir_failed", f"Не удалось прочитать папку: {e}", err=str(e)))))
 
     for fname in entries:
         if not fname.lower().startswith(prefix):
@@ -613,6 +646,7 @@ def api_clip_delete():
     if jsxdir and os.path.isdir(jsxdir):
         try:
             same_dir = os.path.realpath(jsxdir).lower() == os.path.realpath(xml_dir).lower()
+        except ReelsiError: raise
         except Exception:
             same_dir = False
         if not same_dir:
@@ -647,6 +681,7 @@ def api_clip_delete():
                 if os.path.isfile(p):
                     os.remove(p)
                 deleted.append(item)
+            except ReelsiError: raise
             except Exception as e:
                 skipped.append({"path": p, "why": f"ошибка удаления: {e}"})
         files_to_delete = deleted

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты задания ZD:
+"""Тесты:
 1. _cam1_follow_keys с min_scale: зум-ключи 200% (HOLD) -> 300% (плавно) -> 200%;
    голова уходит вправо. На 200% поправка 0 (при min_scale=250), на 300% — ненулевая,
    после отъезда возвращается к 0 (последний ключ клипа == 0). min_scale=0 — ключи

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Сторож: режим нарезки cutmode полностью убран из UI и API (задание GH)."""
+"""Сторож: режим нарезки cutmode полностью убран из UI и API."""
 import glob
 import json
 import os

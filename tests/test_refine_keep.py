@@ -227,7 +227,7 @@ def test_missing_wav_raises():
 
 
 def test_log_line_reports_hole_price(tmp_path):
-    """Цена порога видна в логе одной строкой: дыр, секунд и hole_min (BZ)."""
+    """Цена порога видна в логе одной строкой: дыр, секунд и hole_min."""
     a = np.concatenate([tone(0.5), hush(0.6), tone(0.5)])
     path = str(tmp_path / "gap.wav")
     sf.write(path, a.astype(np.float32), SR)

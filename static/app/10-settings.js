@@ -18,7 +18,7 @@ let REASONING_IDS=new Set();  // точные id моделей с reasoning (и
 // показывает только то, что модель реально умеет: у deepseek-v4-flash 0423 нет
 // low/medium, и выбранный low молча мапился в максимум, сжигая сотни тысяч токенов.
 let MODEL_EFFORTS={};  // {model_id_lower: [efforts]}
-// Возможности модели из каталога models.dev (задание BY): помимо уровней ещё
+// Возможности модели из каталога models.dev: помимо уровней ещё
 // контекст, потолок вывода и цена — их показываем рядом с моделью.
 let MODEL_CAPS={};     // {model_id_lower: {efforts, ctx_limit, out_limit, cost, default, ...}}
 // Модели, думающие ПО УМОЛЧАНИЮ (из каталога: toggle в reasoning_options). Для них
@@ -62,7 +62,7 @@ function aiSetModelInput(){
   const e=modelReasoningLevels(m);
   if(!m){hint.textContent='';return;}
   const cap=MODEL_CAPS[m.toLowerCase()]||{};
-  // Цена и лимиты — рядом с моделью (задание BY): каталог знает, что у модели
+  // Цена и лимиты — рядом с моделью: каталог знает, что у модели
   // внутри, показывать не догадку, а его.
   const ctxt=cap.ctx_limit?fmtN(cap.ctx_limit):null;
   const cout=cap.out_limit?fmtN(cap.out_limit):null;
@@ -113,14 +113,14 @@ function fillStepReasoning(){if(!AICFG)return;
     // быть max/xhigh/minimal, которых в ALL_LEVELS нет, но которые модель умеет.
     const lvs=eff2||lv;
     // Модель думает сама по умолчанию (deepseek-v4-flash и пр.) — «off» у неё это
-    // активное выключение, а не «ничего не делать». Подпись это доносит (BW).
+    // активное выключение, а не «ничего не делать». Подпись это доносит.
     const thinks=!!(MODEL_DEFAULTS&&MODEL_DEFAULTS[(pm.model||'').toLowerCase()]);
     const noReasoning=(lvs.length===1&&lvs[0]==='off');
     sel.innerHTML=lvs.map(l=>{
       let cap=REAS_TITLES[l]||l;
       if(l==='off'&&thinks)cap='Off — думает сама, выключаем явно';
       // уровень приезжает из каталога models.dev: в разметку — через esc(), как любое
-      // значение не из кода (задание HL)
+      // значение не из кода
       return '<option value="'+esc(l)+'"'+(l===cur?' selected':'')+'>'
         +esc(t(cap))+'</option>';
     }).join('');
@@ -207,7 +207,7 @@ function fillCutAsr(){
   const exists=list.some(e=>e.id===cur);
   sel.value=exists?cur:(list[0]?list[0].id:'gigaam');
 }
-// ================= Ступени нарезки (задание GG) =================
+// ================= Ступени нарезки =================
 // Панель ступеней рисуется ПО ДАННЫМ С СЕРВЕРА (/api/cutstages).
 // Своей копии списка ступеней в JS нет — единственный источник правды cutstages.py.
 let CUT_STAGES_META=null;
@@ -691,8 +691,8 @@ function resetCensor(kind){
       if(d.error){toast('⚠ '+errText(d));return;}
       censorFill(d.lists);toast(t('Вернул список из поставки'));
     }catch(e){toast(t('⚠ сервер не ответил: ')+e);}});}
-// Приписки к промпту: профиль спикера -> пусто (задание CS).
-// pa/pb — слоты вставок с галкой «на подложке» (задание ZK): у них свой стиль предмета,
+// Приписки к промпту: профиль спикера -> пусто.
+// pa/pb — слоты вставок с галкой «на подложке»: у них свой стиль предмета,
 // и кнопки 1/2 на карточке такой вставки шлют именно их.
 function imgPrompts(spkKey){
   const spk=(typeof SPEAKERS!=='undefined'&&spkKey)?SPEAKERS[spkKey]:null;
@@ -761,7 +761,7 @@ const GEN_FETCH_MS=330000;   // 5.5 мин: одна попытка 300с + за
 // подряд в один и тот же отвал (нет ключа / 402 / 429).
 async function insGenCore(x,slot,speaker){
   // Кнопка 1/2 — это слот приписки: у вставки с галкой «на подложке» свои слоты pa/pb
-  // (задание ZK), у обычной — прежние a/b. Выбор ОДИН на все двери: insGenOne и
+  // у обычной — прежние a/b. Выбор ОДИН на все двери: insGenOne и
   // insGenBatch зовут с 'a'/'b', подложка сама превращает их в 'pa'/'pb'.
   const second=(slot==='b'||slot==='pb');
   const use=x.plate?(second?'pb':'pa'):(second?'b':'a');
@@ -854,7 +854,7 @@ async function openAISettings(tab){
 }
 // Сводка ИИ-вызовов (/api/ai_stats): медианы токенов и времени по (модель, шаг, ум).
 // Показывает, кто реально думает и во что это обходится — без неё догадка «кто
-// сколько думает» была перевёрнутой (см. задание BW).
+// сколько думает» была перевёрнутой.
 let AISTATS=[];
 async function aiStatsLoad(){
   const el=$('aistats_host');if(!el)return;
@@ -935,7 +935,7 @@ function aiSetHints(models){const pre=(AICFG.presets||{})[$('ais_provider').valu
   if(!ms.length && $('ais_provider').value==='openrouter' && AICFG.reasoning_examples){
     ms=AICFG.reasoning_examples.slice();
   }
-  // Рядом с моделью — контекст, потолок вывода и цена (задание BY): каталог
+  // Рядом с моделью — контекст, потолок вывода и цена: каталог
   // models.dev знает их для каждой модели, показываем их, а не «reasoning».
   $('ais_models').innerHTML=ms.map(m=>{
     const c=MODEL_CAPS[(m||'').toLowerCase()]||{};

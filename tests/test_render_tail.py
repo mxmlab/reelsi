@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Хвост безголового режима в xml2ae/build.py (задание BT).
+"""Хвост безголового режима в xml2ae/build.py.
 
 AfterFX -noui отработал, а .aep не появился — весь хвост был без единого try,
 и любое исключение (applyTemplate с пресетом пользователя, save без галки
@@ -54,7 +54,7 @@ def test_headless_tail_every_step_has_named_catch():
 
 
 def test_headless_tail_uses_explicit_aep_and_aelog_paths():
-    """Путь .aep и .aelog задаёт Python, а не $.fileName (задание CD): AfterFX зовётся по
+    """Путь .aep и .aelog задаёт Python, а не $.fileName: AfterFX зовётся по
     короткому имени .jsx, и вывод имени проекта из $.fileName дал бы короткое имя .aep.
     Лог идёт ФАЙЛОМ, не $.writeln, и создаётся ПЕРВЫМ делом — его отсутствие у Python
     означает «скрипт не запустился»."""
@@ -64,4 +64,4 @@ def test_headless_tail_uses_explicit_aep_and_aelog_paths():
     assert 'new File("C:/proj/01 РИЛС.aelog.txt")' in t, t      # лог файлом рядом с проектом
     assert '$.writeln(' not in t, t                          # свои сообщения — не $.writeln
     assert t.index('_log.open("w")') < t.index("app.project.save"), t   # лог открыт первым делом
-    assert "savePrefAsString" not in t and "Allow Scripts" not in t, t  # галка тут ни при чём (задание CD)
+    assert "savePrefAsString" not in t and "Allow Scripts" not in t, t  # галка тут ни при чём

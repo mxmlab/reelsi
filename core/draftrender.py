@@ -21,6 +21,7 @@ CLI:  python reelsi/draftrender.py "C:/.../01_C1295.xml" [--cpu] [--height 720] 
 import os, platform, subprocess, threading
 from core import media
 from core.app_meta import console_emit, wrap_emit
+from core.umsg import ReelsiError, cli_error
 
 
 # Рендер длинного ролика идёт минуты, сборка прокси — десятки секунд. Но ffmpeg
@@ -89,6 +90,7 @@ def _run_ff(cmd, cancel=None, cwd=None, timeout=FFMPEG_TIMEOUT, on_progress=None
                     text = "".join(sink) if report else None
                 if text is not None:
                     on_progress(text)     # накопленным — как отдавал прежний communicate
+        except ReelsiError: raise
         except Exception as ex:
             broken.append(ex)             # процесс добьёт основной цикл
 
@@ -165,6 +167,7 @@ def _probe_encoder(name):
                             "color=black:s=256x256:d=0.1", "-c:v", name,
                             "-f", "null", "-"], capture_output=True, timeout=60)
         return p.returncode == 0
+    except ReelsiError: raise
     except Exception:
         return False
 
@@ -227,7 +230,7 @@ def proxy_size(outdir):
             try:
                 total += os.path.getsize(p)
             except OSError:
-                pass
+                pass  # файл исчез между обходом и замером — в объём не попадёт
     return total
 
 
@@ -258,7 +261,7 @@ def clean_tmp(outdir, emit=console_emit, proxies=False):
             try:
                 freed += os.path.getsize(p)
             except OSError:
-                pass
+                pass  # файл исчез между обходом и замером — в объём не попадёт
     if not keep:
         shutil.rmtree(t, ignore_errors=True)
     else:
@@ -269,12 +272,12 @@ def clean_tmp(outdir, emit=console_emit, proxies=False):
                     try:
                         os.remove(p)
                     except OSError:
-                        pass
+                        pass  # файл уже удалён или занят другим процессом
             for dname in dirs:                       # пустые подпапки убираем, _tmp оставляем
                 try:
                     os.rmdir(os.path.join(root, dname))
                 except OSError:
-                    pass
+                    pass  # каталог непустой или занят — оставляем как есть
     if proxies:
         emit("  _tmp очищен: {freed:.0f} МБ", freed=freed / 1e6)
     else:
@@ -355,7 +358,7 @@ def _build_proxy(src, dst, tw, th, force_cpu=False, emit=console_emit, cancel=No
     try:
         os.remove(tmp)
     except OSError:
-        pass
+        pass  # недописанный .part уже убран
     emit("  ⚠ прокси не собрался для {name} — работаю по исходнику", name=os.path.basename(src))
     return None
 
@@ -409,6 +412,7 @@ def _display_dims(src):
         vals = [x for x in (r.stdout or "").strip().splitlines() if x.strip()]
         w0, h0 = int(vals[0]), int(vals[1])
         rot = abs(int(float(vals[2]))) % 180 if len(vals) > 2 else 0
+    except ReelsiError: raise
     except Exception:
         return 1080, 1920, False                 # не прочли — НЕ кэшируем: файл мог ещё писаться
     out = (h0, w0, True) if rot == 90 else (w0, h0, False)
@@ -446,6 +450,7 @@ def _src_fps(src):
         fps = fps if 1 < fps < 240 else 25.0        # не прочли — не кэшируем
         _FPS_CACHE[ck] = fps
         return fps
+    except ReelsiError: raise
     except Exception:
         return 25.0
 
@@ -509,6 +514,7 @@ def _rot_key(src):
     повёрнутым: у нормальных файлов ключ не меняется, и они зря не пересобираются."""
     try:
         return "|rot" if _display_dims(src)[2] else ""
+    except ReelsiError: raise
     except Exception:
         return ""
 
@@ -592,7 +598,7 @@ def build_preview_proxy(src, dst, height=720, force_cpu=False, emit=console_emit
     try:
         os.remove(tmp)
     except OSError:
-        pass
+        pass  # недописанный .part уже убран
     emit("  ⚠ превью-прокси не собрался для {name} — играю исходник", name=os.path.basename(src))
     return None
 
@@ -701,6 +707,7 @@ def render_draft(xml_path, out_mp4=None, height=720, force_cpu=False, emit=conso
                                 "--format=csv,noheader,nounits"],
                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
             return int((r.stdout or "").strip().splitlines()[0])
+        except ReelsiError: raise
         except Exception:
             return None
 
@@ -762,13 +769,16 @@ def render_draft(xml_path, out_mp4=None, height=720, force_cpu=False, emit=conso
 
 
 if __name__ == "__main__":
-    import argparse
-    ap = argparse.ArgumentParser(description="Черновой mp4 по финальному XML")
-    ap.add_argument("xml")
-    ap.add_argument("--out")
-    ap.add_argument("--height", type=int, default=720, help="короткая сторона кадра")
-    ap.add_argument("--cpu", action="store_true", help="без NVENC (не трогать VRAM)")
-    ap.add_argument("--no-proxy", action="store_true", help="без 720p-прокси камер (по исходникам)")
-    a = ap.parse_args()
-    print(render_draft(a.xml, a.out, height=a.height, force_cpu=a.cpu,
-                       use_proxy=not a.no_proxy))
+    try:
+        import argparse
+        ap = argparse.ArgumentParser(description="Черновой mp4 по финальному XML")
+        ap.add_argument("xml")
+        ap.add_argument("--out")
+        ap.add_argument("--height", type=int, default=720, help="короткая сторона кадра")
+        ap.add_argument("--cpu", action="store_true", help="без NVENC (не трогать VRAM)")
+        ap.add_argument("--no-proxy", action="store_true", help="без 720p-прокси камер (по исходникам)")
+        a = ap.parse_args()
+        print(render_draft(a.xml, a.out, height=a.height, force_cpu=a.cpu,
+                           use_proxy=not a.no_proxy))
+    except ReelsiError as e:
+        cli_error(e)

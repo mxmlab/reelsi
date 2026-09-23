@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Трек положения головы спикера по маске человека RVM (задание ZC).
+"""Трек положения головы спикера по маске человека RVM.
 
 Использует Robust Video Matting (core.roto) на участках показа Камеры 1:
 на каждом кадре находит центр верхней полосы (12% высоты) силуэта человека.
@@ -14,6 +14,10 @@ import subprocess
 from core import fileio, roto
 from core.app_meta import wrap_emit
 from core.xml2ae.parse import Cancelled
+from core.umsg import ReelsiError
+from core.applog import get_logger
+
+log = get_logger(__name__)
 
 
 def cam1_ranges(cams, fps):
@@ -153,18 +157,22 @@ def track(video, ranges, emit=None, cancel=None, fps=10):
                         if p_dec.poll() is None:
                             p_dec.kill()
                         p_dec.wait(timeout=5)
+                    except ReelsiError: raise
                     except Exception:
-                        pass
+                        pass  # декодер уже мёртв — wait не нужен
                     if p_dec.stdout:
                         try:
                             p_dec.stdout.close()
-                        except Exception:
-                            pass
+                        except ReelsiError: raise
+                        except OSError:
+                            pass  # поток уже закрыт
     finally:
         try:
             roto.release(emit=emit)
-        except Exception:
-            pass
+        except ReelsiError: raise
+        except Exception as ex:
+            log.warning("RVM не выгрузился после трекинга головы: %s — "
+                        "видеопамять остаётся занятой", ex)
 
     return {"v": 1, "fps": fps, "w": w_src, "h": h_src, "pts": pts}
 

@@ -127,10 +127,10 @@ def _reset_job(names):
 def _env(monkeypatch, tmp_path):
     monkeypatch.setenv("REELSI_RENDER_STATS", str(tmp_path / "stats.json"))
     monkeypatch.setattr(
-        render, "_find_ae",
+        render, "find_ae",
         lambda: ("fake_AfterFX.exe", "fake_aerender.exe", "Adobe After Effects 2026")
     )
-    monkeypatch.setattr(render, "_ae_running", lambda: False)   # в тестах AE «закрыт»
+    monkeypatch.setattr(render, "ae_running", lambda: False)   # в тестах AE «закрыт»
 
 
 # --- (a) гигиена журнала: старый .aelog.txt удаляется ДО запуска AfterFX -----------
@@ -284,7 +284,7 @@ def test_combined_open_afterfx_stops_before_launch(clips, tmp_path, monkeypatch)
     os.makedirs(outdir)
     os.makedirs(render_dir)
     _env(monkeypatch, tmp_path)
-    monkeypatch.setattr(render, "_ae_running", lambda: True)
+    monkeypatch.setattr(render, "ae_running", lambda: True)
     launched = []
     _install_popen(monkeypatch, launched)
     batch = [{"xml_path": clips["xml1"], "outdir": outdir, "roto": False},
@@ -308,7 +308,7 @@ def test_single_open_afterfx_stops_before_launch(clips, tmp_path, monkeypatch):
     os.makedirs(outdir)
     os.makedirs(render_dir)
     _env(monkeypatch, tmp_path)
-    monkeypatch.setattr(render, "_ae_running", lambda: True)
+    monkeypatch.setattr(render, "ae_running", lambda: True)
     launched = []
     _install_popen(monkeypatch, launched)
     job = [{"xml_path": clips["xml1"], "outdir": outdir, "roto": False}]
@@ -378,7 +378,7 @@ def test_master_stall_guard_kills_silent_process(tmp_path, monkeypatch):
 
 
 def test_single_afx_stall_guard_kills_silent_process(tmp_path, monkeypatch):
-    """Одиночный AfterFX: процесс жив и молчит — снятие по лимиту (rc=_AE_STALLED),
+    """Одиночный AfterFX: процесс жив и молчит — снятие по лимиту (rc=AE_STALLED),
     а не вечное ожидание. Время двигается подменой таймера, sleep'а нет."""
     _reset_job(["01_C0233"])
     monkeypatch.setattr(render.subprocess, "Popen", _AliveSilent)
@@ -389,7 +389,7 @@ def test_single_afx_stall_guard_kills_silent_process(tmp_path, monkeypatch):
 
     rc = render._run_proc_afx(["fake_AfterFX.exe", "-noui", "-r", "01_C0233.jsx"])
 
-    assert rc == render._AE_STALLED, rc
+    assert rc == render.AE_STALLED, rc
     assert killed, "сторож не снял молчащий AfterFX"
     text = _log_text(render.RJOB)
     assert "не отвечает" in text and "прогон снят" in text, "нет сообщения о снятии:\n" + text

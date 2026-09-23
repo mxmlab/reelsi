@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты для задания EL: подбор по предмету и вес редких слов (лексический ранг).
+"""Тесты: подбор по предмету и вес редких слов (лексический ранг).
 
 Запуск:  python -m pytest reelsi/tests/test_insertlib_rank.py -q
 """

@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 from core.applog import get_logger
 from core.fileio import atomic_text_write
 from .parse import _b64decode, _txt
+from core.umsg import ReelsiError
 
 log = get_logger("reelsi.xml2ae.highlights")
 
@@ -34,6 +35,7 @@ def _word_color(clip):
             return None
         try:
             b = base64.b64decode(v.text.strip())
+        except ReelsiError: raise
         except Exception:
             return None
         s = b.rstrip(b"\x00")
@@ -132,6 +134,7 @@ def write_highlights(xml_path, indices, out_path=None):
             skipped.append((k, word, f"слишком длинное ({wb}B > {lib.max_len}B)")); continue
         try:
             ve.text = lib.make(word)
+        except ReelsiError: raise
         except Exception as e:
             skipped.append((k, word, str(e))); continue
         colored.append(k)
@@ -171,6 +174,7 @@ def _backup_once(xml_path, out_path=None):
         if not os.path.isfile(bak):
             import shutil
             shutil.copy2(xml_path, bak)
+    except ReelsiError: raise
     except Exception as e:
         # Бэкап — страховка, не повод падать. Но и молчать нельзя: пользователь
         # должен знать, что копии оригинала рядом нет (от пустого файла спасает
@@ -209,6 +213,7 @@ def set_highlights(xml_path, indices, out_path=None):
             continue
         try:
             is_col = sb.blob_is_coloured(_b64decode(ve.text))
+        except ReelsiError: raise
         except Exception:
             is_col = False
         wb = len(word.encode("utf-8"))
@@ -249,6 +254,7 @@ def _make_blob(lib, word, want_col):
         if bool(sb.blob_is_coloured(raw)) != bool(want_col):
             return None
         return blob
+    except ReelsiError: raise
     except Exception:
         return None
 
@@ -272,6 +278,7 @@ def edit_word(xml_path, index, text, out_path=None):
         return dict(error="нет Source Text у слова")
     try:
         coloured = sb.blob_is_coloured(_b64decode(ve.text))
+    except ReelsiError: raise
     except Exception:
         coloured = False
     lib = sb.colour_library() if coloured else sb.library()
@@ -295,7 +302,7 @@ def edit_word(xml_path, index, text, out_path=None):
 
 
 GAP_JOIN_SEC = 0.30   # Пауза, до которой слова считаются идущими ПОДРЯД. Удалил слово —
-                      # следующее подхватывает его время (задание MJ). Больше — это уже
+                      # следующее подхватывает его время. Больше — это уже
                       # реальная пауза в речи: на месте удалённого слова должна остаться
                       # тишина, двигать следующее нельзя.
 
@@ -365,8 +372,8 @@ def _move_clip_head(c, new_start):
         if tpu is not None:
             try:
                 to.text = str(int(ti.text) + int(round((o1 - i0) * tpu)))
-            except (TypeError, ValueError):
-                pass
+            except (TypeError, ValueError) as ex:
+                log.warning("не пересчитал pproTicksOut клипа: %s", ex)
     return True
 
 
@@ -398,13 +405,14 @@ def _hand_over_start(tr, cur, start, end, fps):
 def delete_word(xml_path, index, out_path=None):
     """Удалить слово-субтитр #index (порядок parse_full) из XML целиком.
 
-    Слово отдаёт своё время следующему (задание MJ): если сразу за удаляемым в его
+    Слово отдаёт своё время следующему: если сразу за удаляемым в его
     дорожке стоит клип-слово и зазор между ними не больше GAP_JOIN_SEC, начало
     следующего переносится на начало удаляемого (конец не меняется). Иначе — как было.
     Индексы наборов (HL/BRK/CNT/интро) сдвигает по-прежнему shift_indices.
     -> dict(ok=True, index=index, word=...) либо dict(error=...)."""
     try:
         root = ET.parse(xml_path).getroot()
+    except ReelsiError: raise
     except Exception as e:
         return dict(error=str(e))
     seq = root.find(".//sequence")

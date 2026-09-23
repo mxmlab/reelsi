@@ -14,6 +14,7 @@ from core import xmlbuild
 from core.fileio import atomic_text_write
 from core.xml2ae import parse_full
 from core.app_meta import console_emit, wrap_emit
+from core.umsg import ReelsiError, cli_error
 
 
 FPS = 60
@@ -117,9 +118,12 @@ def add_subtitles(xml_path, out_xml=None, model=None, emit=console_emit):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        sys.exit("usage: python subtitle_xml.py edited.xml [out.xml]")
     try:
-        add_subtitles(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)
-    except ValueError as e:
-        raise SystemExit(str(e))
+        if len(sys.argv) < 2:
+            sys.exit("usage: python subtitle_xml.py edited.xml [out.xml]")
+        try:
+            add_subtitles(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else None)
+        except ValueError as e:
+            raise ReelsiError(str(e))
+    except ReelsiError as e:
+        cli_error(e)

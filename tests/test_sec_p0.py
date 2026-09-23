@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты безопасности (задание HL, ветка feat/sec-p0).
+"""Тесты безопасности (ветка feat/sec-p0).
 
 1. `WORK_DIR=`: путь из stdout пускается в CURWORK только если это рабочий каталог
    нарезки в %TEMP% (omnicut_*/gigaamcut_*). Иначе «Стоп» сносил rmtree ЛЮБОЙ путь,

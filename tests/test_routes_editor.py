@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Контракты пяти «читающих» роутов api/editor.py (задание HX, круг 7):
+"""Контракты пяти «читающих» роутов api/editor.py (круг 7):
 
 * `POST /api/xml_state`    — что уже размечено в XML (число субтитров, НЕ-белых слов, камер);
 * `POST /api/omnicut_cuts` — журнал нарезки `<stem>.cuts.json`;

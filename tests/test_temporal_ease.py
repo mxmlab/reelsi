@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Откат dims в temporalEase (шаблон сборки) — задание CE.
+"""Откат dims в temporalEase (шаблон сборки).
 
 AE напечатал одиннадцать раз «Unable to call "setTemporalEaseAtKey" because of
 parameter 2. Value array does not have 1 elements.»: зум камеры 1 считал dims из
@@ -67,7 +67,7 @@ def _extract():
 
 
 def test_temporal_ease_falls_back_from_dims_to_one_element():
-    """Scale 2D-нула: value.length=2, а свойство принимает только 1 элемент (задание CE).
+    """Scale 2D-нула: value.length=2, а свойство принимает только 1 элемент.
     Первый заход с dim=2 падает, откат с одним элементом проходит — кривая доезжает."""
     ease, log = _extract()
     script = (
@@ -98,7 +98,7 @@ def test_temporal_ease_spatial_position_uses_one_element_directly():
     """Position пространственна (isSpatial) — AE ждёт РОВНО один элемент, а на 2D-нуле
     value.length=2. Раньше размерность бралась по value.length, первая попытка падала на
     каждом таком свойстве и AE печатал ошибку в лог на КАЖДОМ ключе (35 строк шума в
-    одном прогоне, задание EV). Теперь с isSpatial первый заход идёт с одним элементом —
+    одном прогоне). Теперь с isSpatial первый заход идёт с одним элементом —
     ошибок нет вовсе, лог пуст."""
     ease, log = _extract()
     script = (
@@ -142,7 +142,7 @@ def test_temporal_ease_scalar_applies_same_influence_to_every_key():
 
 
 def test_temporal_ease_logs_when_even_one_element_fails():
-    """Пустой catch убран (задание CE): если не вышло и с одним элементом — сообщение в
+    """Пустой catch убран: если не вышло и с одним элементом — сообщение в
     лог хвоста (.aelog.txt), а не в пустоту. Раньше так ошибку и не увидели."""
     ease, log = _extract()
     script = (

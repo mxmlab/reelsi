@@ -8,14 +8,18 @@
 Пользователь: «надо чтобы показывало и процент общий, и процент по данному клипу».
 
 Проверяем на потоке строк aerender двух композиций:
-- pct ЭЛЕМЕНТА = доля текущей композиции (_parse_progress по кадрам (N)/(N/M),
-  M из _comp_frames, когда aerender его не печатает);
+- pct ЭЛЕМЕНТА = доля текущей композиции (parse_progress по кадрам (N)/(N/M),
+  M из comp_frames, когда aerender его не печатает);
 - RJOB["pct"] = (готовых + доля текущей) / всего — монотонно, БЕЗ прыжка в 1.0
   после первой композиции (маркер Finished composition = конец ОДНОЙ, не всего);
 - RJOB["cur"] = имя текущей композиции;
 - имя композиции из маркера — В КАВЫЧКАХ и с точкой (дефект FJ): реальная строка
   «PROGRESS: 8/26/2026 12:55:08 AM: Finished composition "C0250".» -> C0250;
 - ETA: не выдумывается, пока замеров меньше 15-20 с (eta=None).
+
+Отдельно: POSIX-ветка `task_popen_kwargs()` (`start_new_session`) проверяется и на
+Windows — подделка Popen обязана принять лишний именованный аргумент, иначе три
+теста из этого файла красные только на Linux (внешнее ревью 2026-09-22, P0-1).
 
 Запуск: python -m pytest reelsi/tests -q
 """
@@ -28,6 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest  # noqa: E402
 
 from api import render  # noqa: E402
+from core import aerender  # noqa: E402
 
 
 class _FakePopen:
@@ -37,7 +42,11 @@ class _FakePopen:
     LINES = []
 
     def __init__(self, cmd, stdout=None, stderr=None, text=True, encoding=None,
-                 errors=None, creationflags=0):
+                 errors=None, creationflags=0, **kw):
+        # **kw обязателен: `task_popen_kwargs()` на POSIX добавляет лишний
+        # именованный `start_new_session=True`, и жёсткая сигнатура роняла три
+        # теста TypeError'ом на Linux при зелёном Windows (внешнее ревью
+        # 2026-09-22, P0-1). Подделка, а не процесс — лишнее молча игнорируем.
         self.stdout = list(self.LINES or [])
         self.returncode = 0
 
@@ -85,7 +94,7 @@ def test_overall_pct_monotonic_no_jump_to_1():
     comps = [("01_C0233", "C0250", 1000), ("02_рилс", "РИЛС 9", 1000)]
     rjob = _run_fake(lines, comps)
     # общий pct = 0.35 + ((1 готовый + 0.5 текущей) / 2) * 0.65 = 0.8375
-    # (в рамках 3-фазной шкалы 0..15% JSX, 15..35% AEP, 35..100% aerender, задание FO).
+    # (в рамках 3-фазной шкалы 0..15% JSX, 15..35% AEP, 35..100% aerender).
     # Главное: нигде не 1.0, пока не закрыта вторая композиция.
     assert rjob["pct"] is not None
     assert rjob["pct"] < 1.0, f"общий pct прыгнул в 1.0 до конца набора: {rjob['pct']}"
@@ -125,22 +134,50 @@ def test_finished_comp_name_from_quoted_marker():
     composition "C0250". — имя в кавычках и с точкой; разборщик обязан отдать C0250
     без кавычек, без точки, без даты (дефект FJ: старая регулярка захватывала всё)."""
     line = 'PROGRESS:  8/26/2026 12:55:08 AM: Finished composition "C0250".'
-    assert render._finished_comp_name(line) == "C0250"
+    assert aerender.finished_comp_name(line) == "C0250"
     # запасной вариант без кавычек (другая локаль)
-    assert render._finished_comp_name("Finished composition: C0250") == "C0250"
-    assert render._finished_comp_name("Total Time Elapsed: 16 Min, 48 Sec") is None
+    assert aerender.finished_comp_name("Finished composition: C0250") == "C0250"
+    assert aerender.finished_comp_name("Total Time Elapsed: 16 Min, 48 Sec") is None
 
 
 def test_frame_progress_line_parsed():
     """Реальная строка прогресса кадра: (2352) без /M — доля считается по M из comps."""
     line = "PROGRESS:  0:00:39:11 (2352): 0 Seconds"
-    assert render._parse_progress(line, 10000) == pytest.approx(0.2352)
-    assert render._parse_progress(line, None) is None     # M неизвестен — нет доли
+    assert aerender.parse_progress(line, 10000) == pytest.approx(0.2352)
+    assert aerender.parse_progress(line, None) is None     # M неизвестен — нет доли
 
 
 def test_eta_none_without_enough_samples():
     """ETA не выдумывается: меньше двух замеров или окно <15 с — None (прочерк)."""
-    assert render._eta_secs([], 1000, 0) is None
-    assert render._eta_secs([(0.0, 0), (5.0, 100)], 1000, 100) is None  # окно <15 с
+    assert aerender.eta_secs([], 1000, 0) is None
+    assert aerender.eta_secs([(0.0, 0), (5.0, 100)], 1000, 100) is None  # окно <15 с
     # окно 20 с, 200 кадров отрендерено из 1000, скорость 10 кадр/с -> 80 с
-    assert render._eta_secs([(0.0, 0), (20.0, 200)], 1000, 200) == pytest.approx(80.0)
+    assert aerender.eta_secs([(0.0, 0), (20.0, 200)], 1000, 200) == pytest.approx(80.0)
+
+
+def test_fake_popen_takes_posix_kwargs(monkeypatch):
+    """POSIX-ветка `task_popen_kwargs()` проверяется и на Windows.
+
+    На Linux задание стартует в СВОЕЙ группе процессов: `task_popen_kwargs()`
+    возвращает `{"start_new_session": True}`. Подделка Popen обязана принять этот
+    лишний именованный аргумент — иначе три теста выше падают TypeError'ом только
+    на Linux, а на Windows набор зелёный (внешнее ревью 2026-09-22, P0-1).
+
+    Ветка включается здесь нарочно: у продовой функции (через `os.name`) и у
+    `render`, который взял её по имени при импорте.
+    """
+    from api import _core
+
+    with monkeypatch.context() as m:
+        m.setattr(_core.os, "name", "posix")
+        posix_kwargs = _core.task_popen_kwargs()
+    assert posix_kwargs == {"start_new_session": True}, posix_kwargs
+
+    monkeypatch.setattr(render, "task_popen_kwargs", lambda: posix_kwargs)
+    lines = [
+        "PROGRESS:  0:00:39:11 (100): 0 Seconds",
+        "PROGRESS:  0:00:40:00 (500): 0 Seconds",
+    ]
+    comps = [("01_C0233", "C0250", 1000), ("02_рилс", "РИЛС 9", 1000)]
+    rjob = _run_fake(lines, comps)
+    assert rjob["pct"] is not None, "POSIX-аргументы не дошли до подделки Popen"

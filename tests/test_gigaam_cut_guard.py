@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты санитарного гарда нарезки и восстановления при сбое чтения звука (задание DN).
+"""Тесты санитарного гарда нарезки и восстановления при сбое чтения звука.
 
 Проверяем:
-1. Зеркальный гард: речь > 30с одним куском вызывает отказ (SystemExit).
+1. Зеркальный гард: речь > 30с одним куском вызывает отказ (ReelsiError).
 2. Одна попытка перевыпустить WAV через sync.extract_audio при сбое чтения звука.
 3. Диагностика в сообщении об ошибке (наличие, размер, файлы в каталоге).
 """
@@ -18,6 +18,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
 from core.gigaam_cut import pipeline as pipeline
+from core.umsg import ReelsiError
 
 
 def test_audio_file_diag_existing(tmp_path):
@@ -37,7 +38,7 @@ def test_audio_file_diag_missing(tmp_path):
 
 
 def test_mirror_guard_raises_on_single_chunk_60s(monkeypatch, tmp_path):
-    """Зеркальный гард: keep из одного куска на 60-секундной речи -> SystemExit."""
+    """Зеркальный гард: keep из одного куска на 60-секундной речи -> ReelsiError."""
     words = [{"w": "слово", "start": 0.0, "end": 60.0}]
     xml_out = str(tmp_path / "out.xml")
 
@@ -57,7 +58,7 @@ def test_mirror_guard_raises_on_single_chunk_60s(monkeypatch, tmp_path):
         xml_built = True
     monkeypatch.setattr(pipeline.xmlbuild, "build", fake_build)
 
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(ReelsiError) as exc_info:
         pipeline._run("dummy.wav", ["cam1.mp4"], [0.0], xml_out, scale="100%", emit=lambda *a, **k: None)
 
     assert "одним куском" in str(exc_info.value)
@@ -103,8 +104,8 @@ def test_audio_retry_succeeds_after_reextract(monkeypatch, tmp_path):
     assert len(keep) == 2
 
 
-def test_audio_retry_fails_raises_system_exit(monkeypatch, tmp_path):
-    """Сбой чтения звука: если перевыпуск не помог — SystemExit с диагностикой."""
+def test_audio_retry_fails_raises_reelsierror(monkeypatch, tmp_path):
+    """Сбой чтения звука: если перевыпуск не помог — ReelsiError с диагностикой."""
     words = [{"w": "раз", "start": 0.0, "end": 5.0}, {"w": "два", "start": 6.0, "end": 10.0}]
     xml_out = str(tmp_path / "out.xml")
 
@@ -120,7 +121,7 @@ def test_audio_retry_fails_raises_system_exit(monkeypatch, tmp_path):
 
     monkeypatch.setattr(pipeline, "refine_keep", always_fail)
 
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(ReelsiError) as exc_info:
         pipeline._run(str(tmp_path / "a0.wav"), ["cam1.mp4"], [0.0], xml_out, scale="100%",
                       no_draft=True, emit=lambda *a, **k: None)
 

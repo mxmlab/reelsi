@@ -5,6 +5,7 @@ Non-destructive: keeps original filenames, the JSON maps role -> file. Missing r
 or file -> empty string (feature just skips that asset)."""
 import os, json
 from core.applog import get_logger
+from core.umsg import ReelsiError
 
 log = get_logger("reelsi.assets")
 
@@ -25,6 +26,7 @@ def resolver(base):
                 m = data
             else:
                 log.warning("Файл ассетов не словарь (%s): %s", type(data).__name__, cfg)
+        except ReelsiError: raise
         except Exception as e:
             log.warning("Не удалось прочитать файл ассетов %s: %s", cfg, e)
 

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Контракты роутов api/presets.py, которые до круга 7 не были покрыты (задание HX):
+"""Контракты роутов api/presets.py, которые до круга 7 не были покрыты:
 
 * `POST /api/savestyle`    — сохранить пользовательский пресет стиля (пишущий!);
 * `GET/POST /api/censor_words` — списки цензуры субтитров (пишущий!);

@@ -25,6 +25,7 @@ import tempfile
 import urllib.request
 import zipfile
 from core.app_meta import console_emit
+from core.umsg import ReelsiError, cli_error
 
 # Своя папка, а не ~/.cache/huggingface: пользователю должно быть видно, сколько
 # места занимают модели (large-v3 — 3 ГБ), и их можно удалить руками.
@@ -115,6 +116,7 @@ def ensure_model(size):
     try:
         return hf_hub_download(repo_id=HF_REPO, revision=HF_REVISION,
                                filename=_model_file(size), local_dir=MODELS_DIR)
+    except ReelsiError: raise
     except Exception as e:
         raise RuntimeError("whisper.cpp: не удалось скачать модель %s (%s: %s)"
                            % (_model_file(size), type(e).__name__, e))
@@ -226,6 +228,7 @@ def transcribe(wav_path, size="large-v3"):
         try:
             with open(out_path, encoding="utf-8") as f:
                 data = json.load(f)
+        except ReelsiError: raise
         except Exception:
             raise RuntimeError("whisper.cpp: не удалось разобрать JSON-результат")
         return parse_words(data)
@@ -233,8 +236,9 @@ def transcribe(wav_path, size="large-v3"):
         for p in (out_base, out_path):
             try:
                 os.remove(p)
-            except Exception:
-                pass
+            except ReelsiError: raise
+            except OSError:
+                pass  # временный вывод уже убран
 
 
 # --------------------------------------------------------------------------- #
@@ -442,6 +446,7 @@ def install_cli(emit=console_emit):
     emit("whisper.cpp: скачиваю {name} ...", name=asset)
     try:
         data = urllib.request.urlopen(url, timeout=600).read()
+    except ReelsiError: raise
     except Exception as e:
         raise RuntimeError("whisper.cpp: не удалось скачать %s — "
                            "скачайте вручную: %s (%s)" % (asset, RELEASES_URL, e))
@@ -472,19 +477,23 @@ def install_cli(emit=console_emit):
 
 
 if __name__ == "__main__":
-    # Без консоли stdout у Python на Windows — cp1251/cp1252, и русский текст
-    # роняет печать UnicodeEncodeError (та же починка, что в doctor.py/webui.py).
-    for _s in (sys.stdout, sys.stderr):
-        try:
-            _s.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
-            pass
-    if len(sys.argv) > 1 and sys.argv[1] == "install":
-        try:
-            install_cli()
-        except RuntimeError as e:
-            print(e)
-            sys.exit(1)
-    else:
-        print("usage: python -m core.whisper_cpp install   # установить whisper-cli "
-              "(по запросу; модели скачаются при первом выборе движка)")
+    try:
+        # Без консоли stdout у Python на Windows — cp1251/cp1252, и русский текст
+        # роняет печать UnicodeEncodeError (та же починка, что в doctor.py/webui.py).
+        for _s in (sys.stdout, sys.stderr):
+            try:
+                _s.reconfigure(encoding="utf-8", errors="replace")
+            except ReelsiError: raise
+            except Exception:
+                pass  # поток без reconfigure — служебная печать не критична
+        if len(sys.argv) > 1 and sys.argv[1] == "install":
+            try:
+                install_cli()
+            except RuntimeError as e:
+                print(e)
+                sys.exit(1)
+        else:
+            print("usage: python -m core.whisper_cpp install   # установить whisper-cli "
+                  "(по запросу; модели скачаются при первом выборе движка)")
+    except ReelsiError as e:
+        cli_error(e)

@@ -32,6 +32,10 @@ from core.media import probe_duration
 
 from core import paths
 from core.app_meta import env, console_emit, http_req, wrap_emit
+from core.umsg import ReelsiError, cli_error
+from core.applog import get_logger
+
+log = get_logger(__name__)
 
 # Индекс базы вставок. REELSI_INSERTLIB — как REELSI_UI_STATE у состояния UI: без него
 # тестовый профиль (launch.json, 5098) пересканирует БОЕВОЙ индекс и перепишет его файл,
@@ -80,7 +84,7 @@ def _tokens(s):
 
 
 def _norm_look(text):
-    """Нормализация приписки стиля картинки (поле look, задание ET1): strip, нижний
+    """Нормализация приписки стиля картинки (поле look): strip, нижний
     регистр, схлопнутые пробелы; из пустого — пустая строка. Единственное место
     нормализации стиля: приписки из image_prompts спикеров отличаются регистром и
     лишними пробелами, и если запись и запрос нормализовать по-разному, одинаковые
@@ -246,7 +250,7 @@ def _lex_bonus(q_words, c_words, df, n_total):
     return LEX_W * (matched / denom)
 
 
-# Поправки РАНГА за стиль картинки (поле look, задание ET1). Правят rank, а не score:
+# Поправки РАНГА за стиль картинки (поле look). Правят rank, а не score:
 # подбор остаётся «по предмету», стиль лишь двигает порядок в выдаче.
 LOOK_MATCH = 0.05
 LOOK_MISS = -0.15
@@ -308,8 +312,9 @@ def _emb_model():
         for m in d.get("data", []):
             if "embed" in (m.get("id") or "").lower():
                 return m["id"]
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # LM Studio не ответил — модель эмбеддингов возьмём по умолчанию
     return None
 
 
@@ -327,6 +332,7 @@ def _embed(texts, model):
                 return None
             out.extend(r["embedding"] for r in rows)
         return out
+    except ReelsiError: raise
     except Exception:
         return None
 
@@ -354,6 +360,7 @@ def _scan_xml_inserts(xml_path):
         from core import xml2ae
         _meta, _cams, _subs, inserts = xml2ae.parse_full(xml_path)
         return [x["media"] for x in (inserts or []) if x.get("media")]
+    except ReelsiError: raise
     except Exception:
         return []
 
@@ -655,8 +662,10 @@ def _seed_index():
     try:
         import shutil
         shutil.copyfile(real, INDEX_PATH)
-    except Exception:
-        pass
+    except ReelsiError: raise
+    except Exception as ex:
+        log.warning("не скопировал боевой insertlib.json в %s: %s — "
+                    "база останется пустой", INDEX_PATH, ex)
 
 
 def _load():
@@ -676,6 +685,7 @@ def _load():
                 _CACHE["df"] = None
                 _CACHE["cand_words"] = None
                 _CACHE["N"] = 0
+            except ReelsiError: raise
             except Exception:
                 return None
         return _CACHE["data"]
@@ -794,7 +804,7 @@ def match_many(queries, k=5, type_hint=None, look=None):
         if type_hint:                                      # мягкий приоритет типа
             scored = [((rank + (0.05 if (it.get("type") or _media_kind(it["path"])) == type_hint
                                 else 0.0)), it, cos_sim, lex) for rank, it, cos_sim, lex in scored]
-        if look:                                           # мягкий приоритет стиля (ET1)
+        if look:                                           # мягкий приоритет стиля
             scored = [((rank + _look_rank(it.get("look"), look)), it, cos_sim, lex)
                       for rank, it, cos_sim, lex in scored]
         # При РАВНОМ score/rank берём САМЫЙ СВЕЖИЙ: перегенерил тот же запрос -> в базе два
@@ -842,7 +852,7 @@ def _ensure_emb_tag(emit=None):
                   _subject_text(_doc_text(it.get("desc"), it.get("ru"), it.get("vis"))))
                  for it in d.get("items", [])
                  if _subject_text(_doc_text(it.get("desc"), it.get("ru"), it.get("vis")))]
-    # эмбеддинг — вне лока (задание BU): сетевой вызов под _LOCK вешал бы всю базу
+    # эмбеддинг — вне лока: сетевой вызов под _LOCK вешал бы всю базу
     # на 120 с, пока LM Studio занят
     if not model:
         model = _emb_model()
@@ -932,7 +942,7 @@ def remove_bg(img_bytes, trim=True, emit=None):
     try:
         from rembg import remove, new_session
     except ImportError:
-        raise SystemExit("для снятия фона нужен пакет rembg — «pip install rembg» "
+        raise ReelsiError("для снятия фона нужен пакет rembg — «pip install rembg» "
                          "(или сними галку «убирать фон» в ⚙)")
     global _RB_SESSION
     if _RB_SESSION is None:
@@ -956,7 +966,7 @@ def remove_bg(img_bytes, trim=True, emit=None):
 def nobg_path(media, emit=None):
     """Путь к PNG с уже снятым фоном РЯДОМ с исходником: <папка>/<стем>.<расш>.nobg.png.
 
-    Галка стиля «без фона» (задание ZI): и сборка (.jsx), и предпросмотр (/api/media?nobg=1)
+    Галка стиля «без фона»: и сборка (.jsx), и предпросмотр (/api/media?nobg=1)
     ходят сюда — снятие фона одно на оба, второй копии правила нет. Кэш обязателен: rembg
     это onnx-модель на CPU, 1-2 с на картинку, а вставок в ролике десятки.
 
@@ -985,13 +995,14 @@ def nobg_path(media, emit=None):
         try:
             # SystemExit отдельно и ТОЛЬКО тут: без пакета rembg/onnxruntime remove_bg
             # не бросает исключение, а выходит из процесса — сборка со вставкой «на
-            # подложке» падала целиком вместо отката на исходник (задание ZK).
+            # подложке» падала целиком вместо отката на исходник.
             out = remove_bg(data, trim=True, emit=emit)
-        except SystemExit as e:
+        except (ReelsiError, SystemExit) as e:
             emit("  фон у {name} не убран ({err}) — вставка как есть",
                  name=os.path.basename(p), err=e)
             return media
         atomic_bytes_write(dst, out)                     # «Стоп»/сбой не оставит обгрызок кэша
+    except ReelsiError: raise
     except Exception as e:
         emit("  фон у {name} не убран ({err}) — вставка как есть",
              name=os.path.basename(p), err=e)
@@ -1038,6 +1049,7 @@ def image_real_format(path):
             fmt = im.format
             if fmt and fmt != expected:
                 return fmt
+    except ReelsiError: raise
     except Exception:
         return None
     return None
@@ -1065,6 +1077,7 @@ def to_ae_image(path, emit=None):
         from PIL import Image
         with Image.open(path) as im:               # только заголовок, пиксели не грузим
             mode = im.mode
+    except ReelsiError: raise
     except Exception:                              # битый файл — пусть ругается AE
         return path
     if mode in AE_OK_MODES:
@@ -1082,6 +1095,7 @@ def _repng(src, dst, why, emit):
         from PIL import Image
         with Image.open(src) as im:
             im.convert("RGBA" if im.mode in ("RGBA", "LA", "PA", "P") else "RGB").save(dst, "PNG")
+    except ReelsiError: raise
     except Exception as e:
         emit("  ⚠ {name}: не перекодировал в PNG ({err}) — {why}",
              name=os.path.basename(src), err=str(e), why=why)
@@ -1106,6 +1120,7 @@ def _vcodec(path):
                              "-show_entries", "stream=codec_name", "-of", "csv=p=0", path],
                             capture_output=True, text=True, timeout=60)
         return ((pr.stdout or "").strip().split(",")[0] or "").lower() or None
+    except ReelsiError: raise
     except Exception:                                  # нет ffprobe/битый файл — пусть ругается AE
         return None
 
@@ -1134,11 +1149,12 @@ def to_ae_video(path, emit=None):
                         "-c:v", "libx264", "-preset", "medium", "-crf", "20",
                         "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
                         dst], check=True, capture_output=True, timeout=3600)
+    except ReelsiError: raise
     except Exception as e:
         try:
             os.remove(dst)                             # недописанный огрызок хуже отсутствия
         except OSError:
-            pass
+            pass  # огрызок уже убран — о сбое сказали в emit выше
         emit("  ⚠ {name}: не перекодировал из {codec} в H.264 ({err})",
              name=os.path.basename(path), codec=codec, err=str(e))
         return path
@@ -1160,7 +1176,7 @@ def strip_bg_file(path, dest_dir=None, emit=None):
     emit = wrap_emit(emit)
     path = os.path.abspath(path)
     if _media_kind(path) == "video":
-        raise SystemExit("это видео — фон снимается только у фото")
+        raise ReelsiError("это видео — фон снимается только у фото")
     from PIL import Image
     with Image.open(path) as im:
         if im.mode in ("RGBA", "LA") and im.getchannel("A").getextrema()[0] < 250:
@@ -1210,7 +1226,7 @@ def add_generated(img_bytes, query, dest_dir, emit=None, embed=True, ru="", look
     ru = (ru or "").strip()
     doc_t = _subject_text(_doc_text(desc, ru))
     vec = None
-    if embed:                                               # эмбеддинг — вне лока (задание BU)
+    if embed:                                               # эмбеддинг — вне лока
         with _LOCK:                                         # короткое чтение модели под локом
             d0 = _load()
             model = (d0.get("emb_model") or "") if d0 else ""
@@ -1263,7 +1279,7 @@ def embed_items(items, emit=None):
             doc_texts.append(_subject_text(_doc_text(d or "", cur_ru, cur_vis)))
     if not model:
         return 0
-    vecs = _emb_docs(doc_texts, model)   # сетевой вызов — вне лока (задание BU)
+    vecs = _emb_docs(doc_texts, model)   # сетевой вызов — вне лока
     if not vecs:
         return 0
     with _LOCK:
@@ -1288,6 +1304,7 @@ def _real_case(p):
     r"""Реальный регистр пути на диске (Windows case-insensitive ФС). Без \\?\ префикса."""
     try:
         r = os.path.realpath(p)
+    except ReelsiError: raise
     except Exception:
         return p
     if r.startswith("\\\\?\\"):
@@ -1328,6 +1345,25 @@ def _crop_of(it):
     if not (20 <= mw <= 300 and 20 <= mh <= 300) or (mw == 100 and mh == 100):
         return None
     return mw, mh
+
+
+def _read_import_log(logp):
+    """Прошлый лог переносов `_import_log.json` (путь -> файл) или None.
+
+    None — файл ЕСТЬ, но не читается или не словарь: перезаписать его значило бы стереть
+    все прошлые переносы. Файла нет — пустой словарь: начинаем с чистого."""
+    if not os.path.exists(logp):
+        return {}
+    try:
+        data = json.load(open(logp, encoding="utf-8"))
+    except ReelsiError: raise
+    except Exception as ex:
+        log.warning("_import_log.json не прочитан (%s): %s", logp, ex)
+        return None
+    if not isinstance(data, dict):
+        log.warning("_import_log.json — не словарь (%s: %s)", logp, type(data).__name__)
+        return None
+    return data
 
 
 def adopt(items, dest_dir, emit=None):
@@ -1397,6 +1433,7 @@ def adopt(items, dest_dir, emit=None):
             n += 1
         try:
             shutil.move(src, tgt)                          # move, не copy: Downloads чистится
+        except ReelsiError: raise
         except Exception as e:
             emit("{name}: {err}", name=fn, err=str(e))
             continue
@@ -1410,12 +1447,13 @@ def adopt(items, dest_dir, emit=None):
     if transferred:                                         # лог переносов (как у import_media)
         os.makedirs(dest, exist_ok=True)
         logp = os.path.join(dest, "_import_log.json")
-        try:
-            old = json.load(open(logp, encoding="utf-8"))
-        except Exception:
-            old = {}
-        old.update(transferred)
-        atomic_json_dump(logp, old, indent=1)
+        old = _read_import_log(logp)                        # None — файл есть, но не читается
+        if old is None:                                     # не перезаписываем: стёрли бы прошлое
+            emit("⚠ лог переносов не прочитан: {path} — не перезаписываю, файлы уже перенесены",
+                 path=logp)
+        else:
+            old.update(transferred)
+            atomic_json_dump(logp, old, indent=1)
     if seen:
         _index_adopt(mapping, seen, emit, crops)
     if transferred:
@@ -1434,7 +1472,7 @@ def _index_adopt(mapping, seen, emit=None, crops=None):
     emit = wrap_emit(emit)
     # правки путей и новых записей — под локом (как reject/add_generated): _load() отдаёт
     # общий закэшированный dict, и параллельный /api/rembg или генерация затирали правку.
-    # Эмбеддинги новых описаний — ВТОРЫМ тактом, вне лока (задание BU): между тактами
+    # Эмбеддинги новых описаний — ВТОРЫМ тактом, вне лока: между тактами
     # индекс мог измениться, поэтому под финальным локом записи ищутся заново по пути.
     with _LOCK:
         data = _load()
@@ -1556,6 +1594,7 @@ def import_media(dirs, dest, since_ts=0.0, move=True, emit=None, recursive=False
                 import shutil
                 try:
                     (shutil.move if move else shutil.copy2)(p, tgt)
+                except ReelsiError: raise
                 except Exception as e:
                     emit("⚠ {name}: {err}", name=fn, err=str(e))
                     continue
@@ -1564,12 +1603,13 @@ def import_media(dirs, dest, since_ts=0.0, move=True, emit=None, recursive=False
     if mapping:                                                  # лог + обновить пути в индексе
         os.makedirs(dest, exist_ok=True)
         logp = os.path.join(dest, "_import_log.json")
-        try:
-            old = json.load(open(logp, encoding="utf-8"))
-        except Exception:
-            old = {}
-        old.update(mapping)
-        atomic_json_dump(logp, old, indent=1)
+        old = _read_import_log(logp)                             # None — файл есть, но не читается
+        if old is None:                                          # не перезаписываем: стёрли бы прошлое
+            emit("⚠ лог переносов не прочитан: {path} — не перезаписываю, файлы уже перенесены",
+                 path=logp)
+        else:
+            old.update(mapping)
+            atomic_json_dump(logp, old, indent=1)
         # весь load-modify-save под локом (как reject/add_generated): _load() отдаёт
         # ОБЩИЙ закэшированный dict, и параллельная правка описания затиралась бы
         with _LOCK:
@@ -1617,8 +1657,9 @@ def _vision_model():
             for i in ids:
                 if pat in i.lower() and "embed" not in i.lower():
                     return i
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # LM Studio не ответил — vision-модель не найдём (скажем выше)
     return None
 
 
@@ -1641,13 +1682,14 @@ def _thumb_b64(path):
         with open(tmp.name, "rb") as f:
             b = f.read()
         return base64.b64encode(b).decode() if b else None
+    except ReelsiError: raise
     except Exception:
         return None
     finally:
         try:
             os.unlink(tmp.name)
         except OSError:
-            pass
+            pass  # временный файл уже убран
 
 
 def describe_file(path, model):
@@ -1676,6 +1718,7 @@ def describe_file(path, model):
             return None
         txt = " ".join(txt.replace("\n", " ").split()).strip().strip('."\'' )
         return txt[:220] or None
+    except ReelsiError: raise
     except Exception:
         return None
 
@@ -1700,8 +1743,10 @@ def auto_describe(emit=None, only_missing=True, progress=None):
     try:                                                        # выгрузить прочие LLM (VRAM 16ГБ)
         from core import aicut
         aicut.ensure_loaded(model)
-    except Exception:
-        pass
+    except ReelsiError: raise
+    except Exception as ex:
+        log.warning("не удалось выгрузить сторонние LLM перед vision-"
+                    "описаниями: %s — возможна нехватка видеопамяти", ex)
     emit("vision-описания: {count} файлов через {model}…", count=len(todo), model=model)
 
     pending = {}
@@ -1781,7 +1826,7 @@ def set_desc(path, desc):
     path = os.path.abspath(path)
     # правка desc под локом (как reject/add_generated): _load() отдаёт общий закэшированный
     # dict, и параллельная генерация/режет-запросы затирали правку. Эмбеддинг — вторым
-    # тактом, вне лока (задание BU): и _emb_model(), и _emb_docs() — сетевые вызовы, под
+    # тактом, вне лока: и _emb_model(), и _emb_docs() — сетевые вызовы, под
     # _LOCK они вешали бы всю базу, пока LM Studio занят.
     with _LOCK:
         d = _load()
@@ -1891,21 +1936,24 @@ def stats(emit=print):
 
 
 if __name__ == "__main__":
-    import sys
-    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    if len(sys.argv) >= 2 and sys.argv[1] == "scan":
-        build_index(sys.argv[2:], emit=console_emit)
-    elif len(sys.argv) >= 3 and sys.argv[1] == "match":
-        for r in match(" ".join(sys.argv[2:]), k=8):
-            print(f"{r['score']:.3f}  [{r['type']}] used={r['used']}  {r['path']}")
-    elif len(sys.argv) >= 5 and sys.argv[1] == "import":
-        import datetime as _dt
-        since = _dt.datetime.strptime(sys.argv[2], "%Y-%m-%d").timestamp()
-        import_media(sys.argv[4:], sys.argv[3], since_ts=since, emit=console_emit)
-    elif len(sys.argv) >= 2 and sys.argv[1] == "describe":
-        auto_describe(emit=console_emit, only_missing="--all" not in sys.argv)
-    elif len(sys.argv) >= 2 and sys.argv[1] == "stats":
-        stats()
-    else:
-        print(__doc__)
+    try:
+        import sys
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        if len(sys.argv) >= 2 and sys.argv[1] == "scan":
+            build_index(sys.argv[2:], emit=console_emit)
+        elif len(sys.argv) >= 3 and sys.argv[1] == "match":
+            for r in match(" ".join(sys.argv[2:]), k=8):
+                print(f"{r['score']:.3f}  [{r['type']}] used={r['used']}  {r['path']}")
+        elif len(sys.argv) >= 5 and sys.argv[1] == "import":
+            import datetime as _dt
+            since = _dt.datetime.strptime(sys.argv[2], "%Y-%m-%d").timestamp()
+            import_media(sys.argv[4:], sys.argv[3], since_ts=since, emit=console_emit)
+        elif len(sys.argv) >= 2 and sys.argv[1] == "describe":
+            auto_describe(emit=console_emit, only_missing="--all" not in sys.argv)
+        elif len(sys.argv) >= 2 and sys.argv[1] == "stats":
+            stats()
+        else:
+            print(__doc__)
+    except ReelsiError as e:
+        cli_error(e)
 

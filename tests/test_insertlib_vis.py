@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты для задания EP: два текстовых поля вместо одного — desc и vis.
+"""Тесты: два текстовых поля вместо одного — desc и vis.
 
 desc = что ЗАДУМАНО (исходная фраза/запрос), vis = что ВИДНО на картинке (только
 vision). Vision больше никогда не пишет в desc; миграция в build_index перекладывает

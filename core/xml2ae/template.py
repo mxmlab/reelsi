@@ -121,7 +121,7 @@ SUBS_LOOP_ROWS = r"""    var SUB_ROWS = %(sub_rows)s;
             d.fontSize=cur_fsz; d.fillColor=(w_hl?HL_FILL:FILL); d.applyFill=true;
             try{d.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
             sp.setValue(d);
-            // Жёлтое в строке (задание ZH): при hl_row_anim="word" въезжает в момент, когда
+            // Жёлтое в строке: при hl_row_anim="word" въезжает в момент, когда
             // слово произнесено (wd[0]), но не раньше строки и не позже, чем остаётся место
             // на подъём (иначе оно всплывало бы уже после ухода строки). "row" и белые —
             // со строкой, как было: та же строка, то же время r_t0.
@@ -264,7 +264,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     var INS_SH_OP = 49, INS_SH_DIR = 135, INS_SH_DIST = 15, INS_SH_SOFT = 70; // тень вставок: чёрная, opacity в %% UI
     // Тайминги анимаций вставок (вход/выход, guard, noexit, пик наезда, вылет из-за
     // спины) считает Python и кладёт готовые ключи в ins.anim — в шаблоне их больше
-    // не досчитываем: превью читает те же ключи из плана сцены (задание C)
+    // не досчитываем: превью читает те же ключи из плана сцены
     var TR_IN = 0.386, TR_SFX_LEAD = 0.083;    // Quick2 до стыка / whoosh ещё раньше
     // ====================================
     var W=%(w)d, H=%(h)d, FPS=%(fps)s, DUR=%(dur).4f;
@@ -280,15 +280,15 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     var INTRO_GLOW=%(intro_glow)g;  // Glow Intensity на интро-тексте (AE-дефолт 1.0)
     var INTRO_SCALE=%(intro_scale)g, INTRO_Y=%(intro_y)g;  // общий масштаб (%%) и сдвиг по вертикали (px) ВСЕГО
                                     // интро: висят на нуле «интро», то есть двигают/масштабируют все прекомпы разом.
-                                    // Опускание под INTRO_SAFE_TOP считает Python (задание Q2) — здесь только поправка Scale.
+                                    // Опускание под INTRO_SAFE_TOP считает Python — здесь только поправка Scale.
     var INTRO_ON2=%(intro_on2)s;    // [0|1 на группу] — группа появляется на перебивке (Камера 2): свой нул
-%(intro_front_decl)s%(intro_ly_decl)s%(intro_lx_decl)s%(intro_above_roto_decl)s%(intro_cam_decl)s    var INTRO_IDY=%(intro_idy)s;    // [px на группу] — опускание блока под INTRO_SAFE_TOP, считает Python (задание Q2)
+%(intro_front_decl)s%(intro_ly_decl)s%(intro_lx_decl)s%(intro_anchor_decl)s%(intro_above_roto_decl)s%(intro_cam_decl)s    var INTRO_IDY=%(intro_idy)s;    // [px на группу] — опускание блока под INTRO_SAFE_TOP, считает Python
     var INTRO_Y2=%(intro_y2)g;      // сдвиг по вертикали (px) нула «интро на кам2» ПОВЕРХ INTRO_Y:
                                     // на перебивке кадр другой, и текст за спиной просится ниже
     var INTRO_WIDE=3;               // ширина интро-прекомпа в долях кадра: прекомп шире кадра, чтобы
                                     // размер текста поджимался СКАЛОЙ СЛОЯ в мастере, не заходя в композ.
                                     // Текст внутри всегда раскладывается в полный кегль — ужимание
-                                    // длинных строк (автофит) считает Python в плане (задание BP)
+                                    // длинных строк (автофит) считает Python в плане
     var INSERTS=%(inserts)s; // [{t:"photo"|"video",style:"cam2"|"cam1",media,start,end,scale,sc,mw,mh,x,y,front,oncam2}, ...] x/y = сдвиг точки покоя, px; sc = ручной масштаб в %% от авто (mw/mh — форма маски); front=видео перед человеком; oncam2=стиль кам1, но в кадре перебивка
     var SUB_HIDE=%(sub_hide)s;  // [[t, opacity], ...] — уход субтитров на rise-вставках
     var TRANS=%(trans)s, TRANS_SFX=%(trans_sfx)s;  // Quick 2.mov + whoosh для видеовставок
@@ -306,7 +306,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     var DISCLAIMER=%(disclaimer)s, DISC_END=%(disc_end)g, DISC_SIZE=%(disc_size)s, DISC_Y=%(disc_y)d%(disc_lead_decl)s;
 
     app.beginUndoGroup("Reelsi build");
-    // Лог сборки. Файл .aelog.txt заводит ХВОСТ (задание CD), а ошибки бывают раньше него —
+    // Лог сборки. Файл .aelog.txt заводит ХВОСТ, а ошибки бывают раньше него —
     // копим и сливаем в файл после открытия. Пустых catch в шаблоне нет: молча терять
     // причину нельзя — так кривая наезда не применялась на всех ключах, и никто не узнал.
     var _log = null, _pending = [];
@@ -316,7 +316,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     }
     // Шрифт по PostScript-имени. У AE бывает НЕСКОЛЬКО записей с одним именем (след
     // переустановки шрифта), и выбор по имени встаёт на битую: в тексте остаётся Times,
-    // а try/catch молчит — ошибки нет, шрифт просто не тот (задание ZF).
+    // а try/catch молчит — ошибки нет, шрифт просто не тот.
     // Перебираем копии через fontObject и кэшируем выбор на имя — проба один раз на имя.
     var _FONT_PICK = {};   // PostScript-имя -> Font (рабочая копия) | null (ставить по имени)
     var _fontProbe = null, _fontProbeSp = null;   // пробная композиция со слоем — одна на весь .jsx
@@ -352,7 +352,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     // setTemporalEaseAtKey ждёт РОВНО столько KeyframeEase, сколько измерений у свойства,
     // а не value.length: Position 1-мерна, и на 2D-нуле value.length=2 роняет вызов
     // («Value array does not have 1 elements»). Пробуем value.length, при отказе — один
-    // элемент (задание CE): раньше откат жил в двух местах (easePair/bez), а в зуме камеры 1
+    // элемент: раньше откат жил в двух местах (easePair/bez), а в зуме камеры 1
     // его не было, и кривая наезда МОЛЧА не применялась ни на одном ключе. Сводим все три
     // места сюда; не вышло и с единицей — в лог, а не в пустоту.
     function temporalEase(prop, infIn, infOut){
@@ -387,7 +387,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
         for (var k=1;k<=prop.numKeys;k++)
             prop.setInterpolationTypeAtKey(k, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER);
         if (prop.numKeys<2) return;
-        temporalEase(prop, HL_EASE_IN, HL_EASE_OUT);   // Position 1-мерна — откат внутри (задание CE)
+        temporalEase(prop, HL_EASE_IN, HL_EASE_OUT);   // Position 1-мерна — откат внутри
     }%(hl_blur_fn)s%(hl_short_fn)s
 
     var main = app.project.items.addComp(%(name)s, W, H, 1.0, Math.max(DUR,1)%(comp_dur)s, FPS);
@@ -539,7 +539,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             var ee=CAM1_EASE[z2]||[%(ease_default)g,%(ease_default)g];
             eIns.push(ee[0]); eOuts.push(ee[1]);
         }
-        // Scale 2D-нула: value.length=2, а AE ждёт 1 — откат внутри, ошибка не прячется (задание CE)
+        // Scale 2D-нула: value.length=2, а AE ждёт 1 — откат внутри, ошибка не прячется
         temporalEase(sc, eIns, eOuts);
         // 4) затем для каждого ключа k (1-based): in / out HOLD или BEZIER по CAM1_HOLDS
         for (var k=1; k<=sc.numKeys; k++){
@@ -644,7 +644,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             if(ins.fit) try{ vl.property("ADBE Transform Group").property("ADBE Scale").setValue([ins.fit,ins.fit]); }catch(e){}
             // ландшафтное видео при fill вылезает по ширине в 1.5-3 раза — центр кадра почти
             // никогда не то, что надо показать; ix/iy = ручная панорама (в webui скраббером).
-            // Позиция — ровно ix/iy пользователя: клампа нет (задание ME2), вставка ходит и
+            // Позиция — ровно ix/iy пользователя: клампа нет, вставка ходит и
             // за краем ролика — там открывается кадр камеры (в предпросмотре так же).
             if(ins.x||ins.y) try{ vl.property("ADBE Transform Group").property("ADBE Position")
                 .setValue([W/2+(ins.x||0), H/2+(ins.y||0)]); }catch(e){}
@@ -702,7 +702,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             // наезд считаем ОТ осевшего масштаба (PEAK/BASE ≈ 2.27×), а не константой 100:
             // у крупной карточки (sc>227%%) фиксированный пик оказывался МЕНЬШЕ конечного
             // размера — вместо наезда вставка раздувалась внутрь кадра. Ключи наезда,
-            // opacity и блюра посчитал Python — план сцены (задание C)
+            // opacity и блюра посчитал Python — план сцены
             applyKeyframes(L.property("ADBE Transform Group").property("ADBE Scale"),
                            ins.anim && ins.anim.scale, true);
             applyKeyframes(L.property("ADBE Transform Group").property("ADBE Opacity"),
@@ -767,14 +767,13 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             }
             var iL=main.layers.add(ic); iL.name=ic.name;
             %(intro_front_route)s%(intro_above_roto_route)s
-            var last=(gI==INTRO_GROUPS.length-1);
             var inAt=(gI==0&&gMin<3)?0:gMin;                // 1-я группа видна с 0 ТОЛЬКО если она реально в начале; серединные — по 1-му своему слову
-            // outStart не раньше конца фейд-ина: у группы из ОДНОГО слова gMax==inAt,
-            // и ключ «100» на outStart затирал ключ «0» на inAt — акцент влетал
-            // мгновенно вместо кросс-фейда (а при gMax чуть меньше inAt+F_DUR
-            // выход начинался раньше входа).
-            var outStart=last?(gMax+F_DUR+HOLD):Math.max(gMax, inAt+F_DUR);
-            var outEnd=outStart+F_OUT;%(intro_fx_out)s%(intro_sub_fx_out)s
+            // Окно выхода группы (outStart/outEnd) считает PYTHON: базовая формула (не раньше
+            // конца фейд-ина — иначе ключ «100» на outStart затирал ключ «0» на inAt, и акцент
+            // влетал мгновенно вместо кросс-фейда), продление под конец анимации глитча,
+            // гашение к субтитру и подрезка под старт следующей группы (окна групп не
+            // накладываются). Сюда приезжает готовое окно — вторая копия формулы не заводится.
+            var outStart=0, outEnd=0;%(intro_sub_fx_out)s%(intro_fx_out)s
             // слой живёт с момента появления СВОИХ слов (серединный акцент не тянется с начала компа)
             iL.inPoint=(gI==0&&inAt==0)?0:inAt; iL.outPoint=outEnd;
             // родитель — общий нул «интро» (привязан к Null Камеры 1): все интро-прекомпы едут за кам1.
@@ -782,24 +781,24 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             // (и все такие же) можно было опустить, не трогая интро на Камере 1
             var iPar = (INTRO_ON2[gI] ? introNull2 : introNull);
             // Масштаб слоя прекомпа = INTRO_SCALE (96.8%%) × ds. ds несёт и ручной масштаб
-            // группы (задание O), и автофит длинных строк (задание BP) — оба считает
+            // группы, и автофит длинных строк — оба считает
             // PYTHON в плане: здесь только применение, вторая копия формулы не заводится.
             // Применённый последним (перед позицией), он не даёт защитам считать
             // неотмасштабированный блок, а превью рисует ту же ds из плана.
             var gDs=(GRP[0].ds||100);
             var iSc=96.8*gDs/100;
-            // опускание блока под INTRO_SAFE_TOP считает PYTHON (задание Q2): iDy живёт
+            // опускание блока под INTRO_SAFE_TOP считает PYTHON: iDy живёт
             // в плане и шаблоне в одном месте, вторая копия формулы не заводится. От
             // неужатого масштаба (см. _intro_i_dy) — автофит режет только Scale.
             var iDy=INTRO_IDY[gI]||0;
-            // Смещение ГРУППЫ (задание E): dx/dy приезжают в головной строке GRP[0] и
+            // Смещение ГРУППЫ: dx/dy приезжают в головной строке GRP[0] и
             // складываются ПОВЕРХ общего сдвига нула (INTRO_Y/INTRO_Y2 висят на нуле) —
             // общий сдвиг остаётся, группа двигается сама по себе. Нет dx/dy в данных
             // (дефолт 0/0) — gDx/gDy нулевые и позиция прежняя.
             var gDx=(GRP[0].dx||0), gDy=(GRP[0].dy||0);
-            if(iPar){ iL.parent=iPar; iL.property("ADBE Transform Group").property("ADBE Position").setValue([gDx,-520.7894+iDy+gDy]); }
-            else iL.property("ADBE Transform Group").property("ADBE Position").setValue([W/2+gDx, H/2-520.7894+iDy+gDy]);
-            try{ iL.property("ADBE Transform Group").property("ADBE Scale").setValue([iSc,iSc]); }catch(e){}
+            if(iPar){ iL.parent=iPar; iL.property("ADBE Transform Group").property("ADBE Position").setValue([gDx,-520.7894+iDy+gDy%(intro_anchor_dy_js)s]); }
+            else iL.property("ADBE Transform Group").property("ADBE Position").setValue([W/2+gDx, H/2-520.7894+iDy+gDy%(intro_anchor_dy_js)s]);
+            try{ iL.property("ADBE Transform Group").property("ADBE Scale").setValue([iSc,iSc]); }catch(e){}%(intro_anchor_set)s
             var iLop=iL.property("ADBE Transform Group").property("ADBE Opacity");
             if(gI==0&&inAt==0){ iLop.setValueAtTime(0,100); }
             else { iLop.setValueAtTime(inAt,0); iLop.setValueAtTime(inAt+F_DUR,100); easePair(iLop); }
@@ -856,7 +855,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
         applyKeyframes(subLayer.property("ADBE Transform Group").property("ADBE Opacity"), SUB_HIDE);
     }
 %(sub_bg_js)s
-    // ---- раскладка слоёв по порядку из стиля (задание FM) ----
+    // ---- раскладка слоёв по порядку из стиля ----
     var LAYER_ORDER = %(layer_order)s;
     var layerGroups = {
         "subs": subLayers,
@@ -905,7 +904,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
 
     try{ if (DISCLAIMER && dl) dl.moveToBeginning(); }catch(e){}   // дисклеймер поверх всего
 %(top_line_js)s%(caption_js)s%(disc_end_js)s%(blur_js)s
-    // Пробная композиция шрифта (задание ZF) своё отработала — в проекте ей делать нечего.
+    // Пробная композиция шрифта своё отработала — в проекте ей делать нечего.
     // Удаляем ДО endUndoGroup: иначе «Отменить» вернёт её в панель проекта.
     if (_fontProbe){ try{ _fontProbe.remove(); }catch(e){ _LOG("пробная композиция шрифта: " + e); } }
 %(dg_report)s%(tail)s})();

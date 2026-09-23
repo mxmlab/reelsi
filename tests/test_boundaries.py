@@ -228,7 +228,7 @@ def test_webp_insert_is_converted_before_it_reaches_ae(tmp_path, monkeypatch):
 def test_webp_insert_is_converted_in_render_prep(tmp_path):
     """Рендер строит .jsx напрямую через to_ae_full, минуя _adopt_inserts: без
     `_convert_inserts` в _run_render_job webp-вставка дошла бы до AE и уронила
-    предполёт (задание BS). Перекодировка кладёт .png РЯДОМ — исходник цел."""
+    предполёт. Перекодировка кладёт .png РЯДОМ — исходник цел."""
     from api.inserts import _convert_inserts
 
     ins = [{"media": _webp(tmp_path), "query": "broken eyeglasses"}]

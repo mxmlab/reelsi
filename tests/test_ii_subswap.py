@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты для задания II:
+"""Тесты:
 
 1. Ключ стиля insert_sub_swap (дефолт True):
    - styles.BASE["insert_sub_swap"] is True

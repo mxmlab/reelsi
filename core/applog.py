@@ -11,6 +11,7 @@ from logging.handlers import RotatingFileHandler
 import os
 
 from core import app_meta, paths
+from core.umsg import ReelsiError
 
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
@@ -39,8 +40,9 @@ def get_logger(name="reelsi"):
                 base_logger.removeHandler(h)
                 try:
                     h.close()
+                except ReelsiError: raise
                 except Exception:
-                    pass
+                    pass  # обработчик уже закрыт — снимаем его с логгера
 
     if not handler_exists:
         log_dir = os.path.dirname(abs_path)
@@ -48,7 +50,7 @@ def get_logger(name="reelsi"):
             try:
                 os.makedirs(log_dir, exist_ok=True)
             except OSError:
-                pass
+                pass  # каталог лога не создать (нет прав) — обработчик с delay=True скажет сам
 
         handler = RotatingFileHandler(
             abs_path,
@@ -73,7 +75,8 @@ def get_logger(name="reelsi"):
                 logger.removeHandler(h)
                 try:
                     h.close()
+                except ReelsiError: raise
                 except Exception:
-                    pass
+                    pass  # обработчик уже закрыт — снимаем его с логгера
 
     return logger

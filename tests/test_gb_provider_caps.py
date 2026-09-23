@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Контракт задания GB: возможности провайдера определяются фактами, а не именем openrouter.
+"""Контракт: возможности провайдера определяются фактами, а не именем openrouter.
 
 1. caps("openai", "deepseek/deepseek-v4-flash") -> reasoning is True, efforts непустой,
    ctx_limit == 1048576, cost is None, catalog_provider == "deepseek".
 2. Регрессия: caps("openrouter", model) -> cost is not None, catalog_provider == "openrouter".
 3. Неизвестная модель ("no-such-vendor/no-such-model") -> все поля None, catalog_provider is None.
-4. gen_image: 3 ветки (в каталоге -> /images; пустой каталог + 404 -> chat fallback; в каталоге + 404 -> SystemExit).
+4. gen_image: 3 ветки (в каталоге -> /images; пустой каталог + 404 -> chat fallback; в каталоге + 404 -> ReelsiError).
 5. Роут /api/ai_models: provider="openai" отдаёт image_models, video_models, caps, reasoning_models.
 """
 import base64
@@ -28,6 +28,7 @@ os.environ.setdefault("REELSI_NO_BROWSER", "1")
 from core.aicut import catalog as catalog
 from core.aicut import images as images
 import api
+from core.umsg import ReelsiError
 
 
 CATALOG_FIXTURE = {
@@ -331,8 +332,8 @@ def test_gen_image_empty_catalog_fallback_to_chat_on_404(monkeypatch):
     assert called_urls == ["https://api.test/v1/images", "https://api.test/v1/chat/completions"]
 
 
-def test_gen_image_in_catalog_raises_systemexit_on_404(monkeypatch):
-    """Ветка 3: Модель в IMAGE_MODELS + 404 от /images -> SystemExit без chat fallback."""
+def test_gen_image_in_catalog_raises_reelsierror_on_404(monkeypatch):
+    """Ветка 3: Модель в IMAGE_MODELS + 404 от /images -> ReelsiError без chat fallback."""
     called_urls = []
 
     def fake_urlopen(req, timeout=None):
@@ -345,7 +346,7 @@ def test_gen_image_in_catalog_raises_systemexit_on_404(monkeypatch):
 
     prof = {"name": "img_prof", "provider": "openai", "base_url": "https://api.test/v1",
             "api_key": "k", "model": "flux-schnell"}
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(ReelsiError) as exc_info:
         images.gen_image("a red cat", prof=prof)
 
     assert "не найдена в Image API" in str(exc_info.value)

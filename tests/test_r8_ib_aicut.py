@@ -26,6 +26,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 
 from core.aicut import commands, llm  # noqa: E402
+from core.umsg import ReelsiError
 
 
 class _Emit:
@@ -161,21 +162,21 @@ SCHEMA = {"required": ["inserts"]}
 def test_обрезанный_ответ_claude_это_отказ_а_не_строка_в_лог(monkeypatch):
     """`stop_reason == "max_tokens"` — оборванный ответ: `_extract_json_obj` возьмёт из
     него последний ЦЕЛЫЙ элемент, `json.loads` пройдёт, и шаг молча отдаст пустой
-    результат. У OpenAI тут отказ — теперь и у Claude (IB, п. 5)."""
+    результат. У OpenAI тут отказ — теперь и у Claude."""
     stub = _anthropic_stub([_Resp('{"inserts": [', stop_reason="max_tokens", out_tokens=42)])
     monkeypatch.setitem(sys.modules, "anthropic", stub)
 
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(ReelsiError) as e:
         llm._ask_anthropic(PROF, "sys", "user", SCHEMA, emit=_Emit())
 
-    err = e.value.code
+    err = e.value.umsg
     assert getattr(err, "code", None) == "output_cut", f"не отказ провайдера: {err!r}"
     assert err.vars.get("tokens") == 42, err.vars
 
 
 def test_нет_обязательного_поля_ответ_повторяется(monkeypatch):
     """Схема могла не примениться: без проверки `required` шаг возвращал `{}` как
-    результат, и вызывающий видел «вставок: 0» вместо повтора (IB, п. 5)."""
+    результат, и вызывающий видел «вставок: 0» вместо повтора."""
     stub = _anthropic_stub([_Resp('{"other": 1}'), _Resp('{"inserts": [{"a": 1}]}')])
     monkeypatch.setitem(sys.modules, "anthropic", stub)
 
@@ -189,10 +190,10 @@ def test_обязательных_полей_нет_во_всех_попытка
     stub = _anthropic_stub([_Resp('{"other": 1}'), _Resp('{"other": 2}')])
     monkeypatch.setitem(sys.modules, "anthropic", stub)
 
-    with pytest.raises(SystemExit) as e:
+    with pytest.raises(ReelsiError) as e:
         llm._ask_anthropic(PROF, "sys", "user", SCHEMA, retries=1, emit=_Emit())
 
-    assert getattr(e.value.code, "code", None) == "bad_json", repr(e.value.code)
+    assert getattr(e.value.umsg, "code", None) == "bad_json", repr(e.value.umsg)
     assert len(stub.calls) == 2, "повтора не было"
 
 

@@ -4,11 +4,11 @@
 """
 import os, threading, traceback, urllib.parse
 from flask import request, jsonify, send_file, Response
-from core.fileio import atomic_json_dump
+from core.project_file import write_project
 from ._core import (JOB, LOCK, bp, emit, item_done, item_fail, item_set, items_init, job_finish,
                     job_start, journal_touch, set_progress, _never_serve, umsg_err,
                     _cross_lock_release, jstr, sysexit_text)
-from core.umsg import umsg
+from core.umsg import ReelsiError, umsg
 from .editor import _ensure_project, _sidecar_yellow, _sidecar_caption
 from .inserts import _adopt_inserts, _insert_dest
 
@@ -19,7 +19,7 @@ from .inserts import _adopt_inserts, _insert_dest
 # ==========================================================================
 
 def _num_field(d, key, default=0.0):
-    """Числовое поле тела запроса (задание IC, п. 1).
+    """Числовое поле тела запроса.
 
     Нечисловое значение раньше доезжало до `float()` и падало ValueError'ом с
     текстом питона («could not convert string to float: 'abc'»), который роут
@@ -57,7 +57,7 @@ def _norm_build_jobs(jobs_in):
     norm = []
     for j in jobs_in:
         if not isinstance(j, dict):
-            # {"jobs": [123]}: раньше это был AttributeError и 500 у роута (задание IC, п. 1)
+            # {"jobs": [123]}: раньше это был AttributeError и 500 у роута
             raise ValueError(f"Элемент набора должен быть объектом, получено: {j!r}")
         xml = jstr(j, "xml").strip().strip('"')
         if not os.path.isfile(xml):
@@ -78,7 +78,7 @@ def _norm_build_jobs(jobs_in):
         st = styles.resolve(style)
         norm.append(dict(
             xml_path=xml,
-            # Папка для .jsx ИМЕННО этого клипа (задание N): тег спикера определяет
+            # Папка для .jsx ИМЕННО этого клипа: тег спикера определяет
             # её у клипа, и каждый собирается в свою. Пусто = глобальное поле.
             outdir=jstr(j, "outdir").strip().strip('"') or None,
             music=jstr(j, "music").strip() or None,
@@ -89,7 +89,7 @@ def _norm_build_jobs(jobs_in):
             hl_count=j.get("hl_count") or [],
             hl_joins=j.get("hl_joins") or [],
             # Элемент списка вставок не объект — пропускаем: дальше по коду у каждой
-            # вставки читаются поля (задание IC, п. 2), и на числе это был бы 500.
+            # вставки читаются поля, и на числе это был бы 500.
             inserts=[x for x in (j.get("inserts") or []) if isinstance(x, dict)],
             intro=j.get("intro") or [],
             intro_remove=j.get("intro_remove") or [],
@@ -109,22 +109,22 @@ def _norm_build_jobs(jobs_in):
 
 
 def _norm_or_error(jobs, code):
-    """Нормализация набора клипов с единой обработкой ошибок для build_run и render_run (задание IW, п. 2)."""
+    """Нормализация набора клипов с единой обработкой ошибок для build_run и render_run."""
     try:
         return _norm_build_jobs(jobs)
     except ValueError as e:
         msg = str(e)
         if msg.startswith("Файл не найден: "):
-            raise SystemExit(umsg("file_not_found", msg,
+            raise ReelsiError(umsg("file_not_found", msg,
                                   path=msg.split("Файл не найден: ", 1)[-1], err=msg))
         if code == "render_set_invalid":
-            raise SystemExit(umsg("render_set_invalid", msg, err=msg))
-        raise SystemExit(umsg("build_set_invalid", msg, err=msg))
+            raise ReelsiError(umsg("render_set_invalid", msg, err=msg))
+        raise ReelsiError(umsg("build_set_invalid", msg, err=msg))
     except (TypeError, AttributeError) as e:
         err = f"{type(e).__name__}: {e}"
         if code == "render_set_invalid":
-            raise SystemExit(umsg("render_set_invalid", f"Некорректный набор: {err}", err=err))
-        raise SystemExit(umsg("build_set_invalid", f"Некорректный набор: {err}", err=err))
+            raise ReelsiError(umsg("render_set_invalid", f"Некорректный набор: {err}", err=err))
+        raise ReelsiError(umsg("build_set_invalid", f"Некорректный набор: {err}", err=err))
 
 
 def _run_build_job(norm, mode, outdir):
@@ -139,7 +139,7 @@ def _run_build_job(norm, mode, outdir):
         if moved:
             with LOCK:
                 JOB["insmoved"] = moved  # фронт починит пути у себя, когда джоб добежит
-        # Очередь этапов по стемам набора (задание FA): элементы заводятся по клипам
+        # Очередь этапов по стемам набора: элементы заводятся по клипам
         # даже в combined-режиме — видно, какие клипы вошли в общий .jsx.
         items_init(JOB, LOCK, [os.path.splitext(os.path.basename(j["xml_path"]))[0] for j in norm])
         stopped = lambda: bool(JOB["cancel"])   # «Стоп» проверяется ВНУТРИ файла (рото), не только между
@@ -173,7 +173,7 @@ def _run_build_job(norm, mode, outdir):
             # outdir — параметр СБОРКИ, а не плана сцены: build_combined отдаёт весь
             # словарь в to_ae_full(**kw) -> scene_plan, и лишний ключ ронял общий .jsx
             # (TypeError: scene_plan() got an unexpected keyword argument 'outdir')
-            # с тех пор, как у клипа появилась своя папка по тегу спикера (задание N).
+            # с тех пор, как у клипа появилась своя папка по тегу спикера.
             # В поштучной ветке и в рендере он снимается так же.
             jobs = [{k: v for k, v in j.items() if k != "outdir"} for j in norm]
             for j in jobs:
@@ -182,7 +182,7 @@ def _run_build_job(norm, mode, outdir):
                 path, n = xml2ae.build_combined(jobs, os.path.join(od, "Reelsi_all.jsx"),
                                                 emit=emit, cancel=stopped,
                                                 progress=set_progress)
-                # Результат ОДИН на весь набор, а элементы — по клипам (задание FA):
+                # Результат ОДИН на весь набор, а элементы — по клипам:
                 # при успехе все они получают done с путём общего .jsx. Пишем под тем же
                 # локом, где появляется result, — threading.Lock нереентерабелен, поэтому
                 # помощник item_done (он сам берёт лок и КЛАДЁТ в bucket) тут не зовём:
@@ -193,12 +193,13 @@ def _run_build_job(norm, mode, outdir):
                         if it.get("stage") == "wait":
                             it.update(stage="done", path=str(path), pct=None)
                 # Элементы очереди поменялись мимо item_done (результат-то один на набор,
-                # задание FA) — снимок в журнале заданий обновляем здесь же (задание NC).
+                # ) — снимок в журнале заданий обновляем здесь же.
                 journal_touch(JOB)
                 emit("-> {path} ({count} комп.)", path=path, count=n)
             except xml2ae.Cancelled:
                 emit("⏹ Остановлено пользователем — общий .jsx не записан "
                      "(готовые маски рото остались в кэше).")
+            except ReelsiError: raise
             except Exception:
                 emit("ОШИБКА:\n{tb}", tb=traceback.format_exc())
         else:
@@ -209,9 +210,9 @@ def _run_build_job(norm, mode, outdir):
                     break
                 stem = os.path.splitext(os.path.basename(j["xml_path"]))[0]
                 emit("[{i}/{n}] {stem} — сборка .jsx…", i=i, n=len(norm), stem=stem)
-                set_progress(i, len(norm))
-                item_set(JOB, LOCK, stem, stage="jsx")   # очередь этапов (задание FA)
-                # Папка клипа — из тега спикера (задание N); глобальное поле — запасной
+                set_progress(i, len(norm), stem)
+                item_set(JOB, LOCK, stem, stage="jsx")   # очередь этапов
+                # Папка клипа — из тега спикера; глобальное поле — запасной
                 # путь. Пусто у обоих = рядом со своим XML, как всегда.
                 od = j.get("outdir") or outdir or os.path.dirname(j["xml_path"])
                 if od not in printed:
@@ -222,7 +223,7 @@ def _run_build_job(norm, mode, outdir):
                 try:
                     p, nc, ns = xml2ae.to_ae_full(j["xml_path"], os.path.join(od, stem + ".jsx"),
                                                   emit=emit, cancel=stopped, **kw)
-                    # Одно место записи «готово» (задание FA): item_done и кладёт путь
+                    # Одно место записи «готово»: item_done и кладёт путь
                     # в results, и переводит элемент в done — вторым местом их не развести.
                     item_done(JOB, LOCK, stem, p)
                     # Полный путь, а не одно имя: «куда положил» — первый вопрос,
@@ -232,26 +233,28 @@ def _run_build_job(norm, mode, outdir):
                 except xml2ae.Cancelled:
                     emit("  ⏹ Остановлено пользователем — файл не записан.")
                     break
-                except SystemExit as e:
+                except (ReelsiError, SystemExit) as e:
                     # «Рото не посчитано…» и прочие umsg-ошибки xml2ae — SystemExit, не
                     # Exception: без этой ветки они уходили из потока мимо лога и failed,
                     # и человек видел «Сборка завершена» без единого собранного файла
-                    # (задание MX). Путь провала тот же, текст — понятный, из umsg.
+                    # Путь провала тот же, текст — понятный, из umsg.
                     txt = sysexit_text(e)
                     emit("  ОШИБКА: {err}", err=txt)
                     item_fail(JOB, LOCK, stem, txt)
+                except ReelsiError: raise
                 except Exception:
                     tb = traceback.format_exc()
                     emit("  ОШИБКА:\n{tb}", tb=tb)
                     item_fail(JOB, LOCK, stem, tb.strip().splitlines()[-1])
         emit("\nСборка завершена.")
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         # Тот же путь, что у Exception ниже: печатаем причину и метим падение задания.
         # «Сборка завершена» при этом не печатается — до неё управление не доходит.
         txt = sysexit_text(e)
         emit("ОШИБКА (сборка прервана): {err}", err=txt)
         with LOCK:
             JOB["failed"].append({"name": "сборка", "reason": txt})
+    except ReelsiError: raise
     except Exception:
         tb = traceback.format_exc()
         emit("ОШИБКА (сборка прервана):\n{tb}", tb=tb)
@@ -268,22 +271,23 @@ def api_build_run():
     d = request.get_json() or {}
     if not isinstance(d, dict):
         # Тело-массив или строка: `d.get` упал бы AttributeError'ом (500). Набор
-        # приходит объектом — всё прочее это «набор не передан» (задание IC, п. 1).
-        return jsonify(**umsg_err(SystemExit(umsg("build_set_invalid",
+        # приходит объектом — всё прочее это «набор не передан».
+        return jsonify(**umsg_err(ReelsiError(umsg("build_set_invalid",
             "Тело запроса должно быть объектом с полем jobs"))))
     try:
         norm = _norm_or_error(d.get("jobs") or [], "build_set_invalid")
         if not norm:
-            raise SystemExit(umsg("set_empty", "Набор пуст"))
+            raise ReelsiError(umsg("set_empty", "Набор пуст"))
         for j in norm:
             j["insdest"] = _insert_dest(d)     # куда прибирать вставки (снимается в _run_build_job)
         if not job_start(kind="build", label="Сборка .jsx"):
-            raise SystemExit(umsg("busy_wait", "Уже выполняется другая задача — дождись или смотри Логи"))
+            raise ReelsiError(umsg("busy_wait", "Уже выполняется другая задача — дождись или смотри Логи"))
         try:
             threading.Thread(target=_run_build_job,
                              args=(norm, jstr(d, "mode") or "separate",
                                    jstr(d, "outdir").strip().strip('"')),
                              daemon=True).start()
+        except ReelsiError: raise
         except Exception:
             # Поток не родился (RuntimeError: can't start new thread) — отпускаем ровно
             # то, что занял job_start: иначе лок и JOB["running"] висели бы до перезапуска
@@ -293,7 +297,7 @@ def api_build_run():
             _cross_lock_release()
             raise
         return jsonify(ok=True)
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -307,7 +311,7 @@ def api_cams_load():
     xml = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml):
-            raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml}",
                                   path=xml))
         try:
             p = _ensure_project(xml)
@@ -330,10 +334,11 @@ def api_cams_load():
             return jsonify(ok=True, n=N, fps=p.get("fps", 60), total=round(tl, 1),
                            names=[os.path.basename(c) for c in cams], segs=segs,
                            assign=[int(x) for x in assign], manual=isinstance(stored, list))
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("cams_load_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("cams_load_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -351,19 +356,19 @@ def api_cams_save():
     d = request.get_json() or {}
     xml = jstr(d, "xml").strip().strip('"')
     # Не список (число, строка, объект) — это «ничего не пришло», а не TypeError
-    # на len(): до правки `{"assign": 5}` роняло роут в 500 (задание IC, п. 2).
+    # на len(): до правки `{"assign": 5}` роняло роут в 500.
     raw_assign = d.get("assign")
     assign_in = raw_assign if isinstance(raw_assign, list) else []
     try:
         if not os.path.isfile(xml):
-            raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml}",
                                   path=xml))
         try:
             p = _ensure_project(xml)
             cams = p["cams"]; offsets = p["offsets"]; N = len(cams)
             keep = [(float(s), float(e)) for s, e in p.get("keep", [])]
             if len(assign_in) != len(keep):
-                raise SystemExit(umsg("sync_mismatch",
+                raise ReelsiError(umsg("sync_mismatch",
                     f"Рассинхрон: сегментов {len(keep)}, камер {len(assign_in)} — перезагрузи окно",
                     segs=len(keep), cams=len(assign_in)))
             assign = [max(0, min(N - 1, int(x))) for x in assign_in]
@@ -375,22 +380,23 @@ def api_cams_save():
                 info = xmlbuild.build(cams, keep, offsets, xml,
                                       assign=(assign if N > 1 else None),
                                       scale=p.get("scale", 50.4), sub_words=sub_words, music_path=None)
-            except SystemExit as e:
+            except (ReelsiError, SystemExit) as e:
                 # Пустой монтаж: build файл не тронул — текст гарда отдаём как есть.
-                raise SystemExit(umsg("cams_save_failed", str(e), err=str(e)))
+                raise ReelsiError(umsg("cams_save_failed", str(e), err=str(e)))
             from core import xml2ae
             xml2ae.write_srt_for(xml)
             colored = 0
             if yellow:
                 colored = len(xml2ae.write_highlights(xml, yellow).get("colored", []))
             p["assign"] = assign
-            atomic_json_dump(os.path.splitext(xml)[0] + ".project.json", p, indent=1)
+            write_project(os.path.splitext(xml)[0] + ".project.json", p)
             return jsonify(ok=True, segs=len(keep), dur=round(info.get("total_s", 0), 1),
                            subs=(len(sub_words) if sub_words else 0), yellow=colored)
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("cams_save_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("cams_save_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -399,7 +405,7 @@ def _int_body_field(d, key, default):
 
     Нужно там, где раньше битое значение подменялось на «-1» и роут отвечал
     посторонней ошибкой: `/api/swap_cam` с `cam: "abc"` говорил «Камеру 1 менять
-    нельзя» (задание IC, п. 7)."""
+    нельзя»."""
     v = d.get(key)
     if v is None:
         return default
@@ -432,22 +438,22 @@ def api_swap_cam():
     xml = jstr(d, "xml").strip().strip('"')
     k = _int_body_field(d, "cam", 1)     # 0 — валидный индекс (guard ниже отклонит)
     if k is None:
-        return jsonify(**umsg_err(SystemExit(umsg("bad_cam",
+        return jsonify(**umsg_err(ReelsiError(umsg("bad_cam",
                                                   "Номер камеры должен быть целым числом"))))
     new_path = jstr(d, "path").strip().strip('"')
     try:
         if not os.path.isfile(xml):
-            raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml}",
                                   path=xml))
         if not os.path.isfile(new_path):
-            raise SystemExit(umsg("cam_file_not_found", f"Новый файл камеры не найден: {new_path}",
+            raise ReelsiError(umsg("cam_file_not_found", f"Новый файл камеры не найден: {new_path}",
                                   path=new_path))
         try:
             p = _ensure_project(xml)
             cams = list(p["cams"]); offsets = list(p.get("offsets") or [0.0] * len(cams))
             N = len(cams)
             if k < 1 or k >= N:
-                raise SystemExit(umsg("cam1_immutable",
+                raise ReelsiError(umsg("cam1_immutable",
                     f"Камеру 1 (звук) менять нельзя; допустимо 2..{N}" if N > 1
                     else "У клипа одна камера — менять вторую нечего", n=N))
             keep = [(float(s), float(e)) for s, e in p.get("keep", [])]
@@ -481,21 +487,22 @@ def api_swap_cam():
             try:
                 xmlbuild.build(cams, keep, offsets, xml, assign=assign,
                                scale=p.get("scale", 50.4), sub_words=sub_words, music_path=None)
-            except SystemExit as e:
+            except (ReelsiError, SystemExit) as e:
                 # Пустой монтаж: build файл не тронул — текст гарда отдаём как есть.
-                raise SystemExit(umsg("swap_cam_failed", str(e), err=str(e)))
+                raise ReelsiError(umsg("swap_cam_failed", str(e), err=str(e)))
             colored = 0
             if yellow:                                       # вернуть жёлтые (в XML) — цвет с аудио cam1
                 colored = len(xml2ae.write_highlights(xml, yellow).get("colored", []))
             p["cams"] = cams; p["offsets"] = offsets
-            atomic_json_dump(os.path.splitext(xml)[0] + ".project.json", p, indent=1)
+            write_project(os.path.splitext(xml)[0] + ".project.json", p)
             return jsonify(ok=True, offset=round(float(off), 3), conf=round(float(conf), 2),
                            low_conf=(conf < 0.30), subs=(len(sub_words) if sub_words else 0),
                            yellow=colored, name=os.path.basename(new_path))
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("swap_cam_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("swap_cam_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -515,10 +522,10 @@ def api_export_xml():
     сверено с экспортом самого Премьера, отличий больше нет ни одного.
     """
     path = (request.args.get("path") or "").strip().strip('"')
-    # Расширение — ДО чтения файла (задание IC, п. 9): роут читал ЛЮБОЙ файл по пути
+    # Расширение — ДО чтения файла: роут читал ЛЮБОЙ файл по пути
     # (`/proc/self/environ` на Linux), а при сбое разбора отдавал его вложением.
     # Теперь .xml (без учёта регистра) — условие входа, остальное 403 как у /api/media.
-    # Расширение должно быть .xml и у присланного пути, и у realpath (задание LB):
+    # Расширение должно быть .xml и у присланного пути, и у realpath:
     # симлинк x.xml -> ai_config.json или y.xml -> secret.txt иначе отдаёт секрет вложением.
     if not path:
         return ("not found", 404)
@@ -526,6 +533,7 @@ def api_export_xml():
         return ("forbidden", 403)
     try:
         real_ext = os.path.splitext(os.path.realpath(path))[1].lower()
+    except ReelsiError: raise
     except Exception:
         real_ext = ""
     if real_ext != ".xml":
@@ -538,6 +546,7 @@ def api_export_xml():
     try:
         text = open(path, encoding="utf-8", newline="").read()
         text, n = xmlbuild.fix_timecodes(text)
+    except ReelsiError: raise
     except Exception:                       # не смогли починить — отдаём как есть
         return send_file(path, as_attachment=True, download_name=os.path.basename(path))
     name = urllib.parse.quote(os.path.basename(path))   # кириллица в имени -> RFC 5987
@@ -560,7 +569,7 @@ def api_export_drp():
     xml = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml):
-            raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml}",
                                   path=xml))
         if _never_serve(xml):
             return ("forbidden", 403)
@@ -570,13 +579,13 @@ def api_export_drp():
             p = _ensure_project(xml)
             cams = p.get("cams") or []
             if not cams:
-                raise SystemExit(umsg("no_cams_sidebar", "В сайдбаре нет камер — нарезку не собрать"))
+                raise ReelsiError(umsg("no_cams_sidebar", "В сайдбаре нет камер — нарезку не собрать"))
             # Частота проекта. Раньше стоял int(...): NTSC 29.97 усекался до 29, а
             # шаблон .drp — таймлайн 60 fps (docs/DRP_SPEC.md), и кадры в него уезжали
             # посчитанными в чужой частоте. Молча собирать неверный .drp нельзя.
             fps = float(p.get("fps") or 60)
             if abs(fps - 60) > 1e-6:
-                raise SystemExit(umsg("drp_fps_unsupported",
+                raise ReelsiError(umsg("drp_fps_unsupported",
                                       f"Экспорт в DaVinci Resolve пока только для таймлайна 60 fps (у клипа {fps:g})",
                                       fps=fps))
             keep = [(float(s), float(e)) for s, e in (p.get("keep") or [])]
@@ -598,7 +607,7 @@ def api_export_drp():
             yellow = _sidecar_yellow(xml)
             inserts = []
             for x in (d.get("inserts") or []):
-                if not isinstance(x, dict):     # элемент не объект — пропуск (задание IC, п. 2)
+                if not isinstance(x, dict):     # элемент не объект — пропуск
                     continue
                 media = jstr(x, "media").strip().strip('"')
                 if not media or not os.path.isfile(media):
@@ -619,21 +628,22 @@ def api_export_drp():
                 try:
                     os.remove(tmp)
                 except OSError:
-                    pass
+                    pass  # временный .drp уже убран (или не создавался)
             if not data:
-                raise SystemExit(umsg("drp_empty", "Сборка .drp вернула пустой файл"))
+                raise ReelsiError(umsg("drp_empty", "Сборка .drp вернула пустой файл"))
             fname = urllib.parse.quote(stem + ".drp")
             return Response(data, mimetype="application/octet-stream", headers={
                 "Content-Disposition": f"attachment; filename*=UTF-8''{fname}"})
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("export_drp_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("export_drp_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
 # ==========================================================================
-# План сцены (задание C): вся арифметика сборки без .jsx и рото-масок.
+# План сцены: вся арифметика сборки без .jsx и рото-масок.
 # ==========================================================================
 
 @bp.route("/api/scene", methods=["POST"])
@@ -647,7 +657,7 @@ def api_scene():
     xml = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml):
-            raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml}",
                                   path=xml))
         try:
             jobs = _norm_build_jobs([d])
@@ -657,8 +667,9 @@ def api_scene():
             plan = xml2ae.scene_plan(**job)
             plan.pop("_ae", None)          # служебное для сборки .jsx — не контракт плана
             return jsonify(ok=True, plan=plan)
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("scene_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("scene_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))

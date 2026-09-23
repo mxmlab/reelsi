@@ -40,6 +40,7 @@ from core.insertlib import (AE_UNSUPPORTED as AE_BAD_IMAGE,   # noqa: E402  webp
                        AE_BAD_VCODEC,                    # noqa: E402  av1/vp9 — тоже роняет importFile
                        image_real_format,                # noqa: E402  содержимое не совпадает с расширением
                        _vcodec)                          # noqa: E402  кодек виден только ffprobe'ом
+from core.umsg import ReelsiError, cli_error
 
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".psd", ".ai", ".exr", ".tga"}
 VIDEO_EXT = {".mp4", ".mov", ".avi", ".mkv", ".mxf", ".m4v", ".webm", ".mpg", ".mpeg"}
@@ -133,13 +134,14 @@ def check_syntax(path, raw, rep):
         if p.returncode != 0:
             first = (p.stderr or "").strip().splitlines()
             rep.err("синтаксис JS битый: " + (first[1] if len(first) > 1 else (first[0] if first else "?")))
+    except ReelsiError: raise
     except Exception as e:                                  # noqa: BLE001
         rep.warn("не удалось прогнать node --check: %s" % e)
     finally:
         try:
             os.remove(tmp)
         except OSError:
-            pass
+            pass  # временный .js уже убран
 
 
 def strip_js(raw):
@@ -294,6 +296,7 @@ def _image_mode(path):
     try:
         with Image.open(path) as im:
             return im.mode
+    except ReelsiError: raise
     except Exception:                                       # noqa: BLE001
         return None
 
@@ -395,7 +398,7 @@ def check_inserts(inserts, rep):
         start, end = x.get("start"), x.get("end")
         if start is None or end is None or not (start < end):
             rep.err("%s: start >= end (%s >= %s)" % (tag, start, end))
-        # геометрия из Python (задание B): видео — масштаб заполнения + запас панорамы,
+        # геометрия из Python: видео — масштаб заполнения + запас панорамы,
         # фото — окна входа/выхода. Поле отсутствует, если размер не прочитался — это ок.
         fit = x.get("fit")
         if fit is not None and not (isinstance(fit, (int, float)) and fit > 0):
@@ -486,6 +489,7 @@ def cross_check_xml(xml_path, structs, rep, ncams=None):
         return
     try:
         meta, cams, subs, ins = xml2ae.parse_full(xml_path, ncams=ncams)
+    except ReelsiError: raise
     except Exception as e:                                  # noqa: BLE001
         rep.err("parse_full упал на %s: %s" % (os.path.basename(xml_path), e))
         return
@@ -581,8 +585,9 @@ def main(argv=None):
 
     try:                                                    # кириллица в cp1251-консоли
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except ReelsiError: raise
     except Exception:                                       # noqa: BLE001
-        pass
+        pass  # поток без reconfigure — отчёт напечатается как есть
 
     files = _targets(a.paths)
     if not files:
@@ -611,4 +616,7 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except ReelsiError as e:
+        cli_error(e)

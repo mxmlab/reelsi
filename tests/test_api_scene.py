@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""/api/scene (задание C): план сцены по тем же полям, что фоновая сборка, только
+"""/api/scene: план сцены по тем же полям, что фоновая сборка, только
 без .jsx и рото-масок — быстрый вызов для фронта/предпросмотра."""
 import os
 import sys

@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Сторож метаданных пакета в pyproject.toml (задание HG).
+"""Сторож метаданных пакета в pyproject.toml.
 
 Проверяет:
 1. pyproject.toml существует в корне репозитория;
 2. версия пакета в pyproject.toml соответствует app_meta.APP_VERSION
-   после нормализации к форме PEP 440 (например, '0.1.0-beta' -> '0.1.0b0');
+   после нормализации к форме PEP 440 (например, '0.2.0-beta' -> '0.2.0b0');
 3. requires-python = '>=3.10';
 4. базовые метаданные (name, readme, license) соответствуют проекту.
 
@@ -30,6 +30,7 @@ ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 
 from core import app_meta, paths
+from core.umsg import ReelsiError
 
 
 def _pep440_version(raw_version: str) -> str:
@@ -201,9 +202,9 @@ def test_require_source_tree(tmp_path, monkeypatch):
     # Внутри клона проходит без исключений
     paths.require_source_tree()
 
-    # В пустой временной папке падает SystemExit
+    # В пустой временной папке падает ReelsiError
     monkeypatch.setattr(paths, "ROOT", str(tmp_path))
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(ReelsiError) as exc_info:
         paths.require_source_tree()
     err_msg = str(exc_info.value)
     assert "pip install -e ." in err_msg

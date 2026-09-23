@@ -10,6 +10,7 @@ import time as _time
 import numpy as np
 from scipy.io import wavfile
 from core.fileio import atomic_bytes_write
+from core.umsg import ReelsiError
 
 SR = 16000  # analysis sample rate (mono)
 
@@ -59,9 +60,9 @@ def _prune_env_cache(ttl_days=None):
                 if now - os.path.getmtime(p) > ttl:
                     os.unlink(p)
             except OSError:
-                pass
+                pass  # файл кэша уже убран
     except OSError:
-        pass
+        pass  # каталога кэша нет — чистить нечего
 
 
 def _load(wav_path):
@@ -182,6 +183,7 @@ def video_envelope(video):
     try:
         if os.path.isfile(p):
             return np.load(p), SR / 160.0
+    except ReelsiError: raise
     except Exception:
         pass   # битый кэш — пересоберём
     fd, wav = tempfile.mkstemp(suffix=".wav", prefix="reelsi_env_")
@@ -193,7 +195,7 @@ def video_envelope(video):
         try:
             os.unlink(wav)
         except OSError:
-            pass
+            pass  # временный wav уже убран
     buf = io.BytesIO()
     np.save(buf, e)
     # Атомарно (core.fileio): огибающую читает и ДРУГОЙ процесс (подбор камер), а

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты задания CH: строки субтитров (группировка, перенос на 2 строки, .jsx, .srt)."""
+"""Тесты: строки субтитров (группировка, перенос на 2 строки.jsx.srt)."""
 import gzip
 import os
 import shutil
@@ -131,7 +131,7 @@ def test_sub_words_per_row_1_identical_output(xml_subs, tmp_path):
 
 def test_sub_words_per_row_3_on_real_xml(xml_subs, tmp_path):
     # Интро в этом тесте — настоящее: слова интро вынимаются из субтитров (intro_remove),
-    # и в режиме строк интро собирается так же, как по слову (задание ZL; CH запрещал его).
+    # и в режиме строк интро собирается так же, как по слову (CH запрещал его).
     intro = [dict(words=["ПЕРВОЕ"], color="white", times=[1.0])]
     get = dict(intro=intro, intro_remove=[0], intro_splits=[1], disclaimer="")
     p_w1 = xml2ae.scene_plan(xml_subs, style={"sub_words_per_row": 1}, **get)
@@ -188,7 +188,7 @@ def test_build_sub_rows_words_per_row_and_max_rows():
 
 
 def test_two_rows_wrapping_vs_font_shrinking(xml_subs, tmp_path):
-    # Тест двухстрочного переноса при sub_rows_max = 2 vs 1 на длинном тексте (задание CJ)
+    # Тест двухстрочного переноса при sub_rows_max = 2 vs 1 на длинном тексте
     meta, cams, subs_list, xml_inserts = xml2ae.parse_full(xml_subs)
     st_wrap2 = {"sub_words_per_row": 6, "sub_rows_max": 2}
     st_wrap1 = {"sub_words_per_row": 6, "sub_rows_max": 1}
@@ -200,7 +200,7 @@ def test_two_rows_wrapping_vs_font_shrinking(xml_subs, tmp_path):
     assert any(s.get("row") == 1 for s in p_wrap2["subs"])
     assert all(s.get("row") == 0 for s in p_wrap1["subs"])
 
-    # sub_step в плане равен 1.18 * fsize, у отдельных строк fsize и sub_step отсутствуют (задание CK)
+    # sub_step в плане равен 1.18 * fsize, у отдельных строк fsize и sub_step отсутствуют
     assert "sub_step" in p_wrap2
     assert p_wrap2["sub_step"] == round(p_wrap2["fsize"] * 1.18, 2)
     for s in p_wrap2["subs"]:

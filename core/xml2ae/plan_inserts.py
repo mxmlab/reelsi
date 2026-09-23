@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Вставки плана сцены (задание MT, этап 3 распила scene_plan).
+"""Вставки плана сцены (этап 3 распила scene_plan).
 
 `scene_plan` был одной функцией на 3253 строки с 24 вложенными функциями, делившими
-состояние замыканиями. Этапы 1–2 (задания MR/MS) вынесли блок субтитров в `plan_subs.py`
+состояние замыканиями. Этапы 1–2 вынесли блок субтитров в `plan_subs.py`
 и расчёт интро в `plan_intro.py`; этап 3 выносит сюда ВСЕ вставки:
 
 * разбор таймингов и привязка к монтажу — секунды старта/конца (сек+кадры и легаси-кадры),
@@ -27,10 +27,11 @@
 делает scene_plan) и отдаёт `clip_end` — замыкание прижима/среза окна: сборка данных
 пользуется им же, второй копии правила среза нет.
 
-Общее с другими блоками остаётся в `build.py` и приходит параметрами: `_sv`/`_sv_or`
-(дефолты ключей стиля), `_active_cam_at` (его зовут и камера, и интро), `_cam_change_sec`
-(по тем же точкам ставятся звуки переходов) и `_media_dims` (его подменяют в модуле build —
-tests/test_insert_video_pan.py). Геометрия вставок — из `layout.py` (`_fit_scale`,
+Общее с другими блоками остаётся в `build.py` и приходит параметрами: `_active_cam_at`
+(его зовут и камера, и интро), `_cam_change_sec` (по тем же точкам ставятся звуки
+переходов) и `_media_dims` (его подменяют в модуле build — tests/test_insert_video_pan.py).
+Стиль приходит структурой `StyleValues` одним полем `style` (её читает один
+раз `plan_style.read_style`). Геометрия вставок — из `layout.py` (`_fit_scale`,
 `_ins_card`, `_cam1_pos_keys`, `_anim_keys`, …), признак картинки — `_is_image` из `parse.py`.
 """
 import os
@@ -43,6 +44,7 @@ from .layout import (INS_C2_BASE, INS_C2_PEAK, INS_C1_HIGH, INS_EXIT, INS_RISE_D
                      _cam1_pos_keys, _fill_slack, _fit_scale, _ins_card,
                      _ins_enter_exit, _ins_plate, _ins_scale)
 from .parse import _is_image
+from .plan_style import StyleValues
 
 
 @dataclass(frozen=True)
@@ -52,7 +54,8 @@ class InsertTimingInputs:
     Поля названы как локальные переменные scene_plan. `inserts` — копии словарей
     (scene_plan делает их сам): модуль правит их ПО МЕСТУ, как правил блок в scene_plan.
     `cam_change_sec` считается в build.py не здесь: по тем же точкам ставятся звуки
-    переходов — второй копии точек смены камеры не заводится.
+    переходов — второй копии точек смены камеры не заводится. `style` — структура
+    стиля, прочитанная один раз.
     """
     # Вставки: свои из UI плюс разобранные из XML (сек+кадры или легаси-кадры).
     inserts: list
@@ -62,10 +65,8 @@ class InsertTimingInputs:
     cam_change_sec: list
     # Индекс камеры в момент t: правило общее с камерой и интро (build.py).
     active_cam_at: Callable[[float], int]
-    # Резолвнутый стиль и обёртки чтения его ключей.
-    st: dict
-    sv: Callable[[dict, str], object]
-    sv_or: Callable[[dict, str], object]
+    # Резолвнутый и прочитанный стиль (plan_style.read_style).
+    style: StyleValues
     # Лог: сюда уходит сообщение о переносе вставки, срезанной катом.
     emit: Callable[..., object]
 
@@ -88,7 +89,9 @@ class InsertsInputs:
 
     Поля названы как локальные переменные scene_plan (`meta` — ролик: тело читает
     `meta["w"]`/`["h"]`/`["fps"]`). `clip_end` — результат `plan_insert_timings`:
-    срез окна катом остаётся ОДНИМ правилом.
+    срез окна катом остаётся ОДНИМ правилом. Стилевые значения (подложка, анимация,
+    точки покоя кам1/кам2, эффекты, «видео за человеком») приходят структурой `style`,
+    прочитанной один раз: поимённого перечисления ключей больше нет.
     """
     # Подготовленные вставки (тайминги, тип, стиль) — из plan_insert_timings.
     inserts: list
@@ -98,18 +101,8 @@ class InsertsInputs:
     clip_end: Callable[..., tuple]
     # Размеры файла: build.py отдаёт свой _media_dims (тесты подменяют его в build).
     media_dims: Callable[[str], object]
-    # Подложка фото-вставок: файл из стиля и его масштаб (задание ZK).
-    plate_path: str
-    plate_scale: float
-    # Стиль анимации вставок: наезд (по умолчанию) | rise | none (задания DD/FC).
-    insert_anim: str
-    st: dict
-    sv_or: Callable[[dict, str], object]
-    # Точка покоя вставок кам1 и кам2, px (задания Q/CB): уже с макетом спикера.
-    ins_c1x: float
-    ins_c1y: float
-    ins_c2x: float
-    ins_c2y: float
+    # Резолвнутый и прочитанный стиль (plan_style.read_style).
+    style: StyleValues
     # Лог: сюда уходит сообщение о снятом фоне (nobg_path).
     emit: Callable[..., object]
 
@@ -139,9 +132,8 @@ def plan_insert_timings(inp: InsertTimingInputs) -> InsertTimings:
     _fps0 = inp.fps
     _cam_change_sec = inp.cam_change_sec
     _active_cam_at = inp.active_cam_at
-    st = inp.st
-    # Общие с другими блоками обёртки — по-прежнему в build.py, сюда приходят параметрами.
-    _sv, _sv_or = inp.sv, inp.sv_or
+    # Стиль — структурой, прочитанной один раз: обёрток _sv/_sv_or нет.
+    style = inp.style
     emit = inp.emit
 
     def _ins_t0(x):                                    # старт вставки в секундах (сек+кадры или легаси-кадры)
@@ -158,11 +150,11 @@ def plan_insert_timings(inp: InsertTimingInputs) -> InsertTimings:
             return float(s or 0) + float(fr or 0) / _fps0
         return float(x.get("end") or 0) / _fps0
 
-    _snap = bool(_sv(st, "insert_snap_cut"))
+    _snap = style.insert_snap_cut
     # Вставка, стартующая ВПРИТЫК перед катом, доигрывала бы вход на уходящем кадре и обрывалась
     # срезом. Прижимаем старт ровно к кату: вставка начинается уже на следующем кадре, вся анимация
     # входа идёт по нему (и стиль фото авто-выбирается по НОВОЙ камере). Конец не двигаем.
-    SNAP_START_TOL = float(st.get("insert_snap_start", 0.35))   # сек до ката
+    SNAP_START_TOL = style.insert_snap_start   # сек до ката
 
     def _snap_start(x):
         if not _snap or SNAP_START_TOL <= 0:
@@ -232,7 +224,7 @@ def plan_insert_timings(inp: InsertTimingInputs) -> InsertTimings:
             for k in ("start", "end", "end_s", "end_f"):
                 x.pop(k, None)
 
-    _instyle = (_sv_or(st, "insert_style"))      # стиль фотовставок: авто | cam1 | cam2
+    _instyle = style.insert_style      # стиль фотовставок: авто | cam1 | cam2
     for x in inserts:                                  # стиль фото: force cam1/cam2 или АВТО по активной камере
         if (x.get("type") or "photo") != "photo":
             continue
@@ -263,12 +255,13 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
     _fps0 = inp.fps
     _clip_end = inp.clip_end
     _media_dims = inp.media_dims
-    _plate_path, _plate_scale = inp.plate_path, inp.plate_scale
-    _insert_anim = inp.insert_anim
-    st = inp.st
-    _sv_or = inp.sv_or
-    ins_c1x, ins_c1y = inp.ins_c1x, inp.ins_c1y
-    ins_c2x, ins_c2y = inp.ins_c2x, inp.ins_c2y
+    # Стиль — структурой, прочитанной один раз: подложка, анимация, точки
+    # покоя кам1/кам2, эффекты и «видео за человеком» берутся оттуда, своих чтений нет.
+    style = inp.style
+    _plate_path, _plate_scale = style.plate_path, style.plate_scale
+    _insert_anim = style.insert_anim
+    ins_c1x, ins_c1y = style.insert_c1_x, style.insert_c1_y
+    ins_c2x, ins_c2y = style.insert_c2_x, style.insert_c2_y
     emit = inp.emit
     _fps = meta["fps"]
 
@@ -288,7 +281,7 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
     # там же прижимается старт к кату, и стиль фото выбран уже по исправленному старту.
 
     # видеовставка: перед человеком (фул на весь кадр, дефолт) или за ним (рото сверху)
-    _vfront = bool(st.get("insert_video_front", True))
+    _vfront = bool(style.insert_video_front)
 
     def _front(x):
         return _vfront if x.get("front") is None else bool(x.get("front"))
@@ -296,7 +289,7 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
     def _ins_js(x):
         t0, t1raw = _win(x)
         t1, noexit = _clip_end(x, t0, t1raw)
-        # «Без фона» (задание ZQ): путь фото у вставки с галкой «на подложке» меняется
+        # «Без фона»: путь фото у вставки с галкой «на подложке» меняется
         # ЗДЕСЬ, в плане сцены, — до _ins_plate и до всей остальной геометрии (у nobg_path
         # свой кэш: второй раз на тот же файл rembg не зовётся). Раньше подмену делал
         # _nobg_kw в to_ae_full, ДО scene_plan: в .jsx уезжал обрезанный PNG, а план для
@@ -320,7 +313,7 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
                "mw": _r(x.get("mw") or 100), "mh": _r(x.get("mh") or 100),
                "sin": _r(x.get("sin") or 0), "noexit": bool(noexit), "front": bool(_front(x)),
                "oncam2": bool(x.get("oncam2"))}
-        # геометрия из Python (задание B): видео — масштаб заполнения и запас панорамы
+        # геометрия из Python: видео — масштаб заполнения и запас панорамы
         # (fit/slack — те же числа, что AE считал из item.width/height), фото — окна
         # входа/выхода cam2-анимации. Размеры не прочитались -> полей нет: вставку
         # не трогаем (старое if(!iw||!ih) return).
@@ -331,26 +324,26 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
                 iw, ih = wh
                 out["fit"] = _r(_fit_scale(iw, ih, True, meta["w"], meta["h"], k))
                 # запас вылета ролика за кадр — СПРАВКА для превью, а не граница позиции
-                # (задание ME2): x/y уходят в план и .jsx ровно такими, какими их задал
+                # x/y уходят в план и .jsx ровно такими, какими их задал
                 # пользователь. Раньше позиция зажималась этим запасом (`if k >= 1`), и у
                 # вертикального 9:16 при sc=100 запаса нет вовсе — X и Y обнулялись, видео
                 # не двигалось. Уехав за край, вставка открывает кадр камеры — как в AE.
                 sx, sy = _fill_slack(iw, ih, meta["w"], meta["h"], k)
                 out["slackx"], out["slacky"] = _r(sx), _r(sy)
                 # коробка заполнения при sc=100 (px в comp): ужатому видео (sc<100) предпросмотр
-                # рисует её × sc/100, не читая размеры файла (задание D)
+                # рисует её × sc/100, не читая размеры файла
                 f0 = _fit_scale(iw, ih, True, meta["w"], meta["h"], 1.0) / 100
                 out["fitw"], out["fith"] = _r(iw * f0, 2), _r(ih * f0, 2)
         else:
             # маска-карточка в comp-координатах (осевший масштаб): её масштабирует anim.scale
-            # (как Scale слоя в AE), и предпросмотру не нужны размеры картинки (задание D)
-            # Подложка — решение ВСТАВКИ, не стиля (задание ZK): у кого галки нет, тот идёт
+            # (как Scale слоя в AE), и предпросмотру не нужны размеры картинки
+            # Подложка — решение ВСТАВКИ, не стиля: у кого галки нет, тот идёт
             # прежним путём (карточка, маска) даже при заданном в стиле файле подложки.
             _plate = _ins_plate(media, _plate_path, out["style"], out.get("sc"),
                                 out.get("x"), out.get("y"), meta["w"], meta["h"],
                                 _plate_scale) if (x.get("plate") and _plate_path) else None
             if _plate:
-                # Подложка (задание ZK): масштаб слоя прекомпа — плашка под карточку, фото
+                # Подложка: масштаб слоя прекомпа — плашка под карточку, фото
                 # вписано в неё, ручные сдвиг/масштаб уехали в px/py/ps ВНУТРЬ прекомпа.
                 # Анимация слоя (вылет кам1, выезд кам2, точка покоя) считается по
                 # нейтральному sc=100: подложка у всех таких вставок одного размера.
@@ -358,10 +351,10 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
                 # достаются РОВНО этим вставкам.
                 out.update(_plate)
                 out["plate"] = True
-                # Сдвиг ВСЕЙ карточки — kx/ky (задание ZQ): точка покоя слоя и его
+                # Сдвиг ВСЕЙ карточки — kx/ky: точка покоя слоя и его
                 # ключи анимации считаются по ним, поэтому драг в превью двигает плашку
                 # вместе с фото. Ручные x/y со страницы вставок уехали в px/py (_ins_plate)
-                # и по-прежнему двигают только фото ВНУТРИ подложки (задание ZI).
+                # и по-прежнему двигают только фото ВНУТРИ подложки.
                 out["x"] = _r(x.get("kx") or 0)
                 out["y"] = _r(x.get("ky") or 0)
                 out["sc"] = 100
@@ -370,12 +363,12 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
                                   out.get("sc"), meta["w"], meta["h"])
                 if _card:
                     out["card"] = _card
-            # анимации вставок: готовые ключи вместо досчёта в ExtendScript (остаток задания B).
+            # анимации вставок: готовые ключи вместо досчёта в ExtendScript (остаток).
             # Те же округлённые t0/t1 и en/ex, что ушли в JSX, — предпросмотр интерполирует их же.
             t0r, t1r = _r(t0), _r(t1)
             if out["style"] == "cam2":
                 S = float(out["scale"] or 44) * float(out["sc"] or 100) / 100
-                if _insert_anim == "rise":           # задание DD: выезд снизу + рост + фейд, без блюра
+                if _insert_anim == "rise":           # выезд снизу + рост + фейд, без блюра
                     en, ex = _ins_enter_exit(t0r, t1r, noexit, _fps0, enter=INS_RISE_ENTER, exit_=INS_EXIT)
                     out["en"], out["ex"] = _r(en), _r(ex)
                     enr, exr = _r(en), _r(ex)
@@ -398,7 +391,7 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
                         "position": pos_keys,
                         "opacity": _anim_keys(t0r, t1r, 0.0, 100.0, noexit, enr, exr, _fps0),
                     }
-                elif _insert_anim == "none":         # задание FC: без анимации — слой просто есть
+                elif _insert_anim == "none":         # без анимации — слой просто есть
                     # один ключ на свойство: слой стоит от t0 в осевшем масштабе S и полной
                     # непрозрачности, вход/выход жёсткие; блюра и позиции нет вовсе
                     out["anim"] = {"scale": [[t0r, _r(S)]], "opacity": [[t0r, 100.0]]}
@@ -415,15 +408,15 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
                 out["en"], out["ex"] = _r(en), _r(ex)
                 ix, iy = float(out["x"] or 0), float(out["y"] or 0)
                 if out["oncam2"]:                    # общий сдвиг всех cam1-на-перебивке (INS_C1_ON2_X/Y)
-                    ix += float(_sv_or(st, "insert_c1on2_x"))
-                    iy += float(_sv_or(st, "insert_c1on2_y"))
-                if _insert_anim == "none":           # задание FC: без анимации — сразу точка покоя
+                    ix += style.insert_c1on2_x
+                    iy += style.insert_c1on2_y
+                if _insert_anim == "none":           # без анимации — сразу точка покоя
                     # up — точка ПОКОЯ из _cam1_pos_keys (layout.py), нижняя точка dn
                     # (за спиной) не строится вовсе: слой просто стоит на месте
                     out["anim"] = {"position": [[t0r, [_r(ins_c1x + ix),
                                                        _r(ins_c1y - INS_C1_HIGH + iy)]]]}
                 else:                                # обычный вылет: подъём dn→up и спуск
-                    # общий сдвиг точки покоя вставок кам1 (задание CB): парный к insert_c2_x/y,
+                    # общий сдвиг точки покоя вставок кам1: парный к insert_c2_x/y,
                     # cx/cy _cam1_pos_keys и есть точка покоя — сдвиг считается здесь, в плане,
                     # и превью рисует готовое (правило одного источника)
                     out["anim"] = {"position": _cam1_pos_keys(t0r, t1r, noexit, ix, iy, _fps0,

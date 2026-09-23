@@ -4,9 +4,13 @@
 """
 import os, json
 from flask import request, jsonify
-from core.fileio import atomic_json_dump, json_load_soft
-from ._core import bp, emit, umsg_err, jstr
-from core.umsg import umsg
+from core.fileio import atomic_json_dump
+from core.project_file import read_project, write_project
+from ._core import bp, emit, is_reelsi_target, umsg_err, jstr
+from core.umsg import ReelsiError, umsg
+from core.applog import get_logger
+
+log = get_logger(__name__)
 
 
 def _sidecar_yellow(xml_path):
@@ -16,6 +20,7 @@ def _sidecar_yellow(xml_path):
         return []
     try:
         d = json.load(open(p, encoding="utf-8"))
+    except ReelsiError: raise
     except Exception:
         return []
     # канонический формат (aicut/set_yellow) — {"yellow": [..]}; старый set_yellow писал
@@ -24,17 +29,19 @@ def _sidecar_yellow(xml_path):
         return [int(i) for i in d]
     try:
         return [int(i) for i in (d.get("yellow") or [])]
+    except ReelsiError: raise
     except Exception:
         return []
 
 
 def _sidecar_caption(xml_path):
-    """Text from <stem>.caption.json next to the XML (задание DG)."""
+    """Text from <stem>.caption.json next to the XML."""
     p = os.path.splitext(xml_path)[0] + ".caption.json"
     if not os.path.isfile(p):
         return ""
     try:
         d = json.load(open(p, encoding="utf-8"))
+    except ReelsiError: raise
     except Exception:
         return ""
     if isinstance(d, dict):
@@ -46,12 +53,12 @@ def _sidecar_caption(xml_path):
 
 @bp.route("/api/caption", methods=["POST"])
 def api_caption():
-    """Подпись о ролике (<stem>.caption.json рядом с XML): чтение и сохранение (задание DG)."""
+    """Подпись о ролике (<stem>.caption.json рядом с XML): чтение и сохранение."""
     d = request.get_json() or {}
     xml_path = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml_path):
-            raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml_path}",
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml_path}",
                                   path=xml_path))
         try:
             if "text" in d:
@@ -61,9 +68,10 @@ def api_caption():
                 return jsonify(ok=True, text=text)
             else:
                 return jsonify(ok=True, text=_sidecar_caption(xml_path))
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("caption_failed", str(e), err=str(e)))
-    except SystemExit as e:
+            raise ReelsiError(umsg("caption_failed", str(e), err=str(e)))
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -74,7 +82,7 @@ def api_words():
     xml_path = jstr(request.get_json() or {}, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml_path):
-            raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml_path}",
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml_path}",
                                   path=xml_path))
         try:
             from core import xml2ae
@@ -86,9 +94,10 @@ def api_words():
             return jsonify(ok=True, fps=fps, yellow=yellow, breaks=breaks,
                            words=[{"i": k, "w": w, "start": round(s / fps, 2)}
                                   for k, (s, e, w) in enumerate(subs)])
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("words_failed", str(e), err=str(e)))
-    except SystemExit as e:
+            raise ReelsiError(umsg("words_failed", str(e), err=str(e)))
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -101,7 +110,7 @@ def api_xml_state():
     xml = jstr(request.get_json() or {}, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml):
-            raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml}",
                                   path=xml))
         try:
             from core import xml2ae
@@ -109,10 +118,11 @@ def api_xml_state():
             colored = len(xml2ae.auto_highlights(xml).get("yellow") or [])
             return jsonify(ok=True, subs=len(subs), colored=colored,
                            ncams=max(1, len(cam_tracks)))
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("xml_state_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("xml_state_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -126,9 +136,10 @@ def api_omnicut_cuts():
     try:
         try:
             return jsonify(ok=True, cuts=json.load(open(p, encoding="utf-8")))
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("omnicut_cuts_failed", str(e), err=str(e)))
-    except SystemExit as e:
+            raise ReelsiError(umsg("omnicut_cuts_failed", str(e), err=str(e)))
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -138,17 +149,27 @@ def api_breaths():
 
     Уверенные детектор вырезал сам ещё в нарезке (в сайдкаре они помечены
     `вырезано`), здесь важны СПОРНЫЕ: юзер снимает их одним кликом. Нет файла —
-    пустой список: нарезка могла идти без детектора (нет моделей или весов)."""
+    пустой список: нарезка могла идти без детектора (нет моделей или весов).
+
+    Цель проверяем, как удаляющие роуты: сайдкар читается рядом с
+    ПРИСЛАННЫМ путём, и без проверки тело с чужим именем отдавало бы
+    `notes.breaths.json` из чужой папки. Интерфейс всегда шлёт путь нарезки —
+    для него поведение не меняется."""
     xml_path = jstr(request.get_json() or {}, "xml").strip().strip('"')
+    if not is_reelsi_target(xml_path, "cut"):
+        return jsonify(**umsg_err(ReelsiError(umsg("not_a_cut",
+                                                  f"Это не нарезка Reelsi: {xml_path}",
+                                                  path=xml_path))))
     p = os.path.splitext(xml_path)[0] + ".breaths.json"
     if not os.path.isfile(p):
         return jsonify(ok=True, marks=[])
     try:
         try:
             return jsonify(ok=True, marks=json.load(open(p, encoding="utf-8")))
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("breaths_failed", str(e), err=str(e)))
-    except SystemExit as e:
+            raise ReelsiError(umsg("breaths_failed", str(e), err=str(e)))
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -159,16 +180,17 @@ def api_editor_load():
     xml = jstr(request.get_json() or {}, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml):
-            raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml}",
                                   path=xml))
         try:
             p = _ensure_project(xml)                      # сайдкар или реконструкция из XML
             return jsonify(ok=True, fps=p.get("fps", 60), cam=p["cams"][0],
                            keep=p.get("keep", []), have_proj=True)
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("editor_load_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("editor_load_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -252,7 +274,7 @@ def api_editor_save():
     keep = d.get("keep") or []
     try:
         if not os.path.isfile(xml):
-            raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml}",
                                   path=xml))
         try:
             proj_path = os.path.splitext(xml)[0] + ".project.json"
@@ -280,10 +302,10 @@ def api_editor_save():
             try:
                 info = xmlbuild.build(cams, segs, offsets, xml, assign=assign,
                                       scale=p.get("scale", 50.4), sub_words=sub_words, music_path=None)
-            except SystemExit as e:
+            except (ReelsiError, SystemExit) as e:
                 # Пустой монтаж (убрали все блоки): build файл не тронул — отдаём отказ
                 # роута с текстом гарда КАК ЕСТЬ, а не «SystemExit: …».
-                raise SystemExit(umsg("editor_save_failed", str(e), err=str(e)))
+                raise ReelsiError(umsg("editor_save_failed", str(e), err=str(e)))
             from core import xml2ae
             xml2ae.write_srt_for(xml)
             if yellow:
@@ -293,6 +315,7 @@ def api_editor_save():
             if old_keep:
                 try:
                     om = json.load(open(os.path.splitext(xml)[0] + ".omni.json", encoding="utf-8"))
+                except ReelsiError: raise
                 except Exception:
                     om = []
 
@@ -318,12 +341,13 @@ def api_editor_save():
                     p["user_overrides"] = uo
             p["keep"] = [[round(s, 3), round(e, 3)] for s, e in segs]
             p.pop("assign", None)                         # блоки изменились -> ручная раскладка камер устарела
-            atomic_json_dump(proj_path, p, indent=1)
+            write_project(proj_path, p)
             return jsonify(ok=True, segs=len(segs), dur=round(info.get("total_s", 0), 1))
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("editor_save_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("editor_save_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -356,14 +380,15 @@ def _ensure_project(xml):
     if os.path.isfile(p):
         # Рваный файл (крах/отбой в момент старой неатомарной записи) не должен
         # валить весь редактор: пересоберём проект заново и перепишем сайдкар.
-        proj = json_load_soft(p)
+        proj = read_project(p)
         if proj is not None:
             return proj
     proj = _project_from_xml(xml)
     try:
-        atomic_json_dump(p, proj, indent=1)
-    except Exception:
-        pass
+        write_project(p, proj)
+    except ReelsiError: raise
+    except Exception as ex:
+        log.warning("не записал project.json (%s): %s", p, ex)
     return proj
 
 
@@ -377,10 +402,11 @@ def api_asr_engines():
         try:
             from core import asr_backends
             return jsonify(engines=asr_backends.engines())
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("asr_engines_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("asr_engines_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         r = umsg_err(e)
         r["engines"] = []
         return jsonify(**r)
@@ -395,7 +421,7 @@ def api_gen_subs():
     subengine = jstr(data, "subengine") or "whisper"
     try:
         if not os.path.isfile(xml):
-            raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml}",
                                   path=xml))
         try:
             import numpy as np, librosa, soundfile as sf, tempfile
@@ -424,8 +450,9 @@ def api_gen_subs():
             finally:
                 try:
                     os.remove(tmp)
-                except Exception:
-                    pass
+                except ReelsiError: raise
+                except OSError:
+                    pass  # временный файл уже удалён
             # Кадры слов — нашей секвенции (build пишет 60), а не проекта: у 25-кадрового
             # проекта слово уезжало в 2.4 раза дальше, чем звучит.
             sub_words = [{"w": w["w"], "start": round(w["start"]*xmlbuild.FPS),
@@ -442,18 +469,19 @@ def api_gen_subs():
             try:
                 info = xmlbuild.build(cams, keep, offsets, xml, assign=assign,
                                       scale=p.get("scale", 50.4), sub_words=sub_words, music_path=None)
-            except SystemExit as e:
+            except (ReelsiError, SystemExit) as e:
                 # Пустой монтаж: build файл не тронул — текст гарда отдаём как есть.
-                raise SystemExit(umsg("gen_subs_failed", str(e), err=str(e)))
+                raise ReelsiError(umsg("gen_subs_failed", str(e), err=str(e)))
             from core import xml2ae
             xml2ae.write_srt_for(xml)
             return jsonify(ok=True, subs=info.get("subtitles", len(sub_words)), words=len(words),
                            engine=subengine,
                            skipped=info.get("long_words") or [])   # слова, не влезшие в шаблон
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("gen_subs_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("gen_subs_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -465,16 +493,17 @@ def api_aicut_preview():
     xml_path = jstr(request.get_json() or {}, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml_path):
-            raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml_path}",
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml_path}",
                                   path=xml_path))
         try:
             from core import xml2ae
             edl = xml2ae.virtual_edl(xml_path)      # общий EDL-парсер (реюз в draft-рендере)
             return jsonify(ok=True, **edl)
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("aicut_preview_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("aicut_preview_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -486,15 +515,16 @@ def api_scanxml():
     dir_ = jstr(d, "dir").strip().strip('"')
     try:
         if not os.path.isdir(dir_):
-            raise SystemExit(umsg("no_folder", f"Нет папки: {dir_}", path=dir_))
+            raise ReelsiError(umsg("no_folder", f"Нет папки: {dir_}", path=dir_))
         try:
             files = sorted(os.path.join(dir_, f) for f in os.listdir(dir_)
                            if f.lower().endswith(".xml"))
             return jsonify(ok=True, paths=files)
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("scanxml_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("scanxml_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -506,10 +536,10 @@ def api_set_yellow():
     xml = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml):
-            raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml}",
                                   path=xml))
         if "indices" not in d or not isinstance(d["indices"], list):
-            raise SystemExit(umsg("bad_indices", "Поле indices должно быть списком"))
+            raise ReelsiError(umsg("bad_indices", "Поле indices должно быть списком"))
         try:
             from core import xml2ae
             idx = [int(i) for i in d["indices"]]
@@ -517,14 +547,17 @@ def api_set_yellow():
             try:                                             # сайдкар .yellow.json — фолбэк для /api/words
                 atomic_json_dump(os.path.splitext(xml)[0] + ".yellow.json",
                                  {"yellow": sorted(res.get("colored", []))})
-            except Exception:
-                pass
+            except ReelsiError: raise
+            except Exception as ex:
+                log.warning("сайдкар .yellow.json не записан (%s): %s",
+                            os.path.splitext(xml)[0] + ".yellow.json", ex)
             return jsonify(ok=True, colored=res.get("colored", []),
                            skipped=[list(s) for s in res.get("skipped", [])])
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("set_yellow_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("set_yellow_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -540,7 +573,7 @@ def api_clear_subs():
     xml = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml):
-            raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml}",
                                   path=xml))
         try:
             p = _ensure_project(xml)
@@ -556,18 +589,19 @@ def api_clear_subs():
             try:
                 info = xmlbuild.build(cams, keep, offsets, xml, assign=assign,
                                       scale=p.get("scale", 50.4), sub_words=None, music_path=None)
-            except SystemExit as e:
+            except (ReelsiError, SystemExit) as e:
                 # Пустой монтаж: build файл не тронул — текст гарда отдаём как есть.
-                raise SystemExit(umsg("clear_subs_failed", str(e), err=str(e)))
+                raise ReelsiError(umsg("clear_subs_failed", str(e), err=str(e)))
             try:
                 os.remove(os.path.splitext(xml)[0] + ".yellow.json")
             except OSError:
-                pass
+                pass  # сайдкара .yellow.json и не было — чистить нечего
             return jsonify(ok=True, segs=len(keep), dur=round(info.get("total_s", 0), 1))
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("clear_subs_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("clear_subs_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -582,19 +616,20 @@ def api_edit_word():
     xml = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml):
-            raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml}",
                                   path=xml))
         try:
             from core import xml2ae
             was = jstr(d, "was").strip()
             res = xml2ae.edit_word(xml, int(d.get("index")), jstr(d, "text"))
             if res.get("error"):
-                raise SystemExit(umsg("edit_word_failed", res["error"], err=res["error"]))
+                raise ReelsiError(umsg("edit_word_failed", res["error"], err=res["error"]))
             learned = None
             if was:
                 try:
                     from core import terms
                     learned = terms.learn(was, res.get("word") or "")
+                except ReelsiError: raise
                 except Exception:
                     pass                                     # словарь не должен ломать правку
             # Ручная звёздочка в редакторе НИКУДА не запоминается. Раньше исходное слово
@@ -603,10 +638,11 @@ def api_edit_word():
             # 106 слов из 203 в клипе. Список плохих слов правится только руками:
             # ⚙ → «Слова».
             return jsonify(ok=True, word=res.get("word"), learned=learned)
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("edit_word_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("edit_word_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -617,17 +653,18 @@ def api_delete_word():
     xml = jstr(d, "xml").strip().strip('"')
     try:
         if not os.path.isfile(xml):
-            raise SystemExit(umsg("file_not_found", f"Файл не найден: {xml}",
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml}",
                                   path=xml))
         try:
             from core import xml2ae
             res = xml2ae.delete_word(xml, int(d.get("index")))
             if res.get("error"):
-                raise SystemExit(umsg("delete_word_failed", res["error"], err=res["error"]))
+                raise ReelsiError(umsg("delete_word_failed", res["error"], err=res["error"]))
             return jsonify(ok=True, index=res.get("index"), word=res.get("word"))
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("delete_word_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("delete_word_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 

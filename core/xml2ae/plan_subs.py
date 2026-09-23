@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Блок субтитров плана сцены (задание MR, этап 1 распила scene_plan).
+"""Блок субтитров плана сцены (этап 1 распила scene_plan).
 
 `scene_plan` был одной функцией на 3253 строки с 24 вложенными функциями, делившими
 состояние замыканиями; ревью назвало это главным долгом. Первый этап распила вынес сюда
 ВЕСЬ блок субтитров: обрезку конца слова по соседу (`_endc`), кегль и геометрию полосы
 (posy/шаг/подъём), стопку подряд жёлтых, появление жёлтых — в том числе коротких
-(задания MA/MN), — данные циклов SUBS/SUB_ROWS/SUB_STACK и подстановки шаблона
+, — данные циклов SUBS/SUB_ROWS/SUB_STACK и подстановки шаблона
 (HL_ROW_WORD, HL_BLUR, hlDur/hlRowDur/hlBlur).
 
 Перенос ПОСТРОЧНЫЙ: поведение, числа, порядок операций и текст подстановок не менялись
@@ -15,15 +15,17 @@
 перенесено дословно, а входы распаковываются в преамбуле.
 
 Вход — один неизменяемый `SubsInputs`, выход — один `SubsPlan` со всем, что `scene_plan`
-читает дальше. Общие с другими блоками обёртки (`_sv`/`_sv_or` — дефолт ключа стиля из
-styles.BASE) и правила (`_accent_word` — регистр слова, `_parse_intro_count` — разбор
-числа-счётчика) остаются в `build.py` и приходят параметрами: второй копии нет.
+читает дальше. Стиль приходит структурой `StyleValues` одним полем `style` (
+её читает один раз `plan_style.read_style`), а общие с другими блоками правила
+(`_accent_word` — регистр слова, `_parse_intro_count` — разбор числа-счётчика) остаются
+в `build.py` и приходят параметрами: второй копии нет.
 """
 from dataclasses import dataclass
 from typing import Callable
 
 from .jsutil import _jd
 from .layout import HL_DUR, _stack_layout, hl_appear_dur
+from .plan_style import StyleValues
 from .template import (SUBS_LOOP_ROWS, SUBS_LOOP_STACK, SUBS_LOOP_STACK_JOINED,
                        SUBS_LOOP_WORDS, SUBS_LOOP_WORDS_JOINED)
 
@@ -33,9 +35,11 @@ class SubsInputs:
     """Вход блока субтитров: всё, что `scene_plan` знает к моменту вызова.
 
     Поля названы как локальные переменные scene_plan, а `width`/`height` — это
-    `meta["w"]`/`meta["h"]`: тело переноса читает те же имена. `sv`, `sv_or`,
-    `accent_word`, `parse_count` — функции, которые живут в build.py и общие с другими
-    блоками (свой стиль и своё правило регистра в модуль не заводятся).
+    `meta["w"]`/`meta["h"]`: тело переноса читает те же имена. `style` — структура
+    стиля, прочитанная ОДИН раз (`plan_style.read_style`); нестилевые
+    входы остаются отдельными полями, а `accent_word`/`parse_count` — функции,
+    которые живут в build.py и общие с другими блоками (своего правила регистра
+    и своего разбора числа-счётчика в модуль не заводится).
     """
     # Слова транскрипта [(начало, конец, слово)] в кадрах и разметка по ним: жёлтые,
     # ручные разделители серий, слова со счётчиком, склейки в строку.
@@ -44,13 +48,9 @@ class SubsInputs:
     brk: set
     cnt: set
     joins: set
-    # Шрифты (PostScript-имена): базовый и жёлтых; регистр субтитров (задание CO).
+    # Шрифты (PostScript-имена): базовый и жёлтых.
     font_ps: str
     hl_font_ps: str
-    sub_case: str
-    # Режим субтитров: слов в строке и строк в реплике (задание CJ).
-    sub_words_per_row: int
-    sub_rows_max: int
     # Кадр (meta["w"]/meta["h"]) и частота: в кадрах считает XML, в секунды переводит план.
     width: int
     height: int
@@ -59,10 +59,8 @@ class SubsInputs:
     cams: list
     # Пословные тайминги из сайдкара (None — их нет): ими уточняются строки.
     word_timings: object
-    # Резолвнутый стиль и обёртки чтения его ключей.
-    st: dict
-    sv: Callable[[dict, str], object]
-    sv_or: Callable[[dict, str], object]
+    # Резолвнутый и прочитанный стиль: регистр, геометрия полосы, жёлтые в строке.
+    style: StyleValues
     accent_word: Callable[[str, str], str]
     parse_count: Callable[..., object]
 
@@ -72,17 +70,17 @@ class SubsPlan:
     """Выход блока субтитров: ровно те имена, что scene_plan читает дальше.
 
     Первые восемь полей уезжают в .jsx подстановками шаблона, остальные — геометрия
-    полосы субтитров: её читают и план (предпросмотр), и шаблон, и окна интро (задание MH).
+    полосы субтитров: её читают и план (предпросмотр), и шаблон, и окна интро.
     """
     subs: list            # элементы субтитров для плана/превью (plan["subs"])
     subs_js: str          # данные SUBS — строки цикла слов
     sub_loop: str         # цикл субтитров: SUBS_LOOP_WORDS/SUB_ROWS (+ цикл стопки)
-    hl_row_decl: str      # объявление HL_ROW_WORD (жёлтые в строке, задание ZH)
+    hl_row_decl: str      # объявление HL_ROW_WORD (жёлтые в строке)
     hl_blur_decl: str     # объявление HL_BLUR (блюр появления жёлтых)
-    hl_blur_fn: str       # функция hlBlur(L, t0) — сигнатура-контракт задания ZH
-    hl_short_fn: str      # hlDur/hlRowDur и HL_HD для коротких жёлтых (задания MA/MN)
+    hl_blur_fn: str       # функция hlBlur(L, t0) — сигнатура-контракт
+    hl_short_fn: str      # hlDur/hlRowDur и HL_HD для коротких жёлтых
     hl_blur_on: bool      # галка блюра — уезжает в план (превью)
-    sub_scale: float      # масштаб слоя прекомпа субтитров, % (задание FE)
+    sub_scale: float      # масштаб слоя прекомпа субтитров, %
     posy: int             # Y полосы субтитров, px (sub_y * высота кадра)
     hl_step: float        # шаг строк стопки, px
     hl_rise: float        # подъём появления жёлтого, px
@@ -100,14 +98,16 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
     """
     subs, hl, brk, cnt, joins = inp.subs, inp.hl, inp.brk, inp.cnt, inp.joins
     font_ps, hl_font_ps = inp.font_ps, inp.hl_font_ps
-    sub_case = inp.sub_case
-    sub_words_per_row, sub_rows_max = inp.sub_words_per_row, inp.sub_rows_max
     width, height = inp.width, inp.height
     _fps0 = inp.fps
-    cams, word_timings, st = inp.cams, inp.word_timings, inp.st
-    # Общие с другими блоками обёртки и правила — по-прежнему в build.py, сюда приходят
-    # параметрами: своей копии _sv/_sv_or/_accent_word/_parse_intro_count в модуле нет.
-    _sv, _sv_or = inp.sv, inp.sv_or
+    cams, word_timings = inp.cams, inp.word_timings
+    # Стиль приходит структурой, прочитанной один раз: sub_case, геометрия
+    # полосы, жёлтые в строке и блюр — оттуда; своей копии чтения ключей в модуле нет.
+    style = inp.style
+    sub_case = style.sub_case
+    sub_words_per_row, sub_rows_max = style.sub_words_per_row, style.sub_rows_max
+    # Общие с другими блоками правила — по-прежнему в build.py, сюда приходят параметрами:
+    # своей копии _accent_word/_parse_intro_count в модуле нет.
     _accent_word = inp.accent_word
     _parse_intro_count = inp.parse_count
     # обрезаем конец слова по началу следующего, чтобы соседние (особ. мелкие «и/в») не накладывались
@@ -116,10 +116,10 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
         ns = subs[k + 1][0] if k + 1 < len(subs) else None
         return min(e, ns) if (ns is not None and ns > s) else e
 
-    _posy = int(height * float(_sv_or(st, "sub_y")))
+    _posy = int(height * float(style.sub_y))
     _hl_step = round(height * 0.06224, 2)
     _hl_rise = round(height * 0.06406, 2)
-    # Длительность подъёма/проявления жёлтых, с (задания ZU/MA): ОДНО число на всю сборку —
+    # Длительность подъёма/проявления жёлтых, с: ОДНО число на всю сборку —
     # константа layout.HL_DUR. Шаблон получает его подстановкой (template.py), план несёт
     # предпросмотру (hl_dur): своей копии числа в JS не заводится, как и у остальной
     # геометрии субтитров.
@@ -132,26 +132,26 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
     # остаётся прежним байт в байт (golden).
     _fsize_base = _fsize
     _sub_step = round(_fsize * 1.18, 2)
-    # Масштаб СЛОЯ прекомпа субтитров (задание FE), %: кегль/раскладка не трогаются,
+    # Масштаб СЛОЯ прекомпа субтитров, %: кегль/раскладка не трогаются,
     # 100 = как сегодня. При 100 подстановка в шаблон пуста — .jsx прежний (golden).
-    sub_scale = float(_sv(st, "sub_scale"))
-    # Жёлтые в режиме строк (задание ZH): HL_ROW_WORD нужен только циклу строк — в режиме
+    sub_scale = float(style.sub_scale)
+    # Жёлтые в режиме строк: HL_ROW_WORD нужен только циклу строк — в режиме
     # «по слову» объявления нет вовсе, и .jsx остаётся прежним байт в байт (golden).
     hl_row_decl = ("" if sub_words_per_row <= 1 else
                    ("\n    var HL_ROW_WORD = %s;   // жёлтые в строке (hl_row_anim): true — въезжает,"
                     " когда слово произнесено; false — вместе со строкой"
-                    % ("true" if _sv(st, "hl_row_anim") == "word" else "false")))
-    # Блюр появления жёлтых (задание ZH): выключен — ни объявления, ни функции, ни вызовов,
+                    % ("true" if style.hl_row_anim == "word" else "false")))
+    # Блюр появления жёлтых: выключен — ни объявления, ни функции, ни вызовов,
     # все три подстановки пусты и .jsx прежний байт в байт (golden). Сами hl_blur_fn и
-    # hl_blur_call собираются НИЖЕ: у короткого жёлтого (задание MA) и блюр играет свою
+    # hl_blur_call собираются НИЖЕ: у короткого жёлтого и блюр играет свою
     # длительность, а её до расчёта циклов ещё не знают.
-    hl_blur_on = bool(_sv(st, "hl_blur"))
+    hl_blur_on = bool(style.hl_blur)
     hl_blur_call = " hlBlur(L, t0);" if hl_blur_on else ""      # цикл строк — как было
     hl_blur_decl = hl_blur_fn = ""
     if hl_blur_on:
         hl_blur_decl = ("\n    var HL_BLUR = %g;   // сила блюра появления жёлтых, px"
-                        " (Gaussian Blur, повтор краёв выключен)" % float(_sv(st, "hl_blur_amt")))
-    # Короткое жёлтое слово (задание MA): подъём, проявление и блюр играли общие HL_DUR =
+                        " (Gaussian Blur, повтор краёв выключен)" % float(style.hl_blur_amt))
+    # Короткое жёлтое слово: подъём, проявление и блюр играли общие HL_DUR =
     # 0.35 с, а слово с видимым временем меньше 0.35 с гасло (outPoint = gend) посреди
     # анимации — «просто исчезало». Длительность d = min(HL_DUR, HL_FIT * видимое время)
     # считает Python (layout.hl_appear_dur) для КАЖДОГО такого слова и кладёт её полем 7
@@ -159,7 +159,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
     # занято cnt_items, его не трогаем). Нет ни одного укороченного жёлтого — нет ни полей,
     # ни функции hlDur, ни новых подстановок: .jsx побайтово как на main (golden).
     _hl_hd = {}                     # индекс жёлтого слова -> своя длительность появления, с
-    # Короткая СТРОКА (задание MN): цикл строк зажимал момент появления окном
+    # Короткая СТРОКА: цикл строк зажимал момент появления окном
     # (r_t1 - HL_DUR), но если строка короче HL_DUR, момент оставался в её начале, и подъём с
     # проявлением обрывались на конце строки. Длительность d = hl_appear_dur(r_t1 - w_t0) —
     # ТА ЖЕ функция, что у MA; видимое время считается до конца строки. Python кладёт её
@@ -173,13 +173,13 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
         """Подстановки цикла субтитров для элемента `elem` (имя переменной строки данных):
         длительность появления в ключах подъёма/проявления и вызов блюра. Пока укороченных
         жёлтых нет — ровно прежний текст: HL_DUR и hlBlur(L, t0). У укороченного длительность
-        едет в блюр через HL_HD (сигнатура hlBlur(L, t0) — контракт задания ZH)."""
+        едет в блюр через HL_HD (сигнатура hlBlur(L, t0) — контракт )."""
         kw["hl_dur_js"] = ("hlDur(%s)" % elem) if _hl_hd else "HL_DUR"
         if hl_blur_on:
             if _hl_hd:
                 kw["hl_blur_call"] = " HL_HD = hlDur(%s); hlBlur(L, t0);" % elem
             elif _hl_row_hd:
-                # HL_HD завели короткие СТРОКИ (задание MN), а этому циклу укороченных не
+                # HL_HD завели короткие СТРОКИ, а этому циклу укороченных не
                 # досталось: переменную обязательно вернуть к общей — иначе блюр возьмёт
                 # длительность последнего жёлтого строки, что осталась в ней с прошлого цикла.
                 kw["hl_blur_call"] = " HL_HD = HL_DUR; hlBlur(L, t0);"
@@ -194,7 +194,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
     if sub_words_per_row <= 1:
         rows, gend = _stack_layout(subs, hl, brk, joins)
         max_line_w = 0.92 * width
-        # Регистр субтитров (задание CO): применяем к ГОТОВОМУ тексту в scene_plan — .jsx
+        # Регистр субтитров: применяем к ГОТОВОМУ тексту в scene_plan — .jsx
         # и превью читают преобразованное, второй копии правила нет. upper (дефолт) —
         # слова из XML уже капсом, upper() их не меняет, .jsx прежний (golden). В
         # покадровом режиме каждое слово — своя реплика, sentence = Заглавная на каждом.
@@ -203,7 +203,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
         subs_plan = []
         cnt_items = []
         any_sub_count = False
-        # Короткие жёлтые (задание MA): видимое время слова — от его появления до общего
+        # Короткие жёлтые: видимое время слова — от его появления до общего
         # конца связки (outPoint слоя = gend). Кому общей HL_DUR не хватает — своя
         # длительность: она уезжает и в данные цикла (поле 7), и в план (hd — превью).
         for k in sorted(hl):
@@ -244,7 +244,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
 
         def _sub_row(k, end, wd, hl_v):
             """Строка данных цикла слов: [начало, конец, слово, hl, ряд, gend] плюс поле
-            счётчика (индекс 6) и — у укороченного жёлтого (задание MA) — поле длительности
+            счётчика (индекс 6) и — у укороченного жёлтого — поле длительности
             появления (индекс 7). Пока укороченных нет, полей ровно шесть: .jsx прежний."""
             r = [subs[k][0], end, wd, hl_v, rows[k], gend[k]]
             if any_sub_count:
@@ -285,8 +285,8 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
             sub_loop = sub_tpl % _hl_loop("sw", sub_count_code="")
         sub_rows_js = "[]"
     else:
-        hl_row_stack = bool(_sv(st, "hl_row_stack"))
-        # Стопка подряд жёлтых (задание ZU) раскладывается ТЕМ ЖЕ правилом, что работает в
+        hl_row_stack = bool(style.hl_row_stack)
+        # Стопка подряд жёлтых раскладывается ТЕМ ЖЕ правилом, что работает в
         # режиме «по слову»: _stack_layout даёт row/gend на каждое слово (серии с учётом
         # склеек joins и ручных разделителей brk). Своей копии разбора серий здесь нет —
         # иначе режимы разъехались бы. Серия — слова с ОДНИМ gend: он у всей серии общий
@@ -299,7 +299,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
             for _k in hl:
                 _run_words[gend[_k]] = _run_words.get(gend[_k], 0) + 1
             stacked_indices = {_k for _k in hl if _run_words[gend[_k]] >= 2}
-            # Короткие жёлтые СТОПКИ (задание MA): стопка играет тем же циклом, что режим
+            # Короткие жёлтые СТОПКИ: стопка играет тем же циклом, что режим
             # «по слову» (выезд на HL_RISE, проявление, блюр, общий конец), поэтому и
             # длительность считается так же — от появления слова до gend стопки. Цикл
             # СТРОК не трогаем: там момент появления уже зажат так, что анимация успевает.
@@ -325,7 +325,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
                                    cut_bounds=cut_bounds, word_timings=word_timings)
         max_line_w = 0.92 * width
 
-        # Подбор единого кегля на весь ролик (задание CK):
+        # Подбор единого кегля на весь ролик:
         # ширина строки = сумма ширин слов каждым своим шрифтом (базовый / hl_font) + пробелы
         reqs = []
         for line in raw_lines:
@@ -356,7 +356,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
             _fsize = min(reqs)
         _sub_step = round(_fsize * 1.18, 2)
 
-        # Регистр субтитров (задание CO): применяем к готовым словам — и план, и .jsx
+        # Регистр субтитров: применяем к готовым словам — и план, и .jsx
         # строятся из преобразованного текста, второй копии правила нет. sentence —
         # «Как в предложении»: первое слово РЕПЛИКИ с заглавной, остальные строчные.
         # upper (дефолт) слова из XML не меняет, .jsx прежний (golden).
@@ -372,7 +372,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
                 return _accent_word(w, "title" if idx in repl_first else "lower")
             return _accent_word(w, sub_case)
         subs_plan = []
-        hl_anim_mode = _sv(st, "hl_row_anim")
+        hl_anim_mode = style.hl_row_anim
         for line in raw_lines:
             l_words = line["words"]
             r_s = line["start"] / _fps0
@@ -389,7 +389,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
                     "e": w_e,
                 }
                 if is_hl:
-                    # Время появления жёлтого в строке (задание ZH, то же правило, что в
+                    # Время появления жёлтого в строке (то же правило, что в
                     # цикле строк шаблона): при "word" — время слова, зажатое в окно строки
                     # (не раньше её начала и не позже, чем остаётся место на подъём), при
                     # "row" — начало строки. Считает Python: превью берёт готовое t0.
@@ -398,7 +398,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
                     else:
                         w_t0 = round(r_s, 4)
                     tw["t0"] = w_t0
-                    # Длительность появления (задание MN): видимое время — до конца строки
+                    # Длительность появления: видимое время — до конца строки
                     # r_t1, формула — та же, что у MA (layout.hl_appear_dur). Короткому
                     # жёлтому общей HL_DUR не хватает: строка короче 0.35 с или момент зажат
                     # к её концу. Тогда своя длительность едет и в .jsx (поле 3 слова), и в
@@ -455,7 +455,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
             # Данные цикла стопки — как SUBS в режиме «по слову»: [начало, конец, слово,
             # hl=1, ряд стопки, общий конец]. Слова серии рисует цикл SUBS_LOOP_STACK:
             # выезд на HL_RISE, проявление и общий конец стопки — второй копии анимации нет.
-            # У укороченного жёлтого (задание MA) в конец строки уезжает его длительность
+            # У укороченного жёлтого в конец строки уезжает его длительность
             # появления: поле счётчика (6) в стопке пустое, длительность — поле 7.
             sub_stack_data = []
             for k in sorted(stacked_indices):
@@ -479,8 +479,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
                        for k, (s, e, w) in enumerate(subs)])
 
         def _row_word(x):
-            """Слово строки для цикла: [начало, текст, hl] и — у коротких строк (задание
-            MN) — четвёртым полем длительность появления (у длинных жёлтых и белых —
+            """Слово строки для цикла: [начало, текст, hl] и — у коротких строк — четвёртым полем длительность появления (у длинных жёлтых и белых —
             общая HL_DUR, как поле 7 у цикла слов). Пока коротких нет, полей ровно три:
             .jsx прежний байт в байт (golden)."""
             wd = [x["start"], _sub_w(x["w"], x["idx"]), 1 if x["idx"] in hl else 0]
@@ -499,7 +498,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
             for line in raw_lines
         ]
         sub_rows_js = _jd(sub_rows_data)
-        # Цикл строк (задание MN): короткому жёлтому длительность даёт Python — подстановка
+        # Цикл строк: короткому жёлтому длительность даёт Python — подстановка
         # hl_dur_js берёт её из поля 3 слова (hlRowDur), остальным оставляет общую HL_DUR.
         # Блюр играет ту же длительность через HL_HD (сигнатура hlBlur(L, t0) — контракт
         # ZH); цикл стопки, что идёт следом, ставит HL_HD сам.
@@ -523,16 +522,16 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
         # словами/стопкой остаются как были), а ролику без стопки — свой: упоминание
         # SUB_STACK в нём ловит сторож tests/test_rows_yellow (токен "SUB_STACK" в .jsx).
         _hl_comment = (
-            "\n    // Короткое жёлтое слово (задание MA): появление не успевало доиграть до"
+            "\n    // Короткое жёлтое слово: появление не успевало доиграть до"
             "\n    // outPoint — длительность кладёт Python полем 7 строки данных SUBS/SUB_STACK"
             "\n    // ([start,end,word,hl,row,gend,cnt,hd]), и только словам, кому общей HL_DUR"
             "\n    // не хватает." if _hl_hd else
-            "\n    // Короткое жёлтое в строке (задание MN): появление не успевало доиграть до"
+            "\n    // Короткое жёлтое в строке: появление не успевало доиграть до"
             "\n    // outPoint строки — длительность кладёт Python полем 3 слова данных SUB_ROWS"
             "\n    // ([начало,текст,hl,hd]), и только тому, кому общей HL_DUR не хватает.")
         hl_short_fn = (
             _hl_comment
-            # Сигнатура hlBlur(L, t0) — контракт задания ZH (её стережёт test_hl_anim),
+            # Сигнатура hlBlur(L, t0) — контракт (её стережёт test_hl_anim),
             # поэтому длительность блюра едет через HL_HD: цикл ставит переменную прямо
             # перед вызовом.
             + ("\n    // Блюр берёт её из HL_HD — переменную ставит цикл ПЕРЕД вызовом."
@@ -542,7 +541,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
             + ("\n    function hlRowDur(wd){ return wd[3]; }" if _hl_row_hd else ""))
     if hl_blur_on:
         hl_blur_fn = (
-            "\n    // Блюр появления жёлтого (задание ZH): Gaussian Blur HL_BLUR -> 0 на ТЕХ ЖЕ"
+            "\n    // Блюр появления жёлтого: Gaussian Blur HL_BLUR -> 0 на ТЕХ ЖЕ"
             "\n    // ключах, что подъём и проявление. Повтор краёв выключен — иначе размытие"
             "\n    // подтягивало бы в кадр края текстового слоя."
             "\n    function hlBlur(L, t0){"

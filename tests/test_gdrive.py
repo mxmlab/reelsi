@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Скачивание с гугл-диска по ссылке (задание G, api/gdrive.py).
+"""Скачивание с гугл-диска по ссылке (api/gdrive.py).
 
 Проверяется то, что можно проверить без живого rclone: разбор ссылки (самое
 место, где молча скачаешь не то — перепутанные id/тип/кусок чужого URL), выбор
@@ -22,9 +22,10 @@ sys.path.insert(0, ROOT)
 os.environ.setdefault("REELSI_NO_BROWSER", "1")
 
 import api.gdrive as gdrive  # noqa: E402
-from api.gdrive import (  # noqa: E402
-    _clean_line, _progress_line, _run_rclone, _stats_fields, parse_gdrive_link,
-    rclone_cmd, rclone_conf, rclone_remote, rclone_remotes,
+from api.gdrive import _run_rclone  # noqa: E402
+from core.rclone import (  # noqa: E402
+    clean_line, parse_gdrive_link, progress_line,
+    rclone_cmd, rclone_conf, rclone_remote, rclone_remotes, stats_fields,
 )
 
 FILE = "https://drive.google.com/file/d/1AbC_dEfGhI1234567890/view?usp=sharing"
@@ -128,12 +129,12 @@ def test_команда_папки_ставит_root_folder_id(tmp_path):
 
 def test_прогресс_rclone_разбирается_в_лог():
     """Строка прогресса rclone (--stats) → «скачивание: X из Y (N%)», всё прочее — как есть."""
-    assert _progress_line("Transferred:   	  0.512 GiB / 1.234 GiB, 41%, 12.5 MiB/s, ETA 0s") == \
+    assert progress_line("Transferred:   	  0.512 GiB / 1.234 GiB, 41%, 12.5 MiB/s, ETA 0s") == \
         "скачивание: 0.512 GiB из 1.234 GiB (41%)"
-    assert _progress_line("Transferred:   	  1.234 GiB / 1.234 GiB, 100%, 8.1 MiB/s, ETA 0s") == \
+    assert progress_line("Transferred:   	  1.234 GiB / 1.234 GiB, 100%, 8.1 MiB/s, ETA 0s") == \
         "скачивание: 1.234 GiB из 1.234 GiB (100%)"
-    assert _progress_line("2026/08/12 12:00:00 ERROR : file.mp4: failed") is None
-    assert _progress_line("") is None
+    assert progress_line("2026/08/12 12:00:00 ERROR : file.mp4: failed") is None
+    assert progress_line("") is None
 
 
 def test_прогресс_вообще_печатается_только_с_v(tmp_path):
@@ -156,18 +157,18 @@ def test_блок_статистики_не_забивает_лог():
     Блок печатается целиком каждые --stats секунд, а наружу отдаются последние 40
     строк лога: без фильтра в них не осталось бы ничего, кроме статистики.
     """
-    from api.gdrive import _is_noise
+    from core.rclone import is_noise
     for noise in ("Transferred:            0 / 1, 0%",
                   "Checks:                 2 / 2, 100%",
                   "Elapsed time:        45.0s",
                   "Transferring:",
                   " *  IMG_6753.MOV: 41% /1.234Gi, 12.345Mi/s, 1m2s"):
-        assert _is_noise(noise), noise
+        assert is_noise(noise), noise
     for keep in ("2026/08/12 12:00:00 ERROR : file.mp4: failed to copy",
                  "2026/08/12 12:00:00 INFO  : IMG_6753.MOV: Copied (new)"):
-        assert not _is_noise(keep), keep
-    # строка прогресса сама по себе шумом не считается — её разбирает _progress_line
-    assert _progress_line("Transferred:   	  0.5 GiB / 1 GiB, 50%, 8 MiB/s, ETA 1m")
+        assert not is_noise(keep), keep
+    # строка прогресса сама по себе шумом не считается — её разбирает progress_line
+    assert progress_line("Transferred:   	  0.5 GiB / 1 GiB, 50%, 8 MiB/s, ETA 1m")
 
 
 def test_статистика_разбирается_по_полям():
@@ -176,31 +177,31 @@ def test_статистика_разбирается_по_полям():
     Три строки блока различаются только формой (у счётчика файлов нет единиц),
     и перепутать их легко: тогда «файл 2 из 5» уехало бы в проценты байтов.
     """
-    assert _stats_fields("Transferred:   \t  0.512 GiB / 1.234 GiB, 41%, 12.5 MiB/s, ETA 1m2s") == {
+    assert stats_fields("Transferred:   \t  0.512 GiB / 1.234 GiB, 41%, 12.5 MiB/s, ETA 1m2s") == {
         "bytes": "0.512 GiB", "total": "1.234 GiB", "pct": 41,
         "speed": "12.5 MiB/s", "eta": "1m2s"}
-    assert _stats_fields("Transferred:            2 / 5, 40%") == {"i": 2, "n": 5}
-    assert _stats_fields(" *  IMG_6753.MOV: 41% /1.234Gi, 12.345Mi/s, 1m2s") == {
+    assert stats_fields("Transferred:            2 / 5, 40%") == {"i": 2, "n": 5}
+    assert stats_fields(" *  IMG_6753.MOV: 41% /1.234Gi, 12.345Mi/s, 1m2s") == {
         "file": "IMG_6753.MOV", "file_pct": 41}
     # без скорости и ETA (первый блок) — всё равно проценты, а не None
-    assert _stats_fields("Transferred:        0 B / 1.234 GiB, 0%")["pct"] == 0
-    assert _stats_fields("2026/08/12 12:00:00 INFO  : IMG.MOV: Copied (new)") is None
-    assert _stats_fields("Checks:                 2 / 2, 100%") is None
+    assert stats_fields("Transferred:        0 B / 1.234 GiB, 0%")["pct"] == 0
+    assert stats_fields("2026/08/12 12:00:00 INFO  : IMG.MOV: Copied (new)") is None
+    assert stats_fields("Checks:                 2 / 2, 100%") is None
 
 
 def test_дата_и_уровень_из_строки_убираются():
     """В логе страницы своё время, а ширина узкая: дата+уровень съедали полстроки."""
-    assert _clean_line("2026/08/12 12:00:00 INFO  : IMG.MOV: Copied (new)") == \
+    assert clean_line("2026/08/12 12:00:00 INFO  : IMG.MOV: Copied (new)") == \
         "IMG.MOV: Copied (new)"
-    assert _clean_line("2026/08/12 12:00:00 ERROR : IMG.MOV: failed to copy") == \
+    assert clean_line("2026/08/12 12:00:00 ERROR : IMG.MOV: failed to copy") == \
         "IMG.MOV: failed to copy"
-    assert _clean_line("  rclone: не про даты  ") == "rclone: не про даты"
+    assert clean_line("  rclone: не про даты  ") == "rclone: не про даты"
 
 
 class _FakeProc:
     """Подставной rclone: отдаёт заготовленные строки и код возврата.
 
-    `poll()` обязателен: сторож простоя (задание HU) опрашивает процесс, и без
+    `poll()` обязателен: сторож простоя опрашивает процесс, и без
     него `_run_rclone` падал AttributeError. Код возврата показывается ТОЛЬКО
     когда строки кончились — иначе цикл вышел бы, не прочитав ни одной."""
 

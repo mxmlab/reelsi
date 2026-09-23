@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Интро гаснет к субтитру, если стоит на его месте; появление успевает доиграть (задание MH).
+"""Интро гаснет к субтитру, если стоит на его месте; появление успевает доиграть.
 
 Разбор `reelsi_batch.aep` владельца против собранного `Reelsi_all.jsx`: 61 из 76
 правленых руками групп интро гаснут к моменту появления следующего субтитра (±0.1 с,
@@ -174,7 +174,7 @@ def test_overlap_block_on_subs_level():
 
 def test_overlap_zoom_only_when_intro_rides_camera():
     """Зум Камеры 1 учитывается, пока интро к ней привязано (intro_cam=True), и не
-    учитывается у откреплённого интро (задание ZM)."""
+    учитывается у откреплённого интро."""
     # блок по центру кадра (dy = база): при 100 % он до полосы не дотягивается,
     # при 300 % — дорастает до неё
     assert _hits(dy=INTRO_BASE_Y) is False
@@ -482,7 +482,7 @@ def test_schema_counters_updated():
     assert "intro_sub_cut" in base and "intro_sub_fade" in base
     fields = [k for k in ("intro_sub_cut", "intro_sub_fade") if _schema_field(k)]
     assert len(fields) == 2
-    # группа «Тайминг» — та же, что у intro_fade (задание MH)
+    # группа «Тайминг» — та же, что у intro_fade
     def walk(items, path=()):
         for x in items:
             if x.get("key") == "intro_sub_fade":

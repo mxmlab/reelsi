@@ -34,6 +34,7 @@ import warnings
 HERE = os.path.dirname(os.path.abspath(__file__))
 from core import paths
 from core.app_meta import APP_VERSION, t, ui_lang
+from core.umsg import ReelsiError, cli_error
 
 # Отчёт должен читаться целиком. Flask ругается на чтение __version__, fontTools пишет
 # в stderr про кривые таблицы в чужих шрифтах — к состоянию окружения ни то, ни другое
@@ -71,11 +72,13 @@ def _mod(name):
     """
     try:
         importlib.import_module(name)
+    except ReelsiError: raise
     except Exception as e:
         return False, type(e).__name__
     try:
         from importlib.metadata import version
         return True, version(_DIST.get(name, name))
+    except ReelsiError: raise
     except Exception:
         return True, ""
 
@@ -100,6 +103,7 @@ def check_core():
             out = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True,
                                  timeout=10).stdout.splitlines()
             row(OK, "ffmpeg", (out[0][:60] if out else t("найден")))
+        except ReelsiError: raise
         except Exception as e:
             row(WARN, "ffmpeg", t("найден, но не отвечает: {err}", err=type(e).__name__))
     else:
@@ -133,6 +137,7 @@ def check_compute():
             free, total = torch.cuda.mem_get_info()
             row(OK, t("устройство"), f"cuda — {name}, " + t("свободно "
                                   "{free:.1f} из {total:.1f} ГБ", free=free / 2**30, total=total / 2**30))
+        except ReelsiError: raise
         except Exception:
             row(OK, t("устройство"), "cuda")
     elif dev == "mps":
@@ -169,6 +174,7 @@ def check_whisper_cpp():
         else:
             row(WARN, "whisper.cpp", t("моделей нет — скачаются при первом выборе "
                                       "движка (large-v3 ≈ 3 ГБ)"))
+    except ReelsiError: raise
     except Exception as e:
         row(WARN, "whisper.cpp", t("проверка не удалась: {err}", err=type(e).__name__))
 
@@ -238,6 +244,7 @@ def check_assets():
                 t("{want} не найден и SF Pro не установлен — Premiere подставит свой "
                 "шрифт, и строка субтитров поедет. Поставь SF Pro или пересобери блобы "
                 "под свой: tools/harvest_good.py", want=want))
+    except ReelsiError: raise
     except Exception as e:
         row(WARN, t("шрифт субтитров"), t("не смог проверить ({err})", err=type(e).__name__))
 
@@ -246,7 +253,7 @@ def check_assets():
         t("есть (ключи провайдеров)") if os.path.exists(ai)
         else t("нет — ИИ-шаги будут недоступны, пока не заведёшь профиль (⚙ в интерфейсе)"))
 
-    # Каталог возможностей моделей (models.dev, задание BY): по нему решается, что
+    # Каталог возможностей моделей (models.dev): по нему решается, что
     # модель умеет (reasoning/temperature/лимиты). Кэш на диск рядом с ai_config.
     try:
         from core.aicut import catalog
@@ -261,11 +268,13 @@ def check_assets():
                 row(OK, t("каталог models.dev"),
                     t("кэш есть ({when}, {nprov} провайдеров) — возможности моделей известны",
                       when=when, nprov=nprov))
+            except ReelsiError: raise
             except Exception:
                 row(WARN, t("каталог models.dev"), t("битый кэш, перезапишется при первом обращении"))
         else:
             row(WARN, t("каталог models.dev"),
                 t("кэша нет — при первом ИИ-вызове каталог подтянется; офлайн возможности моделей неизвестны"))
+    except ReelsiError: raise
     except Exception:
         pass                                   # каталог не критичен, doctor не падает
 
@@ -276,15 +285,17 @@ def check_assets():
 def check_workspace():
     try:
         from core.app_meta import env, out_dir
+        from core.cams import find_cam_dirs
         import reelsi as cli
         base = env("BASE") or cli.DEFAULT_BASE
+    except ReelsiError: raise
     except Exception as e:
         row(WARN, t("рабочая папка"), t("не смог определить ({err})", err=type(e).__name__))
         return
     if not os.path.isdir(base):
         row(ERR, t("рабочая папка"), t("{base} — не существует. Задай REELSI_BASE или --base", base=base))
         return
-    cams = [os.path.basename(p) for p in cli.find_cam_dirs(base)]
+    cams = [os.path.basename(p) for p in find_cam_dirs(base)]
     row(OK if cams else WARN, t("рабочая папка"),
         t("{base} — камеры: {cams}", base=base, cams=", ".join(cams)) if cams
         else t("{base} — папок «камера…» нет, класть материал сюда", base=base))
@@ -305,14 +316,16 @@ def check_external():
 
     То же правило, что у пакетов в check_optional: нет — код 0 и сказано, какая
     функция отключится; есть, но падает — код 1. Поиск AE не дублируем: зовём
-    тот же _find_ae() из api/render.py, чтобы у рендера и у doctor был один
-    источник правды о том, где стоит After Effects."""
+    тот же find_ae() из core/aerender.py, чтобы у рендера и у doctor был один
+    источник правды о том, где стоит After Effects (движок живёт в `core/` — из
+    `api/` его брать значило бы тащить в диагностику Flask-слой)."""
     if _which("rclone"):
         try:
             out = subprocess.run(["rclone", "version"], capture_output=True, timeout=10,
                                  text=True)
             ok = out.returncode == 0
             reason = t("код {code}", code=out.returncode)
+        except ReelsiError: raise
         except Exception as e:
             ok = False
             reason = type(e).__name__
@@ -329,12 +342,13 @@ def check_external():
         row(WARN, "After Effects", t("безголовый рендер доступен только на Windows"))
         return
     try:
-        from api.render import _find_ae
+        from core.aerender import find_ae
     except Exception as e:
         row(WARN, "After Effects", t("не смог проверить ({err})", err=type(e).__name__))
         return
     try:
-        ae = _find_ae()
+        ae = find_ae()
+    except ReelsiError: raise
     except Exception as e:
         row(ERR, "After Effects", t("есть, но падает ({err}) — отключится "
                                   "безголовый рендер", err=type(e).__name__))
@@ -412,11 +426,15 @@ def main():
 
 
 if __name__ == "__main__":
-    # Без консоли stdout у Python на Windows — cp1251/cp1252, и русский текст роняет
-    # печать UnicodeEncodeError. Та же починка, что в webui.py.
-    for _s in (sys.stdout, sys.stderr):
-        try:
-            _s.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
-            pass
-    sys.exit(main())
+    try:
+        # Без консоли stdout у Python на Windows — cp1251/cp1252, и русский текст роняет
+        # печать UnicodeEncodeError. Та же починка, что в webui.py.
+        for _s in (sys.stdout, sys.stderr):
+            try:
+                _s.reconfigure(encoding="utf-8", errors="replace")
+            except ReelsiError: raise
+            except Exception:
+                pass  # поток без reconfigure — печатаем как есть
+        sys.exit(main())
+    except ReelsiError as e:
+        cli_error(e)

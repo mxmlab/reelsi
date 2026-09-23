@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""NTSC-частота в разборе XML (задание IE).
+"""NTSC-частота в разборе XML.
 
 Секвенцию 29.97 и Премьер, и наш же `xmlbuild` пишут как
 `<timebase>30</timebase><ntsc>TRUE</ntsc>`. Пока `parse_full` читал только

@@ -15,6 +15,7 @@ end (_free_torch), just like gigaam_cut.run() does, so the process exits with
 a clean GPU.
 """
 import os, sys, json, tempfile, traceback, logging
+from core.umsg import ReelsiError, cli_error
 
 
 
@@ -58,18 +59,22 @@ def main():
 
 
 if __name__ == "__main__":
-    real_stdout = sys.stdout
-    sys.stdout = sys.stderr          # keep any library stdout noise off our result channel
     try:
-        path = main()
-    except Exception as e:
+        real_stdout = sys.stdout
+        sys.stdout = sys.stderr          # keep any library stdout noise off our result channel
+        try:
+            path = main()
+        except ReelsiError: raise
+        except Exception as e:
+            sys.stdout = real_stdout
+            # Full traceback first (captured in r.stderr by the parent for
+            # diagnosis), then a concise one-line error as the LAST line so the
+            # UI (which shows err[-1]) still gets a clear message.
+            tb = traceback.format_exc()
+            sys.stderr.write(tb)
+            sys.stderr.write("GIGAAM_SUBS_ERROR: %s: %s\n" % (type(e).__name__, e))
+            sys.exit(1)
         sys.stdout = real_stdout
-        # Full traceback first (captured in r.stderr by the parent for
-        # diagnosis), then a concise one-line error as the LAST line so the
-        # UI (which shows err[-1]) still gets a clear message.
-        tb = traceback.format_exc()
-        sys.stderr.write(tb)
-        sys.stderr.write("GIGAAM_SUBS_ERROR: %s: %s\n" % (type(e).__name__, e))
-        sys.exit(1)
-    sys.stdout = real_stdout
-    sys.stdout.write(path)
+        sys.stdout.write(path)
+    except ReelsiError as e:
+        cli_error(e)

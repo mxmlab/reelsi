@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты целостности скачивания и устойчивого опроса статуса генерации видео (KC).
+"""Тесты целостности скачивания и устойчивого опроса статуса генерации видео.
 
 Проверяем:
 1. Защита от HTML/не-видео ответов при скачивании (не оставляем мусор и пробуем следующий URL).
@@ -11,12 +11,14 @@
 import io
 import json
 import os
+import socket
 import time
 import urllib.request
 
 import pytest
 
 from core import aicut
+from core.umsg import ReelsiError
 
 
 class _FakeResponse:
@@ -55,9 +57,29 @@ def _prof():
 
 
 def _setup_base_env(monkeypatch):
-    """Отключаем сетевой опрос каталога и сон во время тестов."""
+    """Отключаем сетевой опрос каталога, сон и DNS во время тестов.
+
+    Резолвер подменяем заглушкой: стража адреса (SSRF) интересует IP, а не имя, а
+    сети в тестах быть не должно — любое имя резолвится в публичный адрес.
+    """
     monkeypatch.setattr(aicut, "ensure_video_catalog", lambda *a, **k: None)
     monkeypatch.setattr(time, "sleep", lambda s: None)
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda host, port=None, *a, **k: [
+                            (socket.AF_INET, socket.SOCK_STREAM, 6,
+                             "", ("93.184.216.34", 0))])
+
+
+def _fake_network(monkeypatch, fake_urlopen):
+    """Подмена сети на уровне OpenerDirector.open.
+
+    Скачивание ролика идёт СВОИМ opener'ом (перехватчик редиректов, core/app_meta.py),
+    а опрос статуса — через urllib.request.urlopen; общая точка входа у них одна,
+    поэтому подменяем её, а не модульный urlopen.
+    """
+    monkeypatch.setattr(
+        urllib.request.OpenerDirector, "open",
+        lambda self, req, data=None, timeout=None: fake_urlopen(req))
 
 
 def test_download_skips_html_and_saves_valid_mp4(tmp_path, monkeypatch):
@@ -90,7 +112,7 @@ def test_download_skips_html_and_saves_valid_mp4(tmp_path, monkeypatch):
             )
         raise RuntimeError(f"Неожиданный URL: {url}")
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    _fake_network(monkeypatch, fake_urlopen)
 
     res = aicut.gen_video("test prompt", opts={"model": "bytedance/seedance-2.0"},
                           out_dir=str(tmp_path), prof=_prof())
@@ -106,7 +128,7 @@ def test_download_skips_html_and_saves_valid_mp4(tmp_path, monkeypatch):
 
 
 def test_download_truncated_body_aborts_and_cleans_out_dir(tmp_path, monkeypatch):
-    """Оборванное тело (Content-Length больше факта) на всех URL приводит к SystemExit и очистке."""
+    """Оборванное тело (Content-Length больше факта) на всех URL приводит к ReelsiError и очистке."""
     _setup_base_env(monkeypatch)
 
     def fake_urlopen(req, *args, **kwargs):
@@ -127,9 +149,9 @@ def test_download_truncated_body_aborts_and_cleans_out_dir(tmp_path, monkeypatch
             headers={"Content-Type": "video/mp4", "Content-Length": "1000"},
         )
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    _fake_network(monkeypatch, fake_urlopen)
 
-    with pytest.raises(SystemExit) as excinfo:
+    with pytest.raises(ReelsiError) as excinfo:
         aicut.gen_video("test prompt", opts={"model": "bytedance/seedance-2.0"},
                         out_dir=str(tmp_path), prof=_prof())
 
@@ -162,9 +184,9 @@ def test_download_invalid_signature_rejected(tmp_path, monkeypatch):
             headers={"Content-Type": "application/octet-stream", "Content-Length": str(len(garbage))},
         )
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    _fake_network(monkeypatch, fake_urlopen)
 
-    with pytest.raises(SystemExit) as excinfo:
+    with pytest.raises(ReelsiError) as excinfo:
         aicut.gen_video("test prompt", opts={"model": "bytedance/seedance-2.0"},
                         out_dir=str(tmp_path), prof=_prof())
 
@@ -196,7 +218,7 @@ def test_download_webm_signature_renames_extension(tmp_path, monkeypatch):
             headers={"Content-Type": "video/webm", "Content-Length": str(len(webm_bytes))},
         )
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    _fake_network(monkeypatch, fake_urlopen)
 
     res = aicut.gen_video("test prompt", opts={"model": "bytedance/seedance-2.0"},
                           out_dir=str(tmp_path), prof=_prof())
@@ -241,7 +263,7 @@ def test_poll_three_html_responses_then_completed_succeeds(tmp_path, monkeypatch
             )
         raise RuntimeError(f"Неожиданный URL: {url}")
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    _fake_network(monkeypatch, fake_urlopen)
 
     res = aicut.gen_video("test prompt", opts={"model": "bytedance/seedance-2.0"},
                           out_dir=str(tmp_path), prof=_prof())
@@ -251,8 +273,8 @@ def test_poll_three_html_responses_then_completed_succeeds(tmp_path, monkeypatch
     assert poll_count == 4
 
 
-def test_poll_four_html_responses_raises_systemexit_without_jsondecode_trace(tmp_path, monkeypatch):
-    """Четыре HTML-ответа 200 подряд вызывают SystemExit с id задачи и poll_url без трассировки JSON."""
+def test_poll_four_html_responses_raises_reelsierror_without_jsondecode_trace(tmp_path, monkeypatch):
+    """Четыре HTML-ответа 200 подряд вызывают ReelsiError с id задачи и poll_url без трассировки JSON."""
     _setup_base_env(monkeypatch)
 
     def fake_urlopen(req, *args, **kwargs):
@@ -269,9 +291,9 @@ def test_poll_four_html_responses_raises_systemexit_without_jsondecode_trace(tmp
             )
         raise RuntimeError(f"Неожиданный URL: {url}")
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    _fake_network(monkeypatch, fake_urlopen)
 
-    with pytest.raises(SystemExit) as excinfo:
+    with pytest.raises(ReelsiError) as excinfo:
         aicut.gen_video("test prompt", opts={"model": "bytedance/seedance-2.0"},
                         out_dir=str(tmp_path), prof=_prof())
 
@@ -282,8 +304,8 @@ def test_poll_four_html_responses_raises_systemexit_without_jsondecode_trace(tmp
     assert "опрос статуса не удался" in err_text
 
 
-def test_poll_timeout_error_four_times_raises_systemexit(tmp_path, monkeypatch):
-    """TimeoutError в urlopen четыре раза подряд вызывает SystemExit с id задачи и ссылкой."""
+def test_poll_timeout_error_four_times_raises_reelsierror(tmp_path, monkeypatch):
+    """TimeoutError в urlopen четыре раза подряд вызывает ReelsiError с id задачи и ссылкой."""
     _setup_base_env(monkeypatch)
 
     def fake_urlopen(req, *args, **kwargs):
@@ -297,9 +319,9 @@ def test_poll_timeout_error_four_times_raises_systemexit(tmp_path, monkeypatch):
             raise TimeoutError("timed out reading status socket")
         raise RuntimeError(f"Неожиданный URL: {url}")
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    _fake_network(monkeypatch, fake_urlopen)
 
-    with pytest.raises(SystemExit) as excinfo:
+    with pytest.raises(ReelsiError) as excinfo:
         aicut.gen_video("test prompt", opts={"model": "bytedance/seedance-2.0"},
                         out_dir=str(tmp_path), prof=_prof())
 
@@ -328,9 +350,9 @@ def test_poll_json_list_handled_as_poll_error_not_attribute_error(tmp_path, monk
             )
         raise RuntimeError(f"Неожиданный URL: {url}")
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    _fake_network(monkeypatch, fake_urlopen)
 
-    with pytest.raises(SystemExit) as excinfo:
+    with pytest.raises(ReelsiError) as excinfo:
         aicut.gen_video("test prompt", opts={"model": "bytedance/seedance-2.0"},
                         out_dir=str(tmp_path), prof=_prof())
 

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Контракты пяти роутов api/inserts.py — база вставок (задание HX, круг 7):
+"""Контракты пяти роутов api/inserts.py — база вставок (круг 7):
 
 * `GET  /api/insertlib_info`   — что в индексе (файл, папки, эмбеддер);
 * `POST /api/insertlib_scan`   — построить/обновить индекс по папкам;

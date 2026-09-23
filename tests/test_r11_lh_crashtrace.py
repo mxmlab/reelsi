@@ -76,7 +76,7 @@ def test_marker_from_dead_pid_logs_warning_and_crash_tail(crashtrace_isolation, 
     marker_data = {
         "pid": dead_pid,
         "started": started_time,
-        "version": "0.1.0-beta",
+        "version": "0.2.0-beta",
         "port": 5001,
     }
     marker_file.write_text(json.dumps(marker_data), encoding="utf-8")

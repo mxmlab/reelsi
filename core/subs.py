@@ -8,6 +8,7 @@ from core import paths
 from core.fileio import atomic_text_write
 from core.subtitle_blobs import BlobLibrary
 from core.xmltext import xml_text as _xml_escape
+from core.umsg import ReelsiError, cli_error
 TICKS_PER_FRAME = 4233600000
 GFX_IN = 216000  # fixed in-point into the graphic media (mirrors reference)
 
@@ -16,7 +17,7 @@ PHRASE_GAP = 0.30  # сек: пауза между словами, закрыв�
 
 
 def build_sub_rows(words, per_row=1, max_rows=1, cut_bounds=None, word_timings=None):
-    """Сгруппировать слова субтитров в строки (задания CH, CJ, CR, CV).
+    """Сгруппировать слова субтитров в строки.
 
     words — список кортежей (start, end, word) либо словарей {"w", "start", "end"}.
     per_row — максимум слов в ОДНОЙ строке (дефолт 1).
@@ -24,7 +25,7 @@ def build_sub_rows(words, per_row=1, max_rows=1, cut_bounds=None, word_timings=N
     cut_bounds — кадры cut-таймлайна, где кончаются/начинаются куски монтажа (реплика не
     переносится через границу склейки).
     word_timings — необязательный список настоящих таймингов [{"w", "start", "end"}, ...]
-    в секундах на cut-таймлайне (сайдкар <стем>.words.json, задания CR, CV).
+    в секундах на cut-таймлайне (сайдкар <стем>.words.json).
     Возвращает список строк [
         {"text": str, "start": int, "end": int, "row": int, "repl": int,
          "words": [{"w", "start", "end", "idx"}]}
@@ -96,7 +97,7 @@ def build_sub_rows(words, per_row=1, max_rows=1, cut_bounds=None, word_timings=N
             return
         r_start = cur[0]["start"]
         r_end = cur[-1]["end"]
-        # Раскладываем слова реплики по строкам ровно по per_row слов (задание CJ)
+        # Раскладываем слова реплики по строкам ровно по per_row слов
         for row_num in range(max_rows):
             chunk = cur[row_num * per_row : (row_num + 1) * per_row]
             if not chunk:
@@ -173,7 +174,7 @@ def build_sub_rows(words, per_row=1, max_rows=1, cut_bounds=None, word_timings=N
         is_pause = _has_pause_after(k)
 
         if is_sent:
-            # 1. слово кончается на ., !, ?, … — конец предложения, строку закрыть ВСЕГДА (задание CV)
+            # 1. слово кончается на ., !, ?, … — конец предложения, строку закрыть ВСЕГДА
             flush()
         elif is_phrase or is_pause:
             # 2/3. конец фразы (не меньше половины per_row) или пауза: проверка сирот
@@ -249,7 +250,7 @@ def write_srt(rows, srt_path):
     content = "\n".join(lines)
     if content and not content.endswith("\n"):
         content += "\n"
-    # атомарно: SRT — результат шага, пустой файл на месте живого хуже отсутствия (IB, п. 2)
+    # атомарно: SRT — результат шага, пустой файл на месте живого хуже отсутствия
     atomic_text_write(srt_path, content)
 
 
@@ -309,14 +310,17 @@ class SubtitleBuilder:
 
 
 if __name__ == "__main__":
-    sb = SubtitleBuilder()
-    print("template word:", repr(sb.tmpl_word), "blob len:", len(sb.tmpl_blob))
-    import xml.etree.ElementTree as ET
-    for i, (w, a, b) in enumerate([("ПРИВЕТ", 0, 20), ("мир", 20, 35), ("ТЕСТ&<", 35, 50)]):
-        c = sb.clip(w, a, b, 500 + i, 1000 + i)
-        ET.fromstring(c)  # must be well-formed
-        eff = re.search(r'<name>([^<]*)</name>\s*<effectid>GraphicAndType', c).group(1)
-        st = re.search(r'<start>(\d+)</start>', c).group(1)
-        en = re.search(r'<end>(\d+)</end>', c).group(1)
-        print(f"  ok word={w!r} effectname={eff!r} start={st} end={en}")
-    print("subs.py self-test OK")
+    try:
+        sb = SubtitleBuilder()
+        print("template word:", repr(sb.tmpl_word), "blob len:", len(sb.tmpl_blob))
+        import xml.etree.ElementTree as ET
+        for i, (w, a, b) in enumerate([("ПРИВЕТ", 0, 20), ("мир", 20, 35), ("ТЕСТ&<", 35, 50)]):
+            c = sb.clip(w, a, b, 500 + i, 1000 + i)
+            ET.fromstring(c)  # must be well-formed
+            eff = re.search(r'<name>([^<]*)</name>\s*<effectid>GraphicAndType', c).group(1)
+            st = re.search(r'<start>(\d+)</start>', c).group(1)
+            en = re.search(r'<end>(\d+)</end>', c).group(1)
+            print(f"  ok word={w!r} effectname={eff!r} start={st} end={en}")
+        print("subs.py self-test OK")
+    except ReelsiError as e:
+        cli_error(e)

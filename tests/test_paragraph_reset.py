@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Проверка сброса стиля абзаца resetParagraphStyle() (задание GP).
+"""Проверка сброса стиля абзаца resetParagraphStyle().
 
 Что проверяем:
 1. В xml2ae/template.py и xml2ae/build.py число resetCharStyle() равно числу
@@ -45,7 +45,7 @@ def test_paragraph_reset_in_source_files():
     # Число вызовов в каждом файле и суммарно 10 и 10
     t_char = len(re.findall(r"\bresetCharStyle\(\)", template_txt))
     t_para = len(re.findall(r"\bresetParagraphStyle\(\)", template_txt))
-    # +2 — циклы стопки жёлтых в режиме строк (SUBS_LOOP_STACK*, задание ZU)
+    # +2 — циклы стопки жёлтых в режиме строк (SUBS_LOOP_STACK*)
     assert t_char == 8, f"в template.py ожидалось 8 resetCharStyle, получено {t_char}"
     assert t_para == 8, f"в template.py ожидалось 8 resetParagraphStyle, получено {t_para}"
 
@@ -61,7 +61,7 @@ def test_paragraph_reset_in_source_files():
     pattern = re.compile(r"(\w+)\.resetCharStyle\(\);\s*(\w+)\.resetParagraphStyle\(\);")
     for name, content in [("template.py", template_txt), ("build.py", build_txt)]:
         matches = pattern.findall(content)
-        expected_count = 8 if name == "template.py" else 2   # +2 — циклы стопки жёлтых (ZU)
+        expected_count = 8 if name == "template.py" else 2   # +2 — циклы стопки жёлтых
         assert len(matches) == expected_count, (
             f"в {name} найдено {len(matches)} связок char+para вместо {expected_count}"
         )

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты для заданий ET1/ET2: поле look в ядре базы вставок и пробросы до подбора.
+"""Тесты: поле look в ядре базы вставок и пробросы до подбора.
 
 look — приписка стиля картинки (из image_prompts.a.extra спикера). Спикеры с одинаковой
 припиской автоматически делят одну библиотеку: add_generated пишет стиль в запись,
@@ -115,7 +115,7 @@ def test_match_many_look_orders_own_general_foreign(tmp_path, monkeypatch):
 
 def test_match_wrapper_passes_look(tmp_path, monkeypatch):
     """Обёртка match(query, look=...): не падает и учитывает стиль — порядок
-    свой -> общий -> чужой на той же фикстуре, score не меняется (ET2)."""
+    свой -> общий -> чужой на той же фикстуре, score не меняется."""
     p_own, p_general, p_foreign = _look_fixture(tmp_path, monkeypatch)
 
     results = insertlib.match("dark subject", k=3, look="at dark background")

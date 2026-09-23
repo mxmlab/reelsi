@@ -18,6 +18,7 @@ import urllib.request
 from .config import AI_CONFIG_PATH, APP_NAME, APP_REFERER
 from core.app_meta import env, http_req
 from core.fileio import atomic_json_dump
+from core.umsg import ReelsiError
 
 CATALOG_URL = "https://models.dev/api.json"
 CATALOG_TTL = 86400        # раз в сутки
@@ -42,6 +43,7 @@ def _load_disk(path):
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
+    except ReelsiError: raise
     except Exception:
         return None
 
@@ -54,6 +56,7 @@ def _save_disk(path, data):
     ОДИН и тот же файл, и содержимое кэша перемешивалось — на этом и поймали."""
     try:
         atomic_json_dump(path, data)
+    except ReelsiError: raise
     except Exception:
         pass                                  # кэш — не критичный путь
 
@@ -91,6 +94,7 @@ def ensure_catalog(emit=None, force=False):
         _CATALOG, _CATALOG_TS = data, now
         emit("каталог models.dev: обновлён ({count} провайдеров)", count=len(data))
         return data
+    except ReelsiError: raise
     except Exception as e:
         if disk:
             _CATALOG, _CATALOG_TS = disk, now
@@ -235,7 +239,7 @@ def valid_level(provider, model, lvl, emit=None):
     return False
 
 
-# Порядок уровней для понижения «на ступень» при повторе битого JSON (задание BW).
+# Порядок уровней для понижения «на ступень» при повторе битого JSON.
 # «max»/«xhigh»/«minimal»/«none» из каталога efforts тоже участвуют: понижение идёт
 # по рангу, а не по нашему фиксированному набору.
 _LEVEL_RANK = {"off": 0, "none": 0, "minimal": 1, "low": 2, "medium": 3,
@@ -243,7 +247,7 @@ _LEVEL_RANK = {"off": 0, "none": 0, "minimal": 1, "low": 2, "medium": 3,
 
 
 def nearest_supported_level(provider, model, lvl, emit=None):
-    """Ближайший уровень СНИЗУ из efforts модели в каталоге (задание BW).
+    """Ближайший уровень СНИЗУ из efforts модели в каталоге.
 
     У deepseek-v4-flash в каталоге только low/high/max — слать medium нельзя:
     провайдер молча мапит невалидный уровень в свой default_effort (high) и жжёт

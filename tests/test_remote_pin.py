@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты фиксации удалённого кода и безопасной распаковки (задание HN)."""
+"""Тесты фиксации удалённого кода и безопасной распаковки."""
 import hashlib
 import io
 import os

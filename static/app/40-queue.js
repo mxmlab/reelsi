@@ -185,7 +185,7 @@ async function camMatchAll(){
   }catch(e){toast(t('Сервер не ответил: ')+e);uiLog('cammatchall: '+e);}
   finally{if(btn)btn.disabled=false;}
 }
-// ================= гугл-диск (задание G) =================
+// ================= гугл-диск =================
 // Ссылка → rclone copy → файлы в папке загрузки → выбор файла камеры 1 → тот же
 // /api/cammatch, что и «Подбор по звуку». Раскладку по камерам не изобретаем.
 let GDN=0,GDLOGN=0;             // интервал поллинга прогресса и сколько строк лога уже показано
@@ -229,7 +229,7 @@ async function gdTick(){
   // упавший rclone не выдаём за успех: раньше «скачивание завершено» писалось
   // на любом исходе, а следом список файлов затирал и это
   const bad=!!(s.done&&s.failed), stopped=!!(s.done&&s.cancelled);
-  if(stopped){st.textContent=t('скачивание остановлено');}   // «Стоп» нажал человек — это не ошибка (задание IC, п. 3)
+  if(stopped){st.textContent=t('скачивание остановлено');}   // «Стоп» нажал человек — это не ошибка
   else if(bad){st.textContent='✗ '+t(s.cur||'скачивание не удалось');toast('⚠ '+t('Скачивание не удалось — смотри лог'));}
   else st.textContent=s.done?t('скачивание завершено'):'';
   gdFiles(bad||stopped);      // при отмене и ошибке список файлов статус не перебивает
@@ -282,7 +282,7 @@ async function gdSpread(){
     if(found===n)addPair();
     else uiLog(t('раскладка: нашлось {n} из {m} камер — доукомплектуй остальные и нажми «В очередь»',{n:found,m:n}));
     saveState();
-    // Сборка превью-прокси к моменту просмотра (задание G): 4:2:2 10-бит жуется
+    // Сборка превью-прокси к моменту просмотра: 4:2:2 10-бит жуется
     // софтом, и лучше начать заранее. Единственный клип — чей он, очевидно;
     // их несколько — прокси поднимутся сами при открытии предпросмотра.
     if(CLIPS.length===1)pvProxyLoad(CLIPS[0].xml,true);
@@ -311,7 +311,7 @@ function renderQueue(){const tb=document.querySelector('#qt tbody');if(!tb)retur
 
 // ================= CLIPS (unified list) =================
 let CLIPS=[];   // {xml,name,status:{subs,colored},inserts:[],job:{...}}
-// Отметка клипа галочкой — ОДНА на все три шага (задание ZS): галка на шаге 1 это та же
+// Отметка клипа галочкой — ОДНА на все три шага: галка на шаге 1 это та же
 // c.sel, что на разметке и сборке. SEL_ANCHOR — индекс последней кликнутой галки, от него
 // Shift считает диапазон; после удаления список перерисован и точки отсчёта больше нет —
 // сбрасывается в -1 (см. delClips и removeSelClips).
@@ -328,7 +328,7 @@ if(typeof window!=='undefined'){
   window.addEventListener('blur',()=>{SHIFT_HELD=false;});
 }
 function clipByXml(xml){return CLIPS.find(c=>c.xml===xml);}
-// Тег спикера ставится ЗДЕСЬ, в ЕДИНСТВЕННОЙ точке рождения клипа (задание N):
+// Тег спикера ставится ЗДЕСЬ, в ЕДИНСТВЕННОЙ точке рождения клипа:
 // после нарезки спикер точно тот, с которым резали; «Из папки результата» берёт
 // папку из ai_outdir, а это папка спикера; «Добавить XML…» — догадка, тег поэтому
 // исправим на шаге 3. «Не выбран» — запасной путь, работает как всегда.
@@ -421,11 +421,15 @@ async function runCustom(){
 const runClassic=runCustom;
 // ---- единое ядро поллинга джоба: /api/status → лог → прогресс → onDone(d) ----
 // eager: доля «внутри текущего клипа» для бара (0.15 нарезка, 0.3 сборка); null = без бара.
-function jobProg(d,eager){
-  const p=(d.progress&&d.progress.n)?{i:+d.progress.i,n:+d.progress.n}   // структурный (сервер)
-        :(PROGMARK?{i:+PROGMARK[1],n:+PROGMARK[2]}:null);                // фолбэк: [i/N] из лога
-  if(eager==null||!p)return{frac:null,sub:''};
-  return{frac:(p.i-1)/p.n+eager/p.n,sub:t('клип {i} из {n}',{i:p.i,n:p.n})};}
+// Имя клипа приходит с сервера (progress.name) и кладётся в контекст очереди — тогда строка
+// очереди у серверных задач та же, что у клиентских («клип i из N · имя» + этап).
+function jobProg(d,eager,title){
+  const p=(d.progress&&d.progress.n)?{i:+d.progress.i,n:+d.progress.n,name:d.progress.name||''}
+        :(PROGMARK?{i:+PROGMARK[1],n:+PROGMARK[2],name:''}:null);        // фолбэк: [i/N] из лога
+  if(!p)return{frac:null,sub:''};
+  progQueue(title,p.i,p.n,p.name);
+  if(eager==null)return{frac:null,sub:''};
+  return{frac:(p.i-1)/p.n+eager/p.n,sub:''};}
 // onTick(d) зовётся на КАЖДОМ опросе (не только в конце) — нарезка так отдаёт
 // готовые клипы по одному, не дожидаясь всей очереди.
 // Сбои fetch подряд. Ретраим как раньше, но обрыв связи не должен выглядеть
@@ -440,10 +444,10 @@ async function pollJob(self,title,eager,onDone,onTick){
     setTimeout(self,1500);return;}
   POLLFAIL=0;
   mergeLog(d);
-  queueRender(d);    // очередь этапов (задание FA): единая дверь для нарезки/сборки/черновика
+  queueRender(d);    // очередь этапов: единая дверь для нарезки/сборки/черновика
   if(onTick)onTick(d);
   const last=[...LOGCACHE].map(fmtLog).reverse().find(l=>l.trim());
-  const pr=jobProg(d,eager);
+  const pr=jobProg(d,eager,title);
   progUpdate(pr.frac,(last||'').trim().slice(0,80),title,pr.sub);
   if(d.done){onDone(d);return;}
   setTimeout(self,1000);}
@@ -700,7 +704,7 @@ function syncBuildBtn(){const n=CLIPS.filter(c=>c.sel).length;
   const scope=$('buildscope');if(scope)scope.textContent=n?t('Выбрано {n} из {m}',{n:n,m:CLIPS.length}):t('Все {n} клипов',{n:CLIPS.length});
   const rms=$('rmSelClips');if(rms)rms.disabled=!n;   // метла «убрать отмеченные» — только когда есть что убирать
   // Клипы ДВУХ спикеров в одном наборе собираются только по одному — каждый в свою
-  // папку (задание N): «Собрать набор» и «Один на всё» для них не существуют.
+  // папку: «Собрать набор» и «Один на всё» для них не существуют.
   const sel=selClips();const spks=new Set(sel.map(c=>(c.job||{}).speaker||'').filter(Boolean));
   const mixed=spks.size>1;
   if(b)b.disabled=!!mixed;
@@ -732,7 +736,7 @@ function delClip(i){
   // curAE / curEdit / curIns правятся при удалении в _spliceClip (общий путь delClips)
   delClips([i]);
 }
-// Окно удаления обобщено на список (задание ZS): заголовок — сколько клипов, в теле — их
+// Окно удаления обобщено на список: заголовок — сколько клипов, в теле — их
 // имена. Дальше выбор один: убрать из списка (_spliceClip по убыванию индексов) или стереть
 // с диска (сухой прогон, потом удаление по каждому XML — бэкенд удаляет по одному).
 function delClips(idxs){
@@ -806,7 +810,7 @@ async function delClipDiskPrepare(){
       const name=f.path.split(/[/\\]/).pop();
       const sz=(f.size>1048576?(f.size/1048576).toFixed(2)+t(' МБ'):(f.size/1024).toFixed(1)+t(' КБ'));
       // имя файла приходит с диска (материал мог приехать с гугл-диска) — в разметку
-      // только через esc(): кавычка или «<» в имени иначе станут тегом (задание HL)
+      // только через esc(): кавычка или «<» в имени иначе станут тегом
       return '<div style="display:flex;justify-content:space-between;gap:8px"><span>'+esc(name)+'</span><span style="flex:none;color:var(--tx)">'+sz+'</span></div>';
     }).join('');
   }else{

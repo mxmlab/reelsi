@@ -12,7 +12,7 @@ import time
 import urllib.request, urllib.error
 from .config import APP_NAME, APP_REFERER, _profile_dict, apply_profile_headers, load_ai_config
 from .llm import ai_log_append, cancel_reason, cancelled
-from core.umsg import umsg
+from core.umsg import ReelsiError, umsg
 from core.app_meta import console_emit, http_req
 
 
@@ -36,7 +36,7 @@ def image_rembg_on():
 
 
 # Слотов приписки ЧЕТЫРЕ: a/b под разные стили (на карточке вставки кнопки 1 и 2) и
-# pa/pb — свои приписки для вставок с галкой «на подложке» (задание ZK): подложка уже
+# pa/pb — свои приписки для вставок с галкой «на подложке»: подложка уже
 # из стиля, фото с вырезанным фоном, и стиль предмета у таких вставок свой.
 # Настройки хранятся строго в профиле спикера (speakers/*.json -> image_prompts).
 IMAGE_PROMPT_SLOTS = ("a", "b", "pa", "pb")
@@ -44,7 +44,7 @@ IMAGE_PROMPT_SLOTS = ("a", "b", "pa", "pb")
 
 def resolve_image_prompt_cfg(slot="a", speaker=None):
     """Настройки промпта генерации выбранного слота с учётом спикера.
-    Цепочка разрешения (задание CS):
+    Цепочка разрешения:
     1) профиль спикера этого клипа (speaker: имя, label или dict) -> image_prompts[slot]
     2) если у клипа нет тега спикера, нет профиля или у спикера пусто -> приписки нет (extra: '')
     """
@@ -63,8 +63,9 @@ def resolve_image_prompt_cfg(slot="a", speaker=None):
                         "extra": extra,
                         "pos": pos if pos in ("prefix", "suffix") else "suffix",
                     }
+        except ReelsiError: raise
         except Exception:
-            pass
+            pass  # в стиле нет ключа промпта — берём пустую добавку
     return {"extra": "", "pos": "suffix"}
 
 
@@ -100,18 +101,19 @@ IMAGE_MODELS = {}
 
 
 def _img_http_error(e, prof):
-    """Разбор HTTPError генерации картинки: фатальное -> SystemExit, иначе строка
+    """Разбор HTTPError генерации картинки: фатальное -> ReelsiError, иначе строка
     для ретрая."""
     try:
         detail = e.read().decode("utf-8", "replace")[:300]
+    except ReelsiError: raise
     except Exception:
         detail = ""
     if e.code in (401, 403):
-        raise SystemExit(umsg("key_rejected", f"API-ключ не принят ({e.code}) — проверь профиль «{prof['name']}» в ⚙", code=e.code, name=prof["name"]))
+        raise ReelsiError(umsg("key_rejected", f"API-ключ не принят ({e.code}) — проверь профиль «{prof['name']}» в ⚙", code=e.code, name=prof["name"]))
     if e.code == 402:
-        raise SystemExit(umsg("no_credits", "у провайдера кончились кредиты (402) — пополни баланс"))
+        raise ReelsiError(umsg("no_credits", "у провайдера кончились кредиты (402) — пополни баланс"))
     if e.code == 429:
-        raise SystemExit(umsg("rate_limit", "лимит запросов провайдера (429) — подожди и повтори"))
+        raise ReelsiError(umsg("rate_limit", "лимит запросов провайдера (429) — подожди и повтори"))
     return f"{e.code}: {detail}"
 
 
@@ -128,7 +130,7 @@ def _is_timeout(e):
 def _check_img_timeout(e):
     """Истечение таймаута без повтора: мёртвое соединение не должно удваивать ожидание."""
     if _is_timeout(e):
-        raise SystemExit(umsg("img_timeout", f"провайдер не ответил за {IMAGE_TIMEOUT_S} с — повтори генерацию", s=IMAGE_TIMEOUT_S))
+        raise ReelsiError(umsg("img_timeout", f"провайдер не ответил за {IMAGE_TIMEOUT_S} с — повтори генерацию", s=IMAGE_TIMEOUT_S))
 
 
 class _ImageTimeoutError(Exception):
@@ -148,9 +150,9 @@ def gen_image(prompt, prof=None, emit=console_emit, retries=1):
     Если Image API не ответил за IMAGES_API_TIMEOUT_S (40с) — также откат на чат."""
     prof = prof or resolve_image_profile()
     if prof is None:
-        raise SystemExit(umsg("images_disabled", "генерация картинок выключена — выбери профиль «Картинки» в настройках ⚙"))
+        raise ReelsiError(umsg("images_disabled", "генерация картинок выключена — выбери профиль «Картинки» в настройках ⚙"))
     if prof["provider"] in ("anthropic", "lmstudio"):
-        raise SystemExit(umsg("provider_no_images",
+        raise ReelsiError(umsg("provider_no_images",
                               f"провайдер «{prof['provider']}» не генерит картинки — нужен "
                               f"OpenRouter/OpenAI-совместимый с image-моделью (FLUX, Nano Banana)",
                               provider=prof["provider"]))
@@ -169,7 +171,7 @@ def gen_image(prompt, prof=None, emit=console_emit, retries=1):
             res = _gen_image_chat(prompt, prof, emit=emit, retries=retries)
         ai_log_append("image", prof, ok=True, ms=(time.time() - t0) * 1000, err=None)
         return res
-    except (Exception, SystemExit) as e:
+    except (ReelsiError, Exception, SystemExit) as e:
         ai_log_append("image", prof, ok=False, ms=(time.time() - t0) * 1000, err=str(e))
         raise
 
@@ -198,7 +200,7 @@ def _gen_image_openrouter(prompt, prof, emit=console_emit, retries=1):
     in_catalog = (prof["model"] or "").lower() in IMAGE_MODELS
     for attempt in range(retries + 1):
         if cancelled():
-            raise SystemExit(cancel_reason())
+            raise ReelsiError(cancel_reason())
         req = http_req(url, data=json.dumps(payload).encode("utf-8"),
                        headers=headers)
         try:
@@ -211,7 +213,7 @@ def _gen_image_openrouter(prompt, prof, emit=console_emit, retries=1):
         except urllib.error.HTTPError as e:
             if e.code == 404:                   # модель не картиночная / не в Image API
                 if in_catalog:
-                    raise SystemExit(umsg("img_model_not_found",
+                    raise ReelsiError(umsg("img_model_not_found",
                                           f"модель «{prof['model']}» не найдена в Image API — "
                                           f"выбери image-модель (FLUX, Nano Banana) в профиле «Картинки» ⚙",
                                           model=prof["model"]))
@@ -237,7 +239,7 @@ def _gen_image_openrouter(prompt, prof, emit=console_emit, retries=1):
                     + json.dumps(resp, ensure_ascii=False)[:200])
         emit("! генерация не удалась ({err}) — повтор {attempt}/{retries}",
              err=last, attempt=attempt + 1, retries=retries)
-    raise SystemExit(umsg("gen_failed", f"генерация картинки упала после {retries + 1} попыток: {last}", tries=retries + 1, last=last))
+    raise ReelsiError(umsg("gen_failed", f"генерация картинки упала после {retries + 1} попыток: {last}", tries=retries + 1, last=last))
 
 
 def _gen_image_chat(prompt, prof, emit=console_emit, retries=1):
@@ -254,7 +256,7 @@ def _gen_image_chat(prompt, prof, emit=console_emit, retries=1):
     last = None
     for attempt in range(retries + 1):
         if cancelled():
-            raise SystemExit(cancel_reason())
+            raise ReelsiError(cancel_reason())
         req = http_req(url, data=json.dumps(payload).encode("utf-8"),
                        headers=headers)
         try:
@@ -278,4 +280,4 @@ def _gen_image_chat(prompt, prof, emit=console_emit, retries=1):
                     + json.dumps(resp, ensure_ascii=False)[:200])
         emit("! генерация не удалась ({err}) — повтор {attempt}/{retries}",
              err=last, attempt=attempt + 1, retries=retries)
-    raise SystemExit(umsg("gen_failed", f"генерация картинки упала после {retries + 1} попыток: {last}", tries=retries + 1, last=last))
+    raise ReelsiError(umsg("gen_failed", f"генерация картинки упала после {retries + 1} попыток: {last}", tries=retries + 1, last=last))

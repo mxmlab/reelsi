@@ -224,7 +224,7 @@ def test_yellow_and_joins_stay_on_their_words(xml_subs, tmp_path):
 
 
 def test_intro_font_size_not_shrunk_by_rows(xml_subs, tmp_path, monkeypatch):
-    """Кегль интро в режиме строк — неужатый кегль субтитров, а не автофит строк (ZL).
+    """Кегль интро в режиме строк — неужатый кегль субтитров, а не автофит строк.
 
     Автофит строк ужимает единый FONT_SIZE субтитров под самую длинную строку, а интро
     в AE читало тот же FONT_SIZE и выходило в разы мельче, чем в режиме по слову. Теперь

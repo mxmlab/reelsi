@@ -14,6 +14,7 @@ Whisper даёт ТЕКСТ, но его тайминги приблизител
 import os, re
 from core.app_meta import console_emit, wrap_emit
 from core.applog import get_logger
+from core.umsg import ReelsiError
 
 log = get_logger("reelsi.falign")
 
@@ -35,6 +36,7 @@ def _resolve(device):
             return "cuda"
         from core.device import pick_device
         return pick_device()
+    except ReelsiError: raise
     except Exception:
         return "cpu"
 
@@ -62,8 +64,9 @@ def release_model():
         import torch
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # torch/GPU недоступны — чистить нечего
     return True
 
 
@@ -110,6 +113,7 @@ def align_text(audio_f32, text, device="cuda", sr=16000):
         aln, sc = torchaudio.functional.forced_align(
             em, torch.tensor([targets], device=dev), blank=blank)
         spans = torchaudio.functional.merge_tokens(aln[0], sc[0], **_blank_kw(blank))
+    except ReelsiError: raise
     except Exception:
         return []
     # merge_tokens склеивает подряд идущие одинаковые токены: на удвоенной букве
@@ -208,6 +212,7 @@ def align_words(wav_path, words, device="cuda", emit=console_emit):
             aln, sc = torchaudio.functional.forced_align(
                 em, torch.tensor([targets], device=dev), blank=blank)
             spans = torchaudio.functional.merge_tokens(aln[0], sc[0], **_blank_kw(blank))
+        except ReelsiError: raise
         except Exception:
             continue
         # Соответствие «спан i ↔ meta[i]» — то же самое, что в align_text

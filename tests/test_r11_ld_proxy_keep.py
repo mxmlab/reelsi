@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Защита прокси черновика и превью от авто-уборки _tmp (LD).
+"""Защита прокси черновика и превью от авто-уборки _tmp.
 
 В _tmp сосуществуют два кэша:
 - pv_*.mp4 — превью-прокси плеера (build_preview_proxy);

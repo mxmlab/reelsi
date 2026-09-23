@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Дешёвая защита API (задание MZ): пять дверей — по тесту на каждую.
+"""Дешёвая защита API: пять дверей — по тесту на каждую.
 
 1. `POST /api/clip_delete` без `dry` — сухой прогон: файлы нарезки остаются на диске,
    в ответе список того, что БЫЛО БЫ удалено. Удаление — только при явном `dry: false`
@@ -142,7 +142,7 @@ def rclone_conf(tmp_path, monkeypatch):
 def test_rclone_назначение_с_дефисом_это_отказ(rclone_conf, dest):
     """Путь назначения приходит из тела запроса: `--config=…` увёл бы скачивание на
     чужие токены, `--dry-run` сделал бы вид, что скачали."""
-    from api.gdrive import rclone_cmd
+    from core.rclone import rclone_cmd
     with pytest.raises(ValueError):
         rclone_cmd("gdrive", FILE_URL, dest)
 
@@ -151,7 +151,7 @@ def test_rclone_позиционные_пути_идут_после_двойно
     """`--` перед первым позиционным аргументом: после него для rclone всё — значения.
     Проверяем хвост команды целиком, включая id с ведущим дефисом (маска его допускает),
     и путь назначения."""
-    from api.gdrive import rclone_cmd
+    from core.rclone import rclone_cmd
 
     dest = str(tmp_path)
     os_dest = dest.replace("\\", "/").rstrip("/")

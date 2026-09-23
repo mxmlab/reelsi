@@ -27,6 +27,7 @@ import traceback
 from core import app_meta, paths
 from core.app_meta import APP_VERSION
 from core.fileio import atomic_json_dump
+from core.umsg import ReelsiError
 
 _CRASH_FILE_HANDLE = None
 _ORIG_SYS_EXCEPTHOOK = None
@@ -89,6 +90,7 @@ def is_pid_alive(pid: int) -> bool:
             if err == 5:
                 return True
             return False
+        except ReelsiError: raise
         except Exception:
             # Запасной вариант через tasklist
             try:
@@ -99,6 +101,7 @@ def is_pid_alive(pid: int) -> bool:
                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
                 )
                 return str(pid) in out
+            except ReelsiError: raise
             except Exception:
                 return False
     else:
@@ -122,6 +125,7 @@ def _parse_iso_datetime(dt_str: str):
         # Python 3.10 fromisoformat поддерживает не более 6 цифр микросекунд
         clean = re.sub(r"(\.\d{1,6})\d*", r"\1", clean)
         return datetime.fromisoformat(clean)
+    except ReelsiError: raise
     except Exception:
         return None
 
@@ -168,6 +172,7 @@ def _check_previous_crash(log: logging.Logger, marker_path: str, crash_path: str
     try:
         with open(marker_path, "r", encoding="utf-8") as f:
             prev_data = json.load(f)
+    except ReelsiError: raise
     except Exception as e:
         log.warning("Маркер предыдущего запуска повреждён: %s", e)
         return
@@ -201,6 +206,7 @@ def _check_previous_crash(log: logging.Logger, marker_path: str, crash_path: str
                 tail_text = "".join(tail).strip()
                 if tail_text:
                     log.warning("Хвост reelsi_crash.log (последние %d строк):\n%s", len(tail), tail_text)
+        except ReelsiError: raise
         except Exception as e:
             log.warning("Не удалось прочитать crash-лог: %s", e)
 
@@ -227,6 +233,7 @@ def _check_previous_crash(log: logging.Logger, marker_path: str, crash_path: str
                     log.warning("Запись журнала Application Windows:\n%s", ev)
             elif res.returncode != 0:
                 log.warning("wevtutil завершился с ошибкой: код %d", res.returncode)
+        except ReelsiError: raise
         except Exception as e:
             log.warning("Не удалось получить события Application Windows: %s", e)
 
@@ -263,10 +270,12 @@ def _remove_marker(marker_path: str = None, port=None):
                     data = json.load(f)
                 if data.get("pid") == os.getpid():
                     os.remove(marker_path)
+            except ReelsiError: raise
             except Exception:
                 os.remove(marker_path)
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # процесс и так завершается — бросать из сторожа нельзя
 
 
 def install(log=None, port=None):
@@ -323,24 +332,26 @@ def install(log=None, port=None):
                         if callable(prev):
                             try:
                                 prev(signum, frame)
-                            except SystemExit:
+                            except (ReelsiError, SystemExit):
                                 raise
+                            except ReelsiError: raise
                             except Exception:
-                                pass
+                                pass  # чужой обработчик сигнала упал — всё равно выходим
                         sys.exit(0)
                     return _sig_handler
 
                 signal.signal(sig, _make_handler(prev_h, marker_path))
             except (ValueError, OSError):
-                pass
+                pass  # сигнал недоступен в этом потоке — сторож просто не встанет
 
     # 4. faulthandler в файл reelsi_crash.log
     _FAULTHANDLER_WAS_ENABLED = faulthandler.is_enabled()
     if _CRASH_FILE_HANDLE is not None:
         try:
             _CRASH_FILE_HANDLE.close()
+        except ReelsiError: raise
         except Exception:
-            pass
+            pass  # старый дескриптор не закрылся — файл всё равно переоткроем ниже
         _CRASH_FILE_HANDLE = None
 
     _CRASH_FILE_HANDLE = open(crash_path, "a", encoding="utf-8")
@@ -360,13 +371,15 @@ def install(log=None, port=None):
             try:
                 tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
                 log.error("Необработанное исключение:\n%s", tb_text)
+            except ReelsiError: raise
             except Exception:
-                pass
+                pass  # логирование упало — исключение всё равно покажем ниже
         if _ORIG_SYS_EXCEPTHOOK is not None:
             try:
                 _ORIG_SYS_EXCEPTHOOK(exc_type, exc_value, exc_tb)
+            except ReelsiError: raise
             except Exception:
-                pass
+                pass  # чужой excepthook упал — выходим через sys.__excepthook__
         else:
             sys.__excepthook__(exc_type, exc_value, exc_tb)
 
@@ -377,13 +390,15 @@ def install(log=None, port=None):
                 tb_text = "".join(traceback.format_exception(args.exc_type, args.exc_value, tb))
                 thread_name = getattr(args.thread, "name", "unknown")
                 log.error("Необработанное исключение в потоке %s:\n%s", thread_name, tb_text)
+            except ReelsiError: raise
             except Exception:
-                pass
+                pass  # логирование упало — поток всё равно умирает
         if _ORIG_THREADING_EXCEPTHOOK is not None:
             try:
                 _ORIG_THREADING_EXCEPTHOOK(args)
+            except ReelsiError: raise
             except Exception:
-                pass
+                pass  # чужой hook потоков упал — не мешаем потоку умереть
         else:
             threading.__excepthook__(args)
 
@@ -409,7 +424,7 @@ def uninstall():
             try:
                 signal.signal(sig, orig_h)
             except (ValueError, OSError):
-                pass
+                pass  # сигнал не вернуть (не главный поток) — снимаем только своё
     _ORIG_SIGNAL_HANDLERS.clear()
 
     if _ORIG_SYS_EXCEPTHOOK is not None:
@@ -422,12 +437,14 @@ def uninstall():
     if not _FAULTHANDLER_WAS_ENABLED:
         try:
             faulthandler.disable()
+        except ReelsiError: raise
         except Exception:
-            pass
+            pass  # faulthandler уже выключен
 
     if _CRASH_FILE_HANDLE is not None:
         try:
             _CRASH_FILE_HANDLE.close()
+        except ReelsiError: raise
         except Exception:
-            pass
+            pass  # дескриптор уже закрыт
         _CRASH_FILE_HANDLE = None

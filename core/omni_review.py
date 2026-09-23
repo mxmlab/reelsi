@@ -14,10 +14,12 @@ Qwen2.5-Omni-7B СМОТРИТ draft.mp4 кусками (~45с, видео+зв�
 """
 import sys, os, json, subprocess, argparse
 from core import media
+from core.umsg import ReelsiError, cli_error
 try:
     sys.stdout.reconfigure(encoding="utf-8")
+except ReelsiError: raise
 except Exception:
-    pass
+    pass  # поток без reconfigure — служебная печать не критична
 
 SYS = ("Ты — придирчивый ревьюер ЧЕРНОВОГО монтажа вертикального talking-head ролика. "
        "Тебе показывают кусок черновика (низкое качество картинки — это нормально, черновик). "
@@ -88,13 +90,14 @@ def main():
         try:
             _cut_chunk(a.draft, t, t1, piece)
             txt = review_chunk(proc, model, piece)
+        except ReelsiError: raise
         except Exception as ex:
             txt = f"(ошибка куска: {ex})"
         finally:
             try:
                 os.remove(piece)
             except OSError:
-                pass
+                pass  # кусок уже убран
         clean = (txt or "").strip()
         if clean and clean.lower() not in ("ок", "ok", "ок."):
             notes.append({"t0": round(t, 1), "t1": round(t1, 1), "notes": clean})
@@ -114,4 +117,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except ReelsiError as e:
+        cli_error(e)

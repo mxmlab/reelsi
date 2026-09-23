@@ -110,10 +110,19 @@ if [ "$NO_OPTIONAL" = "0" ]; then
 fi
 
 step "Verification"
-"$PY" "$HERE/doctor.py" || true
+# A failed check must not abort the installation, but staying silent about it is
+# worse: keep the exit code and say it out loud (installer still succeeds).
+DOCTOR_RC=0
+BOOTSTRAP_RC=0
+"$PY" "$HERE/doctor.py" || DOCTOR_RC=$?
 # bootstrap переехал в пакет core/: из корня он запускается как модуль, а не по пути
 # к файлу — иначе `core.paths` не найдётся и личные файлы заведутся не там.
-(cd "$HERE" && "$PY" -m core.bootstrap) || true
+(cd "$HERE" && "$PY" -m core.bootstrap) || BOOTSTRAP_RC=$?
+if [ "$DOCTOR_RC" -ne 0 ] || [ "$BOOTSTRAP_RC" -ne 0 ]; then
+  echo
+  say "WARNING: the environment check found problems — see above."
+  say "Reelsi is installed, but fix them before the first run."
+fi
 
 echo
 echo "Run:  \"$PY\" \"$HERE/webui.py\""

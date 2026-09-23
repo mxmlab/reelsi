@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты для задания EH: пригодность описания вставки, поле ru и пересчёт эмбеддингов.
+"""Тесты: пригодность описания вставки, поле ru и пересчёт эмбеддингов.
 
 Запуск:  python -m pytest reelsi/tests/test_insertlib_desc.py -q
 """

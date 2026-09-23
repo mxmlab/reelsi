@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Эталон из adcut.aep: выражение на «Размер прямоугольника» плашки под подписью
-// о ролике (задание DG). Плашка тянется за текстом слоя textlayer1.
+// о ролике. Плашка тянется за текстом слоя textlayer1.
 const targetLayerName = "textlayer1"; // Имя слоя с текстом
 const txtLayer = thisComp.layer(targetLayerName);
 

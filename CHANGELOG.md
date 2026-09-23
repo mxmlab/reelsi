@@ -7,7 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+## 0.2.0-beta — 2026-09-23
+
+### Highlights
+- **Style panel rebuilt as an effect panel**: every knob comes from one schema, groups fold, numbers are dragged with the mouse, and changed values are marked.
+- **Camera 1 framing by hand**: the zoom point is dragged in the frame, the whole frame moves with an offset, the horizon rotates, and the frame can follow the speaker's head on its own.
+- **Zooms inside long takes**: a long take gets a smooth zoom-in, a hold and a zoom-out, and the zoom-in can land exactly on a highlighted word.
+- **Photo inserts on a plate**: the background is cut out automatically and only the photo moves inside the plate.
+- **Highlighted words animate**: yellow words rise, fade and blur in as they are spoken, and a run of highlighted words stacks one word at a time.
+- **A more flexible intro**: detach it from the camera, dim the bottom of the frame, put one row big on the left, scale from where the text appears, and switch shadow and glow per layer.
+- **Camera colour in one Lumetri effect**, with the same look in the preview.
+- **The preview no longer stalls the interface**, and progress always shows the clip, the queue and the stage.
+- **Safer by default**: files are deleted only when the target is a Reelsi cut, the paid video download refuses local addresses, and a broken journal is set aside instead of being overwritten.
+- **A written feature guide**: `docs/FEATURES.md` and `docs/FEATURES.ru.md` describe every feature step by step.
+
 ### Added
+- **Intro shadow and glow are separate style switches**: word shadow on glitch and background rows, glow on glitch words, on `fx == "glow"`, on highlighted words and on the intro precomp, the Glo2 numbers and the precomp shadow (colour, opacity, direction, distance, softness). A switch that is off means the effect is not added at all. Defaults are unchanged and the default build is byte-for-byte the same; the preview reads the same numbers from the scene plan.
+- **Intro scale anchor** (`intro_scale_anchor`): the intro can shrink from the first row or from the centre of its rows instead of the centre of the composition. Python computes the anchor and compensates the position, so the picture does not move by a pixel; the default builds as before.
+- **Last intro group hold** (`intro_last_hold`): the extra hold of the last intro group, 1.0 by default (as before); 0 makes the last group behave exactly like the others.
+- **Progress shows the clip, the queue and the stage everywhere**: single-clip AI markup, batch markup, batch AI intro and the After Effects render all keep the queue line while the stage changes, and the server sends the clip name with its number.
+- **Test run on the public slice**: `tools/slice_check.py` builds the published tree in a temporary folder and runs the whole test suite there; its exit code is the suite's.
+- **Type checking at the core boundary**: `mypy` runs in CI in strict mode on 13 core modules; a ratchet test keeps the list from shrinking.
+- **Tests where there were none**: every API route is now touched by a test, and the decision-making functions of the cutting engine (hallucination filter, repeat and tail-retake detection, snapping to silence, the full pass) are covered.
 - **Intro "big on the left"**: a per-row checkbox puts that row (one or more words) on the left in a large size, and the other rows of the group stack to its right, left-aligned. The big word stands on the baseline of the last stacked row and is sized from the stack (cap height of the first row to the baseline of the last). Style knobs: "Gap to big word, px" (`intro_big_gap`), "Stack line spacing, %" (`intro_big_step`, independent of the general intro spacing) and "Big word above stack, %" (`intro_big_over`). Python computes the layout once; After Effects and the preview use the same numbers. Clips without a big row build byte-for-byte as before.
 - **Delete selected clips on every step**: checkboxes on all three clip lists (one shared selection), Shift-click selects or clears a whole range, and "Delete selected" opens the same dialog as the single-clip cross — remove from the list or erase from disk with all sidecars, with a combined file list; one failing clip does not stop the others.
 - **Consecutive yellow words stacked in rows** (`hl_row_stack`): with several words per subtitle row, a run of two or more highlighted words leaves the rows and stacks one word at a time, as in the one-word mode.
@@ -36,6 +57,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Background jobs survive a server restart**: cutting, building/rendering and video generation write a small journal (`job_state.json`) with the job, the item and the progress. If the server is restarted while a job runs, the interface shows «interrupted by a server restart» with that item and progress instead of an empty screen; the next run of the same job overwrites the entry.
 
 ### Changed
+- **The engine left the HTTP layer**: After Effects discovery, `aerender` output parsing, ETA and render statistics moved to `core/aerender.py`; camera folders to `core/cams.py`; the cut entry point to `core/cutjob.py` together with `CutOptions`, the one source of cutting defaults for the command line and the API; `rclone` helpers to `core/rclone.py`; the `/api/ai_config` actions to `core/aicut/config_actions.py`. `api/` no longer imports the command-line module and `core/` does not import `api` or Flask; guard tests keep it so.
+- **User-facing errors are a `ReelsiError`**, not `SystemExit`: a `SystemExit` slipped past every `except Exception` and vanished inside threads. Error texts and codes are unchanged; an error that escapes a route answers with the usual JSON instead of HTTP 500, and the command line still prints the message and exits with 1.
+- **The style is read once**: `core/xml2ae/plan_style.py` reads every style value the build needs into one structure; the scene plan and its six stage modules take it instead of re-reading keys one by one. The built `.jsx` is byte-for-byte the same.
+- **Swallowed errors sorted out**: every `except …: pass` in the code was reviewed; 26 that hid a failure now log it, the rest explain why ignoring is right, and a guard test keeps new silent handlers out. The build log now says when the `.srt` next to the XML was not written and when the roto model failed to leave video memory.
+- **`.project.json` has one writer and a format version**: `core/project_file.py` replaces seven separate writes; files without a version are read as before.
+- **Intro groups never overlap**: a group fades out no later than the next one appears; if the entrance and the fade do not fit, both shrink together (never below 0.1 s). The window is computed once in Python for the plan and the `.jsx`. The golden file changed on purpose.
+- **Jump zoom starts at 100 %**: in the "jumps" camera-1 zoom mode the first segment always ends at 100 %, so the opening punch-in never zooms the wrong way. Zoom values on later cuts stay random in the same range but differ from before.
+- **Honest promises**: the README names both installers and says the `reelsi*` commands appear after `pip install -e .`; multicam is described as built for up to four cameras and verified on two; the installers report a failed environment check instead of hiding it. `docs/KNOWN_ISSUES.md` lists the remaining technical debt.
+- **Build metadata**: `setuptools>=77` (the SPDX licence string needs it), and a CI badge in the README.
+- **Comments without private task codes**: the reasons stay, the references to an unpublished task journal are gone.
 - **Intro fades before the next subtitle when it stands on the subtitle line**: if an intro group overlaps the subtitle band vertically and the next subtitle appears before the group would disappear, the group fades out by that subtitle in "Quick fade before subtitles, s" (`intro_sub_fade`, 0.15). The overlap is computed from the rows, font sizes, group scale, position and the camera-1 zoom when the intro rides the camera. "Intro fades before subtitle" (`intro_sub_cut`) is on by default; the last group of a video holds as before. A word entrance that would not finish before the fade is shortened (never below 0.1 s). The rule comes from a hand-edited project: 61 of 76 edited groups match within 0.1 s. "Intro fade-out, s" (`intro_fade`) only moves the start of the fade, not the moment the intro disappears.
 - **Detached intro fits the frame width**: an intro that no longer rides camera 1 used to lose the camera zoom and look small, because the autofit could only shrink. A detached intro now fits each group to "Intro width, %" (`intro_fit_w`, 92) in both directions; an attached intro still only shrinks; groups with a manual scale are left alone.
 - **Deep Glow is skipped on glowing rows and bright colours**: highlighted glitch words no longer get Deep Glow when their row already has "glow" ("Deep Glow with line glow", `intro_dg_with_glow`, off), or when the highlight colour is bright — the same Rec.709 > 0.7 rule that turns off Tritone. Blue and dark highlight colours keep it.
@@ -60,7 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Style presets**: keys the build no longer reads (`roto_video`, `caption_padx`, `caption_pady`, `intro_fx_fade`, `intro_fx_fade_last`) are removed from saved presets when they load.
 - **Golden files**: the "default build stays byte-identical" rule now states its exception — a deliberate change of the default build updates the golden file in the same commit and is recorded here.
 - **CLA**: removed the internal author note from `docs/CLA.md`; `docs/CLA.md` and `.github/CONTRIBUTING.md` link CLA Assistant, which checks pull requests.
-- **Contributing**: `.github/CONTRIBUTING.md` explains the task codes («задание GZ») found in comments and specs.
+- **Contributing**: `.github/CONTRIBUTING.md` covers the language policy, the ground rules and the test commands.
 - **Demo**: the README demo is an animated WebP, 3.8 MB instead of the 8.4 MB GIF.
 - **CI**: tests that need Pillow, pyarrow and zstandard run instead of being skipped; the workflow token is read-only; Python 3.12 and 3.13 byte-compile the code and check `--help` of the command-line entry points.
 - **Security policy**: `.github/SECURITY.md` states that the breath detector loads its model with `trust_remote_code=True` and how to run without it.
@@ -84,6 +115,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Frontend guards**: the template placeholders are checked against the keys the build supplies, the interface checks that every element id and every function it calls really exists, and CI runs `node --check` on `static/app/*.js`.
 
 ### Fixed
+- **Deleting by a foreign path**: `/api/clip_delete` removed every `<name>.*` next to any path it was given, and `/api/clean_tmp` cleaned any folder. Both now require the target to be a Reelsi cut or output folder; `/api/breaths` checks its target the same way.
+- **SSRF in the paid video download**: the result was fetched from any address the provider returned, redirects included. Now only `http`/`https` to public addresses is accepted, each redirect is checked again, and authorization headers are not carried to another host.
+- **Broken journals are no longer wiped**: a broken file of learned hallucination phrases, media import log, video generation history or hard-terms dictionary used to be read as empty and then overwritten by the next write. Now the learned phrases are left untouched, and the journals are set aside as `<name>.bad-<time>` before the next write.
+- **The hard-terms dictionary was erased silently**: `POST /api/terms` without the `terms` field replaced the dictionary with an empty list, and a string was stored letter by letter. Both are errors now; an explicit empty list still clears it.
+- **Linux CI and the public repository were red**: a process stub in the tests did not accept the POSIX process-group argument, and two documentation checks required files that are not published. The checks now follow `.publicignore`.
+- **Intro counter on fractional numbers**: the After Effects expression read the slider as an object, so fractional counters ("5,2") failed; Repeat Edge Pixels is now off on every intro blur, not only on subtitle highlights.
+- **AI intro answer lands in the right clip**: opening another clip while the model was thinking wrote the answer into the wrong clip.
 - **Errors of background jobs reach the log**: a build, render or cut that stopped with a user-facing reason («roto was not computed for 3 of 40 chunks» and the like) lost that text in the job thread — the job just ended and the item was not listed as failed. The reason is now written to the job log and the item is marked failed.
 - **Big intro word keeps its size in After Effects**: the entrance animation keyed Scale in absolute 70 → 100 % and overrode the big word's layer scale, so "big on the left" looked normal-sized in After Effects while the preview was right. Entrance scale keys now start from the layer's own scale.
 - **Deleted subtitle word leaves no gap**: deleting a word removed its clip from the XML and left an empty gap until the next word (a counter could start more than a second late). The next word now takes the deleted word's start when it followed directly (pause ≤ 0.3 s); its end, the highlight entrance and the counter follow the new start. Gaps left by earlier deletions stay.

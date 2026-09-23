@@ -27,4 +27,4 @@
 try:
     import pyarrow  # noqa: F401
 except Exception:
-    pass
+    pass  # pyarrow не установлен — предзагружать нечего, импорт модуля безвреден

@@ -18,13 +18,13 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 os.environ.setdefault("REELSI_NO_BROWSER", "1")
 
-import reelsi  # noqa: E402
+from core import cams  # noqa: E402
 
 
 def test_find_cam_dirs_ru_en_mixed(tmp_path):
     for name in ("камера1", "Camera2", "cam3", "прочее"):
         (tmp_path / name).mkdir()
-    got = [os.path.basename(p) for p in reelsi.find_cam_dirs(str(tmp_path))]
+    got = [os.path.basename(p) for p in cams.find_cam_dirs(str(tmp_path))]
     assert got == ["камера1", "Camera2", "cam3"]
 
 

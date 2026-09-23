@@ -5,6 +5,7 @@ import json, os, hashlib, re
 from core import cuda_env
 from core.device import ct2_device
 from core.fileio import atomic_json_dump
+from core.umsg import ReelsiError, cli_error
 cuda_env.setup()
 
 DEFAULT_MODEL_SIZE = "large-v3"
@@ -34,12 +35,14 @@ def load_words_cache(path):
             words = json.load(f)
         if isinstance(words, list) and words:
             return words
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # кэш слов битый — распознаем заново
     try:
         os.remove(path)
-    except Exception:
-        pass
+    except ReelsiError: raise
+    except OSError:
+        pass  # битый кэш уже удалён
     return None
 
 
@@ -82,8 +85,9 @@ def release_model():
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # torch/GPU недоступны — чистить нечего
     return True
 
 
@@ -227,17 +231,20 @@ def compare(media):
 
 
 if __name__ == "__main__":
-    import argparse, io, sys
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-    ap = argparse.ArgumentParser(description="Whisper транскрипция / сравнение режимов")
-    ap.add_argument("media", nargs="?", default="reelsi/_a1.wav", help="wav или видео")
-    ap.add_argument("--compare", action="store_true", help="цельно vs по интервалам")
-    ap.add_argument("--segments", action="store_true", help="только по интервалам -> json")
-    ap.add_argument("--out", default="reelsi/_words.json")
-    a = ap.parse_args()
-    if a.compare:
-        compare(a.media)
-    else:
-        ws = transcribe_segments(a.media) if a.segments else transcribe(a.media)
-        json.dump(ws, open(a.out, "w", encoding="utf-8"), ensure_ascii=False, indent=0)
-        print(f"transcribed {len(ws)} words -> {a.out}")
+    try:
+        import argparse, io, sys
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+        ap = argparse.ArgumentParser(description="Whisper транскрипция / сравнение режимов")
+        ap.add_argument("media", nargs="?", default="reelsi/_a1.wav", help="wav или видео")
+        ap.add_argument("--compare", action="store_true", help="цельно vs по интервалам")
+        ap.add_argument("--segments", action="store_true", help="только по интервалам -> json")
+        ap.add_argument("--out", default="reelsi/_words.json")
+        a = ap.parse_args()
+        if a.compare:
+            compare(a.media)
+        else:
+            ws = transcribe_segments(a.media) if a.segments else transcribe(a.media)
+            json.dump(ws, open(a.out, "w", encoding="utf-8"), ensure_ascii=False, indent=0)
+            print(f"transcribed {len(ws)} words -> {a.out}")
+    except ReelsiError as e:
+        cli_error(e)

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты задания CM: режим «нет зума» у Камеры 1 (cam1_zoom='none').
+"""Тесты: режим «нет зума» у Камеры 1 (cam1_zoom='none').
 
 При cam1_zoom='none':
   - у Null Камеры 1 один ключ [(0, 100.0)], движения нет ни в AE, ни в превью;
@@ -103,7 +103,7 @@ def test_existing_zoom_modes_unaffected(xml_subs, tmp_path):
 
 
 def test_ui_index_html_option_none():
-    """Пункт 'none' есть у поля cam1_zoom в схеме панели (задание JB п. 6).
+    """Пункт 'none' есть у поля cam1_zoom в схеме панели.
 
     Селектор режима зума строит панель по core/style_schema.py, поэтому пункты
     проверяются там, а не в разметке: id старой разметки (st_cam1zoom) больше нет.

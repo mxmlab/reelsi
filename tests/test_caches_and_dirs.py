@@ -15,7 +15,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import reelsi
+from core import cams
 from core import roto
 from core import transcribe
 from core import app_meta
@@ -78,20 +78,20 @@ def test_cam_dirs_sorted_by_number_not_case(tmp_path):
     """«Камера2» (заглавная К) не должна опережать «камера1»: обычная сортировка
     строк ставит её первой, и весь монтаж поехал бы за второй камерой."""
     base = _mkdirs(tmp_path, "Камера2", "камера1")
-    assert [os.path.basename(p) for p in reelsi.find_cam_dirs(base)] == ["камера1", "Камера2"]
+    assert [os.path.basename(p) for p in cams.find_cam_dirs(base)] == ["камера1", "Камера2"]
 
 
 def test_cam_dirs_number_beats_lexicographic(tmp_path):
     """камера10 идёт ПОСЛЕ камера2 — сравниваем числа, а не строки."""
     base = _mkdirs(tmp_path, "камера10", "камера2", "камера1")
-    assert [os.path.basename(p) for p in reelsi.find_cam_dirs(base)] == [
+    assert [os.path.basename(p) for p in cams.find_cam_dirs(base)] == [
         "камера1", "камера2", "камера10"]
 
 
 def test_cam_dirs_ignore_foreign_folders(tmp_path):
     """Посторонние папки проекта в камеры не попадают."""
     base = _mkdirs(tmp_path, "камера1", "music", "AutoCut_out", "roto")
-    assert [os.path.basename(p) for p in reelsi.find_cam_dirs(base)] == ["камера1"]
+    assert [os.path.basename(p) for p in cams.find_cam_dirs(base)] == ["камера1"]
 
 
 # --------------------------------------------------------------------------- #

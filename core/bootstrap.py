@@ -17,6 +17,7 @@ import sys
 
 from core import paths
 from core.app_meta import t
+from core.umsg import ReelsiError, cli_error
 
 
 def _example_name(example_path, default="Example"):
@@ -28,8 +29,9 @@ def _example_name(example_path, default="Example"):
             val = d.get("name") or d.get("label")
             if val and isinstance(val, str) and val.strip():
                 return val.strip()
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # файл примера не прочитался — вернём имя по умолчанию
     return default
 
 
@@ -46,6 +48,7 @@ def _write_example(src_path, target_path, name):
         with open(target_path, "w", encoding="utf-8") as f:
             json.dump(d, f, ensure_ascii=False, indent=2)
             f.write("\n")
+    except ReelsiError: raise
     except Exception:
         shutil.copy2(src_path, target_path)
 
@@ -103,10 +106,14 @@ def ensure_user_files():
 
 
 if __name__ == "__main__":
-    for _s in (sys.stdout, sys.stderr):
-        try:
-            _s.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
-            pass
-    for msg in ensure_user_files():
-        print(f"  {msg}")
+    try:
+        for _s in (sys.stdout, sys.stderr):
+            try:
+                _s.reconfigure(encoding="utf-8", errors="replace")
+            except ReelsiError: raise
+            except Exception:
+                pass  # поток без reconfigure (перенаправлен) — служебная печать не критична
+        for msg in ensure_user_files():
+            print(f"  {msg}")
+    except ReelsiError as e:
+        cli_error(e)

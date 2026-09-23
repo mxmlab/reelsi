@@ -37,8 +37,8 @@ T_CAM1, T_CAM2 = 1.0, 8.3
 
 node = pytest.mark.skipif(not shutil.which("node"), reason="контракт фронта требует node в PATH")
 
-ROUND_EXPR = 'Math.round(effect("Slider Control")("Slider"))'
-COMMA_EXPR = '(effect("Slider Control")("Slider")).toFixed(1).replace(".", ",")'
+ROUND_EXPR = 'Math.round(effect("Slider Control")("Slider").value)'
+COMMA_EXPR = 'effect("Slider Control")("Slider").value.toFixed(1).replace(".", ",")'
 
 
 @pytest.fixture()

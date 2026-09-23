@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Звуки SFX с обрезкой / точкой удара / громкостью (задание AA).
+"""Звуки SFX с обрезкой / точкой удара / громкостью.
 
 Плоские ключи стиля `<звук>_in/_out/_at/_db` (+ pop_lead). Формула: слой ставится так,
 чтобы точка `at` файла попала на момент события (жёлтое слово / кат / старт):
@@ -74,7 +74,7 @@ def test_sfx_custom_placement_in_jsx(xml_subs, tmp_path):
 
 
 def test_sfx_carries_events_in_plan(xml_subs, tmp_path):
-    """План сцены несёт звуки с событиями (задание AB читает оттуда): у попа события —
+    """План сцены несёт звуки с событиями (читает оттуда): у попа события —
     жёлтые слова, у ризера — старт; in/out/at/db доезжают.
 
     Файлы звуков создаём НАСТОЯЩИЕ. В план попадает только то, что реально нашлось на
@@ -96,7 +96,7 @@ def test_sfx_carries_events_in_plan(xml_subs, tmp_path):
     sfx = {s["kind"]: s for s in plan["audio"]["sfx"]}
     assert "pop" in sfx and "riser" in sfx
     assert sfx["pop"]["events"], "нет событий: жёлтые слова должны стать событиями"
-    # события несут ГОТОВЫЙ старт: t = ev − at + in (JS не пересчитывает, задание AB)
+    # события несут ГОТОВЫЙ старт: t = ev − at + in (JS не пересчитывает)
     e = sfx["pop"]["events"][0]
     assert "t" in e and e["in"] == 0 and e["out"] is None
     assert sfx["pop"]["db"] == 3

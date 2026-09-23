@@ -14,14 +14,18 @@
 Тяжёлые импорты (torch/transformers) — ТОЛЬКО в локальном пути (облачному не нужны).
 """
 import sys, os, json, base64, io, tempfile, urllib.request, urllib.error
+
+# Импорт до первого try: сторож `except ReelsiError` ниже обязан видеть это имя.
+from core.umsg import ReelsiError, cli_error
 # Xet-протокол HF (hf_xet) на Windows виснет при скачивании больших весов (xet_get
 # застревает, сеть на нуле). Классический HTTP-download надёжнее и докачивает с места.
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 try:
     sys.stdout.reconfigure(encoding="utf-8")
-    sys.stderr.reconfigure(encoding="utf-8")   # SystemExit-сообщения идут в stderr:
+    sys.stderr.reconfigure(encoding="utf-8")   # текст ошибки идёт в stderr:
+except ReelsiError: raise
 except Exception:                              # без utf-8 русский текст превращается в \uXXXX
-    pass
+    pass  # поток без reconfigure — русский текст ошибки и так уходит в stderr
 import soundfile as sf
 from core import vad
 from core import aicut
@@ -48,8 +52,9 @@ def load_model():
         quantization_config=cfg, attn_implementation="sdpa").eval()
     try:
         m.disable_talker()
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # версия модели без talker — отключать нечего
     return proc, m
 
 
@@ -91,8 +96,9 @@ def transcribe_clip_gigaam(model, clip_audio):
     finally:
         try:
             os.remove(tmp)
-        except Exception:
-            pass
+        except ReelsiError: raise
+        except OSError:
+            pass  # временный wav уже убран
 
 
 def _hf_cache_bytes(repo):
@@ -108,7 +114,7 @@ def _hf_cache_bytes(repo):
         try:
             tot += os.path.getsize(os.path.join(d, f))
         except OSError:
-            pass
+            pass  # файл исчез между обходом и замером — в объём не попадёт
     return tot
 
 
@@ -125,8 +131,9 @@ def ensure_weights(repo, emit=console_emit, retries=8):
         info = HfApi().model_info(repo, files_metadata=True)
         total = sum((s.size or 0) for s in info.siblings
                     if (s.rfilename or "").endswith((".safetensors", ".bin")))
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # HuggingFace недоступен — размер весов не покажем, качаем дальше
     tgb = total / 1e9
     last = None
     for attempt in range(retries + 1):
@@ -134,6 +141,7 @@ def ensure_weights(repo, emit=console_emit, retries=8):
         def _dl():
             try:
                 holder["path"] = snapshot_download(repo, max_workers=4)
+            except ReelsiError: raise
             except Exception as e:
                 holder["err"] = e
         th = threading.Thread(target=_dl, daemon=True)
@@ -153,7 +161,7 @@ def ensure_weights(repo, emit=console_emit, retries=8):
         emit("  ! обрыв скачивания ({err_type}: {err}) — докачиваю с места ({cur}/{total})…",
              err_type=type(last).__name__, err=str(last)[:80], cur=attempt + 1, total=retries)
         time.sleep(5)
-    raise SystemExit(f"не удалось скачать веса после {retries + 1} попыток: {last}")
+    raise ReelsiError(f"не удалось скачать веса после {retries + 1} попыток: {last}")
 
 
 
@@ -199,16 +207,17 @@ def _asr_transcribe(prof, arr_int16, retries=2):
             detail = ""
             try:
                 detail = e.read().decode("utf-8", "replace")[:300]
+            except ReelsiError: raise
             except Exception:
-                pass
+                pass  # тело ответа не прочиталось — код HTTP-ошибки у нас уже есть
             if e.code in (401, 403):
-                raise SystemExit(f"Omni-профиль «{prof['name']}»: API-ключ не принят ({e.code})")
+                raise ReelsiError(f"Omni-профиль «{prof['name']}»: API-ключ не принят ({e.code})")
             if e.code == 402:
-                raise SystemExit(f"у провайдера кончились кредиты (402): {detail[:150]}")
+                raise ReelsiError(f"у провайдера кончились кредиты (402): {detail[:150]}")
             if e.code == 429:
                 waits429 += 1
                 if waits429 > 5:
-                    raise SystemExit("лимит запросов провайдера (429) не отпускает — подожди и повтори")
+                    raise ReelsiError("лимит запросов провайдера (429) не отпускает — подожди и повтори")
                 print(f"  ! лимит запросов (429) — жду 20с ({waits429}/5)…", flush=True)
                 time.sleep(20)
                 continue
@@ -217,7 +226,7 @@ def _asr_transcribe(prof, arr_int16, retries=2):
             last = str(e)
         attempt += 1
         print(f"  ! ASR-чанк не расшифровался ({last}) — повтор {attempt}/{retries}", flush=True)
-    raise SystemExit(f"ASR-транскрипция упала после {retries + 1} попыток: {last}")
+    raise ReelsiError(f"ASR-транскрипция упала после {retries + 1} попыток: {last}")
 
 
 # фразы «я не получил аудио» — признак ГЛУХОГО эндпоинта: модель числится
@@ -243,7 +252,7 @@ def _deaf_guard(prof, txt):
         return txt
     _deaf_hits[0] += 1
     if _deaf_hits[0] >= 3:
-        raise SystemExit(
+        raise ReelsiError(
             f"модель {prof['model']} НЕ СЛЫШИТ аудио: провайдер отвечает «аудио не "
             f"предоставлено» на каждый чанк. Так ведёт себя nemotron-3-nano-omni на "
             f"OpenRouter — в карточке модели аудио заявлено, но эндпоинт его выбрасывает. "
@@ -311,10 +320,11 @@ def transcribe_clip_cloud(prof, arr_int16, retries=2):
             detail = ""
             try:
                 detail = e.read().decode("utf-8", "replace")[:300]
+            except ReelsiError: raise
             except Exception:
-                pass
+                pass  # тело ответа не прочиталось — код HTTP-ошибки у нас уже есть
             if e.code in (401, 403):
-                raise SystemExit(f"Omni-профиль «{prof['name']}»: API-ключ не принят ({e.code})")
+                raise ReelsiError(f"Omni-профиль «{prof['name']}»: API-ключ не принят ({e.code})")
             dl = detail.lower()
             if e.code == 400 and use_reasoning and "reason" in dl:
                 use_reasoning = False          # провайдер не понял reasoning
@@ -324,17 +334,17 @@ def transcribe_clip_cloud(prof, arr_int16, retries=2):
                 continue                       # не тратим попытку
             if e.code == 402:
                 if "balance for audio" in dl:
-                    raise SystemExit("OpenRouter пускает АУДИО-запросы только при балансе "
+                    raise ReelsiError("OpenRouter пускает АУДИО-запросы только при балансе "
                                      "от $0.50 (даже на free-моделях, анти-абьюз). Пополни "
                                      "баланс на openrouter.ai/credits или выбери Omni «Локально»")
-                raise SystemExit(f"у провайдера кончились кредиты (402): {detail[:150]}")
+                raise ReelsiError(f"у провайдера кончились кредиты (402): {detail[:150]}")
             if e.code == 429:
                 # фри-лимит (обычно 20 req/мин) — клип шлёт десятки чанков подряд;
                 # ждём и продолжаем, НЕ тратя попытки и не роняя всю нарезку
                 import time
                 waits429 += 1
                 if waits429 > 5:
-                    raise SystemExit("лимит запросов провайдера (429) не отпускает — "
+                    raise ReelsiError("лимит запросов провайдера (429) не отпускает — "
                                      "фри-модель? Подожди минуту-другую и запусти снова")
                 print(f"  ! лимит запросов (429) — жду 20с и продолжаю ({waits429}/5)…", flush=True)
                 time.sleep(20)
@@ -349,7 +359,7 @@ def transcribe_clip_cloud(prof, arr_int16, retries=2):
             # модель без слуха: OpenRouter отвечает 404 «No endpoints found» или 400 про модальности
             if e.code == 404 or (e.code == 400 and any(
                     k in dl for k in ("audio", "modalit", "multimodal", "no endpoints", "support"))):
-                raise SystemExit(f"модель {prof['model']} не принимает аудио — для Omni нужна "
+                raise ReelsiError(f"модель {prof['model']} не принимает аудио — для Omni нужна "
                                  f"аудио-модель (Gemini / ASR qwen3-asr-flash / parakeet) или «Локально». "
                                  f"Ответ провайдера: {detail[:150]}")
             last = f"{e.code}: {detail}"
@@ -357,7 +367,7 @@ def transcribe_clip_cloud(prof, arr_int16, retries=2):
             last = str(e)
         attempt += 1
         print(f"  ! чанк не расшифровался ({last}) — повтор {attempt}/{retries}", flush=True)
-    raise SystemExit(f"облачная Omni-транскрипция упала после {retries + 1} попыток: {last}")
+    raise ReelsiError(f"облачная Omni-транскрипция упала после {retries + 1} попыток: {last}")
 
 
 def group_chunks(intervals, max_len=24.0):
@@ -397,7 +407,7 @@ def main(args=None):
     if a.engine == "gigaam":
         cloud = None   # принудительно локальный GigaAM (даже если выбран облачный профиль)
     if cloud and cloud["provider"] == "anthropic":
-        raise SystemExit("Claude API не принимает аудио — для Omni выбери аудио-модель "
+        raise ReelsiError("Claude API не принимает аудио — для Omni выбери аудио-модель "
                          "(например Gemini на OpenRouter) или «Локально»")
     engine = None
     if cloud:
@@ -433,6 +443,7 @@ def main(args=None):
                 txt = transcribe_clip_gigaam(model, clip)
             else:
                 txt = transcribe_clip(proc, model, clip)
+        except ReelsiError: raise
         except Exception as exc:
             if engine == "gigaam":
                 sys.stderr.write(f"Ошибка GigaAM инференса на куске {s:.1f}–{e:.1f}: {exc}\n")
@@ -447,4 +458,7 @@ def main(args=None):
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except ReelsiError as e:
+        cli_error(e)

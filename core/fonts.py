@@ -5,20 +5,21 @@
 Нужно для UI: базовый шрифт + выбор жирного варианта той же семьи для жёлтых слов.
 Читает nameID 6 (PostScript) и 16/1 (типографская семья) из файлов шрифтов через fontTools.
 У вариативных шрифтов (fvar) перечисляет именованные экземпляры — AE показывает их все,
-а nameID 6 даёт только дефолтное начертание (задание BO). Кэшируется в памяти.
+а nameID 6 даёт только дефолтное начертание. Кэшируется в памяти.
 Если fontTools нет — вернёт пустой список (UI останется свободным вводом).
 """
 import os, logging
+from core.umsg import ReelsiError, cli_error
 
 logging.getLogger("fontTools").setLevel(logging.ERROR)   # не спамить в консоль на кривых шрифтах
 
 _CACHE = None
 
-# Кэш глифсетов по (файл, координаты осей): файл шрифта на сборку открывается один раз (задание BP).
+# Кэш глифсетов по (файл, координаты осей): файл шрифта на сборку открывается один раз.
 _GS_CACHE = {}
 
 # Кэш границ глифа по (файл, координаты осей, имя глифа) — контуры не пересчитываются
-# на каждой строке ролика (задание A1).
+# на каждой строке ролика.
 _GB_CACHE = {}
 
 _FONT_DIRS = [
@@ -52,7 +53,7 @@ WIDTH_CLASS_TO_STRETCH = {
 
 
 def _parse_fallback_style(name):
-    """(weight, stretch, italic) по имени начертания/файла/PS (запасной источник, задание DA)."""
+    """(weight, stretch, italic) по имени начертания/файла/PS (запасной источник)."""
     low = (name or "").lower().replace("-", " ").replace("_", " ")
     # italic / oblique
     italic = any(k in low for k in ("italic", "oblique", "ital", "obli", "kursiv", "slanted"))
@@ -107,9 +108,9 @@ def _names(tt, path):
 
     Для файла без fvar — одна запись (как было). Для вариативного — записи всех
     именованных экземпляров fvar плюс дефолтное начертание: AE показывает их все,
-    а nameID 6 даёт только дефолт (задание BO). var — координаты осей экземпляра,
-    weight/stretch/italic — параметры начертания (задание DA).
-    file — путь к файлу (нужен заданию BP для замера ширины строки).
+    а nameID 6 даёт только дефолт. var — координаты осей экземпляра,
+    weight/stretch/italic — параметры начертания.
+    file — путь к файлу (нужен для замера ширины строки).
     """
     try:
         nm = tt["name"]
@@ -126,12 +127,14 @@ def _names(tt, path):
     os2 = None
     try:
         os2 = tt.get("OS/2")
+    except ReelsiError: raise
     except Exception:
         os2 = None
 
     head = None
     try:
         head = tt.get("head")
+    except ReelsiError: raise
     except Exception:
         head = None
 
@@ -162,6 +165,7 @@ def _names(tt, path):
     fvar = None
     try:
         fvar = tt.get("fvar")
+    except ReelsiError: raise
     except Exception:
         fvar = None
     if fvar is None:
@@ -231,8 +235,9 @@ def _read_file(path):
             tt = TTFont(path, lazy=True, fontNumber=0)
             out.extend(_names(tt, path))
             tt.close()
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # файл не шрифт/битый — пропускаем, остальные имена поиск соберёт
     return out
 
 
@@ -259,7 +264,7 @@ def list_fonts(refresh=False):
 
 
 def _glyph_set(file, coords):
-    """(glyphSet, unitsPerEm, cmap) по (файл, координаты осей), с кэшем (задание BP).
+    """(glyphSet, unitsPerEm, cmap) по (файл, координаты осей), с кэшем.
 
     У вариативных шрифтов координаты осей берутся из записи list_fonts (поле var),
     и getGlyphSet(location=...) отдаёт ширины ИМЕННО этого экземпляра — hmtx напрямую
@@ -273,6 +278,7 @@ def _glyph_set(file, coords):
             tt = TTFont(file, lazy=True, fontNumber=0)
             ent = (tt.getGlyphSet(location=dict(coords)), tt["head"].unitsPerEm,
                    tt.getBestCmap())
+        except ReelsiError: raise
         except Exception:
             ent = None
         _GS_CACHE[key] = ent
@@ -282,7 +288,7 @@ def _glyph_set(file, coords):
 def _glyph_bounds(file, coords, gn):
     """(xMin, yMin, xMax, yMax) контура глифа или None (пустой контур/шрифт не открылся).
     Кэш по (файл, координаты осей, имя глифа): у строки ролика десятки глифов, а контур
-    одного глифа на весь кегль один и тот же (задание A1)."""
+    одного глифа на весь кегль один и тот же."""
     key = (file, coords, gn)
     if key not in _GB_CACHE:
         ent = _glyph_set(file, coords)
@@ -293,6 +299,7 @@ def _glyph_bounds(file, coords, gn):
                 pen = BoundsPen(ent[0])
                 ent[0][gn].draw(pen)
                 b = pen.bounds
+            except ReelsiError: raise
             except Exception:
                 b = None
         _GB_CACHE[key] = b
@@ -300,8 +307,8 @@ def _glyph_bounds(file, coords, gn):
 
 
 def ink_extent(ps_name, text, size_px):
-    """(asc, desc) чернил строки, px: максимум yMax и минус минимум yMin по глифам
-    (задание A1). Нужно для шага строк интро: шаг считают по ЗАЗОРУ между буквами,
+    """(asc, desc) чернил строки, px: максимум yMax и минус минимум yMin по глифам.
+    Нужно для шага строк интро: шаг считают по ЗАЗОРУ между буквами,
     а он зависит от шрифта — «хвост» вниз у верхней строки плюс высота букв нижней.
     Раньше шаг был жёсткими пикселями, и после смены шрифта малые строки наезжали на
     строку над ними (в AE это правил пользователь руками).
@@ -334,6 +341,7 @@ def ink_extent(ps_name, text, size_px):
             y_min, y_max = b[1], b[3]
             asc = y_max if asc is None or y_max > asc else asc
             desc = -y_min if desc is None or -y_min > desc else desc
+    except ReelsiError: raise
     except Exception:
         return None
     if asc is None:                          # чернил нет вовсе (одни пробелы)
@@ -343,7 +351,7 @@ def ink_extent(ps_name, text, size_px):
 
 
 def text_width(ps_name, text, size_px):
-    """Ширина строки (px) тем шрифтом, что увидит After Effects (задание BP). None,
+    """Ширина строки (px) тем шрифтом, что увидит After Effects. None,
     если шрифт не найден — автофит для этой группы НЕ применяется (ужать по неизвестной
     ширине хуже, чем не ужать). Сумма горизонтальных advance'ов по cmap, делённая на
     unitsPerEm и умноженная на size_px. Кернинг игнорируем: он даёт единицы процентов,
@@ -363,16 +371,20 @@ def text_width(ps_name, text, size_px):
             if gn is None:               # глифа нет — ширину не знаем, не ужимаем
                 return None
             total += gs[gn].width
+    except ReelsiError: raise
     except Exception:
         return None
     return total * float(size_px) / upm
 
 
 if __name__ == "__main__":
-    import sys, io
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
-    fs = list_fonts()
-    print(f"шрифтов: {len(fs)}")
-    for x in fs:
-        if "sfpro" in x["ps"].lower() or "geologica" in x["ps"].lower():
-            print(f"  {x['ps']}   [{x['family']}]")
+    try:
+        import sys, io
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
+        fs = list_fonts()
+        print(f"шрифтов: {len(fs)}")
+        for x in fs:
+            if "sfpro" in x["ps"].lower() or "geologica" in x["ps"].lower():
+                print(f"  {x['ps']}   [{x['family']}]")
+    except ReelsiError as e:
+        cli_error(e)

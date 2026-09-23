@@ -146,7 +146,7 @@ function toast(m,ms){const box=document.createElement('div');box.className='toas
   // ошибкам — больше времени на прочтение
   setTimeout(()=>box.remove(),ms||(/^[⚠✗]/.test(String(m))?6000:2600));}
 
-// ================= компонент «слайдер + число» (.sldnum, задание CP2) =================
+// ================= компонент «слайдер + число» (.sldnum) =================
 // Синхронизация input[type=range] и input[type=number] в обе стороны:
 // sldSync кладёт значение ползунка в число ДО вызова stEdit.
 function sldSync(el){

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты задания CI: вкладка «Сабы» на странице разметки."""
+"""Тесты: вкладка «Сабы» на странице разметки."""
 import os
 import re
 import sys
@@ -37,7 +37,7 @@ def test_sub_tab_html_structure():
     # Контролы вкладки Сабы
     assert 'id="insp_subwords"' in html
     assert 'id="insp_subrows"' in html
-    # Заглушки «интро пока не собирается» больше нет (задание ZL): интро собирается и при
+    # Заглушки «интро пока не собирается» больше нет: интро собирается и при
     # строках длиннее одного слова.
     assert 'id="sub_introwarn"' not in html
     assert 'id="subrowslist"' in html

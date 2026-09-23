@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тест forced alignment (задание HV): соответствие спанов токенов и слов без сдвига на разделителях."""
+"""Тест forced alignment: соответствие спанов токенов и слов без сдвига на разделителях."""
 import logging
 import os
 import sys

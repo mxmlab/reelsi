@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты определения языка системы, t() и серверного умолчания (задание DZ).
+"""Тесты определения языка системы, t() и серверного умолчания.
 
 Запуск:  python -m pytest reelsi/tests/test_lang.py -q
 """

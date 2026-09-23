@@ -26,8 +26,8 @@
 | `build`    | сборка .jsx для AE и раскладка камер                            |
 | `inserts`  | база вставок                                                    |
 | `previewproxy` | превью-прокси камер: /api/preview_proxy, /api/preview_proxy_status |
-| `render` | безголовый рендер в AE (задание BD): /api/render_run, /api/render_status |
-| `gdrive` | скачивание с гугл-диска по ссылке через rclone (задание G)        |
+| `render` | безголовый рендер в AE: /api/render_run, /api/render_status |
+| `gdrive` | скачивание с гугл-диска по ссылке через rclone        |
 | `videogen` | вкладка «Видео»                                                 |
 
 Новый эндпоинт пишется в тот модуль, к чьей теме относится. Новая тема — новый модуль

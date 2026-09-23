@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Контракты трёх «разных» роутов без тестов (задание HX, круг 7):
+"""Контракты трёх «разных» роутов без тестов (круг 7):
 
 * `POST /api/ai_inserts`  (api/ai.py)     — ИИ предлагает вставки по субтитрам XML;
 * `GET  /api/tmp_info`    (api/jobs.py)   — что лежит в `<outdir>/_tmp` и в прокси;

@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты для задания IX: сторож rclone на реальном выводе (api/gdrive.py).
+"""Тесты: сторож rclone на реальном выводе (api/gdrive.py, разбор — core/rclone.py).
 
 Проверяется:
 1. Разбор `Checks: i / n` как прогресса (отдельные поля `ci`/`cn`), сохранение
-   контракта `_stats_fields` и `_is_noise`.
+   контракта `stats_fields` и `is_noise`.
 2. Активность по словарю `last[k]`, а не кортежу строки:
    (а) значения заморожены → процесс снят по таймауту простоя (~1 с), пока вывод идёт;
    (б) растут байты → процесс жив;
@@ -22,14 +22,13 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
 import api.gdrive as gdrive  # noqa: E402
-from api.gdrive import (  # noqa: E402
-    _is_noise, _run_rclone, _stats_fields,
-)
+from api.gdrive import _run_rclone  # noqa: E402
+from core.rclone import is_noise, stats_fields  # noqa: E402
 
 try:
-    from api.gdrive import _checks_fields
+    from core.rclone import checks_fields
 except ImportError:
-    _checks_fields = None
+    checks_fields = None
 
 
 class _MockStreamingProc:
@@ -72,16 +71,16 @@ class _MockStreamingProc:
 
 
 def test_checks_fields_parsing():
-    """Checks: i / n разбирается как прогресс (ci, cn), в _stats_fields не попадает, _is_noise True."""
-    assert _checks_fields is not None, "функция _checks_fields должна быть определена в api/gdrive.py"
-    assert _checks_fields("Checks:                 2 / 2, 100%") == {"ci": 2, "cn": 2}
-    assert _checks_fields("Checks: 0 / 1, 0%") == {"ci": 0, "cn": 1}
-    assert _checks_fields("Checks:        15 / 30") == {"ci": 15, "cn": 30}
-    assert _checks_fields("Transferred:   0.5 GiB / 1.0 GiB, 50%") is None
-    assert _checks_fields("Elapsed time:  45.0s") is None
+    """Checks: i / n разбирается как прогресс (ci, cn), в stats_fields не попадает, is_noise True."""
+    assert checks_fields is not None, "функция checks_fields должна быть определена в core/rclone.py"
+    assert checks_fields("Checks:                 2 / 2, 100%") == {"ci": 2, "cn": 2}
+    assert checks_fields("Checks: 0 / 1, 0%") == {"ci": 0, "cn": 1}
+    assert checks_fields("Checks:        15 / 30") == {"ci": 15, "cn": 30}
+    assert checks_fields("Transferred:   0.5 GiB / 1.0 GiB, 50%") is None
+    assert checks_fields("Elapsed time:  45.0s") is None
     # Контракты прежних функций не нарушены
-    assert _stats_fields("Checks:                 2 / 2, 100%") is None
-    assert _is_noise("Checks:                 2 / 2, 100%") is True
+    assert stats_fields("Checks:                 2 / 2, 100%") is None
+    assert is_noise("Checks:                 2 / 2, 100%") is True
 
 
 def test_watchdog_kills_frozen_progress_while_output_continues(monkeypatch):

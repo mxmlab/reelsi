@@ -27,6 +27,7 @@
 """
 import os, sys, json
 from core.app_meta import console_emit, wrap_emit
+from core.umsg import ReelsiError, cli_error
 
 
 SR = 16000
@@ -51,6 +52,7 @@ def get_model(model_id, device="cuda"):
         release_model()
         try:
             proc = AutoProcessor.from_pretrained(model_id)
+        except ReelsiError: raise
         except Exception:
             # У части моделей в репозитории лежит процессор с языковой моделью
             # (Wav2Vec2ProcessorWithLM) — он тянет pyctcdecode, которого у нас нет.
@@ -74,8 +76,9 @@ def release_model():
         import torch
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # torch/GPU недоступны — чистить нечего
     return True
 
 
@@ -191,26 +194,30 @@ def transcribe(wav_path, model_id, device="cuda", emit=console_emit, release=Tru
 
 
 if __name__ == "__main__":
-    import argparse, logging, traceback
-    ap = argparse.ArgumentParser(description="CTC-ASR: слова с таймингами и вероятностями")
-    ap.add_argument("wav")
-    ap.add_argument("--model", required=True, help="HF-id или локальный путь CTC-модели")
-    ap.add_argument("--device", default="cuda")
-    ap.add_argument("--out", help="куда писать JSON (иначе — временный файл)")
-    a = ap.parse_args()
-    logging.basicConfig(level=logging.WARNING, stream=sys.stderr,
-                        format="%(levelname)s:%(name)s:%(message)s")
-    real_stdout = sys.stdout
-    sys.stdout = sys.stderr          # библиотечный шум — на stderr, stdout = только путь
     try:
-        import tempfile
-        out = a.out or os.path.join(tempfile.gettempdir(), "_ctc_asr.json")
-        ws = transcribe(a.wav, a.model, a.device, emit=lambda *x, **k: print(*x))
-        json.dump(ws, open(out, "w", encoding="utf-8"), ensure_ascii=False)
-        sys.stdout = real_stdout
-        print(out)
-    except Exception as e:
-        sys.stdout = real_stdout
-        sys.stderr.write(traceback.format_exc())
-        sys.stderr.write("CTC_ASR_ERROR: %s: %s\n" % (type(e).__name__, e))
-        sys.exit(1)
+        import argparse, logging, traceback
+        ap = argparse.ArgumentParser(description="CTC-ASR: слова с таймингами и вероятностями")
+        ap.add_argument("wav")
+        ap.add_argument("--model", required=True, help="HF-id или локальный путь CTC-модели")
+        ap.add_argument("--device", default="cuda")
+        ap.add_argument("--out", help="куда писать JSON (иначе — временный файл)")
+        a = ap.parse_args()
+        logging.basicConfig(level=logging.WARNING, stream=sys.stderr,
+                            format="%(levelname)s:%(name)s:%(message)s")
+        real_stdout = sys.stdout
+        sys.stdout = sys.stderr          # библиотечный шум — на stderr, stdout = только путь
+        try:
+            import tempfile
+            out = a.out or os.path.join(tempfile.gettempdir(), "_ctc_asr.json")
+            ws = transcribe(a.wav, a.model, a.device, emit=lambda *x, **k: print(*x))
+            json.dump(ws, open(out, "w", encoding="utf-8"), ensure_ascii=False)
+            sys.stdout = real_stdout
+            print(out)
+        except ReelsiError: raise
+        except Exception as e:
+            sys.stdout = real_stdout
+            sys.stderr.write(traceback.format_exc())
+            sys.stderr.write("CTC_ASR_ERROR: %s: %s\n" % (type(e).__name__, e))
+            sys.exit(1)
+    except ReelsiError as e:
+        cli_error(e)

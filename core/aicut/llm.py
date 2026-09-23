@@ -17,8 +17,11 @@ from .config import (APP_NAME, APP_REFERER, DEFAULT_URL, REASONING_LEVELS,
                      apply_profile_headers, model_supports_caching, resolve_profile)
 from . import catalog
 from core.fileio import atomic_text_write
-from core.umsg import umsg
+from core.umsg import ReelsiError, umsg
 from core.app_meta import console_emit, http_req, t
+from core.applog import get_logger
+
+log = get_logger(__name__)
 
 # Лок ИИ-лога: записи идут из потоков джоба/одиночных вызовов, а чистка
 # переписывает файл — без замка две записи могли скушать друг друга.
@@ -54,6 +57,7 @@ def ai_log_append(step, prof, ok, in_t=None, out_t=None, rt=None, finish=None,
             with open(AI_LOG_PATH, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
             _ai_log_prune_if_big()
+    except ReelsiError: raise
     except Exception:
         pass                                   # лог не должен ронять вызов модели
 
@@ -72,6 +76,7 @@ def _ai_log_prune_if_big():
         if len(lines) <= AI_LOG_CAP:
             return
         atomic_text_write(AI_LOG_PATH, "".join(lines[-AI_LOG_CAP:]))
+    except ReelsiError: raise
     except Exception:
         pass                                   # чистка — не критичный путь
 
@@ -169,6 +174,7 @@ def loaded_info(url=None):
         with urllib.request.urlopen(_api_base(url) + "/api/v0/models", timeout=5) as r:
             data = json.load(r)
         return [m for m in data.get("data", []) if m.get("state") == "loaded"]
+    except ReelsiError: raise
     except Exception:
         return None
 
@@ -213,6 +219,7 @@ def unload_ours(emit=console_emit):
             with _OUR_MODELS_LOCK:
                 _OUR_MODELS.discard(m)
             emit("  LM Studio: выгружена {model}", model=m)
+        except ReelsiError: raise
         except Exception as e:
             emit("  (lms unload не сработал: {err})", err=e)
 
@@ -239,13 +246,16 @@ def ensure_loaded(model, url=None, ttl=1800, emit=console_emit):
                 subprocess.run([lms, "unload", m], capture_output=True, timeout=60)
                 with _OUR_MODELS_LOCK:
                     _OUR_MODELS.discard(m)
-            except Exception:
-                pass
+            except ReelsiError: raise
+            except Exception as ex:
+                log.warning("не выгрузил модель «%s» из LM Studio: %s — "
+                            "видеопамяти может не хватить", m, ex)
         subprocess.run([lms, "load", model, "--gpu", "max", "--ttl", str(ttl)],
                        capture_output=True, timeout=300)
         with _OUR_MODELS_LOCK:
             _OUR_MODELS.add(model)
         emit("  LM Studio: загружена {model}", model=model)
+    except ReelsiError: raise
     except Exception as e:
         emit("  (lms load не сработал: {err}; полагаюсь на JIT)", err=e)
 
@@ -264,8 +274,9 @@ def warn_foreign_models(emit=console_emit):
         for m in foreign:
             mid = m.get("id") or "unknown"
             emit("⚠ В LM Studio загружена сторонняя модель «{model}» — может не хватить VRAM", model=mid)
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # LM Studio не ответил — предупреждать о чужих моделях не о чем
 
 
 def _extract_json_obj(text):
@@ -364,7 +375,7 @@ def _read_stream(r, emit, tick=3.0):
     seen = (0, 0)                                     # длины на момент последнего РОСТА ответа
     for line in r:
         if cancelled():
-            raise SystemExit(cancel_reason())
+            raise ReelsiError(cancel_reason())
         line = line.decode("utf-8", "replace").strip()
         if line.startswith("data:"):                  # не-data — ": OPENROUTER PROCESSING" и пустые
             body = line[5:].strip()
@@ -382,7 +393,7 @@ def _read_stream(r, emit, tick=3.0):
                     # апстрим провайдера отвалился (free-эндпоинты OpenRouter ловят
                     # ResourceExhausted пачками) — это лечится повтором, а не правкой
                     raise UpstreamBusy(txt)
-                raise SystemExit(umsg("provider_error", "провайдер вернул ошибку: " + txt, txt=txt))
+                raise ReelsiError(umsg("provider_error", "провайдер вернул ошибку: " + txt, txt=txt))
             if ev is not None:
                 if ev.get("usage"):
                     usage = ev["usage"]               # приходит последним чанком (include_usage)
@@ -455,7 +466,7 @@ def _read_stream(r, emit, tick=3.0):
 def _ask_openai(prof, system, user, schema, max_tokens=4096, emit=console_emit,
 
                 temperature=0.3, retries=1, step=None):
-    """Обёртка над _ask_openai_impl: ловит любой исход вызова (успех/SystemExit)
+    """Обёртка над _ask_openai_impl: ловит любой исход вызова (успех/ReelsiError)
     и пишет его в ai_calls.jsonl с токенами. Импортируется наружу (api/ai.py,
     aicut.__init__), сигнатура прежняя + необязательный `step` для имён шагов.
     Стартовую запись (ok=null) пишем СРАЗУ, а не в конце: вызов, который думает
@@ -466,13 +477,13 @@ def _ask_openai(prof, system, user, schema, max_tokens=4096, emit=console_emit,
         return _ask_openai_impl(prof, system, user, schema, max_tokens=max_tokens,
                                 emit=emit, temperature=temperature, retries=retries,
                                 step=step, _t0=t0)
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         ai_log_append(step, prof, ok=False, ms=(time.time() - t0) * 1000, err=str(e))
         raise
 
 
 def _downgrade_level(lvl, supported, provider=None, model=None):
-    """Уровень на ступень ниже для повтора битого JSON (BW): тот же бюджет
+    """Уровень на ступень ниже для повтора битого JSON: тот же бюджет
     размышлений второй раз не жжём. По каталогу efforts (порядок в нём — это
     порядок провайдера), иначе по нашему порядку уровней."""
     if lvl == "off":
@@ -502,7 +513,7 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
     url = (prof["base_url"] or DEFAULT_URL).rstrip("/")
     model = prof["model"]
     is_local = prof["provider"] == "lmstudio"
-    # Возможности модели из каталога models.dev (задание BY) — что шлём и чего не
+    # Возможности модели из каталога models.dev — что шлём и чего не
     # шлём. Неизвестная модель (свой сервер, локальная сборка) — всё None, и
     # ведём себя как раньше; каталог недоступен — то же самое (не точка отказа).
     c = catalog.caps(prof["provider"], model, emit=emit)
@@ -534,7 +545,7 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
     lvl_prev = lvl_base
     while attempt <= retries:
         if cancelled():
-            raise SystemExit(cancel_reason())
+            raise ReelsiError(cancel_reason())
         if attempt and last_err is not None:
             emit("! ответ модели не разобран ({err}) — повторяю ({attempt}/{retries})…",
                  err=last_err, attempt=attempt, retries=retries)
@@ -544,7 +555,7 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
             ensure_loaded(model, url, emit=emit)     # выгрузит прочие модели и загрузит нужную
         # Фактический уровень на эту попытку: при повторе после битого JSON понижаем
         # на ступень (высокий -> medium -> low -> off) — тот же бюджет размышлений
-        # второй раз жечь нельзя, иначе и повтор утонет в том же размышлении (BW).
+        # второй раз жечь нельзя, иначе и повтор утонет в том же размышлении.
         # Потом проверяем уровень по каталогу: невалидный провайдер молча мапит в
         # свой default_effort, и это уже стоило пользователю дня.
         lvl = lvl_prev if attempt else lvl_base
@@ -597,7 +608,7 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
         # уходят в размышления на весь max_tokens — замер на ролике из 224 слов:
         # жёлтые 126с/out=12001 (обрезано -> битый JSON -> повтор) против
         # 4.2с/out=184 с {"enabled": false}. Поэтому для OFF шлём явный запрет,
-        # для включённого ума — по типу управления из каталога (задание BY):
+        # для включённого ума — по типу управления из каталога:
         # effort (уровень из efforts), budget_tokens (явное число) или toggle
         # (только вкл/выкл). Провайдер, не понявший параметр, ответит 400 ->
         # use_reasoning=False и повтор без него (см. обработку ниже).
@@ -665,6 +676,7 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
         except urllib.error.HTTPError as e:
             try:
                 detail = e.read().decode("utf-8", "replace")[:400]
+            except ReelsiError: raise
             except Exception:
                 detail = ""
             detail_low = detail.lower()
@@ -714,17 +726,17 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
                 # НЕ прячем ответ провайдера: 403 у OpenRouter — это не только
                 # «плохой ключ», но и модерация, data policy, недоступность
                 # модели для ключа. Без текста ошибки причину не найти.
-                raise SystemExit(umsg("provider_refused",
+                raise ReelsiError(umsg("provider_refused",
                                       f"провайдер отказал ({e.code}): {detail or 'без деталей'} "
                                       f"[модель {model}]",
                                       code=e.code, detail=detail or "без деталей", model=model))
             if e.code == 402:
-                raise SystemExit(umsg("no_credits", "у провайдера кончились кредиты (402) — пополни баланс"))
+                raise ReelsiError(umsg("no_credits", "у провайдера кончились кредиты (402) — пополни баланс"))
             if e.code == 429:
-                raise SystemExit(umsg("rate_limit", "лимит запросов провайдера (429) — подожди и повтори"))
+                raise ReelsiError(umsg("rate_limit", "лимит запросов провайдера (429) — подожди и повтори"))
             if e.code in (500, 502, 503, 504):
                 if busy >= BUSY_RETRIES:
-                    raise SystemExit(umsg("provider_unavailable",
+                    raise ReelsiError(umsg("provider_unavailable",
                                           f"провайдер недоступен после {BUSY_RETRIES} повторов: {e.code}: {detail}. "
                                           f"Повтори запуск или смени модель в настройках ⚙",
                                           retries=BUSY_RETRIES, err=f"{e.code}: {detail}"))
@@ -734,12 +746,12 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
                      busy=busy, retries=BUSY_RETRIES)
                 time.sleep(2 * busy)
                 continue
-            raise SystemExit(umsg("provider_code", f"провайдер вернул {e.code}: {detail}", code=e.code, detail=detail))
+            raise ReelsiError(umsg("provider_code", f"провайдер вернул {e.code}: {detail}", code=e.code, detail=detail))
         except StreamStalled as e:
             # Апстрим замолчал посреди ответа, а соединение держится кипэлайвами.
             # Ловим ДО UpstreamBusy (наследник) — счётчик свой, короткий.
             if stalled >= STALL_RETRIES:
-                raise SystemExit(umsg("provider_stalled",
+                raise ReelsiError(umsg("provider_stalled",
                                       f"провайдер перестал отвечать посреди ответа ({e}) и не "
                                       f"ожил после {STALL_RETRIES} повтора. Запусти шаг заново "
                                       f"или смени модель в настройках ⚙",
@@ -752,7 +764,7 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
         except TimeoutError as e:
             # Сокет молчал целиком (даже кипэлайвов не было) — urlopen(timeout=…).
             # Без своей ветки это уезжало наверх голым «TimeoutError:» мимо umsg.
-            raise SystemExit(umsg("provider_timeout",
+            raise ReelsiError(umsg("provider_timeout",
                                   f"провайдер молчал дольше таймаута ({e}) — соединение "
                                   f"оборвано. Запусти шаг заново или смени модель в настройках ⚙",
                                   err=e))
@@ -762,7 +774,7 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
             # JSON), и занятый провайдер отваливался с первого же раза. Попытка не
             # тратится из бюджета JSON — max_tokens и схему трогать незачем.
             if busy >= BUSY_RETRIES:
-                raise SystemExit(umsg("provider_unavailable",
+                raise ReelsiError(umsg("provider_unavailable",
                                       f"провайдер недоступен после {BUSY_RETRIES} повторов: {e}. "
                                       f"Повтори запуск или смени модель в настройках ⚙",
                                       retries=BUSY_RETRIES, err=e))
@@ -776,13 +788,13 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
             who = "LM Studio" if is_local else "провайдер"
             hint = ("Запущен ли сервер и загружена ли модель?" if is_local
                     else "Проверь URL/интернет в настройках ⚙")
-            raise SystemExit(umsg("no_response",
+            raise ReelsiError(umsg("no_response",
                                   f"{who} не отвечает ({url}): {e}. {hint}",
                                   who=who, url=url, err=e))
 
         if not resp.get("choices"):     # OpenRouter кладёт ошибки и в 200-тело
             _body = json.dumps(resp, ensure_ascii=False)[:400]
-            raise SystemExit(umsg("empty_response", "провайдер не вернул ответ: " + _body, body=_body))
+            raise ReelsiError(umsg("empty_response", "провайдер не вернул ответ: " + _body, body=_body))
         ch = resp["choices"][0]
         msg = ch["message"]
         # Некоторые reasoning-модели кладут итоговый JSON в reasoning_content,
@@ -798,7 +810,7 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
         if ch.get("finish_reason") == "length":
             # своего потолка мы больше не ставим, так что это лимит САМОГО провайдера
             rt = ((u.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0)
-            raise SystemExit(umsg("output_cut",
+            raise ReelsiError(umsg("output_cut",
                                   f"провайдер оборвал ответ по своему лимиту вывода "
                                   f"({u.get('completion_tokens', '?')} токенов"
                                   + (f", из них {rt} на размышления" if rt else "") + "). "
@@ -829,7 +841,7 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
             attempt += 1
             continue
         return data
-    raise SystemExit(umsg("bad_json",
+    raise ReelsiError(umsg("bad_json",
                           f"ИИ вернул битый JSON после {retries + 1} попыток — модель залипла, "
                           f"запусти шаг ещё раз (или смени модель в настройках ⚙)",
                           tries=retries + 1))
@@ -863,7 +875,7 @@ def _ask_anthropic(prof, system, user, schema, max_tokens=4096, emit=console_emi
     try:
         return _ask_anthropic_impl(prof, system, user, schema, max_tokens=max_tokens,
                                    emit=emit, retries=retries, step=step, _t0=t0)
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         ai_log_append(step, prof, ok=False, ms=(time.time() - t0) * 1000, err=str(e))
         raise
 
@@ -878,9 +890,9 @@ def _ask_anthropic_impl(prof, system, user, schema, max_tokens=4096, emit=consol
     try:
         import anthropic
     except ImportError:
-        raise SystemExit(umsg("anthropic_missing", "для провайдера Anthropic нужен пакет: pip install anthropic"))
+        raise ReelsiError(umsg("anthropic_missing", "для провайдера Anthropic нужен пакет: pip install anthropic"))
     if not prof.get("api_key"):
-        raise SystemExit(umsg("anthropic_no_key", "не задан API-ключ Anthropic — открой настройки ⚙"))
+        raise ReelsiError(umsg("anthropic_no_key", "не задан API-ключ Anthropic — открой настройки ⚙"))
     base = (prof.get("base_url") or "").rstrip("/")
     client_kwargs = dict(api_key=prof["api_key"],
                          base_url=base or "https://api.anthropic.com")
@@ -912,7 +924,7 @@ def _ask_anthropic_impl(prof, system, user, schema, max_tokens=4096, emit=consol
     tried_without_thinking = False
     for attempt in range(retries + 1):
         if cancelled():
-            raise SystemExit(cancel_reason())
+            raise ReelsiError(cancel_reason())
         if attempt:
             emit("! битый JSON ({err}) — повторяю ({attempt}/{retries})…",
                  err=last_err, attempt=attempt, retries=retries)
@@ -920,22 +932,22 @@ def _ask_anthropic_impl(prof, system, user, schema, max_tokens=4096, emit=consol
         try:
             resp = _call(cur)
         except anthropic.AuthenticationError:
-            raise SystemExit(umsg("key_rejected", "API-ключ Anthropic не принят (401) — проверь ключ в настройках ⚙", code=401, name="Anthropic"))
+            raise ReelsiError(umsg("key_rejected", "API-ключ Anthropic не принят (401) — проверь ключ в настройках ⚙", code=401, name="Anthropic"))
         except anthropic.PermissionDeniedError as e:
-            raise SystemExit(umsg("forbidden", f"Anthropic отказал в доступе (403): {getattr(e, 'message', e)}", err=getattr(e, "message", e)))
+            raise ReelsiError(umsg("forbidden", f"Anthropic отказал в доступе (403): {getattr(e, 'message', e)}", err=getattr(e, "message", e)))
         except anthropic.RateLimitError:
-            raise SystemExit(umsg("rate_limit", "лимит запросов Anthropic (429) — подожди и повтори"))
+            raise ReelsiError(umsg("rate_limit", "лимит запросов Anthropic (429) — подожди и повтори"))
         except anthropic.APIStatusError as e:
             msg = getattr(e, "message", "") or ""
             if cur and ("thinking" in msg.lower() or e.status_code == 400):
                 tried_without_thinking = True
                 emit("! модель не приняла extended thinking — повторяю без него")
                 continue
-            raise SystemExit(umsg("anthropic_code", f"Anthropic API {e.status_code}: {msg}", status=e.status_code, msg=msg))
+            raise ReelsiError(umsg("anthropic_code", f"Anthropic API {e.status_code}: {msg}", status=e.status_code, msg=msg))
         except anthropic.APIConnectionError as e:
-            raise SystemExit(umsg("anthropic_no_connection", f"нет связи с Anthropic API: {e}", err=e))
+            raise ReelsiError(umsg("anthropic_no_connection", f"нет связи с Anthropic API: {e}", err=e))
         if resp.stop_reason == "refusal":
-            raise SystemExit(umsg("safety", "Anthropic отклонил запрос (safety) — попробуй другой профиль"))
+            raise ReelsiError(umsg("safety", "Anthropic отклонил запрос (safety) — попробуй другой профиль"))
         raw = next((b.text for b in resp.content if b.type == "text"), "")
         u = resp.usage
         emit("  модель: {model}  токены: in={in_tok} out={out_tok}",
@@ -945,7 +957,7 @@ def _ask_anthropic_impl(prof, system, user, schema, max_tokens=4096, emit=consol
         # последний ЦЕЛЫЙ элемент — json.loads проходит, обязательного поля нет, и шаг
         # молча отдавал пустой результат. У OpenAI тут отказ, у Claude была строка в лог.
         if resp.stop_reason == "max_tokens":
-            raise SystemExit(umsg("output_cut",
+            raise ReelsiError(umsg("output_cut",
                                   f"провайдер оборвал ответ по своему лимиту вывода "
                                   f"({u.output_tokens} токенов). "
                                   "Понизь уровень «ума» на этом шаге или возьми модель "
@@ -964,14 +976,14 @@ def _ask_anthropic_impl(prof, system, user, schema, max_tokens=4096, emit=consol
                 last_err = e
                 continue
         # Схема могла не примениться (провайдер игнорирует output_config) — проверяем
-        # обязательные поля с повтором, ровно как на пути OpenAI (IB, п. 5).
+        # обязательные поля с повтором, ровно как на пути OpenAI.
         need = [k for k in (schema.get("required") or [])
                 if not isinstance(data, dict) or k not in data]
         if need:
             last_err = "в ответе нет обязательных полей: " + ", ".join(need)
             continue
         return data
-    raise SystemExit(umsg("bad_json",
+    raise ReelsiError(umsg("bad_json",
                           f"Claude вернул битый JSON после {retries + 1} попыток — "
                           f"запусти шаг ещё раз",
-                          tries=retries + 1))
+                          tries=retries + 1))

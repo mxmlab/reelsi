@@ -29,7 +29,7 @@ CSS = os.path.join(ROOT, "static", "app.css")
 from core import app_meta  # noqa: E402
 import test_style_keys_in_ui as watcher  # noqa: E402
 HTML = os.path.join(ROOT, "templates", "index.html")
-# Панель стиля: с задания JB поля строятся из схемы, а не выписаны в разметке,
+# Панель стиля: поля строятся из схемы, а не выписаны в разметке,
 # поэтому проверки стиля смотрят в схему + в код панели (см. tests/test_style_keys_in_ui.py).
 PANEL_JS = os.path.join(ROOT, "static", "app", "94-stylepanel.js")
 STYLES_JS = os.path.join(ROOT, "static", "app", "95-styles.js")
@@ -40,7 +40,7 @@ def _read(path):
 
 
 def _panel_js():
-    """Код панели стиля — единственная дверь полей (задание JB)."""
+    """Код панели стиля — единственная дверь полей."""
     return _read(PANEL_JS)
 
 
@@ -49,7 +49,7 @@ def _schema_field(key):
 
 
 def _schema_toggles():
-    """Ключи-тумблеры схемы: группу/слой прячет её же галка (задание JB п. 2)."""
+    """Ключи-тумблеры схемы: группу/слой прячет её же галка."""
     return {it["toggle"] for _kind, it in watcher.schema_items() if it.get("toggle")}
 
 
@@ -498,7 +498,7 @@ def test_step1_row_controls_order_and_dedupe_in_state(html, js):
 
 
 def test_editor_tooltip_shows_cut_rule(js):
-    """Тултип вырезанного куска в редакторе нарезки (задание CA) показывает rule —
+    """Тултип вырезанного куска в редакторе нарезки показывает rule —
     имя функции, снявшей кусок («кто виноват в лишнем резе» видно в обычной работе).
     Пустой rule не печатается: старые .cuts.json без поля остаются читаемыми."""
     seg = js[js.index("вырезано [{src}]"):js.index("вырезанный кусок — двойной клик")]
@@ -526,6 +526,71 @@ def test_capture_ae_writes_only_the_clip_loaded_into_the_panel(js):
     open_ = js[js.index("function openAEFor(i)"):js.index("function selClips()")]
     assert "AEXML!==CLIPS[i].xml" in open_, (
         "клип открывается по одному индексу: после F5 панель покажет чужие вставки и стиль")
+
+
+def test_ai_intro_answer_lands_in_the_clip_it_was_asked_for():
+    """Ответ «ИИ интро» уезжает в задание СПРОШЕННОГО клипа, а панель — только если он открыт.
+
+    Пойманный баг (жалоба владельца): aiIntroRun держал клип индексом curAE, результат клал
+    в ГЛОБАЛЬНУЮ INTRO и записывал вызовом captureAE() — а тот пишет в CLIPS[curAE], то есть
+    в клип, открытый В МОМЕНТ ОТВЕТА. Модель думает минутами: открыл за это время другой
+    клип — его разметка затёрта чужими строками, а спрошенный не получил ничего. Защита
+    `if(AEXML!==c.xml)` внутри captureAE тут не спасает: после переключения AEXML уже равен
+    xml ВТОРОГО клипа, и запись считается «своей». Образец — пакетный aiIntroAllRun:
+    ссылка на клип, запись в c.job.introRows, панель под гвардией «клип всё ещё открыт».
+    """
+    ae = _read(os.path.join(ROOT, "static", "app", "90-ae.js"))
+    # Комментарии не считаем: в них те же имена по делу (captureAE() — в объяснении бага).
+    body = re.sub(r"//[^\n]*", "", _func(ae, "aiIntroRun"))
+    # 1. Клип запоминается ССЫЛКОЙ на момент запуска: индекс переставляется сортировкой и удалением.
+    assert "const c=CLIPS[curAE]" in body, "клип снова берётся индексом после ответа"
+    # 2. Результат пишется в задание этого клипа, а не в глобальную панель INTRO.
+    assert "c.job.introRows=introRowsFromAI(d)" in body, (
+        "разметка не уезжает в задание спрошенного клипа")
+    assert "INTRO=introRowsFromAI(d)" not in body, (
+        "результат снова кладётся в глобальную INTRO — панель чужого клипа уедет в его задание")
+    # 3. Гвардия «целевой клип всё ещё открыт» — ПОСЛЕ ответа модели: до await открыт ещё тот,
+    #    что спрашивали, а панель трогается только под гвардией.
+    wait = body.index("await aiFetch(")
+    guard = body.index("c===CLIPS[curAE]")
+    assert guard > wait, "нет проверки «целевой клип всё ещё открыт» после ответа ИИ"
+    assert "AEXML===c.xml" in body[guard:guard + 60], (
+        "гвардия не сверяет, что панель принадлежит целевому клипу (AEXML)")
+    for call in ("renderIntro()", "captureAE()", "aewRender()"):
+        assert call in body, "панель интро больше не обновляется: " + call
+        assert body.index(call) > guard, (
+            "безусловный " + call + " до гвардии — панель открытого клипа перетрётся ответом")
+    # 4. #introres — строка открытого клипа: «готово» по чужому ответу не пишем, а закрытому
+    #    клипу разметка сохраняется и об этом честно пишется в лог (с именем клипа).
+    assert body.index("el.className='ok'") > guard, (
+        "#introres красится в «готово» даже когда целевой клип уже закрыт")
+    assert "saveState()" in body[guard:], "закрытый клип: разметка не сохраняется"
+    assert "уехало в задание клипа" in body[guard:], (
+        "в логе не сказано, в задание какого клипа уехала разметка, когда панель занята другим")
+
+
+def test_single_ai_doors_keep_their_clip_by_reference():
+    """Соседние одиночные ИИ-двери держат клип ссылкой — тот же класс гонки, но их писать не надо.
+
+    Ответ висит минутами, клип за это время открывают другой. У вставок (aiInsertsRun,
+    aiInsertsMore) результат сразу пишется в объект клипа (`const c=CLIPS[curIns]` → `c.inserts`),
+    а панель рисуется из CLIPS[curIns], то есть по открытому клипу. У жёлтых — в `c.status`
+    и `clearHl(c)`, а панель слов грузится только под гвардией «этот клип открыт».
+    Тест держит это свойство: новая правка не должна вернуть запись через CLIPS[curIns]/curAE.
+    """
+    ins = _read(os.path.join(ROOT, "static", "app", "80-inserts.js"))
+    run = _func(ins, "aiInsertsRun")
+    assert "const c=CLIPS[curIns]" in run and "c.inserts=(d.inserts||[]).map" in run, (
+        "aiInsertsRun пишет ответ ИИ не в тот клип, для которого спрашивал")
+    more = _func(ins, "aiInsertsMore")
+    assert "const c=CLIPS[curIns]" in more and "c.inserts=cur.concat(" in more, (
+        "aiInsertsMore пишет ответ ИИ не в тот клип, для которого спрашивал")
+
+    ed = _read(os.path.join(ROOT, "static", "app", "70-editor.js"))
+    assert "c.status.colored=(d.colored||d.yellow||[]).length" in ed, (
+        "жёлтые больше не пишутся в статус клипа")
+    assert ed.count("if(curAE>=0&&CLIPS[curAE]===c)loadWordsFor(c.xml)") == 2, (
+        "жёлтые снова грузят панель слов без проверки, что этот клип открыт")
 
 
 def test_cut_results_land_in_the_list_one_by_one(js, html):
@@ -556,6 +621,147 @@ def test_status_refresh_is_not_dropped(js):
     assert "REFRESHWANT=true;return;" in body, "refreshStatuses снова молча пропускает запрос"
     assert "if(REFRESHWANT){REFRESHWANT=false;refreshStatuses();}" in body, (
         "отложенный обход статусов не запускается")
+
+
+# Двери длинных операций: на экране обязан быть контекст очереди — заголовок операции,
+# «клип i из N» и имя клипа (требование «прогресс везде как у AE», эталон — нарезка/сборка).
+PROG_DOORS = (
+    ("40-queue.js", "function jobProg(d,eager,title)"),      # нарезка/сборка — эталон
+    ("70-editor.js", "async function markupClip(c)"),        # разметка ОДНОГО клипа
+    ("70-editor.js", "async function markupAllRun("),        # пакетная разметка (фазы)
+    ("90-ae.js", "async function aiIntroAllRun(list)"),      # ИИ интро на набор
+    ("90-ae.js", "async function pollRender()"),             # рендер AE
+)
+
+
+def _app_functions():
+    """Функции всех static/app/*.js: (файл, имя, тело). Тело — по балансу скобок."""
+    from core import app_meta as _am
+    for path in _am.app_js_files():
+        src = _read(path)
+        for m in re.finditer(r"(?:async\s+)?function\s+([\w$]+)\s*\(", src):
+            i = src.index("{", m.end() - 1)
+            depth = 0
+            for j in range(i, len(src)):
+                if src[j] == "{":
+                    depth += 1
+                elif src[j] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        yield os.path.basename(path), m.group(1), src[m.start():j + 1]
+                        break
+
+
+def _prog_update_runs_in_a_loop(body):
+    """Зовётся ли progUpdate( внутри цикла — то есть в длинном проходе по клипам."""
+    for m in re.finditer(r"\b(?:for|while)\s*\(", body):
+        depth = 0
+        for j in range(m.end() - 1, len(body)):     # парная скобка условия цикла
+            if body[j] == "(":
+                depth += 1
+            elif body[j] == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+        k = j + 1
+        if k < len(body) and body[k] == "{":        # тело в скобках — до парной закрывающей
+            d2 = 0
+            for e in range(k, len(body)):
+                if body[e] == "{":
+                    d2 += 1
+                elif body[e] == "}":
+                    d2 -= 1
+                    if d2 == 0:
+                        break
+            chunk = body[k:e + 1]
+        else:                                       # тело без скобок — до `;`
+            chunk = body[k:body.find(";", k) + 1]
+        if "progUpdate(" in chunk:
+            return True
+    return False
+
+
+def _prog_update_calls(body):
+    """Аргументы каждого вызова progUpdate( — по запятым верхнего уровня.
+
+    Строковые литералы пропускаются: в них встречаются и запятые, и скобки
+    («жёлтые слова (ИИ)…»), из-за которых регулярка посчитала бы аргументы неверно.
+    """
+    calls = []
+    for m in re.finditer(r"progUpdate\s*\(", body):
+        i, n, depth, args, cur = m.end(), len(body), 1, [], ""
+        while i < n and depth:
+            ch = body[i]
+            if ch in "'\"`":
+                q, i = ch, i + 1
+                while i < n:
+                    if body[i] == "\\":
+                        i += 2
+                        continue
+                    if body[i] == q:
+                        i += 1
+                        break
+                    i += 1
+                cur += "''"
+                continue
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth -= 1
+                if depth == 0:
+                    break
+            if ch == "," and depth == 1:
+                args.append(cur.strip())
+                cur = ""
+                i += 1
+                continue
+            cur += ch
+            i += 1
+        args.append(cur.strip())
+        calls.append(args)
+    return calls
+
+
+def test_every_long_operation_shows_its_clip_and_the_queue():
+    """Прогресс длинной операции отвечает, над каким клипом работа идёт и сколько в очереди.
+
+    Пойманный дефект (задание «единый прогресс»): progUpdate(frac, stage, title, sub)
+    рисует три поля, но title и sub необязательны — кто их не передал, у того на экране
+    остаётся контекст прошлого вызова или пустота. Разметка ОДНОГО клипа (markupClip)
+    писала «жёлтые слова (ИИ)…» без имени клипа и без очереди, ИИ интро — «файл N из M»
+    без этапа (пока модель думает, экран не менялся), рендер AE передавал sub=null.
+
+    Правило механическое, а не «посмотри глазами»: контекст очереди (progQueue) живёт
+    отдельно от этапа (progStep), у каждой двери он выставляется, и progUpdate( внутри
+    цикла без контекста очереди — дефект. Тест краснеет, если вернуть в markupClip
+    старую строку progUpdate(null,t('жёлтые слова (ИИ)…'));
+    """
+    # 1. Двери: контекст очереди есть, а этапы внутри двери идут через progStep — голый
+    #    progUpdate(null, …) затёр бы строку очереди этапом.
+    bad = []
+    for fname, marker in PROG_DOORS:
+        src = _read(os.path.join(ROOT, "static", "app", fname))
+        assert marker in src, f"{fname}: пропала дверь длинной операции ({marker})"
+        body = _fn_body(src, marker)
+        if "progQueue(" not in body and "progStep(" not in body:
+            bad.append(f"{fname}: {marker} не выставляет контекст очереди")
+        for args in _prog_update_calls(body):
+            if args[0] == "null" and len(args) < 3:   # «progUpdate(null, этап)» без заголовка
+                bad.append(f"{fname}: {marker} ставит этап голым progUpdate(null, …) — "
+                           "имя клипа и номер в очереди при этом теряются")
+    assert not bad, "длинная операция без ответа «над каким клипом»:\n" + "\n".join(bad)
+
+    # 2. Общее правило по исходнику: цикл, который обновляет прогресс, обязан выставить
+    #    контекст очереди (progQueue или progStep) — иначе он рисует этап без клипа.
+    bad = []
+    for fname, name, body in _app_functions():
+        if not _prog_update_runs_in_a_loop(body):
+            continue
+        if "progQueue(" in body or "progStep(" in body:
+            continue
+        bad.append("%s: %s" % (fname, name))
+    assert not bad, ("цикл обновляет прогресс, не выставив контекст очереди "
+                     "(нужен progQueue/progStep):\n" + "\n".join(bad))
 
 
 def test_loadstyles_blames_the_right_thing(js):
@@ -920,7 +1126,7 @@ def test_scrubbing_does_not_starve_the_preview_double_buffer(js):
 
 
 def test_style_template_is_editable_without_retyping_its_name(js, html):
-    """Шаблон правится кнопкой, а имя для перезаписи подставляется само (задание AC2).
+    """Шаблон правится кнопкой, а имя для перезаписи подставляется само.
 
     Раньше карандаш переключал селектор на «кастом (свой)», и человеку казалось, что он
     заводит новый стиль, хотя «Сохранить как шаблон» перезаписывал тот же файл. Теперь
@@ -937,7 +1143,7 @@ def test_style_template_is_editable_without_retyping_its_name(js, html):
         "имя шаблона снова вписывается руками (или подставляется встроенному)")
     # Поля панели раскладываются из шаблона ОДНИМ путём. Раньше тут вручную возвращали
     # рото открытого клипа (#roto/#rotobottom), потому что рото было настройкой КЛИПА;
-    # с задания EX2c рото — поле стиля, и шаблон приносит его сам (JB п. 2).
+    # с рото — поле стиля, и шаблон приносит его сам.
     assert "$('rotobottom')" not in body and "st_roto" not in body, (
         "заход в правку шаблона снова правит поля рото руками")
     assert "fillStyleFields();" in body, "поля панели не заполняются из шаблона"
@@ -1032,7 +1238,7 @@ def test_style_roto_bottom_shows_mask_while_editing(js, html, css):
     красная полоса на столько процентов высоты; перестал крутить или ушёл с поля —
     ушла. Раньше ротоскоп правился вслепую, до рендера.
 
-    Живую маску включает поле с hint «rotomask» (задание JB): id старой разметки
+    Живую маску включает поле с hint «rotomask»: id старой разметки
     (rotobottom) больше нет, поле строит панель по схеме.
     """
     field = _schema_field("roto_bottom")
@@ -1148,7 +1354,7 @@ def test_every_player_video_is_wired_to_the_volume_graph(js):
 
 
 def test_preview_draws_the_scene_plan_and_never_recomputes_it(js):
-    """Предпросмотр шага 3 РИСУЕТ план сцены (задание D), ничего не досчитывая.
+    """Предпросмотр шага 3 РИСУЕТ план сцены, ничего не досчитывая.
 
     Раньше формула окон групп интро жила в ДВУХ копиях — introGroupWindows в JS и
     inAt/outEnd в шаблоне — и они уже разошлись (JS не учитывал max(gMax, inAt+F_DUR)
@@ -1179,7 +1385,7 @@ def test_preview_draws_the_scene_plan_and_never_recomputes_it(js):
     assert "keysAt(" in place, "позиция/масштаб вставки не интерполируются из ключей"
     assert "x.card" in place, "карточка фото-вставки берётся не из плана"
 
-    # вставки шага 2 (задание DP): перевод в контракт плана единой функцией cardToIns
+    # вставки шага 2: перевод в контракт плана единой функцией cardToIns
     body = _fn_body(js, "function ipvPlanBody(")
     assert "cardToIns(x)" in body, "вставки шага 2 в ipvPlanBody не переводятся через cardToIns"
     ensure = _fn_body(js, "function ensureJobs(")
@@ -1201,7 +1407,7 @@ def test_preview_draws_the_scene_plan_and_never_recomputes_it(js):
 
 
 def test_preview_ducks_voice_on_censor_windows_from_the_plan(js):
-    """Голос предпросмотра ныряет в ноль на окнах цензуры ИЗ ПЛАНА (задание I).
+    """Голос предпросмотра ныряет в ноль на окнах цензуры ИЗ ПЛАНА.
 
     Окна audio.censor считает scene_plan (xml2ae/build.py) — в рендере на них голос
     уходит voice_db→−100. Превью обязано повторить то же самое через voiceGain (VG),
@@ -1249,11 +1455,11 @@ def test_editor_words_panel_shows_the_word_under_the_playhead(js):
 
 
 def test_cam1_inserts_follow_camera_zoom_only_on_cam1(js):
-    """Вставки кам1 наследуют зум Камеры 1, остальные — нет (задание L).
+    """Вставки кам1 наследуют зум Камеры 1, остальные — нет.
 
     В AE нул «вставки кам1» привязан к нулу Камеры 1 (insNull1.parent=cam1null),
     а нулы «вставки кам1 на кам2» и «вставки кам2» свободны. Применить зум ко всем
-    трём — развести превью с AE в другую сторону; таблица случаев в задании L.
+    трём — развести превью с AE в другую сторону; таблица случаев в.
     """
     place = _fn_body(js, "function ipvInsPlace(")
     assert "style==='cam1'&&!x.oncam2" in place, (
@@ -1262,11 +1468,11 @@ def test_cam1_inserts_follow_camera_zoom_only_on_cam1(js):
 
 
 def test_frame_drag_writes_data_not_a_second_storage(js):
-    """Перетаскивание в кадре (задание E, шаг 2) пишет в ИМЕЮЩИЕСЯ источники: вставка —
+    """Перетаскивание в кадре (шаг 2) пишет в ИМЕЮЩИЕСЯ источники: вставка —
     INS[].x/y, интро — gx/gy на головной строке. План-кэш
     правится только как временный показ (insShift / plan.intro.dx) и сам
     пересчитывается дебаунсом — второго хранилища значений нет. Субтитры из списка
-    выпали: драга нет (задание MD), высота — поле стиля «% снизу» (stEdit → ipvPlanSoon).
+    выпали: драга нет, высота — поле стиля «% снизу» (stEdit → ipvPlanSoon).
 
     Главная ловушка — пересчёт координат: экранные px делятся на k (стойка/plan.w),
     а для вставки style=cam1 на Камере 1 ещё и на ipvZoomAt: она отрисована увеличенной
@@ -1304,7 +1510,7 @@ def test_frame_drag_writes_data_not_a_second_storage(js):
     assert "intro_scale" in pos and "G*" in pos, (
         "ipvIntroPos не множит на общий масштаб интро из плана (задание BG)")
 
-    # Драга субтитров больше нет (задание MD): высота правится ползунком стиля, а
+    # Драга субтитров больше нет: высота правится ползунком стиля, а
     # перехваченный клик по строке мешал кадру. Здесь остаётся поле «% снизу».
     assert "$('ipvsub').addEventListener('pointerdown'" not in js, (
         "драг субтитров вернулся в предпросмотр (задание MD его убрало)")
@@ -1315,7 +1521,7 @@ def test_frame_drag_writes_data_not_a_second_storage(js):
 
 
 def test_intro_scale_handle_centered_below_line(css):
-    """Ручка масштаба интро — под блоком по центру, а не в потоке строки (задание BQ).
+    """Ручка масштаба интро — под блоком по центру, а не в потоке строки.
 
     Раньше ручка жила inline после последнего слова (display:inline-block + margin-left),
     и у широкой строки её конец уходил за край кадра — тянуть было нечего. Теперь она
@@ -1338,8 +1544,8 @@ def test_intro_scale_handle_centered_below_line(css):
 
 
 def test_insert_shift_survives_ensure_jobs_rebuild(js):
-    """Сдвиг вставки, сделанный драгом в предпросмотре, переживает пересборку списка
-    (задание BL). ensureJobs целиком пересобирает c.job.ins из карточек шага 2 и убивал
+    """Сдвиг вставки, сделанный драгом в предпросмотре, переживает пересборку списка.
+    ensureJobs целиком пересобирает c.job.ins из карточек шага 2 и убивал
     x/y: драг писал только в INS, а источник x/y — карточка c.inserts (в ui_state у всех
     54 вставок на момент жалобы стояли нули). Теперь драг пишет и в карточку тем же
     norm-сравнением пути, а перенос tw для ручных вставок без карточки несёт x/y.
@@ -1363,7 +1569,7 @@ def test_frame_drag_shift_locks_one_axis(js):
     Ось выбирается по БОЛЬШЕМУ по модулю смещению от точки старта и переоценивается на
     каждом pointermove (как в Figma/Photoshop). Правило ОДНО на оба драга — общий
     axisLock — чтобы две копии снова не разъехались (на этом уже горели: introResolve
-    и resolveIntroFor потеряли gs, задание BG). pointerup применяет ИМЕННО st.lock,
+    и resolveIntroFor потеряли gs). pointerup применяет ИМЕННО st.lock,
     а не ev.shiftKey: Shift можно отпустить за миг до кнопки мыши, и в данные уехало бы
     не то, что нарисовано.
     """
@@ -1416,7 +1622,7 @@ def test_frame_drag_axis_lock_behaves_like_graphics_editors(js):
     ], "axisLock посчитал ось не по большему смещению"
 
 
-# ---------------- задание N: связка «спикер → стиль → папки» ----------------
+# ---------------- связка «спикер → стиль → папки» ----------------
 
 def test_new_clip_carries_the_speaker_tag(js):
     """Клип рождается в ОДНОЙ точке (newClip), и тег спикера ставится там же — во все
@@ -1437,7 +1643,7 @@ def test_new_clip_carries_the_speaker_tag(js):
 
 
 def test_build_sends_style_name_not_copy(js):
-    """В сборку уходит ИМЯ стиля, а не копия (задание EX2a): стиль резолвит бэкенд
+    """В сборку уходит ИМЯ стиля, а не копия: стиль резолвит бэкенд
     в момент сборки (_norm_build_jobs через styles.resolve), а копия из задания
     перекрывала свежие правки шаблона до того, как они доехали до клипа. Копия
     остаётся только у безымянного кастома. roto/roto_bottom из payload убраны —
@@ -1454,7 +1660,7 @@ def test_build_sends_style_name_not_copy(js):
 
 
 def test_restyle_mechanism_is_gone_from_app_scripts():
-    """Механизм разноса правок стиля по клипам удалён целиком (задание EX2b).
+    """Механизм разноса правок стиля по клипам удалён целиком.
 
     После EX1 и EX2a сборка читает стиль по имени из файла стиля (styleForJob →
     styles.resolve на бэкенде), поэтому разносить правку по копиям в заданиях нечего:
@@ -1469,7 +1675,7 @@ def test_restyle_mechanism_is_gone_from_app_scripts():
 
 
 def test_jsx_folder_derives_from_the_tag(js):
-    """Папка .jsx — производная от тега (задание N): у клипа со спикером — его jsxdir
+    """Папка .jsx — производная от тега: у клипа со спикером — его jsxdir
     (effOutdir), без тега — глобальное поле. Эта папка уходит в сборку per-job
     (jobForBuild), а правка поля у клипа с тегом пишется в профиль спикера."""
     assert "function effOutdir(c)" in js, "папки по тегу нет"
@@ -1485,13 +1691,13 @@ def test_jsx_folder_derives_from_the_tag(js):
 
 
 def test_mixed_speakers_disable_set_build(js):
-    """Клипы 2+ спикеров в наборе собираются только по одному, каждый в свою папку
-    (задание N): «Собрать набор» и «Один на всё» для них недоступны."""
+    """Клипы 2+ спикеров в наборе собираются только по одному, каждый в свою папку:
+    «Собрать набор» и «Один на всё» для них недоступны."""
     sync = _fn_body(js, "function syncBuildBtn()")
     assert "spks.size>1" in sync, "смешанные спикеры не считаются"
     assert "b.disabled=!!mixed" in sync, "«Собрать набор» не гаснет при 2+ спикерах"
     assert "combined" in sync, "«Один на всё» не гасится при 2+ спикерах"
-    # outdir набора — в общей buildOutdir (задание BI: её зовут и сборка, и рендер);
+    # outdir набора — в общей buildOutdir (её зовут и сборка, и рендер);
     # «Собрать набор» с «Один на всё» без этого правила собрал бы общий файл не туда
     out = _fn_body(js, "function buildOutdir()")
     assert "spks.size===1" in out, "общий .jsx уходит не в папку единственного спикера"
@@ -1501,7 +1707,7 @@ def test_mixed_speakers_disable_set_build(js):
 
 def test_render_uses_checked_clips_not_open_clip(js):
     """«Собрать и отрендерить» собирает тот же набор, что «Собрать набор» — по
-    галочкам, а не по открытому в редакторе клипу (задание BI, прогон 2026-08-14:
+    галочкам, а не по открытому в редакторе клипу (прогон 2026-08-14:
     галочка на 01, отрендерился 04 из CLIPS[curAE]). Вторая копия сбора набора здесь
     дала бы ровно ту же жалобу, поэтому обе кнопки зовут общий collectJobs()."""
     assert js.count("async function collectJobs(") == 1, "сбор набора объявлен не один раз"
@@ -1545,7 +1751,7 @@ def test_photo_extensions_have_one_source(js):
 
 
 def test_proxy_moves_on_the_seam_not_in_the_live_video(js):
-    """Переезд на превью-прокси не трогает живому <video> src (задание BE).
+    """Переезд на превью-прокси не трогает живому <video> src.
 
     pvProxyRepoint менял src живому элементу посреди игры: присвоение сбрасывает
     элемент в readyState 0 — камеры кроют сцену поверх чёрного фона, отсюда чёрный
@@ -1574,7 +1780,7 @@ def test_proxy_moves_on_the_seam_not_in_the_live_video(js):
 
 
 def test_players_remember_camera_paths_and_watch_proxies(js):
-    """IPV/CPV сохраняют пути камер и следят за сборкой прокси (задание BE).
+    """IPV/CPV сохраняют пути камер и следят за сборкой прокси.
 
     У PV.cams есть, а дублёру нужны пути своей камеры и в других плеерах, иначе переезд
     на прокси (spareHandover) не знает, на какой файл переводить дублёра. Плюс попутный
@@ -1610,7 +1816,7 @@ def test_speaker_image_prompts_ui(html, js):
     open_spk = _fn_body(js, "function openSpeaker(")
     assert "p.image_prompts" in open_spk, "openSpeaker не читает p.image_prompts"
 
-    # 4. imgPrompts не откатывается на AICFG (задание CS)
+    # 4. imgPrompts не откатывается на AICFG
     img_pr = _fn_body(js, "function imgPrompts(")
     assert "AICFG.image_prompt" not in img_pr and "AICFG.image_prompts" not in img_pr, (
         "imgPrompts всё ещё обращается к AICFG")
@@ -2154,7 +2360,7 @@ def test_no_camcustom_and_speaker_dirs_restores_cams(js):
 
 
 def test_norm_ins_path_declared_once():
-    """normInsPath объявлена РОВНО один раз во всех static/app/*.js (задание DP-хвост).
+    """normInsPath объявлена РОВНО один раз во всех static/app/*.js ().
 
     Файлы static/app/*.js грузятся в один глобальный скоуп. Дубль в 90-ae.js был вторым
     источником: при разъезде сопоставление вставок ломалось бы по-разному в разных местах.
@@ -2176,7 +2382,7 @@ def test_norm_ins_path_declared_once():
 
 
 def test_card_to_ins_duration_default_when_zero(js):
-    """Дефолт длительности в cardToIns при duration_sec=0 даёт dur_s=2 (задание DP-хвост).
+    """Дефолт длительности в cardToIns при duration_sec=0 даёт dur_s=2 ().
 
     В исходном ensureJobs было (x.duration_sec||2). При замене на !=null ? ... : 2
     значение duration_sec=0 превращалось в dur_s=0 и вставка исчезала из сборки AE.
@@ -2198,7 +2404,7 @@ def test_card_to_ins_duration_default_when_zero(js):
 
 
 def test_i18n_data_containers_opt_out(html, js):
-    """Контейнеры с данными ролика помечены data-noi18n, applyI18n их пропускает (задание DS).
+    """Контейнеры с данными ролика помечены data-noi18n, applyI18n их пропускает.
 
     В английском интерфейсе applyI18n и MutationObserver не должны переводить текст ролика
     (субтитры, интро, слова, запросы/имена файлов вставок), совпавший со словами словаря.
@@ -2264,7 +2470,7 @@ def test_log_modal_tabs_and_blocks_ea(html, js):
 
 
 def test_clip_stores_style_name_not_copy(js):
-    """Клип хранит ИМЯ стиля, копия — только у безымянного кастома (задание EX2c).
+    """Клип хранит ИМЯ стиля, копия — только у безымянного кастома.
     Копия в задании и была источником рассинхрона: правка стиля до клипа не доезжала.
     Рото стало свойством стиля, пометка styleOwn удалена вместе с механизмом разноса."""
     cap = _fn_body(js, "function captureAE()")
@@ -2503,7 +2709,7 @@ def test_step2_phase_buttons_call_selclips_and_single_phase_fd(js):
 def test_step2_rewrite_question_only_for_single_phase_fd(js):
     """Вопрос о перезаписи — ТОЛЬКО у явного запуска одной фазы (ask=true).
 
-    «Разметить всё» (ask=false) молча пропускает уже готовое, как до задания FD:
+    «Разметить всё» (ask=false) молча пропускает уже готовое, как раньше:
     askConfirm не вызывается вовсе, has(c) пропускает как раньше. Регресс был в том,
     что на наборе с частично размеченными клипами «Разметить всё» выдавал до ТРЁХ
     модалок подряд — проверяем, что при трёх фазах вопрос не задаётся ни разу.
@@ -2549,7 +2755,8 @@ def test_step2_rewrite_question_behavior_in_node_fd(js):
         "let UICANCEL=false,CLIPS=[],curIns=-1,calls={ask:0};"
         "const $=id=>({textContent:'',className:'',style:{},value:''});"
         "function uiBusyGuard(){return false;}function uiBusySet(){}function progShow(){}"
-        "function progUpdate(){}function progDone(){}function renderClips2(){}function saveState(){}"
+        "function progUpdate(){}function progQueue(){}function progStep(){}function progDone(){}"
+        "function renderClips2(){}function saveState(){}"
         "function uiLog(){}function toast(){}function sleep(){return Promise.resolve();}"
         "function engLabel(){return 'whisper';}function askConfirm(){calls.ask++;return true;}"
         "function t(s){return s;}function errText(e){return String(e);}"
@@ -2617,7 +2824,7 @@ def test_no_triple_backslash_quote_in_on_attributes():
                 pytest.fail(f"Найдена последовательность \\\\\\' внутри on-атрибута в {fname}:{line_no}:\n{line.strip()}")
 
     # Ищем по содержимому, а не по номеру строки: правка выше по файлу сдвигала 811-ю,
-    # и сторож падал на посторонней строке (задание MD добавило 30+ строк в 60-preview.js).
+    # и сторож падал на посторонней строке (добавило 30+ строк в 60-preview.js).
     preview_lines = open(os.path.join(app_dir, "60-preview.js"), "rb").read().decode("utf-8").splitlines()
     assert any(r"typeof hex2rgb===\'function\'" in line for line in preview_lines), (
         "в 60-preview.js пропала строка с экранированными кавычками "
@@ -2646,7 +2853,7 @@ def test_ipv_drag_insert_index_matches_plan_filter(js):
 
 
 def test_style_panel_layer_order_and_slider_contracts(css, js):
-    """Панель стиля (задание KP):
+    """Панель стиля:
     - поле layer_order не порождает строки .strow с подписью;
     - у .layer-order-item в CSS нет padding: 8px 12px и нет цвета amber;
     - у .stslider ширина не фиксирована в px.

@@ -3,7 +3,7 @@
 # Copyright (c) 2026 Maxim Si
 """Задание IW: API — тело запроса, наборы, set_yellow, маска ключа.
 
-Тесты проверяют 5 пунктов задания IW (ветка feat/r9-api):
+Тесты проверяют 5 пунктов:
 1. Граница Blueprint в api/_core.py: POST/PUT/PATCH на /api/* с JSON не-объектом
    ([1, 2], "x", 5) возвращает 400 bad_body, а не падает в 500 на d.get().
 2. _norm_or_error в api/build.py и api/render.py: inserts: 5 не роняет build_run

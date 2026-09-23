@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Контракты трёх роутов api/build.py, которые до круга 7 не были покрыты (задание HX):
+"""Контракты трёх роутов api/build.py, которые до круга 7 не были покрыты:
 
 * `POST /api/cams_load` — раскладка камер по сегментам для окна-редактора;
 * `POST /api/swap_cam`  — замена файла камеры (обычно второй) с пересборкой XML;

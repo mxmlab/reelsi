@@ -1,0 +1,5648 @@
+[
+ {
+  "name": "GET: начальное состояние",
+  "method": "GET",
+  "request": null,
+  "status": 200,
+  "json": {
+   "active": "Основной",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "__local__",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_model_hints": [
+    "google/gemini-3.1-flash-lite-image",
+    "google/gemini-3.1-flash-image",
+    "google/gemini-2.5-flash-image"
+   ],
+   "image_rembg": true,
+   "model_caps": {
+    "claude-sonnet-5": {
+     "cache": null,
+     "catalog_provider": null,
+     "cost": null,
+     "ctx_limit": null,
+     "default": null,
+     "efforts": null,
+     "out_limit": null,
+     "reasoning": null,
+     "reasoning_kind": null,
+     "structured_output": null,
+     "temperature": null
+    },
+    "deepseek/deepseek-v4-flash": {
+     "cache": null,
+     "catalog_provider": null,
+     "cost": null,
+     "ctx_limit": null,
+     "default": null,
+     "efforts": null,
+     "out_limit": null,
+     "reasoning": null,
+     "reasoning_kind": null,
+     "structured_output": null,
+     "temperature": null
+    },
+    "google/gemini-2.5-flash": {
+     "cache": null,
+     "catalog_provider": null,
+     "cost": null,
+     "ctx_limit": null,
+     "default": null,
+     "efforts": null,
+     "out_limit": null,
+     "reasoning": null,
+     "reasoning_kind": null,
+     "structured_output": null,
+     "temperature": null
+    },
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cache": null,
+     "catalog_provider": null,
+     "cost": null,
+     "ctx_limit": null,
+     "default": null,
+     "efforts": null,
+     "out_limit": null,
+     "reasoning": null,
+     "reasoning_kind": null,
+     "structured_output": null,
+     "temperature": null
+    }
+   },
+   "presets": {
+    "anthropic": {
+     "base_url": "https://api.anthropic.com",
+     "label": "Anthropic (Claude)",
+     "models": [
+      "claude-sonnet-5",
+      "claude-haiku-4-5",
+      "claude-opus-4-8"
+     ]
+    },
+    "commandcode": {
+     "base_url": "https://api.commandcode.ai/provider/v1",
+     "label": "CommandCode",
+     "models": [
+      "meta/muse-spark-1.3-contributor",
+      "claude-sonnet-5",
+      "gpt-5.6-luna",
+      "deepseek/deepseek-v4-flash",
+      "google/gemini-3.8-flash"
+     ]
+    },
+    "deepseek": {
+     "base_url": "https://api.deepseek.com/v1",
+     "label": "DeepSeek",
+     "models": [
+      "deepseek-chat",
+      "deepseek-reasoner"
+     ]
+    },
+    "groq": {
+     "base_url": "https://api.groq.com/openai/v1",
+     "label": "Groq",
+     "models": [
+      "llama-3.3-70b-versatile",
+      "deepseek-r1-distill-llama-70b"
+     ]
+    },
+    "lmstudio": {
+     "base_url": "http://localhost:1234/v1",
+     "label": "LM Studio (локально)",
+     "models": [
+      "qwen3.6-27b-4bpw-16gb-vram",
+      "qwen3.5-9b-claude-4.6-opus-reasoning-distilled"
+     ]
+    },
+    "ollama": {
+     "base_url": "http://localhost:11434/v1",
+     "label": "Ollama (локально)",
+     "models": [
+      "qwen2.5:32b",
+      "deepseek-r1:32b",
+      "llama3.3"
+     ]
+    },
+    "openai": {
+     "base_url": "",
+     "label": "OpenAI-совместимый (свой URL)",
+     "models": []
+    },
+    "openrouter": {
+     "base_url": "https://openrouter.ai/api/v1",
+     "label": "OpenRouter",
+     "models": []
+    }
+   },
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_defaults": {},
+   "reasoning_effective": {
+    "cut": "medium",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_examples": [
+    "openai/o3",
+    "openai/o3-mini",
+    "openai/o4-mini",
+    "openai/gpt-5",
+    "deepseek/deepseek-r1",
+    "qwen/qwq-32b",
+    "qwen/qwen3-235b-a22b",
+    "anthropic/claude-3.7-sonnet:thinking",
+    "x-ai/grok-4",
+    "x-ai/grok-3-mini",
+    "google/gemini-2.5-pro",
+    "google/gemini-2.5-flash",
+    "mistral/magistral-medium",
+    "moonshotai/kimi-thinking",
+    "perplexity/sonar-reasoning",
+    "nvidia/nemotron"
+   ],
+   "reasoning_levels": [
+    "off",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max"
+   ],
+   "reasoning_models": [
+    "openai/o1",
+    "openai/o3",
+    "openai/o4",
+    "openai/gpt-5",
+    "deepseek/deepseek-r1",
+    "deepseek/deepseek-reasoner",
+    "qwen/qwq",
+    "qwen/qwen3",
+    "anthropic/claude-3.7-sonnet:thinking",
+    "anthropic/claude-3.7-sonnet-thinking",
+    "claude-3-7-sonnet",
+    "claude-sonnet-4",
+    "claude-opus-4",
+    "x-ai/grok-4",
+    "x-ai/grok-3-mini",
+    "google/gemini-2.5-pro",
+    "google/gemini-2.5-flash",
+    "google/gemini-3",
+    "mistral/magistral",
+    "moonshotai/kimi-thinking",
+    "perplexity/sonar-reasoning",
+    "nvidia/nemotron",
+    "tencent/hunyuan",
+    "tencent/hy3"
+   ],
+   "reasoning_step_titles": {
+    "cut": "Нарезка",
+    "inserts": "Вставки",
+    "intro": "Интро",
+    "yellow": "Жёлтые слова"
+   },
+   "reasoning_steps": {
+    "cut": "medium",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Основной",
+    "inserts": "Основной",
+    "intro": "Основной",
+    "yellow": "Основной"
+   },
+   "video_aspects": [
+    "9:16",
+    "16:9",
+    "1:1",
+    "4:3",
+    "3:4",
+    "21:9",
+    "9:21"
+   ],
+   "video_model": "bytedance/seedance-2.0",
+   "video_model_hints": [
+    "bytedance/seedance-2.0",
+    "bytedance/seedance-2.0-fast",
+    "google/veo-3.1",
+    "google/veo-3.1-fast",
+    "google/veo-3.1-lite",
+    "minimax/hailuo-3",
+    "kwaivgi/kling-v3.0-pro",
+    "kwaivgi/kling-v3.0-std"
+   ],
+   "video_models": [
+    {
+     "builtin": true,
+     "caps": {
+      "aspect_ratios": [
+       "1:1",
+       "3:4",
+       "9:16",
+       "4:3",
+       "16:9",
+       "21:9",
+       "9:21"
+      ],
+      "audio": true,
+      "durations": [
+       "4",
+       "5",
+       "6",
+       "7",
+       "8",
+       "9",
+       "10",
+       "11",
+       "12",
+       "13",
+       "14",
+       "15"
+      ],
+      "frame_images": [
+       "first_frame",
+       "last_frame"
+      ],
+      "image_formats": [
+       "jpeg",
+       "png",
+       "webp",
+       "gif",
+       "bmp",
+       "tiff"
+      ],
+      "image_formats_strict": false,
+      "known": true,
+      "label": "Seedance 2.0 — мультимодальная (фото + видео-референсы)",
+      "listed": false,
+      "model": "bytedance/seedance-2.0",
+      "note": "Мультимодальный r2v: до 9 фото и 3 видео-референсов, видео СУММАРНО не длиннее 15с. Что взять с референса — пишется в промпте тегом @image1/@video1. Первый/последний кадр — только ФОТО и не вместе с референсами.",
+      "ref_images": 9,
+      "ref_video_total_s": 15.0,
+      "ref_videos": 3,
+      "references": true,
+      "resolutions": [
+       "480p",
+       "720p",
+       "1080p",
+       "4K"
+      ],
+      "seed": true,
+      "sizes": []
+     },
+     "id": "bytedance/seedance-2.0",
+     "label": "Seedance 2.0 — мультимодальная (фото + видео-референсы)"
+    },
+    {
+     "builtin": true,
+     "caps": {
+      "aspect_ratios": [
+       "1:1",
+       "3:4",
+       "9:16",
+       "4:3",
+       "16:9",
+       "21:9",
+       "9:21"
+      ],
+      "audio": true,
+      "durations": [
+       "4",
+       "5",
+       "6",
+       "7",
+       "8",
+       "9",
+       "10",
+       "11",
+       "12",
+       "13",
+       "14",
+       "15"
+      ],
+      "frame_images": [
+       "first_frame",
+       "last_frame"
+      ],
+      "image_formats": [
+       "jpeg",
+       "png",
+       "webp",
+       "gif",
+       "bmp",
+       "tiff"
+      ],
+      "image_formats_strict": false,
+      "known": true,
+      "label": "Seedance 2.0 Fast — то же, дешевле (до 720p)",
+      "listed": false,
+      "model": "bytedance/seedance-2.0-fast",
+      "note": "Мультимодальный r2v: до 9 фото и 3 видео-референсов, видео СУММАРНО не длиннее 15с. Что взять с референса — пишется в промпте тегом @image1/@video1. Первый/последний кадр — только ФОТО и не вместе с референсами.",
+      "ref_images": 9,
+      "ref_video_total_s": 15.0,
+      "ref_videos": 3,
+      "references": true,
+      "resolutions": [
+       "480p",
+       "720p"
+      ],
+      "seed": true,
+      "sizes": []
+     },
+     "id": "bytedance/seedance-2.0-fast",
+     "label": "Seedance 2.0 Fast — то же, дешевле (до 720p)"
+    },
+    {
+     "builtin": true,
+     "caps": {
+      "aspect_ratios": [
+       "16:9",
+       "9:16"
+      ],
+      "audio": true,
+      "durations": [
+       "4",
+       "6",
+       "8"
+      ],
+      "frame_images": [
+       "first_frame",
+       "last_frame"
+      ],
+      "image_formats": [
+       "jpeg",
+       "png"
+      ],
+      "image_formats_strict": true,
+      "known": true,
+      "label": "Veo 3.1 — Google, сильный звук и физика",
+      "listed": false,
+      "model": "google/veo-3.1",
+      "note": "Только 4, 6 или 8 секунд и только 16:9 / 9:16. Референсы — до 3 ФОТО (видео как референс не принимает) и не вместе с кадром.",
+      "ref_images": 3,
+      "ref_video_total_s": null,
+      "ref_videos": 0,
+      "references": null,
+      "resolutions": [
+       "720p",
+       "1080p",
+       "4K"
+      ],
+      "seed": true,
+      "sizes": []
+     },
+     "id": "google/veo-3.1",
+     "label": "Veo 3.1 — Google, сильный звук и физика"
+    },
+    {
+     "builtin": true,
+     "caps": {
+      "aspect_ratios": [
+       "16:9",
+       "9:16"
+      ],
+      "audio": true,
+      "durations": [
+       "4",
+       "6",
+       "8"
+      ],
+      "frame_images": [
+       "first_frame",
+       "last_frame"
+      ],
+      "image_formats": [
+       "jpeg",
+       "png"
+      ],
+      "image_formats_strict": true,
+      "known": true,
+      "label": "Veo 3.1 Fast — быстрее и дешевле",
+      "listed": false,
+      "model": "google/veo-3.1-fast",
+      "note": "Только 4, 6 или 8 секунд и только 16:9 / 9:16. Референсы — до 3 ФОТО (видео как референс не принимает) и не вместе с кадром.",
+      "ref_images": 3,
+      "ref_video_total_s": null,
+      "ref_videos": 0,
+      "references": null,
+      "resolutions": [
+       "720p",
+       "1080p",
+       "4K"
+      ],
+      "seed": true,
+      "sizes": []
+     },
+     "id": "google/veo-3.1-fast",
+     "label": "Veo 3.1 Fast — быстрее и дешевле"
+    },
+    {
+     "builtin": true,
+     "caps": {
+      "aspect_ratios": [
+       "16:9",
+       "9:16"
+      ],
+      "audio": true,
+      "durations": [
+       "4",
+       "6",
+       "8"
+      ],
+      "frame_images": [
+       "first_frame",
+       "last_frame"
+      ],
+      "image_formats": [
+       "jpeg",
+       "png"
+      ],
+      "image_formats_strict": true,
+      "known": true,
+      "label": "Veo 3.1 Lite — самая дешёвая из Veo (до 1080p)",
+      "listed": false,
+      "model": "google/veo-3.1-lite",
+      "note": "Только 4, 6 или 8 секунд и только 16:9 / 9:16. Референсы — до 3 ФОТО (видео как референс не принимает) и не вместе с кадром.",
+      "ref_images": 3,
+      "ref_video_total_s": null,
+      "ref_videos": 0,
+      "references": null,
+      "resolutions": [
+       "720p",
+       "1080p"
+      ],
+      "seed": true,
+      "sizes": []
+     },
+     "id": "google/veo-3.1-lite",
+     "label": "Veo 3.1 Lite — самая дешёвая из Veo (до 1080p)"
+    },
+    {
+     "builtin": true,
+     "caps": {
+      "aspect_ratios": [
+       "21:9",
+       "16:9",
+       "4:3",
+       "1:1",
+       "3:4",
+       "9:16"
+      ],
+      "audio": true,
+      "durations": [
+       "5",
+       "6",
+       "7",
+       "8",
+       "9",
+       "10",
+       "11",
+       "12",
+       "13",
+       "14",
+       "15"
+      ],
+      "frame_images": [
+       "first_frame",
+       "last_frame"
+      ],
+      "image_formats": [
+       "jpeg",
+       "png"
+      ],
+      "image_formats_strict": false,
+      "known": true,
+      "label": "MiniMax Hailuo 3 — 2K, длина 5–15с",
+      "listed": false,
+      "model": "minimax/hailuo-3",
+      "note": "Единственное разрешение — 2K. Первый/последний кадр — фото. Референсы (файлом) каталогом не заявлены: подпись уйдёт в промпт.",
+      "ref_images": 0,
+      "ref_video_total_s": null,
+      "ref_videos": 0,
+      "references": null,
+      "resolutions": [
+       "2K"
+      ],
+      "seed": false,
+      "sizes": []
+     },
+     "id": "minimax/hailuo-3",
+     "label": "MiniMax Hailuo 3 — 2K, длина 5–15с"
+    },
+    {
+     "builtin": true,
+     "caps": {
+      "aspect_ratios": [
+       "16:9",
+       "9:16",
+       "1:1"
+      ],
+      "audio": true,
+      "durations": [
+       "3",
+       "4",
+       "5",
+       "6",
+       "7",
+       "8",
+       "9",
+       "10",
+       "11",
+       "12",
+       "13",
+       "14",
+       "15"
+      ],
+      "frame_images": [
+       "first_frame",
+       "last_frame"
+      ],
+      "image_formats": [
+       "jpeg",
+       "png"
+      ],
+      "image_formats_strict": false,
+      "known": true,
+      "label": "Kling 3.0 Pro — 720p, длина 3–15с",
+      "listed": false,
+      "model": "kwaivgi/kling-v3.0-pro",
+      "note": "Только 720p и 16:9 / 9:16 / 1:1, seed не поддерживает. Первый/последний кадр — фото. Референсы (файлом) каталогом не заявлены.",
+      "ref_images": 0,
+      "ref_video_total_s": null,
+      "ref_videos": 0,
+      "references": null,
+      "resolutions": [
+       "720p"
+      ],
+      "seed": false,
+      "sizes": []
+     },
+     "id": "kwaivgi/kling-v3.0-pro",
+     "label": "Kling 3.0 Pro — 720p, длина 3–15с"
+    },
+    {
+     "builtin": true,
+     "caps": {
+      "aspect_ratios": [
+       "16:9",
+       "9:16",
+       "1:1"
+      ],
+      "audio": true,
+      "durations": [
+       "3",
+       "4",
+       "5",
+       "6",
+       "7",
+       "8",
+       "9",
+       "10",
+       "11",
+       "12",
+       "13",
+       "14",
+       "15"
+      ],
+      "frame_images": [
+       "first_frame",
+       "last_frame"
+      ],
+      "image_formats": [
+       "jpeg",
+       "png"
+      ],
+      "image_formats_strict": false,
+      "known": true,
+      "label": "Kling 3.0 Std — то же, дешевле",
+      "listed": false,
+      "model": "kwaivgi/kling-v3.0-std",
+      "note": "Только 720p и 16:9 / 9:16 / 1:1, seed не поддерживает. Первый/последний кадр — фото. Референсы (файлом) каталогом не заявлены.",
+      "ref_images": 0,
+      "ref_video_total_s": null,
+      "ref_videos": 0,
+      "references": null,
+      "resolutions": [
+       "720p"
+      ],
+      "seed": false,
+      "sizes": []
+     },
+     "id": "kwaivgi/kling-v3.0-std",
+     "label": "Kling 3.0 Std — то же, дешевле"
+    }
+   ],
+   "video_resolution": "",
+   "video_resolutions": [
+    "480p",
+    "720p",
+    "1080p",
+    "2K",
+    "4K"
+   ]
+  },
+  "config": {
+   "active": "Основной",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   }
+  }
+ },
+ {
+  "name": "set_reasoning_step: успех (cut=high)",
+  "method": "POST",
+  "request": {
+   "action": "set_reasoning_step",
+   "step": "cut",
+   "level": "high"
+  },
+  "status": 200,
+  "json": {
+   "active": "Основной",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "__local__",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "high",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "high",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Основной",
+    "inserts": "Основной",
+    "intro": "Основной",
+    "yellow": "Основной"
+   },
+   "video_model": "bytedance/seedance-2.0",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Основной",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "high"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "high"
+    }
+   }
+  }
+ },
+ {
+  "name": "set_reasoning_step: успех (cut=max, память на модель)",
+  "method": "POST",
+  "request": {
+   "action": "set_reasoning_step",
+   "step": "cut",
+   "level": "max"
+  },
+  "status": 200,
+  "json": {
+   "active": "Основной",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "__local__",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Основной",
+    "inserts": "Основной",
+    "intro": "Основной",
+    "yellow": "Основной"
+   },
+   "video_model": "bytedance/seedance-2.0",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Основной",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   }
+  }
+ },
+ {
+  "name": "set_reasoning_step: неизвестный шаг",
+  "method": "POST",
+  "request": {
+   "action": "set_reasoning_step",
+   "step": "нетакого",
+   "level": "high"
+  },
+  "status": 200,
+  "json": {
+   "err": "unknown_step",
+   "err_vars": {
+    "step": "нетакого"
+   },
+   "error": "Неизвестный шаг «нетакого»"
+  },
+  "config": null
+ },
+ {
+  "name": "set_reasoning_step: неизвестный уровень",
+  "method": "POST",
+  "request": {
+   "action": "set_reasoning_step",
+   "step": "cut",
+   "level": "мусор"
+  },
+  "status": 200,
+  "json": {
+   "err": "unknown_reasoning_level",
+   "err_vars": {
+    "lvl": "мусор"
+   },
+   "error": "Неизвестный уровень «мусор»"
+  },
+  "config": null
+ },
+ {
+  "name": "set_step_profile: успех (yellow=Клод)",
+  "method": "POST",
+  "request": {
+   "action": "set_step_profile",
+   "step": "yellow",
+   "name": "Клод"
+  },
+  "status": 200,
+  "json": {
+   "active": "Основной",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "__local__",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Основной",
+    "inserts": "Основной",
+    "intro": "Основной",
+    "yellow": "Клод"
+   },
+   "video_model": "bytedance/seedance-2.0",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Основной",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "yellow": "Клод"
+   }
+  }
+ },
+ {
+  "name": "set_step_profile: сброс шага на общий active",
+  "method": "POST",
+  "request": {
+   "action": "set_step_profile",
+   "step": "yellow",
+   "name": ""
+  },
+  "status": 200,
+  "json": {
+   "active": "Основной",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "__local__",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Основной",
+    "inserts": "Основной",
+    "intro": "Основной",
+    "yellow": "Основной"
+   },
+   "video_model": "bytedance/seedance-2.0",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Основной",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {}
+  }
+ },
+ {
+  "name": "set_step_profile: успех (intro=Аудио)",
+  "method": "POST",
+  "request": {
+   "action": "set_step_profile",
+   "step": "intro",
+   "name": "Аудио"
+  },
+  "status": 200,
+  "json": {
+   "active": "Основной",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "__local__",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Основной",
+    "inserts": "Основной",
+    "intro": "Аудио",
+    "yellow": "Основной"
+   },
+   "video_model": "bytedance/seedance-2.0",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Основной",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   }
+  }
+ },
+ {
+  "name": "set_step_profile: неизвестный шаг",
+  "method": "POST",
+  "request": {
+   "action": "set_step_profile",
+   "step": "нетакого",
+   "name": "Клод"
+  },
+  "status": 200,
+  "json": {
+   "err": "unknown_step",
+   "err_vars": {
+    "step": "нетакого"
+   },
+   "error": "Неизвестный шаг «нетакого»"
+  },
+  "config": null
+ },
+ {
+  "name": "set_step_profile: нет профиля",
+  "method": "POST",
+  "request": {
+   "action": "set_step_profile",
+   "step": "yellow",
+   "name": "НетТакого"
+  },
+  "status": 200,
+  "json": {
+   "err": "no_profile",
+   "err_vars": {
+    "name": "НетТакого"
+   },
+   "error": "Нет профиля «НетТакого»"
+  },
+  "config": null
+ },
+ {
+  "name": "set_active: успех (Клод)",
+  "method": "POST",
+  "request": {
+   "action": "set_active",
+   "name": "Клод"
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "__local__",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "video_model": "bytedance/seedance-2.0",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   }
+  }
+ },
+ {
+  "name": "set_active: нет профиля",
+  "method": "POST",
+  "request": {
+   "action": "set_active",
+   "name": "НетТакого"
+  },
+  "status": 200,
+  "json": {
+   "err": "no_profile",
+   "err_vars": {
+    "name": "НетТакого"
+   },
+   "error": "Нет профиля «НетТакого»"
+  },
+  "config": null
+ },
+ {
+  "name": "set_active_omni: локальный движок",
+  "method": "POST",
+  "request": {
+   "action": "set_active_omni",
+   "name": "__local__"
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "__local__",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "video_model": "bytedance/seedance-2.0",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "__local__"
+  }
+ },
+ {
+  "name": "set_active_omni: успех (аудио-модель)",
+  "method": "POST",
+  "request": {
+   "action": "set_active_omni",
+   "name": "Аудио"
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "video_model": "bytedance/seedance-2.0",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио"
+  }
+ },
+ {
+  "name": "set_active_omni: Claude не принимает аудио",
+  "method": "POST",
+  "request": {
+   "action": "set_active_omni",
+   "name": "Клод"
+  },
+  "status": 200,
+  "json": {
+   "err": "claude_no_audio",
+   "err_vars": {},
+   "error": "Claude API не принимает аудио — выбери аудио-модель (например Gemini на OpenRouter) или «Локально»"
+  },
+  "config": null
+ },
+ {
+  "name": "set_active_omni: модель не принимает аудио",
+  "method": "POST",
+  "request": {
+   "action": "set_active_omni",
+   "name": "Текстовая"
+  },
+  "status": 200,
+  "json": {
+   "err": "omni_audio_unsupported",
+   "err_vars": {
+    "err": "Модель «deepseek/deepseek-v4-flash» текстовая — звук не принимает (вход: text). Для Omni нужна аудио-модель, например google/gemini-2.5-flash"
+   },
+   "error": "Модель «deepseek/deepseek-v4-flash» текстовая — звук не принимает (вход: text). Для Omni нужна аудио-модель, например google/gemini-2.5-flash"
+  },
+  "config": null
+ },
+ {
+  "name": "set_active_omni: нет профиля",
+  "method": "POST",
+  "request": {
+   "action": "set_active_omni",
+   "name": "НетТакого"
+  },
+  "status": 200,
+  "json": {
+   "err": "no_profile",
+   "err_vars": {
+    "name": "НетТакого"
+   },
+   "error": "Нет профиля «НетТакого»"
+  },
+  "config": null
+ },
+ {
+  "name": "set_active_cut_asr: успех (gigaam)",
+  "method": "POST",
+  "request": {
+   "action": "set_active_cut_asr",
+   "name": "gigaam"
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "video_model": "bytedance/seedance-2.0",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam"
+  }
+ },
+ {
+  "name": "set_active_cut_asr: движок не годен для нарезки",
+  "method": "POST",
+  "request": {
+   "action": "set_active_cut_asr",
+   "name": "whisper"
+  },
+  "status": 200,
+  "json": {
+   "err": "invalid_cut_asr",
+   "err_vars": {
+    "name": "whisper"
+   },
+   "error": "Движок «whisper» не годен для нарезки"
+  },
+  "config": null
+ },
+ {
+  "name": "set_active_image: успех (Аудио)",
+  "method": "POST",
+  "request": {
+   "action": "set_active_image",
+   "name": "Аудио"
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_image": "Аудио",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "video_model": "bytedance/seedance-2.0",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_image": "Аудио"
+  }
+ },
+ {
+  "name": "set_active_image: выключено",
+  "method": "POST",
+  "request": {
+   "action": "set_active_image",
+   "name": "__off__"
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "video_model": "bytedance/seedance-2.0",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__"
+  }
+ },
+ {
+  "name": "set_active_image: провайдер без картинок",
+  "method": "POST",
+  "request": {
+   "action": "set_active_image",
+   "name": "Клод"
+  },
+  "status": 200,
+  "json": {
+   "err": "provider_no_images",
+   "err_vars": {
+    "provider": "Клод"
+   },
+   "error": "Этот провайдер не генерит картинки — нужен OpenRouter/OpenAI-совместимый с image-моделью"
+  },
+  "config": null
+ },
+ {
+  "name": "set_active_image: нет профиля",
+  "method": "POST",
+  "request": {
+   "action": "set_active_image",
+   "name": "НетТакого"
+  },
+  "status": 200,
+  "json": {
+   "err": "no_profile",
+   "err_vars": {
+    "name": "НетТакого"
+   },
+   "error": "Нет профиля «НетТакого»"
+  },
+  "config": null
+ },
+ {
+  "name": "set_active_video: успех (Аудио)",
+  "method": "POST",
+  "request": {
+   "action": "set_active_video",
+   "name": "Аудио"
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "Аудио",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "video_model": "google/gemini-2.5-flash",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_video": "Аудио"
+  }
+ },
+ {
+  "name": "set_active_video: выключено",
+  "method": "POST",
+  "request": {
+   "action": "set_active_video",
+   "name": "__off__"
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "video_model": "bytedance/seedance-2.0",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_video": "__off__"
+  }
+ },
+ {
+  "name": "set_active_video: провайдер без видео",
+  "method": "POST",
+  "request": {
+   "action": "set_active_video",
+   "name": "Клод"
+  },
+  "status": 200,
+  "json": {
+   "err": "provider_no_video",
+   "err_vars": {
+    "provider": "Клод"
+   },
+   "error": "Этот провайдер не генерит видео — нужен OpenRouter/совместимый с видео-моделью"
+  },
+  "config": null
+ },
+ {
+  "name": "set_active_video: нет профиля",
+  "method": "POST",
+  "request": {
+   "action": "set_active_video",
+   "name": "НетТакого"
+  },
+  "status": 200,
+  "json": {
+   "err": "no_profile",
+   "err_vars": {
+    "name": "НетТакого"
+   },
+   "error": "Нет профиля «НетТакого»"
+  },
+  "config": null
+ },
+ {
+  "name": "set_video_resolution: успех (1080p)",
+  "method": "POST",
+  "request": {
+   "action": "set_video_resolution",
+   "resolution": "1080p"
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "video_model": "bytedance/seedance-2.0",
+   "video_resolution": "1080p"
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_video": "__off__",
+   "video_resolution": "1080p"
+  }
+ },
+ {
+  "name": "set_video_resolution: модель не поддерживает (2K)",
+  "method": "POST",
+  "request": {
+   "action": "set_video_resolution",
+   "resolution": "2K"
+  },
+  "status": 200,
+  "json": {
+   "err": "video_resolution_unsupported",
+   "err_vars": {
+    "list": "480p, 720p, 1080p, 4K",
+    "model": "bytedance/seedance-2.0",
+    "resolution": "2K"
+   },
+   "error": "Модель «bytedance/seedance-2.0» не поддерживает разрешение «2K» — можно: 480p, 720p, 1080p, 4K"
+  },
+  "config": null
+ },
+ {
+  "name": "set_video_model: успех + сброс устаревшего разрешения",
+  "method": "POST",
+  "request": {
+   "action": "set_video_model",
+   "model": "bytedance/seedance-2.0-fast"
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "video_model": "bytedance/seedance-2.0-fast",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_video": "__off__",
+   "video_resolution": "",
+   "video_model": "bytedance/seedance-2.0-fast"
+  }
+ },
+ {
+  "name": "set_video_model: неизвестная модель (разрешение не трогаем)",
+  "method": "POST",
+  "request": {
+   "action": "set_video_model",
+   "model": "некая/неизвестная-модель"
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_video": "__off__",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель"
+  }
+ },
+ {
+  "name": "set_video_resolution: успех при неизвестной модели (4K)",
+  "method": "POST",
+  "request": {
+   "action": "set_video_resolution",
+   "resolution": "4K"
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": "4K"
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_video": "__off__",
+   "video_resolution": "4K",
+   "video_model": "некая/неизвестная-модель"
+  }
+ },
+ {
+  "name": "set_video_resolution: пусто — решает провайдер",
+  "method": "POST",
+  "request": {
+   "action": "set_video_resolution",
+   "resolution": ""
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_video": "__off__",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель"
+  }
+ },
+ {
+  "name": "set_image_rembg: выключить",
+  "method": "POST",
+  "request": {
+   "action": "set_image_rembg",
+   "value": false
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_rembg": false,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_video": "__off__",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": false
+  }
+ },
+ {
+  "name": "set_image_rembg: включить",
+  "method": "POST",
+  "request": {
+   "action": "set_image_rembg",
+   "value": true
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_video": "__off__",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": true
+  }
+ },
+ {
+  "name": "set_glitch_glow: успех (deepglow2)",
+  "method": "POST",
+  "request": {
+   "action": "set_glitch_glow",
+   "value": "deepglow2"
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "glitch_glow": "deepglow2",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_video": "__off__",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": true,
+   "glitch_glow": "deepglow2"
+  }
+ },
+ {
+  "name": "set_glitch_glow: недопустимый режим",
+  "method": "POST",
+  "request": {
+   "action": "set_glitch_glow",
+   "value": "мусор"
+  },
+  "status": 200,
+  "json": {
+   "err": "glitch_glow_mode_invalid",
+   "err_vars": {
+    "list": "builtin, deepglow2",
+    "mode": "мусор"
+   },
+   "error": "Недопустимый режим свечения глитча «мусор» — можно: builtin, deepglow2"
+  },
+  "config": null
+ },
+ {
+  "name": "save_profile: новый профиль + set_active",
+  "method": "POST",
+  "request": {
+   "action": "save_profile",
+   "name": "Новый",
+   "set_active": true,
+   "profile": {
+    "provider": "openai",
+    "base_url": "http://localhost:9999/v1",
+    "api_key": "test-key-new-4444",
+    "model": "gpt-4o",
+    "headers_text": "X-Foo: bar\nX-Baz: qux"
+   }
+  },
+  "status": 200,
+  "json": {
+   "active": "Новый",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "glitch_glow": "deepglow2",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Новый": {
+     "api_key": "•••4444",
+     "base_url": "http://localhost:9999/v1",
+     "headers": {
+      "X-Baz": "qux",
+      "X-Foo": "bar"
+     },
+     "model": "gpt-4o",
+     "provider": "openai"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Новый",
+    "inserts": "Новый",
+    "intro": "Аудио",
+    "yellow": "Новый"
+   },
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Новый",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    },
+    "Новый": {
+     "provider": "openai",
+     "base_url": "http://localhost:9999/v1",
+     "api_key": "•••4444",
+     "model": "gpt-4o",
+     "headers": {
+      "X-Foo": "bar",
+      "X-Baz": "qux"
+     }
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_video": "__off__",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": true,
+   "glitch_glow": "deepglow2"
+  }
+ },
+ {
+  "name": "save_profile: ключ-маска при том же адресе — ключ сохранён",
+  "method": "POST",
+  "request": {
+   "action": "save_profile",
+   "name": "Новый",
+   "profile": {
+    "provider": "openai",
+    "base_url": "http://localhost:9999/v1",
+    "api_key": "•••4444",
+    "model": "gpt-4o"
+   }
+  },
+  "status": 200,
+  "json": {
+   "active": "Новый",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "glitch_glow": "deepglow2",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Новый": {
+     "api_key": "•••4444",
+     "base_url": "http://localhost:9999/v1",
+     "model": "gpt-4o",
+     "provider": "openai"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Новый",
+    "inserts": "Новый",
+    "intro": "Аудио",
+    "yellow": "Новый"
+   },
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Новый",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    },
+    "Новый": {
+     "provider": "openai",
+     "base_url": "http://localhost:9999/v1",
+     "api_key": "•••4444",
+     "model": "gpt-4o"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_video": "__off__",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": true,
+   "glitch_glow": "deepglow2"
+  }
+ },
+ {
+  "name": "save_profile: ключ-маска + другой адрес — отказ",
+  "method": "POST",
+  "request": {
+   "action": "save_profile",
+   "name": "Новый",
+   "profile": {
+    "provider": "openai",
+    "base_url": "http://чужой.example/v1",
+    "api_key": "•••4444",
+    "model": "gpt-4o"
+   }
+  },
+  "status": 200,
+  "json": {
+   "err": "key_mask_address_changed",
+   "err_vars": {},
+   "error": "Сменился адрес или провайдер — введи ключ заново: сохранённый ключ к новому адресу не подставляется"
+  },
+  "config": null
+ },
+ {
+  "name": "save_profile: ключ-маска + другой провайдер — отказ",
+  "method": "POST",
+  "request": {
+   "action": "save_profile",
+   "name": "Новый",
+   "profile": {
+    "provider": "openrouter",
+    "base_url": "https://openrouter.ai/api/v1",
+    "api_key": "•••4444",
+    "model": "gpt-4o"
+   }
+  },
+  "status": 200,
+  "json": {
+   "err": "key_mask_address_changed",
+   "err_vars": {},
+   "error": "Сменился адрес или провайдер — введи ключ заново: сохранённый ключ к новому адресу не подставляется"
+  },
+  "config": null
+ },
+ {
+  "name": "save_profile: пустое имя",
+  "method": "POST",
+  "request": {
+   "action": "save_profile",
+   "name": "   ",
+   "profile": {
+    "provider": "openai",
+    "api_key": "test-key-new-4444"
+   }
+  },
+  "status": 200,
+  "json": {
+   "err": "empty_profile_name",
+   "err_vars": {},
+   "error": "Пустое имя профиля"
+  },
+  "config": null
+ },
+ {
+  "name": "save_profile: profile не объект",
+  "method": "POST",
+  "request": {
+   "action": "save_profile",
+   "name": "Новый",
+   "profile": "строка"
+  },
+  "status": 200,
+  "json": {
+   "err": "bad_profile",
+   "err_vars": {},
+   "error": "Поле profile должно быть объектом"
+  },
+  "config": null
+ },
+ {
+  "name": "save_profile: переименование с ключом-маской (Клод → Клод Новый)",
+  "method": "POST",
+  "request": {
+   "action": "save_profile",
+   "name": "Клод Новый",
+   "old_name": "Клод",
+   "profile": {
+    "provider": "anthropic",
+    "base_url": "https://api.anthropic.com",
+    "api_key": "•••2222",
+    "model": "claude-sonnet-5"
+   }
+  },
+  "status": 200,
+  "json": {
+   "active": "Новый",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "glitch_glow": "deepglow2",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод Новый": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Новый": {
+     "api_key": "•••4444",
+     "base_url": "http://localhost:9999/v1",
+     "model": "gpt-4o",
+     "provider": "openai"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Новый",
+    "inserts": "Новый",
+    "intro": "Аудио",
+    "yellow": "Новый"
+   },
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Новый",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    },
+    "Новый": {
+     "provider": "openai",
+     "base_url": "http://localhost:9999/v1",
+     "api_key": "•••4444",
+     "model": "gpt-4o"
+    },
+    "Клод Новый": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_video": "__off__",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": true,
+   "glitch_glow": "deepglow2"
+  }
+ },
+ {
+  "name": "save_profile: переименование активного (Новый → Новый 2)",
+  "method": "POST",
+  "request": {
+   "action": "save_profile",
+   "name": "Новый 2",
+   "old_name": "Новый",
+   "profile": {
+    "provider": "openai",
+    "base_url": "http://localhost:9999/v1",
+    "api_key": "•••4444",
+    "model": "gpt-4o"
+   }
+  },
+  "status": 200,
+  "json": {
+   "active": "Новый 2",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "glitch_glow": "deepglow2",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод Новый": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Новый 2": {
+     "api_key": "•••4444",
+     "base_url": "http://localhost:9999/v1",
+     "model": "gpt-4o",
+     "provider": "openai"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Новый 2",
+    "inserts": "Новый 2",
+    "intro": "Аудио",
+    "yellow": "Новый 2"
+   },
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Новый 2",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    },
+    "Клод Новый": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Новый 2": {
+     "provider": "openai",
+     "base_url": "http://localhost:9999/v1",
+     "api_key": "•••4444",
+     "model": "gpt-4o"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_video": "__off__",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": true,
+   "glitch_glow": "deepglow2"
+  }
+ },
+ {
+  "name": "set_active_image: снова Аудио (перед переименованием)",
+  "method": "POST",
+  "request": {
+   "action": "set_active_image",
+   "name": "Аудио"
+  },
+  "status": 200,
+  "json": {
+   "active": "Новый 2",
+   "active_cut_asr": "gigaam",
+   "active_image": "Аудио",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "glitch_glow": "deepglow2",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод Новый": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Новый 2": {
+     "api_key": "•••4444",
+     "base_url": "http://localhost:9999/v1",
+     "model": "gpt-4o",
+     "provider": "openai"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Новый 2",
+    "inserts": "Новый 2",
+    "intro": "Аудио",
+    "yellow": "Новый 2"
+   },
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Новый 2",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    },
+    "Клод Новый": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Новый 2": {
+     "provider": "openai",
+     "base_url": "http://localhost:9999/v1",
+     "api_key": "•••4444",
+     "model": "gpt-4o"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_image": "Аудио",
+   "active_video": "__off__",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": true,
+   "glitch_glow": "deepglow2"
+  }
+ },
+ {
+  "name": "set_active_video: снова Аудио (перед переименованием)",
+  "method": "POST",
+  "request": {
+   "action": "set_active_video",
+   "name": "Аудио"
+  },
+  "status": 200,
+  "json": {
+   "active": "Новый 2",
+   "active_cut_asr": "gigaam",
+   "active_image": "Аудио",
+   "active_omni": "Аудио",
+   "active_video": "Аудио",
+   "glitch_glow": "deepglow2",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод Новый": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Новый 2": {
+     "api_key": "•••4444",
+     "base_url": "http://localhost:9999/v1",
+     "model": "gpt-4o",
+     "provider": "openai"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Новый 2",
+    "inserts": "Новый 2",
+    "intro": "Аудио",
+    "yellow": "Новый 2"
+   },
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Новый 2",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    },
+    "Клод Новый": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Новый 2": {
+     "provider": "openai",
+     "base_url": "http://localhost:9999/v1",
+     "api_key": "•••4444",
+     "model": "gpt-4o"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_image": "Аудио",
+   "active_video": "Аудио",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": true,
+   "glitch_glow": "deepglow2"
+  }
+ },
+ {
+  "name": "save_profile: переименование Аудио → Аудио 2 (переносит привязки)",
+  "method": "POST",
+  "request": {
+   "action": "save_profile",
+   "name": "Аудио 2",
+   "old_name": "Аудио",
+   "profile": {
+    "provider": "openrouter",
+    "base_url": "https://openrouter.ai/api/v1",
+    "api_key": "•••3333",
+    "model": "google/gemini-2.5-flash"
+   }
+  },
+  "status": 200,
+  "json": {
+   "active": "Новый 2",
+   "active_cut_asr": "gigaam",
+   "active_image": "Аудио 2",
+   "active_omni": "Аудио 2",
+   "active_video": "Аудио 2",
+   "glitch_glow": "deepglow2",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио 2": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод Новый": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Новый 2": {
+     "api_key": "•••4444",
+     "base_url": "http://localhost:9999/v1",
+     "model": "gpt-4o",
+     "provider": "openai"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Новый 2",
+    "inserts": "Новый 2",
+    "intro": "Аудио 2",
+    "yellow": "Новый 2"
+   },
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Новый 2",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    },
+    "Клод Новый": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Новый 2": {
+     "provider": "openai",
+     "base_url": "http://localhost:9999/v1",
+     "api_key": "•••4444",
+     "model": "gpt-4o"
+    },
+    "Аудио 2": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио 2"
+   },
+   "active_omni": "Аудио 2",
+   "active_cut_asr": "gigaam",
+   "active_image": "Аудио 2",
+   "active_video": "Аудио 2",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": true,
+   "glitch_glow": "deepglow2"
+  }
+ },
+ {
+  "name": "clone_profile: успех",
+  "method": "POST",
+  "request": {
+   "action": "clone_profile",
+   "name": "Аудио 2",
+   "new_name": "Копия"
+  },
+  "status": 200,
+  "json": {
+   "active": "Новый 2",
+   "active_cut_asr": "gigaam",
+   "active_image": "Аудио 2",
+   "active_omni": "Аудио 2",
+   "active_video": "Аудио 2",
+   "glitch_glow": "deepglow2",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио 2": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод Новый": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Копия": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Новый 2": {
+     "api_key": "•••4444",
+     "base_url": "http://localhost:9999/v1",
+     "model": "gpt-4o",
+     "provider": "openai"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Новый 2",
+    "inserts": "Новый 2",
+    "intro": "Аудио 2",
+    "yellow": "Новый 2"
+   },
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Новый 2",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    },
+    "Клод Новый": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Новый 2": {
+     "provider": "openai",
+     "base_url": "http://localhost:9999/v1",
+     "api_key": "•••4444",
+     "model": "gpt-4o"
+    },
+    "Аудио 2": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Копия": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио 2"
+   },
+   "active_omni": "Аудио 2",
+   "active_cut_asr": "gigaam",
+   "active_image": "Аудио 2",
+   "active_video": "Аудио 2",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": true,
+   "glitch_glow": "deepglow2"
+  }
+ },
+ {
+  "name": "clone_profile: пустое имя",
+  "method": "POST",
+  "request": {
+   "action": "clone_profile",
+   "name": "  ",
+   "new_name": "Копия 2"
+  },
+  "status": 200,
+  "json": {
+   "err": "empty_profile_name",
+   "err_vars": {},
+   "error": "Пустое имя профиля"
+  },
+  "config": null
+ },
+ {
+  "name": "clone_profile: пустое имя копии",
+  "method": "POST",
+  "request": {
+   "action": "clone_profile",
+   "name": "Аудио 2",
+   "new_name": "  "
+  },
+  "status": 200,
+  "json": {
+   "err": "empty_clone_name",
+   "err_vars": {},
+   "error": "Пустое имя для копии профиля"
+  },
+  "config": null
+ },
+ {
+  "name": "clone_profile: нет профиля",
+  "method": "POST",
+  "request": {
+   "action": "clone_profile",
+   "name": "НетТакого",
+   "new_name": "Копия 3"
+  },
+  "status": 200,
+  "json": {
+   "err": "no_profile",
+   "err_vars": {
+    "name": "НетТакого"
+   },
+   "error": "Нет профиля «НетТакого»"
+  },
+  "config": null
+ },
+ {
+  "name": "clone_profile: имя занято",
+  "method": "POST",
+  "request": {
+   "action": "clone_profile",
+   "name": "Аудио 2",
+   "new_name": "Копия"
+  },
+  "status": 200,
+  "json": {
+   "err": "profile_exists",
+   "err_vars": {
+    "name": "Копия"
+   },
+   "error": "Профиль «Копия» уже существует"
+  },
+  "config": null
+ },
+ {
+  "name": "delete_profile: успех (неактивный)",
+  "method": "POST",
+  "request": {
+   "action": "delete_profile",
+   "name": "Копия"
+  },
+  "status": 200,
+  "json": {
+   "active": "Новый 2",
+   "active_cut_asr": "gigaam",
+   "active_image": "Аудио 2",
+   "active_omni": "Аудио 2",
+   "active_video": "Аудио 2",
+   "glitch_glow": "deepglow2",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио 2": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод Новый": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Новый 2": {
+     "api_key": "•••4444",
+     "base_url": "http://localhost:9999/v1",
+     "model": "gpt-4o",
+     "provider": "openai"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Новый 2",
+    "inserts": "Новый 2",
+    "intro": "Аудио 2",
+    "yellow": "Новый 2"
+   },
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Новый 2",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    },
+    "Клод Новый": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Новый 2": {
+     "provider": "openai",
+     "base_url": "http://localhost:9999/v1",
+     "api_key": "•••4444",
+     "model": "gpt-4o"
+    },
+    "Аудио 2": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио 2"
+   },
+   "active_omni": "Аудио 2",
+   "active_cut_asr": "gigaam",
+   "active_image": "Аудио 2",
+   "active_video": "Аудио 2",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": true,
+   "glitch_glow": "deepglow2"
+  }
+ },
+ {
+  "name": "delete_profile: нет профиля",
+  "method": "POST",
+  "request": {
+   "action": "delete_profile",
+   "name": "НетТакого"
+  },
+  "status": 200,
+  "json": {
+   "err": "no_profile",
+   "err_vars": {
+    "name": "НетТакого"
+   },
+   "error": "Нет профиля «НетТакого»"
+  },
+  "config": null
+ },
+ {
+  "name": "delete_profile: удаление активного — active переезжает",
+  "method": "POST",
+  "request": {
+   "action": "delete_profile",
+   "name": "Новый 2"
+  },
+  "status": 200,
+  "json": {
+   "active": "Основной",
+   "active_cut_asr": "gigaam",
+   "active_image": "Аудио 2",
+   "active_omni": "Аудио 2",
+   "active_video": "Аудио 2",
+   "glitch_glow": "deepglow2",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио 2": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод Новый": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Основной",
+    "inserts": "Основной",
+    "intro": "Аудио 2",
+    "yellow": "Основной"
+   },
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Основной",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    },
+    "Клод Новый": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио 2": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио 2"
+   },
+   "active_omni": "Аудио 2",
+   "active_cut_asr": "gigaam",
+   "active_image": "Аудио 2",
+   "active_video": "Аудио 2",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": true,
+   "glitch_glow": "deepglow2"
+  }
+ },
+ {
+  "name": "delete_profile: удаление шаговой привязки (Клод Новый)",
+  "method": "POST",
+  "request": {
+   "action": "delete_profile",
+   "name": "Клод Новый"
+  },
+  "status": 200,
+  "json": {
+   "active": "Основной",
+   "active_cut_asr": "gigaam",
+   "active_image": "Аудио 2",
+   "active_omni": "Аудио 2",
+   "active_video": "Аудио 2",
+   "glitch_glow": "deepglow2",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Аудио 2": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Основной",
+    "inserts": "Основной",
+    "intro": "Аудио 2",
+    "yellow": "Основной"
+   },
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Основной",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    },
+    "Аудио 2": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио 2"
+   },
+   "active_omni": "Аудио 2",
+   "active_cut_asr": "gigaam",
+   "active_image": "Аудио 2",
+   "active_video": "Аудио 2",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": true,
+   "glitch_glow": "deepglow2"
+  }
+ },
+ {
+  "name": "delete_profile: удаление привязанного к картинкам/видео (Аудио 2)",
+  "method": "POST",
+  "request": {
+   "action": "delete_profile",
+   "name": "Аудио 2"
+  },
+  "status": 200,
+  "json": {
+   "active": "Основной",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "__local__",
+   "active_video": "__off__",
+   "glitch_glow": "deepglow2",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Основной",
+    "inserts": "Основной",
+    "intro": "Основной",
+    "yellow": "Основной"
+   },
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Основной",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {},
+   "active_omni": "__local__",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_video": "__off__",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": true,
+   "glitch_glow": "deepglow2"
+  }
+ },
+ {
+  "name": "delete_profile: успех (Текстовая)",
+  "method": "POST",
+  "request": {
+   "action": "delete_profile",
+   "name": "Текстовая"
+  },
+  "status": 200,
+  "json": {
+   "active": "Основной",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "__local__",
+   "active_video": "__off__",
+   "glitch_glow": "deepglow2",
+   "image_rembg": true,
+   "ok": true,
+   "profiles": {
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Основной",
+    "inserts": "Основной",
+    "intro": "Основной",
+    "yellow": "Основной"
+   },
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Основной",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {},
+   "active_omni": "__local__",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_video": "__off__",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": true,
+   "glitch_glow": "deepglow2"
+  }
+ },
+ {
+  "name": "delete_profile: последний профиль",
+  "method": "POST",
+  "request": {
+   "action": "delete_profile",
+   "name": "Основной"
+  },
+  "status": 200,
+  "json": {
+   "err": "last_profile",
+   "err_vars": {},
+   "error": "Нельзя удалить последний профиль"
+  },
+  "config": null
+ },
+ {
+  "name": "неизвестное действие",
+  "method": "POST",
+  "request": {
+   "action": "нетакого"
+  },
+  "status": 200,
+  "json": {
+   "err": "unknown_action",
+   "err_vars": {
+    "act": "нетакого"
+   },
+   "error": "Неизвестное действие: нетакого"
+  },
+  "config": null
+ },
+ {
+  "name": "тело без action",
+  "method": "POST",
+  "request": {},
+  "status": 200,
+  "json": {
+   "err": "unknown_action",
+   "err_vars": {
+    "act": null
+   },
+   "error": "Неизвестное действие: None"
+  },
+  "config": null
+ },
+ {
+  "name": "GET: финальное состояние",
+  "method": "GET",
+  "request": null,
+  "status": 200,
+  "json": {
+   "active": "Основной",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "__local__",
+   "active_video": "__off__",
+   "glitch_glow": "deepglow2",
+   "image_model_hints": [
+    "google/gemini-3.1-flash-lite-image",
+    "google/gemini-3.1-flash-image",
+    "google/gemini-2.5-flash-image"
+   ],
+   "image_rembg": true,
+   "model_caps": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cache": null,
+     "catalog_provider": null,
+     "cost": null,
+     "ctx_limit": null,
+     "default": null,
+     "efforts": null,
+     "out_limit": null,
+     "reasoning": null,
+     "reasoning_kind": null,
+     "structured_output": null,
+     "temperature": null
+    }
+   },
+   "presets": {
+    "anthropic": {
+     "base_url": "https://api.anthropic.com",
+     "label": "Anthropic (Claude)",
+     "models": [
+      "claude-sonnet-5",
+      "claude-haiku-4-5",
+      "claude-opus-4-8"
+     ]
+    },
+    "commandcode": {
+     "base_url": "https://api.commandcode.ai/provider/v1",
+     "label": "CommandCode",
+     "models": [
+      "meta/muse-spark-1.3-contributor",
+      "claude-sonnet-5",
+      "gpt-5.6-luna",
+      "deepseek/deepseek-v4-flash",
+      "google/gemini-3.8-flash"
+     ]
+    },
+    "deepseek": {
+     "base_url": "https://api.deepseek.com/v1",
+     "label": "DeepSeek",
+     "models": [
+      "deepseek-chat",
+      "deepseek-reasoner"
+     ]
+    },
+    "groq": {
+     "base_url": "https://api.groq.com/openai/v1",
+     "label": "Groq",
+     "models": [
+      "llama-3.3-70b-versatile",
+      "deepseek-r1-distill-llama-70b"
+     ]
+    },
+    "lmstudio": {
+     "base_url": "http://localhost:1234/v1",
+     "label": "LM Studio (локально)",
+     "models": [
+      "qwen3.6-27b-4bpw-16gb-vram",
+      "qwen3.5-9b-claude-4.6-opus-reasoning-distilled"
+     ]
+    },
+    "ollama": {
+     "base_url": "http://localhost:11434/v1",
+     "label": "Ollama (локально)",
+     "models": [
+      "qwen2.5:32b",
+      "deepseek-r1:32b",
+      "llama3.3"
+     ]
+    },
+    "openai": {
+     "base_url": "",
+     "label": "OpenAI-совместимый (свой URL)",
+     "models": []
+    },
+    "openrouter": {
+     "base_url": "https://openrouter.ai/api/v1",
+     "label": "OpenRouter",
+     "models": []
+    }
+   },
+   "profiles": {
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    }
+   },
+   "reasoning_defaults": {},
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_examples": [
+    "openai/o3",
+    "openai/o3-mini",
+    "openai/o4-mini",
+    "openai/gpt-5",
+    "deepseek/deepseek-r1",
+    "qwen/qwq-32b",
+    "qwen/qwen3-235b-a22b",
+    "anthropic/claude-3.7-sonnet:thinking",
+    "x-ai/grok-4",
+    "x-ai/grok-3-mini",
+    "google/gemini-2.5-pro",
+    "google/gemini-2.5-flash",
+    "mistral/magistral-medium",
+    "moonshotai/kimi-thinking",
+    "perplexity/sonar-reasoning",
+    "nvidia/nemotron"
+   ],
+   "reasoning_levels": [
+    "off",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max"
+   ],
+   "reasoning_models": [
+    "openai/o1",
+    "openai/o3",
+    "openai/o4",
+    "openai/gpt-5",
+    "deepseek/deepseek-r1",
+    "deepseek/deepseek-reasoner",
+    "qwen/qwq",
+    "qwen/qwen3",
+    "anthropic/claude-3.7-sonnet:thinking",
+    "anthropic/claude-3.7-sonnet-thinking",
+    "claude-3-7-sonnet",
+    "claude-sonnet-4",
+    "claude-opus-4",
+    "x-ai/grok-4",
+    "x-ai/grok-3-mini",
+    "google/gemini-2.5-pro",
+    "google/gemini-2.5-flash",
+    "google/gemini-3",
+    "mistral/magistral",
+    "moonshotai/kimi-thinking",
+    "perplexity/sonar-reasoning",
+    "nvidia/nemotron",
+    "tencent/hunyuan",
+    "tencent/hy3"
+   ],
+   "reasoning_step_titles": {
+    "cut": "Нарезка",
+    "inserts": "Вставки",
+    "intro": "Интро",
+    "yellow": "Жёлтые слова"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_profiles": {
+    "cut": "Основной",
+    "inserts": "Основной",
+    "intro": "Основной",
+    "yellow": "Основной"
+   },
+   "video_aspects": [
+    "9:16",
+    "16:9",
+    "1:1",
+    "4:3",
+    "3:4",
+    "21:9",
+    "9:21"
+   ],
+   "video_model": "некая/неизвестная-модель",
+   "video_model_hints": [
+    "bytedance/seedance-2.0",
+    "bytedance/seedance-2.0-fast",
+    "google/veo-3.1",
+    "google/veo-3.1-fast",
+    "google/veo-3.1-lite",
+    "minimax/hailuo-3",
+    "kwaivgi/kling-v3.0-pro",
+    "kwaivgi/kling-v3.0-std"
+   ],
+   "video_models": [
+    {
+     "builtin": true,
+     "caps": {
+      "aspect_ratios": [
+       "1:1",
+       "3:4",
+       "9:16",
+       "4:3",
+       "16:9",
+       "21:9",
+       "9:21"
+      ],
+      "audio": true,
+      "durations": [
+       "4",
+       "5",
+       "6",
+       "7",
+       "8",
+       "9",
+       "10",
+       "11",
+       "12",
+       "13",
+       "14",
+       "15"
+      ],
+      "frame_images": [
+       "first_frame",
+       "last_frame"
+      ],
+      "image_formats": [
+       "jpeg",
+       "png",
+       "webp",
+       "gif",
+       "bmp",
+       "tiff"
+      ],
+      "image_formats_strict": false,
+      "known": true,
+      "label": "Seedance 2.0 — мультимодальная (фото + видео-референсы)",
+      "listed": false,
+      "model": "bytedance/seedance-2.0",
+      "note": "Мультимодальный r2v: до 9 фото и 3 видео-референсов, видео СУММАРНО не длиннее 15с. Что взять с референса — пишется в промпте тегом @image1/@video1. Первый/последний кадр — только ФОТО и не вместе с референсами.",
+      "ref_images": 9,
+      "ref_video_total_s": 15.0,
+      "ref_videos": 3,
+      "references": true,
+      "resolutions": [
+       "480p",
+       "720p",
+       "1080p",
+       "4K"
+      ],
+      "seed": true,
+      "sizes": []
+     },
+     "id": "bytedance/seedance-2.0",
+     "label": "Seedance 2.0 — мультимодальная (фото + видео-референсы)"
+    },
+    {
+     "builtin": true,
+     "caps": {
+      "aspect_ratios": [
+       "1:1",
+       "3:4",
+       "9:16",
+       "4:3",
+       "16:9",
+       "21:9",
+       "9:21"
+      ],
+      "audio": true,
+      "durations": [
+       "4",
+       "5",
+       "6",
+       "7",
+       "8",
+       "9",
+       "10",
+       "11",
+       "12",
+       "13",
+       "14",
+       "15"
+      ],
+      "frame_images": [
+       "first_frame",
+       "last_frame"
+      ],
+      "image_formats": [
+       "jpeg",
+       "png",
+       "webp",
+       "gif",
+       "bmp",
+       "tiff"
+      ],
+      "image_formats_strict": false,
+      "known": true,
+      "label": "Seedance 2.0 Fast — то же, дешевле (до 720p)",
+      "listed": false,
+      "model": "bytedance/seedance-2.0-fast",
+      "note": "Мультимодальный r2v: до 9 фото и 3 видео-референсов, видео СУММАРНО не длиннее 15с. Что взять с референса — пишется в промпте тегом @image1/@video1. Первый/последний кадр — только ФОТО и не вместе с референсами.",
+      "ref_images": 9,
+      "ref_video_total_s": 15.0,
+      "ref_videos": 3,
+      "references": true,
+      "resolutions": [
+       "480p",
+       "720p"
+      ],
+      "seed": true,
+      "sizes": []
+     },
+     "id": "bytedance/seedance-2.0-fast",
+     "label": "Seedance 2.0 Fast — то же, дешевле (до 720p)"
+    },
+    {
+     "builtin": true,
+     "caps": {
+      "aspect_ratios": [
+       "16:9",
+       "9:16"
+      ],
+      "audio": true,
+      "durations": [
+       "4",
+       "6",
+       "8"
+      ],
+      "frame_images": [
+       "first_frame",
+       "last_frame"
+      ],
+      "image_formats": [
+       "jpeg",
+       "png"
+      ],
+      "image_formats_strict": true,
+      "known": true,
+      "label": "Veo 3.1 — Google, сильный звук и физика",
+      "listed": false,
+      "model": "google/veo-3.1",
+      "note": "Только 4, 6 или 8 секунд и только 16:9 / 9:16. Референсы — до 3 ФОТО (видео как референс не принимает) и не вместе с кадром.",
+      "ref_images": 3,
+      "ref_video_total_s": null,
+      "ref_videos": 0,
+      "references": null,
+      "resolutions": [
+       "720p",
+       "1080p",
+       "4K"
+      ],
+      "seed": true,
+      "sizes": []
+     },
+     "id": "google/veo-3.1",
+     "label": "Veo 3.1 — Google, сильный звук и физика"
+    },
+    {
+     "builtin": true,
+     "caps": {
+      "aspect_ratios": [
+       "16:9",
+       "9:16"
+      ],
+      "audio": true,
+      "durations": [
+       "4",
+       "6",
+       "8"
+      ],
+      "frame_images": [
+       "first_frame",
+       "last_frame"
+      ],
+      "image_formats": [
+       "jpeg",
+       "png"
+      ],
+      "image_formats_strict": true,
+      "known": true,
+      "label": "Veo 3.1 Fast — быстрее и дешевле",
+      "listed": false,
+      "model": "google/veo-3.1-fast",
+      "note": "Только 4, 6 или 8 секунд и только 16:9 / 9:16. Референсы — до 3 ФОТО (видео как референс не принимает) и не вместе с кадром.",
+      "ref_images": 3,
+      "ref_video_total_s": null,
+      "ref_videos": 0,
+      "references": null,
+      "resolutions": [
+       "720p",
+       "1080p",
+       "4K"
+      ],
+      "seed": true,
+      "sizes": []
+     },
+     "id": "google/veo-3.1-fast",
+     "label": "Veo 3.1 Fast — быстрее и дешевле"
+    },
+    {
+     "builtin": true,
+     "caps": {
+      "aspect_ratios": [
+       "16:9",
+       "9:16"
+      ],
+      "audio": true,
+      "durations": [
+       "4",
+       "6",
+       "8"
+      ],
+      "frame_images": [
+       "first_frame",
+       "last_frame"
+      ],
+      "image_formats": [
+       "jpeg",
+       "png"
+      ],
+      "image_formats_strict": true,
+      "known": true,
+      "label": "Veo 3.1 Lite — самая дешёвая из Veo (до 1080p)",
+      "listed": false,
+      "model": "google/veo-3.1-lite",
+      "note": "Только 4, 6 или 8 секунд и только 16:9 / 9:16. Референсы — до 3 ФОТО (видео как референс не принимает) и не вместе с кадром.",
+      "ref_images": 3,
+      "ref_video_total_s": null,
+      "ref_videos": 0,
+      "references": null,
+      "resolutions": [
+       "720p",
+       "1080p"
+      ],
+      "seed": true,
+      "sizes": []
+     },
+     "id": "google/veo-3.1-lite",
+     "label": "Veo 3.1 Lite — самая дешёвая из Veo (до 1080p)"
+    },
+    {
+     "builtin": true,
+     "caps": {
+      "aspect_ratios": [
+       "21:9",
+       "16:9",
+       "4:3",
+       "1:1",
+       "3:4",
+       "9:16"
+      ],
+      "audio": true,
+      "durations": [
+       "5",
+       "6",
+       "7",
+       "8",
+       "9",
+       "10",
+       "11",
+       "12",
+       "13",
+       "14",
+       "15"
+      ],
+      "frame_images": [
+       "first_frame",
+       "last_frame"
+      ],
+      "image_formats": [
+       "jpeg",
+       "png"
+      ],
+      "image_formats_strict": false,
+      "known": true,
+      "label": "MiniMax Hailuo 3 — 2K, длина 5–15с",
+      "listed": false,
+      "model": "minimax/hailuo-3",
+      "note": "Единственное разрешение — 2K. Первый/последний кадр — фото. Референсы (файлом) каталогом не заявлены: подпись уйдёт в промпт.",
+      "ref_images": 0,
+      "ref_video_total_s": null,
+      "ref_videos": 0,
+      "references": null,
+      "resolutions": [
+       "2K"
+      ],
+      "seed": false,
+      "sizes": []
+     },
+     "id": "minimax/hailuo-3",
+     "label": "MiniMax Hailuo 3 — 2K, длина 5–15с"
+    },
+    {
+     "builtin": true,
+     "caps": {
+      "aspect_ratios": [
+       "16:9",
+       "9:16",
+       "1:1"
+      ],
+      "audio": true,
+      "durations": [
+       "3",
+       "4",
+       "5",
+       "6",
+       "7",
+       "8",
+       "9",
+       "10",
+       "11",
+       "12",
+       "13",
+       "14",
+       "15"
+      ],
+      "frame_images": [
+       "first_frame",
+       "last_frame"
+      ],
+      "image_formats": [
+       "jpeg",
+       "png"
+      ],
+      "image_formats_strict": false,
+      "known": true,
+      "label": "Kling 3.0 Pro — 720p, длина 3–15с",
+      "listed": false,
+      "model": "kwaivgi/kling-v3.0-pro",
+      "note": "Только 720p и 16:9 / 9:16 / 1:1, seed не поддерживает. Первый/последний кадр — фото. Референсы (файлом) каталогом не заявлены.",
+      "ref_images": 0,
+      "ref_video_total_s": null,
+      "ref_videos": 0,
+      "references": null,
+      "resolutions": [
+       "720p"
+      ],
+      "seed": false,
+      "sizes": []
+     },
+     "id": "kwaivgi/kling-v3.0-pro",
+     "label": "Kling 3.0 Pro — 720p, длина 3–15с"
+    },
+    {
+     "builtin": true,
+     "caps": {
+      "aspect_ratios": [
+       "16:9",
+       "9:16",
+       "1:1"
+      ],
+      "audio": true,
+      "durations": [
+       "3",
+       "4",
+       "5",
+       "6",
+       "7",
+       "8",
+       "9",
+       "10",
+       "11",
+       "12",
+       "13",
+       "14",
+       "15"
+      ],
+      "frame_images": [
+       "first_frame",
+       "last_frame"
+      ],
+      "image_formats": [
+       "jpeg",
+       "png"
+      ],
+      "image_formats_strict": false,
+      "known": true,
+      "label": "Kling 3.0 Std — то же, дешевле",
+      "listed": false,
+      "model": "kwaivgi/kling-v3.0-std",
+      "note": "Только 720p и 16:9 / 9:16 / 1:1, seed не поддерживает. Первый/последний кадр — фото. Референсы (файлом) каталогом не заявлены.",
+      "ref_images": 0,
+      "ref_video_total_s": null,
+      "ref_videos": 0,
+      "references": null,
+      "resolutions": [
+       "720p"
+      ],
+      "seed": false,
+      "sizes": []
+     },
+     "id": "kwaivgi/kling-v3.0-std",
+     "label": "Kling 3.0 Std — то же, дешевле"
+    }
+   ],
+   "video_resolution": "",
+   "video_resolutions": [
+    "480p",
+    "720p",
+    "1080p",
+    "2K",
+    "4K"
+   ]
+  },
+  "config": null
+ }
+]

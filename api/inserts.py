@@ -6,7 +6,7 @@ import os, threading
 from flask import request, jsonify
 from ._core import bp, umsg_err, jstr, sysexit_text
 from core import paths
-from core.umsg import umsg
+from core.umsg import ReelsiError, umsg
 
 
 def _insert_dest(d):
@@ -25,7 +25,7 @@ def _convert_inserts(inserts, emit=None):
     from core import insertlib
     conv = {}
     for x in inserts:
-        if not isinstance(x, dict):      # элемент списка не объект — пропуск (задание IC, п. 2)
+        if not isinstance(x, dict):      # элемент списка не объект — пропуск
             continue
         m = jstr(x, "media").strip()
         if m and os.path.exists(m):
@@ -57,11 +57,12 @@ def _adopt_inserts(inserts, dest, emit=None):
         return conv
     try:
         moved = insertlib.adopt(items, dest, emit=emit)
+    except ReelsiError: raise
     except Exception as e:                          # перенос НЕ должен ронять сборку
         (emit or (lambda *a: None))(f"⚠ прибрать в базу не вышло: {e}")
         return conv
     for x in inserts:
-        if not isinstance(x, dict):      # элемент списка не объект — пропуск (задание IC, п. 2)
+        if not isinstance(x, dict):      # элемент списка не объект — пропуск
             continue
         m = os.path.abspath(x["media"]) if jstr(x, "media").strip() else ""
         if m in moved:
@@ -79,10 +80,11 @@ def api_insertlib_info():
         try:
             from core import insertlib
             return jsonify(ok=True, **insertlib.info())
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("insertlib_info_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("insertlib_info_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -96,15 +98,16 @@ def api_insertlib_scan():
     log = []
     try:
         if not dirs:
-            raise SystemExit(umsg("need_folders", "Укажи хотя бы одну папку"))
+            raise ReelsiError(umsg("need_folders", "Укажи хотя бы одну папку"))
         try:
             from core import insertlib
             res = insertlib.build_index(dirs, emit=lambda *a: log.append(" ".join(str(x) for x in a)))
             return jsonify(ok=True, log=log, **res)
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("insertlib_scan_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("insertlib_scan_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         r = umsg_err(e)
         r["log"] = log
         return jsonify(**r)
@@ -118,14 +121,15 @@ def api_insertlib_reject():
     path, query = jstr(d, "path").strip(), jstr(d, "query").strip()
     try:
         if not path or not query:
-            raise SystemExit(umsg("need_path_query", "Нужны path и query"))
+            raise ReelsiError(umsg("need_path_query", "Нужны path и query"))
         try:
             from core import insertlib
             return jsonify(ok=insertlib.reject(path, query, on=d.get("on", True) is not False))
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("insertlib_reject_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("insertlib_reject_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -150,7 +154,7 @@ def api_insertlib_match():
                 extra = aicut.resolve_image_prompt_cfg("a", speaker=jstr(d, "speaker"))["extra"]
                 look = insertlib._norm_look(extra) or None
             # Индексы results/texts/hints обязаны совпадать с порядком qs, поэтому
-            # не-объекты не выбрасываем, а читаем как пустые (задание IC, п. 2).
+            # не-объекты не выбрасываем, а читаем как пустые.
             texts = [jstr(x, "q") if isinstance(x, dict) else "" for x in qs]
             hints = [(x.get("type") or None) if isinstance(x, dict) else None for x in qs]
             k = int(d.get("k") or 5)
@@ -163,10 +167,11 @@ def api_insertlib_match():
                 for i, r in zip(idx, rr):
                     results[i] = r
             return jsonify(ok=True, results=results, emb=bool(insertlib.info().get("emb_model")))
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("insertlib_match_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("insertlib_match_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -184,7 +189,7 @@ def api_insertlib_import():
     log = []
     try:
         if not dirs or not dest:
-            raise SystemExit(umsg("need_src_and_db", "Нужны папки-источники и папка базы"))
+            raise ReelsiError(umsg("need_src_and_db", "Нужны папки-источники и папка базы"))
         try:
             import datetime as _dt
             since = 0.0
@@ -196,10 +201,11 @@ def api_insertlib_import():
                                          emit=lambda *a: log.append(" ".join(str(x) for x in a)))
             return jsonify(ok=True, log=log, count=res["count"], dest=res["dest"],
                            log_file=res.get("log"))
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("insertlib_import_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("insertlib_import_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         r = umsg_err(e)
         r["log"] = log
         return jsonify(**r)
@@ -211,7 +217,7 @@ def api_insertlib_describe():
     try:
         with ILL_LOCK:
             if ILL_JOB["running"]:
-                raise SystemExit(umsg("describe_busy", "Описание уже идёт"))
+                raise ReelsiError(umsg("describe_busy", "Описание уже идёт"))
             only_missing = bool((request.get_json() or {}).get("only_missing", True))
             ILL_JOB.update(running=True, done=0, total=0, log=[], error="")
 
@@ -232,11 +238,12 @@ def api_insertlib_describe():
                 if r.get("error"):
                     with ILL_LOCK:
                         ILL_JOB["error"] = r["error"]
-            except SystemExit as e:
+            except (ReelsiError, SystemExit) as e:
                 # SystemExit из insertlib (umsg) — BaseException: без ветки описание
-                # заканчивалось молча, и в статусе не было ни ошибки, ни причины (MX).
+                # заканчивалось молча, и в статусе не было ни ошибки, ни причины.
                 with ILL_LOCK:
                     ILL_JOB["error"] = sysexit_text(e)
+            except ReelsiError: raise
             except Exception as e:
                 with ILL_LOCK:
                     ILL_JOB["error"] = f"{type(e).__name__}: {e}"
@@ -246,12 +253,13 @@ def api_insertlib_describe():
 
         try:
             threading.Thread(target=_run, daemon=True).start()
+        except ReelsiError: raise
         except Exception:
             with ILL_LOCK:
                 ILL_JOB["running"] = False
             raise
         return jsonify(ok=True)
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -260,7 +268,7 @@ def api_insertlib_describe_status():
     try:
         since = int(request.args.get("since") or 0)
     except (TypeError, ValueError):
-        since = 0                    # ?since=abc роняло роут в HTML-500 (задание HL)
+        since = 0                    # ?since=abc роняло роут в HTML-500
     with ILL_LOCK:
         return jsonify(running=ILL_JOB["running"], done=ILL_JOB["done"], total=ILL_JOB["total"],
                        error=ILL_JOB["error"], log=ILL_JOB["log"][since:], log_total=len(ILL_JOB["log"]))
@@ -273,10 +281,11 @@ def api_insertlib_desc():
         try:
             from core import insertlib
             return jsonify(**insertlib.set_desc(jstr(d, "path"), jstr(d, "desc")))
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("insertlib_desc_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("insertlib_desc_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -289,8 +298,9 @@ def api_insertlib_items():
             return jsonify(ok=True, **insertlib.items_list(q=jstr(d, "q"),
                                                            offset=int(d.get("offset") or 0),
                                                            limit=int(d.get("limit") or 50)))
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("insertlib_items_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("insertlib_items_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))

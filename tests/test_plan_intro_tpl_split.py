@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Сторож распила scene_plan: подстановки шаблона интро (задание MV, этап 5).
+"""Сторож распила scene_plan: подстановки шаблона интро (этап 5).
 
 Подстановки уехали из `scene_plan` в `core/xml2ae/plan_intro_tpl.py`. Сторож держит СТЫК:
 `plan_intro_tpl`, вызванный НАПРЯМУЮ на фикстуре (`tests/fixtures/timeline_subs.xml.gz`),
@@ -30,8 +30,8 @@ sys.path.insert(0, os.path.dirname(HERE))
 from core import styles, xml2ae  # noqa: E402
 from core.xml2ae.build import (DEEP_GLOW2_GLITCH, INTRO_ANIMS, _accent_word,  # noqa: E402
                                _has_valid_count, _intro_appear_dur, _intro_cnt_positions,
-                               _intro_fit_ds, _intro_line_font, _parse_intro_count, _sv, _sv_or,
-                               _tritone_on)
+                               _intro_fit_ds, _intro_line_font, _parse_intro_count,
+                               _sv, _tritone_on, read_style)
 from core.xml2ae.plan_intro import IntroInputs, _g_at, _grp_big_i, plan_intro  # noqa: E402
 from core.xml2ae.plan_intro_tpl import IntroTplInputs, plan_intro_tpl  # noqa: E402
 from core.xml2ae.plan_subs import SubsInputs, plan_subs  # noqa: E402
@@ -76,7 +76,7 @@ GLITCH_YELLOW = [
     {"words": ["ЖЁЛТОЕ"], "color": "yellow", "times": [T1 + 0.6], "fx": "glow"},
     {"words": ["ХВОСТ"], "color": "white", "times": [5.4]},
 ]
-BRIGHT = [1.0, 0.9176, 0.0]     # яркий жёлтый: ни Tritone, ни Deep Glow (задания ZN/MK3)
+BRIGHT = [1.0, 0.9176, 0.0]     # яркий жёлтый: ни Tritone, ни Deep Glow
 DARK = [0.5, 0.2, 0.1]          # тёмный жёлтый: и Tritone, и Deep Glow ставятся
 
 # Обычные строки без ручек: на них проверяются пустые подстановки (golden-текст шаблона).
@@ -88,7 +88,7 @@ PLAIN = [
 # Видеовставка поверх окна группы: группа уезжает наверх (INTRO_FRONT).
 INS_VIDEO = [{"type": "video", "media": "no_such_video.mp4", "style": "cam2",
               "start_s": 1.2, "dur_s": 1.0}]
-# Группа в нижней половине кадра (gy) и галка «интро над рото по положению» (задание C).
+# Группа в нижней половине кадра (gy) и галка «интро над рото по положению».
 BELOW = [{"words": ["НИЗ"], "color": "white", "times": [T1], "gy": 600}]
 
 
@@ -124,20 +124,19 @@ def _active_cam_at(cams, t_sec, fps):
 
 
 def _intro_plan(xml, plan, st, groups, font_ps, hl_font_ps):
-    """IntroPlan — ровно так, как его получает scene_plan перед вызовом блока (задание MS).
+    """IntroPlan — ровно так, как его получает scene_plan перед вызовом блока.
 
     Своей арифметики здесь нет: тот же `plan_intro` с теми же входами, что собирает
     `scene_plan` (готовый план даёт ключи зума и окна видеовставок).
     """
     meta, cams, subs, _xml_inserts = xml2ae.parse_full(xml)
     hl = set()
+    style_values = read_style(st)
     sp = plan_subs(SubsInputs(
         subs=subs, hl=hl, brk=set(), cnt=set(), joins=set(),
-        font_ps=font_ps, hl_font_ps=hl_font_ps, sub_case=(_sv_or(st, "sub_case")).strip(),
-        sub_words_per_row=max(1, int(_sv_or(st, "sub_words_per_row"))),
-        sub_rows_max=max(1, int(_sv_or(st, "sub_rows_max"))),
+        font_ps=font_ps, hl_font_ps=hl_font_ps,
         width=meta["w"], height=meta["h"], fps=meta["fps"] or 60, cams=cams,
-        word_timings=None, st=st, sv=_sv, sv_or=_sv_or,
+        word_timings=None, style=style_values,
         accent_word=_accent_word, parse_count=_parse_intro_count))
     return plan_intro(IntroInputs(
         groups=groups, cams=cams, meta=meta, fps=meta["fps"] or 60,
@@ -145,75 +144,54 @@ def _intro_plan(xml, plan, st, groups, font_ps, hl_font_ps):
         video_segs=[(ins["start"], ins["end"]) for ins in plan["inserts"]
                     if ins.get("t") == "video"],
         subs=sp, font_ps=font_ps,
-        intro_font_ps=st.get("intro_font") or font_ps,
-        intro_hl_font_ps=st.get("intro_hl_font") or hl_font_ps,
-        accent_font_ps=(_sv_or(st, "accent_font")).strip(),
-        accent_case=(_sv_or(st, "accent_case")).strip(),
-        back_font_ps=(_sv_or(st, "back_font")).strip(),
-        back_case=(_sv_or(st, "back_case")).strip(),
+        intro_font_ps=style_values.intro_font or font_ps,
+        intro_hl_font_ps=style_values.intro_hl_font or hl_font_ps,
+        accent_font_ps=style_values.accent_font.strip(),
+        accent_case=style_values.accent_case.strip(),
+        back_font_ps=style_values.back_font.strip(),
+        back_case=style_values.back_case.strip(),
         any_back=any(bool(x.get("back") and not x.get("accent")) for g in groups for x in g),
         any_glitch=any(x.get("anim") == "glitch" for g in groups for x in g),
-        st=st, sv=_sv, sv_or=_sv_or,
+        # Стиль — структурой, как его читает scene_plan.
+        style=style_values,
+        intro_last_hold=float(_sv(st, "intro_last_hold")),
         accent_word=_accent_word, parse_count=_parse_intro_count,
         cnt_positions=_intro_cnt_positions, line_font=_intro_line_font,
         fit_ds=_intro_fit_ds, appear_dur=_intro_appear_dur, anims=INTRO_ANIMS,
-        back_step=float(_sv(st, "back_step")),
-        back_step_after=(None if _sv(st, "back_step_after") is None
-                         else float(_sv(st, "back_step_after"))),
-        back_scale=float(_sv(st, "back_scale")),
-        line_step_k=float(_sv(st, "intro_line_step")) / 100.0,
-        big_step_k=float(_sv(st, "intro_big_step")) / 100.0,
-        intro_fade=float(_sv(st, "intro_fade")),
-        intro_fx_hold_add=float(_sv(st, "intro_fx_hold_add")),
-        intro_sub_cut=bool(_sv(st, "intro_sub_cut")),
-        intro_sub_fade=float(_sv(st, "intro_sub_fade")),
-        intro_scale_k=float(_sv_or(st, "intro_scale")) / 100,
-        fit_w=float(_sv_or(st, "intro_fit_w")) / 100.0,
-        fit_max=float(_sv_or(st, "intro_fit_max")),
-        intro_cam=bool(_sv(st, "intro_cam")),
-        cam1_scale=plan["zoom"]["keys"], holds=[bool(h) for h in plan["zoom"]["holds"]],
-        shadow_fill=[float(v) for v in (_sv_or(st, "intro_comp_shadow_fill"))],
-        shadow_op=float(_sv(st, "intro_comp_shadow_op")),
-        shadow2_fill=[float(v) for v in (_sv_or(st, "intro_comp_shadow2_fill"))],
-        shadow2_op=float(_sv(st, "intro_comp_shadow2_op"))))
+        cam1_scale=plan["zoom"]["keys"], holds=[bool(h) for h in plan["zoom"]["holds"]]))
 
 
 def _tpl_inputs(st, groups, ip, glitch_glow):
-    """IntroTplInputs — так же, как их собирает scene_plan перед вызовом блока (задание MV).
+    """IntroTplInputs — так же, как их собирает scene_plan перед вызовом блока.
 
     Флаги строк и цвета считаются здесь ПРАВИЛАМИ build.py (`_grp_big_i`, `_tritone_on`,
     `_has_valid_count`), а не своей копией: иначе сторож проверял бы копию правила.
+    Стиль приходит структурой `read_style` — тем же чтением, что у scene_plan.
     """
-    intro_fill, intro_hl_fill = st.get("intro_fill"), st.get("intro_hl_fill")
-    _yellow_rgb = intro_hl_fill if intro_hl_fill is not None else st.get("hl_fill")
+    style_values = read_style(st)
+    _yellow_rgb = (style_values.intro_hl_fill if style_values.intro_hl_fill is not None
+                   else style_values.hl_fill)
     yellow_dark = _tritone_on(_yellow_rgb)
-    dg_with_glow = bool(_sv(st, "intro_dg_with_glow"))
     return IntroTplInputs(
         groups=groups, intro=ip,
+        # Точка масштабирования прекомпа (intro_scale_anchor): режим и готовые числа на
+        # группу посчитал plan_intro — блок берёт их из него, как и build.py.
+        scale_anchor=ip.scale_anchor, anchor_y=ip.anchor_y, anchor_dy=ip.anchor_dy,
         any_glitch=any(x.get("anim") == "glitch" for g in groups for x in g),
         any_back=any(bool(x.get("back") and not x.get("accent")) for g in groups for x in g),
         any_big=any(_grp_big_i(g) is not None for g in groups),
         accent_color_used=any(x.get("color") == "accent" for g in groups for x in g),
         custom_color_used=any(x.get("color") == "custom" for g in groups for x in g),
-        intro_fill=intro_fill, intro_hl_fill=intro_hl_fill, hl_fill3=st.get("hl_fill3"),
+        style=style_values,
         yellow_dark=yellow_dark,
         # _dg_bright = not _yellow_dark (build.py): плагин берёт ТОЛЬКО тёмный жёлтый
         dg_on=glitch_glow == "deepglow2" and yellow_dark and any(
             x.get("anim") == "glitch" and x.get("color") == "yellow"
-            and (dg_with_glow or x.get("fx") != "glow") for g in groups for x in g),
-        dg_with_glow=dg_with_glow,
-        shadow_on=bool(st.get("intro_shadow")),
-        shadow_op=float(_sv(st, "intro_shadow_op")),
-        shadow_dir=float(_sv(st, "intro_shadow_dir")),
-        shadow_dist=float(_sv(st, "intro_shadow_dist")),
-        shadow_soft=float(_sv(st, "intro_shadow_soft")),
-        back_shadow_op=float(_sv(st, "back_shadow_op")),
-        back_shadow_soft=float(_sv(st, "back_shadow_soft")),
-        comp_shadow_fill=[float(v) for v in (_sv_or(st, "intro_comp_shadow_fill"))],
-        comp_shadow_op=float(_sv(st, "intro_comp_shadow_op")),
-        comp_shadow2_fill=[float(v) for v in (_sv_or(st, "intro_comp_shadow2_fill"))],
-        comp_shadow2_op=float(_sv(st, "intro_comp_shadow2_op")),
-        back_step=float(_sv(st, "back_step")), back_scale=float(_sv(st, "back_scale")),
+            # Галка Deep Glow и галки свечения (в том числе двери «glowfix»
+            # intro_hl_glow/intro_comp_glow) едут в блок той же структурой style_values —
+            # второй копии чтения ключей стиля нет.
+            and (style_values.dg_with_glow or x.get("fx") != "glow")
+            for g in groups for x in g),
         anims=INTRO_ANIMS, deep_glow=DEEP_GLOW2_GLITCH, has_valid_count=_has_valid_count)
 
 
@@ -226,8 +204,9 @@ def _prepare(xml, style=None, intro=None, splits=None, highlights=None, inserts=
                              highlights=highlights or [], inserts=inserts,
                              glitch_glow=glitch_glow)
     st = styles.resolve(dict(style))
-    font_ps = _sv_or(st, "font")
-    hl_font_ps = st.get("hl_font") or font_ps
+    style_values = read_style(st)
+    font_ps = style_values.font
+    hl_font_ps = style_values.hl_font or font_ps
     intro_lines = [x for x in (intro or [])
                    if (x.get("words") or (x.get("text") or "").strip())]
     cuts = sorted(set(int(s) for s in (splits or []) if 0 < int(s) < len(intro_lines)))
@@ -251,6 +230,9 @@ FIELDS = (
     ("word_shadow_word", "intro_word_shadow_word"),
     ("ly_decl", "intro_ly_decl"),
     ("lx_decl", "intro_lx_decl"),
+    ("anchor_decl", "intro_anchor_decl"),
+    ("anchor_dy_js", "intro_anchor_dy_js"),
+    ("anchor_set", "intro_anchor_set"),
     ("big_fn", "intro_big_fn"),
     ("big_qi_vars", "intro_big_qi_vars"),
     ("big_line_pos", "intro_big_line_pos"),
@@ -394,7 +376,7 @@ def test_intro_tpl_front_and_above_roto(xml_subs):
 
 def test_intro_tpl_comp_shadow_styled_and_default(xml_subs, tmp_path):
     """Тень прекомпа: дефолт — прежняя строка dropShadow(iL, 68) без функции, не-дефолт —
-    introCompShadow по камере группы (задание B)."""
+    introCompShadow по камере группы."""
     _p, plain, _i = _check(xml_subs, intro=GLITCH_BIG, splits=GLITCH_BIG_SPLITS)
     assert plain.comp_shadow == "dropShadow(iL, 68);" and plain.comp_shadow_fn == ""
     style = {"intro_comp_shadow_fill": [1, 0, 0], "intro_comp_shadow_op": 50,
@@ -411,7 +393,8 @@ def test_intro_tpl_defaults_are_golden(xml_subs):
     """Дефолты: ни ручек, ни эффектов — подстановки пустые либо ровно прежние (golden)."""
     _p, tp, _i = _check(xml_subs, intro=PLAIN)
     for text in (tp.hlfill3_decl, tp.fill_decl, tp.shadow_decl, tp.word_shadow_fn,
-                 tp.ly_decl, tp.lx_decl, tp.big_fn, tp.big_qi_vars, tp.big_line_pos,
+                 tp.ly_decl, tp.lx_decl, tp.anchor_decl, tp.anchor_dy_js, tp.anchor_set,
+                 tp.big_fn, tp.big_qi_vars, tp.big_line_pos,
                  tp.big_word_x, tp.front_decl, tp.front_arr_decl, tp.front_raise,
                  tp.above_roto_decl, tp.above_roto_arr_decl, tp.above_roto_route,
                  tp.above_roto_raise, tp.anim_fx_fn, tp.hl_glow_fn, tp.group_flags):

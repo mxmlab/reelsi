@@ -193,9 +193,9 @@ def test_render_job_systemexit_goes_to_failed(tmp_path, monkeypatch):
 
 
 def test_cut_job_systemexit_marks_clip_failed(tmp_path, monkeypatch):
-    """3. Нарезка: reelsi.process_pair бросает SystemExit(umsg(…)) — клип в failed с
+    """3. Нарезка: cutjob.process_pair бросает SystemExit(umsg(…)) — клип в failed с
     понятным текстом, та же строка в логе, задание завершено (не висит running)."""
-    import reelsi
+    from core import cutjob
     from api import jobs
     from api._core import JOB
 
@@ -204,7 +204,7 @@ def test_cut_job_systemexit_marks_clip_failed(tmp_path, monkeypatch):
     def boom(cams, out_xml, args, model=None, emit=None):
         raise _roto_stop()
 
-    monkeypatch.setattr(reelsi, "process_pair", boom)
+    monkeypatch.setattr(cutjob, "process_pair", boom)
 
     opts = {"subs": False, "dedup": False, "srt": False, "ae": False, "keep": True,
             "model": "small", "scale": 1.0, "vad_thresh": 0.5, "min_silence": 0.3,

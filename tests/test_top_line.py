@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты функционала верхней строки-прогресса (задание DF).
+"""Тесты функционала верхней строки-прогресса.
 
 Проверяет:
 - ключи стиля по умолчанию в styles.py (BASE["top_line"] == False);
@@ -135,7 +135,7 @@ def test_top_line_jsx_generation(xml_subs, tmp_path):
 def test_top_line_ui_elements():
     """Элементы интерфейса, JS-функции и CSS-классы для верхней строки.
 
-    Поля строки заведены в схеме панели (задание JB): id старой разметки (st_topline*)
+    Поля строки заведены в схеме панели: id старой разметки (st_topline*)
     и ручные syncTopLine*Hex/topLineUI из 95-styles.js ушли, их заменили общий обход
     схемы и одна функция HEX на все цвета. Превью строки (ipvTopLine) не тронуто.
     """

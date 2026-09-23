@@ -19,7 +19,7 @@ let IPVMODE='clips';
 // applyInsMoved, сопоставления плана и драга в предпросмотре
 function normInsPath(s){return (s||'').replace(/\//g,'\\').toLowerCase();}
 // Ключ сопоставления вставки плана с карточкой списка. У вставки «на подложке» план несёт
-// путь КЭША <стем>.<расш>.nobg.png (подмену делает план сцены, задание ZQ), а карточка хранит
+// путь КЭША <стем>.<расш>.nobg.png (подмену делает план сцены), а карточка хранит
 // исходник — сравниваем без суффикса кэша, иначе подсветка играющей карточки гасла бы.
 // Файл для показа берётся из ПЛАНА как есть: второй копии правила «где лежит кэш» нет.
 function insCardKey(x){
@@ -27,18 +27,18 @@ function insCardKey(x){
   return (x&&x.plate)?p.replace(/\.nobg\.png$/,''):p;}
 // URL картинки-вставки для предпросмотра. У вставки с галкой «на подложке» просим тот же
 // кэш <стем>.nobg.png, что уедет в сборку (core/insertlib.nobg_path) — снятие фона одно на
-// превью и AE, второго расчёта в JS нет (задание ZK). Нужен он только там, где на руках
+// превью и AE, второго расчёта в JS нет. Нужен он только там, где на руках
 // ИСХОДНЫЙ путь (карточки шага 2 и показ без плана): в плане сцены media у такой вставки
-// уже .nobg.png (задание ZQ), и nobg=1 поверх кэша завёл бы второй файл .nobg.nobg.png.
+// уже .nobg.png, и nobg=1 поверх кэша завёл бы второй файл .nobg.nobg.png.
 // Подложке (её картинке) nobg НЕ просим никогда: у неё своя прозрачность, rembg её только испортит.
 function insImgURL(p,onPlate){
   return '/api/media?path='+encodeURIComponent(p)+(onPlate?'&nobg=1':'');}
 // перевод карточки шага 2 в контракт вставки сборки/плана (start_s, dur_s, scale, геометрия)
-// ОДИН источник для ensureJobs (шаг 3) и ipvPlanBody (шаг 2, задание DP)
+// ОДИН источник для ensureJobs (шаг 3) и ipvPlanBody (шаг 2)
 function cardToIns(x,was){
   was=was||{};
   if(x.sin==null&&was.sin)x.sin=was.sin;
-  // Сдвиг ВСЕЙ карточки на подложке (kx/ky, задание ZQ) переносим как x/y: сначала берём
+  // Сдвиг ВСЕЙ карточки на подложке (kx/ky) переносим как x/y: сначала берём
   // у карточки (её правит драг в предпросмотре), иначе из прошлой записи задания — иначе
   // пересборка списка шага 3 обнуляла бы сдвиг. Ноль проверяем на null: 0 — тоже значение.
   const kx=(x.kx!=null?x.kx:(was.kx!=null?was.kx:0));
@@ -49,7 +49,7 @@ function cardToIns(x,was){
     scale:(was.scale!=null?was.scale:44),mosaic:!!x.mosaic,plate:!!x.plate,
     x:x.x||0,y:x.y||0,kx:kx,ky:ky,sc:x.sc||100,mw:x.mw||100,mh:x.mh||100,sin:x.sin||0,
     ...(was.noexit?{noexit:was.noexit}:{})};}
-// ---- план сцены (задание D): предпросмотр РИСУЕТ то, что прислал /api/scene ----
+// ---- план сцены: предпросмотр РИСУЕТ то, что прислал /api/scene ----
 // Никаких вторых расчётов: окна групп интро, анимации вставок, зум, стопку субтитров и
 // полосы рото берём из плана. Ошибка плана предпросмотр не ломает — без него играет как раньше.
 function ipvPlanBody(){
@@ -82,13 +82,13 @@ async function ipvPlanFetch(){
   if(d.ok&&d.plan){IPV.plan=d.plan;IPV.insShift=null;   // свежий план сам несёт сдвиги — временный сброс не нужен
     ipvSubsInvalidate();        // новый шрифт/положение — показать субтитры заново даже на паузе
     IPV.intro=ipvIntroGroups();
-    sfxEnsure(d.plan);          // SFX: элементы под план (задание AB)
+    sfxEnsure(d.plan);          // SFX: элементы под план
     IPV.cur=-2;IPV.introCur=-2;
     if(typeof renderSubRowsList==='function')renderSubRowsList();
     if(typeof aewUpdateCaptionUI==='function')aewUpdateCaptionUI();
     if(IPV.vids.length){itlDraw();ipvUI(ipvNow());}}
   else if(d.error){uiLog(t('план сцены: ')+(d.error||''));}}
-// ---- SFX в предпросмотре (задание AB): те же числа, что в AE ----
+// ---- SFX в предпросмотре: те же числа, что в AE ----
 // План несёт audio.sfx с ГОТОВЫМ стартом каждого события (t = ev − at + in, файловые
 // in/out) — JS ничего не пересчитывает, только ставит элемент на позицию. Каждый звук —
 // свой <audio> (как музыка), громкость = dbToGain(база + db) × MEDIA_VOL (общий множитель
@@ -122,7 +122,7 @@ function sfxSync(tm){
     if(Math.abs(st.el.currentTime-fpos)>0.08)try{st.el.currentTime=fpos;}catch(e){}
     if(st.el.paused)st.el.play().catch(()=>{});}
   sfxSyncApply();}
-// ---- один интерполятор ключей на весь предпросмотр (задание D) ----
+// ---- один интерполятор ключей на весь предпросмотр ----
 // AE-ease задаётся парой влияний (speed всегда 0), перевод в CSS-кривую точный:
 // cubic-bezier(out/100, 0, 1-in/100, 1). Проверка: 35/90 -> (0.35, 0, 0.10, 1).
 function aeEase(out,inp){return [out/100,0,1-inp/100,1];}
@@ -138,7 +138,7 @@ function bezierT(p1x,p2x,x){let q=x;
 // значение ключей в момент tm (сек). keys=[[tm,v],...], ease=[[in,out],...] по ключу; между
 // соседними ключами — кривая из out уходящего и in приходящего (нет ease — дефолт 35/90,
 // тот же bez(), что шаблон вешает на ключи вставок). v может быть массивом (Position).
-// hold может быть булевым (джамп-кат: значение держится) или массивом 0/1 по отрезкам (задание ZA).
+// hold может быть булевым (джамп-кат: значение держится) или массивом 0/1 по отрезкам.
 function keysAt(keys,ease,tm,hold){
   if(!keys||!keys.length)return 0;
   if(hold===true){let v=keys[0][1];for(const k of keys){if(k[0]<=tm)v=k[1];}return v;}
@@ -174,7 +174,7 @@ async function ipvOpen(xml){
     segs:[],audio:[],words:[],dur:0,fps:60,aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,defAt:0,stats:{styk:0,swap:0,seek:0,cam:0,stale:0,back:0},playing:false,raf:0,xml:xml||'',cur:-1,intro:[],introCur:-1,plan:null,insShift:null};
   const stage=$('ipvstage');[...stage.querySelectorAll('video')].forEach(v=>v.remove());
   const oldCv=$('ipvcam');if(oldCv)oldCv.remove();   // старый canvas кадра мог остаться от прошлого клипа
-  const oldSh=$('ipvshade');if(oldSh)oldSh.remove(); // затемнение под интро — тоже от прошлого клипа (IL)
+  const oldSh=$('ipvshade');if(oldSh)oldSh.remove(); // затемнение под интро — тоже от прошлого клипа
   const ov=$('ipvins');ov.className='ipvins';ov.innerHTML='';
   const sb=$('ipvsub');sb.textContent='';sb.classList.remove('plan');
   sb.style.opacity='';sb.style.removeProperty('--subfs');sb.style.removeProperty('--subfc');sb.style.removeProperty('--subhl');sb.style.removeProperty('--subsh');
@@ -188,7 +188,7 @@ async function ipvOpen(xml){
   IPV.segs=d.segs||[];IPV.audio=(d.audio&&d.audio.length?d.audio:d.segs)||[];
   IPV.words=d.words||[];IPV.fps=d.fps||60;
   IPV.dur=d.dur||(IPV.audio.length?IPV.audio[IPV.audio.length-1].te:0);
-  IPV.cams=d.cams;   // дублёру нужны пути камер, чтобы переезжать на прокси (задание BE)
+  IPV.cams=d.cams;   // дублёру нужны пути камер, чтобы переезжать на прокси
   const px=await pvProxyLoad(xml,true);pvProxyMerge(px);   // прокси камер: без него 4:2:2 10 бит встаёт на каждом стыке
   if(IPV.xml!==xml)return;
   IPV.vids=d.cams.map((c,ix)=>{const v=document.createElement('video');
@@ -214,9 +214,9 @@ async function ipvOpen(xml){
     b.el.addEventListener('loadeddata',()=>ipvCamPaint(ipvZoomAt(ipvNow())));
     b.el.addEventListener('seeked',()=>ipvCamPaint(ipvZoomAt(ipvNow())));});
   itlFit();ipvSeekTo(0);
-  if(typeof zoomPickMark==='function')zoomPickMark();   // маркер точки наезда (задание Q)
+  if(typeof zoomPickMark==='function')zoomPickMark();   // маркер точки наезда
   ipvPlanFetch();
-  if(px&&px.building){PVPX.xml=xml;pvProxyWatch('ipvstage');}   // прокси готовятся — догнать их на переезде (BE)
+  if(px&&px.building){PVPX.xml=xml;pvProxyWatch('ipvstage');}   // прокси готовятся — догнать их на переезде
 }
 // картинка активного ракурса — общая машина всех плееров (camApply в 60-preview.js):
 // разбег входящей камеры перед стыком, показ по готовности, дрейф гасится скоростью.
@@ -290,7 +290,7 @@ function ipvJump(i){const x=ipvIns()[i];if(!x||!IPV.vids.length)return;
 // кадра в кадр и дублёру: на стыке подмена меняет элементы местами, и вышедший в эфир
 // дублёр должен нести тот же зум, иначе кадр «прыгает» в масштабе.
 // Масштаб в момент tm — ОДИН на всех (кадр и вставки кам1): второй интерполятор
-// разъехался бы с первым, и превью снова разошлось бы с AE (задание L).
+// разъехался бы с первым, и превью снова разошлось бы с AE.
 function ipvZoomAt(tm){const z=IPV.plan&&IPV.plan.zoom;if(!z||!z.keys||!z.keys.length)return 1;
   const fps=IPV.fps||60;
   // квантование времени к кадру композиции убирает дрожание рендера между кадрами
@@ -299,7 +299,7 @@ function ipvZoomAt(tm){const z=IPV.plan&&IPV.plan.zoom;if(!z||!z.keys||!z.keys.l
   return ((z.fit==null?100:z.fit)/100)*(pct/100);}
 function ipvZoom(tm){const s=ipvZoomAt(tm);
   const pl=IPV.plan;
-  // точка наезда камеры (задание Q): масштабируем кадр от неё, а не от центра — в AE
+  // точка наезда камеры: масштабируем кадр от неё, а не от центра — в AE
   // нул Камеры 1 имеет anchor/position от точки наезда, и неподвижна именно она
   const cx=((pl&&pl.zoom&&pl.zoom.cx)!=null)?pl.zoom.cx:0.5;
   const cy=((pl&&pl.zoom&&pl.zoom.cy)!=null)?pl.zoom.cy:0.5;
@@ -319,17 +319,17 @@ function ipvCamShift(tm){
   }
   return [(pan[0]||0)+off, pan[1]||0];
 }
-// ---- одна матрица кадра Камеры 1 (задание ZG) ----
+// ---- одна матрица кадра Камеры 1 ----
 // Точка ИСХОДНИКА (px композиции от его центра при заполнении кадра) -> экран (px композиции
 // от левого верхнего угла), матрица 2D (a,b,c,d,e,f). Модель как в AE после ZE:
 //   экран = C + S·(R·p − C_c) + T,
 // где C — точка наезда (cx*W, cy*H от левого верхнего угла), C_c — она же от центра кадра,
 // S = ipvZoomAt(tm) (заполнение уже внутри ключей), R — горизонт `rot` вокруг центра
-// ИСХОДНИКА, T = ipvCamShift(tm) = pan + слежение (ZB/ZC).
+// ИСХОДНИКА, T = ipvCamShift(tm) = pan + слежение.
 // Проверка модели: при S=1, rot=0, T=0 центр исходника встаёт в центр кадра, а точка наезда
 // неподвижна при любом S. −C_c стоит ПОСЛЕ R, поэтому поворот центра исходника не двигает
 // (в AE поворачивается слой камеры вокруг своего якоря, а не нул). Второй копии правила не
-// заводить: кадр и подсказка рото обязаны считать одно и то же (задание L).
+// заводить: кадр и подсказка рото обязаны считать одно и то же.
 function ipvCamMatrix(tm){
   const pl=IPV.plan,W=pl?pl.w:1080,H=pl?pl.h:1920;
   const s=ipvZoomAt(tm);
@@ -342,7 +342,7 @@ function ipvCamMatrix(tm){
   return [s*co, s*si, -s*si, s*co,
           cx*W+(shift[0]||0)-s*dx,
           cy*H+(shift[1]||0)-s*dy];}
-// ---- Lumetri в превью (задание ZJ) ----
+// ---- Lumetri в превью ----
 // ПРИБЛИЖЕНИЕ: настоящие формулы Lumetri закрыты (плагин), здесь те же шаги в том же
 // порядке, что в панели AE: экспозиция -> контраст -> тона -> баланс -> насыщенность.
 // Все константы приближения собраны ЗДЕСЬ, чтобы правка была в одном месте.
@@ -427,7 +427,7 @@ function ipvCamPaint(s){const cv=$('ipvcam');if(!cv)return;   // canvas нет �
     c.imageSmoothingEnabled=true;c.imageSmoothingQuality='high';
     cv._c=c;}
   // Чистим ПРИ ЕДИНИЧНОЙ матрице: в контексте осталась матрица прошлого кадра, и clearRect
-  // в ней вычистил бы только угол — оттуда мазня по краям кадра (задание ZG).
+  // в ней вычистил бы только угол — оттуда мазня по краям кадра.
   c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,cv.width,cv.height);
   const vw=v.videoWidth,vh=v.videoHeight;
   if(ci!==0){                                                 // перебивка: как было — вырезка без зума, сдвига и поворота
@@ -438,14 +438,14 @@ function ipvCamPaint(s){const cv=$('ipvcam');if(!cv)return;   // canvas нет �
     const f=Math.max(W/vw,H/vh)*s;                            // заполнение кадра
     const sw=W/f,sh=H/f;
     // Lumetri из стиля висит на ВСЕХ клипах камер (в AE — на клипах и их рото-копиях),
-    // поэтому фильтр превью надевается и на перебивку (задание ZJ)
+    // поэтому фильтр превью надевается и на перебивку
     c.filter=ipvLumetriFilter();
     c.drawImage(v,cx*(vw-sw),cy*(vh-sh),sw,sh,0,0,W,H);       // вырезка от точки наезда, без округления
     c.filter='none';                                          // холст один на кадр — состояние не копим
     return;}
   // Камера 1: рисуем ВЕСЬ исходник через матрицу. Раньше из видео вырезался ровно кадр
   // экрана и сдвигался уже вырезанным куском — по краям открывались полосы и мазня,
-  // которых в AE нет: там двигается весь исходник (задание ZG). Матрица живёт в px
+  // которых в AE нет: там двигается весь исходник. Матрица живёт в px
   // КОМПОЗИЦИИ, поэтому и заполнение f считается по кадру композиции, а не по стойке:
   // k переводит px композиции в px сцены (в перебивке вырезка рисуется прямо в px сцены).
   const pl=IPV.plan;
@@ -454,7 +454,7 @@ function ipvCamPaint(s){const cv=$('ipvcam');if(!cv)return;   // canvas нет �
   const f=Math.max(Wc/vw,Hc/vh);                              // заполнение кадра в px композиции
   const m=ipvCamMatrix((typeof ipvNow==='function')?ipvNow():0);
   c.setTransform(dpr*k*m[0],dpr*k*m[1],dpr*k*m[2],dpr*k*m[3],dpr*k*m[4],dpr*k*m[5]);
-  c.filter=ipvLumetriFilter();                                // цвет камер из плана (ZJ)
+  c.filter=ipvLumetriFilter();                                // цвет камер из плана
   c.drawImage(v,0,0,vw,vh,-vw*f/2,-vh*f/2,vw*f,vh*f);
   c.filter='none';}                                           // состояние холста не копим
 // Полоса «Низ маски %» (подсказка ротоскопа, rotoMask в 95-styles.js) обязана ехать
@@ -462,7 +462,7 @@ function ipvCamPaint(s){const cv=$('ipvcam');if(!cv)return;   // canvas нет �
 // Камеры 1 и едет с её наездом, а подсказка была прибита к низу стойки — при зуме 160%
 // красным закрашивалось не то место, и «низ маски» правился вслепую (жалоба 2026-08-14).
 // Тот же transform, что у видео: рамка во весь кадр, полоса внутри неё.
-// s/cx/cy приходят из ipvZoom — второго интерполятора зума заводить нельзя (задание L).
+// s/cx/cy приходят из ipvZoom — второго интерполятора зума заводить нельзя.
 function ipvRotoMaskZoom(s,cx,cy){const st=$('ipvstage');const m=st&&st.querySelector('.rotomask');
   if(!m)return;
   const pl=IPV.plan;
@@ -489,7 +489,7 @@ function ipvRotoMaskZoom(s,cx,cy){const st=$('ipvstage');const m=st&&st.querySel
     m.style.transformOrigin=(cx*100)+'% '+(cy*100)+'%';
     m.style.transform='translate('+px+'px,'+py+'px) rotate('+rot+'deg) translate('+(-px)+'px,'+(-py)+'px) translate('+panX+'px,'+panY+'px) scale3d('+s+','+s+',1)';
   }}
-// Экран = C + s*(p − C) (задание Q): положение ребёнка нула Камеры 1 (вставки кам1, интро)
+// Экран = C + s*(p − C): положение ребёнка нула Камеры 1 (вставки кам1, интро)
 // при зуме s. C — точка наезда, p — положение без зума; всё от ЦЕНТРА кадра в px композиции.
 // ЕДИНСТВЕННАЯ функция на это правило — зовётся из вставок кам1 и из интро, второй копии нет.
 function ipvCamChild(px, py, s, tm){
@@ -499,7 +499,7 @@ function ipvCamChild(px, py, s, tm){
   const shift=(typeof ipvCamShift==='function')?ipvCamShift(tm):((pl&&pl.zoom&&pl.zoom.pan)||[0,0]);
   const dx=(cx-0.5)*W, dy=(cy-0.5)*H;   // точка наезда от центра кадра
   return [s*px+(1-s)*dx+shift[0], s*py+(1-s)*dy+shift[1]];}
-// Размытие на старте (задание S): в AE — Adjustment Layer с Gaussian Blur start_blur->0
+// Размытие на старте: в AE — Adjustment Layer с Gaussian Blur start_blur->0
 // за start_blur_dur от начала ролика. Здесь тот же фильтр CSS-ом на кадре: linear интерполяция
 // от start_blur до 0 (в AE ключи линейные, ease не ставится). Выключено — план несёт ноль.
 // Задание DQ: clip-path режет результат фильтра по рамке кадра, иначе размытый край лезет на модалку.
@@ -513,7 +513,7 @@ function ipvStartBlur(tm){const pl=IPV.plan,b=pl&&pl.start_blur||0,d=pl&&pl.star
   const v=b*(1-tm/d);
   st.style.filter='blur('+v.toFixed(1)+'px)';
   st.style.clipPath='inset(0 round var(--r))';}
-// ---- верхняя строка-прогресс по плану (задание DF) ----
+// ---- верхняя строка-прогресс по плану ----
 function ipvTopLine(tm){
   const el=$('ipvtopline');if(!el)return;
   const pl=IPV.plan;const tl=pl&&pl.top_line;
@@ -552,7 +552,7 @@ function ipvTopLine(tm){
     prog.style.backgroundRepeat='no-repeat';
   }
 }
-// ---- подпись о ролике по плану (задание DG, обновлено DL) ----
+// ---- подпись о ролике по плану (обновлено DL) ----
 function ipvCaption(tm){
   const el=$('ipvcaption');if(!el)return;
   const pl=IPV.plan;const cap=pl&&pl.caption;
@@ -560,7 +560,7 @@ function ipvCaption(tm){
   const w=pl.w||1080;
   const fontPs=cap.font||'SFPro-Bold';
   const fv=ipvFontFor(fontPs);
-  const size=cap.size!=null?cap.size:26;   // кегль экранный: масштаб слоя убран (задание DL-хвост)
+  const size=cap.size!=null?cap.size:26;   // кегль экранный: масштаб слоя убран ()
   const kx=cap.kx!=null?cap.kx:1.718;
   const ky=cap.ky!=null?cap.ky:2.484;
   // В AE плашка меряется от sourceRectAtTime текста: высота рамки = 1.4125 кегля, а её
@@ -632,7 +632,7 @@ function ipvCaption(tm){
     inner.style.display='none';
   }
 }
-// ---- затемнение под интро по плану (задание IL) ----
+// ---- затемнение под интро по плану ----
 // Мягкое чёрное затемнение снизу кадра под текстом интро — пользователь клал его руками в
 // каждом ролике (Shape Layer в amdi1.aep). Числа (позиция, размер, размытие, прозрачность)
 // считает Python в плане сцены: здесь только отрисовка, второй копии формул нет, как у тени
@@ -657,7 +657,7 @@ function ipvShade(){
   // Центр прямоугольника в системе нула Камеры 1: Position слоя + масштаб × смещение
   // фигуры внутри группы. margin'ы сдвигают коробку её центром в центр кадра — дальше
   // работает та же функция-выбор, что у интро (ipvIntroChild): привязанное затемнение
-  // едет за камерой, откреплённое стоит в координатах кадра (задание ZM).
+  // едет за камерой, откреплённое стоит в координатах кадра.
   const cc=ipvIntroChild((sh.x||0)+(sh.ox||0)*sc,(sh.y||0)+(sh.oy||0)*sc,ipvNow());
   const s=cc[2];                               // зум камеры, а у откреплённого — 1
   el.style.width=bw+'px';el.style.height=bh+'px';
@@ -668,10 +668,10 @@ function ipvShade(){
   el.style.filter='blur('+((sh.blur||0)*k).toFixed(1)+'px)';
   el.style.opacity=String((sh.op!=null?sh.op:100)/100);
 }
-// ---- координаты интро и затемнения: одна функция-выбор (задание ZM) ----
+// ---- координаты интро и затемнения: одна функция-выбор ----
 // Пока галка «интро едет с камерой» включена (plan.intro_cam !== false), нулы «интро»,
 // «интро на кам2» и слой затемнения висят на нуле Камеры 1 — точка считается общей
-// машиной ipvCamChild, как у вставок кам1 (задание Q/ZG). Галку сняли (intro_cam=false):
+// машиной ipvCamChild, как у вставок кам1. Галку сняли (intro_cam=false):
 // в .jsx эти нулы идут по ветке else — координаты кадра, — значит ни зума, ни сдвига
 // `pan`, ни слежения за головой: точка как есть, зум 1, как у свободных вставок кам2.
 // Второй копии выбора нет: обе точки входа (ipvShade и ipvIntroPos) берут тут и точку,
@@ -706,14 +706,14 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
     el.style.opacity='';
   }
   if(!subs.length){el.innerHTML='';return;}
-  // Снимаем всё чужое из #ipvsub — текстовые узлы и посторонние элементы (задание DK)
+  // Снимаем всё чужое из #ipvsub — текстовые узлы и посторонние элементы
   Array.from(el.childNodes).forEach(node=>{
     if(node.nodeType===3||(node.nodeType===1&&!node.classList.contains('pvsub_bg')&&!node.classList.contains('pvsubs_host'))){
       node.remove();
     }
   });
   const posy=pl.posy||0,step=pl.hl_step||0,h=pl.h||1920,w=pl.w||1080;
-  // Порядок слоёв из плана сцены (задание FM)
+  // Порядок слоёв из плана сцены
   const defOrder=['subs','video','roto','photo','intro'];
   const order=(pl&&pl.layer_order)||defOrder;
   const getZ=k=>{const i=order.indexOf(k);return i>=0?(10-i):0;};
@@ -721,7 +721,7 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
   const ovI=$('ipvins');if(ovI)ovI.style.zIndex=Math.max(getZ('photo'),getZ('video'));
   // Слой интро здесь НЕ трогаем: его zIndex ставит ipvIntro на каждом кадре — там же,
   // где живёт признак front (группа поверх видео, как moveToBeginning в AE).
-  // Масштаб слоя прекомпа субтитров (задание FE): то же число, что уходит в Scale в .jsx.
+  // Масштаб слоя прекомпа субтитров: то же число, что уходит в Scale в .jsx.
   // В AE якорь слоя в [W/2, POSY] — точка строки; в превью transform-origin в той же точке
   // (проценты от высоты контейнера = posy/H), иначе масштаб от центра утащит строку.
   const subScale=pl.sub_scale!=null?pl.sub_scale:100;
@@ -736,13 +736,13 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
   // прошлого (правка стиля шла бы мимо превью).
   if(pl.fsize)el.style.setProperty('--subfs',(pl.fsize/w*100).toFixed(3)+'cqw');
   else el.style.removeProperty('--subfs');
-  // цвет базовых субтитров из плана (задание CO): превью красит тем же, что AE.
+  // цвет базовых субтитров из плана: превью красит тем же, что AE.
   if(pl.sub_fill)el.style.setProperty('--subfc',rgb2hex(pl.sub_fill));
   else el.style.removeProperty('--subfc');
-  // цвет выделения из плана (задание CV): превью красит тем же, что AE (--subhl).
+  // цвет выделения из плана: превью красит тем же, что AE (--subhl).
   if(pl.hl_fill)el.style.setProperty('--subhl',rgb2hex(pl.hl_fill));
   else el.style.removeProperty('--subhl');
-  // тень субтитров из плана (задание DK): при включённой плашке собственная тень текста снимается
+  // тень субтитров из плана: при включённой плашке собственная тень текста снимается
   if(pl.sub_shadow===false){
     el.style.setProperty('--subsh','none');
   }else{
@@ -801,7 +801,7 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
   const visKey=vis.map(sub=>(sub.stack?'s':'r')+(sub.s)+':'+(sub.gend)+':'+(sub.w||'')+':'+(sub.row||0)).join('|');
   if(host.dataset.visKey!==visKey){
     host.dataset.visKey=visKey;
-    // Элементы стопки подряд жёлтых (задание ZU) помечены в плане stack: они вышли из строк
+    // Элементы стопки подряд жёлтых помечены в плане stack: они вышли из строк
     // и рисуются каждый своей строкой, ровно как в режиме «по слову». Шаг у них HL_STEP
     // (план.hl_step), а не SUB_STEP строк — общий rowMap склеил бы стопку со строкой текста
     // в один ряд и поставил бы её по чужому шагу.
@@ -823,10 +823,10 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
           return sub.words.map(wd=>{
             const isY=(wd.color==='yellow');
             const wCss=isY?hlFvCss:baseFvCss;
-            // время появления жёлтого — из плана (t0, задание ZU): по нему ниже идут подъём,
+            // время появления жёлтого — из плана (t0): по нему ниже идут подъём,
             // проявление и блюр. Своей формулы «когда слово произнесено» в превью нет.
             const t0=(isY&&wd.t0!=null)?(' data-hl0="'+wd.t0+'"'):'';
-            // своя длительность появления у укороченного слова (hd, задание MA): в AE её
+            // своя длительность появления у укороченного слова (hd): в AE её
             // играет цикл стопки/слов, а не этот — превью берёт готовое число из плана.
             const hd=(isY&&wd.hd!=null)?(' data-hld="'+wd.hd+'"'):'';
             return '<span class="pvsubw_wd'+(isY?' yel':'')+'"'+t0+hd+' style="'+wCss+'">'+esc(wd.w)+'</span>';
@@ -835,10 +835,10 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
           const isY=(sub.color==='yellow');
           const wCss=isY?hlFvCss:baseFvCss;
           // Жёлтое слово режима «по слову» и стопки въезжает так же, как его слой в AE
-          // (задание MA): момент — начало слова (s плана = inPoint слоя), у строки из одного
+          // момент — начало слова (s плана = inPoint слоя), у строки из одного
           // слова — момент ZH из плана (words[0].t0). Длительность — hd плана, если план её
           // знает: у стопки/слова это поле элемента, у строки из ОДНОГО слова — поле слова
-          // (задание MN); нет её — превью берёт общую hl_dur, как и раньше.
+          // нет её — превью берёт общую hl_dur, как и раньше.
           const w0=(sub.words&&sub.words[0])||null;
           const t0=isY?((w0&&w0.t0!=null)?w0.t0:sub.s):null;
           const hl0=(isY&&t0!=null)?(' data-hl0="'+t0+'"'):'';
@@ -856,10 +856,10 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
     stackMap.forEach((stSubs,r)=>html+=lineHtml(stSubs,step,r));
     host.innerHTML=html;
   }
-  // Появление жёлтого в строке (задание ZU): до своего момента слово невидимо, за HL_DUR
+  // Появление жёлтого в строке: до своего момента слово невидимо, за HL_DUR
   // поднимается на hl_rise и проявляется — та же кривая, что easePair в AE (keysAt с
   // дефолтными 35/90 = aeEase). Числа и время появления — из плана, своей копии нет.
-  // Короткое жёлтое (задание MA) играет СВОЮ длительность hd из плана: общей HL_DUR слову
+  // Короткое жёлтое играет СВОЮ длительность hd из плана: общей HL_DUR слову
   // с малым видимым временем не хватало, и анимация обрывалась его исчезновением.
   // Подъём — position:relative + top, а НЕ transform: .pvsubw_wd — обычный inline-span,
   // а к inline-боксу transform не применяется вовсе (сдвиг просто пропал бы). relative
@@ -930,8 +930,8 @@ function ipvUI(tm){const seek=$('ipvseek');if(seek&&document.activeElement!==see
   const sb=$('ipvsub');
   if(IPV.plan){
     ipvSubs(tm);       // стопка субтитров по плану
-    ipvTopLine(tm);    // верхняя строка-прогресс по плану (задание DF)
-    ipvCaption(tm);    // подпись о ролике по плану (задание DG)
+    ipvTopLine(tm);    // верхняя строка-прогресс по плану
+    ipvCaption(tm);    // подпись о ролике по плану
   }
   else{
     const tle=$('ipvtopline');if(tle)tle.style.display='none';
@@ -944,11 +944,11 @@ function ipvUI(tm){const seek=$('ipvseek');if(seek&&document.activeElement!==see
     sb.textContent=cur;sb.style.color=yel?'var(--subhl,var(--yel))':'';sb.classList.remove('plan');
   }
   ipvZoom(tm);                                    // наезд/дрейф Камеры 1 по плану
-  ipvShade();                                     // затемнение под интро (задание IL) — из плана
-  ipvStartBlur(tm);                               // размытие на старте (задание S) — CSS-фильтр на кадре
+  ipvShade();                                     // затемнение под интро — из плана
+  ipvStartBlur(tm);                               // размытие на старте — CSS-фильтр на кадре
   itlPh(tm);ipvIntro(tm);ipvOverlay(tm);aewHighlight(tm);
   if(typeof subrowHighlight==='function')subrowHighlight(tm);
-  sfxSync(tm);                                    // SFX по плану (задание AB)
+  sfxSync(tm);                                    // SFX по плану
   // Счётчики честности показа: «стык/своп/сидк» — про склейку (сколько прошло подменой
   // дублёра, а сколько сорвалось в seek), «кам/замер» — про ракурсы: сколько было
   // переключений и на скольких кадрах входящая камера ещё доигрывала seek (кадр её же,
@@ -980,7 +980,7 @@ function insVideoFill(vw,vh,sc){const W=1080,H=1920;
   const f=Math.max(W/vw,H/vh)*((sc==null?100:sc)/100);
   return {w:vw*f,h:vh*f};}
 // панорама полноэкранной видеовставки: позиция = x/y как их задал пользователь (px кадра),
-// ничем не зажата (задание ME2). Раньше сдвиг упирался в запас вылета ролика за кадр
+// ничем не зажата. Раньше сдвиг упирался в запас вылета ролика за кадр
 // (зеркало fillSlack в xml2ae): у вертикального 9:16 при sc=100 запаса нет вовсе — видео
 // не двигалось совсем, а 16:9 по высоте не двигалось никогда. sx/sy остаются в ответе
 // СПРАВКОЙ (сколько ролик вылезает за кадр), позицию они не режут.
@@ -988,7 +988,7 @@ function insVideoPan(vw,vh,x,y){const W=1080,H=1920;
   if(!vw||!vh)return {x:x||0,y:y||0,sx:0,sy:0};
   const f=Math.max(W/vw,H/vh),sx=Math.max(0,(vw*f-W)/2),sy=Math.max(0,(vh*f-H)/2);
   return {x:x||0,y:y||0,sx,sy};}
-// ---- видеовставки: ОДИН <video> на файл и размеры из плана (задание ME) ----
+// ---- видеовставки: ОДИН <video> на файл и размеры из плана ----
 // Моргание чёрным: перестройка оверлея (новый план после каждой правки, ipvRefresh сбрасывает
 // IPV.cur) чистила #ipvins и создавала НОВЫЙ <video> с тем же src — элемент показывает чёрное,
 // пока не загрузит первый кадр. Поэтому элементы живут в кэше по пути файла и переезжают из
@@ -1016,7 +1016,7 @@ function insVideoEl(media,used){
       if(IPV.plan&&!insVidPlanDims(media)&&typeof ipvUI==='function')ipvUI(ipvNow());});
     insVidCache().set(key,v);used.add(key);return v;}
 }
-// освободить элемент: пауза, снятый src (файл перестаёт держать соединение, задание MB)
+// освободить элемент: пауза, снятый src (файл перестаёт держать соединение)
 // и load() — им браузер отпускает ресурс
 function insVidFree(v){if(!v)return;
   try{v.pause();}catch(e){}
@@ -1066,7 +1066,7 @@ function insVidFreeAll(){if(!IPV.insVids)return;
 // первая вставка успевала отрисоваться, вторая — нет, а классы .cur/.playing (по ним
 // таймлайн и карточки понимают, на какой вставке стоит плейхед) не проставлялись вовсе.
 function ipvOverlay(tm){const ov=$('ipvins');if(!ov)return;
-  // Есть план сцены — рисуем по плану (задания D и DP): позиция/масштаб/появление из
+  // Есть план сцены — рисуем по плану: позиция/масштаб/появление из
   // готовых ключей, ничего не досчитываем. Без плана (ошибка запроса) — прежняя ветка-фолбэк.
   if(IPV.plan)return ipvOverlayPlan(tm);
   const arr=ipvIns();
@@ -1138,7 +1138,7 @@ function ipvOverlay(tm){const ov=$('ipvins');if(!ov)return;
         // Полноэкранное видео двигаем КАРТИНКОЙ ВНУТРИ коробки (object-position), а не
         // transform'ом обёртки: обёртка тут и есть кадр, и сдвиг её целиком выглядел бы как
         // поехавший монтаж. Сдвиг — ровно x/y пользователя (px кадра × k), без клампа
-        // (задание ME2): уехав за край, ролик открывает то, что под ним, — кадр камеры.
+        // уехав за край, ролик открывает то, что под ним, — кадр камеры.
         else if(fullVid){const pan=()=>{const p=insVideoPan(el.videoWidth,el.videoHeight,x.x,x.y);
             // k — коробка предпросмотра относительно кадра 1080: сдвиг тоже в её пикселях
             el.style.objectPosition='calc(50% + '+(p.x*k)+'px) calc(50% + '+(p.y*k)+'px)';};
@@ -1158,7 +1158,7 @@ function ipvOverlay(tm){const ov=$('ipvins');if(!ov)return;
     if(Math.abs((v.currentTime||0)-want)>0.4){try{v.currentTime=want;}catch(e){}}
     if(IPV.playing&&v.paused)v.play().catch(()=>{});
     if(!IPV.playing&&!v.paused)v.pause();}}
-// ---- вставки ПО ПЛАНУ (задание D): всё из plan.inserts, геометрия — готовая, не считается ----
+// ---- вставки ПО ПЛАНУ: всё из plan.inserts, геометрия — готовая, не считается ----
 function ipvOverlayPlan(tm){const ov=$('ipvins');const arr=(IPV.plan&&IPV.plan.inserts)||[];
   const allCards=ipvIns();
   const act=[];
@@ -1166,7 +1166,7 @@ function ipvOverlayPlan(tm){const ov=$('ipvins');const arr=(IPV.plan&&IPV.plan.i
     if(tm>=+x.start&&tm<+x.end)act.push({isPlan:true,i:i,x:x,start:+x.start});}   // окна из плана (снап/срезы уже учтены)
   if(IPVMODE==='clips'){
     for(let ci=0;ci<allCards.length;ci++){const x=allCards[ci];
-      if(!(x.media||'').trim()){const sd=insSD(x);                                // карточки без файла (задание DP-хвост): окно из карточки
+      if(!(x.media||'').trim()){const sd=insSD(x);                                // карточки без файла (): окно из карточки
         if(tm>=sd.s&&tm<sd.s+sd.d)act.push({isPlan:false,ci:ci,x:x,start:sd.s});}}}
   act.sort((a,b)=>a.start-b.start);                                              // позже начавшаяся — выше в DOM/AE-стеке
   const sig=act.map(a=>a.isPlan?'p'+a.i:'c'+a.ci).join(',');
@@ -1183,7 +1183,7 @@ function ipvOverlayPlan(tm){const ov=$('ipvins');const arr=(IPV.plan&&IPV.plan.i
       if(x.media){
         if(isPhotoPath(x.media)){
           const card=x.card||null;
-          // фото на подложке (задание ZI): ДВА img — плашка на весь card.w×card.h и фото
+          // фото на подложке: ДВА img — плашка на весь card.w×card.h и фото
           // поверх со сдвигом от её центра. Окна маски нет вовсе: обрезки в этом режиме нет.
           if(card&&card.plate){
             const pl=document.createElement('div');pl.className='insplate';
@@ -1198,7 +1198,7 @@ function ipvOverlayPlan(tm){const ov=$('ipvins');const arr=(IPV.plan&&IPV.plan.i
             ip.style.maxWidth='none';ip.style.maxHeight='none';ip.style.objectFit='fill';ip.style.filter='none';
             const ph2=document.createElement('img');ph2.className='iphoto';
             // Путь берём из ПЛАНА как есть: у вставки «на подложке» это уже кэш .nobg.png
-            // (подмену делает план сцены, задание ZQ) — nobg=1 поверх кэша завёл бы второй
+            // (подмену делает план сцены) — nobg=1 поверх кэша завёл бы второй
             // файл. Размеры рамки и файл — из одного места, плана.
             ph2.src=insImgURL(x.media);
             ph2.style.position='absolute';ph2.style.left='50%';ph2.style.top='50%';
@@ -1248,7 +1248,7 @@ function ipvOverlayPlan(tm){const ov=$('ipvins');const arr=(IPV.plan&&IPV.plan.i
 function ipvInsPlace(wr,x,tm){
   const el=wr.firstChild;if(!el)return;
   const pl=IPV.plan;const W=pl?pl.w:1080,H=pl?pl.h:1920,k=(wr.clientWidth||W)/W;
-  // Временный сдвиг во время/после драга (задание E): тянем вставку — она едет с пальцем
+  // Временный сдвиг во время/после драга: тянем вставку — она едет с пальцем
   // до пересчёта плана (план кэш, свежий несёт сдвиги сам). В данные пишется по отпусканию,
   // здесь сдвиг только показывается. Плана нет — ноль, обычный показ.
   const sh=(IPV.insShift&&IPV.insShift.i===+wr.dataset.ins)?IPV.insShift:null;
@@ -1266,7 +1266,7 @@ function ipvInsPlace(wr,x,tm){
     const d=ipvInsDims(x);
     el.style.maxWidth='none';el.style.maxHeight='none';el.style.objectFit='fill';el.style.objectPosition='';
     if(d){el.style.width=(d.w*sc/100*k)+'px';el.style.height=(d.h*sc/100*k)+'px';}
-    // Позиция — ровно x/y из плана + сдвиг драга, при ЛЮБОМ масштабе (задание ME2): клампа
+    // Позиция — ровно x/y из плана + сдвиг драга, при ЛЮБОМ масштабе: клампа
     // запасом вылета нет (план его и не зажимает — slackx/slacky там справка), поэтому
     // вертикальное 9:16 при sc=100 тоже двигается. Коробка уезжает за край кадра — в
     // проёме видно то, что под вставкой (кадр камеры), и в AE ровно так же.
@@ -1284,7 +1284,7 @@ function ipvInsPlace(wr,x,tm){
         const p=keysAt(anim.position,null,tm);
         if(Array.isArray(p)){px=p[0]-W/2;py=p[1]-H/2;}
       }else{
-        py=((pl&&pl.ins_c2y||0)-H/2)+(x.y||0);px=((pl&&pl.ins_c2x||W/2)-W/2)+(x.x||0);   // точка покоя cam2 — из стиля (задание Q)
+        py=((pl&&pl.ins_c2y||0)-H/2)+(x.y||0);px=((pl&&pl.ins_c2x||W/2)-W/2)+(x.x||0);   // точка покоя cam2 — из стиля
       }
     }else if(anim&&anim.position){                   // cam1 «из-за спины»: ключи ОТ ЦЕНТРА кадра
       // Ключи _cam1_pos_keys посчитаны в ЛОКАЛЬНЫХ координатах нула «вставки кам1»
@@ -1294,18 +1294,18 @@ function ipvInsPlace(wr,x,tm){
       const p=keysAt(anim.position,null,tm);
       if(Array.isArray(p)){px=p[0];py=p[1];}
     }
-    // задание L + Q: cam1-вставка в кадре кам1 наследует зум нула Камеры 1 (в AE
+    // cam1-вставка в кадре кам1 наследует зум нула Камеры 1 (в AE
     // insNull1.parent=cam1null) — размер умножается на зум, а СМЕЩЕНИЕ от центра
-    // считается правилом экран = C + s*(p−C) (ipvCamChild, задание Q). oncam2 (кам1
+    // считается правилом экран = C + s*(p−C) (ipvCamChild). oncam2 (кам1
     // на перебивке) и кам2 сидят на СВОБОДНЫХ нулах — им зум не положен.
     const z=(style==='cam1'&&!x.oncam2)?ipvZoomAt(tm):1;
     const c=x.card;
     el.style.width=(c.w*m*k*z)+'px';el.style.height=(c.h*m*k*z)+'px';
-    if(c.plate){                                     // фото на подложке (задания ZI/ZQ)
+    if(c.plate){                                     // фото на подложке
       // Плашка — на весь элемент (card.w×card.h), фото поверх со сдвигом от её центра.
       // Числа — из плана (card.photo), своих расчётов здесь нет. Ручные x/y двигают
       // ТОЛЬКО фото (поля страницы вставок), а драг в кадре (IPV.insShift) — ВСЮ карточку:
-      // он уходит в точку покоя слоя, и в данные пишется kx/ky (задание ZQ). Раньше сдвиг
+      // он уходит в точку покоя слоя, и в данные пишется kx/ky. Раньше сдвиг
       // драга уезжал в фото — оно вылезало из плашки.
       const ipl=el.querySelector('img.iplate'),iph=el.querySelector('img.iphoto');
       if(ipl){ipl.style.width='100%';ipl.style.height='100%';}
@@ -1336,7 +1336,7 @@ function ipvMarks(){itlDraw();}   // после правок карточек п
 function ipvRefresh(){IPV.cur=-2;if(IPV.vids.length)ipvUI(ipvNow());   // перерисовать оверлей после правок карточек
   ipvPlanSoon();}   // правки вставок на шагах 2 и 3 видны после пересчёта плана
 
-// ---- интро в предпросмотре (только ae-режим): окна групп из ПЛАНА (задание D) ----
+// ---- интро в предпросмотре (только ae-режим): окна групп из ПЛАНА ----
 // ts/te считает scene_plan (xml2ae/build.py), превью их не досчитывает. introGroupWindows
 // осталась прослойкой: панель шага 2/редактора плана не имеет и вызывает её с группами без
 // ts/te — такие просто не дают окон (историческая копия формулы там отмирает сама).
@@ -1346,24 +1346,30 @@ function introGroupWindows(ir){
   const groups=Array.isArray(ir)?ir:((ir&&ir.lines)||[]);   // панель шага 2 шлёт {lines,splits}
   return groups.filter(g=>g.ts!=null&&g.te!=null)
     .map(g=>({lines:g.lines,inAt:g.ts,outEnd:g.te,fade:g.fade,front:!!g.front,shadow:g.shadow,ys:g.ys,fonts:g.fonts,
-      // Большое слева (задание ZY): левый край и множитель кегля каждой строки — те же
+      // Большое слева: левый край и множитель кегля каждой строки — те же
       // готовые числа, что уехали в .jsx (INTRO_LX/INTRO_LK). Это дверь: забытый тут
       // ключ — и превью рисует большую строку по-старому, хотя план её уже посчитал.
       lx:g.lx,lk:g.lk,
-      // Множитель длительности появления на слово (задание MH): [строка][слово], null —
+      // Множитель длительности появления на слово: [строка][слово], null —
       // слово успевает доиграть до начала затухания. Числа считает Python, превью своей
       // копии правила «когда слово успевает» не держит.
-      sq:g.sq}));}
+      sq:g.sq,
+      // Точка масштабирования блока (intro_scale_anchor): Y якоря слоя прекомпа в пикселях
+      // прекомпа — то же готовое число, что уехало в .jsx (INTRO_ANCHOR_Y). Это дверь:
+      // забытый тут ключ — и блок в превью уменьшается от середины кадра, хотя в AE он уже
+      // ужимается от текста (ключей стиля JS не читает вовсе). Поля нет (дефолт «центр
+      // композиции») — origin снимаем, остаётся центр контейнера, как было.
+      anchor_y:g.anchor_y}));}
 // пересчёт интро на лету: правки в панели уходят в план (окна считает бэкенд), по затишью
 // перезапрашиваем — полоски на таймлайне и оверлей в кадре догоняют за ~0.4с
 function ipvIntroRefresh(){if(IPVMODE!=='ae')return;
   ipvPlanSoon();}
-// PostScript-имя шрифта -> {family, var} с подключением файла шрифта через @font-face (задание DB).
+// PostScript-имя шрифта -> {family, var} с подключением файла шрифта через @font-face.
 // В AE шрифт задаётся PostScript-именем. В браузере подключаем ровно тот же файл через
 // @font-face (font-family:'reelsi-<PS>') и /api/fontfile/<PS>, чтобы начертание (Bold, Regular,
 // Condensed) совпадало с AE побайтово. Вариативным шрифтам поверх задаются оси font-variation-settings.
 // Обычным шрифтам вес и ширина не нужны — файл уже содержит правильное начертание.
-// Шрифта нет в системе — текущий вид без изменений (font-weight:800, задание CY), одна строка в лог.
+// Шрифта нет в системе — текущий вид без изменений (font-weight:800), одна строка в лог.
 const SFXFONTLOG={};
 const IPV_FONT_FACES={};
 function ensureFontFace(ps){
@@ -1508,7 +1514,7 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
     // из CSS, и интро не показывалось НИКОГДА (первая сверка с AE, 2026-08-11)
     io.style.display=(gi<0)?'none':'flex';
     if(gi>=0){
-      // кегль ИЗ ПЛАНА, как у субтитров (задание AD): в AE интро и субтитры — один FONT_SIZE.
+      // кегль ИЗ ПЛАНА, как у субтитров: в AE интро и субтитры — один FONT_SIZE.
       // Но при нескольких словах в строке автофит ужимает FONT_SIZE субтитров, а интро
       // остаётся неужатым (доработка ZL) — берём intro_fsize; старого поля нет (превью
       // со старым бэкендом) — падаем на fsize, как было.
@@ -1517,13 +1523,13 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
       if(ifs)io.style.setProperty('--introsfs',(ifs/(pl.w||1080)*100).toFixed(3)+'cqw');
       const s=(typeof CURSTYLE!=='undefined'&&CURSTYLE)?CURSTYLE:{};
       const lines=IPV.intro[gi].lines||[];
-      // Строки группы сажаем базовой линией по готовым y из плана (задание A2): шаг строк
+      // Строки группы сажаем базовой линией по готовым y из плана: шаг строк
       // зависит от шрифта и якоря, CSS-потоком (flex + line-height + ручные marginTop) его
       // не повторить — превью врало о высоте. ys той же длины, что строки — раскладываем
       // абсолютно; нет ys (старый бэкенд без перезапуска) — сегодняшний поток как есть.
       const yl=IPV.intro[gi].ys;
       const ys=(Array.isArray(yl)&&yl.length===lines.length)?yl:null;
-      // Большое слева (задание ZY): левый край строки и множитель её кегля — готовые
+      // Большое слева: левый край строки и множитель её кегля — готовые
       // числа плана (lx/lk группы). Своих чисел превью не считает: раскладку знает
       // Python. Группа с lx раскладывается абсолютно ВСЕГДА — по центру потока такую
       // строку не поставить.
@@ -1531,10 +1537,14 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
       const lxs=(Array.isArray(xl)&&xl.length===lines.length)?xl:null;
       const kll=IPV.intro[gi].lk;
       const kls=(Array.isArray(kll)&&kll.length===lines.length)?kll:null;
-      // Множитель длительности появления (задание MH): готовые числа плана
+      // Множитель длительности появления: готовые числа плана
       // ([строка][слово]); null/нет поля — слово успевает доиграть, множитель 1.
       const sql=IPV.intro[gi].sq;
       const sqs=(Array.isArray(sql)&&sql.length===lines.length)?sql:null;
+      // Глитч в группе — то же условие, что grpGlitch в .jsx: жёлтое слово группы с
+      // глитчем свечения хайлайта (introHlGlow) не получает. Считается один раз на
+      // перестроение группы, а не на строку.
+      const grpGlitch=lines.some(x=>x.anim==='glitch');
       lines.forEach((l,li)=>{const dv=document.createElement('div');
       // Цвет строки: yellow -> intro_hl_fill / hl_fill, accent -> hl_fill3, custom -> l.fill, white -> intro_fill
       let col='#ffffff';
@@ -1551,15 +1561,46 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
       const lk=(kls&&kls[li]!=null)?kls[li]:null;
       dv.className='iline'+(l.color==='yellow'?' yel':'')+(l.back?' back':'')+(l.color==='accent'?' accent':'')+((ys||lxs)?' abs':'');
       dv.style.color=col;
-      // Свечение (glow / glitch):
-      if(l.fx==='glow'||l.anim==='glitch'){
-        dv.style.textShadow='0 0 12px '+col+', 0 0 24px '+col+', 0 2px 10px rgba(0,0,0,.85)';
-      }else{
-        dv.style.textShadow='0 2px 10px rgba(0,0,0,.75)';
+      // Свечение и тень СЛОВА: галки и числа — из плана (plan.intro_word_fx),
+      // второго чтения ключей стиля во фронте нет. Свечение: глитч-строке — по галке
+      // «свечение слов с глитчем», строке fx=='glow' — по «свечение слов со свечением
+      // строки», жёлтому слову хайлайта — по «свечению жёлтого хайлайта» (та же третья
+      // дверь, что introHlGlow в .jsx: у группы с глитчем и у строки со свечением её нет).
+      // Тень (Drop Shadow) — те же условия, что в .jsx: галка «тень на всех
+      // словах» либо своя галка глитча/заднего плана.
+      const wfx=(pl&&pl.intro_word_fx)||{};
+      const glowOn=(l.anim==='glitch')?(wfx.glow_glitch!==false)
+                  :((l.fx==='glow')?(wfx.glow_fx!==false)
+                  :((l.color==='yellow'&&!grpGlitch)?(wfx.glow_hl!==false):false));
+      // Общее свечение блока — аналог Glo2 на слое ПРЕКОМПА группы (четвёртая дверь):
+      // светится весь блок целиком, а не отдельное слово.
+      const compGlowOn=(wfx.glow_comp!==false);
+      const wshOn=(wfx.shadow_all===true)
+                 ||(l.anim==='glitch'&&wfx.shadow_glitch!==false)
+                 ||(!!l.back&&wfx.shadow_back!==false);
+      const tsh=[];
+      if(glowOn){
+        // Приближение Glo2 двумя гало, как и было (12 и 24 px при дефолтных числах).
+        // Множитель k: Glo2 Radius и Intensity растят свечение, Threshold (порог, выше
+        // которого буква светится) — уменьшает; CSS-аналога порогу нет, поэтому он здесь
+        // так. При дефолтах 77/0.62/149 k=1 — превью выглядит как раньше.
+        const gThr=(wfx.glow_thr!=null?+wfx.glow_thr:149);
+        const gRad=(wfx.glow_rad!=null?+wfx.glow_rad:77);
+        const gInt=(wfx.glow_int!=null?+wfx.glow_int:0.62);
+        const gk=Math.max(0,(gRad/77)*(gInt/0.62)*((255-gThr)/106));
+        if(gk>0){
+          const b1=Math.round(12*gk*10)/10, b2=Math.round(24*gk*10)/10;
+          tsh.push('0 0 '+b1+'px '+col,'0 0 '+b2+'px '+col);
+        }
       }
-      // Масштаб и межстрочный интервал для мелкого текста (back). В ветке ys (задание A2)
+      // Общее свечение блока (Glo2 на прекомпе, радиус 42): мягкая широкая тень ЦВЕТОМ
+      // строки — CSS-аналог свечения всего блока, а не буквы.
+      if(compGlowOn)tsh.push('0 0 21px '+col);
+      if(wshOn)tsh.push('0 2px 10px rgba(0,0,0,'+(glowOn?'.85':'.75')+')');
+      dv.style.textShadow=tsh.join(', ');
+      // Масштаб и межстрочный интервал для мелкого текста (back). В ветке ys
       // ручные marginTop не нужны: вертикаль строки целиком задаёт y из плана.
-      // Большая строка (задание ZY) кегль берёт из плана (lk) — back-скейл её не касается,
+      // Большая строка кегль берёт из плана (lk) — back-скейл её не касается,
       // lk его заменяет, как и в .jsx.
       if(lk!=null){
         dv.style.fontSize='calc(var(--introsfs,8.4cqw) * '+lk+')';
@@ -1571,7 +1612,7 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
       }else if(!ys&&li>0&&lines[li-1].back){
         dv.style.marginTop='-0.15em';
       }
-      // Шрифт строки (задания AD/BO/DA/DB) — из ПЛАНА: plan.intro[].fonts считает Python
+      // Шрифт строки — из ПЛАНА: plan.intro[].fonts считает Python
       // ровно той же лесенкой, что уходит в .jsx (accent_font -> жёлтая intro_hl_font ->
       // intro_font). Своей лесенки превью не держит: жёлтые строки без intro_hl_font/
       // intro_font оставались без шрифта и рисовались системным с fontWeight 800 —
@@ -1592,7 +1633,7 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
         sp.dataset.t=(l.times&&l.times[wi]!=null)?l.times[wi]:0;
         sp.dataset.anim=l.anim||'';
         sp.dataset.fx=l.fx||'';
-        // Сжатие появления (задание MH): множитель длительности у ЭТОГО слова — из плана.
+        // Сжатие появления: множитель длительности у ЭТОГО слова — из плана.
         // Больше нуля и меньше единицы — слово играет появление короче (числа те же, что
         // уехали в INTRO_SQ для AE); нет множителя — анимация прежняя.
         const sqw=(sqs&&sqs[li]&&sqs[li][wi]!=null)?sqs[li][wi]:0;
@@ -1624,7 +1665,7 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
       if(gi>=0&&IPV.intro[gi].lines[IPV.intro[gi].lines.length-1]===l){
         const h=document.createElement('i');h.className='intro-scale-handle';h.dataset.t=t('Изменить масштаб интро (двойной клик — вернуть авто)');dv.appendChild(h);}
       io.appendChild(dv);});
-      // Посадка строк по y из плана (задание A2): базовая линия строки — на её y из плана,
+      // Посадка строк по y из плана: базовая линия строки — на её y из плана,
       // пересчитанном от центра контейнера (y из плана отсчитан от центра прекомпа высотой
       // plan.h). k — CSS-пиксели на пиксель прекомпа, тот же, что у прочих пересчётов превью.
       // Замер смещения базовой линии — ОДИН раз на построение группы (меняется IPV.introCur),
@@ -1645,7 +1686,7 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
         const rows=io.querySelectorAll('.iline');
         for(let li=0;li<rows.length;li++){
           const dv=rows[li];
-          // Левый край строки большого блока (задание ZY): центр контейнера + lx в px
+          // Левый край строки большого блока: центр контейнера + lx в px
           // превью (тот же коэффициент k, что у вертикали ниже). Текст идёт вправо от
           // этого края, поэтому translateX(-50%) из .iline.abs снимаем.
           if(lxs&&lxs[li]!=null){
@@ -1663,7 +1704,7 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
       }}}
   if(gi>=0){
     const g=IPV.intro[gi];
-    // Слой интро. Обычно — та же формула, что getZ в ipvSubs (порядок из плана, задание FM).
+    // Слой интро. Обычно — та же формула, что getZ в ipvSubs (порядок из плана).
     // Группа, попавшая по времени на видеовставку (front), поднимается на 11: это выше любого
     // слоя layer_order (максимум там 10) — ровно то, что делает AE, унося такой прекомп
     // moveToBeginning (template.py, intro_front_raise). Без признака превью всегда ставило
@@ -1674,17 +1715,23 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
     const i=order.indexOf('intro');
     const zIntro=i>=0?(10-i):0;
     io.style.zIndex=g.front?'11':String(zIntro);
-    // Тень прекомпа интро (задание B): цвет и непрозрачность — из плана, у группы своя
-    // камера (plan.intro[].shadow). Приближение AE Drop Shadow (дистанция 0, мягкость 287):
-    // CSS blur = 287 * k / 2, где k — масштаб блока (стойка/plan.w). Фильтр ставится ДО
-    // transform блока, поэтому масштаб группы (ds, зум камеры) учитывается сам. Нет
-    // shadow (старый бэкенд без перезапуска) — фильтр пустой, как раньше.
+    // Тень прекомпа интро: цвет и непрозрачность — из плана, у группы своя
+    // камера (plan.intro[].shadow). Направление, дистанция и мягкость — числа
+    // плана, общие у обеих камер (plan.intro_comp_shadow), их же печатает introCompShadow
+    // в .jsx. Приближение AE Drop Shadow: смещение X = dist·cos(dir), Y = dist·sin(dir)
+    // (Y в кадре вниз), мягкость -> CSS blur = soft/2, как и было при 0/287 по умолчанию.
+    // Фильтр ставится ДО transform блока, поэтому масштаб группы (ds, зум камеры)
+    // учитывается сам. Нет shadow (старый бэкенд без перезапуска) — фильтр пустой.
     const sh=g.shadow;
     if(sh&&sh.fill){
       const k=(io.clientWidth||(pl?pl.w:1080))/(pl?pl.w:1080);
-      const R=(287*k*0.5).toFixed(1);
+      const cs=(pl&&pl.intro_comp_shadow)||{};
+      const cSoft=(cs.soft!=null?+cs.soft:287), cDist=(cs.dist!=null?+cs.dist:0);
+      const cRad=(cs.dir!=null?+cs.dir:135)*Math.PI/180;
+      const R=(cSoft*k*0.5).toFixed(1);
+      const dx=(cDist*Math.cos(cRad)*k).toFixed(1), dy=(cDist*Math.sin(cRad)*k).toFixed(1);
       const c=sh.fill.map(v=>Math.round(Math.max(0,Math.min(1,v||0))*255));
-      io.style.filter='drop-shadow(0 0 '+R+'px rgba('+c[0]+','+c[1]+','+c[2]+','+((sh.op||0)/255).toFixed(3)+'))';
+      io.style.filter='drop-shadow('+dx+'px '+dy+'px '+R+'px rgba('+c[0]+','+c[1]+','+c[2]+','+((sh.op||0)/255).toFixed(3)+'))';
     }else{io.style.filter='';}
     // Общий фейд-аут группы интро: длительность спада (fade) приходит в плане из
     // scene_plan — у прекомпов с глитчем она короче (0.45/0.35 вместо обычной 0.75),
@@ -1700,7 +1747,7 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
       const dt=tm-tw;
       const anim=sp.dataset.anim||'';
       const isCount=(sp.dataset.isCount==='1');
-      // Множитель сжатия появления этого слова (задание MH): длительность анимации
+      // Множитель сжатия появления этого слова: длительность анимации
       // множится на него — ровно так же, как ключи в AE (INTRO_SQ в .jsx).
       const sq=(+sp.dataset.sq>0&&+sp.dataset.sq<1)?+sp.dataset.sq:1;
       if(dt<0){
@@ -1826,23 +1873,32 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
     });
   }
   if(gi>=0)ipvIntroPos(gi,tm);}   // позиция блока из плана (dx/dy группы) — и после рефетча плана
-// позиция интро-блока в кадре из плана (задание E): dx/dy группы — comp-пиксели, на экран
+// позиция интро-блока в кадре из плана: dx/dy группы — comp-пиксели, на экран
 // через k (стойка/plan.w). Общий сдвиг нула и INTRO_Y в AE «вшиты» в CSS-позицию блока.
 function ipvIntroPos(gi,tm){const io=$('ipvintro');if(!io)return;
   const pl=IPV.plan,g=pl&&pl.intro[gi];
   const k=(io.clientWidth||(pl?pl.w:1080))/(pl?pl.w:1080);
   // Интро висит на нуле «интро», привязанном к нулу Камеры 1: в AE оно наследует зум —
-  // едет и МАСШТАБИРУЕТСЯ на s (задание Q). Базовая позиция блока (задание Q2) живёт
+  // едет и МАСШТАБИРУЕТСЯ на s. Базовая позиция блока живёт
   // В ПЛАНЕ (plan.intro[].y, от центра кадра), а не в CSS: превью рисует её из плана,
   // и она идёт в ipvCamChild как часть p — база едет и масштабируется вместе со всем.
   // Смещение группы g.dy складывается поверх (его правит драг в кэше плана).
-  // Общий масштаб интро (задание BG): в AE он на нуле «интро», родителе прекомпа, поэтому
+  // Общий масштаб интро: в AE он на нуле «интро», родителе прекомпа, поэтому
   // множит и СМЕЩЕНИЕ группы (dx/dy), и размер (ds) — а база y уже включает G (считает
-  // scene_plan, задание BG). Поля в плане нет (старый ответ) = 100%, как сегодня.
-  // Галка «интро едет с камерой» снята (задание ZM): зум и сдвиг камеры к блоку не
+  // scene_plan). Поля в плане нет (старый ответ) = 100%, как сегодня.
+  // Галка «интро едет с камерой» снята: зум и сдвиг камеры к блоку не
   // применяются вовсе — точка и зум приходят из ipvIntroChild (там же затемнение).
   const G=((pl&&pl.intro_scale!=null)?pl.intro_scale:100)/100;
   const cc=ipvIntroChild(G*(g?g.dx||0:0), (g?g.y||0:0)+G*(g?g.dy||0:0), tm!=null?tm:ipvNow());
+  // Точка масштабирования блока (intro_scale_anchor): в AE якорь слоя прекомпа стоит на Y
+  // строки блока (INTRO_ANCHOR_Y), а Position приезжает уже компенсированным — блок
+  // уменьшается ОТ СВОЕГО ТЕКСТА, а не подтягивается к середине кадра. В превью то же
+  // делает transform-origin в той же точке: проценты от высоты контейнера (#ipvintro
+  // растянут на кадр, как posy/H у субтитров), k тут не нужен. Число — из плана, второго
+  // чтения ключей стиля во фронте нет; поля нет (дефолт «центр композиции») — origin
+  // снимаем, и блок масштабируется от центра контейнера, как раньше.
+  const ay=(g&&g.anchor_y!=null)?g.anchor_y:null;
+  io.style.transformOrigin=(ay!=null)?('50% '+(ay/((pl&&pl.h)||1920)*100).toFixed(3)+'%'):'';
   io.style.transform='translate('+(cc[0]*k)+'px,'+(cc[1]*k)+'px) scale('+(0.968*G*((g&&g.ds!=null?g.ds:100)/100)*cc[2])+')';}
 // головная строка gi-й группы (в том же порядке, что группы плана: обе по таймингу).
 // Считаем как introWalk: головой с count=0 группа НЕ начинается (в план такая не попала),
@@ -1963,7 +2019,7 @@ document.addEventListener('keydown',e=>{if(!$('mbCams').classList.contains('on')
   const tg=(e.target.tagName||'').toLowerCase();if(tg==='input'||tg==='textarea'||tg==='select')return;
   if(e.key===' '){e.preventDefault();cpvToggle();}});
 
-// ---- перетаскивание в кадре (задание E, шаг 2): вставки / интро / субтитры ----
+// ---- перетаскивание в кадре (шаг 2): вставки / интро / субтитры ----
 // Общая механика как на полосе вставок: pointer events, элемент едет локально сразу, в данные
 // значение пишется по ОТПУСКАНИЮ, план догоняет тем же дебаунсом (ipvPlanSoon), плеер не
 // перезапускается. Главная ловушка — пересчёт координат: экранные px делятся на k (ширина
@@ -1995,9 +2051,9 @@ $('ipvins').addEventListener('pointerdown',e=>{
   const k=(wr.clientWidth||W)/W;
   // зум делим ТОЛЬКО там, где placement его умножает (фото кам1 на кам1 — печёные ключи)
   const z=(x.card&&x.style==='cam1'&&!x.oncam2)?ipvZoomAt(ipvNow()):1;
-  // Вставка «на подложке» (задание ZQ): драг двигает ВСЮ карточку — плашку с фото,
+  // Вставка «на подложке»: драг двигает ВСЮ карточку — плашку с фото,
   // поэтому старт и запись идут по kx/ky; у остальных вставок — по x/y, как раньше.
-  // Поля положения/масштаба на странице вставок по-прежнему правят только фото (ZI).
+  // Поля положения/масштаба на странице вставок по-прежнему правят только фото.
   const onPlate=!!(x.card&&x.card.plate);
   const st={x0:e.clientX,y0:e.clientY,x:onPlate?(INS[real].kx||0):(INS[real].x||0),
             y:onPlate?(INS[real].ky||0):(INS[real].y||0),lock:null};
@@ -2012,7 +2068,7 @@ $('ipvins').addEventListener('pointerdown',e=>{
     [dx,dy]=axisLock(st,dx,dy,st.lock!==null);
     const nx=Math.round((st.x+dx)*10)/10,ny=Math.round((st.y+dy)*10)/10;
     if(onPlate){INS[real].kx=nx;INS[real].ky=ny;}else{INS[real].x=nx;INS[real].y=ny;}
-    // сдвиг пишем и в карточку шага 2 — она источник x/y (задание BL): драг правил только
+    // сдвиг пишем и в карточку шага 2 — она источник x/y: драг правил только
     // INS, а ensureJobs при следующем открытии предпросмотра пересобирает список из карточек
     // и возвращал ноль. Ищем ту же карточку тем же norm-сравнением пути (правило как у маски).
     // kx/ky уезжают туда же: у вставки на подложке карточка — источник сдвига ВСЕЙ карточки.
@@ -2043,12 +2099,12 @@ $('ipvintro').addEventListener('pointerdown',e=>{
   const handle=e.target.closest('.intro-scale-handle');
   if(!handle&&!e.target.closest('.iline'))return;
   ipvIntroDragStart(e,handle);});
-// интро: двойной клик по ручке масштаба возвращает автофит (gs=100, задание CF)
+// интро: двойной клик по ручке масштаба возвращает автофит (gs=100)
 $('ipvintro').addEventListener('dblclick',e=>{
   if(!e.target.closest('.intro-scale-handle'))return;
   ipvIntroScaleReset(e);});
 // Тела драга и сброса интро — ОДНИ на обработчики #ipvintro и #ipvins: второй копии
-// логики быть не должно (на разъехавшихся копиях уже горели, задание BG). Объявлены
+// логики быть не должно (на разъехавшихся копиях уже горели). Объявлены
 // выражениями в const, а не function-декларациями, намеренно: сторож
 // tests/test_ui_static.py режет обработчик интро до следующего `\nfunction ` и иначе
 // потерял бы из среза расчёт оси и запись gx/gy/gs.
@@ -2060,7 +2116,7 @@ const ipvIntroDragStart=function ipvIntroDragStart(e,handle){
   e.preventDefault();e.stopPropagation();
   const io=$('ipvintro'),W=pl.w||1080;
   const k=(io.clientWidth||W)/W;
-  // Общий масштаб интро (задание BG): блок отрисован с множителем G (см. ipvIntroPos),
+  // Общий масштаб интро: блок отрисован с множителем G (см. ipvIntroPos),
   // и экранные px переводятся в пространство группы делением на k*G — иначе при 60%
   // блок уезжает из-под пальца, а уголок тянет вдвое сильнее, чем просили.
   const G=((pl&&pl.intro_scale!=null)?pl.intro_scale:100)/100;
@@ -2100,7 +2156,7 @@ const ipvIntroHitAt=function ipvIntroHitAt(x,y){
     return null;
   }
   return null;};
-// Субтитры в кадре мышью НЕ таскаются (задание MD): высота правится ползунком стиля
+// Субтитры в кадре мышью НЕ таскаются: высота правится ползунком стиля
 // («Высота субтитров, % снизу»), а перехваченный клик по строке мешал работе с кадром.
 // Прежний драг правил CURSTYLE.sub_y через posy плана — от него остался только путь
 // через поле стиля (stEdit → ipvPlanSoon), он и есть единственный.

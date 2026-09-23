@@ -8,6 +8,10 @@
 
 // ================= progress overlay =================
 let PROGMIN=false;   // прогресс свёрнут в чип (оверлей скрыт, задача продолжается)
+// Контекст текущей очереди: заголовок операции, номер и имя клипа. Держится, пока идёт
+// очередь, и НЕ затирается сообщениями об этапах — иначе на экране остаётся один этап
+// без ответа на вопрос «над каким клипом и сколько ещё осталось».
+let PROGQ=null;   // {title, i, n, name}
 function progMini(){PROGMIN=true;$('prog').classList.remove('on');$('progmini').classList.add('on');}
 function progMaxi(){PROGMIN=false;$('progmini').classList.remove('on');$('prog').classList.add('on');}
 function progShow(stage,sub){$('progStage').textContent=stage||t('Работаю…');$('progSub').textContent=sub||'';
@@ -23,21 +27,40 @@ function progReadySet(n){const b=$('progReady');if(!b)return;
   b.style.display=n?'':'none';b.textContent=t('Править готовые: ')+n;}
 function progToReady(){progMini();goStep(1);
   const h=$('clips1');if(h)h.scrollIntoView({behavior:'smooth',block:'center'});}
+// Строка очереди: «клип i из N · имя клипа». Пусто, если контекста нет или он без счётчика.
+function progQueueText(){const q=PROGQ;if(!q)return '';
+  const pos=(q.n>0)?t('клип {i} из {n}',{i:q.i,n:q.n}):'';
+  return [pos,q.name].filter(Boolean).join(' · ');}
+// Выставить/обновить контекст очереди: заголовок операции, номер и имя клипа. Зовётся в
+// начале длинной операции и на каждом её клипе, а не на каждом этапе: этапы меняет progStep.
+function progQueue(title,i,n,name){PROGQ={title:title||'',i:i||0,n:n||0,name:name||''};
+  if(PROGQ.title)$('progStage').textContent=PROGQ.title;
+  $('progSub').textContent=progQueueText();}
+// Сменить ТОЛЬКО этап (и, если задан, процент): строка очереди остаётся на экране —
+// без неё этап не отвечает на вопрос «над каким клипом и сколько ещё осталось».
+function progStep(stage,frac){progUpdate(frac,stage);}
 function progUpdate(frac,stage,title,sub){if(title)$('progStage').textContent=title;
-  if(stage!=null)$('progSub').textContent=sub?(sub+' · '+stage):stage;else if(sub!=null)$('progSub').textContent=sub;
-  const f=$('progFill');
-  if(frac==null){f.className='progfill indet';$('progPct').textContent='';}
-  else{f.className='progfill';f.style.width=Math.max(3,Math.min(100,frac*100))+'%';$('progPct').textContent=Math.round(frac*100)+'%';}
-  const pf=$('pmFill');                       // зеркалим в свёрнутый чип
-  if(frac==null){pf.className='fill indet';pf.style.width='';$('pmPct').textContent='';}
-  else{pf.className='fill';pf.style.width=Math.max(3,Math.min(100,frac*100))+'%';$('pmPct').textContent=Math.round(frac*100)+'%';}
+  // Явный sub главнее (хвост лога, версия AE): у него своя строка. Без него подпись
+  // собирает контекст очереди — «клип i из N · имя клипа» + этап.
+  const s=sub||progQueueText();
+  if(stage!=null)$('progSub').textContent=s?(s+' · '+stage):stage;else if(s!=null)$('progSub').textContent=s;
+  const f=$('progFill'),pf=$('pmFill');       // pf — зеркало в свёрнутый чип
+  // frac===undefined — процент не передан (так зовёт progStep): шкалы не трогаем, иначе
+  // смена этапа сбрасывала бы уже показанный процент в «бегающую» полоску.
+  if(frac!==undefined){
+    if(frac==null){f.className='progfill indet';$('progPct').textContent='';
+      pf.className='fill indet';pf.style.width='';$('pmPct').textContent='';}
+    else{const w=Math.max(3,Math.min(100,frac*100))+'%',p=Math.round(frac*100)+'%';
+      f.className='progfill';f.style.width=w;$('progPct').textContent=p;
+      pf.className='fill';pf.style.width=w;$('pmPct').textContent=p;}
+  }
   $('pmText').textContent=$('progSub').textContent||$('progStage').textContent;}
-function progDone(msg){const f=$('progFill');f.className='progfill done';f.style.width='100%';
+function progDone(msg){PROGQ=null;const f=$('progFill');f.className='progfill done';f.style.width='100%';
   $('progStage').textContent=t('Готово');$('progSub').textContent=msg||'';$('progPct').textContent='100%';$('progClose').style.display='';
   $('progStop').style.display='none';progReadySet(0);   // очередь кончилась — список и так на экране
   const pf=$('pmFill');pf.className='fill done';pf.style.width='100%';$('pmPct').textContent='';
   $('pmText').textContent=t('Готово — открыть');}
-function hideProg(){PROGMIN=false;$('prog').classList.remove('on');$('progmini').classList.remove('on');}
+function hideProg(){PROGQ=null;PROGMIN=false;$('prog').classList.remove('on');$('progmini').classList.remove('on');}
 // «Остановить»: серверная задача (нарезка/сборка) гасится через /api/cancel (subprocess убивается
 // сразу, внутрипроцессный шаг — после текущего клипа); клиентские циклы (разметка) смотрят UICANCEL.
 let UICANCEL=false;
@@ -61,7 +84,7 @@ async function cancelTask(){UICANCEL=true;const b=$('progStop');b.disabled=true;
   if(fail===2){b.disabled=false;progUpdate(null,t('сервер не ответил — остановка не отправлена'));
     $('progClose').style.display='';toast(t('Сервер не ответил: ')+t('остановка не отправлена'));}}
 
-// ================= Очередь этапов пофайловая (задания FA, FP) =================
+// ================= Очередь этапов пофайловая =================
 // Один список items на нарезку/сборку/рендер: имя файла, этап, процент у render,
 // результат у done, причина у error. Показывается прямо в модалке прогресса по дефолту.
 // Зелёный #98ff38 — ТОЛЬКО у done (это статус «готово», а не украшение, DESIGN.md).

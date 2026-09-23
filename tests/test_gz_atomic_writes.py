@@ -38,6 +38,10 @@ CACHE_WRITES = {
         'json.dump(ws, open(out, "w", encoding="utf-8"), ensure_ascii=False)':
             "кэш расшифровки CTC — следующий прогон перезапишет",
     },
+    "core/cutjob.py": {
+        'json.dump(words, open(fin, "w", encoding="utf-8"), ensure_ascii=False)':
+            "вход CLI-сабпроцесса falign во временный файл с уникальным именем",
+    },
     "core/falign_cli.py": {
         'json.dump(out, open(fout, "w", encoding="utf-8"), ensure_ascii=False)':
             "выход CLI-сабпроцесса во временный файл (путь задаёт вызывающий)",
@@ -52,7 +56,7 @@ CACHE_WRITES = {
     },
     "core/omni_cut.py": {
         # выученные фразы-галлюцинации (HALLUC_PHRASES_PATH) ушли из этого списка:
-        # задание IB перевело их на atomic_json_dump — файл рядом с копией, его терять
+        # их перевели на atomic_json_dump — файл рядом с копией, его терять
         # нельзя, он набирается прогонами.
         'json.dump([list(s) for s in spans if s], open(ivp, "w"))':
             "временный файл интервалов речека в рабочем каталоге нарезки",

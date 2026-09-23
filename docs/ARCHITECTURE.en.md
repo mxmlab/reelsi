@@ -9,8 +9,9 @@
 ## What it is and where we're going
 
 A local "CapCut for PC" that works on top of **Adobe Premiere + After Effects**.
-It automates the routine of editing short vertical videos (talking-head, multicam
-1–4 cameras). Everything runs locally on GPU, nothing goes to the cloud.
+It automates the routine of editing short vertical videos (talking-head, multicam:
+up to four cameras, verified on two). Everything runs locally on GPU, nothing goes
+to the cloud.
 
 The core is **AI editing**, already wired in and working:
 
@@ -51,7 +52,7 @@ Blue — Python tools (automatic), yellow — manual work, gray — files:
    browser and edits by dragging; then `xml2ae + styles + roto (RVM)` → `.jsx`
    assembled from the approved plan.
 7. **Render — headless**: the "Render" button assembles the project and drives
-   `aerender` (Windows only, see `api/render.py`); After Effects no longer has to be
+   `aerender` (Windows only, the engine is `core/aerender.py`); After Effects no longer has to be
    opened by hand.
 
 Only stage 5 (and even that optionally) remains manual — the creative end. The manual
@@ -65,7 +66,7 @@ Entry via `core/omni_cut.py` (default `gigaam`). The ASR engine is selected in s
 (`active_cut_asr`, only engines with `cut: true`). One pipeline combines everything the
 classic path did with separate modules — details below.
 
-### Engine 2 — classic (legacy: VAD + Whisper, `reelsi.process_pair`)
+### Engine 2 — classic (legacy: VAD + Whisper, `process_pair` from `core/cutjob.py`)
 Kept for compatibility and accessible via the VAD branch ("Pauses" stage = `loud`):
 `sync` (audio+sync) → `vad` (pause removal by loudness) →
 optional `transcribe` (Whisper large-v3, cache `<src>.words.<md5>.json`, loaded only
@@ -589,7 +590,8 @@ over-the-shoulder fly-out loses its point, a deliberate choice).
 | `core/cutstages.py` | **single source of truth for cutting stages** (`STAGES`, `DEFAULTS`, `DEFAULT_THRESHOLDS`), normalization, and `to_reelsi_opts` generation |
 | `core/gigaam_cut/` | **Engine 1 (main)**: GigaAM whole-file cutting: `tune` (thresholds), `takes` (takes + code post-pass), `asr` (transcription + alignment), `decide` (decision prompts), `pipeline` (run orchestrator). Thresholds are ONLY in `tune`, read via the module, never imported by name |
 | `core/xml2ae/` | export to After Effects: `to_ae_full()` assembles `.jsx`, `build_combined()` — several clips into one. `scene_plan` is the ASSEMBLER of the scene plan (parse the XML, call the block entry points, lay the result out by key); the plan maths itself is split into blocks (tasks MR–MW): `plan_subs` (subtitles), `plan_intro` (intro maths), `plan_intro_tpl` (intro template substitutions), `plan_inserts` (inserts), `plan_audio` (sound and censorship), `plan_camera` (camera: zoom, pan, roto markup, head follow) |
-| `core/aicut/` | LLM markup: yellow words / inserts / intro / cut decision; package since 2026-08-06; `llm.py` (begin_call, cancel_stream), `commands.py` (yellow_cmd, inserts_cmd, intro_cmd), `config.py` (profiles CRUD), `images.py`, `video.py` |
+| `core/xml2ae/plan_style.py` | **the style is read ONCE** into a `StyleValues` structure (`read_style`, task NO): the plan blocks take ready values from it instead of calling `_sv`/`_sv_or` on every line |
+| `core/aicut/` | LLM markup: yellow words / inserts / intro / cut decision; package since 2026-08-06; `llm.py` (begin_call, cancel_stream), `commands.py` (yellow_cmd, inserts_cmd, intro_cmd), `config.py` (profiles CRUD), `config_actions.py` (the `/api/ai_config` actions, one function per action — `set_glitch_glow`, `save_profile` and the rest; the key mask `•••…` = "key unchanged" is handled here too, via `unmask_ai_key` from `config`; the route stays thin, task NZ), `images.py`, `video.py` |
 | `core/omni_cut.py` | CLI/job of AI cutting: default `gigaam`, legacy `--mode old`; `--speaker`, `--selfcheck-model`, `--no-draft`; entry for both engines |
 | `core/xmlbuild.py` | Premiere xmeml assembly (cameras, segments, subtitles) |
 | `core/align.py` | words→timeline, `find_repeat_ranges`, `assign_cameras`, `make_srt`, `is_enumeration` |
@@ -600,7 +602,10 @@ over-the-shoulder fly-out loses its point, a deliberate choice).
 | `core/speakers.py` | speaker profiles: cut thresholds + folder + style |
 | `core/roto.py` | RVM video matting of the character (alpha masks) |
 | `core/headtrack.py` | head track by the RVM person mask (task ZC): RVM over the SHOWN pieces of the camera 1 source (`fps=10`, `scale=432:-2`, recurrent state reset per piece), "head" = X centre of the top band of the silhouette. Sidecar `<stem XML>.head.json` next to the XML (path, size, mtime, `ranges`): `load_cached` is the single validity check (used by both `load_or_track` and `scene_plan`), `load_or_track` computes on a miss, `head_at` interpolates over `None` gaps. Computed in one door — the head of `to_ae_full`; `scene_plan` only READS the sidecar, so the preview needs no GPU |
-| `reelsi.py` | CLI of classic cutting (VAD branch, `process_pair`; legacy) |
+| `reelsi.py` | CLI of classic cutting (VAD branch; legacy, see Engine 2): flag parsing and a call into the engine in `core/cutjob.py` |
+| `core/cutjob.py` | `process_pair` and `CutOptions` — the single source of cutting defaults (VAD + Whisper) for the CLI and the API: field names follow the CLI flags and the API `opts` keys, and the translation between the two lives here rather than in ad-hoc numbers on the spot (task NY) |
+| `core/cams.py` | camera folders and the videos inside them: finding `cameraN`/`камераN` directories (`find_cam_dirs`) and listing the clips of a folder (`list_videos`) — one source for the UI, the API and the CLI (task NY) |
+| `core/rclone.py` | pure `rclone` functions: parsing a Google Drive link (`parse_gdrive_link` — file or folder, `resourcekey`), config and remotes, command assembly, parsing progress and statistics lines |
 | `core/assets.py` | asset resolver (transitions, sounds) from `assets/assets.json` |
 | `core/fonts.py` | list of installed fonts |
 | `core/censor.py`/`core/terms.py` | censorship + ASR terminology dictionary |
@@ -618,7 +623,8 @@ over-the-shoulder fly-out loses its point, a deliberate choice).
 | `core/app_meta.py`, `core/device.py` | paths/environment, device selection (cuda → mps → cpu) |
 | `core/fileio.py` | atomic writing of JSON and text files (tmp + fsync + replace; target permissions and symlinks preserved). RULE: atomic writing lives ONLY here — `os.replace` outside this file is forbidden (guarded by `tests/test_infra_dedup.py`) |
 | `core/media.py` | media duration: ONE ffprobe probe for every call site (`probe_duration`; `None` = "could not read" — no file, no ffprobe, a hang, a broken container; cached by path + mtime + size, 30 s timeout). There used to be five copies, and they diverged exactly on errors: some returned 0.0, others raised (task NB) |
-| `doctor.py` | environment diagnostics |
+| `doctor.py` | environment diagnostics; also checks the optional external binaries — `rclone` (Google Drive download) and After Effects (headless render, via `core.aerender.find_ae` — one source for doctor and the render) |
+| `core/aerender.py` | **the headless render engine with no job state** (task NN): finding and driving AE (`find_ae`, `ae_running`, `short_path`), parsing `aerender` output (frame regexes, timecode, composition name, frame share), ETA and phase-duration statistics (`load_render_stats`/`save_render_stats`, `predict_aep_times`, `eta_secs`), result checks (`rendered_ok`, `comp_frames`), the default output folder (`default_render_dir`). It used to live inside `api/render.py` and was out of reach for the CLI and `doctor.py` without importing the Flask layer |
 | `core/insertlib.py` | insert library: XML + folder scan, `insertlib.json` index, semantic lookup; also `remove_bg` (rembg) and `nobg_path(media)` — ONE cache of a photo without background for the build and the preview (`<folder>/<stem>.nobg.png`; error of rembg or a non-image returns the source path and reports through `emit`) |
 | `api/` | **shared backend**: all `/api/*` (Blueprint), JOB/LOCK, jobs |
 | `webui.py` | **main** web UI (port 5001) |
@@ -629,6 +635,10 @@ over-the-shoulder fly-out loses its point, a deliberate choice).
 | `tools/harvest_good.py` | template/subtitle blob rebuild |
 | `tools/analyze_blobs.py` | subtitle template diagnostics |
 | `tools/` | i18n tooling: `i18n_extract.py` / `i18n_js_keys.py` / `i18n_merge.py` |
+
+Layer rule: `api/` holds routes and job state, the engine lives in `core/`; `core/` imports
+neither `api` nor `flask`, and `api/` does not import the CLI (`reelsi.py`). Guarded by
+`tests/test_layers.py` and `tests/test_api_no_cli.py`.
 
 ## Input / Output
 
@@ -771,7 +781,7 @@ Fields added by tasks ZA–ZQ:
   and horizon, ZB); `zoom.fit` is always `100` after ZE, because the `cam1_fit`
   multiplier is already folded into the zoom KEYS in one place; `zoom.follow` —
   `{keys, ease}` of the head track (no key at all when the checkbox is off);
-- `lumetri` — `None` or the nine values with the clip exposure already added (ZJ);
+- `lumetri` — `None` or the nine values with the clip exposure already added;
 - `intro_fsize` (the intro size BEFORE rows auto-shrink, ZL) and `intro_cam`
   (whether the intro rides the camera 1 null, ZM).
 

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты задания ZG: кадр предпросмотра — весь исходник через одну матрицу камеры.
+"""Тесты: кадр предпросмотра — весь исходник через одну матрицу камеры.
 
 Что стерегут (каждый — пойманный дефект):
 
@@ -124,7 +124,7 @@ def test_paint_draws_whole_source():
     """2. drawImage зовётся с исходным прямоугольником 0,0,vw,vh (весь кадр), не с вырезкой.
 
     Заодно: при пустом `plan.lumetri` фильтр превью снят (`'none'`) и документа не трогает."""
-    # ipvCamPaint надевает на холст фильтр Lumetri (задание ZJ), поэтому в сборку идут и он
+    # ipvCamPaint надевает на холст фильтр Lumetri, поэтому в сборку идут и он
     # сам, и всё, что он зовёт: без них node падал на ReferenceError, а не проверял рисование.
     code = _js("keysAt", "ipvZoomAt", "ipvCamShift", "ipvCamMatrix",
                "ipvLmSmooth", "ipvLumetriTone", "ipvLumetriTable",

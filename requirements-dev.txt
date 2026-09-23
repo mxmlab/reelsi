@@ -8,6 +8,10 @@
 pytest>=8.0
 # linter; same rule set as in CI (ruff.toml)
 ruff>=0.6
+# Статическая проверка типов на ГРАНИЦЕ ядра: строгий список модулей —
+# в [tool.mypy] pyproject.toml, храповик — tests/test_typing_ratchet.py. Версия
+# закреплена минорной: новая майорская меняет правила и красит сборку на ровном месте.
+mypy>=1.11,<2
 # ONLY for retraining the breath detector (train_breath.py);
 # production ships the extracted breath_model.json
 scikit-learn>=1.3

@@ -76,7 +76,7 @@ def test_rendered_jsx_without_subs_is_syntactically_valid(xml_nosubs, tmp_path):
 
 
 def test_headless_jsx_tail_contract(xml_nosubs, tmp_path):
-    """Безголовый .jsx (задание BD): alert из шаблона убран, есть save и quit, очередь
+    """Безголовый .jsx: alert из шаблона убран, есть save и quit, очередь
     чистится до добавления, а папку вывода задаём ПОСЛЕ applyTemplate — пресет «Untitled 1»
     несёт свой путь и молча перебьёт заданный до него. Пропавший файл в imp() пишет в
     $.writeln, а не alert: в -noui модалка зависла бы навсегда."""
@@ -84,19 +84,19 @@ def test_headless_jsx_tail_contract(xml_nosubs, tmp_path):
     xml2ae.to_ae_full(xml_nosubs, out, emit=lambda *a: None,
                       render_dir="C:/путь/exp")
     src = open(out, encoding="utf-8-sig").read()
-    assert 'alert("Reelsi: собрано' not in src       # итоговый alert убран везде (задание BD)
-    assert 'savePrefAsString' not in src             # галка «Allow Scripts…» тут ни при чём (задание CD)
+    assert 'alert("Reelsi: собрано' not in src       # итоговый alert убран везде
+    assert 'savePrefAsString' not in src             # галка «Allow Scripts…» тут ни при чём
     assert 'while (rq0.numItems > 0)' in src         # очередь чистим
     assert 'applyTemplate("Best Settings")' in src
     assert 'applyTemplate("Untitled 1")' in src      # ровно так, через пробел
     assert 'new File("C:/путь/exp" + "/" + main.name + ".mov")' in src
     # файл ПОСЛЕ applyTemplate: индекс om.file > om.applyTemplate
     assert src.index("om.file") > src.index('om.applyTemplate("Untitled 1")')
-    # .aep сохраняется ДВАЖДЫ (задание BT): до очереди — чтобы появился, даже если
+    # .aep сохраняется ДВАЖДЫ: до очереди — чтобы появился, даже если
     # очередь не собралась, и после — чтобы в него попала очередь
     assert 'var f = new File("' in src and src.count("new File(") >= 3   # aelog + aep + om.file
     assert src.count("app.project.save(f)") == 2
-    # лог хвоста — файлом (.aelog.txt), а не $.writeln: в -noui наши $.writeln не видны (задание CD)
+    # лог хвоста — файлом (.aelog.txt), а не $.writeln: в -noui наши $.writeln не видны
     assert ".aelog.txt" in src and "$.writeln(\"REELSI" not in src
     assert src.count("_log.writeln") >= 5                 # каждый шаг хвоста пишет в файл-лог
     assert "}finally{" in src and "app.quit();" in src   # quit в finally: иначе AE повиснет процессом
@@ -124,7 +124,7 @@ def test_manual_jsx_has_no_alert_but_keeps_viewer(xml_nosubs, tmp_path):
     out = str(tmp_path / "manual.jsx")
     xml2ae.to_ae_full(xml_nosubs, out, emit=lambda *a: None)
     src = open(out, encoding="utf-8-sig").read()
-    assert 'alert("Reelsi: собрано' not in src       # итоговый alert убран везде (задание BD)
+    assert 'alert("Reelsi: собрано' not in src       # итоговый alert убран везде
     assert 'alert("Не найден файл' in src            # imp(): человек у экрана должен увидеть, чего нет
     assert "main.openInViewer()" in src
     assert "app.quit()" not in src                   # сохраняет пользователь сам

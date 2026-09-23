@@ -8,7 +8,7 @@
 
 // ================= styles (ported) =================
 let STYLES={},CURSTYLE=null,STYLESAVED='base',FONTS=[];
-// Режим правки шаблона (задание AC2): STYLE_EDITING — имя открытого на карандаш шаблона,
+// Режим правки шаблона: STYLE_EDITING — имя открытого на карандаш шаблона,
 // STYLE_EDIT_ORIG — его снимок до правок (для «несохранённые?»), STYLE_TOUCHED — флаг
 // «поля трогали» для кастома. Селектор в этом режиме показывает имя + « — правится».
 let STYLE_EDITING=null,STYLE_EDIT_ORIG=null,STYLE_TOUCHED=false;
@@ -21,9 +21,9 @@ let SPEAKERS={},SPKSAVED='',SPKDEF={},SPKLAB=[],SPKEDIT='';
 // Глобальная папка для .jsx (клипы БЕЗ тега спикера) — отдельно от того, что поле
 // показывает у клипа с тегом. Тег определяет папку клипа (профиль спикера), поле —
 // вид на неё; глобальное значение хранится здесь, чтобы показ папки спикера не
-// затирал папку для клипов без тега (задание N, «клип без спикера — как сегодня»).
+// затирал папку для клипов без тега («клип без спикера — как сегодня»).
 let AEGLOBAL='';
-// Папка вывода безголового рендера (задание BD, шаг 3). Та же механика, что у
+// Папка вывода безголового рендера (шаг 3). Та же механика, что у
 // AEGLOBAL: у клипа со спикером — из его профиля (renderdir), у клипа без тега —
 // глобальная; дефолт — папка exp рядом с репозиторием (подставляет сервер).
 let AERENDER='';
@@ -53,7 +53,7 @@ function applySpeakerDirs(){const p=SPEAKERS[val('speaker')];if(!p)return;
   // Глобальная папка .jsx берёт дефолт из профиля текущего спикера; поле показывает
   // её (клип без тега) или папку тега (клип с тегом) — см. renderAeDirField.
   if((p.jsxdir||'').trim())AEGLOBAL=(p.jsxdir||'').trim();
-  // Папка вывода рендера — так же из профиля (задание BD), см. renderRenderDirField.
+  // Папка вывода рендера — так же из профиля, см. renderRenderDirField.
   if((p.renderdir||'').trim())AERENDER=(p.renderdir||'').trim();
   renderAeDirField();
   // Папки камер — на загрузке страницы, без вопросов. Раньше они подставлялись
@@ -86,7 +86,7 @@ async function spkDir(id,key,ask){const p=SPEAKERS[val('speaker')]||{};
   if(!cur||await askConfirm(ask+want)){
     if(id==='aeoutdir'){AEGLOBAL=want;renderAeDirField();}
     else{$(id).value=want;}}}
-// Папка для .jsx КЛИПА: тег спикера определяет её у клипа (задание N), и каждый
+// Папка для .jsx КЛИПА: тег спикера определяет её у клипа, и каждый
 // собирается в свою; без тега или у спикера без jsxdir — null (в сборку уйдёт
 // глобальное поле). Профиль — источник, поле интерфейса его показывает.
 function effOutdir(c){const j=c&&c.job,spk=(j&&j.speaker)?SPEAKERS[j.speaker]:null;
@@ -111,7 +111,7 @@ function renderRenderDirField(){const sp=openClipSpeaker();
   if(cur)renderDirNote();}
 // Одна папка для .jsx — ДВА поля (шаг 1 и дубль у кнопки сборки на шаге 3), а значение
 // одно: правка любого поля видна в обоих. Отдельной переменной нет — источник один.
-// Сохранение на каждый ввод — по заданию J, пункт 4: поля папок были голыми инпутами,
+// Сохранение на каждый ввод: поля папок были голыми инпутами,
 // и правка жила только до ближайшего тика flushSave (2.5с) — F5 или квота localStorage
 // раньше тика возвращали старое сохранённое значение ровно с applyState при загрузке.
 function aeDirSync(el){
@@ -141,7 +141,7 @@ async function saveSpeakerJsxdir(sp,dir){
   setAeDir(data.jsxdir);
   uiLog(t('папка спикера «{n}» обновлена: ')+data.jsxdir);}
 // Подпись «откуда папка»: у клипа с тегом — его профиль; без тега — профиль
-// глобального спикера или ручная (задание J, пункт 2). Раньше человек видел путь
+// глобального спикера или ручная (пункт 2). Раньше человек видел путь
 // и не знал, его это значение или подставленное.
 function jsxDirNote(){const sp=openClipSpeaker();
   let note='';
@@ -182,7 +182,7 @@ function renderDirNote(){const sp=openClipSpeaker();
     const v=AERENDER;
     note=(p&&v&&samePath(p,v))?t('папка спикера «{n}»',{n:(SPEAKERS[val('speaker')]||{}).label||''}):(v?t('задана вручную'):'');}
   el.textContent=note;}
-// Папки камер из профиля (задание U): camdirs[k] подставляется при выборе спикера.
+// Папки камер из профиля: camdirs[k] подставляется при выборе спикера.
 // Механика — как spkDir: пусто или совпадает — молча; папку, поставленную руками
 // (CAMFROM === 'user'), не перетираем без подтверждения. После подстановки перечитываем
 // файлы камеры — иначе селекты останутся от старой папки.
@@ -231,14 +231,14 @@ async function onSpeakerChange(){const p=SPEAKERS[val('speaker')];
     // .jsx уезжают в проект AE того же человека — папка у них своя и такая же личная,
     // как папка нарезок. Раньше её меняли руками на шаге сборки и забывали.
     await spkDir('aeoutdir','jsxdir',t('Папка для .jsx задана вручную. Поставить папку спикера?\n'));
-    // Папки камер — те же личные данные (задание U): свой материал, свои исходники.
+    // Папки камер — те же личные данные: свой материал, свои исходники.
     // Механика та же, что у spkDir, только массив: camdirs[k]. Пусто — автоподбор.
     for(let k=0;k<nCams();k++)await camDirApply(k,t('Папка камеры {n} задана вручную. Поставить папку спикера?\n',{n:k+1}));
     const st=$('style');
     // Стиль спикера — ЗНАЧЕНИЕ ПО УМОЛЧАНИЮ: ставим его здесь, а на шаге сборки юзер
     // меняет стиль как хочет, в профиль это не возвращается. Пропавший шаблон (стиль
     // переименовали или удалили) раньше молча игнорировался — и клип собирался чужим.
-    // Клип с тегом живёт СВОИМ стилем (задание N): смена глобального спикера на шаге 1
+    // Клип с тегом живёт СВОИМ стилем: смена глобального спикера на шаге 1
     // не переписывает стиль открытого клипа — он принадлежит тегу, а не глобальному спикеру.
     const openTag=(curAE>=0&&CLIPS[curAE]&&(CLIPS[curAE].job||{}).speaker)||'';
     if(!openTag&&p.style&&st){
@@ -270,7 +270,7 @@ function openSpeaker(key){
   $('spk_pos_a').value=(ips.a&&ips.a.pos==='prefix')?'prefix':'suffix';
   $('spk_extra_b').value=(ips.b&&ips.b.extra)||'';
   $('spk_pos_b').value=(ips.b&&ips.b.pos==='prefix')?'prefix':'suffix';
-  // pa/pb — приписки вставок с галкой «на подложке» (задание ZK): тот же формат, что a/b,
+  // pa/pb — приписки вставок с галкой «на подложке»: тот же формат, что a/b,
   // и так же живут в image_prompts профиля
   $('spk_extra_pa').value=(ips.pa&&ips.pa.extra)||'';
   $('spk_pos_pa').value=(ips.pa&&ips.pa.pos==='prefix')?'prefix':'suffix';
@@ -309,7 +309,7 @@ async function saveSpeaker(){
   const data=SPKEDIT?JSON.parse(JSON.stringify(SPEAKERS[SPKEDIT])):{};
   data.label=label;data.outdir=val('spk_outdir').trim();data.jsxdir=val('spk_jsxdir').trim();data.renderdir=val('spk_renderdir').trim();data.style=val('spk_style');
   data.hint=val('spk_hint');
-  // Приписки к промптам генерации картинок (задание CQ; pa/pb — подложка, задание ZK).
+  // Приписки к промптам генерации картинок (pa/pb — подложка).
   // Пустой слот не пишем, как и раньше: профиль без правок остаётся без image_prompts.
   const exA=val('spk_extra_a').trim(),exB=val('spk_extra_b').trim();
   const exPA=val('spk_extra_pa').trim(),exPB=val('spk_extra_pb').trim();
@@ -328,7 +328,7 @@ async function saveSpeaker(){
     if(videoExA)data.video_prompts.a={extra:videoExA,pos:val('spk_video_pos_a')==='prefix'?'prefix':'suffix'};
     if(videoExB)data.video_prompts.b={extra:videoExB,pos:val('spk_video_pos_b')==='prefix'?'prefix':'suffix'};
   }else delete data.video_prompts;
-  // Папки камер (задание U): пустое поле не пишется — «профиль без правок» не получает
+  // Папки камер: пустое поле не пишется — «профиль без правок» не получает
   // мусорные camdirs, иначе у всех, кто не трогал, «свои» папки сломали бы автоподбор.
   const cds=[];let hasCam=false;
   for(let k=0;k<nCams();k++){const c=val('spk_camdir'+k).trim();cds.push(c);if(c)hasCam=true;}
@@ -455,7 +455,7 @@ function addCustomStyle(){const src=CURSTYLE||STYLES.base||{};CURSTYLE=JSON.pars
 const BUILTIN_STYLES={base:1,geologica:1};   // живут в styles.py, файла в styles/ у них нет
 // Правка ШАБЛОНА. Раньше карандаш переключал селектор на «кастом (свой)» — и человеку
 // казалось, что он заводит новый стиль, хотя сохранение перезаписывало тот же файл
-// (задание AC2). Теперь правка выглядит правкой: селектор показывает имя шаблона с
+// Теперь правка выглядит правкой: селектор показывает имя шаблона с
 // пометкой « — правится», кнопка «Сохранить» перезаписывает его. Встроенным base/geologica
 // файла нет — только «Сохранить как…».
 function editStyle(){
@@ -467,7 +467,7 @@ function editStyle(){
   CURSTYLE=JSON.parse(JSON.stringify(src));
   ensureEditOption(key,src.label||key);
   $('style').value='__edit__';
-  // Рото — теперь поле СТИЛЯ (задание EX2c), а не настройка клипа: шаблон его и приносит,
+  // Рото — теперь поле СТИЛЯ, а не настройка клипа: шаблон его и приносит,
   // fillStyleFields раскладывает по панели вместе с остальными. Прежняя возня с
   // #roto/#rotobottom (запомнить у клипа и вернуть) канула вместе со старой разметкой.
   if($('st_name'))$('st_name').value=BUILTIN_STYLES[key]?'':key;
@@ -477,7 +477,7 @@ function editStyle(){
   if(BUILTIN_STYLES[key])toast(t('«{n}» — встроенный шаблон: сохрани правки под своим именем',{n:t(src.label||key)}));
   else if($('stylehint'))$('stylehint').textContent=t('правится шаблон «{n}» — «Сохранить» перезапишет его',{n:t(src.label||key)});}
 async function delStyle(){let name=$('style').value;
-  // В режиме правки шаблона (задание AC2) в селекторе стоит служебный `__edit__`, а корзина
+  // В режиме правки шаблона в селекторе стоит служебный `__edit__`, а корзина
   // рядом с карандашом — про ТОТ шаблон, который сейчас правится. Без этой строки окно
   // спрашивало «удалить стиль „__edit__“?» и слало на сервер несуществующее имя.
   if(name==='__edit__')name=STYLE_EDITING||'';
@@ -637,7 +637,7 @@ async function onStyleChange(){const sel=$('style');const name=sel.value;const c
   }
   else{
     // Уход со стиля с несохранёнными правками — спросить, а не потерять молча: правки
-    // живут в CURSTYLE и будут перезаписаны новым шаблоном (задание AC2).
+    // живут в CURSTYLE и будут перезаписаны новым шаблоном.
     if(styleDirty()&&!await askConfirm(t('На стиле есть несохранённые правки. Сменить стиль без сохранения?'))){
       sel.value=(STYLE_EDITING?'__edit__':'__custom__');return;
     }
@@ -738,7 +738,7 @@ function setStyleDb(which,v){if(!CURSTYLE)CURSTYLE=JSON.parse(JSON.stringify(STY
   if(typeof stRefresh==='function')stRefresh(which==='music'?'music_db':'voice_db');
   syncDbSliders();applyDbGains();
   captureAE();}
-// Точка наезда Камеры 1 прицелом (задание Q, часть 4): кнопка ставит курсор в crosshair
+// Точка наезда Камеры 1 прицелом (часть 4): кнопка ставит курсор в crosshair
 // над кадром предпросмотра, клик кладёт точку в cam1_zoom_cx/cy (доли кадра), на кадре
 // остаётся маркер-перекрестие. Повторное нажатие кнопки и Esc — отмена. Маркер виден
 // только когда точку ПРАВЯТ: в режиме прицела или на наведении/фокусе на кнопке. Раньше
@@ -793,11 +793,11 @@ function zoomPickClick(e){const st=$('ipvstage');if(!ZOOM_PICK||!st)return;
 document.addEventListener('pointerdown',e=>{if(ZOOM_PICK&&e.target&&e.target.closest('#ipvstage'))zoomPickClick(e);},true);
 document.addEventListener('keydown',e=>{if(ZOOM_PICK&&e.key==='Escape')zoomPickOff();});
 async function pickInto(id){try{const d=await (await fetch('/api/pickone')).json();if(d.path){$(id).value=d.path;stEdit();
-  if(SFX_PREFIX[id])openSfxEdit(id);}}   // заменил звук — сразу настрой (задание AA)
+  if(SFX_PREFIX[id])openSfxEdit(id);}}   // заменил звук — сразу настрой
   catch(e){toast(t('Не открылся выбор файла — сервер не ответил'));uiLog(t('pickone: ')+e);}}
 // Сохранение шаблона: две кнопки — «Сохранить» (перезаписать выбранный шаблон без карандаша,
 // имя уже известно) и «Сохранить как…» (завести новый). Для встроенных base/geologica
-// «Сохранить» требует сохранить под своим именем (задание CU).
+// «Сохранить» требует сохранить под своим именем.
 async function saveStyle(){
   stEdit();
   let target=STYLE_EDITING;
@@ -896,7 +896,7 @@ async function loadASREngines(){
 }
 
 
-// ---- редактор звука: волна, обрезка, точка удара (задание AA) ----
+// ---- редактор звука: волна, обрезка, точка удара ----
 // Открывается карандашом у звука в панели стиля и после выбора файла кнопкой «Файл…».
 // Три маркера тянутся мышью по волне (звук) или по кадру (видеопереход):
 //   in  — обрезать слева (сек от начала файла),

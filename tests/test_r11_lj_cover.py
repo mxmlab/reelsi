@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты гарда покрытия текста моделью и гарда доли речи в omni_cut (задание LJ).
+"""Тесты гарда покрытия текста моделью и гарда доли речи в omni_cut.
 
 ПОЧЕМУ эти тесты существуют:
 1. Если модель вернула пустой ответ, отказ или текст другого ролика,
    align_markup даёт cover < MIN_COVER (0.5). Раньше пустой drop маскировал
    сбой под «резать нечего» и перезаписывал out.xml 100% исходником.
-   Теперь decide_markup обязан падать с SystemExit, защищая готовые файлы.
+   Теперь decide_markup обязан падать с ReelsiError, защищая готовые файлы.
 2. В omni_cut при allow_long_drop=False вето возвращало длинные интервалы,
    сводя llm_drop к 0 и маскируя сбой модели до 100% успеха. Санитарный гард
    доли речи обязан срабатывать ДО возврата длинных интервалов.
@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 from core import aicut, omni_cut
 from core.gigaam_cut import decide, pipeline, tune
+from core.umsg import ReelsiError
 
 _WORDS_VOCAB = [
     "первый", "второй", "третий", "четвертый", "пятый", "шестой", "седьмой", "восьмой",
@@ -74,10 +75,10 @@ def _make_dummy_words(count=20, dur_per_word=1.0):
     {"text": "Извините, не могу помочь"},
     {"text": "совершенно другой текст про космические корабли и дальние планеты галактики"},
 ])
-def test_unrelated_or_empty_model_response_raises_system_exit(
+def test_unrelated_or_empty_model_response_raises_reelsierror(
     monkeypatch, tmp_path, _mock_pipeline_env, bad_response
 ):
-    """Ответ модели не про этот ролик -> SystemExit, исходный XML цел, сайдкаров нет."""
+    """Ответ модели не про этот ролик -> ReelsiError, исходный XML цел, сайдкаров нет."""
     text, words = _make_dummy_words(count=20, dur_per_word=1.0)
     monkeypatch.setattr(pipeline, "transcribe_words_whole", lambda *a, **k: (text, words))
     monkeypatch.setattr(pipeline.aicut, "_ask_json", lambda *a, **k: bad_response)
@@ -85,7 +86,7 @@ def test_unrelated_or_empty_model_response_raises_system_exit(
     out_xml = tmp_path / "out.xml"
     out_xml.write_bytes(b"<xml>original_cut</xml>")
 
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(ReelsiError) as exc_info:
         pipeline.run(
             "dummy.wav", ["cam1.mp4"], [0.0], str(out_xml), 50.4,
             stages={"draft": False, "sense": True, "dedupe": False},
@@ -161,8 +162,8 @@ def test_text_with_bracketed_fragment_cuts_fragment(
     assert "третий четвертый" in cuts_data[0]["text"]
 
 
-def test_omni_cut_model_drops_all_long_intervals_raises_system_exit(monkeypatch):
-    """omni_cut: модель выкидывает все длинные различные интервалы -> SystemExit ДО вето."""
+def test_omni_cut_model_drops_all_long_intervals_raises_reelsierror(monkeypatch):
+    """omni_cut: модель выкидывает все длинные различные интервалы -> ReelsiError ДО вето."""
     texts = [
         {"start": float(i * 3), "end": float((i + 1) * 3), "text": f"содержательный кусок {i}"}
         for i in range(8)
@@ -171,7 +172,7 @@ def test_omni_cut_model_drops_all_long_intervals_raises_system_exit(monkeypatch)
     # Модель просит выкинуть все 8.
     monkeypatch.setattr(aicut, "_ask_json", lambda *a, **k: {"drop": list(range(8)), "notes": "брак"})
 
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(ReelsiError) as exc_info:
         omni_cut.decide(texts, emit=lambda *a, **k: None, allow_long_drop=False)
 
     msg = str(exc_info.value)
@@ -182,11 +183,11 @@ def test_omni_cut_model_drops_all_long_intervals_raises_system_exit(monkeypatch)
 def test_omni_cut_guard_keep_helper():
     """Проверка вспомогательной функции _guard_keep в omni_cut."""
     intervals = [(0.0, 3.0), (3.0, 6.0), (6.0, 9.0), (9.0, 12.0)]
-    # Меньше 25% (3с из 12с = 25%, 2с < 25%) -> SystemExit
-    with pytest.raises(SystemExit):
+    # Меньше 25% (3с из 12с = 25%, 2с < 25%) -> ReelsiError
+    with pytest.raises(ReelsiError):
         omni_cut._guard_keep([(0.0, 2.0)], intervals)
-    # Пустой keep -> SystemExit
-    with pytest.raises(SystemExit):
+    # Пустой keep -> ReelsiError
+    with pytest.raises(ReelsiError):
         omni_cut._guard_keep([], intervals)
     # >= 25% речи -> проходит успешно
     omni_cut._guard_keep([(0.0, 6.0)], intervals)
@@ -202,10 +203,10 @@ def test_min_cover_no_cut_constant_value():
     assert decide.MIN_COVER_NO_CUT == 0.9
 
 
-def test_half_transcript_without_brackets_raises_system_exit(
+def test_half_transcript_without_brackets_raises_reelsierror(
     monkeypatch, tmp_path, _mock_pipeline_env
 ):
-    """Половина транскрипта без скобок (cover=0.5, drop пуст) -> SystemExit (порог 0.9)."""
+    """Половина транскрипта без скобок (cover=0.5, drop пуст) -> ReelsiError (порог 0.9)."""
     text, words = _make_dummy_words(count=20, dur_per_word=1.0)
     monkeypatch.setattr(pipeline, "transcribe_words_whole", lambda *a, **k: (text, words))
     # Ровно половина слов ролика без скобок
@@ -216,7 +217,7 @@ def test_half_transcript_without_brackets_raises_system_exit(
     out_xml = tmp_path / "out.xml"
     out_xml.write_bytes(b"<xml>original_cut</xml>")
 
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(ReelsiError) as exc_info:
         pipeline.run(
             "dummy.wav", ["cam1.mp4"], [0.0], str(out_xml), 50.4,
             stages={"draft": False, "sense": True, "dedupe": False},

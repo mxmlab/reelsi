@@ -20,6 +20,7 @@ from core import cutstages
 from core.app_meta import env, wrap_emit
 from core.app_meta import console_emit
 from core.fileio import atomic_json_dump
+from core.project_file import write_project
 from . import tune
 from .asr import transcribe_words_for_cut, transcribe_words_whole
 _orig_transcribe_words_whole = transcribe_words_whole
@@ -27,6 +28,7 @@ from .decide import decide_markup
 from .takes import build_cutlog, postprocess
 from .tune import (_cut_breaths, _silence_bounds, apply_speaker, keep_intervals,
                    refine_keep)
+from core.umsg import ReelsiError
 
 
 def _audio_file_diag(wav_path):
@@ -36,6 +38,7 @@ def _audio_file_diag(wav_path):
         try:
             sz = os.path.getsize(wav_path)
             file_info = f"существует, {sz} байт ({sz / (1024 * 1024):.2f} МБ)"
+        except ReelsiError: raise
         except Exception as e:
             file_info = f"существует, размер неизвестен ({e})"
     else:
@@ -47,6 +50,7 @@ def _audio_file_diag(wav_path):
             items = os.listdir(parent)
             items_str = ", ".join(items) if items else "пусто"
             dir_info = f"в '{parent}': [{items_str}]"
+        except ReelsiError: raise
         except Exception as e:
             dir_info = f"каталог '{parent}' недоступен ({e})"
     else:
@@ -60,7 +64,7 @@ def _guard_keep(keep, words):
     kept_s = sum(e - s for s, e in keep)
     src_s = (words[-1]["end"] - words[0]["start"]) if words else 0.0
     if not keep or (src_s > 0 and kept_s < 0.25 * src_s):
-        raise SystemExit(
+        raise ReelsiError(
             f"ИИ вырезал почти весь ролик: осталось {kept_s:.1f}с из {src_s:.1f}с "
             f"({len(keep)} сег.). Ничего не перезаписываю — прошлая нарезка цела. "
             f"Проверь модель и промпт в настройках ⚙ и запусти ещё раз.")
@@ -82,9 +86,9 @@ def run(wav_path, cams, offsets, out, scale, model=None,
     model      — модель LM Studio для 27b (None -> активный профиль)
     speaker    — профиль спикера (speakers/*.json): свои пороги под его студию
                  и говор. None = калибровка по спикеру A, как было
-    dedupe     — чистка дублей кодом (задание CA). None = профиль спикера
+    dedupe     — чистка дублей кодом. None = профиль спикера
                  (`speakers.CUT_DEFAULTS.dedupe`) либо дефолт False.
-    stages     — словарь ступеней нарезки (задание GE); если задан, draft/dedupe/etc
+    stages     — словарь ступеней нарезки; если задан, draft/dedupe/etc
                  берутся из него.
     engine     — ASR-движок с пословными таймингами (None -> aicut.cut_asr_engine()).
     """
@@ -173,7 +177,7 @@ def _run(wav_path, cams, offsets, out, scale, model=None,
         kept, drop, _notes, cutlog = decide_markup(
             words, full_text, model=model, emit=emit, silence_bounds=silence_bounds)
         rule = {i: "decide_markup" for i in drop}
-        # Санитарный гард решения модели (до чистки кодом, задание LA):
+        # Санитарный гард решения модели (до чистки кодом):
         # если 27b забраковала почти всю речь, postprocess (особенно veto_unique_drops
         # при dedupe=True) не должен маскировать сбой возвратом всего текста под видом успеха.
         model_keep = keep_intervals(words, kept, silence_bounds)
@@ -194,7 +198,7 @@ def _run(wav_path, cams, offsets, out, scale, model=None,
     # История: старый замер на C1353 показал, что со спором код страховал от
     # сноса всех заходов разом («чтобы не дать» ×3), поэтому при включённом
     # dedupe (галка «Правка нарезки кодом») спор с моделью по-прежнему доступен.
-    # rule — атрибуция вырезов (задание CA): кто снял кусок, видно в .cuts.json.
+    # rule — атрибуция вырезов: кто снял кусок, видно в .cuts.json.
     postprocess(words, kept, drop, silence_bounds,
                 light=(env("LIGHT_POST") == "1"), emit=emit,
                 dedupe=dedupe, rule=rule)
@@ -205,7 +209,7 @@ def _run(wav_path, cams, offsets, out, scale, model=None,
     # Санитарный гард (см. тот же в omni_cut): пустой keep оставлял last_info=None,
     # и вызывающий падал невнятным AttributeError уже ПОСЛЕ полного прогона
     # GigaAM+LLM. Плюс защищаем готовый out.xml от перезаписи пустышкой.
-    # Гард проверяется ТОЛЬКО когда включён sense (задание GE).
+    # Гард проверяется ТОЛЬКО когда включён sense.
     if stages.get("sense", True):
         _guard_keep(keep, words)
     # Камеры раскладываем по СМЫСЛОВЫМ кускам, и только потом подгоняем резы по
@@ -242,9 +246,10 @@ def _run(wav_path, cams, offsets, out, scale, model=None,
                     raise RuntimeError(f"нет камер для извлечения звука ({cams})")
                 keep, assign, breath_marks = _apply_audio_stages(keep, assign)
                 emit("  WAV успешно перевыпущен, подгон звука и вздохи выполнены", flush=True)
+            except ReelsiError: raise
             except Exception as retry_ex:
                 diag_after = _audio_file_diag(wav_path)
-                raise SystemExit(
+                raise ReelsiError(
                     f"Не удалось прочитать аудио для подгона нарезки и вздохов: {retry_ex}. "
                     f"Повторное извлечение звука из {cams[0] if cams else 'камеры'} не помогло. "
                     f"Диагностика: {diag_after}. Прошлая нарезка цела.") from retry_ex
@@ -255,11 +260,11 @@ def _run(wav_path, cams, offsets, out, scale, model=None,
     # Речь длиннее 30с, вышедшая ОДНИМ куском, — признак того, что ступени подгона
     # по звуку и вздохов не отработали (HOLE_MIN=0.15с на живой речи всегда режет
     # несколько дыр). Защищаем готовый XML от перезаписи неразрезанным роликом.
-    # Проверяется ТОЛЬКО когда включён refine или breath (задание GE).
+    # Проверяется ТОЛЬКО когда включён refine или breath.
     if stages.get("refine", True) or stages.get("breath", True):
         kept_s = sum(e - s for s, e in keep)
         if len(keep) == 1 and (kept_s > 30.0 or src_s > 30.0):
-            raise SystemExit(
+            raise ReelsiError(
                 f"Нарезка вернула весь ролик одним куском: {kept_s:.1f}с "
                 f"({len(keep)} сег., исходная речь {src_s:.1f}с > 30с) — "
                 f"подгон по звуку и детектор вздохов не разделили речь. "
@@ -268,11 +273,11 @@ def _run(wav_path, cams, offsets, out, scale, model=None,
     last_info = xmlbuild.build(cams, keep, offsets, out, assign=assign,
                                scale=scale, sub_words=None, music_path=None)
     # обновить cutlog под итоговый drop (после возможных возвратов). rule — имя
-    # функции/источника, снявшего каждый кусок (задание CA): без него «кто виноват
+    # функции/источника, снявшего каждый кусок: без него «кто виноват
     # в лишнем резе» не видно, всё помечено «GigaAM + 27b».
     cutlog = build_cutlog(words, drop, silence_bounds, breath_marks, rule=rule)
 
-    # --- сайдкары пишем ДО чернового рендера, а не после (задание BC, 2026-08-13) ---
+    # --- сайдкары пишем ДО чернового рендера, а не после (2026-08-13) ---
     # Раньше их писал omni_cut.py уже ПОСЛЕ возврата пайплайна — то есть после
     # рендера черновика. «Стоп»/крах на рендере (он минутный) оставлял XML и
     # breaths.json на месте, а project.json/cuts.json — нет: 11 роликов двух
@@ -283,7 +288,7 @@ def _run(wav_path, cams, offsets, out, scale, model=None,
             "scale": scale, "keep": [[round(s, 3), round(e, 3)] for s, e in keep]}
     if speaker:
         proj["speaker"] = speaker
-    atomic_json_dump(os.path.splitext(out)[0] + ".project.json", proj, indent=1)
+    write_project(os.path.splitext(out)[0] + ".project.json", proj)
     cutlog.sort(key=lambda c: c["t0"])
     atomic_json_dump(os.path.splitext(out)[0] + ".cuts.json", cutlog, indent=1)
 
@@ -295,14 +300,16 @@ def _run(wav_path, cams, offsets, out, scale, model=None,
     if stages.get("draft", False):
         try:
             draft_path = draftrender.render_draft(out, emit=emit)
+        except ReelsiError: raise
         except Exception as ex:
             emit("  финальный черновик не собрался: {err}", err=str(ex), flush=True)
 
     # --- чистка временных файлов ---
     try:
         draftrender.clean_tmp(os.path.dirname(out) or ".", emit=lambda *x: None)
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # уборка _tmp не удалась — результат нарезки уже готов
 
     emit("\n-> GigaAM-cut: {out}  ({n_keep} интервалов, {n_drop} слов вырезано)",
          out=out, n_keep=len(keep), n_drop=len(drop), flush=True)

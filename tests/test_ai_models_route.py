@@ -12,7 +12,7 @@ reasoning-моделей, а `reasoning_models=reasoning` в `jsonify` оста�
 Здесь стережётся сам КОНТРАКТ ответа: фронт (`static/app/10-settings.js`) читает
 `models`, `reasoning_models`, `efforts`, `default_enabled` и `caps`, и молчаливая
 потеря любого из полей ломает пометку «· reasoning» и фильтрацию селекта «Ум».
-Источник правды по возможностям — каталог models.dev (aicut.catalog, задание BY):
+Источник правды по возможностям — каталог models.dev (aicut.catalog):
 в тесте он подменяется фикстурой, сеть не трогается.
 
 Запуск:  python -m pytest reelsi/tests -q
@@ -141,7 +141,7 @@ def test_models_route_survives_missing_image_and_video_catalogs(client, catalog)
 
 
 def test_default_enabled_reaches_frontend(client, catalog):
-    """`default_enabled` из каталога доезжает до фронта обоими путями (задания BW/BY).
+    """`default_enabled` из каталога доезжает до фронта обоими путями.
 
     Модель, думающая по умолчанию (deepseek-v4-flash), обязана быть видна в селекте
     «Ум» как «Off — думает сама, выключаем явно»: иначе off выглядит как «ничего
@@ -153,6 +153,6 @@ def test_default_enabled_reaches_frontend(client, catalog):
     # o3 в каталоге НЕ думает по умолчанию — в словаре честный False, а не отсутствие
     assert d["default_enabled"]["openai/o3"] is False
     assert "meta/llama-4" not in d["default_enabled"]  # нет в каталоге — не выдумываем
-    # caps доезжают до фронта (контекст/вывод/цена рядом с моделью, задание BY)
+    # caps доезжают до фронта (контекст/вывод/цена рядом с моделью)
     assert d["caps"]["deepseek/deepseek-v4-flash"]["ctx_limit"] == 131072
     assert d["caps"]["deepseek/deepseek-v4-flash"]["out_limit"] == 65536

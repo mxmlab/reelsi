@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты объединения сборки дорожки субтитров и правила раскладки (задание HR).
+"""Тесты объединения сборки дорожки субтитров и правила раскладки.
 
 1. Единая сборка дорожки субтитров:
    - xmlbuild.build_subtitle_track(sub_words, start_id) -> (vtrack_xml, n_subs, long_words, next_id)

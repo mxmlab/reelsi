@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Сторожа для задания HF (внешнее ревью).
+"""Сторожа (внешнее ревью).
 
 Проверяют:
 1. umsg_err возвращает JSON-сериализуемые err_vars даже при URLError/Exception/Path.
@@ -97,10 +97,22 @@ def test_public_files_have_no_dangling_links():
             if "/" in pat:
                 forbidden.add(os.path.basename(pat))
 
+    # Эти файлы по своей работе называют непубликуемые пути: перечни
+    # проверяемых документов (CLAUDE.md, AGENTS.md, OPENSOURCE_PLAN.md), шаблоны
+    # `.publicignore` и адрес архива. Отсылка в пустоту — не дефект, а смысл
+    # такого списка: именно он и решает, что публикуется, а что нет.
+    # Отдельно — тесты сборки среза (`tests/test_public_slice.py`,
+    # `tests/test_slice_check.py`): они обязаны называть шаблоны `.publicignore`,
+    # иначе им нечего проверять.
+    # И сторож кодов заданий (`tests/test_no_task_codes.py`): он называет журнал
+    # в докстринге — объяснить, почему ссылок на коды в срезе быть не должно,
+    # без имени журнала нечем.
     EXCLUDED_FILES = {
         ".publicignore", "tools/public_slice.py", "tests/test_public_clean.py",
-        "tests/test_public_slice.py", "tests/test_layout.py", "tests/test_docs_links.py",
-        "tests/test_docs_freshness.py", "tools/wt.ps1", "tests/test_review_fixes.py",
+        "tests/test_public_slice.py", "tests/test_slice_check.py",
+        "tests/test_layout.py", "tests/test_docs_links.py",
+        "tests/test_docs_freshness.py", "tests/test_docs_drift.py", "tools/wt.ps1",
+        "tests/test_review_fixes.py", "tests/test_no_task_codes.py",
     }
 
     out = subprocess.check_output(

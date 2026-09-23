@@ -109,13 +109,13 @@ def test_word_1500_slider_and_math_round(xml_subs, tmp_path):
     assert '"ADBE Slider Control-0001"' in jsx
     assert "slP.setValueAtTime(t0, 0);" in jsx
     assert "slP.setValueAtTime(t0 + HL_DUR, cnt[0]);" in jsx
-    assert 'Math.round(effect(\\"Slider Control\\")(\\"Slider\\"))' in jsx
+    assert 'Math.round(effect(\\"Slider Control\\")(\\"Slider\\").value)' in jsx
 
     subs = _subs_data(jsx)
     assert subs is not None
     # У первого слова есть 7-й элемент со счётчиком [1500, Math.round(...)]
     assert len(subs[0]) == 7
-    assert subs[0][6] == [1500, 'Math.round(effect("Slider Control")("Slider"))']
+    assert subs[0][6] == [1500, 'Math.round(effect("Slider Control")("Slider").value)']
     # У других слов 7-й элемент null
     assert subs[1][6] is None
 
@@ -128,7 +128,7 @@ def test_word_decimal_comma_tofixed(xml_subs, tmp_path):
     assert 'toFixed(1).replace(\\".\\", \\",\\")' in jsx
     subs = _subs_data(jsx)
     assert subs is not None
-    assert subs[0][6] == [12.5, '(effect("Slider Control")("Slider")).toFixed(1).replace(".", ",")']
+    assert subs[0][6] == [12.5, 'effect("Slider Control")("Slider").value.toFixed(1).replace(".", ",")']
 
 
 def test_word_non_number_ignored(xml_subs, tmp_path):
@@ -156,7 +156,7 @@ def test_hl_count_remap_on_intro_remove(xml_subs, tmp_path):
     subs = _subs_data(jsx)
     assert subs is not None
     assert subs[0][2] == "1500"
-    assert subs[0][6] == [1500, 'Math.round(effect("Slider Control")("Slider"))']
+    assert subs[0][6] == [1500, 'Math.round(effect("Slider Control")("Slider").value)']
 
     # Если в hl_count указано слово, ушедшее в интро (индекс 0), оно не попадает в субтитры
     jsx_removed, _ = _build(xml_subs, tmp_path, hl_count=[0], intro=intro, intro_remove=[0, 1], name="out_del.jsx")

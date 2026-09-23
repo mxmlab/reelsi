@@ -29,6 +29,10 @@
 import os, json, subprocess, tempfile, logging
 from core import paths
 from core.app_meta import child_env, console_emit, module_cmd, wrap_emit
+from core.umsg import ReelsiError
+from core.applog import get_logger
+
+log = get_logger(__name__)
 
 ENGINES_JSON = paths.data("asr_engines.json")
 
@@ -86,6 +90,7 @@ def _custom():
     try:
         with open(ENGINES_JSON, encoding="utf-8") as f:
             raw = json.load(f)
+    except ReelsiError: raise
     except Exception as exc:
         logging.getLogger(__name__).warning("Не удалось прочитать %s: %s", ENGINES_JSON, exc)
         return []
@@ -165,6 +170,7 @@ def transcribe_words(wav_path, engine="whisper", emit=console_emit, use_terms=Tr
     try:
         from core import terms
         return terms.fix_words(words, emit=emit)
+    except ReelsiError: raise
     except Exception as e:                    # словарь не должен ронять транскрипцию
         emit("⚠ словарь терминов пропущен: {err}", err=str(e))
         return words
@@ -189,8 +195,10 @@ def _whisper(wav_path, **opts):
         # намертво вешает последующие запуски на Windows вместо OOM
         try:
             transcribe.release_model()
-        except Exception:
-            pass
+        except ReelsiError: raise
+        except Exception as ex:
+            log.warning("Whisper не выгрузился после транскрипции: %s — "
+                        "видеопамять остаётся занятой", ex)
 
 
 register("whisper", _whisper)
@@ -234,8 +242,9 @@ def _ctc(wav_path, model_id, device="cuda", **opts):
     finally:
         try:
             os.remove(out)
-        except Exception:
-            pass
+        except ReelsiError: raise
+        except OSError:
+            pass  # временный wav уже убран
 
 
 # --------------------------------------------------------------------------- #
@@ -297,6 +306,7 @@ def _gigaam(wav_path, model_name="v3_ctc", **opts):
         raise RuntimeError("GigaAM: пустой результат ('%s')" % r.stdout[:200])
     try:
         words = json.load(open(res_path, encoding="utf-8"))
+    except ReelsiError: raise
     except Exception:
         raise RuntimeError("GigaAM: не удалось разобрать результат")
     if not isinstance(words, list):
@@ -380,8 +390,9 @@ def _omni(wav_path, engine=None, refine=False, **opts):
     finally:
         try:
             os.remove(out)
-        except Exception:
-            pass
+        except ReelsiError: raise
+        except OSError:
+            pass  # временный wav уже убран
     if refine:
         try:
             from core import gigaam_cut
@@ -390,8 +401,9 @@ def _omni(wav_path, engine=None, refine=False, **opts):
                 for p in phrases if (p.get("text") or "").strip())
             if full_text:
                 return gigaam_cut.align_full(wav_path, full_text)
+        except ReelsiError: raise
         except Exception:
-            pass
+            pass  # пословное выравнивание не удалось — фразы раскидываем по словам ниже
     return _split_phrases(phrases)
 
 

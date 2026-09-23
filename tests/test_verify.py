@@ -21,7 +21,7 @@ import pytest
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
-# verify_ae.py — скрипт в tools/ (задание GU): он не пакет, поэтому путь к папке
+# verify_ae.py — скрипт в tools/: он не пакет, поэтому путь к папке
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 from core import verify_jsx  # noqa: E402

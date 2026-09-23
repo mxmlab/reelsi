@@ -1,14 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты на обрыв ответа провайдером по лимиту вывода (задание LP).
+"""Тесты на обрыв ответа провайдером по лимиту вывода.
 
 Проверяет, что:
-1. При finish_reason == "length" (OpenAI/OpenRouter) вызов падает с SystemExit(output_cut),
+1. При finish_reason == "length" (OpenAI/OpenRouter) вызов падает с ReelsiError(output_cut),
    в сообщении есть общее число токенов, число reasoning_tokens (если есть) и рекомендация
    понизить «ум» или взять модель с большим выводом.
 2. Обрезанный ответ (оборванный JSON) НЕ разбирается: _extract_json_obj не вытаскивает
    из него уцелевшие под-объекты, и результат шага не возвращается пользователю.
-3. Ветка Anthropic при stop_reason == "max_tokens" аналогично падает с SystemExit(output_cut).
+3. Ветка Anthropic при stop_reason == "max_tokens" аналогично падает с ReelsiError(output_cut).
 """
 import json
 import sys
@@ -18,6 +18,7 @@ import pytest
 
 from core import aicut
 from core.aicut import llm
+from core.umsg import ReelsiError
 
 
 @pytest.fixture(autouse=True)
@@ -113,7 +114,7 @@ def _make_anthropic_stub(msg):
 
 
 def test_openai_finish_reason_length_with_reasoning_tokens(monkeypatch):
-    """Обрыв ответа OpenAI по length с reasoning_tokens -> SystemExit(output_cut) с токенами."""
+    """Обрыв ответа OpenAI по length с reasoning_tokens -> ReelsiError(output_cut) с токенами."""
     # Обрывок содержит валидный объект {"id": 1}, который _extract_json_obj мог бы вытащить
     raw_chunk = '{"items": [{"id": 1, "text": "первый"}], "incomplete_tail": '
     stream_lines = [
@@ -150,14 +151,14 @@ def test_openai_finish_reason_length_with_reasoning_tokens(monkeypatch):
     }
 
     step_returned = False
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(ReelsiError) as exc_info:
         res = llm._ask_openai(prof, "system prompt", "user prompt", schema, emit=lambda *a, **k: None)
         step_returned = True  # Не должно выполниться
         assert res is not None
 
     assert not step_returned, "Результат шага не должен возвращаться при обрыве"
 
-    err = exc_info.value.code
+    err = exc_info.value.umsg
     assert getattr(err, "code", None) == "output_cut", f"Ожидался код output_cut, получено: {err!r}"
     assert err.vars.get("tokens") == 4096
 
@@ -170,7 +171,7 @@ def test_openai_finish_reason_length_with_reasoning_tokens(monkeypatch):
 
 
 def test_openai_finish_reason_length_without_reasoning_tokens(monkeypatch):
-    """Обрыв ответа OpenAI по length без reasoning_tokens -> SystemExit(output_cut) без упоминания ума."""
+    """Обрыв ответа OpenAI по length без reasoning_tokens -> ReelsiError(output_cut) без упоминания ума."""
     raw_chunk = '{"items": [{"id": 2}], "cut": '
     stream_lines = [
         _sse({"choices": [{"delta": {"content": raw_chunk}}]}),
@@ -201,14 +202,14 @@ def test_openai_finish_reason_length_without_reasoning_tokens(monkeypatch):
     schema = {"type": "object", "properties": {"items": {"type": "array"}}}
 
     step_returned = False
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(ReelsiError) as exc_info:
         res = llm._ask_openai(prof, "sys", "user", schema, emit=lambda *a, **k: None)
         step_returned = True
         assert res is not None
 
     assert not step_returned, "Результат шага не должен возвращаться при обрыве"
 
-    err = exc_info.value.code
+    err = exc_info.value.umsg
     assert getattr(err, "code", None) == "output_cut"
     assert err.vars.get("tokens") == 2048
 
@@ -247,14 +248,14 @@ def test_openai_obryvok_is_not_parsed_into_partial_result(monkeypatch):
     }
     schema = {"type": "object", "required": ["valid"]}
 
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(ReelsiError) as exc_info:
         llm._ask_openai(prof, "sys", "user", schema, emit=lambda *a, **k: None)
 
-    assert exc_info.value.code.code == "output_cut"
+    assert exc_info.value.umsg.code == "output_cut"
 
 
 def test_anthropic_stop_reason_max_tokens_raises_output_cut(monkeypatch):
-    """Обрыв ответа Anthropic по stop_reason == 'max_tokens' -> SystemExit(output_cut)."""
+    """Обрыв ответа Anthropic по stop_reason == 'max_tokens' -> ReelsiError(output_cut)."""
     truncated_text = '{"items": [{"id": 42}], "broken": '
     fake_msg = _FakeAnthropicMessage(
         text=truncated_text,
@@ -278,14 +279,14 @@ def test_anthropic_stop_reason_max_tokens_raises_output_cut(monkeypatch):
     schema = {"type": "object", "required": ["items"]}
 
     step_returned = False
-    with pytest.raises(SystemExit) as exc_info:
+    with pytest.raises(ReelsiError) as exc_info:
         res = llm._ask_anthropic(prof, "sys", "user", schema, emit=lambda *a, **k: None)
         step_returned = True
         assert res is not None
 
     assert not step_returned, "Результат шага не должен возвращаться при обрыве"
 
-    err = exc_info.value.code
+    err = exc_info.value.umsg
     assert getattr(err, "code", None) == "output_cut", f"Ожидался output_cut, получено: {err!r}"
     assert err.vars.get("tokens") == 8192
 
@@ -297,7 +298,7 @@ def test_anthropic_stop_reason_max_tokens_raises_output_cut(monkeypatch):
 
 
 def test_ask_json_dispatches_and_guards_length(monkeypatch):
-    """_ask_json диспетчеризует оба провайдера и при обрыве поднимает SystemExit(output_cut)."""
+    """_ask_json диспетчеризует оба провайдера и при обрыве поднимает ReelsiError(output_cut)."""
     # 1. OpenAI через _ask_json
     raw_chunk = '{"status": "cut'
     stream_lines = [
@@ -320,9 +321,9 @@ def test_ask_json_dispatches_and_guards_length(monkeypatch):
     }
     monkeypatch.setattr(llm, "resolve_profile", lambda *a, **k: openai_prof)
 
-    with pytest.raises(SystemExit) as exc1:
+    with pytest.raises(ReelsiError) as exc1:
         llm._ask_json("sys", "user", {"type": "object"}, emit=lambda *a, **k: None)
-    assert exc1.value.code.code == "output_cut"
+    assert exc1.value.umsg.code == "output_cut"
 
     # 2. Anthropic через _ask_json
     fake_msg = _FakeAnthropicMessage(text='{"status": "cut', stop_reason="max_tokens", out_tok=2000)
@@ -337,6 +338,6 @@ def test_ask_json_dispatches_and_guards_length(monkeypatch):
     }
     monkeypatch.setattr(llm, "resolve_profile", lambda *a, **k: anthropic_prof)
 
-    with pytest.raises(SystemExit) as exc2:
+    with pytest.raises(ReelsiError) as exc2:
         llm._ask_json("sys", "user", {"type": "object"}, emit=lambda *a, **k: None)
-    assert exc2.value.code.code == "output_cut"
+    assert exc2.value.umsg.code == "output_cut"

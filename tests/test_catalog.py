@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Контракт каталога возможностей моделей (aicut/catalog.py, задание BY).
+"""Контракт каталога возможностей моделей (aicut/catalog.py).
 
 Каталог models.dev — единственный источник правды о том, что умеет модель:
 reasoning (и чем управляется), structured_output, temperature, лимиты, цена.
@@ -24,7 +24,7 @@ sys.path.insert(0, ROOT)
 from core.aicut import catalog as catalog  # noqa: E402
 
 
-# Записи каталога ровно в формате models.dev api.json — живая пара из задания BY:
+# Записи каталога ровно в формате models.dev api.json — живая пара:
 # у luna temperature=False и шесть уровней усилий, у deepseek — True и low/high/max.
 FIXTURE = {
     "openrouter": {
@@ -77,7 +77,7 @@ def loaded(monkeypatch, _catalog_fixture):
 
 
 def test_luna_caps(loaded):
-    """openai/gpt-5.6-luna из задания BY: temperature=False, шесть усилий, out 128k."""
+    """openai/gpt-5.6-luna: temperature=False, шесть усилий, out 128k."""
     c = catalog.caps("openrouter", "openai/gpt-5.6-luna")
     assert c["temperature"] is False
     assert c["efforts"] == ["none", "low", "medium", "high", "xhigh", "max"]

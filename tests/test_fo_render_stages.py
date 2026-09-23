@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты индикации фаз и монотонности прогресса рендера (задание FO).
+"""Тесты индикации фаз и монотонности прогресса рендера.
 
 ПОЧЕМУ этот тест существует:
 Рендер набора имеет три фазы:
@@ -31,6 +31,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
 import api.render as render  # noqa: E402
+from core import aerender  # noqa: E402
 
 
 def _fileurl(p):
@@ -90,12 +91,12 @@ def test_combined_render_stages_and_monotonicity(batch_fixture, tmp_path, monkey
 
     monkeypatch.setenv("REELSI_RENDER_STATS", str(tmp_path / "stats.json"))
     monkeypatch.setattr(
-        render, "_find_ae",
+        render, "find_ae",
         lambda: ("fake_AfterFX.exe", "fake_aerender.exe", "Adobe After Effects 2026")
     )
     # Открытая копия After Effects останавливает прогон ДО запуска AfterFX (задание
     # AE-Hygiene) — в тесте AE «закрыт», иначе результат зависел бы от машины.
-    monkeypatch.setattr(render, "_ae_running", lambda: False)
+    monkeypatch.setattr(render, "ae_running", lambda: False)
 
     # Список записанных состояний (pct, stage_label, stage_done, stage_total, cur)
     history = []
@@ -216,16 +217,16 @@ def test_combined_render_stages_and_monotonicity(batch_fixture, tmp_path, monkey
     phase1_pcts = [p for p, lbl, _, _, _ in history if lbl == "сборка таймлайнов"]
     assert phase1_pcts, "Нет точек фазы 1"
     assert min(phase1_pcts) >= 0.0
-    assert max(phase1_pcts) <= render._PHASE_JSX_END + 1e-6
+    assert max(phase1_pcts) <= aerender.PHASE_JSX_END + 1e-6
 
     phase2_pcts = [p for p, lbl, _, _, _ in history if lbl == "сборка проекта"]
     assert phase2_pcts, "Нет точек фазы 2"
-    assert min(phase2_pcts) >= render._PHASE_JSX_END - 1e-6
-    assert max(phase2_pcts) <= render._PHASE_AEP_END + 1e-6
+    assert min(phase2_pcts) >= aerender.PHASE_JSX_END - 1e-6
+    assert max(phase2_pcts) <= aerender.PHASE_AEP_END + 1e-6
 
     phase3_pcts = [p for p, lbl, _, _, _ in history if lbl == "рендер"]
     assert phase3_pcts, "Нет точек фазы 3"
-    assert min(phase3_pcts) >= render._PHASE_AEP_END - 1e-6
+    assert min(phase3_pcts) >= aerender.PHASE_AEP_END - 1e-6
     assert max(phase3_pcts) <= 1.0
 
 
@@ -242,12 +243,12 @@ def test_single_render_stages_and_monotonicity(batch_fixture, tmp_path, monkeypa
 
     monkeypatch.setenv("REELSI_RENDER_STATS", str(tmp_path / "stats.json"))
     monkeypatch.setattr(
-        render, "_find_ae",
+        render, "find_ae",
         lambda: ("fake_AfterFX.exe", "fake_aerender.exe", "Adobe After Effects 2026")
     )
     # Открытая копия After Effects останавливает прогон ДО запуска AfterFX (задание
     # AE-Hygiene) — в тесте AE «закрыт», иначе результат зависел бы от машины.
-    monkeypatch.setattr(render, "_ae_running", lambda: False)
+    monkeypatch.setattr(render, "ae_running", lambda: False)
 
     history = []
 
@@ -379,7 +380,7 @@ def test_i18n_intro_text_and_stage_labels():
 
 
 def test_combined_phase1_eta_baseline_or_blank(batch_fixture, tmp_path, monkeypatch):
-    """Правило ETA на фазе 1 живого пути «Один на всё» (задания FK, FO): без статистики
+    """Правило ETA на фазе 1 живого пути «Один на всё»: без статистики
     прошлых прогонов — ETA=None (прочерк); со статистикой — базовая оценка фазы и
     eta_preliminary=True. Сборку таймлайнов подменяем: проверяется состояние интерфейса
     в начале фазы, а у самой сборки свои тесты."""
@@ -422,6 +423,6 @@ def test_combined_phase1_eta_baseline_or_blank(batch_fixture, tmp_path, monkeypa
     assert starts == [("сборка таймлайнов", None, None, None, False)], starts
 
     # 2) Статистика есть (5 с / 36 с / 83 с на ролик) — оценка на 2 ролика, preliminary
-    render._save_render_stats(10, 50.0, 360.0, 830.0)
+    aerender.save_render_stats(10, 50.0, 360.0, 830.0)
     run()
     assert starts[1] == ("сборка таймлайнов", 10.0, 10.0, 248.0, True), starts[1]

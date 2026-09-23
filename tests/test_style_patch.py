@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты задания CL: автосохранение правок сабов в шаблон спикера (styles.patch, /api/style_patch)."""
+"""Тесты: автосохранение правок сабов в шаблон спикера (styles.patch, /api/style_patch)."""
 import json
 import os
 import sys

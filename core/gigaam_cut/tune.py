@@ -19,6 +19,7 @@ import numpy as np
 import soundfile as sf
 from core import paths
 from core.app_meta import console_emit, wrap_emit
+from core.umsg import ReelsiError
 
 
 # HERE — корень репозитория, а НЕ папка пакета: соседние модули лежат там.
@@ -96,8 +97,8 @@ FILLERS = {"ну", "вот", "короче", "наверное", "типа", "з
 REPEAT_N = 10         # слов: максимальная длина n-граммы при поиске повторов/заходов
 REPEAT_WIN = 4.0      # сек: дальше этого повтор — уже осмысленный, а не запинка
 TAKE_WIN = 12.0       # сек: пересъёмка идёт сразу; дальше — не заход, а другая мысль
-DEDUPE = False        # чистка дублей кодом после решения модели (задание CA): сняли —
-                      # решает только модель по смыслу. Умолчание False (задание LA,
+DEDUPE = False        # чистка дублей кодом после решения модели: сняли —
+                      # решает только модель по смыслу. Умолчание False (
                       # как в cutstages: умной модели только мешает, режет перечисления и роли).
 
 
@@ -124,7 +125,7 @@ _CUT_GLOBALS = {          # ключ профиля -> имя модульной
     "hole_min": "HOLE_MIN", "min_keep": "MIN_KEEP", "min_island": "MIN_ISLAND",
     "silence_sec": "SILENCE_SEC", "dedupe": "DEDUPE",
 }
-# Снимок умолчаний при импорте модуля (задание LA):
+# Снимок умолчаний при импорте модуля:
 # apply_speaker(name) всегда начинает с чистого листа, а apply_speaker(None)
 # полностью возвращает модульные пороги к значениям по умолчанию.
 _DEFAULT_CUT_GLOBALS = {gname: globals()[gname] for gname in _CUT_GLOBALS.values()}
@@ -500,6 +501,7 @@ def _cut_breaths(keep, assign, wav_path, words, out, emit=console_emit):
     try:
         from core import breath
         marks = breath.detect(wav_path, keep, words, emit=emit, path=breath_model_path(emit))
+    except ReelsiError: raise
     except Exception as ex:
         emit("  детектор вздохов не отработал ({err_type}: {err})",
              err_type=type(ex).__name__, err=str(ex), flush=True)
@@ -526,6 +528,7 @@ def _cut_breaths(keep, assign, wav_path, words, out, emit=console_emit):
     try:
         json.dump(show, open(os.path.splitext(out)[0] + ".breaths.json", "w",
                              encoding="utf-8"), ensure_ascii=False, indent=1)
+    except ReelsiError: raise
     except Exception as ex:
         emit("  сайдкар вздохов не записался: {err}", err=str(ex), flush=True)
     if len(show) > len(cut):
@@ -653,7 +656,7 @@ def refine_keep(keep, wav_path, words=None, emit=console_emit, hole=None,
         if b - a >= min_island:
             keep2.append((a, b)); par2.append(pi)
     # Одна строка про цену порога после нарезки: следующая калибровка любого
-    # спикера делается по логу, а не замером по сайдкарам (задание BZ). Раньше
+    # спикера делается по логу, а не замером по сайдкарам. Раньше
     # строка печаталась только когда что-то сдвинули/вырезали — на пустом прогоне
     # порог молчал, и цену его было не увидеть.
     if snapped:

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Панель стиля (задание LE): двери полей, видимость, рото в долях, сторож перевода.
+"""Панель стиля: двери полей, видимость, рото в долях, сторож перевода.
 
 Панель строится из схемы (`core/style_schema.py` → `/api/style_schema` →
 `static/app/94-stylepanel.js`), значения ходят двумя дверями `stView`/`stStore`, а

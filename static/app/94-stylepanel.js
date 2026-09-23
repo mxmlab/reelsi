@@ -24,7 +24,7 @@ function initSfxMaps() {
   function walk(items) {
     for (const it of items) {
       // Только поля СО ЗВУКОМ (it.sfx): сюда попадало любое ctl:"file", и выбор файла
-      // подложки (insert_plate_file) открывал «Настройку звука» (задание ZJ, п. 1).
+      // подложки (insert_plate_file) открывал «Настройку звука».
       if (it.type === 'field' && it.ctl === 'file' && it.sfx) {
         SFX_PREFIX['st_' + it.key] = it.sfx;
         if (it.video) SFX_ISVIDEO['st_' + it.key] = true;
@@ -57,7 +57,7 @@ async function loadStyleSchema() {
   return STSCHEMA_LOADING;
 }
 
-// Таблица пересчётов conv (JA п. 2)
+// Таблица пересчётов conv
 const stConv = {
   inv_pct: {
     toView: (v) => Math.round((1 - (v != null ? v : 0.5964)) * 100),
@@ -123,7 +123,7 @@ function stRgb2hex(a) {
   return '#' + c(a[0]) + c(a[1]) + c(a[2]);
 }
 
-// Что панель ПОКАЗАЛА у парной ручки (fallback_key, задание ZZ): у back_step_after без
+// Что панель ПОКАЗАЛА у парной ручки (fallback_key): у back_step_after без
 // своего ключа в поле стоит значение back_step. Пока в поле ровно показанное — ключ не
 // заводится (иначе одно открытие панели оживило бы ключ, которого в стиле не было, и
 // «нет ключа → берётся значение пары» перестало бы работать); поменяли — значение другое,
@@ -196,7 +196,7 @@ function stView(field, stored) {
 
 function stStore(field, view, opt) {
   if (!field) return view;
-  // Парная ручка (fallback_key, задание ZZ): ключа в стиле нет и в поле стоит ровно то, что
+  // Парная ручка (fallback_key): ключа в стиле нет и в поле стоит ровно то, что
   // панель показала (значение пары) — значит пользователь его не трогал, и ключ не заводим.
   if (field.fallback_key && (opt == null || opt.orig == null)) {
     const shown = ST_FB_SHOWN[field.key];
@@ -726,7 +726,7 @@ function renderStylePanel() {
           fWrap.appendChild(inp);
           fWrap.appendChild(btnPick);
           // Карандаш звукового редактора — только у ЗВУКОВЫХ полей (sfx в схеме). У подложки
-          // фото-вставок звука нет: кнопка открывала бы редактор пустого префикса (задание ZI).
+          // фото-вставок звука нет: кнопка открывала бы редактор пустого префикса.
           if (item.sfx) fWrap.appendChild(btnEdit);
           right.appendChild(fWrap);
         } else if (item.ctl === 'point') {
@@ -1457,7 +1457,7 @@ function stEdit() {
 
         const opt = { hl_bold: hlBoldVal, orig: CURSTYLE[item.key] };
         CURSTYLE[item.key] = stStore(item, view, opt);
-        // Парная ручка без своего ключа (задание ZZ): показ берётся у пары, и после правки
+        // Парная ручка без своего ключа: показ берётся у пары, и после правки
         // САМОЙ пары в поле осталось бы старое число. Обновляем показ сразу — иначе
         // следующий stEdit прочитает из DOM устаревшее число и запишет его как заданное.
         if (item.fallback_key && CURSTYLE[item.key] == null) stRefresh(item.key);

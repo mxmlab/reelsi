@@ -9,11 +9,16 @@ VRAM: Omni крутится в subprocess (torch, 7.5ГБ) и выходит, о
     python omni_cut.py --cam1 A.MP4 --cam2 B.MP4 --out cut.xml
 """
 import sys, os, re, json, argparse, tempfile, subprocess
+
+# Импорт до первого try: сторож `except ReelsiError` ниже обязан видеть это имя.
+from core.umsg import ReelsiError, cli_error
+
 try:
     sys.stdout.reconfigure(encoding="utf-8")
-    sys.stderr.reconfigure(encoding="utf-8")   # SystemExit-текст идёт в stderr — иначе \uXXXX
+    sys.stderr.reconfigure(encoding="utf-8")   # текст ошибки идёт в stderr — иначе \uXXXX
+except ReelsiError: raise
 except Exception:
-    pass
+    pass  # поток без reconfigure — русский текст ошибки и так уходит в stderr
 from core import arrowfix  # noqa: F401  # предзагрузка pyarrow до torch во избежание краша arrow.dll, не переставлять ниже
 from core import sync
 from core import vad
@@ -22,7 +27,12 @@ from core import xmlbuild
 from core import aicut
 from core import paths
 from core.app_meta import child_env, console_emit, module_cmd, wrap_emit
+from core.applog import get_logger
 from core.fileio import atomic_json_dump
+from core.project_file import read_project, write_project
+
+
+log = get_logger(__name__)
 
 
 DECIDE_SYS = (
@@ -88,6 +98,7 @@ def _norm_phrase(t):
 def _load_halluc():
     try:
         return HALLUC_SEED | set(json.load(open(HALLUC_PHRASES_PATH, encoding="utf-8")))
+    except ReelsiError: raise
     except Exception:
         return set(HALLUC_SEED)
 
@@ -95,10 +106,24 @@ def _load_halluc():
 def _learn_halluc(phrases):
     if not phrases:
         return
-    try:
-        cur = set(json.load(open(HALLUC_PHRASES_PATH, encoding="utf-8")))
-    except Exception:
-        cur = set()
+    if not os.path.exists(HALLUC_PHRASES_PATH):
+        cur = set()                    # файла ещё нет — начинаем с пустого, как раньше
+    else:
+        # Файл ЕСТЬ, но не читается (обрезан крахом, чужая кодировка, права): начать с
+        # пустого и записать = стереть ВСЁ выученное раньше, а файл ниоткуда не
+        # восстанавливается (HALLUC_SEED — только сид). Поэтому обучение пропускаем.
+        try:
+            data = json.load(open(HALLUC_PHRASES_PATH, encoding="utf-8"))
+        except ReelsiError: raise
+        except Exception as ex:
+            log.warning("halluc_phrases.json не прочитан (%s): %s — обучение пропущено",
+                        HALLUC_PHRASES_PATH, ex)
+            return
+        if not isinstance(data, list):
+            log.warning("halluc_phrases.json — не список (%s: %s) — обучение пропущено",
+                        HALLUC_PHRASES_PATH, type(data).__name__)
+            return
+        cur = set(data)
     new = (cur | set(phrases)) - HALLUC_SEED
     if new != cur:
         atomic_json_dump(HALLUC_PHRASES_PATH, sorted(new), indent=1)
@@ -502,8 +527,10 @@ def _free_vram_for_render(emit=None):
         from core import transcribe as _tr
         if _tr.release_model():
             emit("  Whisper выгружен")
-    except Exception:
-        pass
+    except ReelsiError: raise
+    except Exception as ex:
+        log.warning("Whisper не выгрузился перед рендером: %s — "
+                    "видеопамять может остаться занятой", ex)
 
 
 def _load_omni_cache(omf, intervals):
@@ -516,6 +543,7 @@ def _load_omni_cache(omf, intervals):
     try:
         with open(omf, encoding="utf-8") as f:
             cand = json.load(f)
+    except ReelsiError: raise
     except Exception:
         return None
     if not isinstance(cand, list) or len(cand) != len(intervals):
@@ -538,7 +566,7 @@ def _guard_keep(keep, intervals):
     kept_s = sum(e - s for s, e in keep)
     src_s = sum(e - s for s, e in intervals)
     if not keep or (src_s > 0 and kept_s < 0.25 * src_s):
-        raise SystemExit(
+        raise ReelsiError(
             f"ИИ вырезал почти весь ролик: осталось {kept_s:.1f}с из {src_s:.1f}с "
             f"({len(keep)} сег.). Ничего не перезаписываю — прошлая нарезка цела. "
             f"Проверь модель и промпт в настройках ⚙ и запусти ещё раз.")
@@ -695,17 +723,17 @@ def main(work):
                          "его студию и говор; работает в режиме gigaam")
     ap.add_argument("--dedupe", dest="dedupe", action=argparse.BooleanOptionalAction,
                     default=None,
-                    help="чистка дублей кодом (задание CA). Явный флаг (пришёл с галки "
+                    help="чистка дублей кодом. Явный флаг (пришёл с галки "
                          "шага 1) перекрывает профиль спикера; без флага — профиль "
                          "либо дефолт False")
     ap.add_argument("--no-sense", action="store_true",
-                    help="без ИИ-разметки смысловых кусков (задание GE)")
+                    help="без ИИ-разметки смысловых кусков")
     ap.add_argument("--no-refine", action="store_true",
-                    help="без подгона резов по звуку (задание GE)")
+                    help="без подгона резов по звуку")
     ap.add_argument("--no-breath", action="store_true",
-                    help="без вырезания вздохов (задание GE)")
+                    help="без вырезания вздохов")
     ap.add_argument("--no-pauses", action="store_true",
-                    help="без вырезания пауз (задание GE)")
+                    help="без вырезания пауз")
     a = ap.parse_args()
     cams = [c for c in ([a.cam1, a.cam2] + list(a.cam)) if c]
     if not cams:
@@ -757,7 +785,7 @@ def main(work):
                 "scale": a.scale, "keep": [[round(s, 3), round(e, 3)] for s, e in keep]}
         if a.speaker:
             proj["speaker"] = a.speaker
-        atomic_json_dump(os.path.splitext(a.out)[0] + ".project.json", proj, indent=1)
+        write_project(os.path.splitext(a.out)[0] + ".project.json", proj)
         # cut-log: что именно и почему убрано
         cutlog.sort(key=lambda c: c["t0"])
         logf = os.path.splitext(a.out)[0] + ".cuts.json"
@@ -846,6 +874,7 @@ def main(work):
             try:
                 ssm_pre[i] = ssmmod.repeat_cut_ranges(af[int(s*16000):int(e*16000)],
                                                       text=texts[i]["text"], off=s)
+            except ReelsiError: raise
             except Exception:
                 ssm_pre[i] = []
 
@@ -855,7 +884,9 @@ def main(work):
     pj = os.path.splitext(a.out)[0] + ".project.json"
     if os.path.exists(pj):
         try:
-            prev_overrides = json.load(open(pj, encoding="utf-8")).get("user_overrides")
+            _prev = read_project(pj) or {}
+            prev_overrides = _prev.get("user_overrides")
+        except ReelsiError: raise
         except Exception:
             prev_overrides = None
 
@@ -870,8 +901,10 @@ def main(work):
         for o in (prev_overrides.get("restored") or []):
             try:
                 prot.append((float(o["t0"]), float(o["t1"])))
-            except Exception:
-                pass
+            except ReelsiError: raise
+            except Exception as ex:
+                log.warning("защищённый кусок %r из .project.json не разобран: "
+                            "%s — под защиту он не попадёт", o, ex)
         saved = [i for i in sorted(llm_drop)
                  if any(intervals[i][0] < b0 and intervals[i][1] > a0 for a0, b0 in prot)]
         for i in saved:
@@ -891,6 +924,7 @@ def main(work):
         rng = None
         try:
             rng = _tail_cut_by_words(wavs[0], intervals[i], texts[j]["text"])
+        except ReelsiError: raise
         except Exception as ex:
             print(f"  срез хвоста [{i}] не вышел ({type(ex).__name__}: {ex})", flush=True)
         if rng:
@@ -905,8 +939,10 @@ def main(work):
         try:
             from core import transcribe
             transcribe.release_model()                   # VRAM вернуть (дальше — Omni)
-        except Exception:
-            pass
+        except ReelsiError: raise
+        except Exception as ex:
+            log.warning("Whisper не выгрузился перед Omni-проходом: %s — "
+                        "видеопамять остаётся занятой", ex)
     if tail_info:
         # речек склеек по факту звука. Слушает OMNI (дословный слух, повторы не
         # причёсывает — Whisper'у считать повторы нельзя, он их склеивает);
@@ -922,6 +958,7 @@ def main(work):
         try:
             print("  речек склеек слухом Omni…", flush=True)
             bad = _splice_recheck_omni(a16, keep_pre, tail_info, texts, work, emit=_emit)
+        except ReelsiError: raise
         except Exception as ex:
             print(f"  Omni-речек не удался ({type(ex).__name__}: {ex}) — фолбэк на Whisper",
                   flush=True)
@@ -929,6 +966,7 @@ def main(work):
                 bad = _splice_recheck(a16, keep_pre, tail_info, texts, work, emit=_emit)
                 from core import transcribe
                 transcribe.release_model()
+            except ReelsiError: raise
             except Exception as ex2:
                 print(f"  речек склеек не удался ({type(ex2).__name__}: {ex2}) — "
                       f"оставляю срезы как есть", flush=True)
@@ -1005,7 +1043,7 @@ def main(work):
                 continue
             for w in words:
                 w["start"] += s; w["end"] += s
-            rng, log = align.find_restarts(words)
+            rng, _log = align.find_restarts(words)   # _log: имя log занято логгером модуля
             for (a0, a1) in rng:
                 # привязываем границы реза к тишине: режем ТОЛЬКО если с обеих сторон есть
                 # пауза. Иначе forced-align мог ошибиться на повторе слова («был») и рез
@@ -1053,6 +1091,7 @@ def main(work):
                 engine=a.selfcheck_model,
                 tmp_dir=draftrender.tmp_dir(a.out))
             keep = [(s, e) for s, e in keep if round(e*60) - round(s*60) > 0]
+        except ReelsiError: raise
         except Exception as ex:
             print(f"self-check пропущен: {ex}", flush=True)
 
@@ -1070,7 +1109,7 @@ def main(work):
     # Повторная запись тех же сайдкаров, что уже положил pipeline (он пишет их до
     # чернового рендера): здесь они дополняются selfcheck/user_overrides. Пишем тем же
     # атомарным способом — open(...,"w") усекал готовую разметку до сериализации (GZ, п. A).
-    atomic_json_dump(os.path.splitext(a.out)[0] + ".project.json", proj, indent=1)
+    write_project(os.path.splitext(a.out)[0] + ".project.json", proj)
 
     # cut-log: что именно и почему убрано (ничего молча) — рядом с XML + на экран
     cutlog.sort(key=lambda c: c["t0"])
@@ -1085,6 +1124,7 @@ def main(work):
         try:
             from core import draftrender
             draft_path = draftrender.render_draft(a.out, emit=lambda *x: print(*x, flush=True))
+        except ReelsiError: raise
         except Exception as ex:
             print(f"черновик не собрался: {ex}", flush=True)
     if a.omni_review and draft_path:
@@ -1093,21 +1133,25 @@ def main(work):
         try:
             subprocess.run(module_cmd("omni_review", draft_path), env=child_env(),
                            timeout=1800)
+        except ReelsiError: raise
         except Exception as ex:
             print(f"Omni-ревью не удалось: {ex}", flush=True)
     print(f"\n-> {a.out}  ({info.get('total_s', 0):.0f}s, {info.get('segments')} сег., {N} кам.)  + {os.path.basename(logf)}", flush=True)
 
 
 if __name__ == "__main__":
-    # Рабочий каталог камер не переживает «Стоп»: taskkill /F убивает процесс без
-    # атекситов, и omnicut_* с WAV целой камеры остаётся в %TEMP% (до ~230 МБ за
-    # отмену). Маркер WORK_DIR= печатается сразу — сервер (api/jobs.py) читает его
-    # из stdout и чистит каталог в _kill_curproc. finally здесь — для штатного
-    # выхода и SystemExit («вырезал почти всё»).
-    import tempfile, shutil
-    _work = tempfile.mkdtemp(prefix="omnicut_")
-    print(f"WORK_DIR={_work}", flush=True)
     try:
-        main(_work)
-    finally:
-        shutil.rmtree(_work, ignore_errors=True)
+        # Рабочий каталог камер не переживает «Стоп»: taskkill /F убивает процесс без
+        # атекситов, и omnicut_* с WAV целой камеры остаётся в %TEMP% (до ~230 МБ за
+        # отмену). Маркер WORK_DIR= печатается сразу — сервер (api/jobs.py) читает его
+        # из stdout и чистит каталог в _kill_curproc. finally здесь — для штатного
+        # выхода и SystemExit («вырезал почти всё»).
+        import tempfile, shutil
+        _work = tempfile.mkdtemp(prefix="omnicut_")
+        print(f"WORK_DIR={_work}", flush=True)
+        try:
+            main(_work)
+        finally:
+            shutil.rmtree(_work, ignore_errors=True)
+    except ReelsiError as e:
+        cli_error(e)

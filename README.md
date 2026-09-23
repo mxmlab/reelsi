@@ -1,5 +1,7 @@
 # Reelsi
 
+[![CI](https://github.com/mxmlab/reelsi/actions/workflows/ci.yml/badge.svg)](https://github.com/mxmlab/reelsi/actions/workflows/ci.yml)
+
 Reelsi is a local editing assistant for talking-head video. AI cuts footage by content and builds ready-to-edit projects for Adobe Premiere Pro and After Effects. Nothing is uploaded to remote servers, except text sent to your chosen cloud AI provider.
 
 > Russian version: [README.ru.md](README.ru.md).
@@ -8,7 +10,7 @@ Reelsi is a local editing assistant for talking-head video. AI cuts footage by c
 
 ## What it does
 
-- **Multicam audio sync**: aligns 1–4 camera tracks automatically by audio correlation.
+- **Multicam audio sync**: aligns several camera tracks automatically by audio correlation. Built for up to four cameras, verified on two.
 - **Semantic AI cutting**: cuts speech by transcript content using local LM Studio or cloud providers, with customizable cutting stages.
 - **Word-level subtitles**: builds animated graphic subtitles with per-word highlights and plain `.srt` files.
 - **B-roll inserts**: matches assets from your local library by meaning or generates images and video on demand.
@@ -35,11 +37,14 @@ Run all commands from the `reelsi/` clone folder.
 
 Non-editable installation (`pip install .` or `pipx`) is not supported because templates, static assets, and user configuration files live inside the repository clone folder.
 
-Run the automated installer:
+Run the automated installer — `install.ps1` on Windows, `install.sh` on macOS and Linux:
 
 ```bash
-powershell -ExecutionPolicy Bypass -File install.ps1
+powershell -ExecutionPolicy Bypass -File install.ps1   # Windows
+bash install.sh                                        # macOS and Linux
 ```
+
+Both installers only install dependencies: the `reelsi`, `reelsi-webui` and `reelsi-doctor` commands appear after `pip install -e .`. Neither installs Python or ffmpeg — `install.sh` needs a system `python3` and both stop and tell you what is missing instead of installing it.
 
 Or install manually:
 

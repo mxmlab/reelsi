@@ -152,8 +152,10 @@ def test_directories_and_never_serve_are_skipped(client, tmp_path):
     out.mkdir()
     stem = "01_clip"
 
+    # Корень xmeml: цель обязана выглядеть нарезкой (project.json
+    # рядом тут нет — значит признак только в самом XML), иначе роут её отбивает.
     xml_file = out / f"{stem}.xml"
-    xml_file.write_text("<xml/>", encoding="utf-8")
+    xml_file.write_text('<xmeml version="4"/>', encoding="utf-8")
 
     sub_dir = out / f"{stem}.subfolder"
     sub_dir.mkdir()

@@ -25,6 +25,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
 from core import aicut  # noqa: E402
+from core.umsg import ReelsiError
 
 
 @pytest.fixture(autouse=True)
@@ -74,7 +75,7 @@ def test_stop_breaks_stream_on_next_chunk():
     """«Стоп» должен рвать генерацию сразу, а не ждать конца ответа."""
     aicut.cancel_call()
     try:
-        with pytest.raises(SystemExit):
+        with pytest.raises(ReelsiError):
             aicut._read_stream(FakeResp([sse(content="x"), DONE]),
                                emit=lambda *a, **k: None)
     finally:
@@ -189,7 +190,7 @@ def test_openai_payload_has_no_max_tokens_when_off(monkeypatch):
 
 
 def test_openai_payload_sends_max_tokens_when_reasoning_on(monkeypatch):
-    """При включённом «уме» потолок вывода обязателен (задание BW).
+    """При включённом «уме» потолок вывода обязателен.
 
     OpenRouter считает reasoning.effort ПРОЦЕНТОМ от max_tokens запроса (low ≈ 20%):
     без него low на модели с выводом 393k — это 78 тысяч токенов раздумий, «забивает
@@ -211,7 +212,7 @@ def test_openai_payload_sends_max_tokens_when_reasoning_on(monkeypatch):
 
 
 def test_unsupported_level_is_downgraded_to_nearest_lower(monkeypatch):
-    """Невалидный уровень не слать: провайдер молча мапит его в максимум (BW).
+    """Невалидный уровень не слать: провайдер молча мапит его в максимум.
 
     У deepseek-v4-flash в каталоге только low/high/max — medium провайдер бы
     смапил в default_effort=high и сжёг на размышления сотни тысяч токенов.
@@ -223,7 +224,7 @@ def test_unsupported_level_is_downgraded_to_nearest_lower(monkeypatch):
         return FakeResp([sse(content='{"ok": true}'), DONE])
 
     monkeypatch.setattr(aicut.llm.urllib.request, "urlopen", fake_urlopen)
-    # Каталог models.dev: deepseek-v4-flash умеет только low/high/max (задание BY).
+    # Каталог models.dev: deepseek-v4-flash умеет только low/high/max.
     caps = {"reasoning": True, "reasoning_kind": "effort",
             "efforts": ["low", "high", "max"], "structured_output": True,
             "temperature": True, "out_limit": 393216, "ctx_limit": 1310720,
@@ -241,7 +242,7 @@ def test_unsupported_level_is_downgraded_to_nearest_lower(monkeypatch):
 
 
 def test_level_is_downgraded_one_step_on_retry(monkeypatch):
-    """Повтор после битого JSON не жжёт тот же бюджет размышлений второй раз (BW).
+    """Повтор после битого JSON не жжёт тот же бюджет размышлений второй раз.
 
     Первый вызов утонул в размышлениях, второй утонул бы так же — и заплачено
     дважды. На повторе уровень понижается на ступень (high -> medium)."""
@@ -283,7 +284,7 @@ def test_reasoning_level_is_not_downgraded_by_code(monkeypatch):
 
 
 def test_temperature_not_sent_when_model_does_not_accept_it(monkeypatch):
-    """Модель без temperature (в каталоге false, задание BY) — не шлём и пишем в лог.
+    """Модель без temperature (в каталоге false) — не шлём и пишем в лог.
 
     У gpt-5.6-luna в каталоге models.dev temperature=false: отправленный 0.8
     OpenRouter молча выбрасывал, а cmd_inserts думал, что работает. Теперь каталог
@@ -311,7 +312,7 @@ def test_temperature_not_sent_when_model_does_not_accept_it(monkeypatch):
 
 def test_schema_goes_to_prompt_when_structured_output_unsupported(monkeypatch):
     """structured_output=false в каталоге: схема сразу в промпт, круга «400 ->
-    повтор без response_format» в логе быть не должно (задание BY)."""
+    повтор без response_format» в логе быть не должно."""
     sent, log = [], []
 
     def fake_urlopen(req, timeout=None):
@@ -337,7 +338,7 @@ def test_schema_goes_to_prompt_when_structured_output_unsupported(monkeypatch):
 
 
 def test_max_tokens_capped_by_out_limit(monkeypatch):
-    """Потолок вывода при включённом уме — не больше out_limit модели из каталога (BY)."""
+    """Потолок вывода при включённом уме — не больше out_limit модели из каталога."""
     sent = []
 
     def fake_urlopen(req, timeout=None):
@@ -430,7 +431,7 @@ def test_max_completion_tokens_retry_and_success(monkeypatch):
 
 def test_stream_options_rejection_does_not_infinite_loop(monkeypatch):
     """Провайдер ВСЕГДА отвечает 400 про stream_options:
-    функция завершается (SystemExit по контракту), число вызовов urlopen <= retries + 3."""
+    функция завершается (ReelsiError по контракту), число вызовов urlopen <= retries + 3."""
     calls = []
 
     def fake_urlopen(req, timeout=None):
@@ -445,7 +446,7 @@ def test_stream_options_rejection_does_not_infinite_loop(monkeypatch):
     monkeypatch.setattr(aicut.llm.urllib.request, "urlopen", fake_urlopen)
     prof = {"provider": "openrouter", "base_url": "https://x/v1", "api_key": "k",
             "model": "test/model", "reasoning": "off", "name": "t"}
-    with pytest.raises(SystemExit):
+    with pytest.raises(ReelsiError):
         aicut._ask_openai(prof, "sys", "user", {"type": "object"},
                           retries=1, emit=lambda *a, **k: None)
     assert len(calls) <= 1 + 3  # retries + 3

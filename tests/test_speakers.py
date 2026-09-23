@@ -85,7 +85,7 @@ def test_save_load_roundtrip(tmp_path, monkeypatch):
 
 
 def test_camdirs_roundtrip(tmp_path, monkeypatch):
-    """Папки камер живут в профиле, как outdir/jsxdir (задание U): сохраняются и
+    """Папки камер живут в профиле, как outdir/jsxdir: сохраняются и
     возвращаются как есть; отсутствие camdirs — автоподбор, не «пустые папки»."""
     monkeypatch.setattr(speakers, "SPEAKER_DIR", str(tmp_path))
     speakers.save("Два пульта", {"camdirs": ["C:/камера1", "C:/камера2"]})
@@ -95,7 +95,7 @@ def test_camdirs_roundtrip(tmp_path, monkeypatch):
 
 
 def test_image_prompts_roundtrip(tmp_path, monkeypatch):
-    """Приписки к промптам генерации картинок живут в профиле (задание CQ)."""
+    """Приписки к промптам генерации картинок живут в профиле."""
     monkeypatch.setattr(speakers, "SPEAKER_DIR", str(tmp_path))
     prompts = {
         "a": {"extra": "3d icon", "pos": "suffix"},
@@ -109,7 +109,7 @@ def test_image_prompts_roundtrip(tmp_path, monkeypatch):
 
 
 def test_video_prompts_roundtrip(tmp_path, monkeypatch):
-    """Приписки видео-вставок независимы от image_prompts (задание EZ)."""
+    """Приписки видео-вставок независимы от image_prompts."""
     monkeypatch.setattr(speakers, "SPEAKER_DIR", str(tmp_path))
     prompts = {
         "a": {"extra": "cinematic lighting", "pos": "suffix"},

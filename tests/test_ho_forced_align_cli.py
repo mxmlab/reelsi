@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тест флага --forced-align в CLI reelsi.py (задание HO)."""
+"""Тест флага --forced-align в CLI reelsi.py."""
 import os
 import subprocess
 import sys

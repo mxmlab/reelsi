@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты корректности артефактов (задание HT, круг 6).
+"""Тесты корректности артефактов (круг 6).
 
 1. `_js`/`_js_multiline` не оставляют сырых U+2028/U+2029: ExtendScript (ES3) считает
    их переводом строки — литерал рвётся и падает импорт всего .jsx, а `node --check`

@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Длительность медиафайла: ОДНА проба ffprobe на все места (задание NB).
+"""Длительность медиафайла: ОДНА проба ffprobe на все места.
 
 Копий было пять — `draftrender._src_dur`, `insertlib._thumb_b64`,
 `omni_review._dur`, `xmlbuild.probe_audio_dur`, `aicut.video.probe_media` — и
@@ -22,10 +22,10 @@ import subprocess
 # HTTP-запрос подбора камер и поток джоба навсегда.
 PROBE_TIMEOUT = 30
 
-_CACHE = {}
+_CACHE: dict[tuple[str, int, int], float] = {}
 
 
-def probe_duration(path):
+def probe_duration(path: str | os.PathLike[str]) -> float | None:
     """Длительность медиа в секундах; None — не прочли (единое поведение при ошибке).
 
     Кэшируется только УДАЧНАЯ проба: файл могли ещё писать, и запомнить «нет

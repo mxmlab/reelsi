@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты для задания EI: отметка gone для пропавших файлов, матричный расчёт косинусов и скорость подбора.
+"""Тесты: отметка gone для пропавших файлов, матричный расчёт косинусов и скорость подбора.
 
 Запуск:  python -m pytest reelsi/tests/test_insertlib_speed.py -q
 """

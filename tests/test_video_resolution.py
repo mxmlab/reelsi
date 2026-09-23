@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Контракт общего разрешения видео в /api/ai_config (задание EZB).
+"""Контракт общего разрешения видео в /api/ai_config.
 
 Разрешение — ОБЩАЯ настройка ai_config.video_resolution (в ⚙ «Разметка и AE»), как
 модель. /api/ai_config GET и все успешные POST отдают video_resolution (резолвнутую

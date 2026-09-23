@@ -22,10 +22,14 @@
 import os, json, re, threading
 from collections import Counter
 from difflib import SequenceMatcher
-from core.fileio import atomic_json_dump
+from core.fileio import atomic_json_dump, quarantine_unreadable
 
 from core import paths
 from core.app_meta import env, wrap_emit
+from core.umsg import ReelsiError
+from core.applog import get_logger
+
+log = get_logger(__name__)
 # REELSI_TERMS — как REELSI_UI_STATE/REELSI_INSERTLIB: без своей переменной тестовый
 # профиль (порт 5098) правил бы боевой словарь.
 TERMS_PATH = env("TERMS") or paths.root("terms.json")
@@ -96,6 +100,12 @@ def _norm_tight(s):
     return _norm(s).replace(" ", "")
 
 
+def _valid_file(data):
+    """Формат словаря — объект с СПИСКОМ `terms` (ровно то, что пишет save): и объект
+    без поля, и строка в поле — такая же поломка, как обрыв записи."""
+    return isinstance(data, dict) and isinstance(data.get("terms"), list)
+
+
 def load():
     """{"terms": [{"term": str, "variants": [str]}]}. Файла нет — стартовый список."""
     with _LOCK:
@@ -105,8 +115,20 @@ def load():
             return {"terms": [{"term": t, "variants": []} for t in DEFAULT_TERMS]}
         if _CACHE["data"] is None or _CACHE["mtime"] != mt:
             try:
-                d = json.load(open(TERMS_PATH, encoding="utf-8"))
-            except Exception:
+                # with, а не json.load(open(...)): у битого файла исключение уносит
+                # кадр с открытым дескриптором, и на Windows save() не может переименовать
+                # файл, пока тот открыт («used by another process»).
+                with open(TERMS_PATH, encoding="utf-8") as f:
+                    d = json.load(f)
+            except ReelsiError: raise
+            except Exception as ex:
+                # Файл есть, но не прочитан. Отдаём пустой список (как раньше), но молчать
+                # об этом нельзя: интерфейс покажет пустой словарь, а следующая правка
+                # запишет его целиком. Битый файл при этом не пропадёт —
+                # save() отложит его в сторону перед записью.
+                log.warning("terms.json не прочитан (%s): %s — словарь показан пустым, при "
+                            "следующей записи файл будет отложен в %s.bad-…",
+                            TERMS_PATH, ex, TERMS_PATH)
                 return {"terms": []}
             items = []
             for it in (d.get("terms") or []):
@@ -122,8 +144,17 @@ def load():
 
 def save(data):
     with _LOCK:
+        # Битый файл уводим в сторону ДО записи: иначе словарь из одного нового термина
+        # затёр бы всё, что в файле было. Запись при этом не пропускается —
+        # правка пользователя должна сохраниться.
+        bad = quarantine_unreadable(TERMS_PATH, valid=_valid_file)
+        if bad:
+            log.warning("словарь терминов не прочитан (%s) — отложен в %s, записан заново",
+                        TERMS_PATH, bad)
         atomic_json_dump(TERMS_PATH, {"terms": data.get("terms") or []}, indent=1)
-        _CACHE["data"] = None            # перечитаем с диска (mtime сменился)
+        # Перечитаем с диска: данные и mtime сбрасываем оба — после откладывания битого
+        # файла по этому пути лежит уже ДРУГОЙ файл, старый mtime к нему не относится.
+        _CACHE["data"], _CACHE["mtime"] = None, -1
 
 
 def set_terms(items, emit=None):

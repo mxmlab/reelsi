@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты для задания KB: долгие операции в insertlib (auto_describe, build_index)
+"""Тесты: долгие операции в insertlib (auto_describe, build_index)
 не затирают свежие параллельные правки (reject, add_generated, set_desc)."""
 import json
 import os

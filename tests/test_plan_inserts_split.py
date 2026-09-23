@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Сторож распила scene_plan: вставки (задание MT, этап 3).
+"""Сторож распила scene_plan: вставки (этап 3).
 
 Вставки уехали из `scene_plan` в `core/xml2ae/plan_inserts.py` двумя дверями: подготовка
 таймингов (`plan_insert_timings`) и сборка данных (`plan_inserts`). Между ними в
@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.dirname(HERE))
 
 from core import insertlib, styles, xml2ae  # noqa: E402
 from core.xml2ae import build as build_mod  # noqa: E402
-from core.xml2ae.build import _sv, _sv_or  # noqa: E402
+from core.xml2ae.build import read_style  # noqa: E402
 from core.xml2ae.jsutil import _jd, _r  # noqa: E402
 from core.xml2ae.layout import _cam_change_frames  # noqa: E402
 from core.xml2ae.plan_inserts import (InsertTimingInputs, InsertsInputs,  # noqa: E402
@@ -118,27 +118,23 @@ def _active_cam_at(cams, t_sec, fps):
 def _doors(xml, style=None, inserts=None):
     """Обе двери вставок с входами ровно такими, какими их собрал бы scene_plan.
 
-    Повторяет только ЧТЕНИЯ scene_plan: разбор XML, резолв стиля, точки смены камеры из
-    катов, ключи подложки/анимации/сдвигов и подменяемый `build._media_dims`. Своей копии
-    арифметики вставок здесь нет намеренно — иначе сторож проверял бы копию правила.
+    Повторяет только ЧТЕНИЯ scene_plan: разбор XML, резолв стиля, чтение структуры
+    стиля (`read_style`), точки смены камеры из катов и подменяемый `build._media_dims`.
+    Своей копии арифметики вставок здесь нет намеренно — иначе сторож проверял бы
+    копию правила.
     """
     meta, cams, _subs, _xi = xml2ae.parse_full(xml)
     st = styles.resolve(dict(style or {}))
     fps = meta["fps"] or 60
+    style_values = read_style(st)
     timings = plan_insert_timings(InsertTimingInputs(
         inserts=[dict(x) for x in (inserts or [])], fps=fps,
         cam_change_sec=[f / fps for f in _cam_change_frames(cams)],
         active_cam_at=lambda t: _active_cam_at(cams, t, fps),
-        st=st, sv=_sv, sv_or=_sv_or, emit=lambda *a, **k: None))
+        style=style_values, emit=lambda *a, **k: None))
     ip = plan_inserts(InsertsInputs(
         inserts=timings.inserts, meta=meta, fps=fps, clip_end=timings.clip_end,
-        media_dims=build_mod._media_dims,
-        plate_path=str(_sv_or(st, "insert_plate_file") or "").strip(),
-        plate_scale=float(_sv_or(st, "insert_plate_scale")) or 100.0,
-        insert_anim=(_sv_or(st, "insert_anim")).strip(),
-        st=st, sv_or=_sv_or,
-        ins_c1x=float(_sv_or(st, "insert_c1_x")), ins_c1y=float(_sv_or(st, "insert_c1_y")),
-        ins_c2x=float(_sv(st, "insert_c2_x")), ins_c2y=float(_sv(st, "insert_c2_y")),
+        media_dims=build_mod._media_dims, style=style_values,
         emit=lambda *a, **k: None))
     return timings, ip
 
@@ -270,10 +266,9 @@ def test_plan_insert_timings_touches_only_its_copy(xml_subs, tmp_path):
         inserts=copies, fps=fps,
         cam_change_sec=[f / fps for f in _cam_change_frames(cams)],
         active_cam_at=lambda t: _active_cam_at(cams, t, fps),
-        st=styles.resolve({"insert_snap_cut": True}), sv=_sv, sv_or=_sv_or,
+        style=read_style(styles.resolve({"insert_snap_cut": True})),
         emit=lambda *a, **k: None))
     assert ins == frozen, "тайминги правят словари вызывающего"
-
 
 def test_plan_inserts_plate_geometry_ties_plan_and_jsx(xml_subs, tmp_path):
     """Подложка считается один раз: те же ps/px/py уезжают и в план, и в .jsx (второй

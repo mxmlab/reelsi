@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Видеовставка в превью растёт от ЦЕНТРА кадра, как в AE (задание MF).
+"""Видеовставка в превью растёт от ЦЕНТРА кадра, как в AE.
 
 Дефект, пойманный владельцем: «Масштаб, %» у видеовставки увеличивал её от ЛЕВОГО
 ВЕРХНЕГО угла. Замер в браузере: у `<video>` вставки computed `position:absolute;
@@ -43,10 +43,10 @@ node = pytest.mark.skipif(not shutil.which("node"), reason="контракт ф�
 
 # Камеры: <video> прямым ребёнком .pvstage — эталон, менять его нельзя
 CAM_RULE = ".pvstage video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000}"
-# Фото-вставка: окно маски и фото внутри (задания ZI/ZQ) — задание MF их не трогает
+# Фото-вставка: окно маски и фото внутри их не трогает
 MASK_RULE = ".ipvins .insmask{position:relative;overflow:hidden;flex:none;"
 MASK_IMG = ".ipvins .insmask img{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);"
-# Видеовставка: флекс-ребёнок обёртки вместо абсолютной коробки кадра (задание MF)
+# Видеовставка: флекс-ребёнок обёртки вместо абсолютной коробки кадра
 INS_RULE = ".ipvins .ipvwrap video{position:relative;inset:auto;flex:none;background:transparent}"
 
 
@@ -133,7 +133,7 @@ def _ins_video_path(wrapper_classes=()):
 
 
 def test_video_insert_is_a_flex_item_not_an_absolute_box():
-    """Ядро задания MF: видео вставки снова флекс-ребёнок .ipvwrap, а не absolute 0/0.
+    """Ядро: видео вставки снова флекс-ребёнок .ipvwrap, а не absolute 0/0.
 
     Пока `.pvstage video{position:absolute;inset:0}` оставалось победителем, обёртка с
     `align-items/justify-content:center` видео не центрировала (абсолютных детей флекс
@@ -232,7 +232,7 @@ def test_ipvins_place_leaves_centering_to_css():
             f"{key}: ipvInsPlace сам позиционирует видео (position: {got['pos']}, inset: {got['ins']})"
         assert "ipvwrap" in got["wrap"], \
             f"{key}: видео не ребёнок .ipvwrap — центрировать его нечему: {got['wrap']}"
-    # масштаб по-прежнему из плана, а сдвиг — ровно x/y (от центра, без клампа, задание ME2)
+    # масштаб по-прежнему из плана, а сдвиг — ровно x/y (от центра, без клампа)
     assert out["sc130"]["w"] != out["sc70"]["w"], "правка масштаба не меняет коробку вставки"
     assert out["pan"]["tf"] == "translate(60px,-40px)", \
         f"сдвиг x/y не доехал до transform: {out['pan']['tf']}"

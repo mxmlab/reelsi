@@ -8,7 +8,7 @@
 import os
 from flask import request, jsonify
 from ._core import bp, umsg_err, jstr
-from core.umsg import umsg
+from core.umsg import ReelsiError, umsg
 
 
 @bp.route("/api/styles")
@@ -18,9 +18,10 @@ def api_styles():
         try:
             from core import styles
             return jsonify(ok=True, styles=styles.all_styles())
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("styles_load_failed", str(e), err=str(e)))
-    except SystemExit as e:
+            raise ReelsiError(umsg("styles_load_failed", str(e), err=str(e)))
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -31,9 +32,10 @@ def api_style_schema():
         try:
             from core import style_schema
             return jsonify(ok=True, **style_schema.schema())
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("styles_load_failed", str(e), err=str(e)))
-    except SystemExit as e:
+            raise ReelsiError(umsg("styles_load_failed", str(e), err=str(e)))
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -45,14 +47,15 @@ def api_savestyle():
     data = d.get("data") or {}
     try:
         if not name:
-            raise SystemExit(umsg("need_template_name", "Дай имя шаблону"))
+            raise ReelsiError(umsg("need_template_name", "Дай имя шаблону"))
         try:
             from core import styles
             key, path = styles.save(name, data)
             return jsonify(ok=True, key=key, path=path)
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("styles_save_failed", str(e), err=str(e)))
-    except SystemExit as e:
+            raise ReelsiError(umsg("styles_save_failed", str(e), err=str(e)))
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -64,16 +67,17 @@ def api_style_patch():
     patch = d.get("patch") or {}
     try:
         if not name:
-            raise SystemExit(umsg("style_name_missing", "Не указано имя стиля"))
+            raise ReelsiError(umsg("style_name_missing", "Не указано имя стиля"))
         if not isinstance(patch, dict) or not patch:
-            raise SystemExit(umsg("empty_patch", "Пустой набор правок"))
+            raise ReelsiError(umsg("empty_patch", "Пустой набор правок"))
         try:
             from core import styles
             key, path = styles.patch(name, patch)
             return jsonify(ok=True, key=key, path=path)
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("styles_patch_failed", str(e), err=str(e)))
-    except SystemExit as e:
+            raise ReelsiError(umsg("styles_patch_failed", str(e), err=str(e)))
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -88,10 +92,11 @@ def api_speakers():
             from core import speakers
             return jsonify(ok=True, speakers=speakers.all_speakers(),
                            defaults=speakers.CUT_DEFAULTS, labels=speakers.CUT_LABELS)
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("speakers_load_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("speakers_load_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -103,15 +108,16 @@ def api_savespeaker():
     data = d.get("data") or {}
     try:
         if not name:
-            raise SystemExit(umsg("need_speaker_name", "Дай имя спикеру"))
+            raise ReelsiError(umsg("need_speaker_name", "Дай имя спикеру"))
         try:
             from core import speakers
             key, path = speakers.save(name, data)
             return jsonify(ok=True, key=key, path=path)
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("speakers_save_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("speakers_save_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -121,16 +127,17 @@ def api_delspeaker():
     name = jstr(request.get_json() or {}, "name").strip()
     try:
         if not name:
-            raise SystemExit(umsg("speaker_name_missing", "Не указано имя спикера"))
+            raise ReelsiError(umsg("speaker_name_missing", "Не указано имя спикера"))
         try:
             from core import speakers
             if not speakers.delete(name):
-                raise SystemExit(umsg("profile_not_found", "Профиль не найден"))
+                raise ReelsiError(umsg("profile_not_found", "Профиль не найден"))
             return jsonify(ok=True)
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("speakers_del_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("speakers_del_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -138,19 +145,34 @@ def api_delspeaker():
 def api_terms():
     """Словарь трудных терминов (названий, которые ASR не знает).
     GET -> {terms:[{term,variants}]}. POST {terms:[...]} — перезаписать список названий
-    (накопленные обучением варианты сохраняются, см. terms.set_terms)."""
+    (накопленные обучением варианты сохраняются, см. terms.set_terms).
+
+    Поля `terms` нет (или оно `null`) и `terms` не список — ошибка `terms_failed`,
+    `terms.json` не трогается: список названий приходит из интерфейса ЦЕЛИКОМ, и
+    «поля нет» там неотличимо от «очистить всё». Пустой СПИСОК — по-прежнему законное
+    «удалить всё» (дефект из отчёта NS)."""
     from core import terms
     if request.method == "GET":
         return jsonify(ok=True, **terms.load())
     d = request.get_json() or {}
     try:
         try:
-            out = terms.set_terms(d.get("terms") or [])
+            terms_in = d.get("terms")
+            if terms_in is None:
+                # Цена молчаливой записи тут — накопленный словарь трудных терминов.
+                raise ReelsiError(umsg("terms_failed", "terms: поле не передано",
+                                      err="terms: поле не передано"))
+            if not isinstance(terms_in, list):
+                # Строка раньше уезжала в словарь по символам, словарь — по ключам:
+                # мусор («a», «b», «c») оставался у пользователя навсегда.
+                raise TypeError(f"terms: ожидается список, пришло {type(terms_in).__name__}")
+            out = terms.set_terms(terms_in)
             return jsonify(ok=True, terms=out)
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("terms_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("terms_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -171,17 +193,18 @@ def api_censor_words():
             if rst:
                 for k in (("bad", "ok") if rst == "all" else (rst,)):
                     if k not in ("bad", "ok"):
-                        raise SystemExit(umsg("unknown_list", f"неизвестный список: {k}", k=k))
+                        raise ReelsiError(umsg("unknown_list", f"неизвестный список: {k}", k=k))
                     censor.reset(k)
             else:
                 for k in ("bad", "ok"):
                     if isinstance(d.get(k), str):
                         censor.write_text(k, d[k])
             return jsonify(ok=True, lists=censor.info())
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("censor_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("censor_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
 
@@ -192,7 +215,7 @@ def api_delstyle():
     name = jstr(request.get_json() or {}, "name").strip()
     try:
         if not name:
-            raise SystemExit(umsg("style_name_missing", "Не указано имя стиля"))
+            raise ReelsiError(umsg("style_name_missing", "Не указано имя стиля"))
         try:
             from core import styles as _styles
             target = None
@@ -202,11 +225,12 @@ def api_delstyle():
                         target = os.path.join(_styles.STYLE_DIR, f)
                         break
             if not target:
-                raise SystemExit(umsg("builtin_style", "Это встроенный стиль — удалить нельзя"))
+                raise ReelsiError(umsg("builtin_style", "Это встроенный стиль — удалить нельзя"))
             os.remove(target)
             return jsonify(ok=True)
+        except ReelsiError: raise
         except Exception as e:
-            raise SystemExit(umsg("styles_del_failed", f"{type(e).__name__}: {e}",
+            raise ReelsiError(umsg("styles_del_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
-    except SystemExit as e:
+    except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))

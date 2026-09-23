@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Свежесть документации (задание BN).
+"""Свежесть документации.
 
 Документация дрейфует от кода за считанные дни, и расхождение видно только когда
 кто-то наткнётся. Этот тест ловит два типовых дрейфа механически:
@@ -9,7 +9,7 @@
 1. упомянутые в доках модули (`reelsi.py`, `xml2ae/build.py`, …) исчезли;
 2. упомянутые в доках роуты (`/api/scene`, …) не определены ни в одном модуле `api/`.
 
-Проверка относительных ссылок вынесена в tests/test_docs_links.py (задание DV),
+Проверка относительных ссылок вынесена в tests/test_docs_links.py,
 где проверяются все публичные .md-файлы из git ls-files.
 
 Проверяются не все файлы подряд, а те, что описывают код для постороннего глаза:
@@ -18,9 +18,13 @@ README, ARCHITECTURE, спеки нарезки и их друзья. Цифры
 запуска `pytest -q`, а не пересказом.
 """
 import re
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+sys.path.insert(0, str(ROOT / "tools"))
+import public_slice  # noqa: E402
 
 DOCS = [
     "README.md",
@@ -52,6 +56,35 @@ _ROUTE_RE = re.compile(r"(?<![\w.])/api/([a-z_][\w]*)")
 _MODULE_DOCS = [d for d in DOCS if d != "OPENSOURCE_PLAN.md"]
 
 _route_defined = None
+_IGNORE_PATTERNS = None
+
+
+def _ignored_patterns():
+    """Шаблоны `.publicignore` — единственный источник правды о публикации.
+
+    Файла нет — публикуемым считается всё: тогда сторож работает в полную силу,
+    как и до этой правки (внешнее ревью 2026-09-22, P0-1)."""
+    global _IGNORE_PATTERNS
+    if _IGNORE_PATTERNS is None:
+        path = ROOT / public_slice.IGNORE_FILE
+        _IGNORE_PATTERNS = (public_slice.parse_ignore(path.read_text(encoding="utf-8"))
+                            if path.is_file() else [])
+    return _IGNORE_PATTERNS
+
+
+def _is_ignored(rel):
+    """Документ вырезан из публикации (перечислен в `.publicignore`)?"""
+    return public_slice.is_ignored(rel, _ignored_patterns())
+
+
+def _is_checked(rel):
+    """Документ обязан быть проверен сейчас?
+
+    Правило: непубликуемый документ проверяется, ЕСЛИ он есть
+    (приватное дерево), и молча пропускается, если вырезан (публичный срез).
+    Публикуемый документ обязан существовать: его пропажу валит
+    `test_listed_docs_exist`."""
+    return (ROOT / rel).is_file() or not _is_ignored(rel)
 
 
 def _defined_routes():
@@ -72,9 +105,12 @@ def _doc_texts():
     texts = {}
     for rel in DOCS:
         p = ROOT / rel
-        # Пропавший документ — ошибка, а не тихий пропуск (задание ND, п. 1):
-        # раньше он просто выпадал из проверки, и расхождение никто не замечал.
-        assert p.is_file(), f"документ из списка проверяемых не найден: {rel}"
+        if not p.is_file():
+            # Вырезанный `.publicignore` документ (публичный срез) проверять нечем;
+            # публикуемого тут быть не может — его пропажу ловит test_listed_docs_exist
+            # (внешнее ревью 2026-09-22, P0-1).
+            assert _is_ignored(rel), f"документ из списка проверяемых не найден: {rel}"
+            continue
         texts[rel] = p.read_text(encoding="utf-8")
     return texts
 
@@ -86,9 +122,12 @@ def _doc_modules():
     (`jobs.py`) — это ссылка на модуль внутри пакета (`api/jobs.py`): ищем файл с
     таким именем по дереву, один ли он. Исключены исторические имена монолитов —
     файла с ними не осталось нигде, это пересказ, а не карта кода."""
+    texts = _doc_texts()
     mods = {}
     for rel in _MODULE_DOCS:
-        text = _doc_texts()[rel]
+        text = texts.get(rel)
+        if text is None:
+            continue          # документ вырезан из публикации (публичный срез)
         for m in _PY_RE.finditer(text):
             name = m.group(1).replace("\\", "/")
             if name.endswith(".py"):
@@ -121,8 +160,11 @@ def test_listed_docs_exist():
 
     Отдельным тестом, а не только assert'ом в `_doc_texts`: пропавший документ
     должен быть виден в отчёте прогона, а не прятаться за «меньше проверок —
-    меньше ошибок» (задание ND, п. 1)."""
-    missing = [rel for rel in DOCS if not (ROOT / rel).is_file()]
+    меньше ошибок». Вырезанный `.publicignore` документ
+    (публичный срез) из проверки выпадает: файла там нет и быть не может
+    (внешнее ревью 2026-09-22, P0-1)."""
+    missing = [rel for rel in DOCS
+               if _is_checked(rel) and not (ROOT / rel).is_file()]
     assert not missing, (
         f"документов из списка проверяемых нет ({len(missing)}): {missing} — "
         f"верни документ или убери его из DOCS")
@@ -153,7 +195,7 @@ def test_dynamic_route_normalization():
 
 # --------------------------------------------------------------------------- #
 # Та же свежесть, но по СМЫСЛУ: регэксп ловит пропавший файл, а не разъехавшееся
-# значение. Оба дрейфа ниже нашлись заданием HM: `_PY_RE` не видел ссылок вида
+# значение. Оба дрейфа ниже нашлись: `_PY_RE` не видел ссылок вида
 # `file.py:123`, и потому никто не замечал, что таблица ступеней в CUTTING_SPEC
 # обещает не то, что лежит в cutstages.STAGES.
 # --------------------------------------------------------------------------- #

@@ -21,5 +21,5 @@ def setup():
             try:
                 os.add_dll_directory(d)
             except OSError:
-                pass
+                pass  # каталог не принят как DLL-путь — PATH уже дополнен выше
     return dirs

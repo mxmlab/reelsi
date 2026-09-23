@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Звук плана сцены (задание MU, этап 4 распила scene_plan).
+"""Звук плана сцены (этап 4 распила scene_plan).
 
-`scene_plan` был одной функцией на 3253 строки; этапы 1–3 (задания MR/MS/MT) вынесли
+`scene_plan` был одной функцией на 3253 строки; этапы 1–3 вынесли
 субтитры в `plan_subs.py`, расчёт интро в `plan_intro.py` и вставки в `plan_inserts.py`.
 Четвёртый этап выносит сюда ВЕСЬ звук:
 
@@ -29,11 +29,12 @@
 Вторая дверь завела бы вторую копию общего состояния (группы глитч-слов читают и план,
 и шаблон) — ровно то, от чего распил и лечит.
 
-Общее с другими блоками остаётся в build.py и приходит параметрами: `_sv`/`_sv_or`
-(дефолты ключей стиля), резолвер ассетов `aset`, точка между этапами `_ckpt` («музыка»)
-и `emit`. `_any_glitch` тоже считается в build.py: этот флаг читает ещё и расчёт интро
-(plan_intro.py) — второй копии правила нет. `_asset_or` и `_censor_windows` берутся из
-jsutil/layout: там они лежат для всех блоков сразу.
+Общее с другими блоками остаётся в build.py и приходит параметрами: стиль — структурой
+`StyleValues` одним полем `style` (её читает один раз `plan_style.read_style`),
+резолвер ассетов `aset`, точка между этапами `_ckpt` («музыка») и `emit`. `_any_glitch`
+тоже считается в build.py: этот флаг читает ещё и расчёт интро (plan_intro.py) — второй
+копии правила нет. `_asset_or` и `_censor_windows` берутся из jsutil/layout: там они лежат
+для всех блоков сразу.
 """
 import os
 from dataclasses import dataclass
@@ -41,6 +42,7 @@ from typing import Callable
 
 from .jsutil import _asset_or, _jd, _js, _r
 from .layout import _censor_windows
+from .plan_style import StyleValues
 
 
 # Звук глитча в секундах (не зависит от fps ролика): огибающая слоя на ГРУППУ глитч-слов
@@ -79,10 +81,9 @@ class AudioInputs:
     cam_change_sec: list
     # Частота кадров как _fps0 (meta["fps"] or 60): ею считаются кадровые сдвиги.
     fps: float
-    # Резолвнутый стиль и обёртки чтения его ключей (общие с другими блоками).
-    st: dict
-    sv: Callable[[dict, str], object]
-    sv_or: Callable[[dict, str], object]
+    # Резолвнутый и прочитанный стиль (plan_style.read_style): звуки, их обрезка/точка
+    # удара/громкость, музыка голоса и галка микро-фейдов — из него.
+    style: StyleValues
     # Резолвер ассетов (assets.resolver): им ищутся файлы звуков по ролям.
     aset: Callable[[str], object]
     # Галка интро-ризера: стиль уже наложен в build.py, второй копии правила нет.
@@ -155,9 +156,9 @@ def plan_audio(inp: AudioInputs) -> AudioPlan:
     subs, hl = inp.subs, inp.hl
     _cam_change_sec = inp.cam_change_sec
     _fps0 = inp.fps
-    st = inp.st
-    # Общие с другими блоками обёртки — по-прежнему в build.py, сюда приходят параметрами.
-    _sv, _sv_or = inp.sv, inp.sv_or
+    # Стиль — структурой, прочитанной один раз: обёрток _sv/_sv_or нет,
+    # а составные ключи <звук>_in/_out/_at/_db лежат в ней же отдельными полями.
+    style = inp.style
     aset = inp.aset
     intro_riser = inp.intro_riser
     music, music_random, music_dir = inp.music, inp.music_random, inp.music_dir
@@ -195,36 +196,41 @@ def plan_audio(inp: AudioInputs) -> AudioPlan:
                 _glitch_sound_groups.append([_t])
 
     riser = aset("intro_riser") if intro_riser else ""
-    # Свой файл ризера (задание AA): строка в стиле перекрывает ассет-дефолт.
-    _riser_file = (st.get("intro_riser_file") or "").strip()
+    # Свой файл ризера: строка в стиле перекрывает ассет-дефолт.
+    _riser_file = (style.intro_riser_file or "").strip()
     if _riser_file and intro_riser:
         riser = _riser_file
-    pop = (_asset_or(st.get("pop"), "highlight_pop", aset)) if hl else ""
-    glitch_asset = (_asset_or(st.get("glitch"), "glitch", aset)) if _any_glitch else ""
-    glitch_db = float(_sv(st, "glitch_db"))
+    pop = (_asset_or(style.pop, "highlight_pop", aset)) if hl else ""
+    glitch_asset = (_asset_or(style.glitch, "glitch", aset)) if _any_glitch else ""
+    glitch_db = style.glitch_db
     has_video = any((x.get("type") or "photo") == "video" for x in inserts)
-    trans = _asset_or(st.get("transition"), "transition", aset) if has_video else ""
-    trans_sfx = _asset_or(st.get("transition_sfx"), "whoosh", aset) if has_video else ""
-    # Звуки с обрезкой / точкой удара / громкостью (задание AA). Плоские ключи стиля:
+    trans = _asset_or(style.transition, "transition", aset) if has_video else ""
+    trans_sfx = _asset_or(style.transition_sfx, "whoosh", aset) if has_video else ""
+    # Звуки с обрезкой / точкой удара / громкостью. Плоские ключи стиля:
     # <звук>_in/_out/_at/_db (+ pop_lead в кадрах для «попа»). Дефолты = прежнее
     # поведение: .jsx не меняется ни на байт (golden). Формула: слой ставится так,
     # чтобы точка `at` файла попала на момент события (жёлтое слово / кат / старт).
+    # Ключи читает ОДИН раз plan_style — здесь только правило «не задано
+    # -> 0/None» и базовые громкости звука: это арифметика звука, не дефолты стиля.
     def _g(v, d):
         return v if v not in (None, "") else d
 
-    def _sfx_cfg(prefix, base_db, def_out):
-        return dict(in_s=float(_g(st.get(prefix + "_in"), 0)),
-                    out_s=(float(st[prefix + "_out"]) if st.get(prefix + "_out")
-                           not in (None, "") else None),
-                    at_s=float(_g(st.get(prefix + "_at"), 0)),
-                    db=float(_g(st.get(prefix + "_db"), 0)),
+    def _sfx_cfg(n_in, n_out, n_at, n_db, base_db, def_out):
+        return dict(in_s=float(_g(n_in, 0)),
+                    out_s=(float(n_out) if n_out not in (None, "") else None),
+                    at_s=float(_g(n_at, 0)),
+                    db=float(_g(n_db, 0)),
                     base=base_db, def_out=def_out)
 
-    pop_cfg = _sfx_cfg("pop", -8.0, 0.1)          # поп по умолчанию обрезан до ~0.1с
-    wsfx_cfg = _sfx_cfg("transition_sfx", -10.0, None)
-    riser_cfg = _sfx_cfg("intro_riser", 0.0, None)
-    trans_cfg = _sfx_cfg("transition", 0.0, None)
-    pop_lead = int(_g(st.get("pop_lead"), 4)) or 0
+    pop_cfg = _sfx_cfg(style.pop_in, style.pop_out, style.pop_at, style.pop_db,
+                       -8.0, 0.1)                 # поп по умолчанию обрезан до ~0.1с
+    wsfx_cfg = _sfx_cfg(style.transition_sfx_in, style.transition_sfx_out,
+                        style.transition_sfx_at, style.transition_sfx_db, -10.0, None)
+    riser_cfg = _sfx_cfg(style.intro_riser_in, style.intro_riser_out,
+                         style.intro_riser_at, style.intro_riser_db, 0.0, None)
+    trans_cfg = _sfx_cfg(style.transition_in, style.transition_out,
+                         style.transition_at, style.transition_db, 0.0, None)
+    pop_lead = int(_g(style.pop_lead, 4)) or 0
 
     # Звук задан «как вчера» (все ключи дефолтные) — шаблон работает прежним кодом.
     def _plain(cfg, lead):
@@ -274,9 +280,9 @@ def plan_audio(inp: AudioInputs) -> AudioPlan:
                    if not trans_plain else "tl.startTime=cut-TR_IN;")
     trans_tail = _sfx_tail(trans_cfg, "tl") if not trans_plain else ""
 
-    # Звуки в ПЛАН СЦЕНЫ (превью читает их, задание AB): события с ГОТОВЫМ стартом —
+    # Звуки в ПЛАН СЦЕНЫ (превью читает их): события с ГОТОВЫМ стартом —
     # t (монтажное время, когда звук начинает играть = ev − at + in), файловые in/out.
-    # JS старт не пересчитывает (задание AB): берёт числа из плана.
+    # JS старт не пересчитывает: берёт числа из плана.
     def _sfx_ev(ev, cfg):
         return {"t": round(ev - cfg["at_s"] + cfg["in_s"], 3),
                 "in": cfg["in_s"], "out": cfg["out_s"]}
@@ -370,8 +376,8 @@ def plan_audio(inp: AudioInputs) -> AudioPlan:
 
     # Громкость голоса и микро-фейд клипов: одни числа на план и на шаблон — читаются
     # здесь ОДИН раз (раньше voice_db читался и в плане, и в подстановке).
-    voice_db = float(_sv_or(st, "voice_db"))
-    audio_fade = (0.010 if _sv(st, "audio_fades") else 0.0)
+    voice_db = style.voice_db
+    audio_fade = (0.010 if style.audio_fades else 0.0)
 
     # plan["audio"] собирается здесь целиком: числа звука и его данные для превью —
     # из одного места, порядок ключей прежний (побайтовое сравнение плана).

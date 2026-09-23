@@ -19,7 +19,7 @@ import pytest
 # Изоляция файлового лога и файлов состояния сессии тестов ДО любых импортов проекта.
 # Модули бэкенда (api, core.aicut, core.terms и др.) связывают пути прямо на уровне модуля
 # при импорте (через env(...) or paths.root(...)). Без ранней установки переменных
-# модульные константы навсегда привязываются к боевым файлам в корне репозитория (задание LC).
+# модульные константы навсегда привязываются к боевым файлам в корне репозитория.
 _TEST_LOG_DIR = tempfile.mkdtemp(prefix="reelsi-tests-")
 _TEST_LOG_FILE = os.path.join(_TEST_LOG_DIR, "reelsi.log")
 os.environ["REELSI_LOG"] = _TEST_LOG_FILE
@@ -39,11 +39,11 @@ os.environ["REELSI_OKWORDS"] = os.path.join(_TEST_LOG_DIR, "okwords.user.txt")
 os.environ["REELSI_INSERTLIB"] = os.path.join(_TEST_LOG_DIR, "insertlib.json")
 os.environ["REELSI_RENDER_STATS"] = os.path.join(_TEST_LOG_DIR, "render_stats.json")
 os.environ["REELSI_MODELS_DEV"] = os.path.join(_TEST_LOG_DIR, "models_dev.json")
-# Журнал заданий (job_state.json, задание NC): без своей переменной тесты писали бы
+# Журнал заданий (job_state.json): без своей переменной тесты писали бы
 # в боевой файл рабочей копии — а сторож изоляции внизу это заметит и завалит сессию.
 os.environ["REELSI_JOB_STATE"] = os.path.join(_TEST_LOG_DIR, "job_state.json")
 
-# Изоляция ai_config на уровне сессии тестов (задания LC2, LC3):
+# Изоляция ai_config на уровне сессии тестов:
 # REELSI_AI_CONFIG указывает на путь в сессионном каталоге, но файл изначально не создаётся,
 # чтобы тесты использовали _default_ai_config() и не копировали чужие боевые ключи.
 _TEST_AI_CONFIG = os.path.join(_TEST_LOG_DIR, "ai_config.json")
@@ -76,7 +76,7 @@ except Exception:
     pass
 
 
-# ---- Сторож изоляции репозитория (задания LC, LP) ---------------------------
+# ---- Сторож изоляции репозитория ---------------------------
 _ROOT_SNAPSHOT = {}
 
 _SNAPSHOT_SKIP_DIRS = frozenset({
@@ -228,7 +228,7 @@ def isolate_state_files(tmp_path, monkeypatch):
             monkeypatch.setattr(m, "INDEX_PATH", str(insertlib_path))
 
 
-# ---- Шрифт фикстуры для приёмочных тестов геометрии интро (задание MQ) -------
+# ---- Шрифт фикстуры для приёмочных тестов геометрии интро -------
 # В CI системных шрифтов нет, и приёмочные тесты «большого слева» там просто
 # пропускались (pytest.skip, если не установлен шрифт стиля по умолчанию) — геометрия
 # новой фичи не проверялась никогда. Поэтому шрифт едет вместе с тестами: Oswald-Regular
@@ -276,7 +276,7 @@ def reset_all_job_state():
     except Exception:
         pass
     try:
-        # Журнал заданий (задание NC): привязка джоба к журналу и записи «оборвано
+        # Журнал заданий: привязка джоба к журналу и записи «оборвано
         # перезапуском» — тоже состояние в памяти, соседним тестам они не нужны.
         _core._JOURNAL_BOUND.clear()
         _core._JOB_INTERRUPTED.clear()
@@ -332,7 +332,7 @@ def reset_job_state():
 
 @pytest.fixture(autouse=True)
 def reset_tune_globals():
-    """Снимок всех глобалов core.gigaam_cut.tune до теста и восстановление после (задание LC).
+    """Снимок всех глобалов core.gigaam_cut.tune до теста и восстановление после.
 
     Импорт ленивый и в try: без torch модуль может не импортироваться —
     тогда фикстура ничего не делает.

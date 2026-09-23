@@ -52,10 +52,11 @@ jobs:
           # Импорта требуют только эти четыре; всё тяжёлое (transformers,
           # faster-whisper, rembg) грузится лениво внутри функций и в тестах не
           # выполняется. Ставить requirements.txt целиком — минуты ради ничего.
-          # fonttools — парсинг таблиц шрифтов, замер ширины строк и автофит интро (задания BO/BP/DA/DB).
-          # Pillow, pyarrow, zstandard — тесты drp, verify, boundaries, arrowfix (задание HG).
+          # fonttools — парсинг таблиц шрифтов, замер ширины строк и автофит интро.
+          # Pillow, pyarrow, zstandard — тесты drp, verify, boundaries, arrowfix.
           # Спецификаторы в кавычках: без них `>=` в bash — перенаправление вывода в файл «=10.0».
-          pip install flask numpy scipy soundfile pytest ruff fonttools "pillow>=10.0" pyarrow "zstandard>=0.22"
+          # ruff и mypy — оба из requirements-dev.txt, строгий список типов в pyproject.toml.
+          pip install flask numpy scipy soundfile pytest ruff mypy fonttools "pillow>=10.0" pyarrow "zstandard>=0.22"
 
       # Отрендеренный .jsx (шаблон AE_FULL с подстановками) проверяет node
       # (test_rendered_jsx_syntax.py): сам шаблон может быть валиден, а сборка —
@@ -66,6 +67,13 @@ jobs:
 
       - name: Lint
         run: ruff check .
+
+      # Строгая типизация на границе ядра: список модулей — в
+      # [tool.mypy] pyproject.toml, храповик, который не даёт ему сжаться, —
+      # tests/test_typing_ratchet.py (в прогоне тестов ниже он видит уже
+      # установленный mypy и проверяет то же самое).
+      - name: Type check
+        run: mypy
 
       - name: Tests
         run: python -m pytest tests -q

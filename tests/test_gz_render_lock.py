@@ -58,7 +58,7 @@ def lock_state(tmp_path, monkeypatch):
 
 def _post_render(client, tmp_path, jobs=1):
     """Набор рендера как его шлёт интерфейс: ключ `xml` и файл, который существует.
-    api_render_run нормализует набор ДО ответа (задание HU), поэтому «xml_path» из
+    api_render_run нормализует набор ДО ответа, поэтому «xml_path» из
     тела запроса до диспетчера уже не доходит."""
     xs = []
     for i in range(jobs):

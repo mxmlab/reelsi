@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты задания CN: галка «наезд в начале» (cam1_zoom_start).
+"""Тесты: галка «наезд в начале» (cam1_zoom_start).
 
 При cam1_zoom_start=True (дефолт):
   - поведение совпадает с прежним побайтово во всех трёх режимах (pulse, jump, drift).
@@ -98,11 +98,13 @@ def test_cam1_zoom_start_drift_keys(xml_subs, tmp_path):
 
 def test_cam1_zoom_start_jump_keys(xml_subs, tmp_path):
     """В режиме jump при cam1_zoom_start=False: кадр 0 = 100%.
-    Задание ZA: в jump появился плавный наезд в начале, со start=True на 1 ключ больше."""
+    Задание ZA: в jump появился плавный наезд в начале, со start=True на 1 ключ больше.
+    Наезд в начале доходит РОВНО до 100 % (а не до случайного из [lo, hi])."""
     jsx_start_true = _build_jsx(xml_subs, str(tmp_path / "jump_true.jsx"),
                                 style={"cam1_zoom": "jump", "cam1_zoom_start": True})
     keys_true = _cam1_scale_from_jsx(jsx_start_true)
-    assert keys_true[0][0] == 0
+    assert keys_true[0][:2] == [0, ZOOM_BIG]
+    assert keys_true[1][1] == 100.0
 
     jsx_start_false = _build_jsx(xml_subs, str(tmp_path / "jump_false.jsx"),
                                  style={"cam1_zoom": "jump", "cam1_zoom_start": False})
@@ -112,7 +114,7 @@ def test_cam1_zoom_start_jump_keys(xml_subs, tmp_path):
 
 
 def test_ui_index_html_checkbox_cam1_zoom_start():
-    """Галка «наезд в начале» есть в схеме и прячется при cam1_zoom='none' (задание JB п. 6).
+    """Галка «наезд в начале» есть в схеме и прячется при cam1_zoom='none'.
 
     Раньше галка жила в разметке (id st_cam1zoomstart, обёртка cam1zoomstartwrap),
     которую правил fillStyleFields; теперь поле строит панель по core/style_schema.py,

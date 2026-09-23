@@ -36,6 +36,7 @@ import os, subprocess, time
 from core import paths
 from core.app_meta import env, console_emit, wrap_emit
 from core.device import pick_device, autocast_dtype
+from core.umsg import ReelsiError, cli_error
 
 _MODEL = None          # (model, dev, dtype) кэш
 _VARIANT = "mobilenetv3"   # быстрее; "resnet50" — качественнее/медленнее
@@ -60,8 +61,9 @@ def _is_oom(ex):
         import torch
         if isinstance(ex, getattr(torch.cuda, "OutOfMemoryError", ())):
             return True
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # torch нет — OOM распознаем по тексту ошибки ниже
     s = str(ex).lower()
     return ("out of memory" in s or "cuda error" in s
             or "cublas_status_alloc_failed" in s or "cudnn_status_alloc_failed" in s)
@@ -82,8 +84,9 @@ def release(emit=console_emit):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             torch.cuda.ipc_collect()
+    except ReelsiError: raise
     except Exception:
-        pass
+        pass  # torch/GPU нет — чистить нечего, модель уже выгружена
     emit("  RVM выгружен из памяти")
     return True
 
@@ -129,6 +132,7 @@ def _has_frames(path):
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=30).stdout.strip()
         return out.isdigit() and int(out) >= 1
+    except ReelsiError: raise
     except Exception:
         return False
 
@@ -143,6 +147,7 @@ def _probe(video):
              "-show_entries", "stream=width,height,r_frame_rate:stream_side_data=rotation", video],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=30).stdout.strip()
+    except ReelsiError: raise
     except Exception:            # недоступный файл/зависший I/O -> дефолты, а не висящий поток
         return 0, 0, 60.0, "60"
     try:
@@ -156,6 +161,7 @@ def _probe(video):
         if abs(int(float(kv.get("rotation") or 0))) % 180 == 90:
             w, h = h, w
         return w, h, fps, fr
+    except ReelsiError: raise
     except Exception:
         return 0, 0, 60.0, "60"
 
@@ -172,6 +178,7 @@ def _codec(video):
              "stream=codec_name", "-of", "csv=p=0", video],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=30).stdout.strip()
+    except ReelsiError: raise
     except Exception:
         out = ""
     return out or os.path.splitext(video)[1].lower()   # кодек не распознан — хотя бы расширение
@@ -187,6 +194,7 @@ def _nvdec_ok(video):
                                 "-frames:v", "1", "-f", "null", "-"],
                                capture_output=True, timeout=60)
             _HW["dec"][key] = (r.returncode == 0)
+        except ReelsiError: raise
         except Exception:
             _HW["dec"][key] = False        # проба зависла/упала -> CPU-декод
     return _HW["dec"][key]
@@ -204,6 +212,7 @@ def _nvenc_ok():
                                 "color=black:s=256x256:d=0.1", "-c:v", "h264_nvenc",
                                 "-f", "null", "-"], capture_output=True, timeout=60)
             _HW["enc"] = (r.returncode == 0)
+        except ReelsiError: raise
         except Exception:
             _HW["enc"] = False             # проба зависла/упала -> libx264
     return _HW["enc"]
@@ -333,13 +342,15 @@ def alpha_for_video(video, out_mask, downsample_ratio=None, bottom_pct=0.0,
                 if p.poll() is None:
                     p.kill()
                 p.wait(timeout=10)
+            except ReelsiError: raise
             except Exception:
-                pass
+                pass  # процесс уже мёртв — wait не нужен
         for f in (p_dec.stdout, p_enc.stdin):
             try:
                 f.close()
-            except Exception:
-                pass
+            except ReelsiError: raise
+            except OSError:
+                pass  # поток уже закрыт
     if not done:
         raise RuntimeError("RVM не выдал кадры альфы (декод пуст?)")
     emit("  · rvm готово: {done} кадров за {sec:.1f}с ({fps:.0f} fps)",
@@ -425,6 +436,7 @@ def alpha_for_ranges(video, ranges, out_dir, bottom_pct=0.0,
             else:
                 if failures is not None:
                     failures.append({"start": float(s), "end": float(e), "error": "маска пустая"})
+        except ReelsiError: raise
         except Exception as ex:
             # CUDA OOM — особый случай: рото теперь сплошное на весь хрон, у 6-минутного
             # ролика это сотни диапазонов. Раньше цикл ловил ЛЮБУЮ ошибку и шёл дальше,
@@ -451,6 +463,7 @@ def alpha_for_ranges(video, ranges, out_dir, bottom_pct=0.0,
                                                  "error": "маска пустая"})
                             chunk = 2
                             continue
+                    except ReelsiError: raise
                     except Exception as ex2:
                         ex = ex2
                 release(emit=emit)
@@ -471,24 +484,27 @@ def alpha_for_ranges(video, ranges, out_dir, bottom_pct=0.0,
 
 
 if __name__ == "__main__":
-    import argparse
-    ap = argparse.ArgumentParser()
-    ap.add_argument("video")
-    ap.add_argument("--ranges", help="сек: 0-2.6,5.3-8.5 (по умолчанию — всё видео)")
-    ap.add_argument("--bottom", type=float, default=0.0, help="нижняя доля кадра в маску (0..1), напр. 0.18 = стол")
-    ap.add_argument("--device", choices=["cuda", "cpu"], help="принудительно cuda/cpu (иначе авто/env REELSI_ROTO_DEVICE)")
-    ap.add_argument("--seq", type=int, help=f"кадров за раз (по умолчанию {SEQ_CHUNK}; меньше = меньше VRAM)")
-    ap.add_argument("--out", default=paths.root("_roto_out"))
-    a = ap.parse_args()
-    if a.ranges:
-        rr = []
-        for part in a.ranges.split(","):
-            s, e = part.split("-"); rr.append((float(s), float(e)))
-        out = alpha_for_ranges(a.video, rr, a.out, bottom_pct=a.bottom,
-                               device=a.device, seq_chunk=a.seq)
-        print("маски:", [os.path.basename(m["mask"]) for m in out])
-    else:
-        os.makedirs(a.out, exist_ok=True)
-        m = alpha_for_video(a.video, os.path.join(a.out, "roto_full.mp4"),
-                            bottom_pct=a.bottom, device=a.device, seq_chunk=a.seq)
-        print("маска:", m and m[0])
+    try:
+        import argparse
+        ap = argparse.ArgumentParser()
+        ap.add_argument("video")
+        ap.add_argument("--ranges", help="сек: 0-2.6,5.3-8.5 (по умолчанию — всё видео)")
+        ap.add_argument("--bottom", type=float, default=0.0, help="нижняя доля кадра в маску (0..1), напр. 0.18 = стол")
+        ap.add_argument("--device", choices=["cuda", "cpu"], help="принудительно cuda/cpu (иначе авто/env REELSI_ROTO_DEVICE)")
+        ap.add_argument("--seq", type=int, help=f"кадров за раз (по умолчанию {SEQ_CHUNK}; меньше = меньше VRAM)")
+        ap.add_argument("--out", default=paths.root("_roto_out"))
+        a = ap.parse_args()
+        if a.ranges:
+            rr = []
+            for part in a.ranges.split(","):
+                s, e = part.split("-"); rr.append((float(s), float(e)))
+            out = alpha_for_ranges(a.video, rr, a.out, bottom_pct=a.bottom,
+                                   device=a.device, seq_chunk=a.seq)
+            print("маски:", [os.path.basename(m["mask"]) for m in out])
+        else:
+            os.makedirs(a.out, exist_ok=True)
+            m = alpha_for_video(a.video, os.path.join(a.out, "roto_full.mp4"),
+                                bottom_pct=a.bottom, device=a.device, seq_chunk=a.seq)
+            print("маска:", m and m[0])
+    except ReelsiError as e:
+        cli_error(e)

@@ -14,6 +14,7 @@ Timeline model (validated against the real Timeline 2.xml):
 import os, re, urllib.parse, subprocess, json
 from core import fileio, media
 from core.xmltext import xml_text as _esc
+from core.umsg import ReelsiError
 
 FPS = 60
 TICKS_PER_FRAME = 4233600000          # ppro ticks per 60fps frame
@@ -80,6 +81,7 @@ def fix_timecodes(text):
             return block
         try:
             tc = probe(path)["timecode"]
+        except ReelsiError: raise
         except Exception:
             return block                       # битый контейнер — не повод ронять скачивание
         fixed = _TC_STRING.sub(lambda t: t.group(1) + tc + t.group(2), block, count=1)
@@ -163,7 +165,7 @@ def probe(path, still_ok=True):
         try:
             res["fps"] = float(n) / float(d)
         except (ValueError, ZeroDivisionError):
-            pass
+            pass  # битая дробь кадров — fps останется неизвестным
     if key:
         _PROBE_CACHE[key] = res
     return res
@@ -367,7 +369,7 @@ def build(cam_paths, segments, offsets, out_path, assign=None,
     # немой дубль/скринкаст (vad вернул [] — резать нечего, а файл помечался готовым).
     # Критерий тот же, что у info["segments"] в конце.
     if not [1 for s, e in segments if round(e * FPS) > round(s * FPS)]:
-        raise SystemExit(
+        raise ReelsiError(
             "Собирать нечего: не осталось ни одного куска длиннее кадра. "
             "Ничего не перезаписываю — прошлая нарезка цела. "
             "Верни блоки в редакторе или проверь пороги нарезки и запусти ещё раз.")

@@ -73,7 +73,7 @@ def test_master_builds_queue_and_saves_twice(xml_subs, tmp_path):
     i_omt = txt.index('om.applyTemplate("Untitled 1")')
     i_bt = txt.index('rq.applyTemplate("Best Settings")')
     assert i_bt < i_omt < i_om, "om.file не ПОСЛЕ applyTemplate"
-    # перезапись поверх: существующий .mov удаляется перед om.file (задание FK)
+    # перезапись поверх: существующий .mov удаляется перед om.file
     assert 'if(_out.exists){ _out.remove();' in txt, "нет перезаписи существующего .mov"
     # save дважды
     assert txt.count("app.project.save(f)") == 2, "save не дважды (ДО и ПОСЛЕ очереди)"

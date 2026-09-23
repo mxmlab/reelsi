@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты экранирования суррогатов и noncharacters в JS-литералах (задание HW, круг 7).
+"""Тесты экранирования суррогатов и noncharacters в JS-литералах (круг 7).
 
 1. _js("a\\udcffb") и _js("\\ufffe\\uffff") экранируются в ASCII \\uXXXX;
 2. Запись полученных литералов в файл utf-8-sig не падает с UnicodeEncodeError;

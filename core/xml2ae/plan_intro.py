@@ -25,7 +25,7 @@ INTRO_FX, INTRO_SUB_FX, INTRO_SQ).
 остаются в `build.py` и приходят параметрами: второй копии нет.
 """
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable, Sequence, cast
 
 from .jsutil import _jd, _r
 from .layout import (INTRO_BASE_Y, INTRO_F_OUT, INTRO_SAFE_TOP, INTRO_SCALE,
@@ -83,7 +83,7 @@ class IntroInputs:
     parse_count: Callable[..., object]
     cnt_positions: Callable[[dict, int], list]
     line_font: Callable[..., str]
-    fit_ds: Callable[..., object]
+    fit_ds: Callable[..., float]
     appear_dur: Callable[..., float]
     # Таблица анимаций интро (build.INTRO_ANIMS): длительность глитча держит окно группы.
     anims: dict
@@ -130,13 +130,13 @@ class IntroPlan:
     accent_used: bool     # хоть одна строка получила accent_font (подстановки af/cf)
 
 
-def _g_at(g):
+def _g_at(g: list[dict[str, Any]]) -> float:
     """Момент первого слова группы (группы идут по таймингу; см. вызов в build.py)."""
     ts = [t for x in g for t in (x.get("times") or [])]
     return min(ts) if ts else 0.0
 
 
-def _grp_big_i(g):
+def _grp_big_i(g: list[dict[str, Any]]) -> int | None:
     """Индекс большой строки группы (первая с флагом big) или None.
     Группа из одной строки большой не считается: раскладывать её не с чем, и флаг
     остаётся без эффекта — .jsx такой группы прежний. Остальные строки с big в той
@@ -149,7 +149,7 @@ def _grp_big_i(g):
     return None
 
 
-def _scale_anchor_y(mode, ys, h):
+def _scale_anchor_y(mode: str, ys: Sequence[float | None], h: float) -> float:
     """Y якоря масштабирования прекомпа в координатах прекомпа, px (intro_scale_anchor).
 
     "first" — Y первой строки блока, "block" — середина между первой и последней строкой,
@@ -176,7 +176,7 @@ def _scale_anchor_y(mode, ys, h):
 # и кат через 40 мс после первого слова уводил её на нул камеры 1, хотя почти всё время
 # она висит над кадром камеры 2. Ничья (ровно 50/50) — ПОЗДНЕЙ камере: группа доигрывает
 # на ней, и глаз запоминает конец. Показ камер по времени — тот же источник, что camAt в JSX.
-def _intro_on2_at(ts, te, show_segs, active_cam_at):
+def _intro_on2_at(ts: float, te: float, show_segs: list[Any], active_cam_at: Callable[[float], int]) -> int:
     win = te - ts
     if win <= 0:
         return 1 if active_cam_at(ts) != 0 else 0
@@ -196,14 +196,14 @@ def _intro_on2_at(ts, te, show_segs, active_cam_at):
     return 1 if last_ci != 0 else 0
 
 
-def _intro_front_at(ts, te, video_segs):
+def _intro_front_at(ts: float, te: float, video_segs: list[Any]) -> int:
     for vs, ve in video_segs:
         if max(ts, vs) < min(te, ve):
             return 1
     return 0
 
 
-def _next_sub_after(times, sub_starts):
+def _next_sub_after(times: Sequence[float], sub_starts: Sequence[float]) -> float | None:
     """Момент появления первого субтитра ПОСЛЕ последнего слова группы, сек.
     После группы субтитров нет вовсе — None (окно группы остаётся прежним)."""
     if not times or not sub_starts:
@@ -215,7 +215,7 @@ def _next_sub_after(times, sub_starts):
     return None
 
 
-def _sub_row_at(t, subs_plan, hl_step, sub_step):
+def _sub_row_at(t: float, subs_plan: list[dict[str, Any]], hl_step: float, sub_step: float) -> tuple[int, float]:
     """(ряд, шаг) элементов субтитров, видимых в момент t: полоса
     субтитров — не только posy и кегль, но и высота набранного: у стопки жёлтых
     шаг свой (hl_step), у строк текста — шаг строк. Ряда нет — шаг не нужен."""
@@ -230,8 +230,8 @@ def _sub_row_at(t, subs_plan, hl_step, sub_step):
     return row, (hl_step if stack else sub_step)
 
 
-def _intro_line_js(x, accent_font_ps, accent_case, back_font_ps, back_case,
-                   cnt_positions, parse_count, accent_word):
+def _intro_line_js(x: dict[str, Any], accent_font_ps: str, accent_case: str, back_font_ps: str, back_case: str,
+                   cnt_positions: Callable[..., Any], parse_count: Callable[..., Any], accent_word: Callable[[str, str], str]) -> dict[str, Any]:
     line = {"color": x.get("color") or "white",
             "words": [str(wd) for wd in (x.get("words") or (x.get("text") or "").split())],
             "times": [_r(t) for t in (x.get("times") or [])]}
@@ -252,12 +252,12 @@ def _intro_line_js(x, accent_font_ps, accent_case, back_font_ps, back_case,
     if x.get("accent"):
         if accent_font_ps:
             line["accent_font"] = accent_font_ps
-            line["words"] = [accent_word(wd, accent_case) for wd in line["words"]]
+            line["words"] = [accent_word(cast(str, wd), accent_case) for wd in line["words"]]
     elif x.get("back"):
         line["back"] = True
         if back_font_ps:
             line["accent_font"] = back_font_ps
-        line["words"] = [accent_word(wd, back_case) for wd in line["words"]]
+        line["words"] = [accent_word(cast(str, wd), back_case) for wd in line["words"]]
     # «Большое слева»: флаг строки рядом с accent/back. Кладём ТОЛЬКО
     # при True — иначе .jsx меняется на пустом месте (golden). Раскладку по нему
     # считает intro_big_layout, в .jsx флаг нужен как признак строки (скейл и X
@@ -308,7 +308,7 @@ def _intro_line_js(x, accent_font_ps, accent_case, back_font_ps, back_case,
                 cnts = [[wi, _r(target), expr, dec]]
                 break
         if not cnts:
-            parsed = parse_count(" ".join(wds).strip(), x.get("dec"))
+            parsed = parse_count(" ".join(cast(list[str], wds)).strip(), x.get("dec"))
             if parsed is not None:
                 target, dec, expr, _ = parsed
                 cnts = [[0, _r(target), expr, dec]]
@@ -338,17 +338,17 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
     _fps0 = inp.fps
     _active_cam_at = inp.active_cam_at
     _video_segs = inp.video_segs
-    _intro_on2 = []
-    _intro_front = []
-    _intro_above_roto = []               # галка «интро над рото по положению»
-    _intro_anchor = []                   # якорь блока на группу: center | first
-    _intro_anchor_y = []                 # Y якоря слоя прекомпа на группу — в .jsx как INTRO_ANCHOR_Y
-    _intro_anchor_dy = []                # компенсация Position по Y на группу — INTRO_ANCHOR_DY
-    _intro_ly = []                       # Y базовых линий строк на группу — в .jsx как INTRO_LY
-    _intro_lx = []                       # левый край строки на группу (большая строка, ZY)
-    _intro_lk = []                       # множитель кегля строки на группу (большая строка, ZY)
-    _intro_sq = []                       # множитель длительности появления на слово
-    _intro_sub_fx = []                   # окно [начало затухания, конец] групп, гаснущих к субтитру
+    _intro_on2: list[Any] = []
+    _intro_front: list[Any] = []
+    _intro_above_roto: list[Any] = []
+    _intro_anchor: list[str] = []
+    _intro_anchor_y: list[Any] = []
+    _intro_anchor_dy: list[Any] = []
+    _intro_ly: list[Any] = []
+    _intro_lx: list[Any] = []
+    _intro_lk: list[Any] = []
+    _intro_sq: list[Any] = []
+    _intro_sub_fx: list[Any] = []
     # Элементы субтитров и геометрия полосы — из результата plan_subs:
     # своей копии данных субтитров модуль не заводит.
     subs_plan = inp.subs.subs
@@ -408,10 +408,10 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
         _l_tms = [t for _x in _l for t in _x["times"]]
         _l_gl = [t for _x in _l if _x.get("anim") == "glitch" for t in _x["times"]]
         _grp_stats.append((_l, _l_tms, _l_gl))
-    _fx_ts = [None] * len(_grp_stats)     # начало показа группы (inAt), с
-    _fx_te = [None] * len(_grp_stats)     # конец слоя прекомпа: базовая формула + глитч, с
-    _fx_fade = [None] * len(_grp_stats)   # спад группы (intro_fade либо пол окна), с
-    _fx_win = [None] * len(_grp_stats)    # ИТОГОВОЕ окно группы: [начало затухания, конец], с
+    _fx_ts: list[Any] = [None] * len(_grp_stats)     # начало показа группы (inAt), с
+    _fx_te: list[Any] = [None] * len(_grp_stats)     # конец слоя прекомпа: базовая формула + глитч, с
+    _fx_fade: list[Any] = [None] * len(_grp_stats)   # спад группы (intro_fade либо пол окна), с
+    _fx_win: list[Any] = [None] * len(_grp_stats)    # ИТОГОВОЕ окно группы: [начало затухания, конец], с
     for _g, (_l0, _l_tms, _l_gl) in enumerate(_grp_stats):
         # Базовая формула окна — та же функция, что отдаёт ts/te плану
         # (_intro_group_window): второй копии формулы нет ни здесь, ни в шаблоне. Полка
@@ -461,7 +461,7 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
         # Якорь блока интро этой группы: на перебивке свой ключ стиля —
         # группа висит на другом нуле (кам2) и «первая строка» там своя. "first" —
         # первая строка стоит на месте, остальные ложатся ниже.
-        _anchor = style.intro_anchor2 if _on2 else style.intro_anchor
+        _anchor = cast(str, style.intro_anchor2 if _on2 else style.intro_anchor)
         _intro_anchor.append(_anchor)
         # Смещение ГРУППЫ: живёт на головной строке (первой в группе) и
         # добавляется к позиции прекомпа в шаблоне. После разрезания/слияния групп
@@ -485,6 +485,9 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
         # место intro_big_layout. Группа без большой — прежняя раскладка (lx/lk пустые).
         _big_i = _grp_big_i(_lines)
         _big_total = None
+        _lx: Any
+        _lk: Any
+        _ys: Any
         _lx = _lk = None
         if _big_i is None:
             _ys = intro_line_ys(_lines, back_step, _any_back, _anchor, meta["h"],
@@ -502,7 +505,7 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
             # По горизонтали у такой группы видно не строку, а весь блок; ширина блока —
             # из центровки: lx большой = −total/2 (intro_big_layout). Второй копии
             # формулы не заводим, автофит мерит то же, что считает раскладка.
-            _big_total = -2.0 * float(_lx[_big_i])
+            _big_total = -2.0 * float(cast(Any, _lx)[_big_i])
             _n_stack = len(_stack)
         _intro_ly.append(_ys)
         _intro_lx.append(_lx)

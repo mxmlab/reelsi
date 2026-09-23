@@ -7,6 +7,7 @@
 а ElementTree его не пишет.
 """
 import os, html, base64
+from typing import Any, cast
 import xml.etree.ElementTree as ET
 from core.applog import get_logger
 from core.fileio import atomic_text_write
@@ -25,7 +26,7 @@ log = get_logger("reelsi.xml2ae.highlights")
 _COLOR_ANCHOR = bytes([0x07, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x00])
 
 
-def _word_color(clip):
+def _word_color(clip: Any) -> tuple[int, int, int] | None:
     """RGB (0..255) заливки слова-субтитра или None, если белый/дефолт."""
     for p in clip.findall(".//filter/effect/parameter"):
         if (p.findtext("parameterid") or "") != "1":
@@ -57,14 +58,14 @@ SEP_GAP_SEC = 0.40   # пауза между соседними жёлтыми >
                      # одной фразы (зазор < 0.4с) остаются одной стопкой, палка только на реальной паузе.
 
 
-def auto_highlights(xml_path):
+def auto_highlights(xml_path: str) -> dict[str, list[int]]:
     """По цвету слов в XML (Премьер): не-белые -> жёлтые; между соседними жёлтыми с зазором
     по времени (не впритык) -> разделитель. Порядок индексов = как у parse_full (subs, по start).
     -> dict(yellow=[idx], breaks=[idx]). Пусто, если цветных слов нет."""
     root = ET.parse(xml_path).getroot()
-    seq = root.find(".//sequence")
-    fps = int(_txt(seq.find("rate"), "timebase", "60")) or 60
-    rows = []                                        # (start, end, color) по всем словам-субтитрам
+    seq: Any = root.find(".//sequence")
+    fps = int(cast(str, _txt(seq.find("rate"), "timebase", "60"))) or 60
+    rows: list[Any] = []                                        # (start, end, color) по всем словам-субтитрам
     for tr in seq.findall(".//media/video/track"):
         clips = tr.findall("clipitem")
         is_sub = any((c.find(".//filter/effect/effectid") is not None and
@@ -75,11 +76,11 @@ def auto_highlights(xml_path):
             eff = c.find(".//filter/effect")
             word = html.unescape((_txt(eff, "name") or "").strip()) if eff is not None else ""
             if word:
-                rows.append((int(_txt(c, "start")), int(_txt(c, "end")), _word_color(c)))
+                rows.append((int(cast(str, _txt(c, "start"))), int(cast(str, _txt(c, "end"))), _word_color(c)))
     rows.sort(key=lambda x: x[0])                    # тот же порядок, что subs в parse_full
     yellow = [k for k, (s, e, col) in enumerate(rows) if col is not None]
     yset = set(yellow)
-    breaks = []
+    breaks: list[int] = []
     sep_frames = SEP_GAP_SEC * fps
     for k in range(len(rows) - 1):
         if k in yset and (k + 1) in yset:            # два подряд жёлтых
@@ -89,7 +90,7 @@ def auto_highlights(xml_path):
     return dict(yellow=yellow, breaks=breaks)
 
 
-def _sub_value_elem(clip):
+def _sub_value_elem(clip: Any) -> Any:
     """<value>-элемент Source Text (parameterid==1) слова-субтитра, или None."""
     for p in clip.findall(".//filter/effect/parameter"):
         if (p.findtext("parameterid") or "") == "1":
@@ -97,7 +98,7 @@ def _sub_value_elem(clip):
     return None
 
 
-def write_highlights(xml_path, indices, out_path=None):
+def write_highlights(xml_path: str, indices: Any, out_path: str | None = None) -> dict[str, Any]:
     """Покрасить выбранные слова-субтитры ПРЯМО в XML (вместо сайдкара .yellow.json):
     в блоб Source Text подставляется покрашенный вариант того же слова из библиотеки
     subtitle_blobs. Тогда auto_highlights/_word_color видят слово как выделенное, цвет
@@ -108,9 +109,9 @@ def write_highlights(xml_path, indices, out_path=None):
     большого покрашенного шаблона пропускаются (остаются на сайдкар-фолбэк)."""
     from core import subtitle_blobs as sb
     lib = sb.colour_library()
-    root = ET.parse(xml_path).getroot()
-    seq = root.find(".//sequence")
-    items = []                                           # (start, word, value_elem) — как в parse_full
+    root: Any = ET.parse(xml_path).getroot()
+    seq: Any = root.find(".//sequence")
+    items: list[Any] = []                                           # (start, word, value_elem) — как в parse_full
     for tr in seq.findall(".//media/video/track"):
         clips = tr.findall("clipitem")
         if not any((c.find(".//filter/effect/effectid") is not None and
@@ -120,7 +121,7 @@ def write_highlights(xml_path, indices, out_path=None):
             word = html.unescape((_txt(c.find(".//filter/effect"), "name") or "").strip())
             word = " ".join(word.replace("\r", "").replace("\n", "").split())
             if word:
-                items.append((int(_txt(c, "start")), word, _sub_value_elem(c)))
+                items.append((int(cast(str, _txt(c, "start"))), word, _sub_value_elem(c)))
     items.sort(key=lambda x: x[0])                       # тот же порядок, что subs в parse_full
     colored, skipped = [], []
     want = set(int(i) for i in indices)
@@ -143,9 +144,9 @@ def write_highlights(xml_path, indices, out_path=None):
     return dict(colored=colored, skipped=skipped)
 
 
-def _sub_items(seq, with_track=False):
+def _sub_items(seq: Any, with_track: bool = False) -> list[Any]:
     """Слова-субтитры таймлайна в порядке parse_full: [(start, word, clipitem, effect), ...]."""
-    items = []
+    items: list[Any] = []
     for tr in seq.findall(".//media/video/track"):
         clips = tr.findall("clipitem")
         if not any((c.find(".//filter/effect/effectid") is not None and
@@ -157,14 +158,14 @@ def _sub_items(seq, with_track=False):
             word = " ".join(word.replace("\r", "").replace("\n", "").split())
             if word:
                 if with_track:
-                    items.append((int(_txt(c, "start")), word, c, eff, tr))
+                    items.append((int(cast(str, _txt(c, "start"))), word, c, eff, tr))
                 else:
-                    items.append((int(_txt(c, "start")), word, c, eff))
+                    items.append((int(cast(str, _txt(c, "start"))), word, c, eff))
     items.sort(key=lambda x: x[0])
     return items
 
 
-def _backup_once(xml_path, out_path=None):
+def _backup_once(xml_path: str, out_path: str | None = None) -> None:
     """Перед ПЕРВОЙ правкой XML на месте — копия <файл>.xml.bak (оригинал из Премьера).
     Уже есть .bak или пишем в другой файл — ничего не делаем."""
     if out_path and os.path.abspath(out_path) != os.path.abspath(xml_path):
@@ -182,7 +183,7 @@ def _backup_once(xml_path, out_path=None):
         log.warning("ошибка создания бэкапа %s: %s", bak, e)
 
 
-def _write_xml_prolog(root, xml_path, out_path=None):
+def _write_xml_prolog(root: Any, xml_path: str, out_path: str | None = None) -> None:
     """Записать XML с прологом (<?xml?> + <!DOCTYPE xmeml>) — ET их не пишет.
 
     Запись атомарная (core/fileio.atomic_text_write): «Стоп» или сбой в момент
@@ -195,14 +196,14 @@ def _write_xml_prolog(root, xml_path, out_path=None):
     atomic_text_write(out_path or xml_path, prolog + body)
 
 
-def set_highlights(xml_path, indices, out_path=None):
+def set_highlights(xml_path: str, indices: Any, out_path: str | None = None) -> dict[str, Any]:
     """ЯВНО задать набор жёлтых слов (не только добавить, как write_highlights): выбранные —
     красим (покрашенный блоб), а покрашенные, но НЕ выбранные — возвращаем в белый блоб.
     indices — в порядке parse_full. -> dict(colored=[...], skipped=[(idx,word,'причина')])."""
     from core import subtitle_blobs as sb
     clib, wlib = sb.colour_library(), sb.library()
-    root = ET.parse(xml_path).getroot()
-    seq = root.find(".//sequence")
+    root: Any = ET.parse(xml_path).getroot()
+    seq: Any = root.find(".//sequence")
     want = set(int(i) for i in indices)
     colored, skipped = [], []
     for k, (start, word, c, eff) in enumerate(_sub_items(seq)):
@@ -235,7 +236,7 @@ def set_highlights(xml_path, indices, out_path=None):
     return dict(colored=colored, skipped=skipped)
 
 
-def _make_blob(lib, word, want_col):
+def _make_blob(lib: Any, word: str, want_col: bool) -> str | None:
     """Собрать блоб Source Text и ПРОВЕРИТЬ его чтением обратно. -> base64 или None.
 
     Раньше здесь стоял слепой гард `len(word) > lib.max_len -> пропустить`. Он остался
@@ -259,7 +260,7 @@ def _make_blob(lib, word, want_col):
         return None
 
 
-def edit_word(xml_path, index, text, out_path=None):
+def edit_word(xml_path: str, index: int, text: str, out_path: str | None = None) -> dict[str, Any]:
     """Переписать ТЕКСТ слова-субтитра #index (порядок parse_full): и блоб Source Text
     (той же цветности — цвет сохраняется), и <name> эффекта (его читает parse_full), и
     <name> клипайтема. -> dict(ok=True, word=...) либо dict(error=...)."""
@@ -267,8 +268,8 @@ def edit_word(xml_path, index, text, out_path=None):
     text = " ".join((text or "").replace("\r", "").replace("\n", "").split())
     if not text:
         return dict(error="пустой текст")
-    root = ET.parse(xml_path).getroot()
-    seq = root.find(".//sequence")
+    root: Any = ET.parse(xml_path).getroot()
+    seq: Any = root.find(".//sequence")
     items = _sub_items(seq)
     if index < 0 or index >= len(items):
         return dict(error="индекс вне диапазона")
@@ -307,7 +308,7 @@ GAP_JOIN_SEC = 0.30   # Пауза, до которой слова считаю�
                       # тишина, двигать следующее нельзя.
 
 
-def _seq_fps(seq, default=60):
+def _seq_fps(seq: Any, default: int = 60) -> int:
     """Частота секвенции (кадров/с) — в тех же единицах, что start/end клипов."""
     rate = seq.find("rate") if seq is not None else None
     if rate is None:
@@ -318,10 +319,10 @@ def _seq_fps(seq, default=60):
         return default
 
 
-def _track_word_clips(tr):
+def _track_word_clips(tr: Any) -> list[tuple[int, Any]]:
     """Клипы-слова ОДНОЙ дорожки: [(start, clipitem), ...] по порядку start — так же,
     как их собирает _sub_items (удалять надо соседа по своей дорожке, а не по таймлайну)."""
-    rows = []
+    rows: list[tuple[int, Any]] = []
     for c in tr.findall("clipitem"):
         eff = c.find(".//filter/effect")
         if eff is None:
@@ -335,7 +336,7 @@ def _track_word_clips(tr):
     return rows
 
 
-def _move_clip_head(c, new_start):
+def _move_clip_head(c: Any, new_start: int | float) -> bool:
     """Перенести начало клипа на new_start, НЕ трогая его конец.
 
     `start` — то, что читают `_sub_items`/`parse_full` как начало слова. Вместе с ним
@@ -377,7 +378,7 @@ def _move_clip_head(c, new_start):
     return True
 
 
-def _hand_over_start(tr, cur, start, end, fps):
+def _hand_over_start(tr: Any, cur: Any, start: int | float, end: Any, fps: float) -> bool:
     """Отдать время удаляемого слова следующему слову ТОЙ ЖЕ дорожки.
 
     Клип слова вынимается из дорожки, соседей это не двигает — на месте удалённого
@@ -402,7 +403,7 @@ def _hand_over_start(tr, cur, start, end, fps):
     return _move_clip_head(n_clip, int(start))
 
 
-def delete_word(xml_path, index, out_path=None):
+def delete_word(xml_path: str, index: int, out_path: str | None = None) -> dict[str, Any]:
     """Удалить слово-субтитр #index (порядок parse_full) из XML целиком.
 
     Слово отдаёт своё время следующему: если сразу за удаляемым в его
@@ -428,7 +429,7 @@ def delete_word(xml_path, index, out_path=None):
     return dict(ok=True, index=index, word=word)
 
 
-def shift_indices(indices, del_idx):
+def shift_indices(indices: Any, del_idx: int) -> Any:
     """Сдвиг набора индексов слов при удалении слова #del_idx:
     индекс == del_idx убирается; индексы > del_idx уменьшаются на 1;
     индексы < del_idx не меняются.
@@ -442,14 +443,14 @@ def shift_indices(indices, del_idx):
             return None
         return idx - 1 if idx > del_idx else idx
     if isinstance(indices, set):
-        out = set()
+        out: Any = set()
         for i in indices:
             s = shift_indices(i, del_idx)
             if s is not None:
                 out.add(s)
         return out
     if isinstance(indices, list):
-        out = []
+        out: list[dict[str, Any]] = []  # type: ignore[no-redef]  # переиспользование out для list
         for i in indices:
             s = shift_indices(i, del_idx)
             if s is not None:
@@ -458,7 +459,7 @@ def shift_indices(indices, del_idx):
     return indices
 
 
-def shift_intro_rows(rows, del_idx):
+def shift_intro_rows(rows: list[dict[str, Any]], del_idx: int) -> list[dict[str, Any]]:
     """Сдвиг строк интро при удалении слова #del_idx:
     - если слово потреблено строкой, её count уменьшается на 1;
     - строки с count <= 0 удаляются;

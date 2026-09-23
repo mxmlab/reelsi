@@ -137,13 +137,13 @@ def test_render_single_systemexit_marks_clip_failed(tmp_path, monkeypatch):
     """2а. Одиночный рендер: SystemExit на сборке безголового .jsx — ролик в failed с
     понятным текстом, а не «Ничего не собралось» без причины."""
     from api import render
-    from core import xml2ae
+    from core import jobstate, render_job, xml2ae
 
     _clear_job(render.RJOB, pct=None, cur="", ae="", out_dir="", eta=None, eta_phase=None,
                eta_total=None, eta_preliminary=False, stage_label=None, stage_done=0,
                stage_total=0)
-    # Очередь этапов заводит диспетчер (_run_render_job) — заводим её сами, как он.
-    render.items_init(render.RJOB, render.RLOCK, ["01_clip"])
+    # Очередь этапов заводит диспетчер (run_render_job) — заводим её сами, как он.
+    jobstate.items_init(render.RJOB, render.RLOCK, ["01_clip"])
     outdir = tmp_path / "jsx"
     xml = tmp_path / "01_clip.xml"
     xml.write_text("<xml/>", encoding="utf-8")
@@ -153,7 +153,8 @@ def test_render_single_systemexit_marks_clip_failed(tmp_path, monkeypatch):
 
     monkeypatch.setattr(xml2ae, "to_ae_full", boom)
 
-    escaped = _call_worker(render._run_render_single,
+    escaped = _call_worker(render_job.run_render_single,
+                           render.RJOB,
                            [{"xml_path": str(xml), "outdir": str(outdir)}],
                            str(outdir), str(tmp_path / "exp"))
 
@@ -171,6 +172,7 @@ def test_render_job_systemexit_goes_to_failed(tmp_path, monkeypatch):
     """2б. Диспетчер рендера: SystemExit из одиночного пути (и из combined — тот же
     путь провала) не выходит из потока, а становится понятной записью в failed."""
     from api import render
+    from core import render_job
 
     _clear_job(render.RJOB, pct=None, cur="", ae="", out_dir="", eta=None, eta_phase=None,
                eta_total=None, eta_preliminary=False, stage_label=None, stage_done=0,
@@ -179,9 +181,10 @@ def test_render_job_systemexit_goes_to_failed(tmp_path, monkeypatch):
     def boom(*a, **kw):
         raise _roto_stop()
 
-    monkeypatch.setattr(render, "_run_render_single", boom)
+    monkeypatch.setattr(render_job, "run_render_single", boom)
 
-    escaped = _call_worker(render._run_render_job,
+    escaped = _call_worker(render_job.run_render_job,
+                           render.RJOB,
                            [{"xml_path": str(tmp_path / "clip.xml")}], "",
                            str(tmp_path))
 

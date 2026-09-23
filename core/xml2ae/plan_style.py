@@ -66,37 +66,37 @@ class StyleValues:
     «ключа нет, подстановка пустая») и приведение живёт у потребителя, как жило.
     """
     # --- общее: дисклеймер и ризер интро (стиль перебивает kwarg сборки) ---
-    disclaimer: object       # st.get: None — стиль молчит, "" — скрыть дисклеймер
-    disclaimer_end: object   # галка «копия дисклеймера в конце ролика»
-    disc_gap: object         # зазор строк дисклеймера, px; None — интервал авто
-    intro_riser: object      # st.get: None — галка как в kwarg, иначе стиль сильнее
-    intro_riser_file: object # свой файл ризера; None = ассет по умолчанию
+    disclaimer: Any          # st.get: None — стиль молчит, "" — скрыть дисклеймер
+    disclaimer_end: Any      # галка «копия дисклеймера в конце ролика»
+    disc_gap: Any            # зазор строк дисклеймера, px; None — интервал авто
+    intro_riser: Any         # st.get: None — галка как в kwarg, иначе стиль сильнее
+    intro_riser_file: Any    # свой файл ризера; None = ассет по умолчанию
     # --- шрифты и регистры (сырые значения: лесенку «пусто = как базовый» собирает
     # scene_plan — шрифты остаются отдельными входами модулей) ---
-    font: object
-    hl_font: object          # None = как font
-    intro_font: object       # None = как font (субтитры)
-    intro_hl_font: object    # None = как hl_font
-    accent_font: object
-    accent_case: object
-    back_font: object
-    back_case: object
+    font: Any
+    hl_font: Any             # None = как font
+    intro_font: Any          # None = как font (субтитры)
+    intro_hl_font: Any       # None = как hl_font
+    accent_font: Any
+    accent_case: Any
+    back_font: Any
+    back_case: Any
     # --- субтитры ---
     sub_case: str                          # strip: регистр субтитров
-    sub_y: object                          # доля высоты кадра; px считает план
+    sub_y: Any                             # доля высоты кадра; px считает план
     sub_scale: float                       # масштаб слоя прекомпа субтитров, %
     sub_words_per_row: int                 # max(1, …): слов в строке
     sub_rows_max: int                      # max(1, …): строк в реплике
-    sub_fill: object                       # цвет базовых субтитров; None = белый
-    hl_fill: object                        # цвет жёлтого; None = стоковый жёлтый
-    hl_fill3: object                       # третий цвет (color=="accent"); None = дефолт
-    hl_bold: object                        # fauxBold на выделенных словах
-    hl_row_anim: object                    # появление жёлтых в строке: word | row
+    sub_fill: Any                          # цвет базовых субтитров; None = белый
+    hl_fill: Any                           # цвет жёлтого; None = стоковый жёлтый
+    hl_fill3: Any                          # третий цвет (color=="accent"); None = дефолт
+    hl_bold: Any                           # fauxBold на выделенных словах
+    hl_row_anim: Any                       # появление жёлтых в строке: word | row
     hl_blur: bool
     hl_blur_amt: float
     hl_row_stack: bool                     # подряд жёлтые — стопкой
     # плашка под субтитрами: ключи читаются всегда, ставятся по галке sub_bg
-    sub_bg: object
+    sub_bg: Any
     sub_bg_fill: list
     sub_bg_op: float
     sub_bg_h: float
@@ -106,7 +106,7 @@ class StyleValues:
     sub_bg_dy: float
     sub_bg_anim: float
     # верхняя строка-прогресс
-    top_line: object
+    top_line: Any
     top_line_y: float
     top_line_w: float
     top_line_th: float
@@ -115,9 +115,9 @@ class StyleValues:
     top_line_track_fill: list
     top_line_track_op: float
     # подпись о ролике
-    caption: object
-    caption_case: object
-    caption_font: object
+    caption: Any
+    caption_case: Any
+    caption_font: Any
     caption_size: float
     caption_fill: list
     caption_x: float
@@ -129,11 +129,11 @@ class StyleValues:
     caption_kx: float
     caption_ky: float
     # --- интро: положение, масштаб, раскладка ---
-    intro_scale: object
+    intro_scale: Any
     intro_scale_k: float                   # бывшее _G: intro_scale / 100
-    intro_x: object                        # сдвиг интро по X, px
-    intro_y: object
-    intro_y2: object
+    intro_x: Any                           # сдвиг интро по X, px
+    intro_y: Any
+    intro_y2: Any
     intro_cam: bool                        # «интро едет с камерой»
     fit_w: float                           # бывшее _fit_w: intro_fit_w/100 (доля кадра, MI)
     fit_max: float                         # бывшее _fit_max: потолок увеличения
@@ -149,7 +149,7 @@ class StyleValues:
     # Шаг ПОСЛЕ блока заднего плана: своя ручка, ключа в стиле может не быть
     # вовсе — тогда None, и раскладка берёт back_step (старые стили прежние байт в байт).
     # Форма с `is not None`: ноль — ЗАДАННОЕ значение, как у прочих чтений через _sv.
-    back_step_after: object                # None — ключа нет, раскладка берёт back_step
+    back_step_after: Any                   # None — ключа нет, раскладка берёт back_step
     back_scale: float                      # кегль строки заднего плана, доля
     # Фейд-аут прекомпа интро: единый ключ стиля intro_fade (дефолт 0.35).
     intro_fade: float
@@ -161,22 +161,22 @@ class StyleValues:
     intro_sub_cut: bool                    # гаснет к появлению субтитра
     intro_sub_fade: float
     intro_scale_anchor: str                # comp | first (точка масштабирования прекомпа)
-    intro_anchor: object                   # center | first
-    intro_anchor2: object                  # то же для групп на перебивке
+    intro_anchor: Any                      # center | first
+    intro_anchor2: Any                     # то же для групп на перебивке
     intro_big_gap: float                   # зазор «большое слева»
     intro_big_over: float
-    intro_roto_by_pos: object              # интро над рото по положению
-    intro_shade: object                    # затемнение под интро
+    intro_roto_by_pos: Any                 # интро над рото по положению
+    intro_shade: Any                       # затемнение под интро
     intro_shade_op: float
     intro_glow: float
     # цвета текста интро (None = сегодняшнее поведение, подстановка пустая)
-    intro_fill: object
-    intro_hl_fill: object
+    intro_fill: Any
+    intro_hl_fill: Any
     # Тень и свечение слов интро — отдельные рычаги. Раньше решение «ставить
     # эффект» было жёстким: глитч и строки заднего плана — всегда с тенью, глитч и строка
     # с fx=="glow" — всегда с Glo2. Дефолты (галки True, числа 149/77/0.62) не меняют .jsx
     # ни на байт: подстановки шаблона печатают ровно прежний текст (golden).
-    intro_shadow: object
+    intro_shadow: Any
     intro_shadow_op: float
     intro_shadow_dir: float
     intro_shadow_dist: float
@@ -211,12 +211,12 @@ class StyleValues:
     intro_comp_shadow_soft: float
     # --- вставки ---
     insert_anim: str                       # strip: zoom | rise | none
-    insert_style: object                   # auto | cam1 | cam2
+    insert_style: Any                      # auto | cam1 | cam2
     insert_snap_cut: bool
     insert_snap_start: float               # st.get(…, 0.35): ключа нет в BASE, форма прежняя
     insert_sub_swap: bool                  # субтитры уходят на rise-вставках
-    insert_fx: object                      # card | white | none
-    insert_video_front: object             # ст. ключ, мигрирует в layer_order; форма прежняя
+    insert_fx: Any                         # card | white | none
+    insert_video_front: Any                # ст. ключ, мигрирует в layer_order; форма прежняя
     insert_c1_x: float
     insert_c1_y: float
     insert_c2_x: float
@@ -226,8 +226,8 @@ class StyleValues:
     plate_path: str                        # бывшее _plate_path: insert_plate_file, strip
     plate_scale: float                     # бывшее _plate_scale: 0 -> 100.0
     # --- камера (читает plan_camera, scene_plan ключей не знает) ---
-    cam1_zoom: object                      # pulse | jump | drift | none
-    cam1_zoom_start: object
+    cam1_zoom: Any                         # pulse | jump | drift | none
+    cam1_zoom_start: Any
     cam1_zoom_big: float
     cam1_zoom_lo: float
     cam1_zoom_hi: float
@@ -245,41 +245,41 @@ class StyleValues:
     cam1_pan_x: float
     cam1_pan_y: float
     cam1_rot: float
-    cam1_head_follow: object               # слежение за головой
+    cam1_head_follow: Any                  # слежение за головой
     cam1_head_x: float
     cam1_head_smooth: float
     cam1_head_min: float
-    roto_cam1_only: object                 # рото только на кусках Камеры 1
+    roto_cam1_only: Any                    # рото только на кусках Камеры 1
     # --- звук ---
     glitch_db: float
     voice_db: float
     audio_fades: bool
-    pop: object                            # файл/ключ ассета «попа»; None = ассет
-    glitch: object
-    transition: object
-    transition_sfx: object
+    pop: Any                               # файл/ключ ассета «попа»; None = ассет
+    glitch: Any
+    transition: Any
+    transition_sfx: Any
     # Обрезка/точка удара/громкость звуков (<звук>_in/_out/_at/_db): ключи читаются
     # СЫРЫМИ, как читал их _sfx_cfg: правило «не задано -> 0/None» и базовые громкости
     # (base/def_out) — арифметика звука, она осталась в plan_audio.py.
-    pop_in: object
-    pop_out: object
-    pop_at: object
-    pop_db: object
-    transition_sfx_in: object
-    transition_sfx_out: object
-    transition_sfx_at: object
-    transition_sfx_db: object
-    intro_riser_in: object
-    intro_riser_out: object
-    intro_riser_at: object
-    intro_riser_db: object
-    transition_in: object
-    transition_out: object
-    transition_at: object
-    transition_db: object
-    pop_lead: object
+    pop_in: Any
+    pop_out: Any
+    pop_at: Any
+    pop_db: Any
+    transition_sfx_in: Any
+    transition_sfx_out: Any
+    transition_sfx_at: Any
+    transition_sfx_db: Any
+    intro_riser_in: Any
+    intro_riser_out: Any
+    intro_riser_at: Any
+    intro_riser_db: Any
+    transition_in: Any
+    transition_out: Any
+    transition_at: Any
+    transition_db: Any
+    pop_lead: Any
     # --- палитра камер через Lumetri: галка и девять чисел ---
-    lm_on: object
+    lm_on: Any
     lm_exposure: float
     lm_contrast: float
     lm_highlights: float
@@ -290,7 +290,7 @@ class StyleValues:
     lm_tint: float
     lm_sat: float
     # --- порядок слоёв и размытие на старте ---
-    layer_order: object
+    layer_order: Any
     start_blur: float
     start_blur_dur: float
 

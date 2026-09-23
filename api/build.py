@@ -3,6 +3,7 @@
 """Сборка .jsx для After Effects и раскладка камер.
 """
 import os, threading, traceback, urllib.parse
+from typing import Any
 from flask import request, jsonify, send_file, Response
 from core.project_file import write_project
 from ._core import (JOB, LOCK, bp, emit, item_done, item_fail, item_set, items_init, job_finish,
@@ -18,7 +19,7 @@ from .inserts import _adopt_inserts, _insert_dest
 # слов в XML, база вставок, раскладка камер. Перенесены сюда 1:1.
 # ==========================================================================
 
-def _num_field(d, key, default=0.0):
+def _num_field(d: dict[str, Any], key: str, default: float = 0.0) -> float:
     """Числовое поле тела запроса.
 
     Нечисловое значение раньше доезжало до `float()` и падало ValueError'ом с
@@ -35,7 +36,7 @@ def _num_field(d, key, default=0.0):
 
 
 
-def _roto_bottom_safe(st):
+def _roto_bottom_safe(st: dict[str, Any]) -> float:
     """roto_bottom хранится долей (0–1). Дефект V1 (rotoSync без обратного
     пересчёта frac_pct_int) мог записать в состояние ПРОЦЕНТЫ (>1). Значение
     >1 считаем процентами и делим на 100, чтобы испорченное состояние не ломило
@@ -46,7 +47,7 @@ def _roto_bottom_safe(st):
     return v
 
 
-def _norm_build_jobs(jobs_in):
+def _norm_build_jobs(jobs_in: Any) -> list[dict[str, Any]]:
     """Нормализация набора клипов для фонового джоба сборки (/api/build_run)."""
     from core import aicut, styles  # локальный импорт, как в соседних модулях api/
     if jobs_in is None:
@@ -108,7 +109,7 @@ def _norm_build_jobs(jobs_in):
     return norm
 
 
-def _norm_or_error(jobs, code):
+def _norm_or_error(jobs: Any, code: str) -> list[dict[str, Any]]:
     """Нормализация набора клипов с единой обработкой ошибок для build_run и render_run."""
     try:
         return _norm_build_jobs(jobs)
@@ -127,7 +128,7 @@ def _norm_or_error(jobs, code):
         raise ReelsiError(umsg("build_set_invalid", f"Некорректный набор: {err}", err=err))
 
 
-def _run_build_job(norm, mode, outdir):
+def _run_build_job(norm: list[dict[str, Any]], mode: str, outdir: str | None) -> None:
     """Фоновая сборка .jsx со стримом лога в общий JOB (как у нарезки)."""
     try:
         from core import xml2ae  # внутри try: ошибка импорта иначе оставляла JOB running=True навсегда
@@ -135,7 +136,7 @@ def _run_build_job(norm, mode, outdir):
         moved = {}                       # вставки уходят в проект -> прибрать в базу
         for j in norm:
             moved.update(_adopt_inserts(j.get("inserts") or [], j.pop("insdest", None)
-                                        or _insert_dest({}), emit=emit))
+                                         or _insert_dest({}), emit=emit))
         if moved:
             with LOCK:
                 JOB["insmoved"] = moved  # фронт починит пути у себя, когда джоб добежит
@@ -149,7 +150,7 @@ def _run_build_job(norm, mode, outdir):
         # Сначала это стало честной ошибкой, теперь (жалоба 2026-08-12) папка создаётся
         # сама — молчаливая подмена пути недопустима в любом случае: файл ляжет ровно
         # в указанную папку, а не в соседнюю.
-        def ensure_dir(od):
+        def ensure_dir(od: str | None) -> bool:
             if od and not os.path.isdir(od):
                 try:
                     os.makedirs(od, exist_ok=True)
@@ -265,7 +266,7 @@ def _run_build_job(norm, mode, outdir):
 
 
 @bp.route("/api/build_run", methods=["POST"])
-def api_build_run():
+def api_build_run() -> Response:
     """Асинхронная сборка .jsx (набор или один файл): лог стримится в /api/status,
     результат — пути .jsx в results. Общий JOB с нарезкой (VRAM всё равно один)."""
     d = request.get_json() or {}
@@ -302,7 +303,7 @@ def api_build_run():
 
 
 @bp.route("/api/cams_load", methods=["POST"])
-def api_cams_load():
+def api_cams_load() -> Response:
     """Раскладка камер по сегментам для отдельного окна-редактора: сегменты (тайминги +
     длительность на монтажной ленте) и текущая активная камера каждого (ручная из
     project.json['assign'] если валидна, иначе авто assign_cameras). Аудио всегда cam1."""
@@ -343,7 +344,7 @@ def api_cams_load():
 
 
 @bp.route("/api/cams_save", methods=["POST"])
-def api_cams_save():
+def api_cams_save() -> Response:
     """Пересобрать XML с РУЧНОЙ раскладкой камер (список индексов на каждый сегмент) и
     сохранить её в project.json['assign'] (переживёт генерацию субтитров).
 
@@ -400,7 +401,7 @@ def api_cams_save():
         return jsonify(**umsg_err(e))
 
 
-def _int_body_field(d, key, default):
+def _int_body_field(d: dict[str, Any], key: str, default: int | None) -> int | None:
     """Целое из тела запроса. Нечисловое и нецелое («abc», 1.5, [], true) — None.
 
     Нужно там, где раньше битое значение подменялось на «-1» и роут отвечал
@@ -424,7 +425,7 @@ def _int_body_field(d, key, default):
 
 
 @bp.route("/api/swap_cam", methods=["POST"])
-def api_swap_cam():
+def api_swap_cam() -> Response:
     """Заменить файл камеры (обычно вторую) на другой и заново свести под Камеру 1:
     пересчитываем синхрон, пересобираем XML с ТЕМИ ЖЕ keep/раскладкой/субтитрами/жёлтыми.
     Аудио всегда с cam1 → слова/тайминги/вставки не трогаются, весь дальнейший флоу цел.
@@ -511,7 +512,7 @@ def api_swap_cam():
 # ==========================================================================
 
 @bp.route("/api/export_xml")
-def api_export_xml():
+def api_export_xml() -> Response | tuple[str, int]:
     """Скачать таймлайн: на лету проставляем настоящие таймкоды исходников.
 
     Файл на диске рабочий, его читают редактор, субтитры и `xml2ae` — поэтому чиним
@@ -556,7 +557,7 @@ def api_export_xml():
 
 
 @bp.route("/api/export_drp", methods=["POST"])
-def api_export_drp():
+def api_export_drp() -> Response | tuple[str, int]:
     """Скачать таймлайн в `.drp` (DaVinci Resolve): камеры, нарезка, синхрон,
     раскладка, субтитры-графика и вставки — всё, что умеет `drp.build()`.
 
@@ -647,7 +648,7 @@ def api_export_drp():
 # ==========================================================================
 
 @bp.route("/api/scene", methods=["POST"])
-def api_scene():
+def api_scene() -> Response:
     """План сцены: тайминги вставок/зума, готовые ключи анимаций (ins.anim),
     субтитры, интро, цензор. Быстрый роут без GPU — фронт и предпросмотр зовут
     на лету; это тот же расчёт, что уходит в .jsx, только без записи.

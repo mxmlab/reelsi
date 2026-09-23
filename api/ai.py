@@ -7,8 +7,9 @@
 Действия POST /api/ai_config — в core/aicut/config_actions.py: здесь только диспетчер.
 """
 import os, json, threading, time
+from typing import Any, cast
 import urllib.request
-from flask import request, jsonify
+from flask import Response, jsonify, request
 from ._core import _ai_begin, _ai_end, bp, emit, umsg_err, jstr
 from .inserts import _insert_dest
 from core.umsg import ReelsiError, umsg
@@ -30,7 +31,7 @@ from core.aicut.config_actions import ACTIONS
 
 
 @bp.route("/api/ai_yellow", methods=["POST"])
-def api_ai_yellow():
+def api_ai_yellow() -> Response:
     """Ask the local LM Studio model to pick yellow-highlight words for an edited
     sequence XML. Writes <stem>.yellow.json next to it and returns the indices so
     the UI can load them into the highlight chips right away."""
@@ -60,7 +61,7 @@ def api_ai_yellow():
 
 
 @bp.route("/api/ai_inserts", methods=["POST"])
-def api_ai_inserts():
+def api_ai_inserts() -> Response:
     """Local LLM предлагает вставки (10 фото + 3 видео) по субтитрам XML. Выгружает
     модель после. Возвращает список для меню вставок."""
     d = request.get_json() or {}
@@ -74,7 +75,7 @@ def api_ai_inserts():
         try:
             from core import aicut
             notes = []                      # сдвиги таймингов/зон видны в UI-логе, а не глушатся
-            def _emit(line="", **vars):
+            def _emit(line: str = "", **vars: Any) -> None:
                 s = t(line, **vars) if line else ""
                 notes.append(s)
                 emit(line, **vars)         # дублируем в JOB-лог (серверный прогресс стриминга)
@@ -103,7 +104,7 @@ def api_ai_inserts():
 # ---- профили ИИ-провайдеров (шестерёнка в webui, как в Roo Code) ----------
 # Маскирование ключей — в core/aicut/config.py, действия — в core/aicut/config_actions.py
 # в HTTP-модуле от них остались только импорты выше и диспетчер ниже.
-def _ai_config_answer(cfg, full=False):
+def _ai_config_answer(cfg: dict[str, Any], full: bool = False) -> dict[str, Any]:
     """Ответ /api/ai_config — ОДНА функция на обе ветки: набор полей у них общий.
 
     Раньше этот набор был продублирован в GET- и POST-ветках дословно, и правка
@@ -164,7 +165,7 @@ def _ai_config_answer(cfg, full=False):
 
 
 @bp.route("/api/ai_config", methods=["GET", "POST"])
-def api_ai_config():
+def api_ai_config() -> Response:
     """Профили ИИ-провайдеров. GET — {active, profiles(ключи маскированы), presets}.
     POST {action}: действия и их поля — в core/aicut/config_actions.ACTIONS (set_active
     {name} · save_profile {name, old_name?, profile, set_active?} · delete_profile
@@ -177,7 +178,7 @@ def api_ai_config():
     act = d.get("action")
     cfg = aicut.load_ai_config()
     try:
-        action = ACTIONS.get(act)
+        action = ACTIONS.get(cast(str, act))
         if action is None:
             raise ReelsiError(umsg("unknown_action", f"Неизвестное действие: {act}", act=act))
         action(cfg, d)
@@ -192,7 +193,7 @@ def api_ai_config():
 
 
 @bp.route("/api/ai_test", methods=["POST"])
-def api_ai_test():
+def api_ai_test() -> Response:
     """Кнопка «Проверить»: мини-вызов через выбранный бэкенд. Тестирует данные из
     формы (body.profile, ключ-маска подменяется сохранённым) или активный профиль."""
     from core import aicut
@@ -247,7 +248,7 @@ def api_ai_test():
 
 
 @bp.route("/api/ai_models", methods=["POST"])
-def api_ai_models():
+def api_ai_models() -> Response:
     """Кнопка «Обновить список»: модели провайдера. OpenAI-совместимые — GET
     {base}/models (работает у LM Studio и OpenRouter); Anthropic — Models API."""
     from core import aicut
@@ -287,7 +288,7 @@ def api_ai_models():
             return jsonify(ok=True, models=sorted(ids), base_url=base)
         headers = {"Authorization": "Bearer " + key} if key else {}
         headers = aicut.apply_profile_headers(headers, {"headers": hdrs})
-        data = None
+        data: Any = None
         probe_err = None
         try:
             req = http_req(base + "/models", headers=headers)
@@ -331,7 +332,7 @@ def api_ai_models():
         # /chat/completions отвечают 404. Подмешиваем их в подсказки поля «Модель»,
         # чтобы профиль «Картинки» вообще можно было настроить, и запоминаем
         # supported_parameters (по ним gen_image решает, что можно слать).
-        image = []
+        image: list[Any] = []
         if provider != "anthropic":
             try:
                 req = http_req(base + "/images/models", headers=headers)
@@ -348,7 +349,7 @@ def api_ai_models():
         # Видео-модели — тоже отдельный каталог (/videos/models): Seedance/Veo/Kling в
         # общий /models не попадают, поэтому в подсказках поля «Модель» их не было.
         # Подмешиваем и запоминаем записи (по ним video_caps фильтрует запрос).
-        video = []
+        video: list[Any] = []
         if provider != "anthropic":
             try:
                 req = http_req(base + "/videos/models", headers=headers)
@@ -381,7 +382,7 @@ def api_ai_models():
 
 
 @bp.route("/api/ai_genimage", methods=["POST"])
-def api_ai_genimage():
+def api_ai_genimage() -> Response:
     """Сгенерить картинку-вставку по query (модель профиля «Картинки»).
     Сохраняется в <dest|insert_library>/generated/ + сразу в индекс insertlib
     (следующие ролики найдут её автоподбором бесплатно).
@@ -444,7 +445,7 @@ def api_ai_genimage():
 
 
 @bp.route("/api/rembg", methods=["POST"])
-def api_rembg():
+def api_rembg() -> Response:
     """«Убрать фон» у уже выбранного файла-вставки (кнопка на карточке) — как
     Remove Background в фотошопе. Прозрачный <имя>-nobg.png кладём сразу в базу
     (<dest>/photos) и вносим в индекс с описанием=запрос; исходник цел."""
@@ -473,7 +474,7 @@ def api_rembg():
 
 
 @bp.route("/api/ai_intro", methods=["POST"])
-def api_ai_intro():
+def api_ai_intro() -> Response:
     """ИИ-разметка интро + акценты посреди ролика (local LM Studio). Выгружает модель после."""
     d = request.get_json() or {}
     xml_path = jstr(d, "xml").strip().strip('"')
@@ -486,7 +487,7 @@ def api_ai_intro():
         try:
             from core import aicut
             notes = []                      # прогресс стрима и переносы строк — в UI-лог, не в /dev/null
-            def _emit(line="", **vars):
+            def _emit(line: str = "", **vars: Any) -> None:
                 s = t(line, **vars) if line else ""
                 notes.append(s)
                 emit(line, **vars)
@@ -512,7 +513,7 @@ def api_ai_intro():
 
 
 @bp.route("/api/ai_stop", methods=["POST"])
-def api_ai_stop():
+def api_ai_stop() -> Response:
     """Стоп одиночного ИИ-вызова (интро/жёлтые/вставки): флаг CANCEL рвёт ретраи
     _ask_json, выгрузка модели обрывает текущую генерацию LM Studio и освобождает
     VRAM. Клиент к этому моменту уже abort-нул свой fetch."""
@@ -520,7 +521,7 @@ def api_ai_stop():
         try:
             from core import aicut
             ep = aicut.cancel_call()      # CANCEL + смена epoch: старый поток выйдет сам
-            def _unload():
+            def _unload() -> None:
                 # выгрузка отложена в поток — но если к этому моменту уже стартовал НОВЫЙ
                 # вызов (юзер сменил reasoning и запустил заново), модель трогать нельзя
                 if aicut.is_current(ep):
@@ -536,7 +537,7 @@ def api_ai_stop():
 
 
 @bp.route("/api/ai_stats", methods=["GET"])
-def api_ai_stats():
+def api_ai_stats() -> Response:
     """Сводка ИИ-вызовов для модалки настроек: кто сколько думает и стоит.
 
     Читает ai_calls.jsonl и группирует по тройке (модель, шаг, уровень ума).
@@ -546,6 +547,7 @@ def api_ai_stats():
     заведена эта таблица. Ошибки считаются отдельно и в медианы не попадают."""
     from core import aicut
     import statistics
+    f: Any
     rows = []
     try:
         with open(aicut.AI_LOG_PATH, encoding="utf-8") as f:
@@ -553,7 +555,7 @@ def api_ai_stats():
     except ReelsiError: raise
     except Exception:
         pass                                            # файла нет — пустая сводка
-    groups = {}
+    groups: dict[tuple[Any, Any, Any], dict[str, Any]] = {}
     for r in rows:
         if not isinstance(r, dict):
             continue

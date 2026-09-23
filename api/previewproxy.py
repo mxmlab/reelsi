@@ -12,22 +12,23 @@ mediaCapabilities отвечает powerEfficient=false, и 4K декодиру�
 который надо пересобирать после каждой правки.
 """
 import os, threading
-from flask import request, jsonify
+from typing import Any
+from flask import Response, jsonify, request
 from ._core import (bp, jstr, log_entry, umsg_err, _cross_lock_acquire, _cross_lock_release,
                     sysexit_text)
 from core.umsg import ReelsiError, umsg
 
-PXJOB = {"running": False, "done": False, "log": [], "cur": "", "i": 0, "n": 0, "pct": 0}
+PXJOB: dict[str, Any] = {"running": False, "done": False, "log": [], "cur": "", "i": 0, "n": 0, "pct": 0}
 PXLOCK = threading.Lock()
 
 
-def _emit(line, **vars):
+def _emit(line: str, **vars: Any) -> None:
     with PXLOCK:
         entry = log_entry(line, vars)
         PXJOB["log"].append(entry)
 
 
-def _pct(value):
+def _pct(value: float) -> None:
     """Процент сборки ТЕКУЩЕГО файла.
 
     Приходит из `build_preview_proxy` (ffmpeg идёт с `-progress pipe:1`, см.
@@ -37,13 +38,13 @@ def _pct(value):
         PXJOB["pct"] = int(max(0, min(100, round(value))))
 
 
-def _preview_proxy_plan(xml_path, height=720):
+def _preview_proxy_plan(xml_path: str, height: int = 720) -> tuple[list[tuple[str, str, bool]], str]:
     """[(src, proxy_path, готов ли)] по камерам XML + папка кэша."""
     from core import draftrender
     from core import xml2ae
     edl = xml2ae.virtual_edl(xml_path)
     tdir = draftrender.tmp_dir(xml_path)
-    out = []
+    out: list[tuple[str, str, bool]] = []
     for c in edl.get("cams") or []:
         src = c.get("path")
         if not (src and os.path.isfile(src)):
@@ -53,7 +54,7 @@ def _preview_proxy_plan(xml_path, height=720):
     return out, tdir
 
 
-def _run_preview_proxy(plan, height):
+def _run_preview_proxy(plan: list[tuple[str, str, bool]], height: int) -> None:
     """Фоновая сборка недостающих прокси. Свой джоб, а не общий JOB: нарезка\сборка
     .jsx не должны блокироваться тем, что юзер открыл предпросмотр."""
     from core import draftrender
@@ -87,7 +88,7 @@ def _run_preview_proxy(plan, height):
 
 
 @bp.route("/api/preview_proxy", methods=["POST"])
-def api_preview_proxy():
+def api_preview_proxy() -> Response:
     """Прокси камер для предпросмотра. body: {xml, build?: bool}.
 
     Возвращает по каждой камере путь к прокси и готов ли он. build=true — запустить
@@ -134,7 +135,7 @@ def api_preview_proxy():
 
 
 @bp.route("/api/preview_proxy_status")
-def api_preview_proxy_status():
+def api_preview_proxy_status() -> Response:
     """Прогресс фоновой сборки превью-прокси: i/n текущего файла, его имя (cur),
     процент готовности (pct, 0–100) и хвост лога."""
     with PXLOCK:

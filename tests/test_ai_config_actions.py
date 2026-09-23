@@ -70,17 +70,19 @@ import api  # noqa: E402
 from core.aicut import config as aicut_config  # noqa: E402
 
 
-# Ключи — ненастоящие и не в формате реальных (gitleaks в CI не должен ловить фикстуру).
+# Ключи — подставные: ровный ряд одного символа, хвост — тот, что показывает маска.
+# Энтропии такого значения не хватает порогу generic-api-key в gitleaks (3.5),
+# поэтому сканер в CI молчит на этом файле без исключений по пути.
 START_CFG = {
     "active": "Основной",
     "profiles": {
         "Основной": {"provider": "lmstudio", "base_url": "http://localhost:1234/v1",
-                     "api_key": "test-key-lmstudio-1111",
+                     "api_key": "xxxxxxxxxxxxxxxx1111",
                      "model": "qwen3.6-27b-4bpw-16gb-vram"},
         "Клод": {"provider": "anthropic", "base_url": "https://api.anthropic.com",
-                 "api_key": "test-key-anthropic-2222", "model": "claude-sonnet-5"},
+                 "api_key": "xxxxxxxxxxxxxxxx2222", "model": "claude-sonnet-5"},
         "Аудио": {"provider": "openrouter", "base_url": "https://openrouter.ai/api/v1",
-                  "api_key": "test-key-openrouter-3333", "model": "google/gemini-2.5-flash"},
+                  "api_key": "xxxxxxxxxxxxxxxx3333", "model": "google/gemini-2.5-flash"},
         # env-ключ: наружу уходит имя переменной, а не значение (маска тут не нужна)
         "Текстовая": {"provider": "openrouter", "base_url": "https://openrouter.ai/api/v1",
                       "api_key": "env:NZ_TEST_KEY_MISSING",
@@ -196,7 +198,7 @@ SCENARIOS = [
     {"name": "save_profile: новый профиль + set_active", "method": "POST",
      "body": {"action": "save_profile", "name": "Новый", "set_active": True,
               "profile": {"provider": "openai", "base_url": "http://localhost:9999/v1",
-                          "api_key": "test-key-new-4444", "model": "gpt-4o",
+                          "api_key": "xxxxxxxxxxxxxxxx4444", "model": "gpt-4o",
                           "headers_text": "X-Foo: bar\nX-Baz: qux"}}},
     {"name": "save_profile: ключ-маска при том же адресе — ключ сохранён", "method": "POST",
      "body": {"action": "save_profile", "name": "Новый",
@@ -215,7 +217,7 @@ SCENARIOS = [
      "expect": "key_mask_address_changed"},
     {"name": "save_profile: пустое имя", "method": "POST",
      "body": {"action": "save_profile", "name": "   ",
-              "profile": {"provider": "openai", "api_key": "test-key-new-4444"}},
+              "profile": {"provider": "openai", "api_key": "xxxxxxxxxxxxxxxx4444"}},
      "expect": "empty_profile_name"},
     {"name": "save_profile: profile не объект", "method": "POST",
      "body": {"action": "save_profile", "name": "Новый", "profile": "строка"},

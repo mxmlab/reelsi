@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import pytest  # noqa: E402
 
 from api import render  # noqa: E402
-from core import aerender  # noqa: E402
+from core import aerender, jobstate, render_job  # noqa: E402
 
 
 class _FakePopen:
@@ -67,18 +67,18 @@ def _run_fake(lines, comps, render_dir=None):
         render_dir = tempfile.mkdtemp()
     render.RJOB.update(running=True, done=False, log=[], pct=None, cur="", ae="",
                        out_dir="", result=[], failed=[], cancel=False, items=[], eta=None)
-    render.items_init(render.RJOB, render.RLOCK, [s for s, _c, _f in comps])
+    jobstate.items_init(render.RJOB, render.RLOCK, [s for s, _c, _f in comps])
     for s, _c, _f in comps:
-        render.item_set(render.RJOB, render.RLOCK, s, stage="render")
+        jobstate.item_set(render.RJOB, render.RLOCK, s, stage="render")
     import types
-    orig = render.subprocess.Popen
-    render.subprocess.Popen = types.SimpleNamespace
+    orig = render_job.subprocess.Popen
+    render_job.subprocess.Popen = types.SimpleNamespace
     try:
-        render.subprocess.Popen = _FakePopen
+        render_job.subprocess.Popen = _FakePopen
         _FakePopen.LINES = lines
-        render._run_proc_batch("aerender.exe", "набор.aep", comps, render_dir)
+        render_job.run_proc_batch(render.RJOB, "aerender.exe", "набор.aep", comps, render_dir)
     finally:
-        render.subprocess.Popen = orig
+        render_job.subprocess.Popen = orig
     return render.RJOB
 
 
@@ -173,7 +173,7 @@ def test_fake_popen_takes_posix_kwargs(monkeypatch):
         posix_kwargs = _core.task_popen_kwargs()
     assert posix_kwargs == {"start_new_session": True}, posix_kwargs
 
-    monkeypatch.setattr(render, "task_popen_kwargs", lambda: posix_kwargs)
+    monkeypatch.setattr(render_job, "task_popen_kwargs", lambda: posix_kwargs)
     lines = [
         "PROGRESS:  0:00:39:11 (100): 0 Seconds",
         "PROGRESS:  0:00:40:00 (500): 0 Seconds",

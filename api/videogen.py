@@ -6,8 +6,9 @@
 идёт минутами и не должна занимать локальную очередь.
 """
 import os, json, threading, time
+from typing import Any, cast
 import urllib.request
-from flask import request, jsonify
+from flask import Response, jsonify, request
 from ._core import (APP_NAME, APP_REFERER, LOG_CAP, bp, env, jstr, journal_interrupted,
                     journal_write, umsg_err)
 from core import paths
@@ -31,7 +32,7 @@ log = get_logger(__name__)
 # ============================================================================
 VIDEO_DIR = env("VIDEO_DIR") or paths.root("_videogen")
 VIDEO_OUT = os.path.join(VIDEO_DIR, "out")
-VJOB = {"running": False, "done": False, "cancel": False, "log": [], "log_base": 0,
+VJOB: dict[str, Any] = {"running": False, "done": False, "cancel": False, "log": [], "log_base": 0,
         "result": None, "error": None, "err": None, "err_vars": None, "started": 0,
         "key": None, "context": ""}       # ключ истории + opaque-контекст UI карточки
 VLOCK = threading.Lock()
@@ -47,7 +48,7 @@ VHIST_CAP = 300
 VHIST_LOCK = threading.Lock()
 
 
-def _vhist_read():
+def _vhist_read() -> list[dict[str, Any]]:
     """Записи истории (старые в начале). Битый/отсутствующий файл — пустой список:
     вкладка не должна падать из-за журнала."""
     try:
@@ -64,13 +65,13 @@ def _vhist_read():
         return []
 
 
-def _vhist_valid(data):
+def _vhist_valid(data: Any) -> bool:
     """Формат журнала — СПИСОК записей: объект или строка в файле — такая же поломка,
     как обрыв записи, и история из него не собирается."""
     return isinstance(data, list)
 
 
-def _vhist_write(items):
+def _vhist_write(items: list[dict[str, Any]]) -> None:
     """Атомарно (core.fileio.atomic_json_dump), как ui_state: рестарт посреди записи
     не оставит огрызок. Битый журнал ПЕРЕД записью откладывается в сторону
     (core.fileio.quarantine_unreadable): без этого первая же запись статуса затирала
@@ -87,7 +88,7 @@ def _vhist_write(items):
         print("video history:", e)
 
 
-def vhist_put(key, **fields):
+def vhist_put(key: str | None, **fields: Any) -> None:
     """Создать/обновить запись задачи. Пишем на КАЖДОМ переходе статуса, а не в конце:
     если сервер убьют посреди генерации, запись останется — по ней видно, что задача
     не закончилась (и за что провайдер мог списать деньги)."""
@@ -106,7 +107,7 @@ def vhist_put(key, **fields):
         _vhist_write(items)
 
 
-def vhist_boot():
+def vhist_boot() -> None:
     """Рестарт сервера обрывает поток генерации, а запись остаётся «идёт» — вкладка
     показывала бы вечную задачу. Метим такие как прерванные, один раз на старте."""
     items = _vhist_read()
@@ -122,7 +123,7 @@ def vhist_boot():
 vhist_boot()
 
 
-def vhist_scan_files(items):
+def vhist_scan_files(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Ролики, о которых история не знает: сгенерированы до её появления или файл
     положили в папку руками. Импортируем как готовые задачи — иначе «что ещё можно
     скачать» показывало бы только генерации последних дней."""
@@ -152,12 +153,13 @@ def vhist_scan_files(items):
     return items
 
 
-def vemit(line, **vars):
+def vemit(line: Any, **vars: Any) -> None:
     """Строка в лог генерации видео (усечение как у основного лога).
 
     `aicut.gen_video` пишет структурно, как основной JOB. В VJOB хранится готовая
     строка: история извлекает из неё id принятой провайдером задачи.
     """
+    key: Any
     line = str(line)
     if vars:
         try:
@@ -182,7 +184,7 @@ def vemit(line, **vars):
             vhist_put(key, task=task)
 
 
-def _video_worker(prompt, refs, opts, key=None):
+def _video_worker(prompt: str, refs: list[dict[str, Any]], opts: dict[str, Any], key: str | None = None) -> None:
     from core import aicut
     import traceback as _tb
     try:
@@ -191,7 +193,7 @@ def _video_worker(prompt, refs, opts, key=None):
         with VLOCK:
             VJOB["result"] = {"path": res["path"], "cost": res.get("cost"),
                               "id": res.get("id"), "ms": res.get("ms"),
-                              "url": "/api/media?path=" + urllib.request.quote(res["path"]),
+                              "url": "/api/media?path=" + cast(Any, urllib.request).quote(res["path"]),
                               "name": os.path.basename(res["path"])}
         vhist_put(key, status="done", path=res["path"], cost=res.get("cost"),
                   task=res.get("id") or "", ms=res.get("ms"), error="",
@@ -240,7 +242,7 @@ def _video_worker(prompt, refs, opts, key=None):
 
 
 @bp.route("/api/video_gen", methods=["POST"])
-def api_video_gen():
+def api_video_gen() -> Response:
     """Запустить генерацию видео в фоне.
 
     Raw-режим вкладки принимает прежние `{prompt, duration, ...}`. Карточка
@@ -272,7 +274,7 @@ def api_video_gen():
                                       slot=slot))
             prompt = aicut.build_video_prompt(query, slot=slot, speaker=jstr(d, "speaker") or None)
             duration = aicut.video_insert_duration(d.get("insert_duration"), model)
-            refs_in = []
+            refs_in: list[Any] = []
             xml = jstr(d, "xml").strip().strip('"')
             if not xml or not os.path.isfile(xml):
                 raise ReelsiError(umsg("file_not_found", f"Файл XML не найден: {xml}", path=xml))
@@ -372,7 +374,7 @@ def api_video_gen():
 
 
 @bp.route("/api/video_status")
-def api_video_status():
+def api_video_status() -> Response:
     """Опрос генерации видео. ?since= — сколько строк лога уже у клиента.
     interrupted — генерация, оборванная перезапуском сервера (журнал заданий, NC)."""
     try:
@@ -391,7 +393,7 @@ def api_video_status():
 
 
 @bp.route("/api/video_history", methods=["GET", "POST"])
-def api_video_history():
+def api_video_history() -> Response:
     """Задачи генерации, которые помнит СЕРВЕР: готовые ролики (их ещё можно скачать),
     ошибки, отменённые и оборванные рестартом. Страница берёт список отсюда, а не из
     своей памяти, — иначе F5 стирал бы всё, кроме последнего результата.
@@ -434,19 +436,19 @@ def api_video_history():
             return jsonify(**umsg_err(e))
     with VHIST_LOCK:
         items = vhist_scan_files(_vhist_read())
-    out = []
+    out: list[dict[str, Any]] = []
     for it in items:
-        e = dict(it)
-        p = e.get("path") or ""
+        e = dict(it)  # type: ignore[misc]  # e переиспользован после except
+        p = e.get("path") or ""  # type: ignore[misc]  # чтение e
         if p:
             # exists проверяем на КАЖДЫЙ запрос: ролики чистят руками, а «Скачать»
             # на исчезнувший файл — это 404 вместо честного «файла больше нет»
             ok = os.path.isfile(p)
-            e["exists"] = ok
-            e["size"] = os.path.getsize(p) if ok else 0
-            e["name"] = os.path.basename(p)
-            e["url"] = ("/api/media?path=" + urllib.request.quote(p)) if ok else ""
-        out.append(e)
+            e["exists"] = ok  # type: ignore[misc]  # запись e
+            e["size"] = os.path.getsize(p) if ok else 0  # type: ignore[misc]  # запись e
+            e["name"] = os.path.basename(p)  # type: ignore[misc]  # запись e
+            e["url"] = ("/api/media?path=" + cast(Any, urllib.request).quote(p)) if ok else ""  # type: ignore[misc]  # запись e
+        out.append(e)  # type: ignore[misc]  # чтение e
     out.sort(key=lambda x: x.get("ts") or 0, reverse=True)
     with VLOCK:
         cur = VJOB.get("key") if VJOB["running"] else None
@@ -454,7 +456,7 @@ def api_video_history():
 
 
 @bp.route("/api/video_cancel", methods=["POST"])
-def api_video_cancel():
+def api_video_cancel() -> Response:
     """Остановить генерацию видео (поток проверяет флаг между опросами статуса)."""
     with VLOCK:
         VJOB["cancel"] = True
@@ -462,7 +464,7 @@ def api_video_cancel():
 
 
 @bp.route("/api/video_models", methods=["POST"])
-def api_video_models():
+def api_video_models() -> Response:
     """Каталог видео-моделей провайдера: GET {base}/videos/models. БЕСПЛАТНЫЙ GET,
     НЕ генерация. Запоминает supported_parameters/типы входов в aicut, чтобы gen_video
     слал только заявленное, и возвращает факты по выбранной модели (что принимает).
@@ -521,7 +523,7 @@ def api_video_models():
 
 
 @bp.route("/api/video_probe", methods=["POST"])
-def api_video_probe():
+def api_video_probe() -> Response:
     """Что за файл лежит по ссылке-референсу: {kind, duration, width, height}.
     Зачем: тип нельзя брать из расширения (у ссылок его часто нет, а фото и видео
     уходят в РАЗНЫЕ поля запроса), а длину видео надо знать заранее — Seedance режет

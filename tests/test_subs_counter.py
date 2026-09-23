@@ -193,9 +193,9 @@ def test_every_door_contains_hl_count():
     # 7. 85-inserts-view.js: ipvPlanBody
     assert re.search(r"hl_breaks:\(HLXML===xml\)\?\[\.\.\.BRK\]:\[\],[^\n\r]*\r?\n\s*hl_count:\(HLXML===xml\)\?\[\.\.\.CNT\]:\[\]", ins_js)
     # 8. api/build.py: _norm_build_jobs
-    assert re.search(r"hl_breaks=j\.get\(\"hl_breaks\"\)[^\n\r]*,\r?\n\s*hl_count=j\.get\(\"hl_count\"\)", api_build)
+    assert re.search(r"hl_breaks(?:\s*:[^=]+)?\s*=\s*j\.get\(\"hl_breaks\"\)[^\n\r]*,\r?\n\s*hl_count(?:\s*:[^=]+)?\s*=\s*j\.get\(\"hl_count\"\)", api_build)
     # 9. xml2ae/build.py: scene_plan & parse
-    assert re.search(r"hl_breaks=None,\s*hl_count=None", xml_build)
+    assert re.search(r"hl_breaks(?:\s*:[^=]+)?\s*=\s*None,\s*hl_count(?:\s*:[^=]+)?\s*=\s*None", xml_build)
     assert re.search(r"brk_raw\s*=.*?hl_breaks.*?\n\s*cnt_raw\s*=.*?hl_count", xml_build)
 
 

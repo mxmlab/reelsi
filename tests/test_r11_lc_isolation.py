@@ -11,7 +11,7 @@
 import os
 
 from api import _core, videogen
-from core import aerender, censor, insertlib, paths, terms
+from core import aerender, censor, insertlib, jobstate, paths, terms
 from core.aicut import catalog, config
 from core.gigaam_cut import tune
 
@@ -29,7 +29,8 @@ def test_constants_point_outside_repo_root():
         return os.path.dirname(norm) == root or norm == root
 
     assert not is_in_root(config.AI_LOG_PATH), f"AI_LOG_PATH указывает в корень: {config.AI_LOG_PATH}"
-    assert not is_in_root(_core.JOB_LOCK_PATH), f"JOB_LOCK_PATH указывает в корень: {_core.JOB_LOCK_PATH}"
+    assert not is_in_root(jobstate.JOB_LOCK_PATH), f"JOB_LOCK_PATH указывает в корень: {jobstate.JOB_LOCK_PATH}"
+    assert not is_in_root(jobstate.JOB_STATE_PATH), f"JOB_STATE_PATH указывает в корень: {jobstate.JOB_STATE_PATH}"
     assert not is_in_root(_core.UI_STATE_PATH), f"UI_STATE_PATH указывает в корень: {_core.UI_STATE_PATH}"
     assert not is_in_root(videogen.VIDEO_DIR), f"VIDEO_DIR указывает в корень: {videogen.VIDEO_DIR}"
     assert not is_in_root(videogen.VIDEO_HIST_PATH), f"VIDEO_HIST_PATH указывает в корень: {videogen.VIDEO_HIST_PATH}"

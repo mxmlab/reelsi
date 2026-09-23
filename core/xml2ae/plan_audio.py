@@ -38,7 +38,7 @@
 """
 import os
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 from .jsutil import _asset_or, _jd, _js, _r
 from .layout import _censor_windows
@@ -67,46 +67,46 @@ class AudioInputs:
     ставятся только по видеовставке), `subs`/`hl` — событиями «попа».
     """
     # Разметка интро группами: из неё берутся времена глитч-слов (по ним — звук глитча).
-    intro_groups: list
+    intro_groups: list[Any]
     # Есть ли в сборке глитч-строка: флаг считается в build.py — его читает и интро.
     any_glitch: bool
     # Подготовленные вставки: тип им уже проставил plan_insert_timings (по файлу), и
     # `has_video` решает, нужны ли переход и whoosh.
-    inserts: list
+    inserts: list[dict[str, Any]]
     # Слова субтитров и индексы жёлтых: жёлтое слово становится событием «попа».
-    subs: list
-    hl: set
+    subs: list[Any]
+    hl: set[Any]
     # Точки смены камеры, сек (_cam_change_sec из build.py): по ним ставятся whoosh и
     # переход — второй копии точек нет, их же читают вставки.
-    cam_change_sec: list
+    cam_change_sec: list[float]
     # Частота кадров как _fps0 (meta["fps"] or 60): ею считаются кадровые сдвиги.
     fps: float
     # Резолвнутый и прочитанный стиль (plan_style.read_style): звуки, их обрезка/точка
     # удара/громкость, музыка голоса и галка микро-фейдов — из него.
     style: StyleValues
     # Резолвер ассетов (assets.resolver): им ищутся файлы звуков по ролям.
-    aset: Callable[[str], object]
+    aset: Callable[[str], str]
     # Галка интро-ризера: стиль уже наложен в build.py, второй копии правила нет.
     intro_riser: bool
     # Музыка: ссылка/путь, галка «случайная из папки», папка музыки и база проекта
     # (папка музыки по умолчанию — рядом с XML). Скачивание — внутри, как и было.
-    music: object
+    music: Any
     music_random: bool
-    music_dir: object
+    music_dir: Any
     base: str
     xml_path: str
     # Цензура звука: слова (по звёздочке в них ищутся окна мьюта), галка `censor_audio`
     # и частота как meta["fps"] — ровно то, чем цензор считался в scene_plan.
-    censor_source: list
+    censor_source: list[Any]
     censor_audio: bool
     censor_fps: float
     # Словарь плана: путь голоса (Камера 1) и громкость музыки — их знает только scene_plan.
     voice_src: str
     music_db: float
     # Точка между этапами («музыка»): показать, где мы, и проверить «Стоп».
-    ckpt: Callable[[str], object]
+    ckpt: Callable[[str], Any]
     # Лог: сюда уходят сообщения о музыке и о пропавших файлах звуков.
-    emit: Callable[..., object]
+    emit: Callable[..., Any]
 
 
 @dataclass(frozen=True)
@@ -123,11 +123,11 @@ class AudioPlan:
     glitch_db: float       # громкость глитча, dB (полка огибающей)
     trans: str             # файл перехода, "" — нет (или нет видеовставок)
     trans_sfx: str         # файл whoosh перехода, "" — нет
-    sfx_plan: list         # звуки с ГОТОВЫМИ событиями — plan["audio"]["sfx"]
+    sfx_plan: list[dict[str, Any]]         # звуки с ГОТОВЫМИ событиями — plan["audio"]["sfx"]
     music_path: str        # выбранная/скачанная музыка, "" — нет
-    censor_windows: list   # окна мьюта голоса, сек (сырые, план округляет сам)
+    censor_windows: list[Any]   # окна мьюта голоса, сек (сырые, план округляет сам)
     censor_js: str         # те же окна JS-литералом — подстановка CENSOR
-    audio: dict            # словарь plan["audio"] целиком (порядок ключей прежний)
+    audio: dict[str, Any]            # словарь plan["audio"] целиком (порядок ключей прежний)
     pop_place: str         # где ставить слой «попа» (startTime) — подстановка шаблона
     pop_tail: str          # обрезка/громкость того же слоя
     wsfx_place: str        # whoosh: старт слоя
@@ -184,7 +184,7 @@ def plan_audio(inp: AudioInputs) -> AudioPlan:
     # следующее слово начинается НЕ раньше конца звука текущей группы (последнее слово
     # группы + полка + спад + кадр). Границы прекомпов при группировке не учитываются —
     # только время: идём по глитч-словам в порядке возрастания.
-    _glitch_sound_groups = []
+    _glitch_sound_groups: list[list[float]] = []
     if _glitch_word_times:
         _frame = 1.0 / _fps0
         for _t in sorted(float(t) for t in _glitch_word_times):
@@ -212,10 +212,10 @@ def plan_audio(inp: AudioInputs) -> AudioPlan:
     # чтобы точка `at` файла попала на момент события (жёлтое слово / кат / старт).
     # Ключи читает ОДИН раз plan_style — здесь только правило «не задано
     # -> 0/None» и базовые громкости звука: это арифметика звука, не дефолты стиля.
-    def _g(v, d):
+    def _g(v: Any, d: Any) -> Any:
         return v if v not in (None, "") else d
 
-    def _sfx_cfg(n_in, n_out, n_at, n_db, base_db, def_out):
+    def _sfx_cfg(n_in: Any, n_out: Any, n_at: Any, n_db: Any, base_db: float, def_out: float | None) -> dict[str, Any]:
         return dict(in_s=float(_g(n_in, 0)),
                     out_s=(float(n_out) if n_out not in (None, "") else None),
                     at_s=float(_g(n_at, 0)),
@@ -233,7 +233,7 @@ def plan_audio(inp: AudioInputs) -> AudioPlan:
     pop_lead = int(_g(style.pop_lead, 4)) or 0
 
     # Звук задан «как вчера» (все ключи дефолтные) — шаблон работает прежним кодом.
-    def _plain(cfg, lead):
+    def _plain(cfg: dict[str, Any], lead: int) -> bool:
         return (cfg["in_s"] == 0 and cfg["at_s"] == 0 and cfg["db"] == 0
                 and cfg["out_s"] is None and lead == 4)
 
@@ -242,12 +242,12 @@ def plan_audio(inp: AudioInputs) -> AudioPlan:
     riser_plain = _plain(riser_cfg, 4)
     trans_plain = _plain(trans_cfg, 4)
 
-    def _sfx_off(cfg):
+    def _sfx_off(cfg: dict[str, Any]) -> str:
         """Сдвиг старта: момент_события − (at − in), как "+0.2" / "-0.3" / "". """
         off = -(cfg["at_s"] - cfg["in_s"])
         return "%+g" % off if abs(off) > 1e-9 else ""
 
-    def _sfx_tail(cfg, var):
+    def _sfx_tail(cfg: dict[str, Any], var: str) -> str:
         """JS-хвост после startTime: inPoint / outPoint / громкость. var — имя слоя.
         out не задан — базовая обрезка звука (def_out), как было (поп 0.1)."""
         tail = ""
@@ -283,7 +283,7 @@ def plan_audio(inp: AudioInputs) -> AudioPlan:
     # Звуки в ПЛАН СЦЕНЫ (превью читает их): события с ГОТОВЫМ стартом —
     # t (монтажное время, когда звук начинает играть = ev − at + in), файловые in/out.
     # JS старт не пересчитывает: берёт числа из плана.
-    def _sfx_ev(ev, cfg):
+    def _sfx_ev(ev: float, cfg: dict[str, Any]) -> dict[str, Any]:
         return {"t": round(ev - cfg["at_s"] + cfg["in_s"], 3),
                 "in": cfg["in_s"], "out": cfg["out_s"]}
 

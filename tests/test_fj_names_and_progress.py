@@ -32,6 +32,7 @@ sys.path.insert(0, ROOT)
 from core import xml2ae  # noqa: E402
 from api import render  # noqa: E402
 from core import aerender  # noqa: E402
+from core import jobstate, render_job  # noqa: E402
 from core.xml2ae.build import _write_master  # noqa: E402
 
 
@@ -116,8 +117,8 @@ def test_batch_stages_aep_then_render(xml_mismatch, tmp_path, monkeypatch):
     перед aerender: стадии перехода проверяются на живом RJOB."""
     render.RJOB.update(running=True, done=False, log=[], pct=None, cur="", ae="",
                        out_dir="", result=[], failed=[], cancel=False, items=[])
-    render.items_init(render.RJOB, render.RLOCK, ["01_C0233"])
-    monkeypatch.setattr(render, "find_ae",
+    jobstate.items_init(render.RJOB, render.RLOCK, ["01_C0233"])
+    monkeypatch.setattr(render_job, "find_ae",
                         lambda: ("AFX.EXE", "AER.EXE", "AE"))
     calls = []
 
@@ -131,13 +132,13 @@ def test_batch_stages_aep_then_render(xml_mismatch, tmp_path, monkeypatch):
         def poll(self):
             return 0
 
-    monkeypatch.setattr(render.subprocess, "Popen", FakePopen)
-    monkeypatch.setattr(render, "_run_proc_master",
+    monkeypatch.setattr(render_job.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(render_job, "run_proc_master",
                         lambda *a, **k: (0 if False else None))  # заглушка-нет
 
     # вместо запуска процесса проверим только стадии через прямой вызов функций
     # перехода: после «сборки» элемент в aep, перед aerender — в render
-    render.item_set(render.RJOB, render.RLOCK, "01_C0233", stage="aep")
+    jobstate.item_set(render.RJOB, render.RLOCK, "01_C0233", stage="aep")
     stages_after_afx = [it["stage"] for it in render.RJOB["items"]]
     assert stages_after_afx == ["aep"], stages_after_afx
     for it in render.RJOB["items"]:

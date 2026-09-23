@@ -3,19 +3,20 @@
 """База вставок: скан, автоподбор, импорт, описания.
 """
 import os, threading
-from flask import request, jsonify
+from typing import Any
+from flask import Response, jsonify, request
 from ._core import bp, umsg_err, jstr, sysexit_text
 from core import paths
 from core.umsg import ReelsiError, umsg
 
 
-def _insert_dest(d):
+def _insert_dest(d: dict[str, Any]) -> str:
     """Папка базы вставок: из тела запроса («Папка базы» в модалке 📚) или дефолт."""
     return (jstr(d, "dest").strip().strip('"')
             or os.path.join(os.path.dirname(paths.ROOT), "insert_library"))
 
 
-def _convert_inserts(inserts, emit=None):
+def _convert_inserts(inserts: list[Any], emit: Any = None) -> dict[str, str]:
     """Нечитаемое для AE (webp/avif, CMYK-JPEG — в PNG; AV1-видео — в H.264)
     перекодируем в читаемое (см. insertlib.to_ae_media). Гоняем по КАЖДОМУ файлу,
     а не по списку расширений: и цветовая модель, и кодек видны только внутри
@@ -23,7 +24,7 @@ def _convert_inserts(inserts, emit=None):
     новый файл РЯДОМ с исходником, сам файл не трогает.
     -> {старый: новый} для перекодированных (исходник цел)."""
     from core import insertlib
-    conv = {}
+    conv: dict[str, str] = {}
     for x in inserts:
         if not isinstance(x, dict):      # элемент списка не объект — пропуск
             continue
@@ -36,7 +37,7 @@ def _convert_inserts(inserts, emit=None):
     return conv
 
 
-def _adopt_inserts(inserts, dest, emit=None):
+def _adopt_inserts(inserts: list[Any], dest: str, emit: Any = None) -> dict[str, str]:
     """Файлы вставок, уходящих в проект, переезжают из «Скаченного» в базу
     (<dest>/photos|videos) с описанием = запрос вставки. Пути в самих вставках
     подменяются ДО сборки, чтобы .jsx ссылался уже на новое место.
@@ -75,7 +76,7 @@ def _adopt_inserts(inserts, dest, emit=None):
 
 
 @bp.route("/api/insertlib_info")
-def api_insertlib_info():
+def api_insertlib_info() -> Response:
     try:
         try:
             from core import insertlib
@@ -89,11 +90,11 @@ def api_insertlib_info():
 
 
 @bp.route("/api/insertlib_scan", methods=["POST"])
-def api_insertlib_scan():
+def api_insertlib_scan() -> Response:
     """Построить/обновить индекс базы вставок по списку папок (XML прошлых проектов +
     просто медиа). Эмбеддинги — LM Studio (если поднят), иначе токенный матч."""
     d = request.get_json() or {}
-    raw_dirs = d.get("dirs") if isinstance(d.get("dirs"), list) else []
+    raw_dirs: Any = d.get("dirs") if isinstance(d.get("dirs"), list) else []
     dirs = [x.strip() for x in raw_dirs if isinstance(x, str) and x.strip()]
     log = []
     try:
@@ -114,7 +115,7 @@ def api_insertlib_scan():
 
 
 @bp.route("/api/insertlib_reject", methods=["POST"])
-def api_insertlib_reject():
+def api_insertlib_reject() -> Response:
     """«Не предлагать этот файл под этот запрос» — ставится, когда юзер перегенеривает
     поверх автоподбора/генерации. Файл остаётся в базе (руками через 📚 доступен)."""
     d = request.get_json() or {}
@@ -134,7 +135,7 @@ def api_insertlib_reject():
 
 
 @bp.route("/api/insertlib_match", methods=["POST"])
-def api_insertlib_match():
+def api_insertlib_match() -> Response:
     """Подбор файлов из базы: {queries:[{q,type}], k} -> {results:[[{path,name,score},..],..]}.
     Один batch-вызов эмбеддера на все запросы. type ('photo'|'video') — жёсткий фильтр:
     под фото-вставку видео не предлагаем (см. match_many)."""
@@ -175,15 +176,15 @@ def api_insertlib_match():
         return jsonify(**umsg_err(e))
 
 
-ILL_JOB = {"running": False, "done": 0, "total": 0, "log": [], "error": ""}
+ILL_JOB: dict[str, Any] = {"running": False, "done": 0, "total": 0, "log": [], "error": ""}
 ILL_LOCK = threading.Lock()
 
 
 @bp.route("/api/insertlib_import", methods=["POST"])
-def api_insertlib_import():
+def api_insertlib_import() -> Response:
     """Перенести медиа из папок-источников в СВОЮ папку базы (photos/videos), с даты."""
     d = request.get_json() or {}
-    raw_dirs = d.get("dirs") if isinstance(d.get("dirs"), list) else []
+    raw_dirs: Any = d.get("dirs") if isinstance(d.get("dirs"), list) else []
     dirs = [x.strip() for x in raw_dirs if isinstance(x, str) and x.strip()]
     dest = jstr(d, "dest").strip().strip('"')
     log = []
@@ -212,7 +213,7 @@ def api_insertlib_import():
 
 
 @bp.route("/api/insertlib_describe", methods=["POST"])
-def api_insertlib_describe():
+def api_insertlib_describe() -> Response:
     """Vision-описания всех файлов базы (фоновый тред — vision по каждому файлу долгий)."""
     try:
         with ILL_LOCK:
@@ -221,15 +222,15 @@ def api_insertlib_describe():
             only_missing = bool((request.get_json() or {}).get("only_missing", True))
             ILL_JOB.update(running=True, done=0, total=0, log=[], error="")
 
-        def _run():
+        def _run() -> None:
             try:
                 from core import insertlib
 
-                def prog(done, total):
+                def prog(done: int, total: int) -> None:
                     with ILL_LOCK:
                         ILL_JOB["done"], ILL_JOB["total"] = done, total
 
-                def _emit(*a):
+                def _emit(*a: Any) -> None:
                     with ILL_LOCK:
                         ILL_JOB["log"].append(" ".join(str(x) for x in a))
 
@@ -264,7 +265,7 @@ def api_insertlib_describe():
 
 
 @bp.route("/api/insertlib_describe_status")
-def api_insertlib_describe_status():
+def api_insertlib_describe_status() -> Response:
     try:
         since = int(request.args.get("since") or 0)
     except (TypeError, ValueError):
@@ -275,7 +276,7 @@ def api_insertlib_describe_status():
 
 
 @bp.route("/api/insertlib_desc", methods=["POST"])
-def api_insertlib_desc():
+def api_insertlib_desc() -> Response:
     d = request.get_json() or {}
     try:
         try:
@@ -290,7 +291,7 @@ def api_insertlib_desc():
 
 
 @bp.route("/api/insertlib_items", methods=["POST"])
-def api_insertlib_items():
+def api_insertlib_items() -> Response:
     d = request.get_json() or {}
     try:
         try:

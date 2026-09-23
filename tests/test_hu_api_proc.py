@@ -260,12 +260,13 @@ def test_gdrive_watchdog_and_cancel(client, monkeypatch):
 
 
 def test_aerender_watchdog(monkeypatch):
-    """8. Сторож простоя aerender в _run_proc: молчащий процесс снимается, причина —
+    """8. Сторож простоя aerender в run_proc: молчащий процесс снимается, причина —
     в логе рендера и в failed, флаг отмены соседнего джоба тут ни при чём."""
     from api import render
+    from core import render_job
 
-    monkeypatch.setattr(render, "AE_STALL_KILL_SEC", 0.05)
-    monkeypatch.setattr(render, "AE_STALL_WARN_SEC", 0.02)
+    monkeypatch.setattr(render_job, "AE_STALL_KILL_SEC", 0.05)
+    monkeypatch.setattr(render_job, "AE_STALL_WARN_SEC", 0.02)
 
     class SilentProc:
         def __init__(self):
@@ -281,17 +282,17 @@ def test_aerender_watchdog(monkeypatch):
             return -137 if self._killed else 0
 
     silent_p = SilentProc()
-    monkeypatch.setattr("subprocess.Popen", lambda *a, **k: silent_p)
-    monkeypatch.setattr(render, "_kill_proc", lambda p: setattr(p, "_killed", True))
+    monkeypatch.setattr(render_job.subprocess, "Popen", lambda *a, **k: silent_p)
+    monkeypatch.setattr(render_job, "kill_proc", lambda p: setattr(p, "_killed", True))
 
     # RJOB — общий на весь модуль: без сброса сюда приезжает cancel=True от /api/cancel
-    # предыдущего теста, и _run_proc снимает процесс СРАЗУ как отменённый, а не сторожем.
+    # предыдущего теста, и run_proc снимает процесс СРАЗУ как отменённый, а не сторожем.
     with render.RLOCK:
         render.RJOB.update(cancel=False, failed=[], log=[],
                            items=[{"name": "clip1", "stage": "render", "pct": 0.0}])
 
-    rc = render._run_proc(["fake", "aerender"], item_name="clip1")
-    assert rc == render.AE_STALLED
+    rc = render_job.run_proc(render.RJOB, ["fake", "aerender"], item_name="clip1")
+    assert rc == render_job.AE_STALLED
     assert silent_p._killed is True
     # Проверяем, что в RJOB зафиксирована понятная ошибка
     failed_items = [it for it in render.RJOB.get("items", []) if it.get("stage") == "error"]

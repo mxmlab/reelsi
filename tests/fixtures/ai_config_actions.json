@@ -3263,7 +3263,7 @@
    "profile": {
     "provider": "openai",
     "base_url": "http://localhost:9999/v1",
-    "api_key": "test-key-new-4444",
+    "api_key": "xxxxxxxxxxxxxxxx4444",
     "model": "gpt-4o",
     "headers_text": "X-Foo: bar\nX-Baz: qux"
    }
@@ -3577,7 +3577,7 @@
    "name": "   ",
    "profile": {
     "provider": "openai",
-    "api_key": "test-key-new-4444"
+    "api_key": "xxxxxxxxxxxxxxxx4444"
    }
   },
   "status": 200,

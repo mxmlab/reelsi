@@ -120,7 +120,7 @@ def test_log_entry_single_gate():
     нет литерала записи {"t": в обход общей функции (кроме ее собственного тела)."""
     pattern = re.compile(r'\{\s*["\']t["\']\s*:')
 
-    for fname in ("api/render.py", "api/previewproxy.py"):
+    for fname in ("api/render.py", "api/previewproxy.py", "api/_core.py"):
         p = os.path.join(ROOT, fname)
         with open(p, "r", encoding="utf-8") as f:
             content = f.read()
@@ -129,19 +129,19 @@ def test_log_entry_single_gate():
             f"{fname} содержит литерал записи лога {{'t': ({len(matches)} раз(а)) вместо использования log_entry"
         )
 
-    core_path = os.path.join(ROOT, "api", "_core.py")
+    core_path = os.path.join(ROOT, "core", "jobstate.py")
     with open(core_path, "r", encoding="utf-8") as f:
         core_content = f.read()
     core_matches = pattern.findall(core_content)
     assert len(core_matches) == 1, (
-        f"api/_core.py должен содержать {{'t': ровно 1 раз (внутри log_entry), найдено: {len(core_matches)}"
+        f"core/jobstate.py должен содержать {{'t': ровно 1 раз (внутри log_entry), найдено: {len(core_matches)}"
     )
     # [^:]*: — подпись может нести аннотацию возврата (log_entry в строгом
     # списке mypy, и `def log_entry(...) -> dict[str, Any] | str:` под `\):` уже не подходит).
     log_entry_match = re.search(r'def log_entry\([^)]*\)[^:]*:.*?(?=\ndef |\Z)', core_content, re.DOTALL)
-    assert log_entry_match is not None, "В api/_core.py не найдена функция log_entry"
+    assert log_entry_match is not None, "В core/jobstate.py не найдена функция log_entry"
     assert pattern.search(log_entry_match.group(0)) is not None, (
-        "Литерал {'t': в api/_core.py должен находиться внутри log_entry"
+        "Литерал {'t': в core/jobstate.py должен находиться внутри log_entry"
     )
 
 

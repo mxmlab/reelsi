@@ -25,7 +25,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
 import api.render as render  # noqa: E402
-from core import xml2ae  # noqa: E402
+from core import jobstate, render_job, xml2ae  # noqa: E402
 from core.xml2ae.build import _write_master  # noqa: E402
 
 
@@ -51,7 +51,7 @@ def _log_text(rjob):
 def _reset_job(names):
     render.RJOB.update(running=True, done=False, log=[], pct=None, cur="", ae="",
                        out_dir="", result=[], failed=[], cancel=False, items=[])
-    render.items_init(render.RJOB, render.RLOCK, names)
+    jobstate.items_init(render.RJOB, render.RLOCK, names)
 
 
 @pytest.fixture()
@@ -134,7 +134,8 @@ sys.exit(0)
 
     def _run():
         try:
-            rc = render._run_proc_master(
+            rc = render_job.run_proc_master(
+                render.RJOB,
                 sys.executable, str(fake_py),
                 good=good, render_dir=render_dir, aelog_path=aelog,
             )
@@ -151,7 +152,7 @@ sys.exit(0)
     if alive:
         if render.RPROC:
             try:
-                render._kill_proc(render.RPROC)
+                render_job.kill_proc(render.RPROC)
             except Exception:
                 pass
         pytest.fail("Дедлок: _run_proc_master не вернулся за 30 секунд (буфер stdout переполнен)")
@@ -252,7 +253,9 @@ def test_tail_master_log_prints_timeline_ok():
         remit_lines.append(msg)
 
     orig_remit = render.remit
+    orig_emit = render.RJOB.emit
     render.remit = fake_remit
+    render.RJOB.emit = fake_remit
     try:
         import tempfile
         with tempfile.NamedTemporaryFile("w", encoding="utf-8-sig", delete=False) as tf:
@@ -262,7 +265,7 @@ def test_tail_master_log_prints_timeline_ok():
             tf_path = tf.name
 
         try:
-            render._tail_master_log(tf_path, seen, {})
+            render_job.tail_master_log(render.RJOB, tf_path, seen, {})
             assert "  [aelog] таймлайн ok: C0233" in remit_lines
             assert "  [aelog] таймлайн ok: C0234" in remit_lines
         finally:
@@ -270,3 +273,4 @@ def test_tail_master_log_prints_timeline_ok():
                 os.remove(tf_path)
     finally:
         render.remit = orig_remit
+        render.RJOB.emit = orig_emit

@@ -3,9 +3,10 @@
 """Слова, субтитры, редактор нарезки: всё, что правит XML и сайдкары.
 """
 import os, json
-from flask import request, jsonify
+from typing import Any, Sequence, cast
+from flask import request, jsonify, Response
 from core.fileio import atomic_json_dump
-from core.project_file import read_project, write_project
+from core.project_file import ProjectFile, read_project, write_project
 from ._core import bp, emit, is_reelsi_target, umsg_err, jstr
 from core.umsg import ReelsiError, umsg
 from core.applog import get_logger
@@ -13,7 +14,7 @@ from core.applog import get_logger
 log = get_logger(__name__)
 
 
-def _sidecar_yellow(xml_path):
+def _sidecar_yellow(xml_path: str) -> list[int]:
     """Indices from <stem>.yellow.json next to the XML (e.g. written by aicut)."""
     p = os.path.splitext(xml_path)[0] + ".yellow.json"
     if not os.path.isfile(p):
@@ -34,7 +35,7 @@ def _sidecar_yellow(xml_path):
         return []
 
 
-def _sidecar_caption(xml_path):
+def _sidecar_caption(xml_path: str) -> str:
     """Text from <stem>.caption.json next to the XML."""
     p = os.path.splitext(xml_path)[0] + ".caption.json"
     if not os.path.isfile(p):
@@ -52,7 +53,7 @@ def _sidecar_caption(xml_path):
 
 
 @bp.route("/api/caption", methods=["POST"])
-def api_caption():
+def api_caption() -> Response:
     """Подпись о ролике (<stem>.caption.json рядом с XML): чтение и сохранение."""
     d = request.get_json() or {}
     xml_path = jstr(d, "xml").strip().strip('"')
@@ -76,7 +77,7 @@ def api_caption():
 
 
 @bp.route("/api/words", methods=["POST"])
-def api_words():
+def api_words() -> Response:
     """Return the ordered subtitle words of an edited sequence XML so the UI can
     let the user click which to highlight (yellow). Indices match to_ae_full."""
     xml_path = jstr(request.get_json() or {}, "xml").strip().strip('"')
@@ -102,7 +103,7 @@ def api_words():
 
 
 @bp.route("/api/xml_state", methods=["POST"])
-def api_xml_state():
+def api_xml_state() -> Response:
     """Что уже есть в XML — чтобы «Разметить всё» пропускало готовые шаги:
     subs = число слов-субтитров, colored = число НЕ-белых слов (цвет из Премьера,
     как их видит AE-парсер auto_highlights). НЕ учитывает сайдкар .yellow.json —
@@ -127,7 +128,7 @@ def api_xml_state():
 
 
 @bp.route("/api/omnicut_cuts", methods=["POST"])
-def api_omnicut_cuts():
+def api_omnicut_cuts() -> Response:
     """Вернуть cut-log (<stem>.cuts.json рядом с XML) — что и почему вырезано Omni-нарезкой."""
     xml_path = jstr(request.get_json() or {}, "xml").strip().strip('"')
     p = os.path.splitext(xml_path)[0] + ".cuts.json"
@@ -144,7 +145,7 @@ def api_omnicut_cuts():
 
 
 @bp.route("/api/breaths", methods=["POST"])
-def api_breaths():
+def api_breaths() -> Response:
     """Метки вздохов/«кхе» (<stem>.breaths.json) — редактор рисует их на таймлайне.
 
     Уверенные детектор вырезал сам ещё в нарезке (в сайдкаре они помечены
@@ -174,7 +175,7 @@ def api_breaths():
 
 
 @bp.route("/api/editor_load", methods=["POST"])
-def api_editor_load():
+def api_editor_load() -> Response:
     """Блоки нарезки для редактора: оставленные куски исходника (камера 1) в секундах.
     Из сайдкара <stem>.project.json (есть offsets/cams для пересборки) или из XML."""
     xml = jstr(request.get_json() or {}, "xml").strip().strip('"')
@@ -194,7 +195,14 @@ def api_editor_load():
         return jsonify(**umsg_err(e))
 
 
-def _reproject_subs(sub_words, yellow, old_keep, new_keep, old_fps, new_fps=None):
+def _reproject_subs(
+    sub_words: list[dict[str, Any]] | None,
+    yellow: Sequence[int],
+    old_keep: Sequence[Sequence[float]],
+    new_keep: Sequence[Sequence[float]],
+    old_fps: float,
+    new_fps: float | None = None,
+) -> tuple[list[dict[str, Any]] | None, list[int]]:
     """Перенести слова-субтитры и жёлтые со СТАРОГО монтажа на новый. -> (sub_words|None, yellow)
 
     Слова живут в кадрах ТАЙМЛАЙНА, а таймлайн собирается курсором по списку кусков
@@ -226,9 +234,10 @@ def _reproject_subs(sub_words, yellow, old_keep, new_keep, old_fps, new_fps=None
     if not old_keep or (same_keep and old_fps == new_fps):
         return sub_words, list(yellow)
 
-    def _spans(keep, fps):
+    def _spans(keep: Sequence[Sequence[float]], fps: float) -> list[tuple[int, int, int]]:
         """[(начало_на_таймлайне, конец, начало_в_исходнике)] в кадрах СВОЕЙ частоты —
         курсором, как xmlbuild."""
+        out: list[tuple[int, int, int]]
         out, tl = [], 0
         for s, e in keep:
             in0, out0 = round(s * fps), round(e * fps)
@@ -267,7 +276,7 @@ def _reproject_subs(sub_words, yellow, old_keep, new_keep, old_fps, new_fps=None
 
 
 @bp.route("/api/editor_save", methods=["POST"])
-def api_editor_save():
+def api_editor_save() -> Response:
     """Пересобрать XML из отредактированных блоков (оставленные куски исходника)."""
     d = request.get_json() or {}
     xml = jstr(d, "xml").strip().strip('"')
@@ -319,8 +328,8 @@ def api_editor_save():
                 except Exception:
                     om = []
 
-                def _mark(rng_list):
-                    out = []
+                def _mark(rng_list: Sequence[Sequence[float]]) -> list[dict[str, Any]]:
+                    out: list[dict[str, Any]] = []
                     for (s, e) in rng_list:
                         if e - s < 0.3:                    # дрожание краёв — не правка
                             continue
@@ -351,7 +360,7 @@ def api_editor_save():
         return jsonify(**umsg_err(e))
 
 
-def _project_from_xml(xml):
+def _project_from_xml(xml: str) -> ProjectFile:
     """Реконструировать проект (камеры, синхрон, оставленные куски) из готового XML —
     чтобы редактор/субтитры работали БЕЗ сайдкара. offsets выводим из клипов камер."""
     from core import xml2ae
@@ -374,7 +383,7 @@ def _project_from_xml(xml):
             "cam_return": 2, "scale": 50.4, "keep": keep}
 
 
-def _ensure_project(xml):
+def _ensure_project(xml: str) -> ProjectFile:
     """Проект из сайдкара, а если нет — реконструировать из XML и сохранить сайдкар."""
     p = os.path.splitext(xml)[0] + ".project.json"
     if os.path.isfile(p):
@@ -393,7 +402,7 @@ def _ensure_project(xml):
 
 
 @bp.route("/api/asr_engines")
-def api_asr_engines():
+def api_asr_engines() -> Response:
     """Список ASR-движков (кто слушает звук) — один источник истины для селекторов:
     самопроверка стыков на главной и «Движок субтитров» на шаге 2. Встроенные +
     пользовательские CTC-модели других языков из asr_engines.json (файл читается
@@ -413,7 +422,7 @@ def api_asr_engines():
 
 
 @bp.route("/api/gen_subs", methods=["POST"])
-def api_gen_subs():
+def api_gen_subs() -> Response:
     """Субтитры С НУЛЯ: склеить аудио нарезки (камера 1 по keep) → Whisper → вписать
     субтитр-графику в XML. Нужен <stem>.project.json."""
     data = request.get_json() or {}
@@ -486,7 +495,7 @@ def api_gen_subs():
 
 
 @bp.route("/api/aicut_preview", methods=["POST"])
-def api_aicut_preview():
+def api_aicut_preview() -> Response:
     """Parse a produced timeline XML into a virtual timeline the browser can play
     straight from the source camera files (no rendering). Returns the ordered list
     of enabled cut segments (which camera + source time) plus subtitle words."""
@@ -508,7 +517,7 @@ def api_aicut_preview():
 
 
 @bp.route("/api/scanxml", methods=["POST"])
-def api_scanxml():
+def api_scanxml() -> Response:
     """Все .xml в папке (для «подхватить клипы из папки выхода» — список клипов живёт
     в localStorage и в другом браузере/после чистки пустой)."""
     d = request.get_json() or {}
@@ -529,7 +538,7 @@ def api_scanxml():
 
 
 @bp.route("/api/set_yellow", methods=["POST"])
-def api_set_yellow():
+def api_set_yellow() -> Response:
     """Явно задать набор жёлтых слов в XML (ручная разметка из предпросмотра):
     выбранные красим, ранее покрашенные но снятые — возвращаем в белый. Пишет и сайдкар."""
     d = request.get_json() or {}
@@ -546,7 +555,7 @@ def api_set_yellow():
             res = xml2ae.set_highlights(xml, idx)
             try:                                             # сайдкар .yellow.json — фолбэк для /api/words
                 atomic_json_dump(os.path.splitext(xml)[0] + ".yellow.json",
-                                 {"yellow": sorted(res.get("colored", []))})
+                                  {"yellow": sorted(res.get("colored", []))})
             except ReelsiError: raise
             except Exception as ex:
                 log.warning("сайдкар .yellow.json не записан (%s): %s",
@@ -562,7 +571,7 @@ def api_set_yellow():
 
 
 @bp.route("/api/clear_subs", methods=["POST"])
-def api_clear_subs():
+def api_clear_subs() -> Response:
     """Убрать из XML субтитр-графику целиком (крестик на теге «субтитры» на шаге 2).
     Пересобираем нарезку теми же keep/раскладкой, но без sub_words — то есть ровно то,
     что было до /api/gen_subs. Жёлтые уходят ВМЕСТЕ с субтитрами: они живут цветом на
@@ -606,7 +615,7 @@ def api_clear_subs():
 
 
 @bp.route("/api/edit_word", methods=["POST"])
-def api_edit_word():
+def api_edit_word() -> Response:
     """Переписать текст слова-субтитра #index (порядок parse_full) прямо в XML.
 
     Правка «на известный термин» ЗАПОМИНАЕТСЯ: ослышка ASR уходит вариантом в
@@ -621,7 +630,7 @@ def api_edit_word():
         try:
             from core import xml2ae
             was = jstr(d, "was").strip()
-            res = xml2ae.edit_word(xml, int(d.get("index")), jstr(d, "text"))
+            res = xml2ae.edit_word(xml, int(cast(Any, d.get("index"))), jstr(d, "text"))
             if res.get("error"):
                 raise ReelsiError(umsg("edit_word_failed", res["error"], err=res["error"]))
             learned = None
@@ -647,7 +656,7 @@ def api_edit_word():
 
 
 @bp.route("/api/delete_word", methods=["POST"])
-def api_delete_word():
+def api_delete_word() -> Response:
     """Удалить слово-субтитр #index (порядок parse_full) прямо из XML."""
     d = request.get_json() or {}
     xml = jstr(d, "xml").strip().strip('"')
@@ -657,7 +666,7 @@ def api_delete_word():
                                   path=xml))
         try:
             from core import xml2ae
-            res = xml2ae.delete_word(xml, int(d.get("index")))
+            res = xml2ae.delete_word(xml, int(cast(Any, d.get("index"))))
             if res.get("error"):
                 raise ReelsiError(umsg("delete_word_failed", res["error"], err=res["error"]))
             return jsonify(ok=True, index=res.get("index"), word=res.get("word"))

@@ -11,7 +11,8 @@
 Почему именно rclone, а не своя качалка на requests — в докстроке `core/rclone.py`.
 """
 import os, shutil, subprocess, threading, time
-from flask import request, jsonify
+from typing import Any, Callable, cast
+from flask import Response, jsonify, request
 from ._core import LOG_CAP, bp, jstr, kill_tree, umsg_err, sysexit_text
 from core.applog import get_logger
 from core.rclone import (checks_fields, clean_line, is_noise, parse_gdrive_link,
@@ -28,10 +29,10 @@ _RCLONE_STALLED = -137
 # и у блока статистики, напечатанного по таймеру `--stats 2s`, когда передача уже встала.
 _PROGRESS_KEYS = ("bytes", "pct", "file", "file_pct", "i", "n", "ci", "cn")
 
-GDPROC = None  # Текущий процесс rclone — для отмены через /api/cancel и сторожа простоя
+GDPROC: Any = None  # Текущий процесс rclone — для отмены через /api/cancel и сторожа простоя
 
 
-def _kill_proc(p):
+def _kill_proc(p: Any) -> None:
     """taskkill /T /F — дерево: rclone с дочерними процессами снимается полностью.
 
     Имя оставлено ради тестов: реализация теперь одна на пакет — `_core.kill_tree`.
@@ -39,7 +40,7 @@ def _kill_proc(p):
     kill_tree(p)
 
 
-def gdrive_kill():
+def gdrive_kill() -> None:
     """«Стоп» из интерфейса (/api/cancel зовёт): флаг джобу + реально убить
     текущий subprocess rclone с деревом."""
     with GDLOCK:
@@ -49,7 +50,7 @@ def gdrive_kill():
         _kill_proc(p)
 
 
-def _run_rclone(args, emit, stat=None):
+def _run_rclone(args: list[str], emit: Callable[..., Any], stat: Callable[..., Any] | None = None) -> int:
     """rclone копией сабпроцессом со сторожем простоя и поддержкой отмены.
     Статистика уходит в `stat` (живой статус страницы), события — в `emit` (лог джоба).
 
@@ -88,9 +89,9 @@ def _run_rclone(args, emit, stat=None):
     # а не кортежа строки. Строки блока статистики (--stats 2s) имеют
     # разную форму и чередуются; раньше кортеж строки «менялся» на каждой строке
     # при полностью замороженных значениях, и вставшая передача не снималась.
-    last_stat = {}
+    last_stat: dict[str, Any] = {}
 
-    def _handle(raw):
+    def _handle(raw: str) -> None:
         nonlocal logged
         line = raw.rstrip()
         if not line.strip():
@@ -126,11 +127,11 @@ def _run_rclone(args, emit, stat=None):
     # Исключение ловится НА СТРОКУ: раньше `except Exception` стоял вокруг всего цикла,
     # поток чтения умирал на первой же неожиданной строке, активность замирала — и
     # сторож снимал ЗДОРОВОЕ скачивание через 10 минут.
-    died = [None]
+    died: list[str | None] = [None]
 
-    def _pump():
+    def _pump() -> None:
         try:
-            for line in p.stdout:
+            for line in cast(Any, p.stdout):
                 try:
                     _handle(line)
                 except ReelsiError: raise
@@ -183,15 +184,15 @@ def _run_rclone(args, emit, stat=None):
 # ключа — это 500 на ровном месте.
 # cancelled: «Стоп» нажал человек — это НЕ ошибка: раньше отмена
 # приезжала на страницу как failed=True и рисовалась красным тостом «не удалось».
-GDFRESH = {"cur": "запуск rclone…", "i": 0, "n": 0, "pct": None, "bytes": "", "total": "",
+GDFRESH: dict[str, Any] = {"cur": "запуск rclone…", "i": 0, "n": 0, "pct": None, "bytes": "", "total": "",
            "speed": "", "eta": "", "file": "", "file_pct": None, "cancel": False,
            "cancelled": False}
-GDJOB = dict(GDFRESH, running=False, done=False, failed=None, log=[], log_base=0,
+GDJOB: dict[str, Any] = dict(GDFRESH, running=False, done=False, failed=None, log=[], log_base=0,
              url="", started=0)
 GDLOCK = threading.Lock()
 
 
-def _gemit(line):
+def _gemit(line: Any) -> None:
     with GDLOCK:
         GDJOB["log"].append(str(line))
         over = len(GDJOB["log"]) - LOG_CAP
@@ -200,13 +201,13 @@ def _gemit(line):
             GDJOB["log_base"] += over
 
 
-def _gstat(fields):
+def _gstat(fields: dict[str, Any]) -> None:
     """Поля прогресса из статистики rclone — в состояние джоба."""
     with GDLOCK:
         GDJOB.update(fields)
 
 
-def _download_job(cmd, url):
+def _download_job(cmd: list[str], url: str) -> None:
     ok = False
     try:
         _gemit(f"качаю {url}")
@@ -245,7 +246,7 @@ def _download_job(cmd, url):
 
 
 @bp.route("/api/gdrive_download", methods=["POST"])
-def api_gdrive_download():
+def api_gdrive_download() -> Response:
     """Скачать материал по ссылке гугл-диска. body: {url, dest}.
     Свой джоб (GDJOB), не общий JOB: нарезка не должна ждать гигабайт с диска —
     тот же образец, что у превью-прокси (PXJOB)."""
@@ -292,7 +293,7 @@ def api_gdrive_download():
 
 
 @bp.route("/api/gdrive_status")
-def api_gdrive_status():
+def api_gdrive_status() -> Response:
     """Прогресс фонового скачивания с гугл-диска.
 
     `?since=` — сколько строк лога уже у клиента (тот же уговор, что у

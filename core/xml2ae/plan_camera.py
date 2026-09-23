@@ -46,6 +46,7 @@
 тронут: здесь только чтение уже готового кэша.
 """
 from dataclasses import dataclass
+from typing import Any
 
 from .jsutil import _jd, _r
 from .layout import (EASE_DEFAULT, _cam1_drift_keys, _cam1_follow_keys, _cam1_jump_keys,
@@ -65,19 +66,19 @@ class CameraInputs:
     поворота, режим зума и его числа, fit, слежение за головой.
     """
     # Камеры из разбора XML: по их клипам считаются и ключи зума, и разметка рото.
-    cams: list
+    cams: list[dict[str, Any]]
     # Ролик из разбора XML: ширина/высота/длительность в кадрах и fps без запаса.
-    meta: dict
+    meta: dict[str, Any]
     # Частота кадров как _fps0 (meta["fps"] or 60) — ею считаются ключи и участки головы.
     fps: float
     # Слова субтитров (уже без вырезанных слов интро) и индексы жёлтых — для наездов
     # в тейках по жёлтым.
-    subs: list
-    hl: set
+    subs: list[Any]
+    hl: set[Any]
     # Резолвнутый и прочитанный стиль (plan_style.read_style).
     style: StyleValues
     # Явные ключи зума (kwarg scene_plan) или None — тогда режим из стиля.
-    cam1_scale: object
+    cam1_scale: list[Any] | None
     # Галка «Авто-ротоскоп»: выключена — разметка пустая, `_roto_js` не позовёт GPU.
     roto: bool
     # Путь XML: рядом с ним лежит кэш трека головы `<стем>.head.json`.
@@ -94,13 +95,13 @@ class CameraPlan:
     `*_js`/`*_decl` — подстановки шаблона: при выключенных ручках они пустые или прежние,
     и .jsx остаётся байт в байт (golden).
     """
-    cam1_scale: list        # [[кадр, %], ...] (+ режим drift третьим элементом), уже с fit
-    holds: list             # тип интерполяции каждого ключа: 1=HOLD, 0=BEZIER
+    cam1_scale: list[Any]   # [[кадр, %], ...] (+ режим drift третьим элементом), уже с fit
+    holds: list[Any]        # тип интерполяции каждого ключа: 1=HOLD, 0=BEZIER
     cam1scale_js: str       # подстановка CAM1_SCALE
     cam1_ease_js: str       # подстановка CAM1_EASE: [in, out] влияния на каждый ключ
     cam1holds_js: str       # подстановка CAM1_HOLDS (то же, что zoom["holds"])
-    roto: list              # plan["roto"]: фрагменты масок (ci/ts/te/src/scale)
-    zoom: dict              # plan["zoom"]: holds/fit/cx/cy/pan/rot/keys/ease (+follow)
+    roto: list[dict[str, Any]]  # plan["roto"]: фрагменты масок (ci/ts/te/src/scale)
+    zoom: dict[str, Any]    # plan["zoom"]: holds/fit/cx/cy/pan/rot/keys/ease (+follow)
     cam1_cx: float          # точка наезда Камеры 1, доли кадра (подстановка cam1_cx)
     cam1_cy: float
     cam1_moved: bool        # камера сдвинута/повёрнута/следит: иначе подстановки пустые
@@ -159,7 +160,7 @@ def plan_camera(inp: CameraInputs) -> CameraPlan:
                 _zdhi = style.cam1_drift_hi
                 cam1_scale = _cam1_drift_keys(cams, lo=_zdlo, hi=_zdhi, fps=meta["fps"], big=_zbig, start=_zstart)
             elif _c1zoom == "jump":
-                _ztake = None
+                _ztake: dict[str, Any] | None = None
                 if style.cam1_take_zoom:
                     _ztake = {
                         "min_s": style.cam1_take_min,

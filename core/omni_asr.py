@@ -62,19 +62,26 @@ def transcribe_clip(proc, model, arr_int16):
     import torch
     from qwen_omni_utils import process_mm_info
     tmp = os.path.join(tempfile.gettempdir(), "_omni_clip_%d.wav" % os.getpid())  # pid: два прогона не топчут друг друга
-    sf.write(tmp, arr_int16, SR, subtype="PCM_16")
-    conv = [{"role": "system", "content": [{"type": "text", "text": SYS}]},
-            {"role": "user", "content": [{"type": "audio", "audio": tmp}]}]
-    text = proc.apply_chat_template(conv, add_generation_prompt=True, tokenize=False)
-    audios, images, videos = process_mm_info(conv, use_audio_in_video=False)
-    inputs = proc(text=text, audio=audios, images=images, videos=videos,
-                  return_tensors="pt", padding=True, use_audio_in_video=False)
-    inputs = inputs.to(model.device).to(model.dtype)
-    with torch.inference_mode():
-        ids = model.generate(**inputs, return_audio=False, max_new_tokens=420)
-    gen = ids[:, inputs["input_ids"].shape[1]:]
-    return proc.batch_decode(gen, skip_special_tokens=True,
-                             clean_up_tokenization_spaces=False)[0].strip()
+    try:
+        sf.write(tmp, arr_int16, SR, subtype="PCM_16")
+        conv = [{"role": "system", "content": [{"type": "text", "text": SYS}]},
+                {"role": "user", "content": [{"type": "audio", "audio": tmp}]}]
+        text = proc.apply_chat_template(conv, add_generation_prompt=True, tokenize=False)
+        audios, images, videos = process_mm_info(conv, use_audio_in_video=False)
+        inputs = proc(text=text, audio=audios, images=images, videos=videos,
+                      return_tensors="pt", padding=True, use_audio_in_video=False)
+        inputs = inputs.to(model.device).to(model.dtype)
+        with torch.inference_mode():
+            ids = model.generate(**inputs, return_audio=False, max_new_tokens=420)
+        gen = ids[:, inputs["input_ids"].shape[1]:]
+        return proc.batch_decode(gen, skip_special_tokens=True,
+                                 clean_up_tokenization_spaces=False)[0].strip()
+    finally:
+        try:
+            os.remove(tmp)
+        except ReelsiError: raise
+        except OSError:
+            pass  # временный wav уже убран
 
 
 def transcribe_clip_gigaam(model, clip_audio):
@@ -222,6 +229,11 @@ def _asr_transcribe(prof, arr_int16, retries=2):
                 time.sleep(20)
                 continue
             last = f"{e.code}: {detail}"
+        except json.JSONDecodeError as e:
+            raw = (getattr(e, "doc", "") or "").strip().replace("\r", " ").replace("\n", " ")
+            last = f"не-JSON ответ провайдера: {raw[:120]}" if raw else f"не-JSON ответ провайдера ({e})"
+            if prof.get("api_key"):
+                last = last.replace(prof["api_key"], "***")
         except (urllib.error.URLError, KeyError) as e:
             last = str(e)
         attempt += 1
@@ -363,6 +375,11 @@ def transcribe_clip_cloud(prof, arr_int16, retries=2):
                                  f"аудио-модель (Gemini / ASR qwen3-asr-flash / parakeet) или «Локально». "
                                  f"Ответ провайдера: {detail[:150]}")
             last = f"{e.code}: {detail}"
+        except json.JSONDecodeError as e:
+            raw = (getattr(e, "doc", "") or "").strip().replace("\r", " ").replace("\n", " ")
+            last = f"не-JSON ответ провайдера: {raw[:120]}" if raw else f"не-JSON ответ провайдера ({e})"
+            if prof.get("api_key"):
+                last = last.replace(prof["api_key"], "***")
         except (urllib.error.URLError, RuntimeError, KeyError) as e:
             last = str(e)
         attempt += 1

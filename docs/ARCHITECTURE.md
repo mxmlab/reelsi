@@ -1681,9 +1681,13 @@ voice_db, music_path, music_db, censor:[{ts,te}]}}`. Ключи вставок �
 - Тесты контрактов: `python -m pytest tests -q` (parse_full, set_highlights/
   edit_word + .bak, /api/status, /api/ui_state). Гонять после правок xml2ae/api.
 - **Тесты гоняются и на самом срезе — `python tools/slice_check.py`** (`--ref <коммит>`,
-  `--keep` — оставить каталог для разбора): срез `tools/public_slice.py` собирается во временный
-  каталог, и `python -m pytest tests -q` идёт уже в нём. Код возврата скрипта — код возврата
-  pytest, часть приёмки перед выдачей среза.
+  `--keep` — оставить каталог для разбора, `--only <шаг>` — прогнать один шаг; бинарник
+  gitleaks — `--gitleaks PATH` или `$GITLEAKS`, нет его — провал, а `--no-gitleaks` — громкий
+  пропуск): срез `tools/public_slice.py` собирается во временный каталог, и в нём повторяется
+  весь CI, а не только pytest — `ruff`, `mypy`, `node --check` по ExtendScript и `static/app/*.js`,
+  `compileall` с `--help` точек входа, разбор `requirements*.txt` и gitleaks по дереву среза.
+  Код возврата ненулевой, если хоть один шаг провален или не прогонялся; часть приёмки перед
+  выдачей среза.
 - Правки XML на месте (`set_highlights`/`edit_word`) оставляют `<файл>.xml.bak`
   (оригинал из Премьера, один раз при первой правке).
 - **Проверка `.jsx` без AE — `core/verify_jsx.py`** (прежний ручной рецепт «скопировать в

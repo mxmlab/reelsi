@@ -6,13 +6,13 @@
 в .gitignore), роуты только читают и пишут их.
 """
 import os
-from flask import request, jsonify
+from flask import Response, jsonify, request
 from ._core import bp, umsg_err, jstr
 from core.umsg import ReelsiError, umsg
 
 
 @bp.route("/api/styles")
-def api_styles():
+def api_styles() -> Response:
     """Все пресеты стиля (встроенные + пользовательские шаблоны) для селектора в UI."""
     try:
         try:
@@ -26,7 +26,7 @@ def api_styles():
 
 
 @bp.route("/api/style_schema")
-def api_style_schema():
+def api_style_schema() -> Response:
     """Схема слоёв, групп и полей стиля для панели настроек (Effect Controls)."""
     try:
         try:
@@ -40,7 +40,7 @@ def api_style_schema():
 
 
 @bp.route("/api/savestyle", methods=["POST"])
-def api_savestyle():
+def api_savestyle() -> Response:
     """Сохранить пользовательский пресет стиля как reelsi/styles/<name>.json."""
     d = request.get_json() or {}
     name = jstr(d, "name").strip()
@@ -60,7 +60,7 @@ def api_savestyle():
 
 
 @bp.route("/api/style_patch", methods=["POST"])
-def api_style_patch():
+def api_style_patch() -> Response:
     """Точечно обновить поля пользовательского пресета стиля reelsi/styles/<name>.json."""
     d = request.get_json() or {}
     name = jstr(d, "name").strip()
@@ -83,7 +83,7 @@ def api_style_patch():
 
 
 @bp.route("/api/speakers")
-def api_speakers():
+def api_speakers() -> Response:
     """Профили спикеров для селектора: у каждого своя студия, микрофон и говор,
     а значит свои пороги нарезки (см. speakers.py). Отдаём вместе с дефолтами и
     подписями порогов — редактор профиля рисуется по ним."""
@@ -101,7 +101,7 @@ def api_speakers():
 
 
 @bp.route("/api/savespeaker", methods=["POST"])
-def api_savespeaker():
+def api_savespeaker() -> Response:
     """Сохранить профиль спикера как reelsi/speakers/<name>.json."""
     d = request.get_json() or {}
     name = jstr(d, "name").strip()
@@ -122,7 +122,7 @@ def api_savespeaker():
 
 
 @bp.route("/api/delspeaker", methods=["POST"])
-def api_delspeaker():
+def api_delspeaker() -> Response:
     """Удалить профиль спикера."""
     name = jstr(request.get_json() or {}, "name").strip()
     try:
@@ -142,7 +142,7 @@ def api_delspeaker():
 
 
 @bp.route("/api/terms", methods=["GET", "POST"])
-def api_terms():
+def api_terms() -> Response:
     """Словарь трудных терминов (названий, которые ASR не знает).
     GET -> {terms:[{term,variants}]}. POST {terms:[...]} — перезаписать список названий
     (накопленные обучением варианты сохраняются, см. terms.set_terms).
@@ -177,7 +177,7 @@ def api_terms():
 
 
 @bp.route("/api/censor_words", methods=["GET", "POST"])
-def api_censor_words():
+def api_censor_words() -> Response:
     """Списки цензуры субтитров. GET -> {lists:{bad:{text,custom,count}, ok:{…}}}.
     POST {bad:"…", ok:"…"} — сохранить свой список (текст как в файле, стем в строке);
     POST {reset:"bad"|"ok"|"all"} — вернуть поставочный. Ключ ответа `lists`, а не
@@ -209,7 +209,7 @@ def api_censor_words():
 
 
 @bp.route("/api/delstyle", methods=["POST"])
-def api_delstyle():
+def api_delstyle() -> Response:
     """Удалить пользовательский пресет стиля (файл reelsi/styles/<name>.json).
     Встроенные (base/geologica — в коде styles.py) удалить нельзя."""
     name = jstr(request.get_json() or {}, "name").strip()

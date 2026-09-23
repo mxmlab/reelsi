@@ -42,9 +42,10 @@ def client():
 def clean_state(tmp_path, monkeypatch):
     """Свой файл лока задач и чистое состояние JOB на входе и на выходе."""
     from api import _core
+    from core import jobstate
 
-    monkeypatch.setattr(_core, "JOB_LOCK_PATH", str(tmp_path / "job.lock"))
-    monkeypatch.setattr(_core, "_JOB_LOCK_FH", None)
+    monkeypatch.setattr(jobstate, "JOB_LOCK_PATH", str(tmp_path / "job.lock"))
+    monkeypatch.setattr(jobstate, "_JOB_LOCK_FH", None)
     with _core.LOCK:
         _core.JOB.update(running=False, cancel=False, failed=[], results=[])
     yield
@@ -76,8 +77,9 @@ def _clip(tmp_path):
 def _released():
     """Лок и JOB свободны: следующий джоб обязан стартовать."""
     from api import _core
+    from core import jobstate
 
-    assert _core._JOB_LOCK_FH is None, "межпроцессный лок остался занят"
+    assert jobstate._JOB_LOCK_FH is None, "межпроцессный лок остался занят"
     with _core.LOCK:
         assert _core.JOB["running"] is False, "JOB[\"running\"] остался занят"
     assert _core.job_start(kind="cut", label="проверка") is True, "лок не отпущен"

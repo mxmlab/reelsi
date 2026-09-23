@@ -660,7 +660,7 @@ byte-for-byte as before.
 **How:** 1. Open ⚙ › **Tools**. 2. Under **After Effects**, choose between **Built-in (Blur + Glow)** and **Deep Glow 2 (plugin)**. 3. Rebuild `.jsx` scripts for clips if already exported.
 **Settings:** controls how yellow intro words with the "glitch" animation glow in the generated After Effects project. Built-in uses Gaussian Blur and Glow available in every AE install (default). Deep Glow 2 replaces them with the third-party plugin using pre-tuned parameters; accent lines and other lines remain untouched. In this mode the plugin is not put on a line that has the line glow of its own (tick **Deep Glow with line glow**, `intro_dg_with_glow`, off by default, to get the old behaviour back) and not on a bright highlight colour — the same Rec.709 brightness threshold (above 0.7) as for Tritone, so such a word keeps the built-in Blur + Glow. Saved under the `glitch_glow` key in `ai_config.json` (`builtin` or `deepglow2`) and takes effect on the next build; already built `.jsx` scripts need to be rebuilt.
 **Limitations / price:** if Deep Glow 2 is selected but the plugin is not installed in After Effects, manual build shows a single dialog per file reporting the number of unstyled words, while headless rendering writes an error line to the log; words remain without glow. There is no automated pre-flight check or fallback to built-in effects.
-**Code:** `core/aicut/config.py:509`, `core/aicut/config_actions.py:219`, `core/xml2ae/build.py:663`, `core/xml2ae/build.py:1866`, `templates/index.html:783`, `static/app/10-settings.js:732`
+**Code:** `core/aicut/config.py:524`, `core/aicut/config_actions.py:221`, `core/xml2ae/build.py:594`, `core/xml2ae/build.py:1491`, `templates/index.html:783`, `static/app/10-settings.js:732`
 
 ### Subtitle scale
 
@@ -801,7 +801,7 @@ better over time.
 headless run, so the job refuses to start. There is a stall watchdog, and an instant
 AfterFX exit is reported as a likely open AE copy. Rotoscoping runs during the build and is
 the longest stage.
-**Code:** `api/render.py:1445`, `core/aerender.py:34`, `api/render.py:1240`,
+**Code:** `core/render_job.py:1495`, `core/aerender.py:34`, `core/render_job.py:1287`,
 `core/aerender.py:151`, `core/aerender.py:49`, `static/app/90-ae.js:176`
 
 ### Progress, queue and logs
@@ -822,7 +822,7 @@ restart, with the item and the progress it stopped at. A cut whose process has p
 nothing for 20 minutes is marked as silent in the status and in the log, but the process is
 never killed: a long speech recognition run is silent for a legitimate reason.
 **Code:** `static/app/50-chrome.js:73`, `templates/index.html:530`,
-`templates/index.html:553`, `core/umsg.py:1`, `api/_core.py:537`, `api/jobs.py:31`,
+`templates/index.html:553`, `core/umsg.py:1`, `core/jobstate.py:176`, `api/jobs.py:31`,
 `static/app/00-core.js:77`
 
 ## Settings and tools

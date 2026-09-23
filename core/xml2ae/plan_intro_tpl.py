@@ -860,7 +860,7 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
                     and float(intro_comp_shadow_dist) == 0.0
                     and float(intro_comp_shadow_soft) == 287.0)
 
-    def _ics_rgb(fill):
+    def _ics_rgb(fill: list[float]) -> str:
         return "%g,%g,%g" % (fill[0], fill[1], fill[2])
 
     if _ics_default:

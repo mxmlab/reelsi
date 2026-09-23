@@ -6,6 +6,7 @@
 ПОСЛЕ ручной правки монтажа. Отсюда берут структуру и сборка .jsx, и правка слов.
 """
 import os, html
+from typing import Any
 import xml.etree.ElementTree as ET
 
 # HERE — корень репозитория, а НЕ папка пакета: assets/ лежат уровнем выше него.
@@ -20,7 +21,7 @@ class Cancelled(Exception):
     пишет в лог «остановлено», а не «ОШИБКА» с трейсбеком, и не заносит файл в failed."""
 
 
-def _txt(el, tag, default=None):
+def _txt(el: Any, tag: str, default: Any = None) -> Any:
     c = el.find(tag)
     return c.text if c is not None and c.text is not None else default
 
@@ -36,7 +37,7 @@ import re
 from core.xmlbuild import unpathurl as _decode_pathurl   # noqa: E402
 
 
-def _parent_name(path):
+def _parent_name(path: str | None) -> str:
     """Имя папки, в которой лежит файл, — НЕ зависящее от разделителя пути.
 
     Разделитель зависит от системы: `_decode_pathurl` ставит `os.sep`, то есть на
@@ -56,7 +57,7 @@ def _parent_name(path):
     return "" if re.fullmatch(r"[A-Za-z]:", name) else name
 
 
-def _clip_scale(clip):
+def _clip_scale(clip: Any) -> float:
     for eff in clip.findall(".//filter/effect"):
         if _txt(eff, "effectid") == "basic":
             for p in eff.findall("parameter"):
@@ -72,23 +73,23 @@ _IMG_EXT = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp", "
 CAM_MIN_CLIPS = 5   # трек = камера, если один файл нарезан на >= стольких клипов
 
 
-def _is_image(p):
+def _is_image(p: Any) -> bool:
     return p and os.path.splitext(p)[1].lower() in _IMG_EXT
 
 
-def _b64decode(s):
+def _b64decode(s: Any) -> bytes:
     import base64
     return base64.b64decode(s or "")
 
 
-def parse_full(xml_path, ncams=None):
+def parse_full(xml_path: str, ncams: int | None = None) -> tuple[dict[str, Any], list[dict[str, Any]], list[tuple[int, int, str]], list[dict[str, Any]]]:
     """Parse a timeline into (meta, cam_tracks, subs, inserts).
     Track convention (deterministic when ncams is given): the first `ncams` non-subtitle
     video tracks are cameras 1..N (bottom→top), every track above them holds inserts
     (photo track, then video track). The subtitle track is found by content anywhere.
     When ncams is None, fall back to a heuristic (one file cut into many clips = camera)."""
     root = ET.parse(xml_path).getroot()
-    seq = root.find(".//sequence")
+    seq: Any = root.find(".//sequence")
     # Частота секвенции. <timebase> — НОМИНАЛ (30 у NTSC), реальную частоту задаёт
     # <ntsc>TRUE</ntsc>: 29.97 = 30*1000/1001. Пока читался один <timebase>, секвенция
     # 29.97 (так её пишут и Премьер, и наш xmlbuild для исходников) считалась 30-й, а
@@ -123,15 +124,15 @@ def parse_full(xml_path, ncams=None):
         if fid and pu is not None and pu.text and fid not in fmap:
             fmap[fid] = _decode_pathurl(pu.text)
 
-    def clip_path(c):
+    def clip_path(c: Any) -> Any:
         f = c.find(".//file")
         return fmap.get(f.get("id")) if f is not None else None
 
-    def is_sub_track(clips):
+    def is_sub_track(clips: Any) -> bool:
         return any((c.find(".//filter/effect/effectid") is not None and
                     c.find(".//filter/effect/effectid").text == "GraphicAndType") for c in clips)
 
-    def as_camera(clips):
+    def as_camera(clips: Any) -> dict[str, Any]:
         rows = []
         for c in clips:
             if _txt(c, "start") is None or _txt(c, "end") is None:
@@ -143,7 +144,7 @@ def parse_full(xml_path, ncams=None):
         return {"path": path, "name": _parent_name(path) if path else "Камера",
                 "clips": rows}
 
-    def as_inserts(clips):
+    def as_inserts(clips: Any) -> list[dict[str, Any]]:
         out = []
         for c in clips:
             p = clip_path(c)
@@ -154,6 +155,9 @@ def parse_full(xml_path, ncams=None):
         return out
 
     from collections import Counter
+    subs: list[Any]
+    cam_tracks: list[Any]
+    insert_clips: list[Any]
     subs, cam_tracks, insert_clips = [], [], []
     non_sub = []                                       # (clips) видео-треков не-субтитров, снизу вверх
     for tr in seq.findall(".//media/video/track"):
@@ -171,7 +175,7 @@ def parse_full(xml_path, ncams=None):
             continue
         non_sub.append(clips)
 
-    def _looks_camera(clips):
+    def _looks_camera(clips: Any) -> bool:
         known = [p for p in (clip_path(c) for c in clips) if p]
         img_track = bool(known) and all(_is_image(p) for p in known)   # трек картинок = не камера
         top_n = Counter(known).most_common(1)[0][1] if known else 0    # один файл, нарезанный на N клипов

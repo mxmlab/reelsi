@@ -33,6 +33,7 @@ sys.path.insert(0, ROOT)
 
 import api  # noqa: E402
 from api import _core, gdrive, render  # noqa: E402
+from core import jobstate, render_job  # noqa: E402
 
 H = {"Host": "127.0.0.1:5001"}
 
@@ -458,21 +459,21 @@ class _SilentAerender:
 
 def test_run_proc_batch_stall_watchdog(monkeypatch, tmp_path):
     """Молчащий набор снимается сторожем, причина — в логе и в failed."""
-    monkeypatch.setattr(render, "AE_STALL_KILL_SEC", 0.3)
-    monkeypatch.setattr(render, "AE_STALL_WARN_SEC", 0.1)
-    monkeypatch.setattr(render.subprocess, "Popen", _SilentAerender)
-    monkeypatch.setattr(render, "_kill_proc",
+    monkeypatch.setattr(render_job, "AE_STALL_KILL_SEC", 0.3)
+    monkeypatch.setattr(render_job, "AE_STALL_WARN_SEC", 0.1)
+    monkeypatch.setattr(render_job.subprocess, "Popen", _SilentAerender)
+    monkeypatch.setattr(render_job, "kill_proc",
                         lambda p: setattr(p, "_killed", True))
 
     comps = [("01_C0233", "C0233", 100)]
     with render.RLOCK:
         render.RJOB.update(running=True, done=False, log=[], pct=None, cur="", ae="",
                            out_dir="", result=[], failed=[], cancel=False, items=[], eta=None)
-    render.items_init(render.RJOB, render.RLOCK, [s for s, _c, _f in comps])
-    render.item_set(render.RJOB, render.RLOCK, "01_C0233", stage="render")
+    jobstate.items_init(render.RJOB, render.RLOCK, [s for s, _c, _f in comps])
+    jobstate.item_set(render.RJOB, render.RLOCK, "01_C0233", stage="render")
 
-    rc = render._run_proc_batch("aerender.exe", "набор.aep", comps, str(tmp_path))
-    assert rc == render.AE_STALLED
+    rc = render_job.run_proc_batch(render.RJOB, "aerender.exe", "набор.aep", comps, str(tmp_path))
+    assert rc == render_job.AE_STALLED
     assert any("не отвечает" in str(e) for e in render.RJOB["log"]), render.RJOB["log"]
     assert any("не отвечает" in f.get("reason", "") for f in render.RJOB["failed"])
 
@@ -482,18 +483,18 @@ def test_run_proc_batch_talks_and_finishes(monkeypatch, tmp_path):
     lines = [
         'PROGRESS:  8/26/2026 12:55:08 AM: Finished composition "C0233".',
     ]
-    monkeypatch.setattr(render, "AE_STALL_KILL_SEC", 0.3)
-    monkeypatch.setattr(render, "AE_STALL_WARN_SEC", 0.1)
-    monkeypatch.setattr(render.subprocess, "Popen", lambda *a, **k: _Proc(lines))
-    monkeypatch.setattr(render, "_kill_proc", lambda p: pytest.fail("снят живой рендер"))
+    monkeypatch.setattr(render_job, "AE_STALL_KILL_SEC", 0.3)
+    monkeypatch.setattr(render_job, "AE_STALL_WARN_SEC", 0.1)
+    monkeypatch.setattr(render_job.subprocess, "Popen", lambda *a, **k: _Proc(lines))
+    monkeypatch.setattr(render_job, "kill_proc", lambda p: pytest.fail("снят живой рендер"))
 
     comps = [("01_C0233", "C0233", 100)]
     with render.RLOCK:
         render.RJOB.update(running=True, done=False, log=[], pct=None, cur="", ae="",
                            out_dir="", result=[], failed=[], cancel=False, items=[], eta=None)
-    render.items_init(render.RJOB, render.RLOCK, [s for s, _c, _f in comps])
+    jobstate.items_init(render.RJOB, render.RLOCK, [s for s, _c, _f in comps])
 
-    rc = render._run_proc_batch("aerender.exe", "набор.aep", comps, str(tmp_path))
+    rc = render_job.run_proc_batch(render.RJOB, "aerender.exe", "набор.aep", comps, str(tmp_path))
     assert rc == 0
     assert any(it.get("name") == "01_C0233" and it.get("stage") == "done"
                for it in render.RJOB["items"]), render.RJOB["items"]
@@ -538,10 +539,17 @@ def test_kill_tree_kills_and_survives_errors(monkeypatch):
         def kill(self):
             killed.append(self)
 
-    monkeypatch.setattr(_core.subprocess, "run",
+    # Записывающие заглушки POSIX-функций: тест никогда не должен слать настоящий сигнал (на CI pid=1 убивал init)
+    killpg_calls = []
+    monkeypatch.setattr(jobstate.os, "getpgid", lambda pid: 1, raising=False)
+    monkeypatch.setattr(jobstate.os, "getpgrp", lambda: 9999, raising=False)
+    monkeypatch.setattr(jobstate.os, "killpg", lambda pgid, sig: killpg_calls.append((pgid, sig)), raising=False)
+    monkeypatch.setattr(jobstate.signal, "SIGKILL", 9, raising=False)
+    monkeypatch.setattr(jobstate.subprocess, "run",
                         lambda *a, **k: (_ for _ in ()).throw(OSError("нет taskkill")))
-    _core.kill_tree(_P())
+    jobstate.kill_tree(_P())
     assert len(killed) == 1
+    assert killpg_calls == [], "killpg не должен вызываться для pid=1"
 
 
 # --------------------------------------------------------------------------- #

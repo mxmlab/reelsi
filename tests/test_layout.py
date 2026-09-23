@@ -71,12 +71,13 @@ import webui  # noqa: F401  (тянет весь бэкенд и движок)
 
 cfg = mod("aicut.config")
 core = mod("api._core")
+jobstate = mod("jobstate")
 censor = mod("censor")
 out = {
     "personal": {
         "AI_CONFIG_PATH": cfg.AI_CONFIG_PATH,
         "AI_LOG_PATH": cfg.AI_LOG_PATH,
-        "JOB_LOCK_PATH": core.JOB_LOCK_PATH,
+        "JOB_LOCK_PATH": jobstate.JOB_LOCK_PATH,
         "UI_STATE_PATH": core.UI_STATE_PATH,
         "INSERTLIB_INDEX": mod("insertlib").INDEX_PATH,
         "TERMS_PATH": mod("terms").TERMS_PATH,

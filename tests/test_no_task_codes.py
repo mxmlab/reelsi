@@ -14,6 +14,7 @@ r"""Сторож: в публикуемых файлах не остаётся �
 
 - `.py` — комментарии и докстринги (одиночные строковые выражения);
 - `.js`, `.jsx`, `.css` — комментарии, `.html` — `<!-- -->`;
+- `.ps1` — комментарии PowerShell (`# …` и блоки `<# … #>`);
 - документы (`.md`, `.txt`, `.yml`, `.toml`, `LICENSE`, `.gitignore` и прочее
   без расширения) — текст целиком;
 - шаблоны сборки `core/xml2ae/*.py` — сверх этого `// …` ВНУТРИ строковых
@@ -301,6 +302,58 @@ def _html_spans(text):
         i = k
 
 
+def _ps_skip_string(text, i):
+    """Индекс за строковым литералом PowerShell: `''` и `""` — экранированная кавычка."""
+    quote = text[i]
+    n = len(text)
+    i += 1
+    while i < n:
+        if text[i] == quote:
+            if i + 1 < n and text[i + 1] == quote:
+                i += 2
+                continue
+            return i + 1
+        if quote == '"' and text[i] == "`":        # backtick-escape в "…"
+            i += 2
+            continue
+        if text[i] == "\n":                        # строка не закрыта: файл не глотаем
+            return i
+        i += 1
+    return n
+
+
+def _ps_spans(text):
+    """Комментарии PowerShell: `# …` до конца строки и блоки `<# … #>`.
+
+    Строки (в том числе here-строки `@'…'@`) пропускаются: `#` внутри них — не
+    комментарий, и ругаться на чужой скрипт сторож не должен.
+    """
+    spans, i, n = [], 0, len(text)
+    while i < n:
+        if text.startswith("@'", i) or text.startswith('@"', i):
+            close = "\n" + text[i + 1] + "@"
+            j = text.find(close, i + 2)
+            i = n if j == -1 else j + len(close)
+            continue
+        if text[i] in "'\"":
+            i = _ps_skip_string(text, i)
+            continue
+        if text.startswith("<#", i):
+            j = text.find("#>", i + 2)
+            j = n if j == -1 else j + 2
+            spans.append((i, j))
+            i = j
+            continue
+        if text[i] == "#":
+            j = text.find("\n", i)
+            j = n if j == -1 else j
+            spans.append((i, j))
+            i = j
+            continue
+        i += 1
+    return spans
+
+
 def text_spans(rel, text):
     """Куски файла, где ссылка на задание — дефект. None — проверять весь текст."""
     ext = os.path.splitext(rel)[1].lower()
@@ -315,6 +368,8 @@ def text_spans(rel, text):
         return _js_spans(text, line_comment=(ext != ".css"))
     if ext in (".html", ".htm"):
         return _html_spans(text)
+    if ext == ".ps1":
+        return _ps_spans(text)
     if ext in _DOC_EXT:
         return [(0, len(text))]
     return None
@@ -369,6 +424,20 @@ def test_watchdog_sees_the_pattern():
         "сторож залез в строковый литерал: строки кода править нельзя")
     assert not offenders("sample.js", "var s = '// задание ZI';\n"), (
         "сторож принял строку JS за комментарий")
+
+
+def test_watchdog_sees_powershell_comments():
+    """Обвязка на PowerShell тоже публикуется: код задания в комментарии — дефект."""
+    assert offenders("tools/wt.ps1", "# чужие правки уехали в stash (задание BF2)\n"), (
+        "сторож не видит строчный комментарий PowerShell")
+    assert offenders("tools/wt.ps1", "<#\n так и случилось — задание BF2 встало\n#>\n"), (
+        "сторож не видит блочный комментарий PowerShell")
+    assert not offenders("tools/wt.ps1", "# чисто, без кодов\n"), (
+        "сторож ругается на чистый комментарий PowerShell")
+    assert not offenders("tools/wt.ps1", 'Write-Output "задание BF2"\n'), (
+        "сторож залез в строковый литерал PowerShell")
+    assert not offenders("tools/wt.ps1", '$s = @"\nзадание BF2\n"@\n'), (
+        "сторож принял here-строку за комментарий")
 
 
 def test_watchdog_sees_templates_and_fixtures():

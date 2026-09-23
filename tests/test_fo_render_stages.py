@@ -31,7 +31,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
 import api.render as render  # noqa: E402
-from core import aerender  # noqa: E402
+from core import aerender, render_job  # noqa: E402
 
 
 def _fileurl(p):
@@ -91,12 +91,12 @@ def test_combined_render_stages_and_monotonicity(batch_fixture, tmp_path, monkey
 
     monkeypatch.setenv("REELSI_RENDER_STATS", str(tmp_path / "stats.json"))
     monkeypatch.setattr(
-        render, "find_ae",
+        render_job, "find_ae",
         lambda: ("fake_AfterFX.exe", "fake_aerender.exe", "Adobe After Effects 2026")
     )
     # Открытая копия After Effects останавливает прогон ДО запуска AfterFX (задание
     # AE-Hygiene) — в тесте AE «закрыт», иначе результат зависел бы от машины.
-    monkeypatch.setattr(render, "ae_running", lambda: False)
+    monkeypatch.setattr(render_job, "ae_running", lambda: False)
 
     # Список записанных состояний (pct, stage_label, stage_done, stage_total, cur)
     history = []
@@ -118,6 +118,7 @@ def test_combined_render_stages_and_monotonicity(batch_fixture, tmp_path, monkey
         record_state()
 
     monkeypatch.setattr(render, "remit", hooked_remit)
+    monkeypatch.setattr(render.RJOB, "emit", hooked_remit)
 
     class FakePopen:
         def __init__(self, cmd, *args, **kwargs):
@@ -175,7 +176,7 @@ def test_combined_render_stages_and_monotonicity(batch_fixture, tmp_path, monkey
         def wait(self):
             return 0
 
-    monkeypatch.setattr(render.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(render_job.subprocess, "Popen", FakePopen)
 
     batch = [
         {"xml_path": batch_fixture["xml1"], "outdir": outdir, "roto": False},
@@ -193,7 +194,7 @@ def test_combined_render_stages_and_monotonicity(batch_fixture, tmp_path, monkey
     )
 
     record_state()
-    render._run_render_combined(batch, outdir, render_dir)
+    render_job.run_render_combined(render.RJOB, batch, outdir, render_dir)
     record_state()
 
     assert not render.RJOB["failed"], f"Рендер упал: {render.RJOB['failed']}"
@@ -243,12 +244,12 @@ def test_single_render_stages_and_monotonicity(batch_fixture, tmp_path, monkeypa
 
     monkeypatch.setenv("REELSI_RENDER_STATS", str(tmp_path / "stats.json"))
     monkeypatch.setattr(
-        render, "find_ae",
+        render_job, "find_ae",
         lambda: ("fake_AfterFX.exe", "fake_aerender.exe", "Adobe After Effects 2026")
     )
     # Открытая копия After Effects останавливает прогон ДО запуска AfterFX (задание
     # AE-Hygiene) — в тесте AE «закрыт», иначе результат зависел бы от машины.
-    monkeypatch.setattr(render, "ae_running", lambda: False)
+    monkeypatch.setattr(render_job, "ae_running", lambda: False)
 
     history = []
 
@@ -268,6 +269,7 @@ def test_single_render_stages_and_monotonicity(batch_fixture, tmp_path, monkeypa
         record_state()
 
     monkeypatch.setattr(render, "remit", hooked_remit)
+    monkeypatch.setattr(render.RJOB, "emit", hooked_remit)
 
     class FakePopenSingle:
         def __init__(self, cmd, *args, **kwargs):
@@ -309,7 +311,7 @@ def test_single_render_stages_and_monotonicity(batch_fixture, tmp_path, monkeypa
         def wait(self):
             return 0
 
-    monkeypatch.setattr(render.subprocess, "Popen", FakePopenSingle)
+    monkeypatch.setattr(render_job.subprocess, "Popen", FakePopenSingle)
 
     jobs = [
         {"xml_path": batch_fixture["xml1"], "outdir": outdir, "roto": False},
@@ -325,7 +327,7 @@ def test_single_render_stages_and_monotonicity(batch_fixture, tmp_path, monkeypa
     )
 
     record_state()
-    render._run_render_single(jobs, outdir, render_dir)
+    render_job.run_render_single(render.RJOB, jobs, outdir, render_dir)
     record_state()
 
     assert not render.RJOB["failed"]
@@ -416,7 +418,7 @@ def test_combined_phase1_eta_baseline_or_blank(batch_fixture, tmp_path, monkeypa
                 {"name": "02_C0234", "stage": "wait", "pct": None, "path": "", "reason": ""},
             ]
         )
-        render._run_render_combined(batch, outdir, render_dir)
+        render_job.run_render_combined(render.RJOB, batch, outdir, render_dir)
 
     # 1) Статистики нет — ETA не выдумывается, в интерфейсе прочерк
     run()

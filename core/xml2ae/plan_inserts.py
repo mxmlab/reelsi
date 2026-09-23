@@ -36,7 +36,7 @@
 """
 import os
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable, cast
 
 from .jsutil import _jd, _r
 from .layout import (INS_C2_BASE, INS_C2_PEAK, INS_C1_HIGH, INS_EXIT, INS_RISE_DY,
@@ -58,17 +58,17 @@ class InsertTimingInputs:
     стиля, прочитанная один раз.
     """
     # Вставки: свои из UI плюс разобранные из XML (сек+кадры или легаси-кадры).
-    inserts: list
+    inserts: list[dict[str, Any]]
     # Частота кадров как _fps0 (meta["fps"] or 60) — ею тайминги переводятся в секунды.
     fps: float
     # Точки смены показываемой камеры, сек (_cam_change_sec из build.py).
-    cam_change_sec: list
+    cam_change_sec: list[float]
     # Индекс камеры в момент t: правило общее с камерой и интро (build.py).
     active_cam_at: Callable[[float], int]
     # Резолвнутый и прочитанный стиль (plan_style.read_style).
     style: StyleValues
     # Лог: сюда уходит сообщение о переносе вставки, срезанной катом.
-    emit: Callable[..., object]
+    emit: Callable[..., Any]
 
 
 @dataclass(frozen=True)
@@ -79,8 +79,8 @@ class InsertTimings:
     сборка данных режет окно (и снимает выход). Отдаётся наружу, потому что между двумя
     дверями лежит звук, читающий тот же подготовленный список вставок.
     """
-    inserts: list
-    clip_end: Callable[..., tuple]
+    inserts: list[dict[str, Any]]
+    clip_end: Callable[[dict[str, Any], float, float], tuple[float, bool]]
 
 
 @dataclass(frozen=True)
@@ -94,17 +94,17 @@ class InsertsInputs:
     прочитанной один раз: поимённого перечисления ключей больше нет.
     """
     # Подготовленные вставки (тайминги, тип, стиль) — из plan_insert_timings.
-    inserts: list
-    meta: dict
+    inserts: list[dict[str, Any]]
+    meta: dict[str, Any]
     # Частота кадров как _fps0 — ею считаются окна входа/выхода и ключи анимаций.
     fps: float
-    clip_end: Callable[..., tuple]
+    clip_end: Callable[[dict[str, Any], float, float], tuple[float, bool]]
     # Размеры файла: build.py отдаёт свой _media_dims (тесты подменяют его в build).
-    media_dims: Callable[[str], object]
+    media_dims: Callable[[str], Any]
     # Резолвнутый и прочитанный стиль (plan_style.read_style).
     style: StyleValues
     # Лог: сюда уходит сообщение о снятом фоне (nobg_path).
-    emit: Callable[..., object]
+    emit: Callable[..., Any]
 
 
 @dataclass(frozen=True)
@@ -115,9 +115,9 @@ class InsertsPlan:
     подстановкой INSERTS, video_segs — окна видеовставок: по ним группа интро уезжает
     наверх (INTRO_FRONT).
     """
-    inserts: list
+    inserts: list[dict[str, Any]]
     inserts_js: str
-    video_segs: list
+    video_segs: list[Any]
 
 
 def plan_insert_timings(inp: InsertTimingInputs) -> InsertTimings:
@@ -136,13 +136,13 @@ def plan_insert_timings(inp: InsertTimingInputs) -> InsertTimings:
     style = inp.style
     emit = inp.emit
 
-    def _ins_t0(x):                                    # старт вставки в секундах (сек+кадры или легаси-кадры)
+    def _ins_t0(x: dict[str, Any]) -> float:                                    # старт вставки в секундах (сек+кадры или легаси-кадры)
         s, fr = x.get("start_s"), x.get("start_f")
         if s is not None or fr is not None:
             return float(s or 0) + float(fr or 0) / _fps0
         return float(x.get("start") or 0) / _fps0
 
-    def _ins_t1(x):                                    # конец вставки в секундах (старт+длительность или явный конец)
+    def _ins_t1(x: dict[str, Any]) -> float:                                    # конец вставки в секундах (старт+длительность или явный конец)
         if x.get("dur_s") is not None or x.get("dur_f") is not None:
             return _ins_t0(x) + float(x.get("dur_s") or 0) + float(x.get("dur_f") or 0) / _fps0
         s, fr = x.get("end_s"), x.get("end_f")
@@ -156,7 +156,7 @@ def plan_insert_timings(inp: InsertTimingInputs) -> InsertTimings:
     # входа идёт по нему (и стиль фото авто-выбирается по НОВОЙ камере). Конец не двигаем.
     SNAP_START_TOL = style.insert_snap_start   # сек до ката
 
-    def _snap_start(x):
+    def _snap_start(x: dict[str, Any]) -> None:
         if not _snap or SNAP_START_TOL <= 0:
             return
         t0, t1 = _ins_t0(x), _ins_t1(x)
@@ -194,7 +194,7 @@ def plan_insert_timings(inp: InsertTimingInputs) -> InsertTimings:
     # кату, выхода нет (у видео это же убирает выходной переход+whoosh).
     SNAP_TOL = 0.12                                    # сек: конец «на кате» с учётом округления ИИ
 
-    def _clip_end(x, t0, t1):                          # -> (end_sec, noexit)
+    def _clip_end(x: dict[str, Any], t0: float, t1: float) -> tuple[float, bool]:  # -> (end_sec, noexit)
         if _snap:
             for cp in _cam_change_sec:                 # конец вставки на самом кате -> жёсткий срез
                 if abs(t1 - cp) <= SNAP_TOL and cp > t0 + 1.5 / _fps0:
@@ -265,13 +265,13 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
     emit = inp.emit
     _fps = meta["fps"]
 
-    def _isec(x, k):                                   # поле «сек+кадры» -> секунды
+    def _isec(x: dict[str, Any], k: str) -> float:                                   # поле «сек+кадры» -> секунды
         s, f = x.get(k + "_s"), x.get(k + "_f")
         if s is not None or f is not None:
             return float(s or 0) + float(f or 0) / _fps
         return float(x.get(k) or 0) / _fps             # легаси: целые кадры
 
-    def _win(x):                                       # -> (start_sec, end_sec)
+    def _win(x: dict[str, Any]) -> tuple[float, float]:                               # -> (start_sec, end_sec)
         st = _isec(x, "start")
         if x.get("dur_s") is not None or x.get("dur_f") is not None:  # старт + длительность
             return st, st + float(x.get("dur_s") or 0) + float(x.get("dur_f") or 0) / _fps
@@ -283,10 +283,10 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
     # видеовставка: перед человеком (фул на весь кадр, дефолт) или за ним (рото сверху)
     _vfront = bool(style.insert_video_front)
 
-    def _front(x):
+    def _front(x: dict[str, Any]) -> bool:
         return _vfront if x.get("front") is None else bool(x.get("front"))
 
-    def _ins_js(x):
+    def _ins_js(x: dict[str, Any]) -> dict[str, Any]:
         t0, t1raw = _win(x)
         t1, noexit = _clip_end(x, t0, t1raw)
         # «Без фона»: путь фото у вставки с галкой «на подложке» меняется
@@ -302,7 +302,7 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
         if x.get("plate") and _plate_path and _is_image(media_src):
             from core.insertlib import nobg_path
             media = nobg_path(media_src, emit=emit)
-        out = {"t": x.get("type") or "photo", "style": x.get("style") or "cam2",
+        out: dict[str, Any] = {"t": x.get("type") or "photo", "style": x.get("style") or "cam2",
                "media": media, "start": _r(t0), "end": _r(t1),
                "scale": _r(x.get("scale") or 44), "mosaic": bool(x.get("mosaic")),
                "x": _r(x.get("x") or 0), "y": _r(x.get("y") or 0),
@@ -322,7 +322,7 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
             if wh:
                 k = _r(x.get("sc") or 100) / 100               # округлённый sc: как увидит JSX
                 iw, ih = wh
-                out["fit"] = _r(_fit_scale(iw, ih, True, meta["w"], meta["h"], k))
+                out["fit"] = _r(cast(float, _fit_scale(iw, ih, True, meta["w"], meta["h"], k)))
                 # запас вылета ролика за кадр — СПРАВКА для превью, а не граница позиции
                 # x/y уходят в план и .jsx ровно такими, какими их задал
                 # пользователь. Раньше позиция зажималась этим запасом (`if k >= 1`), и у
@@ -332,7 +332,7 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
                 out["slackx"], out["slacky"] = _r(sx), _r(sy)
                 # коробка заполнения при sc=100 (px в comp): ужатому видео (sc<100) предпросмотр
                 # рисует её × sc/100, не читая размеры файла
-                f0 = _fit_scale(iw, ih, True, meta["w"], meta["h"], 1.0) / 100
+                f0 = cast(float, _fit_scale(iw, ih, True, meta["w"], meta["h"], 1.0)) / 100
                 out["fitw"], out["fith"] = _r(iw * f0, 2), _r(ih * f0, 2)
         else:
             # маска-карточка в comp-координатах (осевший масштаб): её масштабирует anim.scale

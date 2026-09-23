@@ -31,6 +31,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
 import api.render as render  # noqa: E402
+from core import jobstate, render_job  # noqa: E402
 
 
 def _fileurl(p):
@@ -84,7 +85,7 @@ def _install_popen(monkeypatch, launched, on_afterfx=None):
     Служебные процессы сборки (node, ffprobe и т.п.) уходят в настоящий Popen —
     иначе они засоряют список запусков. Подменённый процесс «уже вышел»: poll()=0,
     stdout пустой."""
-    real_popen = render.subprocess.Popen
+    real_popen = render_job.subprocess.Popen
 
     class FakePopen:
         def __init__(self, cmd, *args, **kwargs):
@@ -115,22 +116,22 @@ def _install_popen(monkeypatch, launched, on_afterfx=None):
                 return getattr(self._real, name)
             raise AttributeError(name)
 
-    monkeypatch.setattr(render.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(render_job.subprocess, "Popen", FakePopen)
 
 
 def _reset_job(names):
     render.RJOB.update(running=True, done=False, log=[], pct=None, cur="", ae="",
                        out_dir="", result=[], failed=[], cancel=False, items=[])
-    render.items_init(render.RJOB, render.RLOCK, names)
+    jobstate.items_init(render.RJOB, render.RLOCK, names)
 
 
 def _env(monkeypatch, tmp_path):
     monkeypatch.setenv("REELSI_RENDER_STATS", str(tmp_path / "stats.json"))
     monkeypatch.setattr(
-        render, "find_ae",
+        render_job, "find_ae",
         lambda: ("fake_AfterFX.exe", "fake_aerender.exe", "Adobe After Effects 2026")
     )
-    monkeypatch.setattr(render, "ae_running", lambda: False)   # в тестах AE «закрыт»
+    monkeypatch.setattr(render_job, "ae_running", lambda: False)   # в тестах AE «закрыт»
 
 
 # --- (a) гигиена журнала: старый .aelog.txt удаляется ДО запуска AfterFX -----------
@@ -162,7 +163,7 @@ def test_combined_deletes_stale_aelog_before_master(clips, tmp_path, monkeypatch
     batch = [{"xml_path": clips["xml1"], "outdir": outdir, "roto": False},
              {"xml_path": clips["xml2"], "outdir": outdir, "roto": False}]
     _reset_job(["01_C0233", "02_C0234"])
-    render._run_render_combined(batch, outdir, render_dir)
+    render_job.run_render_combined(render.RJOB, batch, outdir, render_dir)
 
     assert launched == ["fake_afterfx.exe"], launched
     assert seen_at_launch == [False], "старый .aelog.txt не удалён до запуска AfterFX"
@@ -191,7 +192,7 @@ def test_single_deletes_stale_aelog_before_afterfx(clips, tmp_path, monkeypatch)
     _install_popen(monkeypatch, launched, on_afterfx=on_afterfx)
     job = [{"xml_path": clips["xml1"], "outdir": outdir, "roto": False}]
     _reset_job(["01_C0233"])
-    render._run_render_single(job, outdir, render_dir)
+    render_job.run_render_single(render.RJOB, job, outdir, render_dir)
 
     assert launched == ["fake_afterfx.exe"], launched
     assert seen_at_launch == [False], "старый .aelog.txt не удалён до запуска AfterFX"
@@ -230,7 +231,7 @@ def test_combined_stale_aep_not_updated_fails(clips, tmp_path, monkeypatch):
     batch = [{"xml_path": clips["xml1"], "outdir": outdir, "roto": False},
              {"xml_path": clips["xml2"], "outdir": outdir, "roto": False}]
     _reset_job(["01_C0233", "02_C0234"])
-    render._run_render_combined(batch, outdir, render_dir)
+    render_job.run_render_combined(render.RJOB, batch, outdir, render_dir)
 
     assert launched == ["fake_afterfx.exe"], "aerender запустился по старому .aep: %r" % launched
     reasons = [f["reason"] for f in render.RJOB["failed"]]
@@ -263,7 +264,7 @@ def test_single_stale_aep_not_updated_fails(clips, tmp_path, monkeypatch):
     _install_popen(monkeypatch, launched, on_afterfx=on_afterfx)
     job = [{"xml_path": clips["xml1"], "outdir": outdir, "roto": False}]
     _reset_job(["01_C0233"])
-    render._run_render_single(job, outdir, render_dir)
+    render_job.run_render_single(render.RJOB, job, outdir, render_dir)
 
     assert launched == ["fake_afterfx.exe"], "aerender запустился по старому .aep: %r" % launched
     reasons = [f["reason"] for f in render.RJOB["failed"]]
@@ -284,13 +285,13 @@ def test_combined_open_afterfx_stops_before_launch(clips, tmp_path, monkeypatch)
     os.makedirs(outdir)
     os.makedirs(render_dir)
     _env(monkeypatch, tmp_path)
-    monkeypatch.setattr(render, "ae_running", lambda: True)
+    monkeypatch.setattr(render_job, "ae_running", lambda: True)
     launched = []
     _install_popen(monkeypatch, launched)
     batch = [{"xml_path": clips["xml1"], "outdir": outdir, "roto": False},
              {"xml_path": clips["xml2"], "outdir": outdir, "roto": False}]
     _reset_job(["01_C0233", "02_C0234"])
-    render._run_render_combined(batch, outdir, render_dir)
+    render_job.run_render_combined(render.RJOB, batch, outdir, render_dir)
 
     assert launched == [], "AfterFX запущен при открытой копии AE: %r" % launched
     reasons = [f["reason"] for f in render.RJOB["failed"]]
@@ -308,12 +309,12 @@ def test_single_open_afterfx_stops_before_launch(clips, tmp_path, monkeypatch):
     os.makedirs(outdir)
     os.makedirs(render_dir)
     _env(monkeypatch, tmp_path)
-    monkeypatch.setattr(render, "ae_running", lambda: True)
+    monkeypatch.setattr(render_job, "ae_running", lambda: True)
     launched = []
     _install_popen(monkeypatch, launched)
     job = [{"xml_path": clips["xml1"], "outdir": outdir, "roto": False}]
     _reset_job(["01_C0233"])
-    render._run_render_single(job, outdir, render_dir)
+    render_job.run_render_single(render.RJOB, job, outdir, render_dir)
 
     assert launched == [], "AfterFX запущен при открытой копии AE: %r" % launched
     reasons = [f["reason"] for f in render.RJOB["failed"]]
@@ -359,13 +360,14 @@ def test_master_stall_guard_kills_silent_process(tmp_path, monkeypatch):
     good = [("01_C0233", "C0233", jsx1, 100),
             ("02_C0234", "C0234", jsx2, 100)]
     _reset_job(["01_C0233", "02_C0234"])
-    monkeypatch.setattr(render.subprocess, "Popen", _AliveSilent)
+    monkeypatch.setattr(render_job.subprocess, "Popen", _AliveSilent)
     killed = []
-    monkeypatch.setattr(render, "_kill_proc", lambda p: killed.append(p))
-    monkeypatch.setattr(render._time, "time", _clock(step=300.0))
-    monkeypatch.setattr(render._time, "sleep", lambda *a, **k: None)
+    monkeypatch.setattr(render_job, "kill_proc", lambda p: killed.append(p))
+    monkeypatch.setattr(render_job._time, "time", _clock(step=300.0))
+    monkeypatch.setattr(render_job._time, "sleep", lambda *a, **k: None)
 
-    render._run_proc_master(
+    render_job.run_proc_master(
+        render.RJOB,
         "fake_AfterFX.exe", "-noui", "-r", "master.jsx",
         good=good, render_dir=str(tmp_path / "exp"),
         aelog_path=os.path.join(outdir, "reelsi_batch.aelog.txt"))
@@ -381,15 +383,15 @@ def test_single_afx_stall_guard_kills_silent_process(tmp_path, monkeypatch):
     """Одиночный AfterFX: процесс жив и молчит — снятие по лимиту (rc=AE_STALLED),
     а не вечное ожидание. Время двигается подменой таймера, sleep'а нет."""
     _reset_job(["01_C0233"])
-    monkeypatch.setattr(render.subprocess, "Popen", _AliveSilent)
+    monkeypatch.setattr(render_job.subprocess, "Popen", _AliveSilent)
     killed = []
-    monkeypatch.setattr(render, "_kill_proc", lambda p: killed.append(p))
-    monkeypatch.setattr(render._time, "time", _clock(step=300.0))
-    monkeypatch.setattr(render._time, "sleep", lambda *a, **k: None)
+    monkeypatch.setattr(render_job, "kill_proc", lambda p: killed.append(p))
+    monkeypatch.setattr(render_job._time, "time", _clock(step=300.0))
+    monkeypatch.setattr(render_job._time, "sleep", lambda *a, **k: None)
 
-    rc = render._run_proc_afx(["fake_AfterFX.exe", "-noui", "-r", "01_C0233.jsx"])
+    rc = render_job.run_proc_afx(render.RJOB, ["fake_AfterFX.exe", "-noui", "-r", "01_C0233.jsx"])
 
-    assert rc == render.AE_STALLED, rc
+    assert rc == render_job.AE_STALLED, rc
     assert killed, "сторож не снял молчащий AfterFX"
     text = _log_text(render.RJOB)
     assert "не отвечает" in text and "прогон снят" in text, "нет сообщения о снятии:\n" + text

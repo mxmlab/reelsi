@@ -36,6 +36,7 @@ sys.path.insert(0, ROOT)
 os.environ.setdefault("REELSI_NO_BROWSER", "1")
 
 from api import _core, jobs, render  # noqa: E402
+from core import jobstate  # noqa: E402
 
 HDR = {"Host": "127.0.0.1:5001"}
 
@@ -53,7 +54,7 @@ def journal_in_tmp(tmp_path, monkeypatch):
     """Журнал — в tmp_path: модуль держит путь константой, её и переставляем.
     (В conftest REELSI_JOB_STATE уже уведён в сессионный каталог — на случай, если
     какой-то тест дёрнет задание мимо этой фикстуры.)"""
-    monkeypatch.setattr(_core, "JOB_STATE_PATH", str(tmp_path / "job_state.json"))
+    monkeypatch.setattr(jobstate, "JOB_STATE_PATH", str(tmp_path / "job_state.json"))
     _core._JOURNAL_BOUND.clear()
     _core._JOB_INTERRUPTED.clear()
     yield
@@ -62,7 +63,7 @@ def journal_in_tmp(tmp_path, monkeypatch):
 
 
 def _journal():
-    with open(_core.JOB_STATE_PATH, encoding="utf-8") as f:
+    with open(jobstate.JOB_STATE_PATH, encoding="utf-8") as f:
         return json.load(f)["jobs"]
 
 
@@ -280,3 +281,115 @@ def _wait_gone(pid, timeout=10.0):
             return False
         time.sleep(0.05)
     return False
+
+
+class _PosixOsProxy:
+    """Прокси над os для изоляции POSIX-ветки kill_tree на Windows.
+
+    ПОЧЕМУ: monkeypatch os.name = 'posix' напрямую в модуле os ломает pathlib.Path
+    (он пытается создать PosixPath на Windows при форматировании ошибок pytest).
+    Подмена атрибута os в jobstate изолирует ветвление без поломки окружения.
+    """
+    def __init__(self, **overrides):
+        self._overrides = overrides
+
+    def __getattr__(self, name):
+        if name in self._overrides:
+            return self._overrides[name]
+        return getattr(os, name)
+
+
+@pytest.mark.parametrize("bad_pgid", [0, 1])
+def test_kill_tree_does_not_killpg_pgid_0_or_1(monkeypatch, bad_pgid):
+    """При getpgid -> 0 или 1 kill_tree НЕ зовёт killpg, но p.kill() зовёт.
+
+    Группа 0 (текущая) и группа 1 (init/системная) защищены от сигналов;
+    тест симулирует POSIX-ветку на любой ОС через безопасный прокси jobstate.os.
+    """
+    killed = []
+    killpg_calls = []
+
+    class _P:
+        pid = 42424
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            killed.append(self)
+
+    proxy = _PosixOsProxy(
+        name="posix",
+        getpgid=lambda pid: bad_pgid,
+        getpgrp=lambda: 9999,
+        killpg=lambda pgid, sig: killpg_calls.append((pgid, sig)),
+    )
+    monkeypatch.setattr(jobstate, "os", proxy)
+    monkeypatch.setattr(jobstate.signal, "SIGKILL", 9, raising=False)
+
+    p = _P()
+    jobstate.kill_tree(p)
+
+    assert killpg_calls == [], f"killpg не должен вызываться для pgid={bad_pgid}"
+    assert len(killed) == 1, "p.kill() должен быть вызван"
+
+
+def test_kill_tree_kills_pgid_greater_than_1(monkeypatch):
+    """При валидном pgid > 1 kill_tree зовёт killpg(pgid, SIGKILL) и p.kill()."""
+    killed = []
+    killpg_calls = []
+
+    class _P:
+        pid = 42424
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            killed.append(self)
+
+    proxy = _PosixOsProxy(
+        name="posix",
+        getpgid=lambda pid: 500,
+        getpgrp=lambda: 9999,
+        killpg=lambda pgid, sig: killpg_calls.append((pgid, sig)),
+    )
+    monkeypatch.setattr(jobstate, "os", proxy)
+    monkeypatch.setattr(jobstate.signal, "SIGKILL", 9, raising=False)
+
+    p = _P()
+    jobstate.kill_tree(p)
+
+    assert killpg_calls == [(500, 9)], f"killpg должен быть вызван для pgid=500, получено {killpg_calls}"
+    assert len(killed) == 1, "p.kill() должен быть вызван"
+
+
+def test_kill_tree_does_not_killpg_own_group(monkeypatch):
+    """Если pgid равен группе сервера, killpg НЕ вызывается."""
+    killed = []
+    killpg_calls = []
+
+    class _P:
+        pid = 42424
+
+        def poll(self):
+            return None
+
+        def kill(self):
+            killed.append(self)
+
+    proxy = _PosixOsProxy(
+        name="posix",
+        getpgid=lambda pid: 9999,
+        getpgrp=lambda: 9999,
+        killpg=lambda pgid, sig: killpg_calls.append((pgid, sig)),
+    )
+    monkeypatch.setattr(jobstate, "os", proxy)
+    monkeypatch.setattr(jobstate.signal, "SIGKILL", 9, raising=False)
+
+    p = _P()
+    jobstate.kill_tree(p)
+
+    assert killpg_calls == []
+    assert len(killed) == 1
+

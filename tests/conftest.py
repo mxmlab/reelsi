@@ -55,6 +55,7 @@ import copy
 
 from api import _core, gdrive, inserts, previewproxy, render, videogen
 from core import app_meta, applog, insertlib, paths
+from core import jobstate  # noqa: F401  (для sys.modules в фикстуре путей)
 from core.aicut import config as _aicut_cfg
 from core.aicut import llm
 
@@ -191,7 +192,7 @@ def isolate_state_files(tmp_path, monkeypatch):
         if m and hasattr(m, "AI_LOG_PATH"):
             monkeypatch.setattr(m, "AI_LOG_PATH", str(ai_log))
 
-    for mod_name in ("api._core", "api", "api.files"):
+    for mod_name in ("core.jobstate", "api._core", "api", "api.files"):
         m = sys.modules.get(mod_name)
         if m and hasattr(m, "JOB_LOCK_PATH"):
             monkeypatch.setattr(m, "JOB_LOCK_PATH", str(job_lock))

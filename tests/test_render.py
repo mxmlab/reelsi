@@ -29,7 +29,7 @@ sys.path.insert(0, ROOT)
 os.environ.setdefault("REELSI_NO_BROWSER", "1")
 
 import api.render as render  # noqa: E402
-from core import aerender  # noqa: E402
+from core import aerender, render_job  # noqa: E402
 
 
 def test_progress_parses_frame_in_parens():
@@ -112,8 +112,8 @@ def _preflight(jobs, tmp_path, monkeypatch):
     render.RJOB.update(running=True, done=False, log=[], pct=None, cur="", ae="",
                        out_dir="", result=[], failed=[], cancel=False)
     reached = []
-    monkeypatch.setattr(render, "find_ae", lambda: reached.append(1) or None)
-    render._run_render_job(_norm_build_jobs(jobs), "", str(tmp_path / "exp"))
+    monkeypatch.setattr(render_job, "find_ae", lambda: reached.append(1) or None)
+    render_job.run_render_job(render.RJOB, _norm_build_jobs(jobs), "", str(tmp_path / "exp"))
     return bool(reached), render.RJOB
 
 
@@ -379,15 +379,15 @@ def test_run_proc_batch_identifies_comp_from_output_to_and_header():
                        out_dir="", result=[], failed=[], cancel=False,
                        items=[{"name": "01_C0233", "stage": "render", "pct": None, "path": "", "reason": ""}])
 
-    orig_popen = render.subprocess.Popen
+    orig_popen = render_job.subprocess.Popen
     try:
-        render.subprocess.Popen = FakePopen
-        rc = render._run_proc_batch("fake_aerender", "fake_proj.aep", comps, "fake_out")
+        render_job.subprocess.Popen = FakePopen
+        rc = render_job.run_proc_batch(render.RJOB, "fake_aerender", "fake_proj.aep", comps, "fake_out")
         assert rc == 0
         assert render.RJOB["pct"] == 1.0
         item = render.RJOB["items"][0]
         assert item["pct"] == 1.0
         assert item["stage"] == "done"
     finally:
-        render.subprocess.Popen = orig_popen
+        render_job.subprocess.Popen = orig_popen
 

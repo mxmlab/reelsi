@@ -8,6 +8,7 @@
 import heapq
 import math
 import os
+from typing import Any, Sequence, cast
 from core import fonts as _fonts
 from .jsutil import _r
 from .parse import is_out_dir
@@ -24,10 +25,10 @@ INS_MASK_SQUARE_AR = 2.2           # должно совпадать с одно
 # Сторона коробки, в которую вписано фото на подложке, долей стороны плашки:
 # фото занимает 75% плашки, остальное — её поля.
 INS_PLATE_INNER = 0.75
-_IMG_SIZE_CACHE = {}
+_IMG_SIZE_CACHE: dict[str, tuple[int, int] | None] = {}
 
 
-def _img_size(path):
+def _img_size(path: str | None) -> tuple[int, int] | None:
     """(w, h) картинки или None, если не открылась (битый файл, видео, нет PIL)."""
     p = os.path.abspath(path or "")
     if p not in _IMG_SIZE_CACHE:
@@ -41,7 +42,7 @@ def _img_size(path):
     return _IMG_SIZE_CACHE[p]
 
 
-def _ins_scale(media, style, comp_w=1080):
+def _ins_scale(media: str | None, style: str, comp_w: int | float = 1080) -> int | float:
     """Масштаб фотовставки под «карточку». Фото в прекомпе тянется под ширину композа, значит
     видимая высота = ih*comp_w/iw. Не-ультравайд режется маской в квадрат — тогда видимая
     ширина равна видимой высоте. Размеры не прочитались -> старые дефолты."""
@@ -59,7 +60,7 @@ def _ins_scale(media, style, comp_w=1080):
     return _r(min(INS_CARD_W / vis_w, card_h / vis_h) * 100, 1)
 
 
-def _ins_card(media, style, mw, mh, sc, comp_w=1080, comp_h=1920):
+def _ins_card(media: str | None, style: str, mw: Any, mh: Any, sc: Any, comp_w: int | float = 1080, comp_h: int | float = 1920) -> dict[str, Any] | None:
     """Маска-карточка фотовставки в comp-координатах (px) в ОСЕВШЕМ масштабе:
     {w, h} — окно маски, {pw, ph} — само фото (тянуто под ширину композа, маска его режет).
     Раньше это считал предпросмотр (insPreviewBox) из размеров картинки — переехало в план
@@ -83,7 +84,7 @@ def _ins_card(media, style, mw, mh, sc, comp_w=1080, comp_h=1920):
             "pw": _r(comp_w * s, 2), "ph": _r(photo_h * s, 2)}
 
 
-def _ins_plate(media, plate, style, sc, x, y, comp_w=1080, comp_h=1920, plate_scale=100.0):
+def _ins_plate(media: str | None, plate: str | None, style: str, sc: Any, x: Any, y: Any, comp_w: int | float = 1080, comp_h: int | float = 1920, plate_scale: float = 100.0) -> dict[str, Any] | None:
     """Геометрия фото-вставки на подложке — плашка из стиля снизу,
     фото сверху, маски-скругления нет. Зовётся ТОЛЬКО для вставок с галкой «на подложке»
     (поле plate): у остальных прежний путь — карточка и маска.
@@ -131,7 +132,7 @@ def _ins_plate(media, plate, style, sc, x, y, comp_w=1080, comp_h=1920, plate_sc
 INTRO_F_DUR, INTRO_HOLD, INTRO_F_OUT = 0.3, 1.0, 0.75
 
 
-def _intro_group_window(times, gi, n_groups, intro_last_hold=INTRO_HOLD):
+def _intro_group_window(times: Sequence[float], gi: int, n_groups: int, intro_last_hold: float = INTRO_HOLD) -> tuple[int | float, int | float]:
     """Окно группы интро (сек): (ts, te) — РОВНО формула inAt/outEnd из AE_FULL.
     times — моменты слов группы (сек, округлённые как в плане). gi — индекс группы,
     n_groups — их число.
@@ -156,7 +157,7 @@ def _intro_group_window(times, gi, n_groups, intro_last_hold=INTRO_HOLD):
 INTRO_MIN_PART = 0.1    # пол ужатой анимации и ужатого фейда, с
 
 
-def intro_clamp_window(in_at, t_last, out_start, out_end, fade, anim_dur, next_in):
+def intro_clamp_window(in_at: float, t_last: float, out_start: float, out_end: float, fade: float, anim_dur: float, next_in: float | None) -> tuple[int | float, int | float, int | float]:
     """Подрезать окно группы интро под старт следующей группы.
 
     Возвращает (out_start, out_end, fade). `next_in` — момент появления следующей
@@ -193,7 +194,7 @@ HL_DUR = 0.35
 HL_FIT = 0.6
 
 
-def hl_appear_dur(vis):
+def hl_appear_dur(vis: float | int) -> float:
     """Длительность появления жёлтого слова, с: min(HL_DUR, HL_FIT*vis).
     vis — видимое время слова (outPoint − момент появления), с. Округление до десятых
     миллисекунды: столько же знаков, сколько у остальных чисел плана и .jsx."""
@@ -227,7 +228,7 @@ SHADE_DY = -215                     # позиция слоя: y = intro_y + SHA
 SHADE_SCALE = 94                    # масштаб слоя, % (среднее по роликам)
 
 
-def _intro_i_dy(h, n_lines, gs, step_k=1.0):
+def _intro_i_dy(h: float, n_lines: int, gs: float | None, step_k: float = 1.0) -> float:
     """Опускание блока интро под INTRO_SAFE_TOP, px. Масштаб группы
     (96.8·gs/100) выбирает вызывающий: у ПРИВЯЗАННОГО интро это НЕужатый gs (граница
     — там автофит режет только Scale, и опускание от него не зависит), у
@@ -246,7 +247,7 @@ def _intro_i_dy(h, n_lines, gs, step_k=1.0):
     return 0.0
 
 
-def _cap(ps, size):
+def _cap(ps: str | None, size: float) -> float:
     """Высота заглавных (капитель) строки, px: верх «H» из контуров глифа —
     у заглавной нет ни хвоста, ни выносов, поэтому её верх и есть верх строки. Шрифта,
     файла или глифа нет — 0.72 кегля (та же запасная ветка, что была у чернил: раскладка
@@ -265,8 +266,8 @@ def _cap(ps, size):
 INTRO_BIG_OVER = 110.0
 
 
-def intro_big_layout(lines, ys_stack, fsize, fonts, back_scale, gap,
-                     over=INTRO_BIG_OVER):
+def intro_big_layout(lines: list[dict[str, Any]], ys_stack: Sequence[float], fsize: float, fonts: Sequence[str | None], back_scale: float, gap: float,
+                     over: float = INTRO_BIG_OVER) -> tuple[list[float | None], list[float | None], list[float | None]]:
     """Раскладка «большое слева»: ПЕРВАЯ строка группы с флагом big встаёт
     слева крупно, остальные строки группы — стопкой справа от неё, выровненные по левому
     краю. Возвращает (lx, lk, ys) — три списка ТОЙ ЖЕ длины, что lines:
@@ -316,15 +317,15 @@ def intro_big_layout(lines, ys_stack, fsize, fonts, back_scale, gap,
         return ([None] * n, [None] * n,
                 [round(float(y), 2) for y in ys_stack] if len(ys_stack) == n else [None] * n)
 
-    def _text(i):
+    def _text(i: int) -> str:
         return " ".join(str(w) for w in (lines[i].get("words") or []))
 
-    def _size(i):
+    def _size(i: int) -> float:
         """Кегль строки: задний план мельче, большая считается при fsize (её lk
         подбирается отдельно) — как в шаблоне, где back-скейл применяется к слою."""
         return fsize * back_scale if lines[i].get("back") else fsize
 
-    def _width(i, size):
+    def _width(i: int, size: float) -> float:
         wpx = _fonts.text_width(fonts[i], _text(i), size)
         if wpx is None:
             return 0.55 * size * len(_text(i))
@@ -348,6 +349,9 @@ def intro_big_layout(lines, ys_stack, fsize, fonts, back_scale, gap,
     lx_big = -total / 2.0
     lx_stack = -total / 2.0 + big_w + gap
 
+    lx: list[float | None]
+    lks: list[float | None]
+    ys: list[float | None]
     lx, lks, ys = [None] * n, [None] * n, [None] * n
     lx[big_i], lks[big_i], ys[big_i] = lx_big, lk, y_big
     for j, k in enumerate(stack_idx):
@@ -360,8 +364,8 @@ def intro_big_layout(lines, ys_stack, fsize, fonts, back_scale, gap,
             [None if v is None else round(v, 2) for v in ys])
 
 
-def intro_line_ys(lines, back_step, any_back_in_clip=True, anchor="center",
-                  h=1920.0, step_k=1.0, back_step_after=None):
+def intro_line_ys(lines: list[dict[str, Any]], back_step: float, any_back_in_clip: bool = True, anchor: str = "center",
+                  h: float = 1920.0, step_k: float = 1.0, back_step_after: float | None = None) -> list[float]:
     """Y базовых линий строк интро в координатах прекомпа (высота h), по числу строк.
 
     Шаг ДО строки заднего плана и шаг МЕЖДУ строками заднего плана — line_step *
@@ -396,7 +400,7 @@ def intro_line_ys(lines, back_step, any_back_in_clip=True, anchor="center",
         return []
     line_step = INTRO_LINE_STEP * step_k
 
-    def _back(i):
+    def _back(i: int) -> bool:
         return bool(lines[i].get("back"))
 
     steps = []
@@ -446,7 +450,7 @@ def intro_line_ys(lines, back_step, any_back_in_clip=True, anchor="center",
 # Полоса субтитров — posy и кегль субтитров, у стопки жёлтых плюс её высота.
 
 
-def intro_line_sizes(lines, fsize, back_scale=1.0, lk=None):
+def intro_line_sizes(lines: list[dict[str, Any]] | None, fsize: float, back_scale: float = 1.0, lk: Sequence[float | None] | None = None) -> list[float]:
     """Кегль каждой строки интро, px: fsize у обычной строки,
     fsize·back_scale у строки заднего плана, fsize·lk у большой строки.
 
@@ -466,7 +470,7 @@ def intro_line_sizes(lines, fsize, back_scale=1.0, lk=None):
     return out
 
 
-def _desc(ps, size):
+def _desc(ps: str | None, size: float) -> float:
     """Глубина выносных под базовой линией, px: низ «y» из контуров глифа.
     Файла шрифта или глифа нет — 0.24 кегля (та же запасная ветка, что у капители: блок
     обязан считаться и без файла шрифта — иначе группа молча перестала бы гаснуть)."""
@@ -476,8 +480,8 @@ def _desc(ps, size):
     return float(ext[1])
 
 
-def intro_block_span(ys, sizes, h, ds=100.0, g=100.0, y=0.0, dy=0.0,
-                     zoom=100.0, intro_cam=True, fonts=None):
+def intro_block_span(ys: Sequence[float | None], sizes: Sequence[float], h: float, ds: float = 100.0, g: float = 100.0, y: float = 0.0, dy: float = 0.0,
+                     zoom: float = 100.0, intro_cam: bool = True, fonts: Sequence[str | None] | None = None) -> tuple[float, float]:
     """(top, bottom) — вертикальный габарит блока интро в кадре, px от верха кадра.
     Верх блока — по капители самой верхней строки, низ — по выносным
     нижней (вертикаль типографская, как в intro_big_layout).
@@ -510,10 +514,10 @@ def intro_block_span(ys, sizes, h, ds=100.0, g=100.0, y=0.0, dy=0.0,
     # Масштаб прекомпа: 96.8·ds/100 (то же iSc, что в шаблоне и в ipvIntroPos), × G
     # (масштаб нула «интро») и × зум Камеры 1, пока интро на ней.
     k = (INTRO_SCALE / 100.0) * (float(ds) / 100.0) * (float(g) / 100.0) * zk
-    return (center + (top_pc - h / 2.0) * k, center + (bot_pc - h / 2.0) * k)
+    return (center + (top_pc - h / 2.0) * k, center + (cast(float, bot_pc) - h / 2.0) * k)
 
 
-def sub_span(posy, size, font=None, row=0, step=0.0):
+def sub_span(posy: float, size: float, font: str | None = None, row: int = 0, step: float = 0.0) -> tuple[float, float]:
     """(top, bottom) — вертикальная полоса субтитров в кадре, px от верха кадра.
     posy — Y базовой линии строки (plan.posy), size — кегль субтитров, row/step — ряд
     стопки жёлтых (её слова идут ниже на шаг hl_step, как в preview ipvSubs); верх — по
@@ -525,15 +529,15 @@ def sub_span(posy, size, font=None, row=0, step=0.0):
     return top, bot
 
 
-def spans_hit(a, b):
+def spans_hit(a: tuple[float, float], b: tuple[float, float]) -> bool:
     """Пересекаются ли две вертикальные полосы. Касание краями — не
     пересечение: блок, чей низ ровно на верхе полосы субтитров, на неё не заходит."""
     return a[0] < b[1] and b[0] < a[1]
 
 
-def intro_hits_subs(ys, sizes, posy, sub_size, h=1920.0, ds=100.0, g=100.0,
-                    y=0.0, dy=0.0, zoom=100.0, intro_cam=True, fonts=None,
-                    sub_font=None, sub_row=0, sub_step=0.0):
+def intro_hits_subs(ys: Sequence[float | None], sizes: Sequence[float], posy: float, sub_size: float, h: float = 1920.0, ds: float = 100.0, g: float = 100.0,
+                    y: float = 0.0, dy: float = 0.0, zoom: float = 100.0, intro_cam: bool = True, fonts: Sequence[str | None] | None = None,
+                    sub_font: str | None = None, sub_row: int = 0, sub_step: float = 0.0) -> bool:
     """Стоит ли блок интро на полосе субтитров, True/False.
 
     Одна дверь для решения «группа гаснет к появлению следующего субтитра»: сборка
@@ -544,7 +548,7 @@ def intro_hits_subs(ys, sizes, posy, sub_size, h=1920.0, ds=100.0, g=100.0,
                      sub_span(posy, sub_size, font=sub_font, row=sub_row, step=sub_step))
 
 
-def intro_sub_window(in_at, te, next_sub, sub_fade, f_in=INTRO_F_DUR):
+def intro_sub_window(in_at: float, te: float, next_sub: float, sub_fade: float, f_in: float = INTRO_F_DUR) -> tuple[float, float, float]:
     """(te, fade, fade_start) — окно группы, гаснущей к появлению субтитра.
 
     Группа гаснет РОВНО к next_sub: te = next_sub, затухание sub_fade секунд, начало
@@ -571,7 +575,7 @@ SUB_BG_SH_DIST = 5.0                # Distance (px)
 SUB_BG_SH_SOFT = 44.0               # Softness (px)
 
 
-def _media_dims(path):
+def _media_dims(path: str | None) -> tuple[int, int] | None:
     """(w, h) видео КАК ПОКАЗЫВАЕТСЯ (с учётом поворота — как item.width/height в AE)
     или None, если файла нет/размер не прочитался. Тогда вставку не трогаем вовсе —
     то же, что if(!iw||!ih) return в старом JS."""
@@ -586,7 +590,7 @@ def _media_dims(path):
         return None
 
 
-def _fit_scale(iw, ih, fill, comp_w, comp_h, k):
+def _fit_scale(iw: float, ih: float, fill: bool, comp_w: float, comp_h: float, k: float | None) -> float | None:
     """Масштаб видеовставки, %: fill=True — заполнение экрана (видео всегда так),
     иначе — ужать, если больше кадра. k = ручной масштаб (доля от авто).
     None, если размеров нет (старое if(!iw||!ih) return)."""
@@ -596,7 +600,7 @@ def _fit_scale(iw, ih, fill, comp_w, comp_h, k):
     return f * 100
 
 
-def _fill_slack(iw, ih, comp_w, comp_h, k):
+def _fill_slack(iw: float, ih: float, comp_w: float, comp_h: float, k: float | None) -> tuple[float, float]:
     """На сколько px заполняющий кадр ролика вылезает за кадр композиции, в каждую сторону.
     16:9 ролик, вписанный по высоте, вылезает по ширине на ~2300 px (есть что панорамировать),
     а по высоте запаса нет вовсе; ужатая вставка (k<1) кадр не заполняет — вылет нулевой.
@@ -612,7 +616,7 @@ def _fill_slack(iw, ih, comp_w, comp_h, k):
     return max(0.0, (iw * f - comp_w) / 2), max(0.0, (ih * f - comp_h) / 2)
 
 
-def _ins_enter_exit(t0, t1, noexit, fps, enter=INS_ENTER, exit_=INS_EXIT):
+def _ins_enter_exit(t0: float, t1: float, noexit: bool, fps: float, enter: float = INS_ENTER, exit_: float = INS_EXIT) -> tuple[float, float]:
     """Окна входа/выхода cam2-вставки, сек. Окно короче анимации входа (ИИ округляет
     тайминги до 0.1с, _clip_end умеет подрезать фото под кат) — ключи выходили ИЗ
     ПОРЯДКА: ужимаем вход под факт. -> (en, ex); короче кадра — (0, win), показ без
@@ -625,7 +629,7 @@ def _ins_enter_exit(t0, t1, noexit, fps, enter=INS_ENTER, exit_=INS_EXIT):
     return en, ex
 
 
-def _anim_keys(t0, t1, va, vb, noexit, en, ex, fps):
+def _anim_keys(t0: float, t1: float, va: float, vb: float, noexit: bool, en: float, ex: float, fps: float) -> list[list[Any]]:
     """Ключи анимации «вход va->vb, держим vb, выход vb->va» (то, что ставил JS-функцией
     fourKeys). Guard win<1/FPS и ветка noexit жили в ExtendScript — перенесены сюда
     (остаток): превью читает эти же ключи из плана сцены и не повторяет расчёт.
@@ -643,7 +647,7 @@ def _anim_keys(t0, t1, va, vb, noexit, en, ex, fps):
     return keys
 
 
-def _blur_keys(t0, t1, noexit):
+def _blur_keys(t0: float, t1: float, noexit: bool) -> list[list[Any]]:
     """Ключи Box Blur cam2-вставки: резкость входит за INS_ENTER, уходит за INS_EXIT.
     БЕЗ guard'а — в старом JS его здесь не было: на окне короче кадра ключи встают за
     концом слоя и не показываются, это безопасно. Повторяем старое поведение буквально."""
@@ -656,7 +660,7 @@ def _blur_keys(t0, t1, noexit):
     return keys
 
 
-def _cam1_pos_keys(t0, t1, noexit, ix, iy, fps, cx=0.0, cy=0.0):
+def _cam1_pos_keys(t0: float, t1: float, noexit: bool, ix: float, iy: float, fps: float, cx: float = 0.0, cy: float = 0.0) -> list[list[Any]]:
     """Ключи Position cam1-вставки «вылет из-за спины» (то, что ставил JS по INS_C1_*).
     Подъём/спуск сжимаются под окно: потолок 30 кадров на фазу — на коротком окне вылет
     не успевал начаться и фото не появлялось в кадре. cx/cy — точка покоя родительского
@@ -700,8 +704,8 @@ DEFAULT_CAM1_SCALE = [
 ]
 
 
-def _cam1_zoom_keys(cams, big=ZOOM_BIG, small=ZOOM_SMALL, punch=ZOOM_PUNCH,
-                    lo=112.0, hi=140.0, fps=60.0, start=True):
+def _cam1_zoom_keys(cams: Sequence[dict[str, Any]], big: float = ZOOM_BIG, small: float = ZOOM_SMALL, punch: int = ZOOM_PUNCH,
+                    lo: float = 112.0, hi: float = 140.0, fps: float = 60.0, start: bool = True) -> list[tuple[float, float]]:
     """Кейфреймы зума Null Камеры 1. Мультикам -> импульс-наезд на каждом ВОЗВРАТЕ кам2→кам1
     (кадр среза, где снова показывается кам1) + импульс в самом начале (кадр 0).
     ПЕРВЫЙ импульс = `big` (крупный наезд в начале), последующие возвраты = случайный пик
@@ -734,8 +738,8 @@ def _cam1_zoom_keys(cams, big=ZOOM_BIG, small=ZOOM_SMALL, punch=ZOOM_PUNCH,
     return keys
 
 
-def _cam1_jump_keys(cams, lo=100.0, hi=140.0, min_diff=12.0, fps=60.0, start=True,
-                    big=ZOOM_BIG, punch=ZOOM_PUNCH, take=None):
+def _cam1_jump_keys(cams: Sequence[dict[str, Any]], lo: float = 100.0, hi: float = 140.0, min_diff: float = 12.0, fps: float = 60.0, start: bool = True,
+                    big: float | None = ZOOM_BIG, punch: int | None = ZOOM_PUNCH, take: dict[str, Any] | None = None) -> list[tuple[float, float, int, int]]:
     """Джамп-кат зум кам1: на КАЖДОЙ смене показываемой камеры скейл ПРЫГАЕТ на случайное
     значение 100–140%% (HOLD-кейфреймы).
     Кадр 0 со start=True: плавный наезд big→100 за punch кадров (ease out 35 / in 90).
@@ -791,7 +795,7 @@ def _cam1_jump_keys(cams, lo=100.0, hi=140.0, min_diff=12.0, fps=60.0, start=Tru
 
         # Наезд в тейке (только если take не None и seg_end - f >= take["min_s"]*fps)
         if take is not None and (seg_end - f) >= take["min_s"] * fps:
-            m = 1.0 + trng.uniform(take["lo"], take["hi"]) / 100.0
+            m = 1.0 + cast(Any, trng).uniform(take["lo"], take["hi"]) / 100.0
             vm = round(v * m, 1)
             take_words = take.get("words")
             picked_w = None
@@ -838,12 +842,12 @@ DEFAULT_DISCLAIMER = ("МАТЕРИАЛ НОСИТ ИСКЛЮЧИТЕЛЬНО О
                       "ПО НАЗНАЧЕНИЮ ВРАЧА")
 
 
-def _project_base(xml_path):
+def _project_base(xml_path: str) -> str:
     p = os.path.dirname(os.path.abspath(xml_path))
     return os.path.dirname(p) if is_out_dir(os.path.basename(p)) else p
 
 
-def _stack_layout(subs, hl, breaks=None, joins=None):
+def _stack_layout(subs: Sequence[tuple[float, float, str]], hl: set[int] | Sequence[int], breaks: Any = None, joins: Any = None) -> tuple[list[int], list[float]]:
     """For highlighted words that are ADJACENT in reading order, assign a stack row
     (0,1,2,...) and a shared group-end frame (whole stack disappears together).
     `breaks` = set of word indices AFTER which the stack restarts (ручной разделитель
@@ -874,7 +878,7 @@ def _stack_layout(subs, hl, breaks=None, joins=None):
     return rows, gend
 
 
-def _censor_windows(subs, fps):
+def _censor_windows(subs: Sequence[tuple[float, float, str]], fps: float) -> list[tuple[float, float]]:
     """Audio-mute windows (sec) for the middle letter of each censored subtitle word.
     A word is censored if it carries a '*' (from censor.py or manual edit)."""
     wins = []
@@ -890,7 +894,7 @@ def _censor_windows(subs, fps):
     return wins
 
 
-def _cam_overlaps(clips, sf, ef, fps, ci):
+def _cam_overlaps(clips: Sequence[Sequence[Any]], sf: float, ef: float, fps: float, ci: int) -> list[dict[str, Any]]:
     """Все клипы камеры `ci`, пересекающиеся с окном [sf,ef] (кадры). Для каждого — участок
     ИСХОДНИКА, реально показанный там (учёт source in-point), и место на таймлайне.
     -> [dict(ci, tl_start, tl_end, src_start, src_end, scale)] (сек). Скрытые клипы cam2+ (не
@@ -908,7 +912,7 @@ def _cam_overlaps(clips, sf, ef, fps, ci):
     return out
 
 
-def cover_sweep(raw):
+def cover_sweep(raw: Sequence[Sequence[Any]]) -> list[tuple[Any, Any, int]]:
     """Кто виден на каждом элементарном отрезке таймлайна: [(b0, b1, k), ...], где k —
     ИНДЕКС победившего клипа в raw. Побеждает верхняя дорожка (максимальный ci), при
     равном ci — тот, что раньше в raw (то есть раньше в XML).
@@ -927,8 +931,8 @@ def cover_sweep(raw):
         return []
     order = sorted(range(len(raw)), key=lambda k: raw[k][0])   # клипы по началу — для входа
     bounds = sorted({t for cl in raw for t in (cl[0], cl[1])})
-    exp = []                    # куча (конец, индекс): когда клип перестаёт быть активным
-    live = {}                   # ci -> множество индексов активных клипов этой камеры
+    exp: list[tuple[Any, int]] = []             # куча (конец, индекс): когда клип перестаёт быть активным
+    live: dict[Any, set[int]] = {}              # ci -> множество индексов активных клипов этой камеры
     out, p = [], 0
     for b0, b1 in zip(bounds, bounds[1:]):
         while p < len(order) and raw[order[p]][0] <= b0:       # вошли в кадр
@@ -946,7 +950,7 @@ def cover_sweep(raw):
     return out
 
 
-def _show_segments(cams):
+def _show_segments(cams: Sequence[dict[str, Any]]) -> list[tuple[float, float, int]]:
     """Склеенные сегменты ПОКАЗА (какая камера реально видна): [(start, end, ci), ...].
     Верхняя включённая дорожка побеждает; смежные куски одной камеры склеены (VAD-стыки
     внутри камеры — НЕ смена кадра)."""
@@ -955,7 +959,7 @@ def _show_segments(cams):
         for cl in c["clips"]:
             if cl[4] and cl[1] > cl[0]:            # только включённые (реально видимые) клипы
                 raw.append((cl[0], cl[1], ci))
-    segs = []                                       # склеенные сегменты показа: (start, end, ci)
+    segs: list[tuple[float, float, int]] = []      # склеенные сегменты показа: (start, end, ci)
     for b0, b1, k in cover_sweep(raw):
         ci = raw[k][2]
         if segs and segs[-1][2] == ci and abs(segs[-1][1] - b0) < 1e-6:
@@ -965,13 +969,13 @@ def _show_segments(cams):
     return segs
 
 
-def _cam_change_frames(cams):
+def _cam_change_frames(cams: Sequence[dict[str, Any]]) -> list[float]:
     """Кадры, где меняется ПОКАЗЫВАЕМАЯ камера (срезы кадра). -> [frame, ...] по возрастанию."""
     segs = _show_segments(cams)
     return [segs[k][0] for k in range(1, len(segs)) if segs[k][2] != segs[k - 1][2]]
 
 
-def _zoom_cut_frames(cams, fps=60.0, min_gap_sec=2.0):
+def _zoom_cut_frames(cams: Sequence[dict[str, Any]], fps: float = 60.0, min_gap_sec: float = 2.0) -> list[float]:
     """Кадры срезов для зум-стилей: смены показываемой камеры ПЛЮС собственные склейки кам1
     (границы её клипов) там, где смен камеры нет. Однокамерный проект раньше уходил в случайные
     интервалы 4–7 c — кейфреймы вставали посреди кадра, а не на срезах. Слишком частые срезы
@@ -981,6 +985,7 @@ def _zoom_cut_frames(cams, fps=60.0, min_gap_sec=2.0):
     changes = set(_cam_change_frames(cams))          # смены камеры — берём ВСЕ, даже короткие перебивки
     glue = {cl[0] for cl in cams[0]["clips"]         # собственные склейки кам1 = тоже срезы кадра
             if cl[4] and cl[0] > 0} - changes
+    last: float | int
     gap, out, last = max(1.0, float(min_gap_sec)) * fps, [], 0
     for f in sorted(changes | glue):
         if f in changes or f - last >= gap:          # склейки кам1 прореживаем: зуму нужно где дрейфовать
@@ -988,7 +993,7 @@ def _zoom_cut_frames(cams, fps=60.0, min_gap_sec=2.0):
     return out
 
 
-def _cam1_return_frames(cams):
+def _cam1_return_frames(cams: Sequence[dict[str, Any]]) -> list[float]:
     """Кадры, где показ ВОЗВРАЩАЕТСЯ на Камеру 1 (срез перебивка→кам1). Именно тут ставится
     импульс pulse-зума. Раньше брались концы ВСЕХ клипов cam2+ — при ручной раскладке смежные
     куски одной перебивки давали кейфрейм ПОСРЕДИ показа камеры, не на срезе."""
@@ -996,8 +1001,8 @@ def _cam1_return_frames(cams):
     return [segs[k][0] for k in range(1, len(segs)) if segs[k][2] == 0 and segs[k - 1][2] != 0]
 
 
-def _cam1_drift_keys(cams, lo=100.0, hi=160.0, min_diff=10.0, fps=60.0,
-                     big=None, punch=None, start=True):
+def _cam1_drift_keys(cams: Sequence[dict[str, Any]], lo: float = 100.0, hi: float = 160.0, min_diff: float = 10.0, fps: float = 60.0,
+                     big: float | None = None, punch: int | None = None, start: bool = True) -> list[tuple[float, float, int]]:
     """Дрейф-зум кам1. ВСЕ ключи — ease (безье), никаких HOLD: «скачок» на кате получается
     из двух соседних ключей (цель дрейфа за 1 кадр до среза + новое значение в срезе) —
     интерполяция за 1 кадр читается как резкий скачок. Старт — как у pulse: big (182)
@@ -1015,9 +1020,11 @@ def _cam1_drift_keys(cams, lo=100.0, hi=160.0, min_diff=10.0, fps=60.0,
     dur = max((cl[1] for c in cams for cl in c["clips"] if cl[4]), default=frames[-1] + fps)
     seg_ends = frames[1:] + [max(dur, frames[-1] + 1)]           # конец каждого интервала (=след. смена / конец видео)
     rng = _rnd.Random("d," + ",".join(str(f) for f in frames))   # тот же таймлайн -> тот же разброс
+    keys: list[Any]
+    prev: list[Any]
     keys, prev = [], [None]
 
-    def _pick():
+    def _pick() -> float:
         for _ in range(8):
             x = round(rng.uniform(lo, hi), 1)
             if prev[0] is None or abs(x - prev[0]) >= min_diff:
@@ -1049,7 +1056,7 @@ def _cam1_drift_keys(cams, lo=100.0, hi=160.0, min_diff=10.0, fps=60.0,
     return keys
 
 
-def _zoom_key_eases(keys):
+def _zoom_key_eases(keys: Sequence[Sequence[Any]]) -> list[list[float]]:
     """[[in, out], ...] — влияние ease на КАЖДЫЙ ключ зума Камеры 1 (для JS-цикла).
     pulse (2-элементные ключи): фирменная кривая только на участках большой→малый —
     out 35 у текущего, если следующий меньше; in 90, если предыдущий больше (как
@@ -1069,7 +1076,7 @@ def _zoom_key_eases(keys):
     return out
 
 
-def _zoom_key_holds(keys, legacy_hold=False):
+def _zoom_key_holds(keys: Sequence[Sequence[Any]] | None, legacy_hold: bool = False) -> list[bool]:
     """[bool, ...] — тип интерполяции отрезка от КАЖДОГО ключа до следующего.
     True = HOLD (значение держится до следующего ключа); False = BEZIER (плавно).
     Для 4-элементных ключей (f, pct, mode, hold) берётся k[3];
@@ -1078,7 +1085,7 @@ def _zoom_key_holds(keys, legacy_hold=False):
     return [bool(k[3]) if len(k) >= 4 else bool(legacy_hold) for k in (keys or [])]
 
 
-def _zoom_max(keys, fps, ts, te, holds=None, hold=None):
+def _zoom_max(keys: Sequence[Sequence[Any]] | None, fps: float, ts: float, te: float, holds: Sequence[bool] | bool | None = None, hold: bool | None = None) -> float:
     """Максимум зума Камеры 1 (в %%, как в ключах) на окне [ts, te] сек.
 
     Группа живёт секунду с лишним, и наезд успевает случиться ВНУТРИ окна — брать зум
@@ -1105,7 +1112,7 @@ def _zoom_max(keys, fps, ts, te, holds=None, hold=None):
 
     pts = [[f / fps, v] for f, v in raw_keys]
 
-    def _linear_at(t):
+    def _linear_at(t: float) -> float:
         if t <= pts[0][0]:
             return pts[0][1]
         if t >= pts[-1][0]:
@@ -1154,7 +1161,7 @@ def _zoom_max(keys, fps, ts, te, holds=None, hold=None):
     return best if best > 0.0 else pts[0][1]
 
 
-def _span_roto_plan(cams, sf, ef, fps):
+def _span_roto_plan(cams: Sequence[dict[str, Any]], sf: float, ef: float, fps: float) -> list[dict[str, Any]]:
     """Рото по ПОКАЗЫВАЕМОЙ камере в окне [sf,ef] (кадры): перебивки cam2+ там, где включён их
     клип, и Камера 1 во всех разрывах между ними. Так человек перед текстом/видеовставкой и на
     cam1, и на cam2. -> список энтри (без флага intro/vins — его ставит вызывающий)."""
@@ -1178,7 +1185,7 @@ def _span_roto_plan(cams, sf, ef, fps):
 HEAD_DEAD_RATIO = 0.03  # мёртвая зона слежения (3% ширины кадра): мелкие покачивания головы игнорируются
 
 
-def _rdp(pts, eps=4.0):
+def _rdp(pts: list[tuple[float, float]], eps: float = 4.0) -> list[tuple[float, float]]:
     """Рамер–Дуглас–Пекер по (f, y) внутри клипа."""
     if len(pts) <= 2:
         return pts
@@ -1205,9 +1212,23 @@ def _rdp(pts, eps=4.0):
     return [pts[0], pts[-1]]
 
 
-def _cam1_follow_keys(cams, pts, w_src, h_src, zoom_keys, holds, fps=60.0,
-                      W=1080, H=1920, cx=0.5, pan_x=0.0, cam1_fit=100.0,
-                      target=0.5, smooth_s=0.6, min_scale=0.0):
+def _cam1_follow_keys(
+    cams: Sequence[dict[str, Any]],
+    pts: Sequence[Any],
+    w_src: float,
+    h_src: float,
+    zoom_keys: Sequence[Sequence[Any]] | None,
+    holds: Sequence[bool] | None,
+    fps: float = 60.0,
+    W: float = 1080,
+    H: float = 1920,
+    cx: float | None = 0.5,
+    pan_x: float = 0.0,
+    cam1_fit: float = 100.0,
+    target: float | None = 0.5,
+    smooth_s: float | None = 0.6,
+    min_scale: float = 0.0,
+) -> list[tuple[int, int | float]]:
     """Ключи слежения за головой по X для Камеры 1.
 
     Возвращает [(f, off), ...]. Все ключи Easy Ease (EASE_DEFAULT).
@@ -1233,7 +1254,7 @@ def _cam1_follow_keys(cams, pts, w_src, h_src, zoom_keys, holds, fps=60.0,
     raw_zoom = [(float(k[0]), float(k[1])) for k in (zoom_keys or []) if len(k) >= 2]
     n_zoom = len(raw_zoom)
 
-    def _zoom_at(f):
+    def _zoom_at(f: float) -> float:
         if not raw_zoom:
             return 1.0
         if f <= raw_zoom[0][0]:
@@ -1250,7 +1271,7 @@ def _cam1_follow_keys(cams, pts, w_src, h_src, zoom_keys, holds, fps=60.0,
                 return (v0 + (v1 - v0) * (f - f0) / (f1 - f0)) / 100.0
         return raw_zoom[-1][1] / 100.0
 
-    def _clamp_off(off_val, s_val):
+    def _clamp_off(off_val: float, s_val: float) -> float:
         if s_val * fit_w < W:
             return 0.0
         left_edge = Cx + s_val * (W / 2.0 - fit_w / 2.0 - Cx) + pan_x
@@ -1283,7 +1304,7 @@ def _cam1_follow_keys(cams, pts, w_src, h_src, zoom_keys, holds, fps=60.0,
         return []
 
     step = max(1, int(round(fps / 10.0)))
-    all_keys = []
+    all_keys: list[tuple[float, float]] = []
 
     for clip in shown_clips:
         c_start = int(clip["start"])
@@ -1295,7 +1316,7 @@ def _cam1_follow_keys(cams, pts, w_src, h_src, zoom_keys, holds, fps=60.0,
         if frames[-1] != f_last:
             frames.append(f_last)
 
-        clip_samples = []
+        clip_samples: list[tuple[float, float]] = []
         y = 0.0
         prev_f = None
 

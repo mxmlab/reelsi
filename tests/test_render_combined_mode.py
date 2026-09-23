@@ -29,7 +29,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
-from core import xml2ae  # noqa: E402
+from core import jobstate, render_job, xml2ae  # noqa: E402
 import api.render as render  # noqa: E402
 
 
@@ -81,7 +81,7 @@ def _norm(jobs):
 def _reset_job(names):
     render.RJOB.update(running=True, done=False, log=[], pct=None, cur="", ae="",
                        out_dir="", result=[], failed=[], cancel=False, items=[])
-    render.items_init(render.RJOB, render.RLOCK, names)
+    jobstate.items_init(render.RJOB, render.RLOCK, names)
 
 
 def _log_text(rjob):
@@ -103,12 +103,12 @@ def _log_text(rjob):
 def _env(monkeypatch, tmp_path):
     monkeypatch.setenv("REELSI_RENDER_STATS", str(tmp_path / "stats.json"))
     monkeypatch.setattr(
-        render, "find_ae",
+        render_job, "find_ae",
         lambda: ("fake_AfterFX.exe", "fake_aerender.exe", "Adobe After Effects 2026")
     )
     # Открытая копия After Effects останавливает прогон ДО запуска AfterFX (задание
     # AE-Hygiene) — в тесте AE «закрыт», иначе результат зависел бы от машины.
-    monkeypatch.setattr(render, "ae_running", lambda: False)
+    monkeypatch.setattr(render_job, "ae_running", lambda: False)
 
 
 # ---------------- (a,b) build_combined: comps_global, бины, имена композиций -------
@@ -172,7 +172,7 @@ def _fake_popen_combined(monkeypatch, outdir, render_dir, mov1, mov2, combined_j
     (пишет .aelog.txt и .aep), aerender рендерит обе композиции по очереди.
     Служебные процессы (node --check из предполёта и т.п.) уходят в настоящий
     Popen — как в test_ae_hygiene."""
-    real_popen = render.subprocess.Popen
+    real_popen = render_job.subprocess.Popen
 
     class FakePopen:
         def __init__(self, cmd, *args, **kwargs):
@@ -241,7 +241,7 @@ def _fake_popen_combined(monkeypatch, outdir, render_dir, mov1, mov2, combined_j
                 return getattr(self._real, name)
             raise AttributeError(name)
 
-    monkeypatch.setattr(render.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(render_job.subprocess, "Popen", FakePopen)
 
 
 def test_render_combined_collects_one_file_and_master_single_path(xmls, tmp_path,
@@ -283,9 +283,10 @@ def test_render_combined_collects_one_file_and_master_single_path(xmls, tmp_path
         record_state()
 
     monkeypatch.setattr(render, "remit", hooked_remit)
+    monkeypatch.setattr(render.RJOB, "emit", hooked_remit)
 
     _reset_job(["01_C0233", "02_C0234"])
-    render._run_render_job(_norm(_jobs(xmls, outdir)), outdir, render_dir)
+    render_job.run_render_job(render.RJOB, _norm(_jobs(xmls, outdir)), outdir, render_dir)
 
     assert not render.RJOB["failed"], f"Рендер упал: {render.RJOB['failed']}"
     assert render.RJOB["result"] == [mov1, mov2], render.RJOB["result"]
@@ -319,7 +320,7 @@ def test_render_combined_preflight_fail_stops_whole_set(xmls, tmp_path, monkeypa
     _env(monkeypatch, tmp_path)
 
     launched = []
-    real_popen = render.subprocess.Popen
+    real_popen = render_job.subprocess.Popen
 
     class FakePopen:
         """AE-процессы фиксируются в launched, служебные (node --check из предполёта
@@ -348,12 +349,12 @@ def test_render_combined_preflight_fail_stops_whole_set(xmls, tmp_path, monkeypa
                 return getattr(self._real, name)
             raise AttributeError(name)
 
-    monkeypatch.setattr(render.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(render_job.subprocess, "Popen", FakePopen)
 
     os.remove(xmls["cam1"])      # файл камеры пропал — предполёт обязан это поймать
 
     _reset_job(["01_C0233", "02_C0234"])
-    render._run_render_job(_norm(_jobs(xmls, outdir)), outdir, render_dir)
+    render_job.run_render_job(render.RJOB, _norm(_jobs(xmls, outdir)), outdir, render_dir)
 
     assert launched == [], "AfterFX/aerender запущены при непройденном предполёте"
     assert not render.RJOB["result"], "непрошедший предполёт набор отрендерился"
@@ -398,11 +399,11 @@ def test_run_render_job_multiple_clips_always_calls_combined(tmp_path, monkeypat
     jobs = [{"xml": str(f1)}, {"xml": str(f2)}]
 
     called = []
-    monkeypatch.setattr(render, "_run_render_combined", lambda norm, outdir, rdir: called.append("combined"))
-    monkeypatch.setattr(render, "_run_render_single", lambda norm, outdir, rdir: called.append("single"))
+    monkeypatch.setattr(render_job, "run_render_combined", lambda job, norm, outdir, rdir: called.append("combined"))
+    monkeypatch.setattr(render_job, "run_render_single", lambda job, norm, outdir, rdir: called.append("single"))
 
     _reset_job(["01", "02"])
-    render._run_render_job(_norm(jobs), str(tmp_path), str(tmp_path / "render"))
+    render_job.run_render_job(render.RJOB, _norm(jobs), str(tmp_path), str(tmp_path / "render"))
     assert called == ["combined"], f"Ожидался только вызов combined, получено: {called}"
 
 
@@ -418,7 +419,7 @@ def test_api_render_run_mode_separate_leads_to_combined(tmp_path, monkeypatch):
     jobs = [{"xml": str(f1)}, {"xml": str(f2)}]
 
     called = []
-    monkeypatch.setattr(render, "_run_render_combined", lambda norm, outdir, rdir: called.append("combined"))
+    monkeypatch.setattr(render_job, "run_render_combined", lambda job, norm, outdir, rdir: called.append("combined"))
 
     # Синхронно запускаем таргет треда, чтобы избежать гонок в тесте
     def fake_thread(target, args=(), daemon=True):

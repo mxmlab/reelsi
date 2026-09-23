@@ -23,6 +23,7 @@ jobs:
   test:
     if: github.repository == 'mxmlab/reelsi'
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
 
@@ -81,6 +82,7 @@ jobs:
   test-windows:
     if: github.repository == 'mxmlab/reelsi'
     runs-on: windows-latest
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v5
 
@@ -112,6 +114,7 @@ jobs:
   scan:
     if: github.repository == 'mxmlab/reelsi'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     env:
       # Версия закреплена: в новой могут смениться правила, и сборка покраснеет
       # на находках, которых раньше не было. Обновлять осознанно.
@@ -133,7 +136,7 @@ jobs:
       - name: Scan history for secrets (gitleaks)
         run: |
           curl -sL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar xz gitleaks
-          ./gitleaks git --redact -c .gitleaks.toml .
+          ./gitleaks git --redact -v -c .gitleaks.toml .
 
       - name: Audit dependencies (pip-audit)
         run: |
@@ -143,6 +146,7 @@ jobs:
   smoke:
     if: github.repository == 'mxmlab/reelsi'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     strategy:
       matrix:
         python-version: ["3.12", "3.13"]
@@ -179,6 +183,7 @@ jobs:
   requirements:
     if: github.repository == 'mxmlab/reelsi'
     runs-on: windows-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
 
@@ -200,6 +205,7 @@ jobs:
   jsx:
     if: github.repository == 'mxmlab/reelsi'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
 

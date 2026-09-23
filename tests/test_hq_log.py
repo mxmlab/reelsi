@@ -187,6 +187,7 @@ def test_render_exception_logged(tmp_path, monkeypatch):
     """При исключении в рендере полный трейсбек пишется в лог-файл, а 'внутренняя ошибка' сохраняется в RJOB."""
     from core.applog import get_logger
     import api.render as render
+    from core import render_job
 
     log_file = tmp_path / "render_err.log"
     monkeypatch.setenv("REELSI_LOG", str(log_file))
@@ -197,16 +198,16 @@ def test_render_exception_logged(tmp_path, monkeypatch):
     with render.RLOCK:
         render.RJOB["failed"] = []
 
-    # Подменим _run_render_single так, чтобы падало с исключением
+    # Подменим run_render_single так, чтобы падало с исключением
     def fake_render_single(*args, **kwargs):
         raise RuntimeError("AE render pipeline crashed unexpectedly")
 
-    monkeypatch.setattr(render, "_run_render_single", fake_render_single)
+    monkeypatch.setattr(render_job, "run_render_single", fake_render_single)
 
     batch = [{"xml_path": "clip1.xml"}]
     # Вызываем ветку с одиночным рендером в потоке (набор — уже нормализованный,
     # как его отдаёт api_render_run)
-    render._run_render_job(batch, str(tmp_path), str(tmp_path / "out"))
+    render_job.run_render_job(render.RJOB, batch, str(tmp_path), str(tmp_path / "out"))
 
     for h in logging.getLogger("reelsi").handlers:
         h.flush()

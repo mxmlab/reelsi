@@ -41,9 +41,10 @@ def clean_state(tmp_path, monkeypatch):
     from api.gdrive import GDJOB, GDLOCK
     from api.inserts import ILL_JOB
     from api.previewproxy import PXJOB, PXLOCK
+    from core import jobstate
 
-    monkeypatch.setattr(_core, "JOB_LOCK_PATH", str(tmp_path / "job.lock"))
-    monkeypatch.setattr(_core, "_JOB_LOCK_FH", None)
+    monkeypatch.setattr(jobstate, "JOB_LOCK_PATH", str(tmp_path / "job.lock"))
+    monkeypatch.setattr(jobstate, "_JOB_LOCK_FH", None)
     with _core.LOCK:
         _core.JOB.update(running=False, cancel=False, failed=[], results=[])
         _core.AI_ACTIVE = 0
@@ -89,8 +90,8 @@ def no_threads(monkeypatch):
 
 def test_render_run_thread_fail_resets_running(client, tmp_path, clean_state, no_threads):
     """api/render.py: при сбое старта потока RJOB['running'] сбрасывается и лок отпускается."""
-    from api import _core
     from api.render import RJOB, RLOCK
+    from core import jobstate
 
     render_dir = tmp_path / "renders"
     # Файл набора обязан существовать: api_render_run нормализует набор ДО старта
@@ -103,7 +104,7 @@ def test_render_run_thread_fail_resets_running(client, tmp_path, clean_state, no
     assert r.status_code == 500
     with RLOCK:
         assert RJOB["running"] is False, "RJOB['running'] остался True после сбоя старта"
-    assert _core._JOB_LOCK_FH is None, "межпроцессный лок остался занят"
+    assert jobstate._JOB_LOCK_FH is None, "межпроцессный лок остался занят"
 
 
 def test_inserts_describe_thread_fail_resets_running(client, clean_state, no_threads):
@@ -248,8 +249,8 @@ def test_preview_proxy_gpu_lock_busy(client, tmp_path, clean_state, monkeypatch)
 
 def test_preview_proxy_gpu_lock_acquired_and_released(client, tmp_path, clean_state, monkeypatch):
     """api/previewproxy.py: свободный лок захватывается и отпускается после сборки."""
-    from api import _core, previewproxy
-    from core import draftrender
+    from api import previewproxy
+    from core import draftrender, jobstate
 
     xml = tmp_path / "clip.xml"
     xml.write_text("<xmeml/>", encoding="utf-8")
@@ -263,7 +264,7 @@ def test_preview_proxy_gpu_lock_acquired_and_released(client, tmp_path, clean_st
     def mock_build(src, dst, height=720, emit=None, progress=None):
         built.append((src, dst))
         # Проверяем, что лок занят (повторный acquire возвращает False)
-        lock_held_during_build.append(_core._JOB_LOCK_FH is not None)
+        lock_held_during_build.append(jobstate._JOB_LOCK_FH is not None)
 
     monkeypatch.setattr(draftrender, "build_preview_proxy", mock_build)
 
@@ -281,7 +282,7 @@ def test_preview_proxy_gpu_lock_acquired_and_released(client, tmp_path, clean_st
     assert len(built) == 1
     assert lock_held_during_build == [True]
     # После завершения лок освобождён
-    assert _core._JOB_LOCK_FH is None
+    assert jobstate._JOB_LOCK_FH is None
 
 
 def test_preview_proxy_no_build_does_not_acquire_lock(client, tmp_path, clean_state, monkeypatch):
@@ -333,7 +334,8 @@ def test_ai_begin_timeout_behavior(clean_state, monkeypatch):
 
 def test_preview_proxy_thread_fail_releases_gpu_lock(client, tmp_path, clean_state, no_threads, monkeypatch):
     """api/previewproxy.py: сбой старта потока отпускает лок GPU и сбрасывает running."""
-    from api import _core, previewproxy
+    from api import previewproxy
+    from core import jobstate
 
     xml = tmp_path / "clip.xml"
     xml.write_text("<xmeml/>", encoding="utf-8")
@@ -345,4 +347,4 @@ def test_preview_proxy_thread_fail_releases_gpu_lock(client, tmp_path, clean_sta
     assert r.status_code == 500
     with previewproxy.PXLOCK:
         assert previewproxy.PXJOB["running"] is False
-    assert _core._JOB_LOCK_FH is None, "межпроцессный лок GPU остался занят при сбое старта"
+    assert jobstate._JOB_LOCK_FH is None, "межпроцессный лок GPU остался занят при сбое старта"

@@ -8,7 +8,8 @@ CURPROC ПЕРЕПРИСВАИВАЕТСЯ (global), а `from ._core import CURP
 _kill_curproc — оба здесь.
 """
 import os, queue, threading, time, traceback, subprocess, shutil, tempfile
-from flask import request, jsonify
+from typing import Any, Sequence, cast
+from flask import request, jsonify, Response
 from core import cams
 from core import cutjob
 from core import cutstages
@@ -23,8 +24,8 @@ from core.applog import get_logger
 from .videogen import VJOB, VLOCK
 
 log = get_logger("reelsi.jobs")
-CURPROC = None          # текущий subprocess задачи (omni_cut) — чтобы «Стоп» мог убить дерево
-CURWORK = []            # рабочие каталоги задачи (omnicut_*, gigaamcut_*): omni_cut печатает
+CURPROC: subprocess.Popen[Any] | None = None          # текущий subprocess задачи (omni_cut) — чтобы «Стоп» мог убить дерево
+CURWORK: list[str] = []            # рабочие каталоги задачи (omnicut_*, gigaamcut_*): omni_cut печатает
                         # их маркером WORK_DIR= в stdout, а _kill_curproc удаляет — иначе
                         # WAV камер (сотни МБ) переживают «Стоп» в %TEMP%. Путь проверяется
                         # is_safe_work_dir: ту же строку печатает ответ модели — см. там
@@ -35,7 +36,7 @@ CURWORK = []            # рабочие каталоги задачи (omnicut_
 CUT_STALL_S = 20 * 60
 
 
-def build_pairs(camdirs, names_list):
+def build_pairs(camdirs: Sequence[str], names_list: Sequence[Sequence[str]]) -> list[list[str]]:
     """Очередь (ИМЕНА файлов) + папки камер -> полные пути, с проверкой, что файлы есть.
 
     Очередь хранит только имена, папка приезжает отдельно — значит пара «очередь от
@@ -59,7 +60,7 @@ def build_pairs(camdirs, names_list):
     return pairs
 
 
-def is_safe_work_dir(path):
+def is_safe_work_dir(path: Any) -> bool:
     """Похож ли путь из строки `WORK_DIR=` на рабочий каталог нарезки.
 
     Маркер печатают свои же движки (core/omni_cut.py, core/gigaam_cut/pipeline.py),
@@ -82,7 +83,7 @@ def is_safe_work_dir(path):
     return os.path.basename(real).startswith(("omnicut_", "gigaamcut_"))
 
 
-def _kill_curproc():
+def _kill_curproc() -> None:
     """Убить текущий subprocess вместе с детьми (omni_cut порождает omni_asr — им VRAM),
     и убрать его рабочие каталоги (см. CURWORK). Дерево убивает общая `_core.kill_tree`:
     раньше та же функция была скопирована здесь третьим экземпляром."""
@@ -95,18 +96,18 @@ def _kill_curproc():
         shutil.rmtree(w, ignore_errors=True)
 
 
-def _pump_stdout(p):
+def _pump_stdout(p: subprocess.Popen[Any]) -> queue.Queue[str | None]:
     """Фоновый поток чтения stdout процесса нарезки в очередь (образец — api/render.py).
 
     Пока главный поток сидит в `for line in p.stdout`, он не может ни заметить
     простой процесса, ни среагировать на «Стоп» до следующей строки вывода: зависшая
     нарезка висела бесконечно, а в статусе не было ни слова. Строки
     кладём в очередь — их разбирает тот же цикл, что и раньше, только с таймаутом."""
-    q = queue.Queue()
+    q: queue.Queue[str | None] = queue.Queue()
 
-    def _pump():
+    def _pump() -> None:
         try:
-            for line in p.stdout:
+            for line in cast(Any, p.stdout):
                 q.put(line)
         except ReelsiError: raise
         except Exception:
@@ -118,7 +119,7 @@ def _pump_stdout(p):
     return q
 
 
-def _mark_stopped_waits():
+def _mark_stopped_waits() -> None:
     """«Стоп» по JOB["cancel"]: файлам, до которых работа не дошла (stage="wait"),
     проставить stage="stopped", чтобы очередь показывала их «остановлено», а не «в очереди»."""
     with LOCK:
@@ -127,7 +128,7 @@ def _mark_stopped_waits():
                 it["stage"] = "stopped"
 
 
-def cut_options(opts):
+def cut_options(opts: dict[str, Any] | None) -> CutOptions:
     """opts запроса (/api/run) -> CutOptions.
 
     Умолчания тут не выписываются: чего в opts нет — берётся из самого класса
@@ -149,7 +150,7 @@ def cut_options(opts):
         big_chunk=float(d.get("big_chunk") or CutOptions.big_chunk))
 
 
-def run_job(base, outdir, pairs, opts):
+def run_job(base: str, outdir: str, pairs: list[list[str]], opts: dict[str, Any]) -> None:
     try:
         os.makedirs(outdir, exist_ok=True)
         options = cut_options(opts)
@@ -265,7 +266,7 @@ def run_job(base, outdir, pairs, opts):
         job_finish()
 
 
-def run_omnicut_job(outdir, pairs, model=None, draft=True, selfcheck=False, review=False, mode="gigaam", selfcheck_model="whisper:large-v3", speaker=None, dedupe=None, stages=None):
+def run_omnicut_job(outdir: str, pairs: list[list[str]], model: str | None = None, draft: bool = True, selfcheck: bool = False, review: bool = False, mode: str = "gigaam", selfcheck_model: str = "whisper:large-v3", speaker: str | None = None, dedupe: bool | None = None, stages: dict[str, Any] | None = None) -> None:
     """ИИ-нарезка через omni_cut.py (Omni + LLM + SSM) — как subprocess, стримим лог.
     stages — словарь ступеней нарезки; если задан, draft и dedupe берутся из него.
     draft — параметр сохранён для совместимости сигнатуры, в теле ни на что не влияет (черновик — производная Omni-ревью);
@@ -473,7 +474,7 @@ def run_omnicut_job(outdir, pairs, model=None, draft=True, selfcheck=False, revi
 
 
 @bp.route("/api/omnicut_run", methods=["POST"])
-def api_omnicut_run():
+def api_omnicut_run() -> Response:
     d = request.get_json() or {}
     outdir = jstr(d, "outdir").strip().strip('"')
     try:
@@ -516,7 +517,7 @@ def api_omnicut_run():
 
 
 @bp.route("/api/draft_render", methods=["POST"])
-def api_draft_render():
+def api_draft_render() -> Response:
     """Черновой .draft.mp4 по готовому XML (ручной перерендер после правок в редакторе).
     Фоновый JOB (рендер ~1-2 мин), лог в /api/status; NVENC с фолбэком на CPU."""
     d = request.get_json() or {}
@@ -530,7 +531,7 @@ def api_draft_render():
     except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
-    def _run():
+    def _run() -> None:
         try:
             from core import draftrender
             emit("[1/1] Черновик mp4: {name}", name=os.path.basename(xml_path))
@@ -564,7 +565,7 @@ def api_draft_render():
 
 
 @bp.route("/api/clean_tmp", methods=["POST"])
-def api_clean_tmp():
+def api_clean_tmp() -> Response:
     """Очистить временные файлы: <outdir>/_tmp (черновики-скрипты, ass, склейки
     self-check) + черновые .draft.mp4; опционально кэш рото (roto=true — это КЭШ,
     удаление = пересчёт RVM) и превью-прокси камер (proxies=true — тоже КЭШ, удаление =
@@ -616,7 +617,7 @@ def api_clean_tmp():
 
 
 @bp.route("/api/tmp_info")
-def api_tmp_info():
+def api_tmp_info() -> Response:
     """Что и сколько лежит в <outdir>/_tmp — чтобы кнопка очистки спрашивала по делу,
     а не «удалить временные файлы?» вслепую."""
     outdir = (request.args.get("outdir") or "").strip().strip('"')
@@ -646,7 +647,7 @@ def api_tmp_info():
 
 
 @bp.route("/api/cancel", methods=["POST"])
-def api_cancel():
+def api_cancel() -> Response:
     """Остановить текущую задачу: subprocess (ИИ-нарезка) убивается сразу с детьми
     (omni_asr держит VRAM), внутрипроцессные шаги (Whisper/сборка) — после текущего клипа.
     Выполняется ВСЕГДА (даже без JOB["running"]): массовая разметка — это цепочка
@@ -672,7 +673,7 @@ def api_cancel():
         from core import aicut
         ep = aicut.cancel_call()   # CANCEL рвёт ретраи _ask_json (иначе он перезагрузит
                                    # выгруженную модель) + смена epoch убивает старый поток
-        def _unload():             # не выгружать, если поверх уже стартовал новый ИИ-вызов
+        def _unload() -> None:     # не выгружать, если поверх уже стартовал новый ИИ-вызов
             try:
                 if aicut.is_current(ep):
                     aicut.unload_ours()
@@ -687,7 +688,7 @@ def api_cancel():
 
 
 @bp.route("/api/run", methods=["POST"])
-def api_run():
+def api_run() -> Response:
     d = request.get_json(silent=True) or {}
     base = jstr(d, "base") or DEFAULT_BASE
     outdir = jstr(d, "outdir").strip().strip('"')
@@ -701,6 +702,7 @@ def api_run():
         # Если пришли stages, строим opts на сервере из единого контракта cutstages.
         # Старое поле opts остаётся как fallback для обратной совместимости.
         raw_stages = d.get("stages")
+        opts: Any
         if raw_stages is not None and isinstance(raw_stages, dict):
             thresholds = d.get("thresholds")
             opts = cutstages.to_reelsi_opts(raw_stages, thresholds=thresholds)
@@ -726,7 +728,7 @@ def api_run():
 
 
 @bp.route("/api/status")
-def api_status():
+def api_status() -> Response:
     """?since=N — отдать только строки лога после абсолютного индекса N (иначе весь лог).
     log_total — абсолютный счётчик строк (включая срезанные кэпом): клиент шлёт его
     обратно как since; log_total < since у клиента = новый джоб, надо сбросить кэш.
@@ -749,7 +751,7 @@ def api_status():
 
 
 @bp.route("/api/cutstages")
-def api_cutstages():
+def api_cutstages() -> Response:
     """Отдать единый список ступеней нарезки и дефолты.
 
     Интерфейс рисует ступени по ответу сервера, своей копии списка не держит.

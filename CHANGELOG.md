@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+- **The pre-release check repeats the whole CI**: `tools/slice_check.py` runs pytest, ruff, mypy, `node --check` on ExtendScript and the interface scripts, byte-compilation with `--help` of the entry points, requirement parsing and gitleaks on the published tree. A missing gitleaks binary is a failure unless skipping is requested explicitly.
+- **Tests for speech recognition**: every function of `core/omni_asr.py` that makes a decision is covered without network, models or GPU.
+
+### Changed
+- **Render orchestration left the HTTP layer**: launching After Effects and `aerender`, stall watchdogs, the master project and batch rendering live in `core/render_job.py`; job state without Flask lives in `core/jobstate.py`. `api/render.py` is down from 1633 to 162 lines: the job instance, Stop and two routes. Guards keep Flask and `api` out of both modules.
+- **`scene_plan` split further**: word preparation, asset folders and fonts, and frame decoration (subtitle plate, progress line, caption, disclaimer) moved into their own `plan_*` modules; the function is down from 1213 to 885 lines. The built `.jsx` and plan are byte-identical on real clips.
+- **Strict type checking on all of `api/` and `core/xml2ae/`**: 42 modules under strict mypy, up from 13. Annotations only — the syntax tree without annotations matches the previous code file by file.
+- **Every CI job has a timeout**, so a stuck job no longer burns six hours.
+
+### Fixed
+- **CI after the 0.2.0-beta release**: `requirements-dev.txt` had a non-ASCII comment that old pip on Windows could not read, and gitleaks flagged a fake key in a test. The comment is in English, a local test now checks every requirements file in cp1252, the fake keys carry no entropy, the one published false positive is closed by its fingerprint in `.gitleaksignore`, and the CI log now shows the rule, file and line of a finding.
+- **The Linux test job killed its own runner** ("the hosted runner lost communication", the run looked stuck at 68 %): a test passed a fake process with pid 1 to the process-tree killer, which sent SIGKILL to the init process group. The killer never signals groups 0 and 1 now, the test stubs the signal calls, and a guard covers it.
+- **Pre-release check left its temporary tree behind on Linux**: making files writable replaced the directory mode instead of adding the write bit, so directories lost read access and could not be removed.
+- **Cloud speech recognition**: a non-JSON reply from the provider (a gateway error page, a cut-off body) is now retried like a network error and ends in a clear message instead of a raw parser error; the temporary audio file of the local Qwen path is removed after use.
+
 ## 0.2.0-beta — 2026-09-23
 
 ### Highlights

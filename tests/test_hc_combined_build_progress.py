@@ -18,12 +18,13 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
 import api.render as render  # noqa: E402
+from core import jobstate, render_job  # noqa: E402
 
 
 def _reset_job(names):
     render.RJOB.update(running=True, done=False, log=[], pct=None, cur="", ae="",
                        out_dir="", result=[], failed=[], cancel=False, items=[])
-    render.items_init(render.RJOB, render.RLOCK, names)
+    jobstate.items_init(render.RJOB, render.RLOCK, names)
 
 
 def test_tail_master_log_with_timelines(tmp_path):
@@ -37,7 +38,7 @@ def test_tail_master_log_with_timelines(tmp_path):
     stems = ["01_A", "02_B", "03_C"]
     _reset_job(stems)
     for i, s in enumerate(stems):
-        render.item_set(render.RJOB, render.RLOCK, s, stage="aep" if i == 0 else "wait")
+        jobstate.item_set(render.RJOB, render.RLOCK, s, stage="aep" if i == 0 else "wait")
     render.RJOB["cur"] = stems[0]
 
     aelog = str(tmp_path / "reelsi_batch.aelog.txt")
@@ -52,7 +53,7 @@ def test_tail_master_log_with_timelines(tmp_path):
         f.write("REELSI-MASTER: начат\n")
         f.write("таймлайн ok: A\n")
 
-    res1 = render._tail_master_log(aelog, seen, by_jsx, timelines=timelines)
+    res1 = render_job.tail_master_log(render.RJOB, aelog, seen, by_jsx, timelines=timelines)
     assert res1 == 1
     stages1 = [it["stage"] for it in render.RJOB["items"]]
     assert stages1 == ["built", "aep", "wait"]
@@ -62,14 +63,14 @@ def test_tail_master_log_with_timelines(tmp_path):
     with open(aelog, "a", encoding="utf-8") as f:
         f.write("таймлайн ok: A\n")
 
-    res2 = render._tail_master_log(aelog, seen, by_jsx, timelines=timelines)
+    res2 = render_job.tail_master_log(render.RJOB, aelog, seen, by_jsx, timelines=timelines)
     assert res2 == 1
     stages2 = [it["stage"] for it in render.RJOB["items"]]
     assert stages2 == ["built", "built", "aep"]
     assert render.RJOB["cur"] == stems[2]
 
     # 3) Повторный вызов без новых строк -> 0, стадии те же
-    res3 = render._tail_master_log(aelog, seen, by_jsx, timelines=timelines)
+    res3 = render_job.tail_master_log(render.RJOB, aelog, seen, by_jsx, timelines=timelines)
     assert res3 == 0
     stages3 = [it["stage"] for it in render.RJOB["items"]]
     assert stages3 == ["built", "built", "aep"]
@@ -79,7 +80,7 @@ def test_tail_master_log_with_timelines(tmp_path):
     with open(aelog, "a", encoding="utf-8") as f:
         f.write(f"evalFile ok: {combined_path}\n")
 
-    res4 = render._tail_master_log(aelog, seen, by_jsx, timelines=timelines)
+    res4 = render_job.tail_master_log(render.RJOB, aelog, seen, by_jsx, timelines=timelines)
     assert res4 == 0
     stages4 = [it["stage"] for it in render.RJOB["items"]]
     assert stages4 == ["built", "built", "aep"]
@@ -159,7 +160,7 @@ def test_run_proc_master_combined_progress(tmp_path, monkeypatch):
         def wait(self):
             return 0
 
-    monkeypatch.setattr(render.subprocess, "Popen", FakeMasterProcess)
+    monkeypatch.setattr(render_job.subprocess, "Popen", FakeMasterProcess)
 
     history = []
 
@@ -179,11 +180,13 @@ def test_run_proc_master_combined_progress(tmp_path, monkeypatch):
         record_state()
 
     monkeypatch.setattr(render, "remit", hooked_remit)
-    monkeypatch.setattr(render._time, "sleep", lambda *a, **k: record_state())
+    monkeypatch.setattr(render.RJOB, "emit", hooked_remit)
+    monkeypatch.setattr(render_job._time, "sleep", lambda *a, **k: record_state())
 
     p_jsx = 0.20
     p_aep = 0.60
-    rc = render._run_proc_master(
+    rc = render_job.run_proc_master(
+        render.RJOB,
         "fake_AfterFX.exe", "-noui", "-r", "master.jsx",
         good=good, render_dir=render_dir, aelog_path=aelog,
         p_jsx_end=p_jsx, p_aep_end=p_aep,

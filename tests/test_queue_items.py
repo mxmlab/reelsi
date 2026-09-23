@@ -21,6 +21,7 @@ sys.path.insert(0, ROOT)
 
 import api._core as core  # noqa: E402
 import api.render as render  # noqa: E402
+from core import jobstate, render_job  # noqa: E402
 
 
 def _job():
@@ -92,14 +93,14 @@ def test_render_invariant_counts_match_buckets():
     render.RJOB.update(running=False, done=False, log=[], pct=None, cur="", ae="",
                        out_dir="", result=[], failed=[], cancel=False, items=[])
     stems = ["01", "02", "03", "04", "05"]
-    render.items_init(render.RJOB, render.RLOCK, stems)
+    jobstate.items_init(render.RJOB, render.RLOCK, stems)
     # прогон: 01 и 03 отрендерились, 02 и 04 упали поклипово, 05 не дошёл («Стоп»)
-    render.item_done(render.RJOB, render.RLOCK, "01", "exp/01.mov", bucket="result")
-    render.item_fail(render.RJOB, render.RLOCK, "02", "aerender rc=1", bucket="failed")
-    render.item_done(render.RJOB, render.RLOCK, "03", "exp/03.mov", bucket="result")
-    render.item_fail(render.RJOB, render.RLOCK, "04", "файла нет на диске", bucket="failed")
-    render.item_set(render.RJOB, render.RLOCK, "05", stage="stopped")
-    # глобальная запись БЕЗ клипа оставляется прямой, как в _run_render_job
+    jobstate.item_done(render.RJOB, render.RLOCK, "01", "exp/01.mov", bucket="result")
+    jobstate.item_fail(render.RJOB, render.RLOCK, "02", "aerender rc=1", bucket="failed")
+    jobstate.item_done(render.RJOB, render.RLOCK, "03", "exp/03.mov", bucket="result")
+    jobstate.item_fail(render.RJOB, render.RLOCK, "04", "файла нет на диске", bucket="failed")
+    jobstate.item_set(render.RJOB, render.RLOCK, "05", stage="stopped")
+    # глобальная запись БЕЗ клипа оставляется прямой, как в run_render_job
     render.RJOB["failed"].append({"name": "AE", "reason": "After Effects не найден"})
 
     done = [it for it in render.RJOB["items"] if it["stage"] == "done"]
@@ -111,14 +112,14 @@ def test_render_invariant_counts_match_buckets():
 
 
 def test_render_mark_stopped_waits_flips_wait_not_done():
-    """«Стоп» на рендере: _mark_stopped_waits оставляет done как есть,
+    """«Стоп» на рендере: mark_stopped_waits оставляет done как есть,
     а все, кто ещё в wait, помечает stopped, чтобы очередь не показывала их «в очереди»."""
     render.RJOB.update(running=False, done=False, log=[], pct=None, cur="", ae="",
                        out_dir="", result=[], failed=[], cancel=True, items=[])
     stems = ["01", "02", "03", "04", "05"]
-    render.items_init(render.RJOB, render.RLOCK, stems)
-    render.item_done(render.RJOB, render.RLOCK, "03", "exp/03.mov", bucket="result")
-    render._mark_stopped_waits()
+    jobstate.items_init(render.RJOB, render.RLOCK, stems)
+    jobstate.item_done(render.RJOB, render.RLOCK, "03", "exp/03.mov", bucket="result")
+    render_job.mark_stopped_waits(render.RJOB)
     assert _by_name(render.RJOB, "03")["stage"] == "done"      # готовый не трогаем
     rest = [it for it in render.RJOB["items"] if it["name"] != "03"]
     assert len(rest) == 4

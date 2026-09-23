@@ -1,15 +1,19 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Тесты прогона набора на публичном срезе (tools/slice_check.py).
+r"""Тесты прогона публичного среза через весь CI (tools/slice_check.py).
 
-Настоящий набор внутри теста НЕ гоняется: запуск pytest подменяется заглушкой
-(`monkeypatch`), а проверяются две вещи из задания — дерево, которое готовит скрипт,
-совпадает с деревом среза, и код возврата скрипта равен коду возврата pytest
-(обе ветки: 0 и не 0). Фикстура-репозиторий — та же, что в tests/test_public_slice.py.
+Настоящие проверки внутри тестов НЕ запускаются: запуск внешних команд подменён
+заглушкой (`fake_commands`), поиск программ — `fake_tools`. Проверяется то, ради
+чего скрипт и переписан: дерево среза совпадает с деревом коммита, список шагов
+повторяет CI, падение любого шага красит код возврата и печатает `FAIL` с именем
+шага, отсутствие бинарника gitleaks — провал с причиной, а `--no-gitleaks` —
+громкий пропуск при нулевом коде. Фикстура-репозиторий — та же, что в
+tests/test_public_slice.py.
 """
 import hashlib
 import os
+import stat
 import subprocess
 import sys
 
@@ -54,26 +58,56 @@ def _state(repo):
 
 
 class _Result:
-    """Ответ запуска pytest: код возврата и вывод."""
+    """Ответ запуска команды: код возврата и вывод."""
 
-    def __init__(self, returncode, text=""):
+    def __init__(self, returncode, text="", err=""):
         self.returncode = returncode
         self.stdout = text
-        self.stderr = ""
+        self.stderr = err
 
 
-class _FakePytest:
-    """Заглушка `slice_check.run_pytest`: помнит каталоги среза, отдаёт заданные коды."""
+class _FakeCommands:
+    """Заглушка `slice_check.run_command`: код возврата по подстроке команды.
 
-    def __init__(self, codes, text=""):
-        self.codes = list(codes)
+    Ключ `codes` — подстрока в команде (`"pytest"`, `"ruff"`, `"mypy"`, `"node"`,
+    `"compileall"`, `"pip"`, `"gitleaks"`); что не совпало — считается зелёным.
+    Реальные pytest/ruff/mypy/node/pip/gitleaks в тестах не запускаются.
+    """
+
+    def __init__(self, codes=None, text="", err=""):
+        self.codes = dict(codes or {})
         self.text = text
-        self.trees = []
+        self.err = err
+        self.calls = []
 
-    def __call__(self, tree):
-        self.trees.append(tree)
-        code = self.codes.pop(0) if self.codes else 0
-        return _Result(code, self.text)
+    def __call__(self, args, cwd, env=None, timeout=None):
+        joined = " ".join(str(a) for a in args)
+        self.calls.append({"args": joined, "cwd": cwd})
+        code = 0
+        for marker, value in self.codes.items():
+            if marker in joined:
+                code = value
+                break
+        return _Result(code, self.text, self.err)
+
+    def calls_with(self, marker):
+        """Запуски, в команде которых есть подстрока (например, имя шага)."""
+        return [c for c in self.calls if marker in c["args"]]
+
+
+def _tree_of(fake):
+    """Каталог среза, в котором выполнялись команды."""
+    assert fake.calls, "ни одна внешняя команда не запускалась"
+    return fake.calls[0]["cwd"]
+
+
+def _pytest_trees(fake):
+    """Каталоги среза, в которых шёл pytest.
+
+    Признак — сама команда, а не подстрока «pytest»: её же содержит путь к
+    игрушечным node и gitleaks внутри каталога pytest'а.
+    """
+    return [c["cwd"] for c in fake.calls_with(" -m pytest ")]
 
 
 @pytest.fixture
@@ -103,34 +137,57 @@ def repo(tmp_path):
         "# Список запретных слов\nивановтест\n", encoding="utf-8"
     )
 
+    # Шаг `jsx` без единого файла счёл бы себя не пройденным (и правильно): в
+    # игрушечном репозитории должны быть и ExtendScript, и JS интерфейса.
+    tools_dir = tmp_path / "tools"
+    tools_dir.mkdir()
+    (tools_dir / "inspect.jsx").write_text("var cam = 1;\n", encoding="utf-8")
+    app_dir = tmp_path / "static" / "app"
+    app_dir.mkdir(parents=True)
+    (app_dir / "main.js").write_text("var app = 2;\n", encoding="utf-8")
+
     _git(["add", "."], cwd=tmp_path, check=True)
     _git(["commit", "-m", "Initial commit"], cwd=tmp_path, check=True)
     return tmp_path
 
 
 @pytest.fixture
-def fake_pytest(monkeypatch):
-    """Подмена запуска pytest: `fake_pytest(0, 3)` — первые два вызова с такими кодами."""
+def fake_tools(tmp_path_factory, monkeypatch):
+    """Подмена `slice_check.find_tool`: node и gitleaks «стоят», PATH машины не важен."""
+    folder = tmp_path_factory.mktemp("fake-bin")
+    paths = {}
+    for name in ("node", "gitleaks"):
+        path = folder / name
+        path.write_text("", encoding="utf-8")
+        paths[name] = str(path)
 
-    def make(*codes, text=""):
-        fake = _FakePytest(codes, text)
-        monkeypatch.setattr(slice_check, "run_pytest", fake)
+    monkeypatch.setattr(slice_check, "find_tool", lambda name: paths.get(name))
+    return paths
+
+
+@pytest.fixture
+def fake_commands(monkeypatch):
+    """Подмена запуска внешних команд: `fake_commands({"ruff": 1}, text="поломка")`."""
+
+    def make(codes=None, text="", err=""):
+        fake = _FakeCommands(codes, text, err)
+        monkeypatch.setattr(slice_check, "run_command", fake)
         return fake
 
     return make
 
 
-def test_дерево_среза_совпадает_со_срезом(repo, fake_pytest):
+def test_дерево_среза_совпадает_со_срезом(repo, fake_tools, fake_commands):
     """Каталог, который готовит slice_check, — ровно дерево среза, без вырезанного."""
     sha = public_slice.build_slice(str(repo))
     assert sha is not None
     expected = _git(["ls-tree", "-r", "--name-only", sha], cwd=repo, check=True).stdout.splitlines()
     assert ".publicignore" in expected and "README.md" in expected
 
-    fake = fake_pytest(0)
+    fake = fake_commands()
     assert slice_check.main(["--root", str(repo), "--keep"]) == 0
 
-    tree = fake.trees[0]
+    tree = _tree_of(fake)
     try:
         assert os.path.isdir(tree), "каталог среза не оставлен, хотя просили --keep"
         assert _walk(tree) == sorted(expected)
@@ -140,41 +197,183 @@ def test_дерево_среза_совпадает_со_срезом(repo, fake
         slice_check.remove_tree(tree)
 
 
-def test_код_возврата_равен_коду_pytest(repo, fake_pytest, capsys):
+def test_код_возврата_равен_коду_pytest(repo, fake_tools, fake_commands, capsys):
     """Код возврата скрипта = код возврата pytest, и каталог за собой убран."""
-    fake = fake_pytest(0, 3, text="1 failed, 2 passed in 0.10s")
-
+    fake_ok = fake_commands(text="1 failed, 2 passed in 0.10s")
     assert slice_check.main(["--root", str(repo)]) == 0
     out = capsys.readouterr().out
     assert "Код возврата pytest: 0" in out
     assert "1 failed, 2 passed in 0.10s" in out, "последние строки вывода pytest не напечатаны"
 
+    fake_commands({"pytest": 3}, text="1 failed, 2 passed in 0.10s")
     assert slice_check.main(["--root", str(repo)]) == 3
-    assert "Код возврата pytest: 3" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Код возврата pytest: 3" in out
+    assert "[FAIL] pytest" in out, "упавший шаг не назван в выводе"
 
-    assert len(fake.trees) == 2
-    for tree in fake.trees:
+    assert len(_pytest_trees(fake_ok)) == 1
+    for tree in _pytest_trees(fake_ok):
         assert not os.path.exists(tree), f"временный каталог среза остался: {tree}"
 
 
-def test_в_репозиторий_ничего_не_пишется(repo, fake_pytest):
+def test_в_репозиторий_ничего_не_пишется(repo, fake_tools, fake_commands):
     """Сборка среза не трогает рабочую копию: ни индекса, ни объектов, ни ссылок."""
-    fake_pytest(0)
+    fake_commands()
     before = _state(repo)
     assert slice_check.main(["--root", str(repo)]) == 0
     assert _state(repo) == before
 
 
-def test_ref_берёт_названный_коммит(repo, fake_pytest):
+def test_ref_берёт_названный_коммит(repo, fake_tools, fake_commands):
     """`--ref` собирает срез указанного коммита, а не HEAD."""
     _git(["rm", "README.md"], cwd=repo, check=True)
     _git(["commit", "-m", "remove readme"], cwd=repo, check=True)
 
-    fake = fake_pytest(0)
+    fake = fake_commands()
     assert slice_check.main(["--root", str(repo), "--ref", "HEAD~1", "--keep"]) == 0
 
-    tree = fake.trees[0]
+    tree = _tree_of(fake)
     try:
         assert "README.md" in _walk(tree)
     finally:
         slice_check.remove_tree(tree)
+
+
+def test_шаги_повторяют_джобы_ci():
+    """Список шагов, запускалки и подсказки описывают один и тот же набор."""
+    assert slice_check.STEP_NAMES == (
+        "pytest", "ruff", "mypy", "jsx", "smoke", "requirements", "gitleaks")
+    assert list(slice_check._step_calls()) == list(slice_check.STEP_NAMES)
+    assert set(slice_check.STEP_HINTS) == set(slice_check.STEP_NAMES)
+
+
+@pytest.mark.parametrize("marker,name", [
+    ("ruff", "ruff"),
+    ("mypy", "mypy"),
+    ("node", "jsx"),
+    ("compileall", "smoke"),
+    ("pip", "requirements"),
+    ("gitleaks", "gitleaks"),
+])
+def test_падение_шага_красит_код_возврата(repo, fake_tools, fake_commands, marker, name, capsys):
+    """Любой упавший шаг виден строкой FAIL с именем шага и делает код ненулевым."""
+    fake_commands({marker: 1}, text="поломка шага")
+    assert slice_check.main(["--root", str(repo)]) != 0
+    out = capsys.readouterr().out
+    assert f"[FAIL] {name}" in out, out
+
+
+def test_падение_pytest_отдаёт_его_код(repo, fake_tools, fake_commands, capsys):
+    """Провал тестов отдаёт их собственный код, а не единицу."""
+    fake_commands({"pytest": 3})
+    assert slice_check.main(["--root", str(repo)]) == 3
+    assert "[FAIL] pytest" in capsys.readouterr().out
+
+
+def test_нет_бинарника_gitleaks_это_провал(repo, fake_commands, monkeypatch, capsys):
+    """Бинарника нет — провал с понятной причиной, а не молчаливый пропуск."""
+    monkeypatch.delenv(slice_check.ENV_GITLEAKS, raising=False)
+    monkeypatch.setattr(slice_check, "find_tool", lambda name: None)
+    fake = fake_commands()
+
+    assert slice_check.main(["--root", str(repo)]) != 0
+
+    out = capsys.readouterr().out
+    assert "[FAIL] gitleaks" in out, out
+    assert "--gitleaks" in out and slice_check.ENV_GITLEAKS in out, "причина без пути к бинарнику"
+    assert "--no-gitleaks" in out, "не сказано, как пропустить шаг осознанно"
+    assert not fake.calls_with("gitleaks"), "gitleaks всё равно запускался"
+
+
+def test_указанный_путь_gitleaks_проверяется(repo, fake_tools, fake_commands, capsys):
+    """Явный `--gitleaks PATH` с несуществующим файлом — тот же провал с причиной."""
+    fake_commands()
+    missing = os.path.join(str(repo), "нет-такого-gitleaks")
+    assert slice_check.main(["--root", str(repo), "--gitleaks", missing]) != 0
+    out = capsys.readouterr().out
+    assert "[FAIL] gitleaks" in out and "файл не найден" in out, out
+
+
+def test_явный_пропуск_gitleaks_не_красит_код(repo, fake_tools, fake_commands, capsys):
+    """`--no-gitleaks`: код 0 при остальных зелёных и громкая строка о пропуске."""
+    fake = fake_commands()
+    assert slice_check.main(["--root", str(repo), "--no-gitleaks"]) == 0
+    out = capsys.readouterr().out
+    assert "gitleaks НЕ ПРОГОНЯЛСЯ" in out, out
+    assert "[ПРОПУЩЕН] gitleaks" in out
+    assert not fake.calls_with("gitleaks"), "шаг gitleaks всё же запускался"
+
+
+def test_only_гоняет_один_шаг(repo, fake_tools, fake_commands):
+    """`--only pytest` — при разборе идёт один шаг, остальные на код не влияют."""
+    fake = fake_commands({"ruff": 1, "mypy": 1, "gitleaks": 1})
+    assert slice_check.main(["--root", str(repo), "--only", "pytest"]) == 0
+    assert fake.calls_with("pytest"), "pytest не запускался"
+    for other in ("ruff", "mypy", "node", "compileall", "pip", "gitleaks"):
+        assert not fake.calls_with(other), f"при --only pytest запускался шаг {other}"
+
+
+def test_явный_пропуск_шага_не_красит_код(repo, fake_tools, fake_commands, capsys):
+    """`--skip ШАГ`: шаг не идёт, в таблице виден пропущенным."""
+    fake = fake_commands()
+    assert slice_check.main(["--root", str(repo), "--skip", "ruff"]) == 0
+    out = capsys.readouterr().out
+    assert "[ПРОПУЩЕН] ruff" in out, out
+    assert not fake.calls_with("ruff"), "пропущенный шаг всё же запускался"
+
+
+def test_неизвестный_шаг_отвергается(repo, fake_commands, capsys):
+    """Опечатка в `--only` видна в stderr, и ничего не запускается."""
+    fake = fake_commands()
+    assert slice_check.main(["--root", str(repo), "--only", "птест"]) == 2
+    assert not fake.calls, "команды запускались, хотя шаг назван неверно"
+    assert "Неизвестный шаг" in capsys.readouterr().err
+
+
+def test_remove_tree_удаляет_каталог_с_подкаталогом_и_readonly(tmp_path):
+    """Игрушечный каталог с подкаталогом и файлом «только для чтения» удаляется целиком."""
+    toy = tmp_path / "toy"
+    sub = toy / "sub"
+    sub.mkdir(parents=True)
+    f = sub / "ro.txt"
+    f.write_text("read-only content", encoding="utf-8")
+    os.chmod(str(f), stat.S_IREAD)
+
+    assert os.path.exists(str(f))
+    slice_check.remove_tree(str(toy))
+    assert not os.path.exists(str(toy)), "каталог среза остался после remove_tree"
+
+
+def test_remove_tree_не_снимает_чтение_и_вход_у_каталогов(tmp_path, monkeypatch):
+    """remove_tree не лишает подкаталог прав чтения и входа перед вызовом shutil.rmtree."""
+    toy = tmp_path / "toy"
+    sub = toy / "sub"
+    sub.mkdir(parents=True)
+    f = sub / "ro.txt"
+    f.write_text("hello", encoding="utf-8")
+    os.chmod(str(f), stat.S_IREAD)
+
+    chmod_calls: dict[str, int] = {}
+    real_chmod = slice_check.os.chmod
+
+    def fake_chmod(p, mode):
+        chmod_calls[os.path.normpath(str(p))] = mode
+        real_chmod(p, mode)
+
+    rmtree_called = []
+
+    def fake_rmtree(tree, ignore_errors=False):
+        rmtree_called.append(tree)
+        # Проверяем режимы подкаталогов ДО удаления
+        sub_norm = os.path.normpath(str(sub))
+        assert sub_norm in chmod_calls, f"chmod не вызывался для {sub_norm}"
+        mode = chmod_calls[sub_norm]
+        assert mode & stat.S_IREAD, f"у каталога снят бит чтения: {oct(mode)}"
+        assert mode & stat.S_IEXEC, f"у каталога снят бит входа: {oct(mode)}"
+
+    monkeypatch.setattr(slice_check.os, "chmod", fake_chmod)
+    monkeypatch.setattr(slice_check.shutil, "rmtree", fake_rmtree)
+
+    slice_check.remove_tree(str(toy))
+    assert len(rmtree_called) == 1
+

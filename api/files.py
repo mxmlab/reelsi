@@ -4,7 +4,8 @@
 дублей, нативные диалоги выбора, отдача медиа, ui_state.
 """
 import os, re, sys, json, subprocess
-from flask import request, jsonify, send_file
+from typing import Any, cast
+from flask import request, jsonify, send_file, Response
 from core.fileio import atomic_json_dump
 from core.project_file import read_project
 from core import cams
@@ -15,7 +16,7 @@ from ._core import (DEFAULT_BASE, UI_STATE_PATH, _never_serve, app_out_dir, bp,
 from core.umsg import ReelsiError, umsg
 
 
-def _cams_response(base):
+def _cams_response(base: str) -> Response:
     """Ответ /api/cams: найденные папки камер (или ошибка «нет папок»).
     Отдельной функцией, чтобы его переиспользовал /api/cams_make — после создания
     папок ответ должен быть ровно тем же, что и при ручном выборе."""
@@ -29,7 +30,7 @@ def _cams_response(base):
 
 
 @bp.route("/api/cams")
-def api_cams():
+def api_cams() -> Response:
     base = request.args.get("base", DEFAULT_BASE)
     try:
         return _cams_response(base)
@@ -39,7 +40,7 @@ def api_cams():
 
 
 @bp.route("/api/cams_make", methods=["POST"])
-def api_cams_make():
+def api_cams_make() -> Response:
     """Создать папки камер 1..N на чистой установке, где их нет вовсе.
     Только по явной кнопке в интерфейсе: молча создавать папки в чужой папке
     нельзя — пользователь мог указать не ту base."""
@@ -58,7 +59,7 @@ def api_cams_make():
 
 
 @bp.route("/api/cammatch", methods=["POST"])
-def api_cammatch():
+def api_cammatch() -> Response:
     """Автоподбор вторичных камер по звуку: видео камеры 1 (cam1) уже выбрано,
     в каждой папке dirs (камеры 2..N) ищем файл ТОГО ЖЕ дубля — его звук лучше
     всего коррелирует со звуком cam1 (имена файлов у камер могут не совпадать).
@@ -115,13 +116,13 @@ _QUEUE_PREFIX = re.compile(r"^\d+_")
 _PATHURL = re.compile(r"<pathurl>([^<]+)</pathurl>")
 
 
-def _basename(p):
+def _basename(p: Any) -> str:
     """Имя файла из пути ЛЮБОГО вида. os.path.basename на Linux не режет '\\', а в
     project.json пути лежат так, как их дал Windows ('D:/съёмка\\C1437.MP4')."""
     return str(p).replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
 
 
-def _clip_cams(xml_path):
+def _clip_cams(xml_path: str) -> list[str]:
     """Список путей исходных камер клипа.
 
     Сначала пробует `<stem>.project.json`. Если сайдкара нет (XML добавлен
@@ -144,7 +145,7 @@ def _clip_cams(xml_path):
     return [xmlbuild.unpathurl(u) for u in _PATHURL.findall(text) if u]
 
 
-def _cut_sources(outdir):
+def _cut_sources(outdir: str) -> tuple[set[str], set[str]]:
     """По каким исходникам в папке результата УЖЕ есть нарезка: (имена, стемы).
 
     Три источника, от точного к грубому:
@@ -155,6 +156,8 @@ def _cut_sources(outdir):
         на случай XML, собранного руками или в другой программе.
     Всё в нижнем регистре: на Windows регистр в именах файлов не значит ничего.
     """
+    names: set[str]
+    stems: set[str]
     names, stems = set(), set()
     for f in sorted(os.listdir(outdir)):
         if not f.lower().endswith(".xml"):
@@ -167,7 +170,7 @@ def _cut_sources(outdir):
 
 
 @bp.route("/api/newtakes", methods=["POST"])
-def api_newtakes():
+def api_newtakes() -> Response:
     """Какие дубли ещё НЕ нарезаны: файлы, для которых в папке результата нет XML.
 
     Ради этого и делается: папка камеры копится съёмками, а нарезать надо только
@@ -190,6 +193,8 @@ def api_newtakes():
         return jsonify(ok=True, new=files, done=[], no_outdir=True)
     try:
         names, stems = _cut_sources(outdir)
+        new: list[str]
+        done: list[str]
         new, done = [], []
         for f in files:
             base = _basename(f).lower()
@@ -202,7 +207,7 @@ def api_newtakes():
 
 
 @bp.route("/api/files")
-def api_files():
+def api_files() -> Response:
     d = request.args.get("dir", "").strip().strip('"')
     if not os.path.isdir(d):
         # files=[] рядом с ошибкой: фронт рисует пустой список, а не падает
@@ -211,7 +216,7 @@ def api_files():
 
 
 @bp.route("/api/ui_state", methods=["GET", "POST"])
-def api_ui_state():
+def api_ui_state() -> Response:
     """Серверное зеркало состояния UI (клипы/очередь/стиль). localStorage остаётся
     основным и быстрым, файл — надёжная копия: переживает смену браузера, чистку
     и квоту localStorage. Пишется атомарно (tmp+replace)."""
@@ -240,7 +245,7 @@ def api_ui_state():
         return jsonify(**umsg_err(ReelsiError(umsg("ui_state_save_failed", f"{type(e).__name__}: {e}"))))
 
 
-def _native_pick(dialog_call):
+def _native_pick(dialog_call: str) -> str:
     """Run a Tk dialog in a subprocess (never touches the Flask thread) and return
     the chosen path. The app is local, so the dialog opens on the user's screen."""
     code = (
@@ -254,7 +259,7 @@ def _native_pick(dialog_call):
 
 
 @bp.route("/api/pickmedia")
-def api_pickmedia():
+def api_pickmedia() -> Response:
     try:
         return jsonify(path=_native_pick(
             "filedialog.askopenfilename(title='Выбери фото/видео', "
@@ -268,7 +273,7 @@ def api_pickmedia():
 
 
 @bp.route("/api/fonts")
-def api_fonts():
+def api_fonts() -> Response:
     """Установленные шрифты (PostScript-имя + семья) для автоподстановки в стиле."""
     try:
         from core import fonts
@@ -279,7 +284,7 @@ def api_fonts():
 
 
 @bp.route("/api/fontfile/<path:ps_name>")
-def api_fontfile(ps_name):
+def api_fontfile(ps_name: str) -> Response | tuple[Response, int]:
     """Отдать файл шрифта по PostScript-имени из таблицы шрифтов.
 
     Только чтение, только файлы из list_fonts() — прямой путь из запроса не
@@ -313,7 +318,7 @@ def api_fontfile(ps_name):
 
 
 @bp.route("/api/pickfiles")
-def api_pickfiles():
+def api_pickfiles() -> Response:
     """Multi-select XML files (returns a list of paths)."""
     try:
         raw = _native_pick("'|'.join(filedialog.askopenfilenames(title='Выбери XML', "
@@ -325,7 +330,7 @@ def api_pickfiles():
 
 
 @bp.route("/api/pickone")
-def api_pickone():
+def api_pickone() -> Response:
     """Один файл любого типа (для видео-перехода/звука/попа в кастом-стиле)."""
     try:
         p = _native_pick("filedialog.askopenfilename(title='Выбери файл')")
@@ -336,7 +341,7 @@ def api_pickone():
 
 
 @bp.route("/api/pickaudio")
-def api_pickaudio():
+def api_pickaudio() -> Response:
     try:
         return jsonify(path=_native_pick(
             "filedialog.askopenfilename(title='Выбери аудио', "
@@ -347,7 +352,7 @@ def api_pickaudio():
 
 
 @bp.route("/api/pickdir")
-def api_pickdir():
+def api_pickdir() -> Response:
     try:
         return jsonify(path=_native_pick("filedialog.askdirectory(title='Выбери папку')"))
     except ReelsiError: raise
@@ -393,7 +398,7 @@ MEDIA_CHUNK = 4 * 1024 * 1024
 _RANGE_ONE_RE = re.compile(r"^\s*bytes\s*=\s*(\d+)\s*-\s*(\d*)\s*$", re.IGNORECASE)
 
 
-def _narrow_media_range(header, size):
+def _narrow_media_range(header: str | None, size: int) -> str | None:
     """Сузить открытый/слишком длинный Range до MEDIA_CHUNK байт.
 
     Возвращает новый заголовок Range либо None — «трогать нечего»: суффиксный
@@ -414,7 +419,7 @@ def _narrow_media_range(header, size):
     return f"bytes={start}-{min(start + MEDIA_CHUNK, size) - 1}"
 
 
-def _media_path_ok(path, exts):
+def _media_path_ok(path: str, exts: set[str]) -> bool:
     """Годится ли путь к отдаче: расширение (и у присланного пути, и у realpath) +
     денилист секретов (`_never_serve`).
 
@@ -435,7 +440,7 @@ def _media_path_ok(path, exts):
 
 
 @bp.route("/api/media")
-def api_media():
+def api_media() -> Response | tuple[str, int]:
     """Serve a local media file with HTTP Range support so the browser <video> in
     the AI-cut preview can seek/stream. Local app — only serves existing files."""
     path = (request.args.get("path") or "").strip().strip('"')
@@ -486,7 +491,7 @@ def api_media():
 
 
 @bp.route("/api/music_random", methods=["POST"])
-def api_music_random():
+def api_music_random() -> Response:
     """Случайный аудиофайл из папки музыки — ТОТ ЖЕ выбор, что на сборке
     (ytmusic.random_track в xml2ae/build.py). Превью так слушает ползунок «Музыка»
     в режиме «случайно»; сборка всё равно выберет трек заново, уровень тот же."""
@@ -502,7 +507,7 @@ def api_music_random():
 
 
 @bp.route("/api/waveform")
-def api_waveform():
+def api_waveform() -> Response | tuple[str, int]:
     """Пики амплитуды исходника (для рисования волны на блоках). Кэш рядом с файлом."""
     path = (request.args.get("path") or "").strip().strip('"')
     try:
@@ -539,7 +544,7 @@ def api_waveform():
     try:
         import numpy as np, librosa
         y, sr = librosa.load(path, sr=16000, mono=True)
-        step = max(1, sr // pps)
+        step = max(1, cast(int, sr // pps))
         peaks = [round(float(np.abs(y[i:i+step]).max()), 3) for i in range(0, len(y), step)]
         res = {"ok": True, "dur": round(len(y)/sr, 3), "pps": pps, "peaks": peaks}
         try:
@@ -554,7 +559,7 @@ def api_waveform():
 
 
 @bp.route("/api/clip_delete", methods=["POST"])
-def api_clip_delete():
+def api_clip_delete() -> Response:
     """Удалить нарезку клипа целиком: XML и все его сайдкары, НЕ трогая исходное видео.
 
     dry: true — только проверка и список файлов на удаление без реального удаления.
@@ -605,9 +610,9 @@ def api_clip_delete():
                 pass  # realpath не разрешился — базовое имя камеры уже в наборе защищённых
 
     prefix = stem.lower() + "."
-    files_to_delete = []
-    skipped = []
-    seen_paths = set()
+    files_to_delete: list[dict[str, Any]] = []
+    skipped: list[dict[str, str]] = []
+    seen_paths: set[str] = set()
 
     # 1. Сканируем папку XML (только файлы первого уровня, без рекурсии)
     try:
@@ -674,7 +679,7 @@ def api_clip_delete():
     total_bytes = sum(f["size"] for f in files_to_delete)
 
     if not dry:
-        deleted = []
+        deleted: list[dict[str, Any]] = []
         for item in files_to_delete:
             p = item["path"]
             try:

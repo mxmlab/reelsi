@@ -21,7 +21,7 @@
 в `build.py` и приходят параметрами: второй копии нет.
 """
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable, cast
 
 from .jsutil import _jd
 from .layout import HL_DUR, _stack_layout, hl_appear_dur
@@ -43,11 +43,11 @@ class SubsInputs:
     """
     # Слова транскрипта [(начало, конец, слово)] в кадрах и разметка по ним: жёлтые,
     # ручные разделители серий, слова со счётчиком, склейки в строку.
-    subs: list
-    hl: set
-    brk: set
-    cnt: set
-    joins: set
+    subs: list[Any]
+    hl: set[Any]
+    brk: set[Any]
+    cnt: set[Any]
+    joins: set[Any]
     # Шрифты (PostScript-имена): базовый и жёлтых.
     font_ps: str
     hl_font_ps: str
@@ -56,13 +56,13 @@ class SubsInputs:
     height: int
     fps: float
     # Клипы камер — только ради границ катов: строка субтитров не тянется через кат.
-    cams: list
+    cams: list[dict[str, Any]]
     # Пословные тайминги из сайдкара (None — их нет): ими уточняются строки.
-    word_timings: object
+    word_timings: Any
     # Резолвнутый и прочитанный стиль: регистр, геометрия полосы, жёлтые в строке.
     style: StyleValues
     accent_word: Callable[[str, str], str]
-    parse_count: Callable[..., object]
+    parse_count: Callable[..., Any]
 
 
 @dataclass(frozen=True)
@@ -72,7 +72,7 @@ class SubsPlan:
     Первые восемь полей уезжают в .jsx подстановками шаблона, остальные — геометрия
     полосы субтитров: её читают и план (предпросмотр), и шаблон, и окна интро.
     """
-    subs: list            # элементы субтитров для плана/превью (plan["subs"])
+    subs: list[dict[str, Any]]            # элементы субтитров для плана/превью (plan["subs"])
     subs_js: str          # данные SUBS — строки цикла слов
     sub_loop: str         # цикл субтитров: SUBS_LOOP_WORDS/SUB_ROWS (+ цикл стопки)
     hl_row_decl: str      # объявление HL_ROW_WORD (жёлтые в строке)
@@ -111,7 +111,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
     _accent_word = inp.accent_word
     _parse_intro_count = inp.parse_count
     # обрезаем конец слова по началу следующего, чтобы соседние (особ. мелкие «и/в») не накладывались
-    def _endc(k):
+    def _endc(k: int) -> int:
         s, e, w = subs[k]
         ns = subs[k + 1][0] if k + 1 < len(subs) else None
         return min(e, ns) if (ns is not None and ns > s) else e
@@ -158,7 +158,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
     # строки данных SUBS/SUB_STACK ([.., gend, cnt, hd] — сразу за полем счётчика: поле 6
     # занято cnt_items, его не трогаем). Нет ни одного укороченного жёлтого — нет ни полей,
     # ни функции hlDur, ни новых подстановок: .jsx побайтово как на main (golden).
-    _hl_hd = {}                     # индекс жёлтого слова -> своя длительность появления, с
+    _hl_hd: dict[int, float] = {}                     # индекс жёлтого слова -> своя длительность появления, с
     # Короткая СТРОКА: цикл строк зажимал момент появления окном
     # (r_t1 - HL_DUR), но если строка короче HL_DUR, момент оставался в её начале, и подъём с
     # проявлением обрывались на конце строки. Длительность d = hl_appear_dur(r_t1 - w_t0) —
@@ -166,10 +166,10 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
     # полем 3 слова данных SUB_ROWS ([начало, текст, hl, hd]) и полем hd слова в плане
     # (превью берёт готовое). Нет ни одной такой строки — нет ни поля, ни функции hlRowDur,
     # ни подстановок: .jsx побайтово прежний (golden).
-    _hl_row_hd = {}                 # индекс жёлтого слова СТРОКИ -> своя длительность, с
+    _hl_row_hd: dict[int, float] = {}                 # индекс жёлтого слова СТРОКИ -> своя длительность, с
     hl_short_fn = ""
 
-    def _hl_loop(elem, **kw):
+    def _hl_loop(elem: str, **kw: Any) -> dict[str, Any]:
         """Подстановки цикла субтитров для элемента `elem` (имя переменной строки данных):
         длительность появления в ключах подъёма/проявления и вызов блюра. Пока укороченных
         жёлтых нет — ровно прежний текст: HL_DUR и hlBlur(L, t0). У укороченного длительность
@@ -191,6 +191,10 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
     from core.subs import build_sub_rows
     from core import fonts as _fonts
 
+    rows: list[int] | None
+    gend: list[float] | None
+    _sub_w: Any
+
     if sub_words_per_row <= 1:
         rows, gend = _stack_layout(subs, hl, brk, joins)
         max_line_w = 0.92 * width
@@ -198,7 +202,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
         # и превью читают преобразованное, второй копии правила нет. upper (дефолт) —
         # слова из XML уже капсом, upper() их не меняет, .jsx прежний (golden). В
         # покадровом режиме каждое слово — своя реплика, sentence = Заглавная на каждом.
-        def _sub_w(w):
+        def _sub_w(w: str) -> str:
             return _accent_word(w, "title" if sub_case == "sentence" else sub_case)
         subs_plan = []
         cnt_items = []
@@ -242,11 +246,11 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
                     item["fsize"] = shrunk_fs
             subs_plan.append(item)
 
-        def _sub_row(k, end, wd, hl_v):
+        def _sub_row(k: int, end: int, wd: str, hl_v: int) -> list[Any]:
             """Строка данных цикла слов: [начало, конец, слово, hl, ряд, gend] плюс поле
             счётчика (индекс 6) и — у укороченного жёлтого — поле длительности
             появления (индекс 7). Пока укороченных нет, полей ровно шесть: .jsx прежний."""
-            r = [subs[k][0], end, wd, hl_v, rows[k], gend[k]]
+            r = [subs[k][0], end, wd, hl_v, cast(list[int], rows)[k], cast(list[float], gend)[k]]
             if any_sub_count:
                 r.append(cnt_items[k])
             if _hl_hd:
@@ -295,7 +299,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
         stacked_indices = set()
         if hl_row_stack:
             rows, gend = _stack_layout(subs, hl, brk, joins)
-            _run_words = {}
+            _run_words: dict[int, int] = {}
             for _k in hl:
                 _run_words[gend[_k]] = _run_words.get(gend[_k], 0) + 1
             stacked_indices = {_k for _k in hl if _run_words[gend[_k]] >= 2}
@@ -367,7 +371,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
             if r not in _first_r and ln.get("row") == 0 and ln.get("words"):
                 _first_r.add(r)
                 repl_first.add(ln["words"][0]["idx"])
-        def _sub_w(w, idx):
+        def _sub_w(w: str, idx: int) -> str:
             if sub_case == "sentence":
                 return _accent_word(w, "title" if idx in repl_first else "lower")
             return _accent_word(w, sub_case)
@@ -435,8 +439,8 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
                     "e": _endc(k) / _fps0,
                     "w": wd,
                     "color": "yellow",
-                    "row": rows[k],
-                    "gend": gend[k] / _fps0,
+                    "row": cast(list[int], rows)[k],
+                    "gend": cast(list[float], gend)[k] / _fps0,
                     "repl": k,
                     "stack": True,
                 }
@@ -459,7 +463,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
             # появления: поле счётчика (6) в стопке пустое, длительность — поле 7.
             sub_stack_data = []
             for k in sorted(stacked_indices):
-                _sw = [subs[k][0], _endc(k), _sub_w(subs[k][2], k), 1, rows[k], gend[k]]
+                _sw = [subs[k][0], _endc(k), _sub_w(subs[k][2], k), 1, cast(list[int], rows)[k], cast(list[float], gend)[k]]
                 if _hl_hd:
                     _sw.append(None)
                     _sw.append(_hl_hd.get(k, _hl_dur))
@@ -474,11 +478,11 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
         # общий конец; у остальных слов поля прежние. Галка выключена — stacked_indices пуст,
         # ветки не вычисляются, и SUBS побайтово прежний (golden).
         subs_js = _jd([[s, _endc(k), _sub_w(w, k), 1 if k in hl else 0,
-                        rows[k] if k in stacked_indices else 0,
-                        gend[k] if k in stacked_indices else _endc(k)]
+                        cast(list[int], rows)[k] if k in stacked_indices else 0,
+                        cast(list[float], gend)[k] if k in stacked_indices else _endc(k)]
                        for k, (s, e, w) in enumerate(subs)])
 
-        def _row_word(x):
+        def _row_word(x: dict[str, Any]) -> list[Any]:
             """Слово строки для цикла: [начало, текст, hl] и — у коротких строк — четвёртым полем длительность появления (у длинных жёлтых и белых —
             общая HL_DUR, как поле 7 у цикла слов). Пока коротких нет, полей ровно три:
             .jsx прежний байт в байт (golden)."""

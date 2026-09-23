@@ -40,16 +40,17 @@ def client():
 def lock_state(tmp_path, monkeypatch):
     """Свой файл лока задач и чистое состояние JOB/RJOB на входе и на выходе."""
     from api import _core, render
+    from core import jobstate
 
-    monkeypatch.setattr(_core, "JOB_LOCK_PATH", str(tmp_path / "job.lock"))
-    monkeypatch.setattr(_core, "_JOB_LOCK_FH", None)
+    monkeypatch.setattr(jobstate, "JOB_LOCK_PATH", str(tmp_path / "job.lock"))
+    monkeypatch.setattr(jobstate, "_JOB_LOCK_FH", None)
     with _core.LOCK:
         _core.JOB.update(running=False, cancel=False, failed=[], results=[])
     with render.RLOCK:
         render.RJOB.update(running=False, done=False, cancel=False, result=[], failed=[],
                            items=[])
     yield
-    _core._cross_lock_release()
+    jobstate._cross_lock_release()
     with _core.LOCK:
         _core.JOB["running"] = False
     with render.RLOCK:
@@ -72,8 +73,9 @@ def _post_render(client, tmp_path, jobs=1):
 def test_рендер_при_занятой_задаче_отказ(client, tmp_path, monkeypatch, lock_state):
     """Идёт нарезка (или сборка) — рендер не стартует: отказ тот же, что у сборки."""
     from api import _core, render
+    from core import render_job
 
-    monkeypatch.setattr(render, "_run_render_job", lambda *a: None)   # поток не должен родиться
+    monkeypatch.setattr(render_job, "run_render_job", lambda *a: None)   # поток не должен родиться
     assert _core.job_start(kind="cut", label="Нарезка") is True
     try:
         r = _post_render(client, tmp_path)
@@ -89,9 +91,10 @@ def test_рендер_при_занятом_межпроцессном_локе_
                                                       lock_state):
     """Лок держит соседняя копия интерфейса (второй webui) — тоже отказ."""
     from api import render
+    from core import render_job
 
     monkeypatch.setattr(render, "_cross_lock_acquire", lambda: False)
-    monkeypatch.setattr(render, "_run_render_job", lambda *a: None)
+    monkeypatch.setattr(render_job, "run_render_job", lambda *a: None)
 
     d = _post_render(client, tmp_path).get_json()
 
@@ -103,37 +106,39 @@ def test_эндпоинт_занимает_лок_на_время_рендера
                                                 lock_state):
     """Пока рендер идёт, лок занят — нарезка и сборка в него не пролезут."""
     from api import _core, render
+    from core import jobstate, render_job
 
     started = threading.Event()
     seen = {}
 
-    def fake_run(jobs, outdir, render_dir):
-        seen["lock"] = _core._JOB_LOCK_FH is not None
+    def fake_run(*a, **k):
+        seen["lock"] = jobstate._JOB_LOCK_FH is not None
         started.set()
 
-    monkeypatch.setattr(render, "_run_render_job", fake_run)
+    monkeypatch.setattr(render_job, "run_render_job", fake_run)
     _post_render(client, tmp_path)
     assert started.wait(timeout=10), "рендер не стартовал"
 
     assert seen["lock"] is True, "лок задач не занят во время рендера"
-    assert _core._JOB_LOCK_FH is not None
+    assert jobstate._JOB_LOCK_FH is not None
     with _core.LOCK:
         assert _core.JOB["running"] is False
     # соседний джоб в этом же процессе лок уже не возьмёт
-    assert _core._cross_lock_acquire() is False
+    assert jobstate._cross_lock_acquire() is False
     with render.RLOCK:
         render.RJOB["running"] = False       # поток подменён — диспетчер сам не сбросит
 
 
 def test_после_рендера_лок_свободен(tmp_path, monkeypatch, lock_state):
     """Три исхода рендера (нормальный выход / ошибка / «Стоп») — во всех лок отпущен."""
-    from api import _core, render
+    from api import render
+    from core import jobstate, render_job
 
     # 1. Нормальный выход
-    monkeypatch.setattr(render, "_run_render_single", lambda *a: None)
-    assert _core._cross_lock_acquire() is True         # так же, как эндпоинт
-    render._run_render_job([{"xml_path": str(tmp_path / "clip.xml")}], "", str(tmp_path))
-    assert _core._JOB_LOCK_FH is None, "лок остался занят после рендера"
+    monkeypatch.setattr(render_job, "run_render_single", lambda *a: None)
+    assert jobstate._cross_lock_acquire() is True         # так же, как эндпоинт
+    render_job.run_render_job(render.RJOB, [{"xml_path": str(tmp_path / "clip.xml")}], "", str(tmp_path))
+    assert jobstate._JOB_LOCK_FH is None, "лок остался занят после рендера"
     with render.RLOCK:
         assert render.RJOB["running"] is False
 
@@ -141,10 +146,10 @@ def test_после_рендера_лок_свободен(tmp_path, monkeypatch
     def fake_crash(*a, **k):
         raise RuntimeError("сбой рендера")
 
-    monkeypatch.setattr(render, "_run_render_single", fake_crash)
-    assert _core._cross_lock_acquire() is True
-    render._run_render_job([{"xml_path": str(tmp_path / "clip.xml")}], "", str(tmp_path))
-    assert _core._JOB_LOCK_FH is None, "лок остался занят после ошибки рендера"
+    monkeypatch.setattr(render_job, "run_render_single", fake_crash)
+    assert jobstate._cross_lock_acquire() is True
+    render_job.run_render_job(render.RJOB, [{"xml_path": str(tmp_path / "clip.xml")}], "", str(tmp_path))
+    assert jobstate._JOB_LOCK_FH is None, "лок остался занят после ошибки рендера"
     with render.RLOCK:
         assert render.RJOB["running"] is False
 
@@ -153,23 +158,23 @@ def test_после_рендера_лок_свободен(tmp_path, monkeypatch
                 {"xml_path": str(tmp_path / "b.xml")}]
     with render.RLOCK:
         render.RJOB["cancel"] = True
-    assert _core._cross_lock_acquire() is True
-    render._run_render_job(two_jobs, "", str(tmp_path))
-    assert _core._JOB_LOCK_FH is None, "лок остался занят после «Стоп»"
+    assert jobstate._cross_lock_acquire() is True
+    render_job.run_render_job(render.RJOB, two_jobs, "", str(tmp_path))
+    assert jobstate._JOB_LOCK_FH is None, "лок остался занят после «Стоп»"
     with render.RLOCK:
         render.RJOB["cancel"] = False
 
 
 def test_кривой_набор_в_render_run_не_берет_лок(client, tmp_path, lock_state):
     """Несуществующий файл или пустой набор — api_render_run отдаёт ошибку и лок не занимает."""
-    from api import _core
+    from core import jobstate
 
     r = client.post("/api/render_run", json={"jobs": [{"xml": str(tmp_path / "nonexistent.xml")}]})
     assert r.status_code == 200
     assert r.get_json().get("err") == "file_not_found"
-    assert _core._JOB_LOCK_FH is None, "лок взят при несуществующем файле"
+    assert jobstate._JOB_LOCK_FH is None, "лок взят при несуществующем файле"
 
     r = client.post("/api/render_run", json={"jobs": []})
     assert r.status_code == 200
     assert r.get_json().get("err") == "set_empty"
-    assert _core._JOB_LOCK_FH is None, "лок взят при пустом наборе"
+    assert jobstate._JOB_LOCK_FH is None, "лок взят при пустом наборе"

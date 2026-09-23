@@ -28,6 +28,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
 import api.render as render  # noqa: E402
+from core import render_job  # noqa: E402
 
 
 def _fileurl(p):
@@ -87,12 +88,12 @@ def test_combined_render_e2e_two_clips(batch_fixture, tmp_path, monkeypatch):
 
     # Подделка find_ae
     monkeypatch.setattr(
-        render, "find_ae",
+        render_job, "find_ae",
         lambda: ("fake_AfterFX.exe", "fake_aerender.exe", "Adobe After Effects 2026")
     )
     # Открытая копия After Effects останавливает прогон ДО запуска AfterFX (задание
     # AE-Hygiene) — в тесте AE «закрыт», иначе результат зависел бы от машины.
-    monkeypatch.setattr(render, "ae_running", lambda: False)
+    monkeypatch.setattr(render_job, "ae_running", lambda: False)
 
     class FakePopen:
         def __init__(self, cmd, *args, **kwargs):
@@ -167,7 +168,7 @@ def test_combined_render_e2e_two_clips(batch_fixture, tmp_path, monkeypatch):
         def wait(self):
             return 0
 
-    monkeypatch.setattr(render.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(render_job.subprocess, "Popen", FakePopen)
 
     batch = [
         {"xml_path": batch_fixture["xml1"], "outdir": outdir, "roto": False},
@@ -183,7 +184,7 @@ def test_combined_render_e2e_two_clips(batch_fixture, tmp_path, monkeypatch):
         ]
     )
 
-    render._run_render_combined(batch, outdir, render_dir)
+    render_job.run_render_combined(render.RJOB, batch, outdir, render_dir)
 
     assert not render.RJOB["failed"], f"Рендер упал с ошибками: {render.RJOB['failed']}"
     assert len(render.RJOB["result"]) == 2
@@ -219,12 +220,12 @@ def test_render_job_batch_dispatcher(batch_fixture, tmp_path, monkeypatch):
         f.write(b"data")
 
     monkeypatch.setattr(
-        render, "find_ae",
+        render_job, "find_ae",
         lambda: ("fake_AfterFX.exe", "fake_aerender.exe", "Adobe After Effects 2026")
     )
     # Открытая копия After Effects останавливает прогон ДО запуска AfterFX (задание
     # AE-Hygiene) — в тесте AE «закрыт», иначе результат зависел бы от машины.
-    monkeypatch.setattr(render, "ae_running", lambda: False)
+    monkeypatch.setattr(render_job, "ae_running", lambda: False)
 
     class FakePopen:
         def __init__(self, cmd, *args, **kwargs):
@@ -296,7 +297,7 @@ def test_render_job_batch_dispatcher(batch_fixture, tmp_path, monkeypatch):
         def wait(self):
             return 0
 
-    monkeypatch.setattr(render.subprocess, "Popen", FakePopen)
+    monkeypatch.setattr(render_job.subprocess, "Popen", FakePopen)
 
     jobs = [
         {"xml": batch_fixture["xml1"], "outdir": outdir, "roto": False, "style": {"roto": False}},
@@ -313,7 +314,7 @@ def test_render_job_batch_dispatcher(batch_fixture, tmp_path, monkeypatch):
         items=[]
     )
 
-    render._run_render_job(jobs, outdir, render_dir)
+    render_job.run_render_job(render.RJOB, jobs, outdir, render_dir)
 
     assert not render.RJOB["failed"], f"Рендер упал с ошибками: {render.RJOB['failed']}"
     assert render.RJOB["done"] is True

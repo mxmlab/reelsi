@@ -53,6 +53,7 @@ pytest; ruff; mypy (конфигурация берётся из `pyproject.toml
 import argparse
 import io
 import os
+import re
 import shutil
 import stat
 import subprocess
@@ -574,6 +575,70 @@ def resolve_linux_ssh(explicit: str | None = None) -> tuple[str | None, str]:
                   f"{ENV_LINUX_SSH}, либо пропусти шаг явным флагом --no-linux")
 
 
+def _parse_ci_pytest_args_text(text: str) -> str | None:
+    """Извлекает аргументы после 'python -m pytest tests' в шаге джобы test."""
+    in_jobs = False
+    in_test_job = False
+
+    for raw_line in text.splitlines():
+        if raw_line and not raw_line.startswith(" ") and not raw_line.startswith("#"):
+            in_jobs = (raw_line.rstrip() == "jobs:")
+            in_test_job = False
+            continue
+
+        if not in_jobs:
+            continue
+
+        # Заголовок джобы: ровно 2 пробела ("  job-name:")
+        m_job = re.match(r"^ {2}([a-zA-Z0-9_-]+):\s*$", raw_line)
+        if m_job:
+            in_test_job = (m_job.group(1) == "test")
+            continue
+
+        if not in_test_job:
+            continue
+
+        # Шаг внутри test (отступ 4+ пробелов): ищем run: ... python -m pytest tests ...
+        m_run = re.search(r"^\s*run:\s*(?:.*?\b)?python\s+-m\s+pytest\s+tests(?:\s+(.*))?$", raw_line)
+        if m_run:
+            return (m_run.group(1) or "").strip()
+
+    return None
+
+
+def extract_ci_test_pytest_args(tree: str) -> tuple[str | None, str]:
+    """Извлекает аргументы pytest из шага Tests джобы test в .github/workflows/ci.yml."""
+    ci_file = os.path.join(tree, ".github", "workflows", "ci.yml")
+    if not os.path.isfile(ci_file):
+        return None, f"в срезе не найден файл {os.path.join('.github', 'workflows', 'ci.yml')}"
+
+    try:
+        with open(ci_file, encoding="utf-8") as f:
+            text = f.read()
+    except OSError as e:
+        return None, f"ошибка чтения {ci_file}: {e}"
+
+    try:
+        import yaml  # type: ignore[import-untyped]
+        data = yaml.safe_load(text)
+        if isinstance(data, dict):
+            test_job = data.get("jobs", {}).get("test", {})
+            for step in test_job.get("steps", []):
+                if isinstance(step, dict):
+                    run_cmd = step.get("run", "")
+                    if isinstance(run_cmd, str) and "python -m pytest tests" in run_cmd:
+                        parts = run_cmd.split("python -m pytest tests", 1)
+                        return parts[1].strip(), ""
+    except Exception:
+        pass
+
+    args = _parse_ci_pytest_args_text(text)
+    if args is not None:
+        return args, ""
+
+    return None, "в .github/workflows/ci.yml не найдена строка 'run: python -m pytest tests ...' в джобе test"
+
+
 def step_linux(tree: str, host: str | None = None,
                image: str = DEFAULT_LINUX_IMAGE) -> StepResult:
     """Прогон тестов в docker с --init по ssh на Linux-хосте."""
@@ -581,11 +646,22 @@ def step_linux(tree: str, host: str | None = None,
     if target_host is None:
         return StepResult("linux", FAIL, reason)
 
+    pytest_args, err = extract_ci_test_pytest_args(tree)
+    if pytest_args is None:
+        return StepResult("linux", FAIL, err)
+
     print(f"Прогон тестов в docker на Linux-хосте {target_host} (образ {image})")
     try:
         tar_bytes = pack_slice_tar(tree)
     except Exception as e:
         return StepResult("linux", FAIL, f"ошибка упаковки среза в tar: {e}")
+
+    if pytest_args:
+        pytest_cmd = f"python -m pytest tests {pytest_args}"
+    else:
+        pytest_cmd = "python -m pytest tests"
+    if "-p no:cacheprovider" not in pytest_cmd:
+        pytest_cmd += " -p no:cacheprovider"
 
     # --init обязателен: без него pytest = PID 1 внутри контейнера, killpg(1)
     # совпадает со своей группой процессов и пропускается ядром Linux (дефект
@@ -594,7 +670,7 @@ def step_linux(tree: str, host: str | None = None,
         'd=$(mktemp -d) && '
         'tar -xf - -C "$d" && '
         '(cd "$d" && git init -q && git add -A && git -c user.name=slice -c user.email=slice@local commit -qm slice) && '
-        f'docker run --rm --init --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$d:/src" -w /src {image} python -m pytest tests -q -p no:cacheprovider; '
+        f'docker run --rm --init --user "$(id -u):$(id -g)" -e HOME=/tmp -e COVERAGE_FILE=/tmp/.coverage -v "$d:/src" -w /src {image} {pytest_cmd}; '
         'rc=$?; rm -rf "$d"; exit $rc'
     )
     cmd = ["ssh", "-o", "BatchMode=yes", target_host, remote_script]

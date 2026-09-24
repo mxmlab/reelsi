@@ -14,6 +14,7 @@ tests/test_public_slice.py.
 import hashlib
 import io
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -147,6 +148,19 @@ def repo(tmp_path):
     app_dir = tmp_path / "static" / "app"
     app_dir.mkdir(parents=True)
     (app_dir / "main.js").write_text("var app = 2;\n", encoding="utf-8")
+
+    workflows_dir = tmp_path / ".github" / "workflows"
+    workflows_dir.mkdir(parents=True)
+    (workflows_dir / "ci.yml").write_text(
+        "jobs:\n"
+        "  test:\n"
+        "    steps:\n"
+        "      - name: Tests\n"
+        "        env:\n"
+        "          COVERAGE_FILE: ${{ runner.temp }}/.coverage\n"
+        "        run: python -m pytest tests -q --cov=api --cov=core --cov=tools --cov-report=term:skip-covered --cov-fail-under=73\n",
+        encoding="utf-8",
+    )
 
     _git(["add", "."], cwd=tmp_path, check=True)
     _git(["commit", "-m", "Initial commit"], cwd=tmp_path, check=True)
@@ -346,6 +360,43 @@ def test_команда_ssh_содержит_init_batchmode_и_образ(repo, 
     assert "user@host" in args
 
 
+def test_команда_docker_шага_linux_содержит_аргументы_из_ci_и_coverage_file(repo, fake_tools, fake_commands):
+    """Команда docker шага linux содержит аргументы pytest из ci.yml и COVERAGE_FILE вне /src."""
+    fake = fake_commands()
+    assert slice_check.main(["--root", str(repo), "--linux-ssh", "user@host"]) == 0
+    ssh_calls = fake.calls_with("ssh")
+    assert len(ssh_calls) == 1
+    args = ssh_calls[0]["args"]
+
+    # Аргументы pytest из ci.yml
+    assert "--cov=api" in args
+    assert "--cov=core" in args
+    assert "--cov=tools" in args
+    assert "--cov-report=term:skip-covered" in args
+    assert "--cov-fail-under=73" in args
+
+    # COVERAGE_FILE вне /src
+    m = re.search(r"-e\s+COVERAGE_FILE=([^\s;]+)", args)
+    assert m, "команда docker не содержит -e COVERAGE_FILE"
+    cov_path = m.group(1)
+    assert not cov_path.startswith("/src"), f"COVERAGE_FILE ({cov_path}) находится внутри /src"
+    assert cov_path == "/tmp/.coverage"
+
+
+def test_linux_шаг_падает_если_в_ci_нет_строки_pytest(repo, fake_tools, fake_commands, capsys):
+    """Если в ci.yml среза нет строки pytest для джобы test, шаг linux падает с FAIL."""
+    ci_file = repo / ".github" / "workflows" / "ci.yml"
+    ci_file.write_text("jobs:\n  test:\n    steps:\n      - name: Other\n        run: echo hi\n", encoding="utf-8")
+    _git(["add", str(ci_file)], cwd=repo, check=True)
+    _git(["commit", "-m", "ci without pytest"], cwd=repo, check=True)
+
+    fake_commands()
+    assert slice_check.main(["--root", str(repo), "--linux-ssh", "user@host"]) != 0
+    out = capsys.readouterr().out
+    assert "[FAIL] linux" in out
+    assert "не найдена строка" in out
+
+
 def test_ненулевой_код_удалённой_стороны_дает_fail(repo, fake_tools, fake_commands, capsys):
     """Ненулевой код удалённой стороны даёт FAIL и делает код возврата ненулевым."""
     fake_commands({"ssh": 255}, err="ssh: connect to host failed\n")
@@ -370,7 +421,7 @@ def test_tar_содержит_файлы_среза(repo, fake_tools, fake_comma
     assert ".publicignore" in names
     for gone in ("TASKS.md", "docs/archive/old.md", "tests/personal_words.txt"):
         assert gone not in names, f"в tar попал игнорируемый файл: {gone}"
-    assert not any(n.startswith(".git") for n in names), "в tar попал служебный .git"
+    assert not any(n == ".git" or n.startswith(".git/") for n in names), "в tar попал служебный .git"
 
 
 def test_linux_image_позволяет_задать_свой_образ(repo, fake_tools, fake_commands):

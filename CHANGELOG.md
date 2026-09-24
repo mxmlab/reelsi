@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+- **Linux CI job after the 0.2.1-beta release**: all tests passed and coverage was above the floor, but the coverage data file `.coverage` was written into the repository and the test isolation guard failed the job. The data file now goes to the runner's temp directory, and the Linux step of the pre-release check runs exactly the CI test command, coverage included.
+
 ## 0.2.1-beta — 2026-09-24
 
 ### Highlights

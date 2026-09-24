@@ -89,3 +89,83 @@ def test_у_каждой_джобы_ci_есть_timeout_minutes():
             )
     except ImportError:
         pass
+
+
+def test_шаг_tests_джобы_test_имеет_coverage_file_в_env():
+    """У шага Tests джобы test объявлен COVERAGE_FILE в env вне репозитория, если есть --cov."""
+    assert os.path.isfile(CI_YML), f"файл {CI_YML} не найден"
+    with open(CI_YML, encoding="utf-8") as f:
+        text = f.read()
+
+    # Текстовый построчный разбор
+    in_jobs = False
+    in_test_job = False
+    step_has_cov = False
+    step_env_coverage_file: str | None = None
+    in_env = False
+
+    for raw_line in text.splitlines():
+        if raw_line and not raw_line.startswith(" ") and not raw_line.startswith("#"):
+            in_jobs = (raw_line.rstrip() == "jobs:")
+            in_test_job = False
+            continue
+
+        if not in_jobs:
+            continue
+
+        m_job = re.match(r"^ {2}([a-zA-Z0-9_-]+):\s*$", raw_line)
+        if m_job:
+            in_test_job = (m_job.group(1) == "test")
+            continue
+
+        if not in_test_job:
+            continue
+
+        # Шаг джобы test
+        m_step = re.match(r"^ {6}-\s*name:\s*(.+)$", raw_line)
+        if m_step:
+            if step_has_cov:
+                break
+            in_env = False
+            continue
+
+        if re.match(r"^ {8}env:\s*$", raw_line):
+            in_env = True
+            continue
+
+        if in_env:
+            m_cov_env = re.match(r"^ {10}COVERAGE_FILE:\s*(.+)$", raw_line)
+            if m_cov_env:
+                step_env_coverage_file = m_cov_env.group(1).strip()
+            elif not raw_line.startswith(" " * 10):
+                in_env = False
+
+        m_run = re.match(r"^ {8}run:\s*(.+)$", raw_line)
+        if m_run and "--cov" in m_run.group(1):
+            step_has_cov = True
+
+    assert step_has_cov, "в джобе test не найден шаг с запуском pytest c --cov"
+    assert step_env_coverage_file is not None, (
+        "у шага с --cov в джобе test отсутствует COVERAGE_FILE в env"
+    )
+    assert "${{ runner.temp }}" in step_env_coverage_file or "/tmp" in step_env_coverage_file, (
+        f"COVERAGE_FILE={step_env_coverage_file} должен указывать во временный каталог вне репозитория"
+    )
+
+    # Проверка через PyYAML, если доступен
+    try:
+        import yaml
+        data = yaml.safe_load(text)
+        steps = data.get("jobs", {}).get("test", {}).get("steps", [])
+        found_cov_step = False
+        for step in steps:
+            run_cmd = step.get("run", "")
+            if isinstance(run_cmd, str) and "--cov" in run_cmd:
+                found_cov_step = True
+                env = step.get("env", {})
+                assert "COVERAGE_FILE" in env, f"шаг {step.get('name')} с --cov не имеет COVERAGE_FILE в env"
+                assert "${{ runner.temp }}" in env["COVERAGE_FILE"] or "/tmp" in env["COVERAGE_FILE"]
+        assert found_cov_step, "yaml parser: не найден шаг с --cov в джобе test"
+    except ImportError:
+        pass
+

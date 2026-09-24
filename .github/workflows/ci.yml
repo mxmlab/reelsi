@@ -77,6 +77,8 @@ jobs:
         run: mypy
 
       - name: Tests
+        env:
+          COVERAGE_FILE: ${{ runner.temp }}/.coverage
         run: python -m pytest tests -q --cov=api --cov=core --cov=tools --cov-report=term:skip-covered --cov-fail-under=73
 
   test-windows:

@@ -41,7 +41,9 @@ pytest; ruff; mypy (конфигурация берётся из `pyproject.toml
 увидели бы чужие приватные файлы.
 
 Интерфейс: `--ref`, `--keep`, `--root` — как было; `--only ШАГ` гоняет один шаг
-при разборе; `--skip ШАГ` пропускает шаг явно; бинарник gitleaks берётся из
+при разборе; `--skip ШАГ` пропускает шаг явно; родительский каталог для среза —
+из `--workdir DIR` или `$REELSI_SLICE_WORKDIR` (по умолчанию системный `%TEMP%`);
+бинарник gitleaks берётся из
 `--gitleaks PATH` или `$GITLEAKS`, а `--no-gitleaks` — явный пропуск с громкой
 строкой в выводе; удалённый хост для шага linux берётся из `--linux-ssh USER@HOST`
 или `$REELSI_LINUX_SSH`, образ — `--linux-image` (по умолчанию `reelsi-ci:py310`),
@@ -87,6 +89,7 @@ NO_BINARY_CODE = 127
 ENV_GITLEAKS = "GITLEAKS"
 GITLEAKS_CONFIG = ".gitleaks.toml"
 ENV_LINUX_SSH = "REELSI_LINUX_SSH"
+ENV_SLICE_WORKDIR = "REELSI_SLICE_WORKDIR"
 DEFAULT_LINUX_IMAGE = "reelsi-ci:py310"
 REQUIREMENTS_FILES = ("requirements.txt", "requirements-optional.txt", "requirements-dev.txt")
 COMPILE_PATHS = ("api", "core", "tools", "tests", "webui.py", "reelsi.py", "doctor.py")
@@ -619,7 +622,7 @@ def extract_ci_test_pytest_args(tree: str) -> tuple[str | None, str]:
         return None, f"ошибка чтения {ci_file}: {e}"
 
     try:
-        import yaml  # type: ignore[import-untyped]
+        import yaml
         data = yaml.safe_load(text)
         if isinstance(data, dict):
             test_job = data.get("jobs", {}).get("test", {})
@@ -795,6 +798,8 @@ def main(argv: list[str] | None = None, root: str | None = None) -> int:
     )
     parser.add_argument("--ref", default="HEAD", help="Коммит-источник среза (по умолчанию HEAD)")
     parser.add_argument("--keep", action="store_true", help="Оставить каталог среза на диске (для разбора падений)")
+    parser.add_argument("--workdir", default=None, metavar="DIR",
+                        help=f"Родительский каталог для дерева среза (иначе ${ENV_SLICE_WORKDIR} или %TEMP%)")
     parser.add_argument("--root", default=None, help="Корень репозитория (по умолчанию автоопределение)")
     parser.add_argument("--only", action="append", default=None, metavar="ШАГ",
                         help=f"Гнать только эти шаги ({', '.join(STEP_NAMES)}); можно через запятую")
@@ -825,7 +830,13 @@ def main(argv: list[str] | None = None, root: str | None = None) -> int:
         return 2
 
     repo_root = args.root or root or _detect_root()
-    tree = tempfile.mkdtemp(prefix=TREE_PREFIX)
+    raw_workdir = args.workdir if args.workdir is not None else os.environ.get(ENV_SLICE_WORKDIR)
+    workdir = str(raw_workdir).strip() if raw_workdir else None
+    if workdir:
+        os.makedirs(workdir, exist_ok=True)
+        tree = tempfile.mkdtemp(prefix=TREE_PREFIX, dir=workdir)
+    else:
+        tree = tempfile.mkdtemp(prefix=TREE_PREFIX)
     try:
         entries = slice_entries(repo_root, args.ref)
         write_tree(repo_root, entries, tree)

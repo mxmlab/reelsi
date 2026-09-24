@@ -51,7 +51,7 @@ def _mirror_proc(p: Any) -> None:
     RPROC = p
 
 
-def remit(line: str, **vars: Any) -> None:
+def remit(line: str, /, **vars: Any) -> None:
     """Строка в лог рендера (свой лог, не общий JOB).
 
     Живёт здесь, а не в core/render_job.py, намеренно: `core.app_meta.wrap_emit`

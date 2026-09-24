@@ -15,7 +15,7 @@ ruff>=0.6
 # static type check on the CORE BOUNDARY: the strict module list lives in
 # [tool.mypy] pyproject.toml, the ratchet in tests/test_typing_ratchet.py.
 # Pinned by minor: a new major changes the rules and fails the build for no reason
-mypy>=1.11,<2
+mypy>=2.3,<3
 # ONLY for retraining the breath detector (train_breath.py);
 # production ships the extracted breath_model.json
 scikit-learn>=1.3

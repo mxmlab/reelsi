@@ -75,7 +75,7 @@ def api_ai_inserts() -> Response:
         try:
             from core import aicut
             notes = []                      # сдвиги таймингов/зон видны в UI-логе, а не глушатся
-            def _emit(line: str = "", **vars: Any) -> None:
+            def _emit(line: str = "", /, **vars: Any) -> None:
                 s = t(line, **vars) if line else ""
                 notes.append(s)
                 emit(line, **vars)         # дублируем в JOB-лог (серверный прогресс стриминга)
@@ -487,7 +487,7 @@ def api_ai_intro() -> Response:
         try:
             from core import aicut
             notes = []                      # прогресс стрима и переносы строк — в UI-лог, не в /dev/null
-            def _emit(line: str = "", **vars: Any) -> None:
+            def _emit(line: str = "", /, **vars: Any) -> None:
                 s = t(line, **vars) if line else ""
                 notes.append(s)
                 emit(line, **vars)

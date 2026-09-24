@@ -403,7 +403,7 @@ def t(key: str, **vars: Any) -> str:
     return val
 
 
-def console_emit(line: str = "", **vars: Any) -> None:
+def console_emit(line: str = "", /, **vars: Any) -> None:
     """Консольный вывод логов с переводом по словарю static/i18n/en.json.
 
     Единый дефолт `emit=console_emit` для продуктовых модулей вместо `emit=print`.
@@ -425,7 +425,7 @@ def wrap_emit(emit_fn: Callable[..., Any] | None = None) -> Callable[..., Any]:
     fn_mod = getattr(emit_fn, "__module__", "") or ""
     if fn_name in ("emit", "remit", "_emit") and ("api." in fn_mod or fn_mod.startswith("api")):
         return emit_fn
-    def _e(line: str = "", **vars: Any) -> Any:
+    def _e(line: str = "", /, **vars: Any) -> Any:
         if not vars:
             try:
                 return emit_fn(line)

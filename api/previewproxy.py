@@ -22,7 +22,7 @@ PXJOB: dict[str, Any] = {"running": False, "done": False, "log": [], "cur": "", 
 PXLOCK = threading.Lock()
 
 
-def _emit(line: str, **vars: Any) -> None:
+def _emit(line: str, /, **vars: Any) -> None:
     with PXLOCK:
         entry = log_entry(line, vars)
         PXJOB["log"].append(entry)

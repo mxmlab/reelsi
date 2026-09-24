@@ -161,6 +161,7 @@ LOWER_BOUND = (
     "tools/train_breath.py",
     "tools/verify_ae.py",
     "tools/webui_test.py",
+    "tools/route_coverage.py",
 )
 
 # Каталоги, которые сканирует сторож писателей .project.json: код, а не тесты

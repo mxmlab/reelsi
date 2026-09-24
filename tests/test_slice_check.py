@@ -460,6 +460,41 @@ def test_неизвестный_шаг_отвергается(repo, fake_command
     assert "Неизвестный шаг" in capsys.readouterr().err
 
 
+def test_workdir_кладёт_дерево_среза_внутрь_каталога(repo, fake_tools, fake_commands, tmp_path):
+    """`--workdir DIR`: каталог создаётся при отсутствии, дерево среза — внутри него, а после main() его на диске нет."""
+    wd = tmp_path / "wd"
+    assert not wd.exists()
+
+    fake = fake_commands()
+    assert slice_check.main(["--root", str(repo), "--only", "pytest", "--workdir", str(wd)]) == 0
+
+    assert wd.is_dir(), "каталог --workdir не создан"
+    trees = _pytest_trees(fake)
+    assert len(trees) == 1
+    tree = trees[0]
+    assert os.path.commonpath([os.path.abspath(tree), str(wd)]) == str(wd), \
+        f"дерево среза {tree} создано не внутри --workdir {wd}"
+    assert not os.path.exists(tree), "дерево среза не удалено после main()"
+
+
+def test_env_workdir_кладёт_дерево_среза_внутрь_каталога(repo, fake_tools, fake_commands, tmp_path, monkeypatch):
+    """`$REELSI_SLICE_WORKDIR`: тот же эффект, что у `--workdir`, но через переменную окружения."""
+    wd = tmp_path / "wd_env"
+    assert not wd.exists()
+    monkeypatch.setenv(slice_check.ENV_SLICE_WORKDIR, str(wd))
+
+    fake = fake_commands()
+    assert slice_check.main(["--root", str(repo), "--only", "pytest"]) == 0
+
+    assert wd.is_dir(), "каталог из REELSI_SLICE_WORKDIR не создан"
+    trees = _pytest_trees(fake)
+    assert len(trees) == 1
+    tree = trees[0]
+    assert os.path.commonpath([os.path.abspath(tree), str(wd)]) == str(wd), \
+        f"дерево среза {tree} создано не внутри {slice_check.ENV_SLICE_WORKDIR}"
+    assert not os.path.exists(tree), "дерево среза не удалено после main()"
+
+
 def test_remove_tree_удаляет_каталог_с_подкаталогом_и_readonly(tmp_path):
     """Игрушечный каталог с подкаталогом и файлом «только для чтения» удаляется целиком."""
     toy = tmp_path / "toy"

@@ -8,7 +8,7 @@ from flask import request, jsonify, send_file, Response
 from core.project_file import write_project
 from ._core import (JOB, LOCK, bp, emit, item_done, item_fail, item_set, items_init, job_finish,
                     job_start, journal_touch, set_progress, _never_serve, umsg_err,
-                    _cross_lock_release, jstr, sysexit_text)
+                    _cross_lock_release, jstr, sysexit_text, sidecar_path)
 from core.umsg import ReelsiError, umsg
 from .editor import _ensure_project, _sidecar_yellow, _sidecar_caption
 from .inserts import _adopt_inserts, _insert_dest
@@ -390,7 +390,7 @@ def api_cams_save() -> Response:
             if yellow:
                 colored = len(xml2ae.write_highlights(xml, yellow).get("colored", []))
             p["assign"] = assign
-            write_project(os.path.splitext(xml)[0] + ".project.json", p)
+            write_project(sidecar_path(xml, ".project.json"), p)
             return jsonify(ok=True, segs=len(keep), dur=round(info.get("total_s", 0), 1),
                            subs=(len(sub_words) if sub_words else 0), yellow=colored)
         except ReelsiError: raise
@@ -495,7 +495,7 @@ def api_swap_cam() -> Response:
             if yellow:                                       # вернуть жёлтые (в XML) — цвет с аудио cam1
                 colored = len(xml2ae.write_highlights(xml, yellow).get("colored", []))
             p["cams"] = cams; p["offsets"] = offsets
-            write_project(os.path.splitext(xml)[0] + ".project.json", p)
+            write_project(sidecar_path(xml, ".project.json"), p)
             return jsonify(ok=True, offset=round(float(off), 3), conf=round(float(conf), 2),
                            low_conf=(conf < 0.30), subs=(len(sub_words) if sub_words else 0),
                            yellow=colored, name=os.path.basename(new_path))

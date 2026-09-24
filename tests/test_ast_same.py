@@ -6,6 +6,10 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
+from tools.ast_same import main as ast_same_main
+
 ROOT = Path(__file__).resolve().parent.parent
 AST_SAME = ROOT / "tools" / "ast_same.py"
 
@@ -32,7 +36,7 @@ def _init_repo(tmp_path: Path) -> None:
 
 
 def _run_cli(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    """Запускает tools/ast_same.py через subprocess."""
+    """Запускает tools/ast_same.py через subprocess (сквозной тест)."""
     return subprocess.run(
         [sys.executable, str(AST_SAME), *args],
         cwd=str(cwd),
@@ -42,7 +46,27 @@ def _run_cli(args: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def test_added_annotation_same_with_types_only(tmp_path: Path) -> None:
+def _run_inprocess(
+    args: list[str],
+    cwd: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> subprocess.CompletedProcess[str]:
+    """Запускает tools/ast_same.py в процессе (для покрытия)."""
+    monkeypatch.chdir(cwd)
+    code = ast_same_main(args)
+    captured = capsys.readouterr()
+    return subprocess.CompletedProcess(
+        args=[sys.executable, str(AST_SAME), *args],
+        returncode=code,
+        stdout=captured.out,
+        stderr=captured.err,
+    )
+
+
+def test_added_annotation_same_with_types_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Добавленная аннотация → same с --types-only и DIFF без флагов."""
     _init_repo(tmp_path)
     f = tmp_path / "calc.py"
@@ -54,17 +78,19 @@ def test_added_annotation_same_with_types_only(tmp_path: Path) -> None:
     f.write_text("def calc(x: int) -> int:\n    y: int = x + 1\n    return y\n", encoding="utf-8")
 
     # С флагом --types-only: same, код 0
-    res_types = _run_cli(["HEAD", "--types-only", "calc.py"], tmp_path)
+    res_types = _run_inprocess(["HEAD", "--types-only", "calc.py"], tmp_path, monkeypatch, capsys)
     assert res_types.returncode == 0
     assert "same calc.py" in res_types.stdout
 
     # Без флагов: DIFF, код 1
-    res_strict = _run_cli(["HEAD", "calc.py"], tmp_path)
+    res_strict = _run_inprocess(["HEAD", "calc.py"], tmp_path, monkeypatch, capsys)
     assert res_strict.returncode == 1
     assert "DIFF calc.py" in res_strict.stdout
 
 
-def test_int_or_zero_is_diff(tmp_path: Path) -> None:
+def test_int_or_zero_is_diff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """int(x) → int(x or 0) → DIFF даже с --types-only."""
     _init_repo(tmp_path)
     f = tmp_path / "logic.py"
@@ -74,12 +100,14 @@ def test_int_or_zero_is_diff(tmp_path: Path) -> None:
 
     f.write_text("def f(x):\n    return int(x or 0)\n", encoding="utf-8")
 
-    res = _run_cli(["HEAD", "--types-only", "logic.py"], tmp_path)
+    res = _run_inprocess(["HEAD", "--types-only", "logic.py"], tmp_path, monkeypatch, capsys)
     assert res.returncode == 1
     assert "DIFF logic.py" in res.stdout
 
 
-def test_added_assert_is_diff(tmp_path: Path) -> None:
+def test_added_assert_is_diff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Добавлен assert → DIFF."""
     _init_repo(tmp_path)
     f = tmp_path / "guard.py"
@@ -90,12 +118,14 @@ def test_added_assert_is_diff(tmp_path: Path) -> None:
     f.write_text("def f(x):\n    assert x > 0\n    return x * 2\n", encoding="utf-8")
 
     # Проверяем как без флагов, так и с --types-only
-    res = _run_cli(["HEAD", "--types-only", "guard.py"], tmp_path)
+    res = _run_inprocess(["HEAD", "--types-only", "guard.py"], tmp_path, monkeypatch, capsys)
     assert res.returncode == 1
     assert "DIFF guard.py" in res.stdout
 
 
-def test_removed_module_docstring(tmp_path: Path) -> None:
+def test_removed_module_docstring(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Удалён докстринг модуля → same только с --ignore-docstrings."""
     _init_repo(tmp_path)
     f = tmp_path / "doc.py"
@@ -106,21 +136,23 @@ def test_removed_module_docstring(tmp_path: Path) -> None:
     f.write_text("def get_val():\n    return 42\n", encoding="utf-8")
 
     # С флагом --ignore-docstrings: same, код 0
-    res_doc = _run_cli(["HEAD", "--ignore-docstrings", "doc.py"], tmp_path)
+    res_doc = _run_inprocess(["HEAD", "--ignore-docstrings", "doc.py"], tmp_path, monkeypatch, capsys)
     assert res_doc.returncode == 0
     assert "same doc.py" in res_doc.stdout
 
     # Без флага (и с другим флагом): DIFF, код 1
-    res_none = _run_cli(["HEAD", "doc.py"], tmp_path)
+    res_none = _run_inprocess(["HEAD", "doc.py"], tmp_path, monkeypatch, capsys)
     assert res_none.returncode == 1
     assert "DIFF doc.py" in res_none.stdout
 
-    res_other = _run_cli(["HEAD", "--ignore-annotations", "doc.py"], tmp_path)
+    res_other = _run_inprocess(["HEAD", "--ignore-annotations", "doc.py"], tmp_path, monkeypatch, capsys)
     assert res_other.returncode == 1
     assert "DIFF doc.py" in res_other.stdout
 
 
-def test_cast_call_replacement(tmp_path: Path) -> None:
+def test_cast_call_replacement(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """cast(int, x) вместо x → same с --ignore-cast."""
     _init_repo(tmp_path)
     f = tmp_path / "typing_cast.py"
@@ -131,17 +163,19 @@ def test_cast_call_replacement(tmp_path: Path) -> None:
     f.write_text("def f(x):\n    y = cast(int, x)\n    return y\n", encoding="utf-8")
 
     # С флагом --ignore-cast: same, код 0
-    res_cast = _run_cli(["HEAD", "--ignore-cast", "typing_cast.py"], tmp_path)
+    res_cast = _run_inprocess(["HEAD", "--ignore-cast", "typing_cast.py"], tmp_path, monkeypatch, capsys)
     assert res_cast.returncode == 0
     assert "same typing_cast.py" in res_cast.stdout
 
     # Без флага: DIFF, код 1
-    res_strict = _run_cli(["HEAD", "typing_cast.py"], tmp_path)
+    res_strict = _run_inprocess(["HEAD", "typing_cast.py"], tmp_path, monkeypatch, capsys)
     assert res_strict.returncode == 1
     assert "DIFF typing_cast.py" in res_strict.stdout
 
 
-def test_tuple_assignment_split_is_diff(tmp_path: Path) -> None:
+def test_tuple_assignment_split_is_diff(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """a, b = 1, 2 разбито на две строки → DIFF."""
     _init_repo(tmp_path)
     f = tmp_path / "assign.py"
@@ -151,12 +185,14 @@ def test_tuple_assignment_split_is_diff(tmp_path: Path) -> None:
 
     f.write_text("a = 1\nb = 2\n", encoding="utf-8")
 
-    res = _run_cli(["HEAD", "--types-only", "assign.py"], tmp_path)
+    res = _run_inprocess(["HEAD", "--types-only", "assign.py"], tmp_path, monkeypatch, capsys)
     assert res.returncode == 1
     assert "DIFF assign.py" in res.stdout
 
 
-def test_new_file_reporting_and_allow_new(tmp_path: Path) -> None:
+def test_new_file_reporting_and_allow_new(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Новый файл → NEW и код 1, с --allow-new → 0."""
     _init_repo(tmp_path)
     f_old = tmp_path / "old.py"
@@ -168,18 +204,18 @@ def test_new_file_reporting_and_allow_new(tmp_path: Path) -> None:
     f_new.write_text("y = 2\n", encoding="utf-8")
 
     # Без --allow-new: NEW и код 1
-    res_strict = _run_cli(["HEAD", "new_module.py"], tmp_path)
+    res_strict = _run_inprocess(["HEAD", "new_module.py"], tmp_path, monkeypatch, capsys)
     assert res_strict.returncode == 1
     assert "NEW new_module.py" in res_strict.stdout
 
     # С --allow-new: NEW и код 0
-    res_allow = _run_cli(["HEAD", "--allow-new", "new_module.py"], tmp_path)
+    res_allow = _run_inprocess(["HEAD", "--allow-new", "new_module.py"], tmp_path, monkeypatch, capsys)
     assert res_allow.returncode == 0
     assert "NEW new_module.py" in res_allow.stdout
 
 
 def test_diff_flag_prints_unified_diff(tmp_path: Path) -> None:
-    """Флаг --diff печатает unified diff для различающихся файлов."""
+    """Флаг --diff печатает unified diff для различающихся файлов (сквозной тест через subprocess)."""
     _init_repo(tmp_path)
     f = tmp_path / "diff_test.py"
     f.write_text("def f():\n    return 1\n", encoding="utf-8")
@@ -195,7 +231,9 @@ def test_diff_flag_prints_unified_diff(tmp_path: Path) -> None:
     assert "+    return 2" in res.stdout
 
 
-def test_no_paths_scans_git_diff_excluding_tests(tmp_path: Path) -> None:
+def test_no_paths_scans_git_diff_excluding_tests(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
     """Без путей проверяются изменённые файлы из git diff, пропуская tests/."""
     _init_repo(tmp_path)
     src = tmp_path / "core.py"
@@ -212,6 +250,6 @@ def test_no_paths_scans_git_diff_excluding_tests(tmp_path: Path) -> None:
     tst.write_text("assert False\n", encoding="utf-8")
 
     # Запускаем без путей
-    res = _run_cli(["HEAD"], tmp_path)
+    res = _run_inprocess(["HEAD"], tmp_path, monkeypatch, capsys)
     assert "core.py" in res.stdout
     assert "test_dummy.py" not in res.stdout

@@ -291,6 +291,47 @@ def _never_serve(path: str) -> bool:
     return False
 
 
+def sidecar_path(base: str, suffix: str) -> str:
+    """Путь к сайдкару рядом с базовым файлом и проверка его безопасности.
+
+    Строит путь `<stem><suffix>` рядом с `base` (или `<base><suffix>`, если у
+    `base` нет расширения).
+
+    Отказывает (ReelsiError), если сайдкар — секрет по `_never_serve` или
+    ссылка (симлинк/жёсткая ссылка), уводящая из каталога базового файла
+    (realpath сайдкара не в том же каталоге, что realpath базы).
+    Обычный файл или отсутствие файла — путь возвращается как есть.
+    """
+    if not base or not isinstance(base, str) or not base.strip():
+        return ""
+    clean_base = base.strip().strip('"')
+    stem = os.path.splitext(clean_base)[0]
+    target = (stem + suffix) if suffix else clean_base
+
+    if _never_serve(target):
+        raise ReelsiError(umsg("forbidden_sidecar", f"Недопустимый сайдкар: {target}", path=target))
+
+    if os.path.lexists(target):
+        try:
+            real_base = os.path.realpath(clean_base)
+            real_base_dir = os.path.normcase(os.path.dirname(real_base))
+        except ReelsiError: raise
+        except Exception:
+            real_base_dir = os.path.normcase(os.path.dirname(os.path.abspath(clean_base)))
+
+        try:
+            real_target = os.path.realpath(target)
+            real_target_dir = os.path.normcase(os.path.dirname(real_target))
+        except ReelsiError: raise
+        except Exception:
+            real_target_dir = os.path.normcase(os.path.dirname(os.path.abspath(target)))
+
+        if real_base_dir != real_target_dir:
+            raise ReelsiError(umsg("forbidden_sidecar", f"Недопустимый сайдкар: {target}", path=target))
+
+    return target
+
+
 def is_reelsi_target(path: Any, kind: str) -> bool:
     """Своя ли цель у роута, который по ней УДАЛЯЕТ: нарезка (`kind="cut"`) или папка вывода (`kind="outdir"`).
 
@@ -324,10 +365,12 @@ def is_reelsi_target(path: Any, kind: str) -> bool:
         try:
             if os.path.splitext(path)[1].lower() != ".xml" or not os.path.isfile(path):
                 return False
-            stem = os.path.splitext(os.path.basename(path))[0]
-            if os.path.isfile(os.path.join(os.path.dirname(os.path.abspath(path)),
-                                           stem + ".project.json")):
-                return True
+            try:
+                proj_path = sidecar_path(path, ".project.json")
+                if proj_path and os.path.isfile(proj_path):
+                    return True
+            except ReelsiError:
+                pass  # сайдкар-секрет/ссылка наружу → не считаем проектным признаком, дальше решаем по самому XML
             import xml.etree.ElementTree as ET
             # Локальное имя тега: `{ns}xmeml` — всё ещё xmeml, а любая другая
             # ошибка разбора означает мусор, а не нарезку.
@@ -358,7 +401,7 @@ LOCK = threading.Lock()
 LOG_CAP = 4000          # ИИ-нарезка стримит тысячи строк — без кэпа лог растёт бесконечно
 
 
-def emit(line: str, **vars: Any) -> None:
+def emit(line: str, /, **vars: Any) -> None:
     with LOCK:
         entry = log_entry(line, vars)
         JOB["log"].append(entry)

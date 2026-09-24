@@ -92,7 +92,8 @@ def split_mid_groups_precomps(mids: Any, subs: Any = ()) -> tuple[list[Any], int
     cur: list[Any] = []
     all_pc = []          # прекомпы этого ролика: (fi, last_i, n_lines)
     n_null = 0
-    for g in mids + [{"break": True}]:          # фиктивный break в конце закрывает последний
+    fake_break = {"break": True}
+    for g in mids + [fake_break]:          # фиктивный break в конце закрывает последний
         if g.get("break") and cur:
             fi = next((x["from"] for x in cur if x.get("from") is not None), None)
             li = next((x["from"] for x in reversed(cur) if x.get("from") is not None), None)
@@ -103,6 +104,8 @@ def split_mid_groups_precomps(mids: Any, subs: Any = ()) -> tuple[list[Any], int
                         break
                 all_pc.append((fi, li, len(cur)))
             cur = []
+        if g is fake_break:
+            continue
         if not (mids and g is mids[-1] and g.get("break")):
             if g.get("from") is None:
                 n_null += 1

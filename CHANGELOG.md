@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+- **More tests**: speech recognition back-ends (`core/asr_backends.py` 47 → 95 %, `core/ctc_asr.py` 0 → 98 %), the cut job (`core/cutjob.py` 43 → 100 %) and the pure logic of `tools/` scripts — all without network, models or GPU. Line coverage is 78.5 %; the CI floor is raised from 73 % to 77 %.
+- **Every API route is exercised by a test**: `tools/route_coverage.py` finds, for each of the 88 routes, the tests that actually call it through the test client; 13 routes were only mentioned before and now have behaviour tests, and a guard fails on a new route without one.
+
+### Changed
+- **mypy 2.x**: the type checker is pinned to `>=2.3,<3` in `requirements-dev.txt`, CI and the CI image.
+
 ### Fixed
+- **Forced word alignment was silently dropped**: whenever the aligner printed a line, logging it raised a `TypeError` (the template argument and the `line` placeholder shared a name), the error was swallowed and the cut kept the unaligned timings. The template argument of every log function is now positional-only, and a guard test covers all of them.
+- `tools/intro_rules.py` counted one extra empty accent per clip.
+- **Sidecar files next to a requested path are checked like the path itself**: `.project.json`, `.words.json`, `.cuts.json` and the other sidecars derived from a path sent to the server are refused when they are a secret or a link leading out of the clip folder — 14 places in `api/` go through one check.
 - **Linux CI job after the 0.2.1-beta release**: all tests passed and coverage was above the floor, but the coverage data file `.coverage` was written into the repository and the test isolation guard failed the job. The data file now goes to the runner's temp directory, and the Linux step of the pre-release check runs exactly the CI test command, coverage included.
 
 ## 0.2.1-beta — 2026-09-24

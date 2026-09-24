@@ -169,6 +169,7 @@ files = [
     "tools/train_breath.py",
     "tools/verify_ae.py",
     "tools/webui_test.py",
+    "tools/route_coverage.py",
 ]
 
 # disallow_untyped_defs — ровно для строгого списка: публичные функции и методы
@@ -300,6 +301,7 @@ module = [
     "tools.train_breath",
     "tools.verify_ae",
     "tools.webui_test",
+    "tools.route_coverage",
 ]
 disallow_untyped_defs = true
 

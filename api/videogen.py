@@ -153,7 +153,7 @@ def vhist_scan_files(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return items
 
 
-def vemit(line: Any, **vars: Any) -> None:
+def vemit(line: Any, /, **vars: Any) -> None:
     """Строка в лог генерации видео (усечение как у основного лога).
 
     `aicut.gen_video` пишет структурно, как основной JOB. В VJOB хранится готовая

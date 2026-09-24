@@ -42,7 +42,7 @@ def _json_safe(obj: Any) -> Any:
         return str(obj)
 
 
-def log_entry(line: str, vars: dict[str, Any] | None = None,
+def log_entry(line: str, /, vars: dict[str, Any] | None = None,
               **extra: Any) -> dict[str, Any] | str:
     """Сборка записи лога со структурными переменными.
 

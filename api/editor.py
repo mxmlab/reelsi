@@ -7,7 +7,7 @@ from typing import Any, Sequence, cast
 from flask import request, jsonify, Response
 from core.fileio import atomic_json_dump
 from core.project_file import ProjectFile, read_project, write_project
-from ._core import bp, emit, is_reelsi_target, umsg_err, jstr
+from ._core import bp, emit, is_reelsi_target, umsg_err, jstr, sidecar_path
 from core.umsg import ReelsiError, umsg
 from core.applog import get_logger
 
@@ -16,7 +16,9 @@ log = get_logger(__name__)
 
 def _sidecar_yellow(xml_path: str) -> list[int]:
     """Indices from <stem>.yellow.json next to the XML (e.g. written by aicut)."""
-    p = os.path.splitext(xml_path)[0] + ".yellow.json"
+    if not xml_path:
+        return []
+    p = sidecar_path(xml_path, ".yellow.json")
     if not os.path.isfile(p):
         return []
     try:
@@ -37,7 +39,9 @@ def _sidecar_yellow(xml_path: str) -> list[int]:
 
 def _sidecar_caption(xml_path: str) -> str:
     """Text from <stem>.caption.json next to the XML."""
-    p = os.path.splitext(xml_path)[0] + ".caption.json"
+    if not xml_path:
+        return ""
+    p = sidecar_path(xml_path, ".caption.json")
     if not os.path.isfile(p):
         return ""
     try:
@@ -64,7 +68,7 @@ def api_caption() -> Response:
         try:
             if "text" in d:
                 text = jstr(d, "text").strip()
-                p = os.path.splitext(xml_path)[0] + ".caption.json"
+                p = sidecar_path(xml_path, ".caption.json")
                 atomic_json_dump(p, {"text": text}, indent=1)
                 return jsonify(ok=True, text=text)
             else:
@@ -131,10 +135,12 @@ def api_xml_state() -> Response:
 def api_omnicut_cuts() -> Response:
     """Вернуть cut-log (<stem>.cuts.json рядом с XML) — что и почему вырезано Omni-нарезкой."""
     xml_path = jstr(request.get_json() or {}, "xml").strip().strip('"')
-    p = os.path.splitext(xml_path)[0] + ".cuts.json"
-    if not os.path.isfile(p):
+    if not xml_path:
         return jsonify(ok=True, cuts=[])
     try:
+        p = sidecar_path(xml_path, ".cuts.json")
+        if not os.path.isfile(p):
+            return jsonify(ok=True, cuts=[])
         try:
             return jsonify(ok=True, cuts=json.load(open(p, encoding="utf-8")))
         except ReelsiError: raise
@@ -161,10 +167,10 @@ def api_breaths() -> Response:
         return jsonify(**umsg_err(ReelsiError(umsg("not_a_cut",
                                                   f"Это не нарезка Reelsi: {xml_path}",
                                                   path=xml_path))))
-    p = os.path.splitext(xml_path)[0] + ".breaths.json"
-    if not os.path.isfile(p):
-        return jsonify(ok=True, marks=[])
     try:
+        p = sidecar_path(xml_path, ".breaths.json")
+        if not os.path.isfile(p):
+            return jsonify(ok=True, marks=[])
         try:
             return jsonify(ok=True, marks=json.load(open(p, encoding="utf-8")))
         except ReelsiError: raise
@@ -286,7 +292,7 @@ def api_editor_save() -> Response:
             raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml}",
                                   path=xml))
         try:
-            proj_path = os.path.splitext(xml)[0] + ".project.json"
+            proj_path = sidecar_path(xml, ".project.json")
             from core import align
             from core import xmlbuild
             from core import xml2ae
@@ -323,7 +329,8 @@ def api_editor_save() -> Response:
             # повторной нарезке LLM получает «не выкидывай похожее», куски защищаются жёстко
             if old_keep:
                 try:
-                    om = json.load(open(os.path.splitext(xml)[0] + ".omni.json", encoding="utf-8"))
+                    om_path = sidecar_path(xml, ".omni.json")
+                    om = json.load(open(om_path, encoding="utf-8")) if os.path.isfile(om_path) else []
                 except ReelsiError: raise
                 except Exception:
                     om = []
@@ -385,7 +392,7 @@ def _project_from_xml(xml: str) -> ProjectFile:
 
 def _ensure_project(xml: str) -> ProjectFile:
     """Проект из сайдкара, а если нет — реконструировать из XML и сохранить сайдкар."""
-    p = os.path.splitext(xml)[0] + ".project.json"
+    p = sidecar_path(xml, ".project.json")
     if os.path.isfile(p):
         # Рваный файл (крах/отбой в момент старой неатомарной записи) не должен
         # валить весь редактор: пересоберём проект заново и перепишем сайдкар.
@@ -454,7 +461,7 @@ def api_gen_subs() -> Response:
                 # и выгружает свою модель после транскрипции).
                 # emit — чтобы подмены по словарю терминов были видны в логе, а не молча
                 words = asr_backends.transcribe_words(tmp, engine=subengine, emit=emit)  # [{w,start,end}] сек на cut-таймлайне
-                words_path = os.path.splitext(xml)[0] + ".words.json"
+                words_path = sidecar_path(xml, ".words.json")
                 atomic_json_dump(words_path, words, indent=1)
             finally:
                 try:
@@ -553,13 +560,14 @@ def api_set_yellow() -> Response:
             from core import xml2ae
             idx = [int(i) for i in d["indices"]]
             res = xml2ae.set_highlights(xml, idx)
+            yellow_path = sidecar_path(xml, ".yellow.json")
             try:                                             # сайдкар .yellow.json — фолбэк для /api/words
-                atomic_json_dump(os.path.splitext(xml)[0] + ".yellow.json",
+                atomic_json_dump(yellow_path,
                                   {"yellow": sorted(res.get("colored", []))})
             except ReelsiError: raise
             except Exception as ex:
                 log.warning("сайдкар .yellow.json не записан (%s): %s",
-                            os.path.splitext(xml)[0] + ".yellow.json", ex)
+                            yellow_path, ex)
             return jsonify(ok=True, colored=res.get("colored", []),
                            skipped=[list(s) for s in res.get("skipped", [])])
         except ReelsiError: raise
@@ -590,7 +598,7 @@ def api_clear_subs() -> Response:
             keep = [(float(s), float(e)) for s, e in p.get("keep", [])]
             stored = p.get("assign")
             assign = ([max(0, min(N - 1, int(x))) for x in stored]
-                      if N > 1 and isinstance(stored, list) and len(stored) == len(keep) else None)
+                       if N > 1 and isinstance(stored, list) and len(stored) == len(keep) else None)
             if assign is None and N > 1:
                 from core import align
                 assign = align.assign_cameras(keep, N, return_every=p.get("cam_return", 2),
@@ -602,7 +610,7 @@ def api_clear_subs() -> Response:
                 # Пустой монтаж: build файл не тронул — текст гарда отдаём как есть.
                 raise ReelsiError(umsg("clear_subs_failed", str(e), err=str(e)))
             try:
-                os.remove(os.path.splitext(xml)[0] + ".yellow.json")
+                os.remove(sidecar_path(xml, ".yellow.json"))
             except OSError:
                 pass  # сайдкара .yellow.json и не было — чистить нечего
             return jsonify(ok=True, segs=len(keep), dur=round(info.get("total_s", 0), 1))

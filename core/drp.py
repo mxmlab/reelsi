@@ -394,7 +394,7 @@ def kv_value(data: bytes | bytearray, name: str) -> tuple[int, int] | None:
     return None
 
 
-def kv_set(data: bytes | bytearray, name: str, raw: bytes | bytearray) -> bytes:
+def kv_set(data: bytes | bytearray, name: str, raw: bytes | bytearray) -> bytes | bytearray:
     """Переписать значение НА МЕСТЕ. Длина обязана совпасть — иначе поехали бы
     длины вложенных контейнеров, а их мы не пересчитываем."""
     pos = kv_value(data, name)
@@ -406,7 +406,7 @@ def kv_set(data: bytes | bytearray, name: str, raw: bytes | bytearray) -> bytes:
     return data[:off] + raw + data[off + size:]
 
 
-def kv_get(data: bytes | bytearray, name: str) -> bytes | None:
+def kv_get(data: bytes | bytearray, name: str) -> bytes | bytearray | None:
     pos = kv_value(data, name)
     return None if pos is None else data[pos[0]:pos[0] + pos[1]]
 
@@ -453,7 +453,7 @@ def set_media_descriptor(entry_xml: str, path: str, pr: dict[str, Any], mtime: s
         return pack_fields(head, d)
 
     def time(h: str) -> str:
-        d = bytes.fromhex(h)
+        d: bytes | bytearray = bytes.fromhex(h)
         d = kv_set(d, "Timecode", tc.encode("utf-16-be"))
         d = kv_set(d, "NumFrames", frames.to_bytes(4, "big"))
         if fps:
@@ -470,7 +470,7 @@ def set_media_descriptor(entry_xml: str, path: str, pr: dict[str, Any], mtime: s
         return kv_set(d, "Resolution", res).hex()
 
     def tracks(h: str) -> str:
-        d = bytes.fromhex(h)
+        d: bytes | bytearray = bytes.fromhex(h)
         d = kv_set(d, "StartTime", struct.pack(">d", timecode_seconds(pr["timecode"], fps)))
         sr = int.from_bytes(kv_get(d, "SampleRate") or b"\x00\x00\xbb\x80", "big")
         d = kv_set(d, "Duration", round(pr["dur_s"] * sr).to_bytes(8, "big"))

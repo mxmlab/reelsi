@@ -49,7 +49,7 @@ _which = shutil.which
 logging.getLogger("fontTools").setLevel(logging.CRITICAL)
 
 OK, WARN, ERR = "OK  ", "WARN", "FAIL"
-_rows = []
+_rows: list[tuple[str, str, str]] = []
 _bad = 0
 
 

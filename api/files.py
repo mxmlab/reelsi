@@ -12,7 +12,7 @@ from core import cams
 from core import sync
 from core import xmlbuild
 from ._core import (DEFAULT_BASE, UI_STATE_PATH, _never_serve, app_out_dir, bp,
-                    is_reelsi_target, jstr, umsg_err)
+                    is_reelsi_target, jstr, umsg_err, sidecar_path)
 from core.umsg import ReelsiError, umsg
 
 
@@ -128,7 +128,9 @@ def _clip_cams(xml_path: str) -> list[str]:
     Сначала пробует `<stem>.project.json`. Если сайдкара нет (XML добавлен
     руками) или cams пустой — читает теги `<pathurl>` из самого XML-файла.
     """
-    proj = read_project(os.path.splitext(xml_path)[0] + ".project.json") or {}
+    if not xml_path:
+        return []
+    proj = read_project(sidecar_path(xml_path, ".project.json")) or {}
     cams = [c for c in (proj.get("cams") or []) if c and str(c).strip()]
     if cams:
         return cams

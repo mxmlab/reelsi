@@ -32,7 +32,21 @@ Run all commands from the `reelsi/` folder:
 ```bash
 pip install torch==2.5.1 torchaudio==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
 pip install -r requirements.txt -r requirements-optional.txt
+pip install -r requirements-dev.txt
+pre-commit install
+```
+
+Run test suite and linters locally:
+
+```bash
+ruff check .
+mypy
 python -m pytest tests -q
+```
+
+CI additionally measures test coverage (threshold 77%), enforces a 120s timeout per test, and requires each `api/` route to be called by at least one test (`tools/route_coverage.py`).
+
+```bash
 python webui.py
 ```
 

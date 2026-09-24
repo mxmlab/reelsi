@@ -52,7 +52,7 @@ Blue — Python tools (automatic), yellow — manual work, gray — files:
    browser and edits by dragging; then `xml2ae + styles + roto (RVM)` → `.jsx`
    assembled from the approved plan.
 7. **Render — headless**: the "Render" button assembles the project and drives
-   `aerender` (Windows only, the engine is `core/aerender.py`); After Effects no longer has to be
+   `aerender` (Windows only, trio `api/render.py` [routes] → `core/render_job.py` [orchestration] → `core/aerender.py` [stateless engine]); After Effects no longer has to be
    opened by hand.
 
 Only stage 5 (and even that optionally) remains manual — the creative end. The manual
@@ -589,7 +589,7 @@ over-the-shoulder fly-out loses its point, a deliberate choice).
 |---|---|
 | `core/cutstages.py` | **single source of truth for cutting stages** (`STAGES`, `DEFAULTS`, `DEFAULT_THRESHOLDS`), normalization, and `to_reelsi_opts` generation |
 | `core/gigaam_cut/` | **Engine 1 (main)**: GigaAM whole-file cutting: `tune` (thresholds), `takes` (takes + code post-pass), `asr` (transcription + alignment), `decide` (decision prompts), `pipeline` (run orchestrator). Thresholds are ONLY in `tune`, read via the module, never imported by name |
-| `core/xml2ae/` | export to After Effects: `to_ae_full()` assembles `.jsx`, `build_combined()` — several clips into one. `scene_plan` is the ASSEMBLER of the scene plan (parse the XML, call the block entry points, lay the result out by key); the plan maths itself is split into blocks (tasks MR–MW): `plan_subs` (subtitles), `plan_intro` (intro maths), `plan_intro_tpl` (intro template substitutions), `plan_inserts` (inserts), `plan_audio` (sound and censorship), `plan_camera` (camera: zoom, pan, roto markup, head follow) |
+| `core/xml2ae/` | export to After Effects: `to_ae_full()` assembles `.jsx`, `build_combined()` — several clips into one. `scene_plan` is the ASSEMBLER of the scene plan (parse the XML, call the block entry points, lay the result out by key); the plan maths itself is split into blocks: `plan_words` (word prep: index alignment, intro word exclusion, `censor_source`, `.words.json` timings), `plan_assets` (project & asset folders, asset resolver, font ladder), `plan_subs` (subtitles), `plan_intro` (intro maths), `plan_intro_tpl` (intro template substitutions), `plan_inserts` (inserts), `plan_decor` (decorations: subtitle hide on rise inserts, shadow, plate, progress bar, caption, disclaimer), `plan_audio` (sound and censorship), `plan_camera` (camera: zoom, pan, roto markup, head follow) |
 | `core/xml2ae/plan_style.py` | **the style is read ONCE** into a `StyleValues` structure (`read_style`, task NO): the plan blocks take ready values from it instead of calling `_sv`/`_sv_or` on every line |
 | `core/aicut/` | LLM markup: yellow words / inserts / intro / cut decision; package since 2026-08-06; `llm.py` (begin_call, cancel_stream), `commands.py` (yellow_cmd, inserts_cmd, intro_cmd), `config.py` (profiles CRUD), `config_actions.py` (the `/api/ai_config` actions, one function per action — `set_glitch_glow`, `save_profile` and the rest; the key mask `•••…` = "key unchanged" is handled here too, via `unmask_ai_key` from `config`; the route stays thin, task NZ), `images.py`, `video.py` |
 | `core/omni_cut.py` | CLI/job of AI cutting: default `gigaam`, legacy `--mode old`; `--speaker`, `--selfcheck-model`, `--no-draft`; entry for both engines |
@@ -625,6 +625,8 @@ over-the-shoulder fly-out loses its point, a deliberate choice).
 | `core/media.py` | media duration: ONE ffprobe probe for every call site (`probe_duration`; `None` = "could not read" — no file, no ffprobe, a hang, a broken container; cached by path + mtime + size, 30 s timeout). There used to be five copies, and they diverged exactly on errors: some returned 0.0, others raised (task NB) |
 | `doctor.py` | environment diagnostics; also checks the optional external binaries — `rclone` (Google Drive download) and After Effects (headless render, via `core.aerender.find_ae` — one source for doctor and the render) |
 | `core/aerender.py` | **the headless render engine with no job state** (task NN): finding and driving AE (`find_ae`, `ae_running`, `short_path`), parsing `aerender` output (frame regexes, timecode, composition name, frame share), ETA and phase-duration statistics (`load_render_stats`/`save_render_stats`, `predict_aep_times`, `eta_secs`), result checks (`rendered_ok`, `comp_frames`), the default output folder (`default_render_dir`). It used to live inside `api/render.py` and was out of reach for the CLI and `doctor.py` without importing the Flask layer |
+| `core/render_job.py` | **headless render orchestration and `RenderJob` state holder without Flask**: launching AfterFX and aerender with stall watchdogs, output parsing, stage queue, master project, live progress and on-the-fly ETA, "Stop". The job instance lives in the owner (`api/render.py`); guard tests forbid Flask/`api` imports |
+| `core/jobstate.py` | **job state management without Flask**: job logging, journal (`job_state.json`), stage queue (`items_init`/`item_set`/`item_done`/`item_fail`, `journal_*`), progress and stall watchdog (`set_progress`/`set_stalled`), cross-process GPU lock (`job.lock`), error parsing. State instances (`JOB`, `LOCK`, `RJOB`, `PJOB`) stay with owners in `api/`; `api/_core.py` re-exports functions under old names |
 | `core/insertlib.py` | insert library: XML + folder scan, `insertlib.json` index, semantic lookup; also `remove_bg` (rembg) and `nobg_path(media)` — ONE cache of a photo without background for the build and the preview (`<folder>/<stem>.nobg.png`; error of rembg or a non-image returns the source path and reports through `emit`) |
 | `api/` | **shared backend**: all `/api/*` (Blueprint), JOB/LOCK, jobs |
 | `webui.py` | **main** web UI (port 5001) |
@@ -634,6 +636,7 @@ over-the-shoulder fly-out loses its point, a deliberate choice).
 | `core/cuda_env.py` | NVIDIA runtime DLL registration for faster-whisper on Windows |
 | `tools/harvest_good.py` | template/subtitle blob rebuild |
 | `tools/analyze_blobs.py` | subtitle template diagnostics |
+| `tools/route_coverage.py` | coverage measurement of 88 `api/` routes by real test calls (`tests/*.py`); guard test fails on untested new routes |
 | `tools/` | i18n tooling: `i18n_extract.py` / `i18n_js_keys.py` / `i18n_merge.py` |
 
 Layer rule: `api/` holds routes and job state, the engine lives in `core/`; `core/` imports
@@ -982,7 +985,7 @@ generation profiles (separate from LLM), models from the catalog.
 - `POST /api/speakers` / `savespeaker` / `delspeaker` — speaker profiles.
 - `POST /api/terms` — ASR term dictionary; `POST /api/censor_words` — censor lists.
 
-**ASSEMBLY** (`api/build.py`, `api/render.py`, `api/previewproxy.py`):
+**ASSEMBLY** (`api/build.py`, `api/render.py`, `core/render_job.py`, `api/previewproxy.py`):
 - `POST /api/build_run` — AE assembly (`.jsx`).
 - `POST /api/scene` — scene plan for the step-3 preview (all assembly math without
   roto/`.jsx`); the preview draws it and never recomputes.

@@ -106,6 +106,23 @@ python reelsi.py --no-cut     # только субтитры
 - [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md) — руководство по участию в разработке.
 - [CHANGELOG.md](CHANGELOG.md) — история изменений.
 
+## Разработка
+
+Установите зависимости разработки и настройте git-хуки:
+
+```bash
+pip install -r requirements-dev.txt
+pre-commit install
+```
+
+Запуск тестов и линтеров локально (CI выполняет те же проверки):
+
+```bash
+python -m pytest tests -q
+ruff check .
+mypy
+```
+
 ## Лицензия
 
 Reelsi распространяется под лицензией AGPL-3.0-or-later. Вы можете свободно использовать, изменять и распространять код на тех же условиях; по вопросам коммерческой лицензии обращайтесь к автору.

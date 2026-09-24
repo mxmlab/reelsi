@@ -449,8 +449,8 @@ NG-реплики, которые модель выкинула, но и не р
 в AE (правило «у любого значения один источник»):
 
 1. **`scene_plan()`** (`core/xml2ae/build.py`) — план сцены БЕЗ рото и записи; сам он
-   теперь СБОРЩИК: расчёт разложен по блокам `plan_subs` / `plan_intro` / `plan_intro_tpl` /
-   `plan_inserts` / `plan_audio` / `plan_camera`, а в `build.py` остались
+   теперь СБОРЩИК: расчёт разложен по блокам `plan_words` / `plan_assets` / `plan_subs` /
+   `plan_intro` / `plan_intro_tpl` / `plan_inserts` / `plan_decor` / `plan_audio` / `plan_camera`, а в `build.py` остались
    разбор XML, вызовы дверей и раскладка результата по ключам. В плане: наезд и дрейф
    камеры, ключи вставок, интро-группы (окна `ts`/`te`, смещения
    `dx`/`dy`, масштаб `ds`), субтитры, визуальная подпись ролика (`caption` из `<stem>.caption.json` по стилю пресета — плашка + текст), рото-разметка, `audio` (громкости + окна
@@ -460,7 +460,7 @@ NG-реплики, которые модель выкинула, но и не р
    JS-шаблон `AE_FULL` → запись `.jsx`. Отдельно `build_combined()` склеивает
    несколько файлов в один `.jsx` (набор → «один на всё»).
 
-**Безголовый рендер** (`api/render.py` + движок `core/aerender.py`). Кнопка «Рендер» на шаге 3
+**Безголовый рендер** (тройка `api/render.py` [роуты] → `core/render_job.py` [оркестрация] → `core/aerender.py` [движок без состояния]). Кнопка «Рендер» на шаге 3
 собирает проект (`AfterFX.exe -noui -r …jsx` — с `app.project.save` и без `alert`,
 только в этом режиме) и отдаёт очередь рендера в `aerender.exe`; прогресс парсится
 из stdout в лог джоба. Только Windows: поиск AE идёт по `%ProgramFiles%\Adobe`
@@ -502,7 +502,7 @@ NG-реплики, которые модель выкинула, но и не р
 | `api/videogen.py` | вкладка «Видео» (своё состояние `VJOB`, JOB не трогает) |
 | `api/previewproxy.py` | превью-прокси 720p 4:2:0 8-бит для 4:2:2 10-битных исходников (Sony/Canon), которые браузер не декодирует и 4K-seek вешает: `/api/preview_proxy` + `/api/preview_proxy_status`, своё состояние `PXJOB` |
 | `api/gdrive.py` | скачивание материала с гугл-диска через `rclone`: `/api/gdrive_download` + `/api/gdrive_status`, свой джоб (JOB не занимает), прогресс парсится из вывода rclone; разбор ссылки, команда и разбор прогресса — чистые функции `core/rclone.py` |
-| `api/render.py` | безголовый рендер в AE: `/api/render_run` + `/api/render_status`, сборка `AfterFX -noui` → `aerender`, свой джоб; оркестрация держит состояние задания (RJOB/RPROC), а движок без состояния — в `core/aerender.py` (поиск AE, разбор вывода, ETA, статистика) |
+| `api/render.py` | тонкий HTTP-модуль на ~162 строки: роуты `/api/render_run` и `/api/render_status`, экземпляр джоба (`RJOB`, `RLOCK`) и «Стоп»; вся оркестрация вынесена в `core/render_job.py` |
 
 Правило слоёв: `api/` — роуты и состояние заданий, движок — в `core/`; `core/` не импортирует
 `api` и `flask`, `api/` не импортирует CLI (`reelsi.py`). Стерегут `tests/test_layers.py` и
@@ -855,7 +855,7 @@ floor + 18 дБ.
 | `core/align.py` | слова→таймлайн, `find_repeat_ranges`, `assign_cameras`, `make_srt`, филлеры/мёртвый воздух |
 | `core/subtitle_blobs.py`, `core/subs.py` | субтитры-графика (FlatBuffer Source Text из эталона) |
 | `core/xmlbuild.py` | сборка Premiere xmeml (камеры, сегменты, субтитры) |
-| `core/xml2ae/` | **финальный XML → After Effects `.jsx`** (главный пакет движка 3): `parse` (разбор), `template` (AE_FULL), `jsutil`, `layout` (геометрия), `highlights` (правка XML), `build` (`scene_plan` — СБОРЩИК плана: разбор XML, вызовы дверей блоков, раскладка результата; `to_ae_full`, `build_combined`), блоки плана сцены (распил `scene_plan`): `plan_subs` (субтитры), `plan_intro` (расчёт интро), `plan_intro_tpl` (текстовые подстановки шаблона интро), `plan_inserts` (вставки), `plan_audio` (звук и цензура), `plan_camera` (камера: зум, pan, рото-разметка, слежение за головой) |
+| `core/xml2ae/` | **финальный XML → After Effects `.jsx`** (главный пакет движка 3): `parse` (разбор), `template` (AE_FULL), `jsutil`, `layout` (геометрия), `highlights` (правка XML), `build` (`scene_plan` — СБОРЩИК плана: разбор XML, вызовы дверей блоков, раскладка результата; `to_ae_full`, `build_combined`), блоки плана сцены (распил `scene_plan`): `plan_words` (подготовка слов: разметка к индексам, исключение слов интро, `censor_source`, тайминги из `.words.json`), `plan_assets` (папка проекта и ассетов, резолвер ассетов, лесенка шрифтов), `plan_subs` (субтитры), `plan_intro` (расчёт интро), `plan_intro_tpl` (текстовые подстановки шаблона интро), `plan_inserts` (вставки), `plan_decor` (оформление: уход субтитров на rise-вставках, тень, плашка, строка-прогресс, подпись о ролике, дисклеймер), `plan_audio` (звук и цензура), `plan_camera` (камера: зум, pan, рото-разметка, слежение за головой) |
 | `core/xml2ae/plan_style.py` | **стиль читается ОДИН раз** в структуру `StyleValues` (`read_style`): блоки плана берут готовые значения из неё, а не дёргают `_sv`/`_sv_or` на каждой строке |
 | `core/styles.py` | пресеты стиля (`base`, `geologica` + пользовательские `styles/*.json`) |
 | `core/speakers.py` | профили спикеров: пороги нарезки + папка + стиль под конкретную студию и говор (`speakers/*.json`). Дефолты дублируют константы `gigaam_cut`, сверяет тест |
@@ -889,7 +889,10 @@ floor + 18 дБ.
 | `core/media.py` | длительность медиа: ОДНА проба ffprobe на все места (`probe_duration`; `None` = «не прочли» — нет файла, нет ffprobe, завис, битый контейнер; кэш по пути + mtime + размеру, таймаут 30 с). Копий было пять, и расходились они ровно на ошибке: одни отдавали 0.0, другие падали ValueError |
 | `doctor.py` | диагностика окружения: что стоит, что отвалится, как чинить; отдельно проверяет внешние опциональные бинарники — `rclone` (скачивание с гугл-диска) и After Effects (безголовый рендер, поиском `core.aerender.find_ae` — один источник на doctor и рендер) |
 | `core/aerender.py` | **движок безголового рендера без состояния задания**: поиск и вызов AE (`find_ae`, `ae_running`, `short_path`), разбор вывода `aerender` (регулярки кадров, таймкод, имя композиции, доля кадров), ETA и статистика длительностей фаз (`load_render_stats`/`save_render_stats`, `predict_aep_times`, `eta_secs`), проверки результата (`rendered_ok`, `comp_frames`), папка вывода по умолчанию (`default_render_dir`). Раньше всё это жило в `api/render.py` и было недоступно CLI и `doctor.py` без импорта Flask-слоя |
+| `core/render_job.py` | **оркестрация безголового рендера и держатель состояния `RenderJob` без Flask**: запуск AfterFX и aerender со сторожами простоя, разбор вывода, очередь этапов, мастер-проект, живой прогресс и ETA по ходу, «Стоп». Экземпляр джоба живёт у владельца (`api/render.py`), сторожевые тесты запрещают импорт Flask и `api` |
+| `core/jobstate.py` | **состояние заданий без Flask**: лог задания, журнал (`job_state.json`), очередь этапов (`items_init`/`item_set`/`item_done`/`item_fail`, `journal_*`), прогресс и сторож простоя (`set_progress`/`set_stalled`), межпроцессный лок видеокарты (`job.lock`), разбор ошибок. Экземпляры (`JOB`, `LOCK`, `RJOB`, `PJOB`) остаются у владельцев в `api/`, `api/_core.py` реэкспортирует функции под прежними именами |
 | `tools/ast_same.py` | сверка AST двух ревизий без аннотаций/докстрингов/импортов/cast: критерий приёмки типизации и рефакторингов («логика не менялась») |
+| `tools/route_coverage.py` | замер покрытия 88 роутов `api/` реальными вызовами из тестов (`tests/*.py`); сторожевой тест валится на новом роуте без вызова |
 | `tools/` | i18n-утилиты (`i18n_extract.py` / `i18n_js_keys.py` / `i18n_merge.py`), исследование интро (`intro_rules.py` / `intro_hook_rules.py` / `intro_hook_check.py`), рабочая копия на сессию (`wt.ps1`) |
 
 **Длинные слова в субтитрах.** Эталонные блобы кончаются на 38 байтах (19 кириллических
@@ -2235,7 +2238,7 @@ Enter/уходу фокуса: сбрасывает `libOpts` (старые ва
 - `POST /api/speakers` / `savespeaker` / `delspeaker` — профили спикеров.
 - `POST /api/terms` — словарь терминов ASR; `POST /api/censor_words` — списки цензуры.
 
-**СБОРКА** (`api/build.py`, `api/render.py`, `api/previewproxy.py`):
+**СБОРКА** (`api/build.py`, `api/render.py`, `core/render_job.py`, `api/previewproxy.py`):
 - `POST /api/build_run` — сборка AE (`.jsx`).
 - `POST /api/scene` — план сцены для предпросмотра шага 3 (вся математика сборки без
   рото/`.jsx`); предпросмотр рисует его и не досчитывает.

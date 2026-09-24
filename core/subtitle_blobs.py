@@ -17,6 +17,7 @@ Public API:
     b64 = lib.make(word)                         # -> base64 str for <value>
 """
 import re, base64, json, os, struct
+from typing import Any, Sequence, cast
 
 from core import paths
 from core.umsg import ReelsiError, cli_error
@@ -39,7 +40,7 @@ _EFFECT_RE = re.compile(
     r'\s*<value>([A-Za-z0-9+/=]+)</value>')
 
 
-def _read_text(b):
+def _read_text(b: bytes | bytearray) -> str | None:
     """Return the embedded Source Text word (str) from a blob, or None."""
     if len(b) < TEXT_OFF + 4:
         return None
@@ -52,7 +53,7 @@ def _read_text(b):
         return None
 
 
-def _tail_start(b):
+def _tail_start(b: bytes | bytearray) -> int:
     """Где кончается текстовая область (текст + нулевой паддинг) и начинается хвост."""
     i = TEXT_OFF + 4 + int.from_bytes(b[TEXT_OFF:TEXT_OFF + 4], "little")
     while i < len(b) and b[i] == 0:
@@ -60,12 +61,12 @@ def _tail_start(b):
     return i
 
 
-def _capacity(b):
+def _capacity(b: bytes | bytearray) -> int:
     """Сколько БАЙТ текста влезает в блоб (с нулевым терминатором)."""
     return _tail_start(b) - TEXT_OFF - 4 - 1
 
 
-def _grow(b, delta):
+def _grow(b: bytes | bytearray, delta: int) -> bytes:
     """Копия блоба с текстовой областью, удлинённой на `delta` байт (кратно 4).
     Нули вставляются перед хвостом, три смещения правятся на дельту — так же, как
     отличаются между собой РЕАЛЬНЫЕ блобы разной длины (проверено побайтово)."""
@@ -79,16 +80,16 @@ def _grow(b, delta):
 
 
 class BlobLibrary:
-    def __init__(self, by_len):
+    def __init__(self, by_len: dict[int, bytes]) -> None:
         # by_len: dict[int byte_len] -> blob bytes
         self.by_len = dict(sorted(by_len.items()))
         self.lengths = sorted(self.by_len)
         self.max_len = self.lengths[-1] if self.lengths else 0
 
     @classmethod
-    def from_reference(cls, xml_path):
+    def from_reference(cls, xml_path: str) -> 'BlobLibrary':
         txt = open(xml_path, encoding="utf-8").read()
-        by_len = {}
+        by_len: dict[int, bytes] = {}
         for name, val in _EFFECT_RE.findall(txt):
             b = base64.b64decode(val)
             w = _read_text(b)
@@ -99,16 +100,16 @@ class BlobLibrary:
             raise RuntimeError("no usable Source Text blobs found in " + xml_path)
         return cls(by_len)
 
-    def save(self, path):
+    def save(self, path: str) -> None:
         json.dump({str(k): base64.b64encode(v).decode() for k, v in self.by_len.items()},
                   open(path, "w"))
 
     @classmethod
-    def load(cls, path):
+    def load(cls, path: str) -> 'BlobLibrary':
         d = json.load(open(path))
         return cls({int(k): base64.b64decode(v) for k, v in d.items()})
 
-    def make(self, word):
+    def make(self, word: str) -> str:
         """Return base64 string of a Source Text blob rendering `word`.
         Every blob is normalised to the auto-width ("stretched") box so long words
         stay on one line and centre correctly (offset 204 = 1067.0)."""
@@ -142,7 +143,7 @@ class BlobLibrary:
 _COLOR_ANCHOR = bytes([0x07, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x00])
 
 
-def blob_is_coloured(b):
+def blob_is_coloured(b: bytes) -> bool:
     """Тот же критерий, что у xml2ae._word_color (без импорта xml2ae — избегаем цикла):
     после последнего якоря в rstrip-хвосте ровно 3 не-нулевых байта."""
     s = b.rstrip(b"\x00")
@@ -155,10 +156,10 @@ def blob_is_coloured(b):
     return len(rgb) == 3 and rgb != b"\x00\x00\x00"
 
 
-def harvest_coloured(xml_paths, out_json=None):
+def harvest_coloured(xml_paths: Sequence[str], out_json: str | None = None) -> BlobLibrary:
     """Собрать покрашенные Source Text-блобы из реальных XML, ключ = байт-длина слова.
     Возвращает BlobLibrary; при out_json — сохраняет туда."""
-    by_len = {}
+    by_len: dict[int, bytes] = {}
     for xp in xml_paths:
         try:
             txt = open(xp, encoding="utf-8").read()
@@ -183,11 +184,11 @@ def harvest_coloured(xml_paths, out_json=None):
     return lib
 
 
-_COLOR_LIB = None
-_WHITE_LIB = None
+_COLOR_LIB: BlobLibrary | None = None
+_WHITE_LIB: BlobLibrary | None = None
 
 
-def colour_library():
+def colour_library() -> BlobLibrary:
     """Ленивая загрузка refblobs_color.json (собран из XML пользователя)."""
     global _COLOR_LIB
     if _COLOR_LIB is None:
@@ -195,7 +196,7 @@ def colour_library():
     return _COLOR_LIB
 
 
-def library():
+def library() -> BlobLibrary:
     """Ленивая загрузка белой библиотеки refblobs.json (обычные, непокрашенные слова)."""
     global _WHITE_LIB
     if _WHITE_LIB is None:
@@ -210,7 +211,7 @@ if __name__ == "__main__":
         lib.save(paths.data("refblobs.json"))
 
         log = open(paths.root("blob_selftest.txt"), "w", encoding="utf-8")
-        def p(*a): print(*a, file=log)
+        def p(*a: Any) -> None: print(*a, file=log)
         p(f"harvested template lengths (bytes): {lib.lengths}")
         p(f"count: {len(lib.lengths)}  max: {lib.max_len}")
 
@@ -218,7 +219,7 @@ if __name__ == "__main__":
         bad = 0
         for L, b in lib.by_len.items():
             w = _read_text(b)
-            rt = _read_text(base64.b64decode(lib.make(w)))
+            rt = _read_text(base64.b64decode(lib.make(cast(str, w))))
             if rt != w:
                 bad += 1; p(f"  ROUNDTRIP FAIL L={L} {w!r} -> {rt!r}")
         p(f"roundtrip exact-length: {len(lib.by_len)-bad}/{len(lib.by_len)} OK")

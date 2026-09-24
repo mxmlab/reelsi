@@ -14,7 +14,7 @@ _ILLEGAL_XML_CHARS = re.compile(
 )
 
 
-def xml_text(s, attr=False):
+def xml_text(s: object, attr: bool = False) -> str:
     """Очистить строку от недопустимых символов XML 1.0 и экранировать & < > (и \" при attr=True)."""
     cleaned = _ILLEGAL_XML_CHARS.sub("", str(s))
     escaped = cleaned.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")

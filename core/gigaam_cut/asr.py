@@ -6,7 +6,9 @@ GigaAM v3-CTC слушает файл целиком и сам отдаёт по
 из ОДНОЙ модели, отдельный forced-align не нужен и ничего не расползается.
 Здесь же освобождение VRAM.
 """
+from __future__ import annotations
 import re
+from typing import Any
 import numpy as np
 import soundfile as sf
 from .tune import CHUNK, SR
@@ -18,7 +20,7 @@ from core.umsg import ReelsiError
 # --------------------------------------------------------------------------- #
 # Утилиты VRAM / аудио
 # --------------------------------------------------------------------------- #
-def _free_torch():
+def _free_torch() -> None:
     import gc
     gc.collect()
     try:
@@ -30,14 +32,14 @@ def _free_torch():
         pass  # torch/GPU недоступны — чистить нечего
 
 
-def _norm(t):
+def _norm(t: str | None) -> str:
     return " ".join(re.findall(r"[а-яёa-z]+", (t or "").lower()))
 
 
 # --------------------------------------------------------------------------- #
 # Шаг 1+2 одним махом: GigaAM целиком -> пословные тайминги (word_timestamps)
 # --------------------------------------------------------------------------- #
-def _word(w, t0=0.0):
+def _word(w: Any, t0: float = 0.0) -> dict[str, Any]:
     """gigaam.Word -> наш словарь [{w,start,end}] (t0 — сдвиг окна, сек).
     `prob` gigaam не отдаёт; если появится — подхватим (её показывает self-check)."""
     d = {"w": w.text, "start": round(float(w.start) + t0, 3),
@@ -48,7 +50,9 @@ def _word(w, t0=0.0):
     return d
 
 
-def transcribe_words_whole(wav_path, emit=console_emit, model_name="v3_ctc"):
+def transcribe_words_whole(
+    wav_path: str, emit: Any = console_emit, model_name: str = "v3_ctc"
+) -> tuple[str, list[dict[str, Any]]]:
     """GigaAM слушает весь файл и САМ отдаёт слова с таймингами
     (word_timestamps=True) — текст и тайминги из одной модели, forced-align
     (wav2vec2) не нужен. Возвращает (full_text, [{"w","start","end"}] в сек).
@@ -79,7 +83,9 @@ def transcribe_words_whole(wav_path, emit=console_emit, model_name="v3_ctc"):
     return full_text, words
 
 
-def transcribe_words_for_cut(wav_path, engine="gigaam", emit=console_emit):
+def transcribe_words_for_cut(
+    wav_path: str, engine: str = "gigaam", emit: Any = console_emit
+) -> tuple[str, list[dict[str, Any]]]:
     """Единая точка входа для нарезки: распознавание слов с родными таймингами.
 
     Принимает движок с признаком cut=True из каталога asr_backends (CTC):
@@ -108,7 +114,7 @@ def transcribe_words_for_cut(wav_path, engine="gigaam", emit=console_emit):
         return full_text, words
 
 
-def _quiet_cut(x, lo, hi, sr, frame=0.05):
+def _quiet_cut(x: Any, lo: int, hi: int, sr: int, frame: float = 0.05) -> int:
     """Самая тихая точка (центр самого тихого 50мс-кадра) в x[lo:hi]."""
     f = max(1, int(frame * sr))
     seg = np.abs(x[lo:hi].astype(np.float32))
@@ -119,7 +125,9 @@ def _quiet_cut(x, lo, hi, sr, frame=0.05):
     return lo + int(np.argmin(rms)) * f + f // 2
 
 
-def _transcribe_words_manual(model, wav_path, emit=console_emit, win=18.0, search=6.0, sr=SR):
+def _transcribe_words_manual(
+    model: Any, wav_path: str, emit: Any = console_emit, win: float = 18.0, search: float = 6.0, sr: int = SR
+) -> list[dict[str, Any]]:
 
     """Фолбэк без pyannote: окна ~win сек, но шов кладём в самую тихую точку
     последних `search` сек окна — рез между окнами не попадает в слово.
@@ -137,6 +145,9 @@ def _transcribe_words_manual(model, wav_path, emit=console_emit, win=18.0, searc
         a = a.mean(1).astype("int16")
     n = len(a)
     step = int(win * sr)
+    words: list[dict[str, Any]]
+    pos: int
+    nwin: int
     words, pos, nwin = [], 0, 0
     est = max(1, int(n / step) + 1)              # грубая оценка числа окон для прогресса
     while pos < n:
@@ -175,7 +186,9 @@ def _transcribe_words_manual(model, wav_path, emit=console_emit, win=18.0, searc
 # --------------------------------------------------------------------------- #
 # Шаг 2: forced-align полного текста -> пословные тайминги
 # --------------------------------------------------------------------------- #
-def align_full(wav_path, text, emit=console_emit, device="cuda"):
+def align_full(
+    wav_path: str, text: str, emit: Any = console_emit, device: str = "cuda"
+) -> list[dict[str, Any]]:
     """Выровнять полный текст GigaAM по звуку целиком (wav2vec2).
     Эмиссии считаем чанками по CHUNK сек, но forced_align делаем ОДИН на весь
     файл по склеенным эмиссиям (текст-то один общий — по-чанковый align с полным
@@ -200,10 +213,12 @@ def align_full(wav_path, text, emit=console_emit, device="cuda"):
 
     words = [w for w in re.split(r"\s+", (text or "").strip()) if w]
 
-    def norm(w):
+    def norm(w: str) -> str:
         return "".join(c for c in w.lower() if c in vocab and c != "|")
 
     # Build targets + meta (word index per token, -1 for delimiter)
+    targets: list[Any]
+    meta: list[int]
     targets, meta = [], []
     for k, w in enumerate(words):
         s = norm(w)
@@ -218,8 +233,8 @@ def align_full(wav_path, text, emit=console_emit, device="cuda"):
 
     # --- эмиссии чанками + карта «кадр -> секунды» с точным fd каждого чанка ---
     step = int(CHUNK * SR)
-    em_chunks = []
-    frame_t = []                     # frame_t[i] = время НАЧАЛА кадра i, сек
+    em_chunks: list[Any] = []
+    frame_t: list[float] = []                     # frame_t[i] = время НАЧАЛА кадра i, сек
     for a0 in range(0, len(audio), step):
         a1 = min(a0 + step, len(audio))
         clip = audio[a0:a1].to(dev)
@@ -245,6 +260,8 @@ def align_full(wav_path, text, emit=console_emit, device="cuda"):
         aln, sc = torchaudio.functional.forced_align(
             em_all, torch.tensor([targets], device=dev), blank=blank)
         spans = torchaudio.functional.merge_tokens(aln[0], sc[0])
+        word_times: dict[int, list[float]]
+        ti: int
         word_times, ti = {}, 0       # word_idx -> [start_sec, end_sec]
         last = len(frame_t) - 1
         for sp in spans:
@@ -277,7 +294,7 @@ def align_full(wav_path, text, emit=console_emit, device="cuda"):
         emit("  align_full: не выровнено ни одного слова — фолбэк по окнам", flush=True)
         return _align_full_chunked(audio, words, dur, emit)
 
-    out = [{"w": words[k], "start": round(word_times[k][0], 3),
+    out: list[dict[str, Any]] = [{"w": words[k], "start": round(word_times[k][0], 3),
             "end": round(word_times[k][1], 3)} for k in sorted(word_times.keys())]
 
     # хвост как в falign: не откусывать окончания
@@ -290,11 +307,15 @@ def align_full(wav_path, text, emit=console_emit, device="cuda"):
     return out
 
 
-def _align_full_chunked(audio, words, dur, emit=console_emit, device="cuda"):
+def _align_full_chunked(
+    audio: Any, words: list[str], dur: float, emit: Any = console_emit, device: str = "cuda"
+) -> list[dict[str, Any]]:
     """Фолбэк: режем аудио на окна CHUNK сек, каждое окно align_text'ом с
     пропорциональной долей слов. Менее точен на стыках окон, но не падает."""
     from core import falign
     n = len(words)
+    out: list[dict[str, Any]]
+    wi: int
     out, wi = [], 0
     step = int(CHUNK * SR)
     for a0 in range(0, len(audio), step):

@@ -29,6 +29,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from typing import Any, cast
 
 # Что именно AE не читает — ОДИН источник правды, insertlib: там же живёт to_ae_image,
 # который это чинит. Раньше обе тройки констант стояли и здесь копией: значения совпадали,
@@ -54,37 +55,37 @@ class Report:
     """Накопитель проблем по одному файлу. `scope` — префикс сообщений: в склейке
     «один .jsx на всё» без него не понять, в каком из таймлайнов беда."""
 
-    def __init__(self, path):
+    def __init__(self, path: str) -> None:
         self.path = path
         self.scope = ""
-        self.errors = []
-        self.warns = []
-        self.info = []
+        self.errors: list[str] = []
+        self.warns: list[str] = []
+        self.info: list[str] = []
 
-    def err(self, msg):
+    def err(self, msg: str) -> None:
         self.errors.append(self.scope + msg)
 
-    def warn(self, msg):
+    def warn(self, msg: str) -> None:
         self.warns.append(self.scope + msg)
 
-    def note(self, msg):
+    def note(self, msg: str) -> None:
         self.info.append(self.scope + msg)
 
     @property
-    def ok(self):
+    def ok(self) -> bool:
         return not self.errors
 
 
 # ---------------------------------------------------------------- извлечение
 
-def extract_structs(raw):
+def extract_structs(raw: str) -> dict[str, Any]:
     """`var NAME=<json>;` -> {NAME: значение}.
 
     Все структуры собираются `json.dumps` (см. `xml2ae._jd`), поэтому валидный
     JSON. Режем не по `;` — строка может содержать что угодно — а `raw_decode`:
     он разбирает ровно одно значение и сам говорит, где оно кончилось.
     """
-    out = {}
+    out: dict[str, Any] = {}
     dec = json.JSONDecoder()
     for name in WANTED:
         m = re.search(r"\bvar\s+%s\s*=\s*" % name, raw)
@@ -106,14 +107,14 @@ def extract_structs(raw):
 TIMELINE_SEP = re.compile(r"^//\s*=+\s*следующий таймлайн\s*=+\s*$", re.M)
 
 
-def split_timelines(raw):
+def split_timelines(raw: str) -> list[str]:
     """.jsx -> список кусков-таймлайнов (для одиночного файла — один кусок)."""
     return TIMELINE_SEP.split(raw)
 
 
 # ---------------------------------------------------------------- проверки
 
-def check_syntax(path, raw, rep):
+def check_syntax(path: str, raw: str, rep: Report) -> None:
     """`node --check`. На расширение .jsx node отвечает ERR_UNKNOWN_FILE_EXTENSION,
     поэтому копируем в .js (ровно тот рецепт, что записан в ARCHITECTURE.md)."""
     if not shutil.which("node"):
@@ -144,10 +145,11 @@ def check_syntax(path, raw, rep):
             pass  # временный .js уже убран
 
 
-def strip_js(raw):
+def strip_js(raw: str) -> str:
     """Код без комментариев и строковых литералов (на их месте — пробелы, чтобы не
     склеивались соседние слова). Мини-автомат, а не регулярка: в комментариях есть
     апострофы, а в строках — пути с `//`, и одна регулярка на всё путает одно с другим."""
+    out: list[str]
     out, i, n = [], 0, len(raw)
     while i < n:
         c = raw[i]
@@ -179,9 +181,9 @@ _CONST = re.compile(r"(?<![.\w$])([A-Z][A-Z0-9_]{2,})\b(?!\s*:)")
 _NAME = re.compile(r"[A-Za-z_$][\w$]*")
 
 
-def _declared(code):
+def _declared(code: str) -> set[str]:
     """Все имена, объявленные в коде: `var a=1, B=2, C;`, имена функций и их аргументы."""
-    out = set()
+    out: set[str] = set()
     for m in re.finditer(r"\bfunction\s+([A-Za-z_$][\w$]*)?\s*\(([^)]*)\)", code):
         if m.group(1):
             out.add(m.group(1))
@@ -202,8 +204,8 @@ def _declared(code):
                 name_here = True
             elif depth == 0 and name_here and (c.isalpha() or c in "_$"):
                 nm = _NAME.match(code, i)
-                out.add(nm.group(0))
-                i = nm.end()
+                out.add(nm.group(0))  # type: ignore[union-attr]
+                i = nm.end()  # type: ignore[union-attr]
                 name_here = False
                 continue
             elif depth == 0 and c == "=":
@@ -212,7 +214,7 @@ def _declared(code):
     return out
 
 
-def check_undeclared(raw, rep):
+def check_undeclared(raw: str, rep: Report) -> None:
     """Настройка используется, но нигде не объявлена.
 
     Геометрия уезжала из ExtendScript в Python по частям, и `var INS_C2_PEAK/INS_C2_Y_FR`
@@ -227,7 +229,7 @@ def check_undeclared(raw, rep):
                 % (name, name))
 
 
-def check_line_separators(raw, rep):
+def check_line_separators(raw: str, rep: Report) -> None:
     """Сырые U+2028 (Line Separator) и U+2029 (Paragraph Separator).
 
     В ES3 (ExtendScript в AE) они считаются переводом строки: строковый литерал
@@ -238,14 +240,14 @@ def check_line_separators(raw, rep):
                 "переводом строки и упадёт при импорте")
 
 
-def check_bom(path, rep):
+def check_bom(path: str, rep: Report) -> None:
     """.jsx пишется с BOM (utf-8-sig) — ExtendScript иначе читает кириллицу мусором."""
     with open(path, "rb") as f:
         if f.read(3) != b"\xef\xbb\xbf":
             rep.warn("нет BOM (utf-8-sig) — AE может прочитать кириллицу мусором")
 
 
-def _media_problem(media, rep, what):
+def _media_problem(media: Any, rep: Report, what: str) -> None:
     """Общая проверка пути к медиа: существует, читаемо для AE."""
     if not media:
         rep.err("%s: пустой путь к медиа" % what)
@@ -276,10 +278,10 @@ def _media_problem(media, rep, what):
                     % (what, os.path.basename(media), codec.upper()))
 
 
-_CODECS = {}
+_CODECS: dict[str, Any] = {}
 
 
-def _codec_cached(path):
+def _codec_cached(path: str) -> Any:
     """ffprobe на файл — один раз за прогон: рото-маски и переходы повторяются в каждом .jsx."""
     key = os.path.abspath(path)
     if key not in _CODECS:
@@ -287,7 +289,7 @@ def _codec_cached(path):
     return _CODECS[key]
 
 
-def _image_mode(path):
+def _image_mode(path: str) -> str | None:
     """Цветовая модель картинки по заголовку (PIL пиксели не читает). -> None если нечем."""
     try:
         from PIL import Image
@@ -301,7 +303,7 @@ def _image_mode(path):
         return None
 
 
-def check_cam(cams, rep):
+def check_cam(cams: Any, rep: Report) -> None:
     if not isinstance(cams, list) or not cams:
         rep.err("CAM пуст — в проекте не будет ни одной камеры")
         return
@@ -312,7 +314,7 @@ def check_cam(cams, rep):
         if not clips:
             rep.err("%s: нет ни одного клипа" % tag)
             continue
-        prev_end = None
+        prev_end: float | int | None = None
         for j, cl in enumerate(clips):
             if len(cl) < 6:
                 rep.err("%s.clips[%d]: ожидалось [start,end,in,out,enabled,scale], пришло %r" % (tag, j, cl))
@@ -329,14 +331,14 @@ def check_cam(cams, rep):
         rep.note("%s: %d клип(ов)" % (tag, len(clips)))
 
 
-def check_subs(subs, rep):
+def check_subs(subs: Any, rep: Report) -> None:
     if not isinstance(subs, list):
         rep.err("SUBS не список")
         return
     if not subs:
         rep.note("SUBS: пусто (субтитров нет)")
         return
-    prev_start = None
+    prev_start: float | int | None = None
     for i, s in enumerate(subs):
         if len(s) < 6:
             rep.err("SUBS[%d]: ожидалось [start,end,word,hl,row,gend], пришло %r" % (i, s))
@@ -363,7 +365,7 @@ def check_subs(subs, rep):
     rep.note("SUBS: %d слов, из них жёлтых %d" % (len(subs), sum(1 for s in subs if len(s) > 3 and s[3] == 1)))
 
 
-def check_roto(roto, ncams, rep):
+def check_roto(roto: Any, ncams: int, rep: Report) -> None:
     if not isinstance(roto, list):
         rep.err("ROTO не список")
         return
@@ -384,7 +386,7 @@ def check_roto(roto, ncams, rep):
         rep.note("ROTO: %d кусков" % len(roto))
 
 
-def check_inserts(inserts, rep):
+def check_inserts(inserts: Any, rep: Report) -> None:
     if not isinstance(inserts, list):
         rep.err("INSERTS не список")
         return
@@ -425,7 +427,7 @@ def check_inserts(inserts, rep):
                     sum(1 for x in inserts if x.get("t") == "video")))
 
 
-def check_intro(groups, rep):
+def check_intro(groups: Any, rep: Report) -> None:
     if not isinstance(groups, list):
         rep.err("INTRO_GROUPS не список")
         return
@@ -455,11 +457,11 @@ def check_intro(groups, rep):
         rep.note("INTRO_GROUPS: %d прекомп(ов)" % len(groups))
 
 
-def check_cam1scale(scale, rep):
+def check_cam1scale(scale: Any, rep: Report) -> None:
     if not isinstance(scale, list):
         rep.err("CAM1_SCALE не список")
         return
-    prev_f = None
+    prev_f: float | int | None = None
     for i, kf in enumerate(scale):
         if len(kf) < 2:
             rep.err("CAM1_SCALE[%d]: ожидалось [frame, percent], пришло %r" % (i, kf))
@@ -476,7 +478,7 @@ def check_cam1scale(scale, rep):
 
 # ------------------------------------------------------- сверка с исходником
 
-def cross_check_xml(xml_path, structs, rep, ncams=None):
+def cross_check_xml(xml_path: str, structs: dict[str, Any], rep: Report, ncams: int | None = None) -> None:
     """Сверка с XML, из которого собран .jsx: столько ли камер, слов, вставок.
 
     Ровно та ручная проверка, что описана в ARCHITECTURE.md («parse_full(xml,
@@ -508,7 +510,7 @@ def cross_check_xml(xml_path, structs, rep, ncams=None):
 
 # ---------------------------------------------------------------- сборка
 
-def verify(path, xml_path=None, ncams=None):
+def verify(path: str, xml_path: str | None = None, ncams: int | None = None) -> Report:
     rep = Report(path)
     if not os.path.exists(path):
         rep.err("файла нет: %s" % path)
@@ -521,7 +523,7 @@ def verify(path, xml_path=None, ncams=None):
     check_undeclared(raw, rep)
 
     blocks = split_timelines(raw)
-    first = None
+    first: dict[str, Any] | None = None
     for i, blk in enumerate(blocks):
         rep.scope = "таймлайн %d/%d: " % (i + 1, len(blocks)) if len(blocks) > 1 else ""
         structs = check_block(blk, rep)
@@ -536,7 +538,7 @@ def verify(path, xml_path=None, ncams=None):
     return rep
 
 
-def check_block(raw, rep):
+def check_block(raw: str, rep: Report) -> dict[str, Any]:
     """Все структурные проверки одного таймлайна. -> его structs."""
     structs = extract_structs(raw)
     for name in WANTED:
@@ -563,8 +565,8 @@ def check_block(raw, rep):
     return structs
 
 
-def _targets(paths):
-    out = []
+def _targets(paths: list[str]) -> list[str]:
+    out: list[str] = []
     for p in paths:
         if os.path.isdir(p):
             out += sorted(glob.glob(os.path.join(p, "*.jsx")))
@@ -575,7 +577,7 @@ def _targets(paths):
     return out
 
 
-def main(argv=None):
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Проверка .jsx без After Effects")
     ap.add_argument("paths", nargs="+", help=".jsx, маска или папка")
     ap.add_argument("--xml", help="исходный XML — сверить число камер/слов/вставок")
@@ -584,7 +586,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
 
     try:                                                    # кириллица в cp1251-консоли
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        cast(Any, sys.stdout).reconfigure(encoding="utf-8", errors="replace")
     except ReelsiError: raise
     except Exception:                                       # noqa: BLE001
         pass  # поток без reconfigure — отчёт напечатается как есть

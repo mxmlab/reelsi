@@ -9,7 +9,9 @@
 Порядок работы с VRAM здесь не косметика: на 16 ГБ держим ОДНУ тяжёлую модель за раз,
 поэтому GigaAM выгружается ДО обращения к 27b, а тот — до рендера.
 """
+from __future__ import annotations
 import os, shutil, tempfile
+from typing import Any, Callable, Sequence, cast
 import soundfile as sf
 from core import aicut
 from core import xmlbuild
@@ -31,7 +33,7 @@ from .tune import (_cut_breaths, _silence_bounds, apply_speaker, keep_intervals,
 from core.umsg import ReelsiError
 
 
-def _audio_file_diag(wav_path):
+def _audio_file_diag(wav_path: str) -> str:
     """Факты о файле звука на момент сбоя: наличие, размер, каталог."""
     exists = os.path.exists(wav_path)
     if exists:
@@ -59,7 +61,7 @@ def _audio_file_diag(wav_path):
     return f"WAV '{wav_path}' ({file_info}; {dir_info})"
 
 
-def _guard_keep(keep, words):
+def _guard_keep(keep: Sequence[Any], words: Sequence[Any]) -> None:
     """Санитарный гард доли речи: меньше 25% (или пусто) — отказ от перезаписи."""
     kept_s = sum(e - s for s, e in keep)
     src_s = (words[-1]["end"] - words[0]["start"]) if words else 0.0
@@ -73,9 +75,9 @@ def _guard_keep(keep, words):
 # --------------------------------------------------------------------------- #
 # Оркестратор
 # --------------------------------------------------------------------------- #
-def run(wav_path, cams, offsets, out, scale, model=None,
-        cam_return=2, no_draft=False, speaker=None, dedupe=None, stages=None, emit=console_emit,
-        engine=None):
+def run(wav_path: str, cams: Sequence[str], offsets: Sequence[float], out: str, scale: float, model: str | None = None,
+        cam_return: int = 2, no_draft: bool = False, speaker: str | None = None, dedupe: bool | None = None, stages: dict[str, Any] | None = None, emit: Callable[..., Any] = console_emit,
+        engine: str | None = None) -> tuple[Any, Any, Any, Any]:
     """Полный GigaAM-путь. Возвращает (keep, cutlog, draft_path, info).
 
     wav_path  — 16кГц wav камеры 1 (уже извлечён sync'ом в omni_cut)
@@ -134,9 +136,9 @@ def run(wav_path, cams, offsets, out, scale, model=None,
         shutil.rmtree(work, ignore_errors=True)
 
 
-def _run(wav_path, cams, offsets, out, scale, model=None,
-         cam_return=2, no_draft=False, speaker=None, dedupe=None, stages=None, emit=console_emit,
-         engine=None):
+def _run(wav_path: str, cams: Sequence[str], offsets: Sequence[float], out: str, scale: float, model: str | None = None,
+         cam_return: int = 2, no_draft: bool = False, speaker: str | None = None, dedupe: bool | None = None, stages: dict[str, Any] | None = None, emit: Callable[..., Any] = console_emit,
+         engine: str | None = None) -> tuple[Any, Any, Any, Any]:
 
     emit = wrap_emit(emit)
     N = len(cams)
@@ -163,6 +165,7 @@ def _run(wav_path, cams, offsets, out, scale, model=None,
     if not words:
         raise RuntimeError("GigaAM не дал ни одного слова — проверь аудио")
     src_s = (words[-1]["end"] - words[0]["start"]) if words else 0.0
+    silence_bounds: Any
     if stages.get("pauses") != "off":
         silence_bounds = _silence_bounds(words)
         if silence_bounds:
@@ -219,7 +222,7 @@ def _run(wav_path, cams, offsets, out, scale, model=None,
     assign = (align.assign_cameras(keep, N, return_every=cam_return, big_chunk_sec=6.0)
               if N > 1 else None)
 
-    def _apply_audio_stages(cur_keep, cur_assign):
+    def _apply_audio_stages(cur_keep: Any, cur_assign: Any) -> tuple[Any, Any, list[Any]]:
         if stages.get("refine", True):
             k, parents = refine_keep(cur_keep, wav_path, words=words, emit=emit)
             a = [cur_assign[p] for p in parents] if cur_assign is not None else None
@@ -288,7 +291,7 @@ def _run(wav_path, cams, offsets, out, scale, model=None,
             "scale": scale, "keep": [[round(s, 3), round(e, 3)] for s, e in keep]}
     if speaker:
         proj["speaker"] = speaker
-    write_project(os.path.splitext(out)[0] + ".project.json", proj)
+    write_project(os.path.splitext(out)[0] + ".project.json", cast(Any, proj))
     cutlog.sort(key=lambda c: c["t0"])
     atomic_json_dump(os.path.splitext(out)[0] + ".cuts.json", cutlog, indent=1)
 

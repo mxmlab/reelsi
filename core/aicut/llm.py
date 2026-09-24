@@ -9,8 +9,11 @@ CANCEL и EPOCH живут здесь и здесь же ПЕРЕПРИСВАИ�
 Поколение вызова (EPOCH) нужно, чтобы «Стоп» и перезагрузка страницы не убивали
 вызов, стартовавший ПОСЛЕ них: устаревший поток видит чужой epoch и выходит сам.
 """
+from __future__ import annotations
 import os, re, json, shutil, subprocess, time, threading
 import urllib.request, urllib.error
+from typing import Any, Callable, cast
+
 from .config import (APP_NAME, APP_REFERER, DEFAULT_URL, REASONING_LEVELS,
                      AI_LOG_PATH, AI_LOG_CAP, AI_LOG_MAX_MB,
                      REASONING_BUDGET,
@@ -28,8 +31,8 @@ log = get_logger(__name__)
 _AI_LOG_LOCK = threading.Lock()
 
 
-def ai_log_append(step, prof, ok, in_t=None, out_t=None, rt=None, finish=None,
-                  ms=None, err=None):
+def ai_log_append(step: str | None, prof: dict[str, Any] | None, ok: bool | None, in_t: int | None = None, out_t: int | None = None, rt: int | None = None, finish: str | None = None,
+                  ms: float | int | None = None, err: str | None = None) -> None:
     """Дописать одну запись ИИ-вызова в ai_calls.jsonl (JSONL, по строке на вызов).
 
     step — имя шага ("cut"/"yellow"/"inserts"/"intro"/"plan" или что передал
@@ -62,7 +65,7 @@ def ai_log_append(step, prof, ok, in_t=None, out_t=None, rt=None, finish=None,
         pass                                   # лог не должен ронять вызов модели
 
 
-def _ai_log_prune_if_big():
+def _ai_log_prune_if_big() -> None:
     """Если файл разросся — переписать, оставив последние AI_LOG_CAP строк.
 
     Держим ровно КАП последних (файл append-only, записи идут в хронологическом
@@ -97,7 +100,7 @@ _EPOCH_LOCK = threading.Lock()
 _LOCAL = threading.local()          # epoch потока; нет его (CLI, потоки джоба) — старое поведение
 
 
-def begin_call():
+def begin_call() -> int:
     """Начать новый одиночный ИИ-вызов из текущего потока: отменить все прошлые
     (их номер устареет) и снять флаг «Стоп». Возвращает номер вызова."""
     global CANCEL, EPOCH
@@ -108,7 +111,7 @@ def begin_call():
         return EPOCH
 
 
-def cancel_call():
+def cancel_call() -> int:
     """Кнопка «Стоп»: отменить текущий вызов. Возвращает номер, до которого отменено —
     по нему отложенная выгрузка модели поймёт, что вызов уже сменился новым."""
     global CANCEL, EPOCH
@@ -118,7 +121,7 @@ def cancel_call():
         return EPOCH
 
 
-def clear_cancel():
+def clear_cancel() -> None:
     """Снять «Стоп» для вызова БЕЗ своего номера (джоб, тест связи, генерация
     картинки — они идут пачками, менять им поколение нельзя: отменят друг друга).
     Потоки прошлого одиночного вызова это не воскрешает — их держит устаревший epoch."""
@@ -127,14 +130,14 @@ def clear_cancel():
         CANCEL = False
 
 
-def cancelled():
+def cancelled() -> bool:
     """Отменён ли ИИ-вызов ТЕКУЩЕГО потока: нажали «Стоп» либо поверх нас стартовал
     новый вызов. Потоки без своего номера (CLI, джоб) смотрят только на CANCEL."""
     ep = getattr(_LOCAL, "epoch", None)
     return bool(CANCEL) if ep is None else (bool(CANCEL) or ep != EPOCH)
 
 
-def cancel_reason():
+def cancel_reason() -> Any:
     """Почему вызов прерван — «Стоп» или его вытеснил новый запуск (важно различать:
     во втором случае ошибка прилетит клиенту, которого уже нет, а работает новый)."""
     ep = getattr(_LOCAL, "epoch", None)
@@ -143,7 +146,7 @@ def cancel_reason():
     return umsg("cancelled", "остановлено кнопкой «Стоп»")
 
 
-def is_current(ep=None):
+def is_current(ep: int | None = None) -> bool:
     """Актуален ли вызов (наш или заданный) — можно ли трогать общий ресурс, например
     выгружать модель LM Studio: устаревший поток этим убил бы чужую генерацию."""
     if ep is None:
@@ -152,7 +155,7 @@ def is_current(ep=None):
 
 
 # --- Управление VRAM LM Studio (16 ГБ впритык: держим загруженной ОДНУ модель) ---
-def _lms_bin():
+def _lms_bin() -> str | None:
     p = shutil.which("lms")
     if p:
         return p
@@ -163,12 +166,12 @@ def _lms_bin():
     return None
 
 
-def _api_base(url):
+def _api_base(url: str | None) -> str:
     b = (url or DEFAULT_URL).rstrip("/")
     return b[:-3] if b.endswith("/v1") else b
 
 
-def loaded_info(url=None):
+def loaded_info(url: str | None = None) -> list[dict[str, Any]] | None:
     """Записи загруженных сейчас моделей (нативный REST /api/v0/models). None = не удалось."""
     try:
         with urllib.request.urlopen(_api_base(url) + "/api/v0/models", timeout=5) as r:
@@ -179,7 +182,7 @@ def loaded_info(url=None):
         return None
 
 
-def loaded_models(url=None):
+def loaded_models(url: str | None = None) -> list[str] | None:
     """id загруженных сейчас моделей. None = не удалось."""
     info = loaded_info(url)
     return None if info is None else [m["id"] for m in info]
@@ -190,17 +193,17 @@ def loaded_models(url=None):
 # пользователем руками для другой работы, в том числе при работе в облаке.
 # Список живёт в памяти процесса, потокобезопасен: перезапустили сервер — список пуст,
 # значит наших моделей нет и мы никого не трогаем.
-_OUR_MODELS = set()
+_OUR_MODELS: set[str] = set()
 _OUR_MODELS_LOCK = threading.Lock()
 
 
-def our_loaded_models():
+def our_loaded_models() -> set[str]:
     """Копия множества моделей LM Studio, загруженных Reelsi."""
     with _OUR_MODELS_LOCK:
         return set(_OUR_MODELS)
 
 
-def unload_ours(emit=console_emit):
+def unload_ours(emit: Callable[..., Any] = console_emit) -> None:
     """Выгрузить ТОЛЬКО те модели LM Studio, которые Reelsi загрузил сам.
 
     Если ничего своего не загружено (частый случай — работаем на облачном провайдере
@@ -224,7 +227,7 @@ def unload_ours(emit=console_emit):
             emit("  (lms unload не сработал: {err})", err=e)
 
 
-def ensure_loaded(model, url=None, ttl=1800, emit=console_emit):
+def ensure_loaded(model: str, url: str | None = None, ttl: int = 1800, emit: Callable[..., Any] = console_emit) -> None:
     """Гарантировать, что модель загружена в LM Studio.
     Выгружает ТОЛЬКО наши ранее загруженные модели (если загружали другую),
     чужие модели пользователя не трогает (жалоба 2026-08-21).
@@ -260,7 +263,7 @@ def ensure_loaded(model, url=None, ttl=1800, emit=console_emit):
         emit("  (lms load не сработал: {err}; полагаюсь на JIT)", err=e)
 
 
-def warn_foreign_models(emit=console_emit):
+def warn_foreign_models(emit: Callable[..., Any] = console_emit) -> None:
     """Предупредить в лог, если в LM Studio висит сторонняя (не наша) модель,
     которая может занять VRAM перед тяжёлым локальным шагом (ASR/GigaAM/Omni).
     Информирование вместо самоуправства: работу не останавливает и модель не выгружает."""
@@ -279,7 +282,7 @@ def warn_foreign_models(emit=console_emit):
         pass  # LM Studio не ответил — предупреждать о чужих моделях не о чем
 
 
-def _extract_json_obj(text):
+def _extract_json_obj(text: str) -> str:
     """Вытащить последний сбалансированный {...}-объект из текста. Reasoning-модели
     (qwen3, deepseek-r1) обрамляют ответ размышлениями и <think>…</think>; итоговый
     JSON — в самом конце. Сканируем от последней '}' назад к её паре '{'."""
@@ -299,9 +302,9 @@ def _extract_json_obj(text):
     return text[:end + 1]
 
 
-def _ask_json(system, user, schema, model=None, url=None, max_tokens=4096, emit=console_emit,
+def _ask_json(system: str, user: str, schema: dict[str, Any], model: str | None = None, url: str | None = None, max_tokens: int = 4096, emit: Callable[..., Any] = console_emit,
 
-              temperature=0.3, retries=1, reasoning=None, profile=None, step=None):
+              temperature: float = 0.3, retries: int = 1, reasoning: str | None = None, profile: str | None = None, step: str | None = None) -> Any:
     """Один структурированный JSON-вызов АКТИВНОГО провайдера (профиль из ai_config.json).
     model/url — переопределения (CLI/обратная совместимость). Диспетчер:
     anthropic -> Claude API (SDK); остальные -> OpenAI-совместимый chat/completions.
@@ -352,7 +355,7 @@ STALL_FIRST = 240
 STALL_NOTE = 15          # с какой тишины писать про неё в лог, не дожидаясь обрыва
 
 
-def _read_stream(r, emit, tick=3.0):
+def _read_stream(r: Any, emit: Callable[..., Any], tick: float = 3.0) -> dict[str, Any]:
     """Собрать SSE-поток chat/completions в форму обычного (не-стримингового) тела:
     {"choices": [{"message": {...}, "finish_reason": ...}], "usage": {...}}, чтобы
     разбор ниже не менялся.
@@ -463,9 +466,8 @@ def _read_stream(r, emit, tick=3.0):
             "usage": usage}
 
 
-def _ask_openai(prof, system, user, schema, max_tokens=4096, emit=console_emit,
-
-                temperature=0.3, retries=1, step=None):
+def _ask_openai(prof: dict[str, Any], system: str, user: str, schema: dict[str, Any], max_tokens: int = 4096, emit: Callable[..., Any] = console_emit,
+                temperature: float = 0.3, retries: int = 1, step: str | None = None) -> Any:
     """Обёртка над _ask_openai_impl: ловит любой исход вызова (успех/ReelsiError)
     и пишет его в ai_calls.jsonl с токенами. Импортируется наружу (api/ai.py,
     aicut.__init__), сигнатура прежняя + необязательный `step` для имён шагов.
@@ -482,7 +484,7 @@ def _ask_openai(prof, system, user, schema, max_tokens=4096, emit=console_emit,
         raise
 
 
-def _downgrade_level(lvl, supported, provider=None, model=None):
+def _downgrade_level(lvl: str, supported: list[str] | None, provider: str | None = None, model: str | None = None) -> str:
     """Уровень на ступень ниже для повтора битого JSON: тот же бюджет
     размышлений второй раз не жжём. По каталогу efforts (порядок в нём — это
     порядок провайдера), иначе по нашему порядку уровней."""
@@ -501,8 +503,8 @@ def _downgrade_level(lvl, supported, provider=None, model=None):
     return order[max(i - 1, 0)]
 
 
-def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_emit,
-                     temperature=0.3, retries=1, step=None, _t0=None):
+def _ask_openai_impl(prof: dict[str, Any], system: str, user: str, schema: dict[str, Any], max_tokens: int = 4096, emit: Callable[..., Any] = console_emit,
+                     temperature: float = 0.3, retries: int = 1, step: str | None = None, _t0: float | None = None) -> Any:
     """OpenAI-совместимый путь: LM Studio (локально) / OpenRouter / свой сервер.
     Ответ читаем стримом (см. _read_stream) — прогресс в логе и мгновенный «Стоп».
     Битый JSON (модель залипла) лечится повтором (для LM Studio — ещё и перезагрузкой
@@ -593,7 +595,7 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
         else:                                        # фолбэк: схема прямо в промпте
             sys_txt = (system + "\n\nОтветь СТРОГО одним JSON-объектом по этой JSON-схеме, "
                        "без пояснений и без markdown:\n" + json.dumps(schema, ensure_ascii=False))
-        sys_content = sys_txt
+        sys_content: Any = sys_txt
         if use_cache:
             # cache_control кладём в КОНЕЦ статического префикса (system),
             # чтобы провайдер переиспользовал его между вызовами (inserts/yellow
@@ -836,7 +838,7 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
         # объект с обязательными полями, иначе это обрывок/пример, а не результат.
         need = [k for k in (schema.get("required") or []) if not isinstance(data, dict) or k not in data]
         if need:
-            last_err = "в ответе нет обязательных полей: " + ", ".join(need)
+            last_err = cast(Any, "в ответе нет обязательных полей: " + ", ".join(need))
             lvl_prev = lvl
             attempt += 1
             continue
@@ -846,7 +848,7 @@ def _ask_openai_impl(prof, system, user, schema, max_tokens=4096, emit=console_e
                           f"запусти шаг ещё раз (или смени модель в настройках ⚙)",
                           tries=retries + 1))
 
-def _anthropic_supports_thinking(mid):
+def _anthropic_supports_thinking(mid: str | None) -> bool:
     """Умеет ли Claude настраиваемый extended thinking (reasoning).
 
     Включаем у Claude 3.7 Sonnet и Claude 4 Sonnet/Opus (thinking задаётся бюджетом
@@ -867,8 +869,8 @@ def _anthropic_supports_thinking(mid):
     return False
 
 
-def _ask_anthropic(prof, system, user, schema, max_tokens=4096, emit=console_emit, retries=1,
-                   step=None):
+def _ask_anthropic(prof: dict[str, Any], system: str, user: str, schema: dict[str, Any], max_tokens: int = 4096, emit: Callable[..., Any] = console_emit, retries: int = 1,
+                   step: str | None = None) -> Any:
     """Claude API (см. _ask_openai: та же обёртка с логом вызовов в ai_calls.jsonl)."""
     t0 = time.time()
     ai_log_append(step, prof, ok=None)
@@ -880,8 +882,8 @@ def _ask_anthropic(prof, system, user, schema, max_tokens=4096, emit=console_emi
         raise
 
 
-def _ask_anthropic_impl(prof, system, user, schema, max_tokens=4096, emit=console_emit,
-                        retries=1, step=None, _t0=None):
+def _ask_anthropic_impl(prof: dict[str, Any], system: str, user: str, schema: dict[str, Any], max_tokens: int = 4096, emit: Callable[..., Any] = console_emit,
+                        retries: int = 1, step: str | None = None, _t0: float | None = None) -> Any:
     """Anthropic Claude API (официальный SDK): structured outputs через
     output_config.format — валидный JSON по схеме гарантирован. Для моделей с
     настраиваемым extended thinking (Claude 3.7 Sonnet / Claude 4 Sonnet/Opus) уровень
@@ -907,7 +909,7 @@ def _ask_anthropic_impl(prof, system, user, schema, max_tokens=4096, emit=consol
     if lvl in ("low", "medium", "high") and _anthropic_supports_thinking(model):
         thinking_budget = {"low": 2000, "medium": 8000, "high": 16000}[lvl]
 
-    def _call(thinking):
+    def _call(thinking: int | None) -> Any:
         mt = max_tokens
         if thinking and thinking >= mt:
             mt = thinking + 4000          # max_tokens СТРОГО > budget_tokens
@@ -980,7 +982,7 @@ def _ask_anthropic_impl(prof, system, user, schema, max_tokens=4096, emit=consol
         need = [k for k in (schema.get("required") or [])
                 if not isinstance(data, dict) or k not in data]
         if need:
-            last_err = "в ответе нет обязательных полей: " + ", ".join(need)
+            last_err = cast(Any, "в ответе нет обязательных полей: " + ", ".join(need))
             continue
         return data
     raise ReelsiError(umsg("bad_json",

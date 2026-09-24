@@ -16,15 +16,15 @@ r"""Прогон публичного среза через весь CI, а не
 pytest; ruff; mypy (конфигурация берётся из `pyproject.toml` среза); jsx
 (`node --check` по ExtendScript и по `static/app/*.js`); smoke (`compileall` и
 `--help` точек входа); requirements (разбор требований pip'ом и чтение их в
-системной кодировке); gitleaks (только дерево среза). Каждый шаг печатает имя и
-итог, в конце — сводная таблица. Код возврата ненулевой, если хоть один шаг
-провален или не прогонялся без явного флага пропуска; провал самих тестов отдаёт
-их собственный код.
+системной кодировке); gitleaks (только дерево среза); linux (тесты на Linux в docker с
+--init по ssh). Каждый шаг печатает имя и итог, в конце — сводная таблица.
+Код возврата ненулевой, если хоть один шаг провален или не прогонялся без явного
+флага пропуска; провал самих тестов отдаёт их собственный код.
 
 Чего здесь нет по сравнению с CI и почему: pip-audit (тянет сеть и базу
 уязвимостей), история публичного репозитория у gitleaks (сканируется только
 дерево среза — историю смотрит джоба `scan`), `reelsi --help` из установленного
-пакета (нужна `pip install -e .`), вторая операционная система.
+пакета (нужна `pip install -e .`).
 
 Правила отбора файлов НЕ дублируются: `.publicignore` читается и разбирается
 функциями `tools/public_slice.py` (`IGNORE_FILE`, `parse_ignore`, `is_ignored`).
@@ -43,20 +43,24 @@ pytest; ruff; mypy (конфигурация берётся из `pyproject.toml
 Интерфейс: `--ref`, `--keep`, `--root` — как было; `--only ШАГ` гоняет один шаг
 при разборе; `--skip ШАГ` пропускает шаг явно; бинарник gitleaks берётся из
 `--gitleaks PATH` или `$GITLEAKS`, а `--no-gitleaks` — явный пропуск с громкой
-строкой в выводе.
+строкой в выводе; удалённый хост для шага linux берётся из `--linux-ssh USER@HOST`
+или `$REELSI_LINUX_SSH`, образ — `--linux-image` (по умолчанию `reelsi-ci:py310`),
+а `--no-linux` — явный пропуск.
 
 Код возврата: 0 — все шаги прошли или пропущены явно; иначе ненулевой (при
 провале тестов — их код, как и раньше); не собрался срез — 2.
 """
 import argparse
+import io
 import os
 import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 from functools import partial
-from typing import Callable
+from typing import Any, Callable
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import public_slice  # noqa: E402
@@ -81,6 +85,8 @@ TIMEOUT_CODE = 124                  # коды, которые run_command от�
 NO_BINARY_CODE = 127
 ENV_GITLEAKS = "GITLEAKS"
 GITLEAKS_CONFIG = ".gitleaks.toml"
+ENV_LINUX_SSH = "REELSI_LINUX_SSH"
+DEFAULT_LINUX_IMAGE = "reelsi-ci:py310"
 REQUIREMENTS_FILES = ("requirements.txt", "requirements-optional.txt", "requirements-dev.txt")
 COMPILE_PATHS = ("api", "core", "tools", "tests", "webui.py", "reelsi.py", "doctor.py")
 CLI_HELP = (("reelsi.py",), ("-m", "core.omni_cut"), ("-m", "core.gigaam_cut"))
@@ -92,7 +98,7 @@ FAIL = "FAIL"
 NOTRUN = "НЕ ПРОГОНЯЛСЯ"
 SKIP = "ПРОПУЩЕН"
 
-STEP_NAMES = ("pytest", "ruff", "mypy", "jsx", "smoke", "requirements", "gitleaks")
+STEP_NAMES = ("pytest", "ruff", "mypy", "jsx", "smoke", "requirements", "gitleaks", "linux")
 
 STEP_HINTS = {
     "pytest": "python -m pytest tests -q",
@@ -102,6 +108,7 @@ STEP_HINTS = {
     "smoke": "compileall и --help точек входа",
     "requirements": "pip install --dry-run по requirements*.txt и чтение их в системной кодировке",
     "gitleaks": "gitleaks dir --redact -c .gitleaks.toml",
+    "linux": "pytest в docker с --init по ssh на Linux-хосте",
 }
 
 LOCALE_CHECK = (
@@ -141,7 +148,7 @@ class StepResult:
         return self.status in (FAIL, NOTRUN)
 
 
-def _text(value) -> str:
+def _text(value: Any) -> str:
     """Вывод команды строкой: TimeoutExpired отдаёт то str, то bytes."""
     if not value:
         return ""
@@ -150,8 +157,9 @@ def _text(value) -> str:
     return value
 
 
-def run_command(args, cwd: str, env: dict | None = None,
-                timeout: int = TIMEOUT_S) -> subprocess.CompletedProcess:
+def run_command(args: Any, cwd: str, env: dict[str, str] | None = None,
+                timeout: int = TIMEOUT_S,
+                input: bytes | str | None = None) -> subprocess.CompletedProcess[Any]:
     """Единственная точка запуска внешних команд: её и подменяют тесты.
 
     Таймаут и отсутствие программы возвращаются таким же CompletedProcess с
@@ -159,6 +167,22 @@ def run_command(args, cwd: str, env: dict | None = None,
     """
     cmd = [str(a) for a in args]
     try:
+        if input is not None:
+            input_bytes = input.encode("utf-8") if isinstance(input, str) else input
+            res = subprocess.run(
+                cmd,
+                cwd=cwd,
+                input=input_bytes,
+                capture_output=True,
+                env=env,
+                timeout=timeout,
+            )
+            return subprocess.CompletedProcess(
+                cmd,
+                res.returncode,
+                _text(res.stdout),
+                _text(res.stderr),
+            )
         return subprocess.run(
             cmd,
             cwd=cwd,
@@ -375,9 +399,12 @@ def step_ruff(tree: str) -> StepResult:
 
 
 def step_mypy(tree: str) -> StepResult:
-    """`mypy` без аргументов: список модулей и строгость — в `pyproject.toml` среза."""
-    res = run_command([sys.executable, "-m", "mypy"], tree)
-    return _tool_result("mypy", res, "mypy")
+    """`mypy` под win32 и linux: список модулей и строгость — в `pyproject.toml` среза."""
+    for platform in ("win32", "linux"):
+        res = run_command([sys.executable, "-m", "mypy", "--platform", platform], tree)
+        if res.returncode != 0:
+            return _tool_result("mypy", res, f"mypy --platform {platform}")
+    return StepResult("mypy", OK)
 
 
 def _walk_ext(tree: str, ext: str) -> list[str]:
@@ -521,7 +548,73 @@ def step_gitleaks(tree: str, gitleaks_path: str | None = None) -> StepResult:
     return _tool_result("gitleaks", res, "gitleaks dir")
 
 
-def _step_calls(gitleaks_path: str | None = None) -> dict[str, Callable[[str], StepResult]]:
+def pack_slice_tar(tree: str) -> bytes:
+    """Упаковывает файлы каталога среза (без служебного .git) в tar-архив."""
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tf:
+        for dirpath, dirnames, filenames in os.walk(tree):
+            dirnames[:] = [d for d in dirnames if d != ".git"]
+            for name in sorted(filenames):
+                full = os.path.join(dirpath, name)
+                rel = os.path.relpath(full, tree).replace("\\", "/")
+                tf.add(full, arcname=rel)
+    return buf.getvalue()
+
+
+def resolve_linux_ssh(explicit: str | None = None) -> tuple[str | None, str]:
+    """Хост для удалённого прогона тестов на Linux и причина, если он не задан.
+
+    Порядок: `--linux-ssh USER@HOST`, затем `$REELSI_LINUX_SSH`.
+    """
+    for source, value in (("--linux-ssh", explicit), (f"${ENV_LINUX_SSH}", os.environ.get(ENV_LINUX_SSH))):
+        if value and value.strip():
+            return value.strip(), ""
+
+    return None, ("хост не задан: укажи --linux-ssh USER@HOST или переменную "
+                  f"{ENV_LINUX_SSH}, либо пропусти шаг явным флагом --no-linux")
+
+
+def step_linux(tree: str, host: str | None = None,
+               image: str = DEFAULT_LINUX_IMAGE) -> StepResult:
+    """Прогон тестов в docker с --init по ssh на Linux-хосте."""
+    target_host, reason = resolve_linux_ssh(host)
+    if target_host is None:
+        return StepResult("linux", FAIL, reason)
+
+    print(f"Прогон тестов в docker на Linux-хосте {target_host} (образ {image})")
+    try:
+        tar_bytes = pack_slice_tar(tree)
+    except Exception as e:
+        return StepResult("linux", FAIL, f"ошибка упаковки среза в tar: {e}")
+
+    # --init обязателен: без него pytest = PID 1 внутри контейнера, killpg(1)
+    # совпадает со своей группой процессов и пропускается ядром Linux (дефект
+    # «тест убил раннер CI» становится невидим), и зомби-процессы не пожинаются.
+    remote_script = (
+        'd=$(mktemp -d) && '
+        'tar -xf - -C "$d" && '
+        '(cd "$d" && git init -q && git add -A && git -c user.name=slice -c user.email=slice@local commit -qm slice) && '
+        f'docker run --rm --init --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$d:/src" -w /src {image} python -m pytest tests -q -p no:cacheprovider; '
+        'rc=$?; rm -rf "$d"; exit $rc'
+    )
+    cmd = ["ssh", "-o", "BatchMode=yes", target_host, remote_script]
+    res = run_command(cmd, tree, input=tar_bytes)
+    output = _output_of(res)
+    if res.returncode == 0:
+        return StepResult("linux", OK, code=0, output=output)
+    if res.returncode == TIMEOUT_CODE:
+        return StepResult("linux", NOTRUN, f"таймаут: ssh {target_host}",
+                          code=res.returncode, output=output)
+    if res.returncode == NO_BINARY_CODE:
+        return StepResult("linux", NOTRUN, "команда не запустилась: ssh",
+                          code=res.returncode, output=output)
+    return StepResult("linux", FAIL, f"код возврата {res.returncode}",
+                      code=res.returncode, output=output)
+
+
+def _step_calls(gitleaks_path: str | None = None,
+                linux_ssh: str | None = None,
+                linux_image: str = DEFAULT_LINUX_IMAGE) -> dict[str, Callable[[str], StepResult]]:
     """Запускалки шагов: имя -> вызов. Порядок и имена — в `STEP_NAMES`."""
     return {
         "pytest": step_pytest,
@@ -531,6 +624,7 @@ def _step_calls(gitleaks_path: str | None = None) -> dict[str, Callable[[str], S
         "smoke": step_smoke,
         "requirements": step_requirements,
         "gitleaks": partial(step_gitleaks, gitleaks_path=gitleaks_path),
+        "linux": partial(step_linux, host=linux_ssh, image=linux_image),
     }
 
 
@@ -542,7 +636,8 @@ def _split_names(values: list[str] | None) -> list[str]:
     return names
 
 
-def _skip_reason(name: str, only: set[str], skip: set[str], no_gitleaks: bool) -> str:
+def _skip_reason(name: str, only: set[str], skip: set[str],
+                 no_gitleaks: bool, no_linux: bool) -> str:
     """Почему шаг не пойдёт; пустая строка — идёт."""
     if only and name not in only:
         return f"не выбран (--only {','.join(sorted(only))})"
@@ -550,20 +645,28 @@ def _skip_reason(name: str, only: set[str], skip: set[str], no_gitleaks: bool) -
         return "пропущен явным флагом --skip"
     if name == "gitleaks" and no_gitleaks:
         return "явный флаг --no-gitleaks: дерево среза не сканировалось"
+    if name == "linux" and no_linux:
+        return "явный флаг --no-linux: тесты на Linux не прогонялись"
     return ""
 
 
-def run_steps(tree: str, only: set[str], skip: set[str], gitleaks_path: str | None,
-              no_gitleaks: bool) -> list[StepResult]:
+def run_steps(tree: str, only: set[str], skip: set[str],
+              gitleaks_path: str | None, no_gitleaks: bool,
+              linux_ssh: str | None = None,
+              linux_image: str = DEFAULT_LINUX_IMAGE,
+              no_linux: bool = False) -> list[StepResult]:
     """Прогон шагов в порядке `STEP_NAMES`; пропущенные попадают в таблицу отдельным итогом."""
-    calls = _step_calls(gitleaks_path)
+    calls = _step_calls(gitleaks_path=gitleaks_path, linux_ssh=linux_ssh, linux_image=linux_image)
     results = []
     for name in STEP_NAMES:
-        reason = _skip_reason(name, only, skip, no_gitleaks)
+        reason = _skip_reason(name, only, skip, no_gitleaks, no_linux)
         if reason:
             if name == "gitleaks" and no_gitleaks:
                 print("gitleaks НЕ ПРОГОНЯЛСЯ: явный флаг --no-gitleaks — дерево среза не "
                       "сканировано, история публичного репозитория так не проверяется")
+            elif name == "linux" and no_linux:
+                print("linux НЕ ПРОГОНЯЛСЯ: явный флаг --no-linux — тесты на Linux в docker с "
+                      "--init не прогонялись")
             results.append(StepResult(name, SKIP, reason))
             print_result(results[-1])
             continue
@@ -625,6 +728,12 @@ def main(argv: list[str] | None = None, root: str | None = None) -> int:
                         help=f"Путь к бинарнику gitleaks (иначе ${ENV_GITLEAKS} или PATH)")
     parser.add_argument("--no-gitleaks", action="store_true",
                         help="Не гонять gitleaks: шаг не прогонялся, о чём скрипт скажет громко")
+    parser.add_argument("--linux-ssh", default=None, metavar="USER@HOST",
+                        help=f"Хост для запуска тестов на Linux по ssh (иначе ${ENV_LINUX_SSH})")
+    parser.add_argument("--linux-image", default=DEFAULT_LINUX_IMAGE, metavar="IMAGE",
+                        help=f"Docker-образ на удалённом хосте (по умолчанию {DEFAULT_LINUX_IMAGE})")
+    parser.add_argument("--no-linux", action="store_true",
+                        help="Не гонять тесты на Linux: шаг не прогонялся, о чём скрипт скажет громко")
 
     try:
         args = parser.parse_args(argv)
@@ -648,7 +757,10 @@ def main(argv: list[str] | None = None, root: str | None = None) -> int:
         print(f"Срез {args.ref}: файлов {len(entries)}")
         print(f"Каталог среза: {tree}")
 
-        results = run_steps(tree, only, skip, args.gitleaks, args.no_gitleaks)
+        results = run_steps(tree, only, skip, args.gitleaks, args.no_gitleaks,
+                            linux_ssh=args.linux_ssh,
+                            linux_image=args.linux_image,
+                            no_linux=args.no_linux)
         print_summary(results)
         return exit_code(results)
     except public_slice.SliceGitError as e:

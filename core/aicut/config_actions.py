@@ -256,7 +256,7 @@ def save_profile(cfg: dict[str, Any], d: dict[str, Any]) -> None:
         raise ReelsiError(umsg("key_mask_address_changed",
             "Сменился адрес или провайдер — введи ключ заново: сохранённый ключ "
             "к новому адресу не подставляется"))
-    newp = {"provider": provider,
+    newp: dict[str, Any] = {"provider": provider,
             "base_url": base_url,
             "api_key": unmask_ai_key(key_in, old_name or name),
             "model": _s(p, "model").strip()}

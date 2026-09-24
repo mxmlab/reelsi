@@ -23,6 +23,7 @@ import json
 import os
 import re
 import sys
+from typing import Any, Sequence, cast
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -52,12 +53,12 @@ ORDER_PAIRS = [("субтитры", "переходы"), ("субтитры", "�
                ("рото", "вставки/интро"), ("рото", "камеры"), ("вставки/интро", "камеры")]
 
 
-def _load(path):
+def _load(path: str) -> Any:
     with open(path, encoding="utf-8-sig") as f:
         return json.load(f)
 
 
-def main_comps(dump, subs_comp=None):
+def main_comps(dump: Any, subs_comp: Any = None) -> list[Any]:
     """Главные компы — всё, что не субтитры, не интро и не прекомп вставки.
 
     Их может быть НЕСКОЛЬКО: `build_combined` («один .jsx на всё») кладёт в один
@@ -74,7 +75,7 @@ def main_comps(dump, subs_comp=None):
             and _looks_generated(c.get("layers") or [])]
 
 
-def pick_main(dump, name=None):
+def pick_main(dump: Any, name: str | None = None) -> tuple[Any, str | None]:
     """-> (комп, ошибка). Один кандидат — берём; несколько — нужен --comp."""
     cands = main_comps(dump)
     if not cands:
@@ -92,7 +93,7 @@ def pick_main(dump, name=None):
     return cands[0], None
 
 
-def _kind(layer):
+def _kind(layer: Any) -> str:
     """Грубая классификация слоя главного компа по имени/источнику (нул — по флагу)."""
     n = layer.get("name") or ""
     src = layer.get("source") or ""
@@ -126,15 +127,15 @@ def _kind(layer):
     return "прочее"
 
 
-def _looks_generated(layers):
+def _looks_generated(layers: Any) -> bool:
     """Похож ли комп на сборку из нашего .jsx (а не на ручной проект в AE)."""
     return any((L.get("name") or "").startswith(("Камера ", "Вставка: ", "Субтитры"))
                or (L.get("name") or "") in ("Рото маска", "Рото камера",
-                                            "вставки кам1", "вставки кам2", SUBS_COMP)
+                                             "вставки кам1", "вставки кам2", SUBS_COMP)
                for L in layers)
 
 
-def check(dump, structs, rep, comp_name=None):
+def check(dump: Any, structs: Any, rep: Any, comp_name: str | None = None) -> None:
     main, err = pick_main(dump, comp_name)
     if err:
         rep.err(err)
@@ -253,6 +254,8 @@ def check(dump, structs, rep, comp_name=None):
     # НЕ проверяем непрерывность ярусов: переходы ставятся у своего ката и законно
     # чередуются со вставками (замер на реальных проектах — чередование есть везде).
     # Проверяем ПАРНЫЕ инварианты: что обязано лежать целиком выше чего.
+    pos: dict[str, list[int]]
+    named: dict[tuple[str, int], str]
     pos, named = {}, {}
     for L in layers:
         k = _kind(L)
@@ -274,7 +277,7 @@ def check(dump, structs, rep, comp_name=None):
             k for k in LAYER_ORDER if k in pos))
 
 
-def main(argv=None):
+def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Сверка проекта AE с собранным .jsx")
     ap.add_argument("inspect", help="<проект>.inspect.json от ae_inspect.jsx")
     ap.add_argument("--jsx", required=True, help=".jsx, которым собирался проект")
@@ -283,7 +286,7 @@ def main(argv=None):
     a = ap.parse_args(argv)
 
     try:
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        cast(Any, sys.stdout).reconfigure(encoding="utf-8", errors="replace")
     except Exception:                                       # noqa: BLE001
         pass
 

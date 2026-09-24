@@ -15,19 +15,20 @@ Usage:
     python reelsi/reelsi.py --no-subs --no-dedup  # just the multicam cut
 """
 import os, sys, argparse, traceback
+from typing import Any, Sequence, cast
 from core.app_meta import out_dir
 from core.cams import DEFAULT_BASE, find_cam_dirs, list_videos
 from core.cutjob import CutOptions, process_pair
 from core.umsg import ReelsiError, cli_error
 
 
-def choose(prompt, options):
+def choose(prompt: str, options: Sequence[str]) -> str:
     try:
         if sys.stdin.isatty():
             import questionary
             r = questionary.select(prompt, choices=options).ask()
             if r is not None:
-                return r
+                return cast(str, r)
     except ReelsiError: raise
     except Exception:
         pass  # questionary нет или нет TTY — спросим цифрой ниже
@@ -41,7 +42,7 @@ def choose(prompt, options):
         print("Неверный номер.")
 
 
-def build_queue(base, n_cams=2):
+def build_queue(base: str, n_cams: int = 2) -> list[Any]:
     """n_cams cameras (1..4). Returns a list of camera-path tuples."""
     dirs = find_cam_dirs(base)
     if len(dirs) < n_cams:
@@ -49,7 +50,7 @@ def build_queue(base, n_cams=2):
     dirs = dirs[:n_cams]
     vids = [list_videos(d) for d in dirs]
     labels = [os.path.basename(d) for d in dirs]
-    queue = []
+    queue: list[Any] = []
     print("Камеры: " + ", ".join(labels))
     print("Набери очередь. После каждой спрошу, добавить ли ещё.\n")
     while True:
@@ -74,7 +75,7 @@ def build_queue(base, n_cams=2):
     return queue
 
 
-def build_parser():
+def build_parser() -> argparse.ArgumentParser:
     # Умолчания нарезки — из CutOptions (core/cutjob.py), своих чисел у CLI нет:
     # раньше те же числа лежали ещё и в argparse.Namespace, который собирал api/jobs.py.
     cut = CutOptions()
@@ -110,13 +111,14 @@ def build_parser():
     return ap
 
 
-def main():
+def main() -> None:
     from core.paths import require_source_tree
     require_source_tree()
     ap = build_parser()
     args = ap.parse_args()
     n_cams = 1 if args.single else args.cams
 
+    queue: list[Any]
     if args.cam1:
         queue = [tuple(c for c in (args.cam1, args.cam2, args.cam3, args.cam4) if c)]
     else:

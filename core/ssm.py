@@ -6,6 +6,8 @@
 find_repeats(y) -> список (lag, rep_start, rep_end, score) — reparandum (первый заход) на выброс.
 snap_cut(y, t)  -> ближайшая «тихая» точка (минимум энергии + zero-crossing), чтобы не резать слова.
 """
+from __future__ import annotations
+from typing import Any
 import numpy as np
 
 SR = 16000
@@ -13,14 +15,16 @@ HOP = 160
 FPS = SR / HOP
 
 
-def _mfcc(y):
+def _mfcc(y: Any) -> Any:
     import librosa
     m = librosa.feature.mfcc(y=y.astype(np.float32), sr=SR, n_mfcc=20, hop_length=HOP, n_fft=400)
     m = np.vstack([m, librosa.feature.delta(m)])
     return (m - m.mean(1, keepdims=True)) / (m.std(1, keepdims=True) + 1e-6)
 
 
-def find_repeats(y, min_rep=0.35, thr=0.55, min_run=0.30):
+def find_repeats(
+    y: Any, min_rep: float = 0.35, thr: float = 0.55, min_run: float = 0.30
+) -> list[tuple[float, float, float, float]]:
     """Найти повторяющиеся куски по диагональным полосам SSM. Вернуть непересекающиеся
     (lag_sec, start_sec, end_sec, score) — [start,end) = первый заход (reparandum) на выброс."""
     m = _mfcc(y)
@@ -46,7 +50,7 @@ def find_repeats(y, min_rep=0.35, thr=0.55, min_run=0.30):
             else:
                 i += 1
     cands.sort(key=lambda c: -c[3])
-    out = []
+    out: list[tuple[float, float, float, float]] = []
     for c in cands:
         if all(not (c[1] < o[2] and o[1] < c[2]) for o in out):   # непересекающиеся
             out.append(c)
@@ -58,11 +62,11 @@ import re as _re
 from core import align as _align  # общий гейт перечислений (см. align.is_enumeration)
 
 
-def _norm(w):
+def _norm(w: str) -> str:
     return _re.sub(r"[^\w]+", "", w.lower())
 
 
-def repeated_phrase(text, min_span=2, max_gap=6):
+def repeated_phrase(text: str, min_span: int = 2, max_gap: int = 6) -> str:
     """Вернуть текст повторённой связки (для cut-log), '' если нет."""
     raw = [w for w in _re.split(r"\s+", text or "") if w]
     toks = [_norm(w) for w in raw]
@@ -79,7 +83,7 @@ def repeated_phrase(text, min_span=2, max_gap=6):
     return ""
 
 
-def text_has_repeat(text, min_span=2, max_gap=6):
+def text_has_repeat(text: str, min_span: int = 2, max_gap: int = 6) -> bool:
     """Есть ли в ТЕКСТЕ повтор (связка из ≥2 слов, произнесённая дважды рядом)? Гейт для
     SSM: режем повтор в звуке только если транскрипт это подтверждает (меньше ложных).
     Перечисление («где он сделал вот это, а где он сделал другое») повтором НЕ считаем —
@@ -98,7 +102,7 @@ def text_has_repeat(text, min_span=2, max_gap=6):
     return False
 
 
-def snap_cut(y, t_sec, win=0.15, sil_ratio=0.30):
+def snap_cut(y: Any, t_sec: float, win: float = 0.15, sil_ratio: float = 0.30) -> tuple[float, bool]:
     """Сдвинуть точку реза к минимуму энергии в окне ±win + zero-crossing. Вернуть
     (time, ok): ok=False если даже минимум громче sil_ratio·(медианной энергии клипа) —
     значит настоящей паузы тут нет (середина слова), резать НЕЛЬЗЯ."""
@@ -124,7 +128,7 @@ def snap_cut(y, t_sec, win=0.15, sil_ratio=0.30):
     return t, ok
 
 
-def _zc(y, t):
+def _zc(y: Any, t: float) -> float:
     i = int(t * SR); n = len(y)
     for d in range(int(0.015 * SR)):
         for j in (i + d, i - d):
@@ -133,7 +137,9 @@ def _zc(y, t):
     return t
 
 
-def breath_cut_ranges(y, off=0.0, min_gap=0.40, keep_pad=0.12, sil_ratio=0.45):
+def breath_cut_ranges(
+    y: Any, off: float = 0.0, min_gap: float = 0.40, keep_pad: float = 0.12, sil_ratio: float = 0.45
+) -> list[tuple[float, float]]:
     """Вырезать вздохи/паузы ВНУТРИ интервала: низко-энергетические участки длиннее
     min_gap. Режем середину, оставляя keep_pad у речи (не клиппит), с zero-crossing."""
     n = len(y)
@@ -157,7 +163,7 @@ def breath_cut_ranges(y, off=0.0, min_gap=0.40, keep_pad=0.12, sil_ratio=0.45):
     return out
 
 
-def repeat_cut_ranges(y, text="", off=0.0):
+def repeat_cut_ranges(y: Any, text: str = "", off: float = 0.0) -> list[tuple[float, float]]:
     """Диапазоны на выброс (абс. секунды, +off): режем повтор ТОЛЬКО если (1) текст его
     подтверждает и (2) обе точки реза попадают в реальную тишину (иначе не режем — лучше
     оставить повтор, чем разрезать слово)."""

@@ -7,7 +7,9 @@
 островки в пару кадров. Эти чистки детерминированные и без ИИ — их и проверяют
 tests/test_gigaam_postprocess.py.
 """
+from __future__ import annotations
 import re
+from typing import Any, Sequence
 from core import align
 from . import tune as _tune
 from .tune import (FILLERS, HEAL_RUN, HEAL_SEG, NG_MARKERS, REPEAT_N, REPEAT_WIN, TAKE_WIN,
@@ -16,7 +18,7 @@ from core.app_meta import console_emit, wrap_emit
 
 
 
-def _words_text(words, a, b):
+def _words_text(words: Sequence[Any], a: int, b: int) -> str:
     return " ".join(words[i]["w"] for i in range(a, b + 1))
 
 
@@ -28,18 +30,18 @@ def _words_text(words, a, b):
 # стыке («питание воло | волосяных луковиц») и роняет островки в 2-3 кадра.
 # Всё это ловится кодом по пословным таймингам, поэтому не полагаемся на ИИ.
 # --------------------------------------------------------------------------- #
-def _tok(w):
+def _tok(w: str | None) -> str:
     """Слово -> голые буквы (для сравнения повторов)."""
     return "".join(re.findall(r"[а-яёa-z]+", (w or "").lower()))
 
 
-def _is_ng(words, idxs):
+def _is_ng(words: list[dict[str, Any]], idxs: Any) -> bool:
     """Есть ли в куске мат/NG-реплика — такое обратно не возвращаем."""
     return any(any(t.startswith(m) or m in t for m in NG_MARKERS)
                for t in (_tok(words[i]["w"]) for i in idxs) if t)
 
 
-def _same(t1, t2):
+def _same(t1: str, t2: str) -> bool:
     """Слова считаем одним и тем же, если совпали, одно — обрубок другого
     («воло»/«волосяных») или различие в одну букву («фолликулы»/«фоликулы»)."""
     if t1 == t2:
@@ -51,7 +53,7 @@ def _same(t1, t2):
         return _lev1(a, b)                 # «фолликулы»/«фоликулы» — вставка буквы
     return False
 
-def _lev1(a, b):
+def _lev1(a: str, b: str) -> bool:
     """Расстояние Левенштейна <= 1 (замена, вставка или удаление одной буквы)."""
     if a == b:
         return True
@@ -65,7 +67,9 @@ def _lev1(a, b):
     return a[i:] == b[i + 1:]
 
 
-def find_takes(words, max_n=REPEAT_N, win=TAKE_WIN, lookback=14, emit=console_emit):
+def find_takes(
+    words: list[dict[str, Any]], max_n: int = REPEAT_N, win: float = TAKE_WIN, lookback: int = 14, emit: Any = console_emit
+) -> list[tuple[int, int, int]]:
     """Фальстарты: место, где спикер НАЧАЛ фразу заново. Признак — начало
     сегмента с позиции j дословно повторяет начало недавнего сегмента с
     позиции i (>=2 слова, с поправкой на обрубки и опечатки ASR). Тогда
@@ -87,6 +91,10 @@ def find_takes(words, max_n=REPEAT_N, win=TAKE_WIN, lookback=14, emit=console_em
     emit = wrap_emit(emit)
     toks = [_tok(w["w"]) for w in words]
     n_all = len(words)
+    res: list[tuple[int, int, int]]
+    enum: list[tuple[int, int]]
+    j: int
+    floor: int
     res, enum, j, floor = [], [], 1, 0
     while j < n_all:
         best = None
@@ -117,7 +125,7 @@ def find_takes(words, max_n=REPEAT_N, win=TAKE_WIN, lookback=14, emit=console_em
     return res
 
 
-def _take_tail(words, drop, b, silence_bounds=None):
+def _take_tail(words: list[dict[str, Any]], drop: set[int], b: int, silence_bounds: Any = None) -> int:
     """Докуда тянется чистовой заход: граница кластера — это лишь то место, где
     закончилось совпадение с брошенным заходом («используем его уже» ← совпало,
     «очень давно» ← уже нет). Реальная фраза идёт до ПАУЗЫ, поэтому добираем
@@ -129,8 +137,10 @@ def _take_tail(words, drop, b, silence_bounds=None):
     return end
 
 
-def force_takes(words, kept, drop, takes=None, silence_bounds=None,
-                protect=(), emit=console_emit):
+def force_takes(
+    words: list[dict[str, Any]], kept: set[int], drop: set[int], takes: list[tuple[int, int, int]] | None = None, silence_bounds: Any = None,
+    protect: Any = (), emit: Any = console_emit
+) -> list[tuple[int, int, int]]:
     """ЖЕЛЕЗНОЕ ПРАВИЛО в коде: внутри кластера дублей остаётся ПОСЛЕДНИЙ заход,
     ранние выкидываются — независимо от того, что нарезала 27b (она стабильно
     промахивается индексами: называет верный заход в notes и режет соседний).
@@ -144,6 +154,8 @@ def force_takes(words, kept, drop, takes=None, silence_bounds=None,
     Не возвращаем только блоки с мат/NG-маркерами: там модель права."""
     if takes is None:
         takes = find_takes(words, emit=emit)
+    fixed: list[tuple[int, int, int]]
+    revived: list[tuple[int, int]]
     fixed, revived = [], []
     for a, b, last in takes:
         span = range(a, b + 1)
@@ -180,8 +192,10 @@ def force_takes(words, kept, drop, takes=None, silence_bounds=None,
     return fixed
 
 
-def veto_unique_drops(words, kept, drop, takes=None, min_words=5, min_sec=1.5,
-                      protect=(), emit=console_emit):
+def veto_unique_drops(
+    words: list[dict[str, Any]], kept: set[int], drop: set[int], takes: list[tuple[int, int, int]] | None = None, min_words: int = 5, min_sec: float = 1.5,
+    protect: Any = (), emit: Any = console_emit
+) -> list[int]:
     """Страховка от «модель снесла хороший кусок». 27b иногда режет диапазон
     гораздо шире брошенного захода — на C1353 она выкинула 0-44 вместо 14-20 и
     унесла с собой весь интро-хук («ты точно облысеешь если сядешь на курс…»).
@@ -193,12 +207,14 @@ def veto_unique_drops(words, kept, drop, takes=None, min_words=5, min_sec=1.5,
     уникальный связный кусок речи никак не может быть дублем."""
     if takes is None:
         takes = find_takes(words, emit=lambda *a, **k: None)
-    in_take = set()
+    in_take: set[int] = set()
     for a, b, _last in takes:
         in_take.update(range(a, b + 1))
-    back = []
+    back: list[int] = []
     for a, b in _ranges(sorted(drop)):
         for lo, hi, step in ((a, b, 1), (b, a, -1)):     # оба края диапазона
+            run: list[int]
+            i: int
             run, i = [], lo
             while (i - hi) * step <= 0 and i not in in_take and i not in protect:
                 run.append(i); i += step
@@ -217,8 +233,10 @@ def veto_unique_drops(words, kept, drop, takes=None, min_words=5, min_sec=1.5,
     return back
 
 
-def heal_fragments(words, kept, drop, silence_bounds=None, takes=None,
-                   max_seg=HEAL_SEG, max_run=HEAL_RUN, protect=(), emit=console_emit):
+def heal_fragments(
+    words: list[dict[str, Any]], kept: set[int], drop: set[int], silence_bounds: Any = None, takes: list[tuple[int, int, int]] | None = None,
+    max_seg: float = HEAL_SEG, max_run: int = HEAL_RUN, protect: Any = (), emit: Any = console_emit
+) -> list[int]:
 
     """Обрывок фразы: 27b оставила начало и дорезала короткое продолжение —
     «и список» (без «самых опасных»), «мне впервые» (без «про него рассказали»),
@@ -227,13 +245,15 @@ def heal_fragments(words, kept, drop, silence_bounds=None, takes=None,
     (то есть это не брошенный заход, а именно продолжение) — возвращаем его."""
     if takes is None:
         takes = find_takes(words, emit=lambda *a, **k: None)
-    in_take = set()
+    in_take: set[int] = set()
     for a, b, _last in takes:
         in_take.update(range(a, b + 1))
-    back = []
+    back: list[int] = []
     for a, b in keep_segments(words, kept, silence_bounds):
         if words[b]["end"] - words[a]["start"] > max_seg:
             continue
+        run: list[int]
+        i: int
         run, i = [], b + 1
         while i < len(words) and i in drop and len(run) <= max_run:
             run.append(i); i += 1
@@ -251,7 +271,9 @@ def heal_fragments(words, kept, drop, silence_bounds=None, takes=None,
     return back
 
 
-def dedupe_repeats(words, kept, drop, max_n=REPEAT_N, protect=(), emit=console_emit):
+def dedupe_repeats(
+    words: list[dict[str, Any]], kept: set[int], drop: set[int], max_n: int = REPEAT_N, protect: Any = (), emit: Any = console_emit
+) -> list[int]:
     """Соседние повторы СРЕДИ ОСТАВЛЕННЫХ слов: «в организме в организме» ->
     остаётся ПОСЛЕДНИЙ заход, ранний уходит в drop (то же железное правило,
     что и в промпте, но здесь оно гарантировано). Ищем от длинных n-грамм к
@@ -283,8 +305,10 @@ def dedupe_repeats(words, kept, drop, max_n=REPEAT_N, protect=(), emit=console_e
     return removed
 
 
-def dedupe_fragments(words, kept, drop, win=REPEAT_WIN, max_n=REPEAT_N,
-                     protect=(), emit=console_emit):
+def dedupe_fragments(
+    words: list[dict[str, Any]], kept: set[int], drop: set[int], win: float = REPEAT_WIN, max_n: int = REPEAT_N,
+    protect: Any = (), emit: Any = console_emit
+) -> list[int]:
     """Осколок дубля НЕ вплотную: «и список самых опасных … и список для причёски»
     — 27b оставил кусок соседнего захода. Выкидываем ПОЗДНЮЮ копию n-граммы
     (n>=2) — текст от этого не меняется при любом порядке заходов, уходит только
@@ -331,7 +355,9 @@ def dedupe_fragments(words, kept, drop, win=REPEAT_WIN, max_n=REPEAT_N,
     return removed
 
 
-def drop_truncated(words, kept, drop, min_len=4, protect=(), emit=console_emit):
+def drop_truncated(
+    words: list[dict[str, Any]], kept: set[int], drop: set[int], min_len: int = 4, protect: Any = (), emit: Any = console_emit
+) -> list[int]:
 
     """Обрубок слова на стыке: оставленное слово — строгий префикс следующего
     оставленного («воло» перед «волосяных», «производ» перед «производные»).
@@ -351,7 +377,7 @@ def drop_truncated(words, kept, drop, min_len=4, protect=(), emit=console_emit):
     return removed
 
 
-def _self_repeat(toks, max_n=6):
+def _self_repeat(toks: list[str], max_n: int = 6) -> bool:
     """Один и тот же n-грамм (n>=2) встречается дважды — раскачивающаяся
     пересъёмка («в итоге в итоге яички в итоге яички получают…»)."""
     for n in range(min(max_n, len(toks) // 2), 1, -1):
@@ -366,12 +392,12 @@ def _self_repeat(toks, max_n=6):
     return False
 
 
-def _stutter(toks):
+def _stutter(toks: list[str]) -> bool:
     """Смежные дубли: «но но», «дальше дальше», «ставят ставить»."""
     return any(a and b and a == b for a, b in zip(toks, toks[1:]))
 
 
-def _share_bigram(a, b):
+def _share_bigram(a: list[str], b: list[str]) -> bool:
     """Хвосты делят общий биграм — перефразировка, а не параллель («полгода как…»
     против «в полгода как…», «сталкиваются чаще всего» против «сталкиваюсь чаще
     всего»)."""
@@ -381,7 +407,7 @@ def _share_bigram(a, b):
     return any(x in bb for x in zip(a, a[1:]))
 
 
-def _stub(a, b):
+def _stub(a: str, b: str) -> bool:
     """Одно слово — обрубок другого и покороче (порог 3 буквы: «вес»/«весом»,
     «уко»/«уколы»). В _same порог 4 — здесь пересъёмка с огрызком иначе уезжает
     в «разные хвосты»."""
@@ -389,7 +415,7 @@ def _stub(a, b):
     return len(s) >= 3 and l.startswith(s)
 
 
-def _neg_start(B):
+def _neg_start(B: list[str]) -> bool:
     """Второй заход начинается с отрицания («нет», «наоборот», «а не», «но не»)."""
     if not B:
         return False
@@ -406,7 +432,7 @@ def _neg_start(B):
 RETALK_MARKERS = ("еще раз", "ещё раз", "не успе", "поехали", "давай")
 
 
-def _is_parallel(A, B, min_prefix=2):
+def _is_parallel(A: list[str], B: list[str], min_prefix: int = 2) -> bool:
     """Вырезанный кусок — ПЕРВАЯ половина параллельной конструкции? True = вернуть.
 
     См. keep_parallel_runs: жалоба юзера про «одинаковые слова, начало вырезается».
@@ -440,8 +466,10 @@ def _is_parallel(A, B, min_prefix=2):
     return False
 
 
-def keep_parallel_runs(words, kept, drop, model_drop=None, look=14, min_prefix=2,
-                       protect=(), emit=console_emit):
+def keep_parallel_runs(
+    words: list[dict[str, Any]], kept: set[int], drop: set[int], model_drop: Any = None, look: int = 14, min_prefix: int = 2,
+    protect: Any = (), emit: Any = console_emit
+) -> list[int]:
     """Вернуть вырезанные ПЕРВЫЕ половины параллелей и антитез.
 
     Жалоба юзера 2026-08-13: «одинаковые слова при нарезке всё ещё вырезаются
@@ -464,7 +492,7 @@ def keep_parallel_runs(words, kept, drop, model_drop=None, look=14, min_prefix=2
     параллели, срезанные ради темы)."""
     if model_drop is None:
         model_drop = set(drop)
-    back = []
+    back: list[int] = []
     for a, b in _ranges(sorted(model_drop)):
         if any(i not in drop for i in range(a, b + 1)):
             continue                     # механические чистки уже вернули часть — не трогаем
@@ -483,6 +511,8 @@ def keep_parallel_runs(words, kept, drop, model_drop=None, look=14, min_prefix=2
         A = toks[:look]
         if not any(A):
             continue
+        B: list[str]
+        i: int
         B, i = [], b + 1
         while i < len(words) and len(B) < look:
             if i in kept:
@@ -501,8 +531,10 @@ def keep_parallel_runs(words, kept, drop, model_drop=None, look=14, min_prefix=2
     return back
 
 
-def postprocess(words, kept, drop, silence_bounds=None, protect=(), light=False,
-                emit=console_emit, dedupe=None, rule=None):
+def postprocess(
+    words: list[dict[str, Any]], kept: set[int], drop: set[int], silence_bounds: Any = None, protect: Any = (), light: bool = False,
+    emit: Any = console_emit, dedupe: bool | None = None, rule: dict[int, str] | None = None
+) -> tuple[set[int], set[int]]:
     """Чистки подряд (порядок важен: повторы/обрубки могут породить новые
     микро-островки, поэтому островки — последними; force_takes — первым, он
     единственный может ВЕРНУТЬ слово в kept). protect — слова, которые только
@@ -533,7 +565,7 @@ def postprocess(words, kept, drop, silence_bounds=None, protect=(), light=False,
     protect = set(protect)
     model_drop = set(drop)                 # вырезы МОДЕЛИ — им и спорит keep_parallel_runs
 
-    def tick(before, name):
+    def tick(before: set[int], name: str | None) -> None:
         """После одной чистки: новые слова в drop — её правило; вернувшиеся —
         атрибуцию снять (их в cutlog уже нет, правило вводило бы в заблуждение)."""
         if rule is None:
@@ -589,18 +621,20 @@ _RULE_ORDER = {"decide_markup": 0, "force_takes": 1, "dedupe_repeats": 2,
                "dedupe_fragments": 3, "drop_truncated": 4, "drop_micro_keeps": 5}
 
 
-def _range_rule(rule, a, b):
+def _range_rule(rule: dict[int, str] | None, a: int, b: int) -> str:
     """Имя правила для диапазона вырезанных слов [a, b]. Слова в диапазоне могут
     быть сняты РАЗНЫМИ чистками (модель дорезала код и наоборот) — берём то, что
     сняло БОЛЬШИНСТВО слов; ничья — то, что резало позже в конвейере."""
-    cnt = {}
+    cnt: dict[str, int] = {}
     for i in range(a, b + 1):
         r = (rule or {}).get(i, "decide_markup")
         cnt[r] = cnt.get(r, 0) + 1
     return max(cnt, key=lambda r: (cnt[r], _RULE_ORDER.get(r, 0)))
 
 
-def build_cutlog(words, drop, silence_bounds=(), breath_marks=(), rule=None):
+def build_cutlog(
+    words: list[dict[str, Any]], drop: set[int], silence_bounds: Any = (), breath_marks: Any = (), rule: dict[int, str] | None = None
+) -> list[dict[str, Any]]:
     """Записи «что убрано» для .cuts.json (gigaam-путь): вырезанные слова по
     диапазонам, тишина, вздохи. Каждая запись несёт `rule` — имя функции/
     источника, снявшего кусок: так в редакторе нарезки видно, кто виноват в

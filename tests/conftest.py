@@ -13,6 +13,7 @@ import os
 import shutil
 import sys
 import tempfile
+from typing import Any, Callable, Optional
 
 import pytest
 
@@ -48,6 +49,13 @@ os.environ["REELSI_JOB_STATE"] = os.path.join(_TEST_LOG_DIR, "job_state.json")
 # чтобы тесты использовали _default_ai_config() и не копировали чужие боевые ключи.
 _TEST_AI_CONFIG = os.path.join(_TEST_LOG_DIR, "ai_config.json")
 os.environ["REELSI_AI_CONFIG"] = _TEST_AI_CONFIG
+
+# Настоящие системные функции отправки сигналов: сторож сигналов подменяет os.kill и os.killpg
+# на уровне каждого теста, а настоящие реализации вызывает через эти ссылки.
+# В тестах сторожа (tests/test_signal_guard.py) их можно подменить заглушками через monkeypatch.
+_real_os_kill: Callable[..., Any] = os.kill
+_real_os_killpg: Optional[Callable[..., Any]] = getattr(os, "killpg", None)
+sys.modules.setdefault("tests.conftest", sys.modules[__name__])
 
 
 
@@ -145,6 +153,65 @@ def case_insensitive_fs(tmp_path):
     probe.unlink(missing_ok=True)
     if not is_insensitive:
         pytest.skip("ФС чувствительна к регистру — тест рассчитан на case-insensitive ФС")
+
+
+@pytest.fixture(autouse=True)
+def signal_guard(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Сторож «тесты не шлют сигналы»: подменяет os.kill и os.killpg обёрткой,
+    которая запрещает отправку сигналов в pid 0, pid 1, отрицательный pid,
+    группу 0, группу 1, отрицательную группу, собственную группу процессов
+    или собственный pid (если нет маркера allow_self_signal).
+    """
+    allow_self = request.node.get_closest_marker("allow_self_signal") is not None
+    current_pid = os.getpid()
+
+    def safe_kill(pid: int, sig: int) -> None:
+        if sig == 0:
+            # Проверка существования процесса: сигнал 0 не доставляется
+            target = getattr(os.kill, "_real", None) or _real_os_kill
+            target(pid, sig)
+            return
+        if pid == 0:
+            raise RuntimeError(f"Сторож сигналов: запрещена отправка сигнала {sig} в pid=0")
+        if pid == 1:
+            raise RuntimeError(f"Сторож сигналов: запрещена отправка сигнала {sig} в pid=1")
+        if pid < 0:
+            raise RuntimeError(f"Сторож сигналов: запрещена отправка сигнала {sig} в отрицательный pid={pid}")
+        if pid == current_pid and not allow_self:
+            raise RuntimeError(
+                f"Сторож сигналов: запрещена отправка сигнала {sig} в собственный процесс pid={pid} "
+                "(маркер @pytest.mark.allow_self_signal отсутствует)"
+            )
+        target = getattr(os.kill, "_real", None) or _real_os_kill
+        target(pid, sig)
+
+    def safe_killpg(pgid: int, sig: int) -> None:
+        if sig == 0:
+            # Проверка существования группы процессов: сигнал 0 не доставляется
+            target = getattr(os.killpg, "_real", None) or _real_os_killpg
+            if target is not None:
+                target(pgid, sig)
+                return
+            raise AttributeError("module 'os' has no attribute 'killpg'")
+        if pgid == 0:
+            raise RuntimeError(f"Сторож сигналов: запрещена отправка сигнала {sig} в группу pgid=0")
+        if pgid == 1:
+            raise RuntimeError(f"Сторож сигналов: запрещена отправка сигнала {sig} в группу pgid=1")
+        if pgid < 0:
+            raise RuntimeError(f"Сторож сигналов: запрещена отправка сигнала {sig} в отрицательную группу pgid={pgid}")
+        getpgrp_fn = getattr(os, "getpgrp", None)
+        if getpgrp_fn is not None and pgid == getpgrp_fn():
+            raise RuntimeError(
+                f"Сторож сигналов: запрещена отправка сигнала {sig} в свою группу процессов pgid={pgid}"
+            )
+        target = getattr(os.killpg, "_real", None) or _real_os_killpg
+        if target is not None:
+            target(pgid, sig)
+            return
+        raise AttributeError("module 'os' has no attribute 'killpg'")
+
+    monkeypatch.setattr(os, "kill", safe_kill)
+    monkeypatch.setattr(os, "killpg", safe_killpg, raising=False)
 
 
 @pytest.fixture(autouse=True)

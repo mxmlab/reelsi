@@ -8,8 +8,10 @@
 слова — под такое правил в коде не напишешь). Личная поправка спикера
 (`hint`) добавляется через tune._sys.
 """
+from __future__ import annotations
 import re
 import difflib
+from typing import Any, Callable, Sequence
 from core import aicut
 from core.app_meta import console_emit, env, wrap_emit
 from .takes import _tok, _words_text
@@ -22,7 +24,7 @@ from core.umsg import ReelsiError
 # уносила с ним уникальное продолжение; с medium — все скобки встали на ранние
 # заходы, а чистовые остались целыми. Плата: 130с против 12с на клип.
 # Уровень берём из настроек шага «Нарезка» (UI), env — только для тестов.
-def _decide_reasoning():
+def _decide_reasoning() -> Any:
     return env("DECIDE_REASONING") or aicut.step_reasoning("cut")
 DECIDE_MARKUP_SYS = (
     "Ты — редактор talking-head видео. Тебе дана ПОЛНАЯ пословная расшифровка "
@@ -125,7 +127,7 @@ DECIDE_MARKUP_SCHEMA = {
 }
 
 
-def parse_markup(text):
+def parse_markup(text: str | None) -> list[tuple[str, bool]]:
     """Размеченный моделью текст -> [(токен, выкинуть?)]. Скобки [ ] могут быть
     не закрыты (модель оборвалась) — тогда всё до конца считается вырезанным."""
     out, depth = [], 0
@@ -147,7 +149,7 @@ MIN_COVER = 0.5
 MIN_COVER_NO_CUT = 0.9
 
 
-def align_markup(words, marked, emit=console_emit):
+def align_markup(words: Sequence[Any], marked: Sequence[tuple[str, bool]], emit: Callable[..., Any] = console_emit) -> tuple[set[int], float]:
     """Наложить разметку модели на НАШИ слова (у нас тайминги, у неё — решение).
 
     Модель обязана вернуть текст дословно, но может подправить окончание,
@@ -175,7 +177,7 @@ def align_markup(words, marked, emit=console_emit):
     return drop, cover
 
 
-def decide_markup(words, full_text, model=None, emit=console_emit, silence_bounds=None):
+def decide_markup(words: Sequence[Any], full_text: str, model: str | None = None, emit: Callable[..., Any] = console_emit, silence_bounds: Any = None) -> tuple[set[int], set[int], str, list[dict[str, Any]]]:
 
     """Модель возвращает ВЕСЬ текст ролика, заключив в [ ] то, что надо выкинуть.
     Никакой арифметики и никакого поиска цитат: позиция куска задана самим

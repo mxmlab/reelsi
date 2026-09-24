@@ -27,6 +27,7 @@
 Движок по умолчанию — "whisper", поэтому нетронутый селектор ничего не меняет.
 """
 import os, json, subprocess, tempfile, logging
+from typing import Any
 from core import paths
 from core.app_meta import child_env, console_emit, module_cmd, wrap_emit
 from core.umsg import ReelsiError
@@ -37,7 +38,7 @@ log = get_logger(__name__)
 ENGINES_JSON = paths.data("asr_engines.json")
 
 # name -> callable(wav_path, **opts) -> [{"w","start","end"[,"prob"]}]
-ASR_BACKENDS = {}
+ASR_BACKENDS: dict[str, Any] = {}
 
 WHISPER_SIZES = ["large-v3", "medium", "small"]
 
@@ -81,7 +82,7 @@ _BUILTIN = [{"id": "whisper:%s" % s, "label": "Whisper %s" % s, "lang": "multi",
 ]
 
 
-def _custom():
+def _custom() -> list[dict[str, Any]]:
     """CTC-движки других языков из `asr_engines.json` (правится руками).
     Формат записи: {"id","label","lang","model"[,"device"]}. Битый JSON или не тот тип
     пишут предупреждение в лог и возвращают пустой список, не роняя UI."""
@@ -124,12 +125,12 @@ def _custom():
     return out
 
 
-def engines():
+def engines() -> list[dict[str, Any]]:
     """Все движки: встроенные + пользовательские (для UI и валидации)."""
     return _BUILTIN + _custom()
 
 
-def engine_meta(engine):
+def engine_meta(engine: str | None) -> dict[str, Any] | None:
     """Метаданные движка по имени. «whisper» = «whisper:large-v3»."""
     engine = engine or "whisper"
     if engine == "whisper":
@@ -140,7 +141,7 @@ def engine_meta(engine):
     return None
 
 
-def transcribe_words(wav_path, engine="whisper", emit=console_emit, use_terms=True, **opts):
+def transcribe_words(wav_path: str, engine: str = "whisper", emit: Any = console_emit, use_terms: bool = True, **opts: Any) -> list[dict[str, Any]]:
     """Единая точка входа. Неизвестный движок -> whisper (поведение по умолчанию
     не меняется, если селектор не трогали).
 
@@ -176,14 +177,14 @@ def transcribe_words(wav_path, engine="whisper", emit=console_emit, use_terms=Tr
         return words
 
 
-def register(name, fn):
+def register(name: str, fn: Any) -> None:
     ASR_BACKENDS[name] = fn
 
 
 # --------------------------------------------------------------------------- #
 # Whisper (faster-whisper, GPU) — the original hardcoded path
 # --------------------------------------------------------------------------- #
-def _whisper(wav_path, **opts):
+def _whisper(wav_path: str, **opts: Any) -> list[dict[str, Any]]:
     from core import aicut
     from core import transcribe
     aicut.unload_ours()                      # free VRAM for Whisper
@@ -208,7 +209,7 @@ register("whisper", _whisper)
 # CTC других языков (transformers): текст И тайминги И вероятности из одной
 # акустической модели — тот же принцип, что у GigaAM, forced-align не нужен.
 # --------------------------------------------------------------------------- #
-def _ctc(wav_path, model_id, device="cuda", **opts):
+def _ctc(wav_path: str, model_id: str, device: str = "cuda", **opts: Any) -> list[dict[str, Any]]:
     """Отдельным процессом (как GigaAM): CUDA OOM / нативный краш в тяжёлой
     GPU-части не должен убивать Flask. Результат — путь к JSON в stdout."""
     from core import aicut
@@ -231,7 +232,7 @@ def _ctc(wav_path, model_id, device="cuda", **opts):
             err = [l for l in raw.splitlines() if l.strip()]
             raise RuntimeError(raw if "CTC_ASR_ERROR" in raw else
                                (err[-1] if err else "CTC-движок завершился с ошибкой"))
-        path = (r.stdout or "").strip().splitlines()
+        path: Any = (r.stdout or "").strip().splitlines()
         path = path[-1] if path else ""
         if not path or not os.path.isfile(path):
             raise RuntimeError("CTC (%s): пустой результат" % model_id)
@@ -250,7 +251,7 @@ def _ctc(wav_path, model_id, device="cuda", **opts):
 # --------------------------------------------------------------------------- #
 # GigaAM (локально): весь файл одной моделью -> слова с родными таймингами
 # --------------------------------------------------------------------------- #
-def _widen(words, min_dur=0.14, gap=0.02):
+def _widen(words: list[dict[str, Any]], min_dur: float = 0.14, gap: float = 0.02) -> list[dict[str, Any]]:
     """Растянуть слишком короткие слова (RNN-T-головы).
 
     У CTC кадр эмиссии = момент звучания буквы, длительность слова честная. У
@@ -268,7 +269,7 @@ def _widen(words, min_dur=0.14, gap=0.02):
     return words
 
 
-def _gigaam(wav_path, model_name="v3_ctc", **opts):
+def _gigaam(wav_path: str, model_name: str = "v3_ctc", **opts: Any) -> list[dict[str, Any]]:
     """GigaAM целиком по файлу -> [{"w","start","end"}] (родные тайминги CTC/RNN-T).
 
     model_name — голова GigaAM: v3_ctc (быстро, чистая акустика), v3_rnnt
@@ -298,7 +299,7 @@ def _gigaam(wav_path, model_name="v3_ctc", **opts):
             # The subprocess already wrote a concise one-line error as the last
             # line AND the full traceback above it — surface both for diagnosis.
             raise RuntimeError(raw)
-        err = raw.splitlines()
+        err: Any = raw.splitlines()
         err = err[-1] if err else "GigaAM subprocess завершился с ошибкой"
         raise RuntimeError(err)
     res_path = (r.stdout or "").strip()
@@ -321,7 +322,7 @@ register("gigaam", _gigaam)
 # whisper.cpp (локально, нативно): Metal на Mac, Vulkan на AMD — быстрее CPU,
 # которого CTranslate2 не умеет обходить. Вся логика — в whisper_cpp.py.
 # --------------------------------------------------------------------------- #
-def _whisper_cpp(wav_path, size="large-v3", **opts):
+def _whisper_cpp(wav_path: str, size: str = "large-v3", **opts: Any) -> list[dict[str, Any]]:
     """Прогнать whisper-cli в отдельном процессе (паттерн _ctc): нативный краш
     не убивает Flask. Возвращает общий контракт [{"w","start","end"}] (сек)."""
     from core import whisper_cpp
@@ -331,10 +332,10 @@ def _whisper_cpp(wav_path, size="large-v3", **opts):
 # --------------------------------------------------------------------------- #
 # Omni (Qwen / GigaAM) — phrase-level -> word-level (interpolated)
 # --------------------------------------------------------------------------- #
-def _split_phrases(phrases):
+def _split_phrases(phrases: Any) -> list[dict[str, Any]]:
     """Разбить фразы [{start,end,text}] на слова с линейной интерполяцией
     таймингов внутри фразы. Контракт: [{w,start,end}] в секундах."""
-    words = []
+    words: list[dict[str, Any]] = []
     for ph in phrases or []:
         text = (ph.get("text") or "").strip()
         if not text:
@@ -351,7 +352,7 @@ def _split_phrases(phrases):
     return words
 
 
-def _omni(wav_path, engine=None, refine=False, **opts):
+def _omni(wav_path: str, engine: str | None = None, refine: bool = False, **opts: Any) -> list[dict[str, Any]]:
     """Omni-транскрипция клипа. Конкретный локальный движок (qwen/gigaam)
     берётся из `aicut.omni_local_engine()` — единый источник истины (как в нарезке).
     Запускаем `omni_asr.py` отдельным процессом (устоявшийся паттерн в omni_cut.py),

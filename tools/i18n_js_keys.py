@@ -10,6 +10,7 @@ import json
 import os
 import re
 import sys
+from typing import Any, cast
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -22,7 +23,7 @@ T = re.compile(r"\bt\('((?:[^'\\]|\\.)*)'")
 CYR = re.compile(r"[А-Яа-яЁё]")
 
 
-def _js_unescape(s):
+def _js_unescape(s: str) -> str:
     """Ключ в исходнике — с экранированием, в словаре — как есть (t() ищет по
     runtime-строке). Иначе ключ с \n «не находится», и перевод молча не работает."""
     return re.sub(r"\\(.)", lambda m: {"n": "\n", "t": "\t", "r": "\r",
@@ -30,8 +31,8 @@ def _js_unescape(s):
                                        "0": "\0"}.get(m.group(1), m.group(1)), s)
 
 
-def main():
-    keys = {}
+def main() -> int:
+    keys: dict[str, list[str]] = {}
     for f in sorted(os.listdir(APP)):
         if not f.endswith(".js"):
             continue
@@ -53,7 +54,7 @@ def main():
 if __name__ == "__main__":
     for _s in (sys.stdout, sys.stderr):
         try:
-            _s.reconfigure(encoding="utf-8", errors="replace")
+            cast(Any, _s).reconfigure(encoding="utf-8", errors="replace")
         except Exception:
             pass
     sys.exit(main())

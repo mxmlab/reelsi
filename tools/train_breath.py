@@ -23,6 +23,7 @@ import glob
 import time
 import argparse
 import subprocess
+from typing import Any, Sequence, cast
 
 import numpy as np
 
@@ -37,7 +38,7 @@ from core import align
 from core.project_file import read_project  # noqa: E402
 
 
-def _clips(dirs):
+def _clips(dirs: Sequence[str]) -> list[tuple[str, str, Any]]:
     """Ролики с ручной доводкой: project.json заметно новее cuts.json."""
     out = []
     for d in dirs:
@@ -53,13 +54,13 @@ def _clips(dirs):
                 continue
             if pj is None:
                 continue
-            cam = (pj.get("cams") or [None])[0]
+            cam = (pj.get("cams") or cast(Any, [None]))[0]
             if cam and os.path.exists(cam) and pj.get("keep"):
                 out.append((p[:-len(".project.json")], cam, pj["keep"]))
     return out
 
 
-def _prepare(clips, cache):
+def _prepare(clips: Sequence[tuple[str, str, Any]], cache: str) -> None:
     """wav 16кГц + слова GigaAM для каждого ролика (кэш между запусками).
     Модель грузится ОДИН раз на все ролики: 34 ролика = ~30с."""
     os.makedirs(cache, exist_ok=True)
@@ -95,7 +96,7 @@ def _prepare(clips, cache):
             G._free_torch()
 
 
-def _auto_keep(stem, words):
+def _auto_keep(stem: str, words: Sequence[dict[str, Any]]) -> Any:
     """Восстановить АВТОнарезку (до ручных правок) из cuts.json + слов."""
     from core import gigaam_cut as G
     cuts = json.load(open(stem + ".cuts.json", encoding="utf-8"))
@@ -110,14 +111,14 @@ def _auto_keep(stem, words):
                          emit=lambda *a, **k: None)[0]
 
 
-_WAVS = {}
+_WAVS: dict[str, str] = {}
 
 
-def _wav_of(stem):
+def _wav_of(stem: str) -> str:
     return _WAVS[stem]
 
 
-def dataset(dirs, cache):
+def dataset(dirs: Sequence[str], cache: str) -> tuple[Any, Any, Any, list[dict[str, Any]]]:
     clips = _clips(dirs)
     if not clips:
         raise SystemExit("не нашёл роликов с ручной доводкой в: " + ", ".join(dirs))
@@ -146,7 +147,7 @@ def dataset(dirs, cache):
     return np.array(X, dtype="float64"), np.array(Y), np.array(G_), meta
 
 
-def fit(X, Y, trees=200, depth=3):
+def fit(X: Any, Y: Any, trees: int = 200, depth: int = 3) -> dict[str, Any]:
     """Градиентный бустинг (sklearn) -> РАЗОБРАННЫЙ в json.
 
     Линейная модель на этих признаках давала 59% точности на отложенных роликах,
@@ -172,13 +173,13 @@ def fit(X, Y, trees=200, depth=3):
                 baseline=float(np.ravel(clf._baseline_prediction)[0]), trees=out)
 
 
-def _rate(p, Y, thr):
+def _rate(p: Any, Y: Any, thr: float) -> tuple[int, int]:
     hit = int(((p >= thr) & (Y == 1)).sum())
     fp = int(((p >= thr) & (Y == 0)).sum())
     return hit, fp
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dirs", nargs="+",
                     # старые имена папок остаются: там лежат уже размеченные ролики,
@@ -237,13 +238,13 @@ def main():
     if a.speaker:
         # Прописываем модель в профиль сами: иначе обучил и забыл подключить.
         from core import speakers as _sp
-        prof = _sp.load(a.speaker)
+        prof = cast(dict[str, Any], _sp.load(a.speaker))
         prof["breath_model"] = os.path.basename(out)
         _sp.save(prof.get("label") or a.speaker, prof)
         print("   прописал в профиль «%s» -> breath_model: %s"
               % (prof.get("label") or a.speaker, os.path.basename(out)))
     # на чём модель чаще всего делит — грубая, но полезная подсказка
-    use = {}
+    use: dict[Any, Any] = {}
     for t in mdl["trees"]:
         for f, lf in zip(t["feature"], t["leaf"]):
             if not lf:
@@ -253,5 +254,5 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.stdout.reconfigure(encoding="utf-8")
+    cast(Any, sys.stdout).reconfigure(encoding="utf-8")
     main()

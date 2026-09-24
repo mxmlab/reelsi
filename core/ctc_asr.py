@@ -25,7 +25,9 @@
 Как подпроцесс (так его зовёт asr_backends — падение CUDA не убьёт Flask):
     python ctc_asr.py a.wav --model <hf-id> --out words.json
 """
+from __future__ import annotations
 import os, sys, json
+from typing import Any, Callable
 from core.app_meta import console_emit, wrap_emit
 from core.umsg import ReelsiError, cli_error
 
@@ -38,7 +40,7 @@ TAIL = 0.10           # сек: не откусывать окончание с�
 _MODEL = None         # (model_id, device) -> (processor, model)
 
 
-def get_model(model_id, device="cuda"):
+def get_model(model_id: str, device: str = "cuda") -> tuple[Any, Any, str]:
     """Загрузить (и закэшировать) CTC-модель. Возвращает (processor, model, device)."""
     global _MODEL
     import torch
@@ -64,7 +66,7 @@ def get_model(model_id, device="cuda"):
     return _MODEL[1], _MODEL[2], device
 
 
-def release_model():
+def release_model() -> bool:
     """Освободить VRAM (зовём после батча — как falign.release_model)."""
     global _MODEL
     if _MODEL is None:
@@ -82,7 +84,7 @@ def release_model():
     return True
 
 
-def _load_audio(wav_path):
+def _load_audio(wav_path: str) -> Any:
     """float32-моно 16кГц (torchaudio: он и так в зависимостях falign/gigaam_cut)."""
     import torchaudio
     wav, sr = torchaudio.load(wav_path)
@@ -92,7 +94,7 @@ def _load_audio(wav_path):
     return audio
 
 
-def _quiet_cut(audio, lo, hi, frame=0.05):
+def _quiet_cut(audio: Any, lo: int, hi: int, frame: float = 0.05) -> int:
     """Самая тихая точка (центр самого тихого 50мс-кадра) в audio[lo:hi] — кладём
     туда шов между окнами, чтобы рез не попал в середину слова."""
     import torch
@@ -105,7 +107,7 @@ def _quiet_cut(audio, lo, hi, frame=0.05):
     return lo + int(torch.argmin(rms)) * f + f // 2
 
 
-def _windows(audio):
+def _windows(audio: Any) -> list[tuple[int, int]]:
     """Границы окон ~CHUNK сек со швами в тихих точках. -> [(a0, a1), …] в сэмплах."""
     n = len(audio)
     step, search = int(CHUNK * SR), int(SEARCH * SR)
@@ -119,7 +121,7 @@ def _windows(audio):
     return out
 
 
-def _decode_window(proc, model, device, clip, t0):
+def _decode_window(proc: Any, model: Any, device: str, clip: Any, t0: float) -> list[dict[str, Any]]:
     """Greedy-CTC по одному окну -> [{w,start,end,prob}] в АБСОЛЮТНЫХ секундах.
 
     Токен «эмитится» на кадре, где argmax != blank и отличается от предыдущего
@@ -131,6 +133,8 @@ def _decode_window(proc, model, device, clip, t0):
     with torch.inference_mode():
         logits = model(clip.unsqueeze(0).to(device)).logits[0]      # [T, V]
         probs = torch.softmax(logits.float(), dim=-1)
+        conf: Any
+        ids: Any
         conf, ids = probs.max(dim=-1)
     ids, conf = ids.cpu().tolist(), conf.cpu().tolist()
     T = len(ids)
@@ -140,9 +144,12 @@ def _decode_window(proc, model, device, clip, t0):
     blank = tok.pad_token_id
     delim = getattr(tok, "word_delimiter_token", "|")
 
+    chars: list[str]
+    frames: list[int]
+    confs: list[float]
     words, chars, frames, confs = [], [], [], []
 
-    def commit():
+    def commit() -> None:
         text = "".join(chars).strip()
         if text and frames:
             words.append({"w": text,
@@ -170,7 +177,7 @@ def _decode_window(proc, model, device, clip, t0):
     return words
 
 
-def transcribe(wav_path, model_id, device="cuda", emit=console_emit, release=True):
+def transcribe(wav_path: str, model_id: str, device: str = "cuda", emit: Callable[..., Any] = console_emit, release: bool = True) -> list[dict[str, Any]]:
     """Весь файл окнами -> [{w,start,end,prob}] в секундах от начала файла."""
     emit = wrap_emit(emit)
     proc, model, dev = get_model(model_id, device)

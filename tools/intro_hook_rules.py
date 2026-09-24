@@ -18,6 +18,7 @@ import os
 import re
 import sys
 from collections import Counter
+from typing import Any, Sequence
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 # Папка с ручными .jsx лежит РЯДОМ с репозиторием, а не внутри. Абсолютный путь тут был
@@ -31,7 +32,7 @@ HOOK_START = 25   # старт прекомпа, с
 PAUSE = 0.4       # порог паузы из BF
 
 
-def intro_groups_from_jsx(jsx_path):
+def intro_groups_from_jsx(jsx_path: str) -> Any:
     raw = open(jsx_path, encoding="utf-8").read()
     m = re.search(r"var INTRO_GROUPS=(\[.*?\]);", raw, re.S)
     if not m:
@@ -42,19 +43,19 @@ def intro_groups_from_jsx(jsx_path):
         return None
 
 
-def med(vals):
+def med(vals: Sequence[Any]) -> Any:
     v = sorted(x for x in vals if x is not None)
     return v[len(v) // 2] if v else None
 
 
-def pct(vals, p):
+def pct(vals: Sequence[Any], p: float) -> Any:
     v = sorted(x for x in vals if x is not None)
     if not v:
         return None
     return v[min(len(v) - 1, int(len(v) * p))]
 
 
-def _split_hook(groups):
+def _split_hook(groups: Any) -> tuple[list[Any], list[Any]]:
     """Группы -> (хук, акценты). Хук — прекомпы подряд с начала ролика, разрыв до
     предыдущего < HOOK_GAP с и старт < HOOK_START с; дальше всё — акценты."""
     hook, accents = [], []
@@ -72,8 +73,8 @@ def _split_hook(groups):
     return hook, accents
 
 
-def main():
-    total = {"hook": {"rows": 0, "words": [], "chars": [], "precomp_rows": [],
+def main() -> None:
+    total: dict[str, dict[str, Any]] = {"hook": {"rows": 0, "words": [], "chars": [], "precomp_rows": [],
                       "precomp_words": [], "durs": []},
              "accent": {"rows": 0, "words": [], "chars": [], "precomp_rows": []}}
     hook_per_video = []

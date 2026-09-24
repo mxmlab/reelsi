@@ -26,6 +26,7 @@ CLI:  python insertlib.py scan <dir1> <dir2> ...
 """
 import os, re, json, math, threading, time, urllib.request
 from collections import Counter
+from typing import Any, Sequence, cast
 import numpy as np
 from core.fileio import atomic_bytes_write, atomic_json_dump
 from core.media import probe_duration
@@ -58,7 +59,7 @@ MAX_VIDEO_MB = 300                                   # видео-вставка
 
 
 # ---------- текст из пути ----------
-def _norm_text(path):
+def _norm_text(path: str) -> str:
     """Имя файла + родительская папка -> поисковый текст: разделители/ькамелкейс в пробелы."""
     base = os.path.splitext(os.path.basename(path))[0]
     parent = os.path.basename(os.path.dirname(path))
@@ -70,7 +71,7 @@ def _norm_text(path):
     return s
 
 
-def _norm_filename(path):
+def _norm_filename(path: str | None) -> str:
     """Нормализация имени файла без расширения (разделители и camelCase в пробелы)."""
     base = os.path.splitext(os.path.basename(path or ""))[0]
     s = re.sub(r"[\\_\-\.\(\)\[\]{}+,]", " ", base)
@@ -79,11 +80,11 @@ def _norm_filename(path):
     return s.lower()
 
 
-def _tokens(s):
+def _tokens(s: str | None) -> set[str]:
     return set(w for w in re.split(r"[^a-zа-яё0-9]+", (s or "").lower()) if len(w) >= 2)
 
 
-def _norm_look(text):
+def _norm_look(text: str | None) -> str:
     """Нормализация приписки стиля картинки (поле look): strip, нижний
     регистр, схлопнутые пробелы; из пустого — пустая строка. Единственное место
     нормализации стиля: приписки из image_prompts спикеров отличаются регистром и
@@ -96,7 +97,7 @@ _WORD_RE = re.compile(r"[a-zа-яё]{3,}", re.I)
 _SIGNIFICANT_WORD_RE = re.compile(r"[a-zа-яё0-9]{3,}", re.I)
 
 
-def _field_unfit(value, path):
+def _field_unfit(value: str | None, path: str | None) -> bool:
     """Пригодность ОДНОГО текстового поля (desc/vis) для поиска — правила те же, что
     были у desc: пусто, равно имени файла (_norm_text), меньше двух значимых слов
     (слово = [a-zа-яё]{3,} без учёта регистра). True = поле непригодно."""
@@ -114,7 +115,7 @@ _REFUSAL_PREFIXES = ("none of", "none of the above", "i cannot", "i can't",
                      "unable to", "sorry", "no objects", "there is no", "there are no")
 
 
-def _is_refusal(text) -> bool:
+def _is_refusal(text: str | None) -> bool:
     """Отказ vision-модели: ответ начинается с типовой фразы отказа (без учёта регистра).
     Единственный источник правды для этого понятия. Отказ хуже пустого: он попадает в
     эмбеддинг и тянет к себе чужие запросы, поэтому везде считается отсутствием описания."""
@@ -122,7 +123,7 @@ def _is_refusal(text) -> bool:
     return any(t.startswith(p) for p in _REFUSAL_PREFIXES)
 
 
-def needs_text(it) -> bool:
+def needs_text(it: dict[str, Any]) -> bool:
     """Предикат пригодности ТЕКСТА записи для поиска (единственный источник правды).
     Истина, если запись нуждается в описании: непригодны ОБА поля — и desc (что
     задумано), и vis (что видно на картинке). Исключение: desc_src == 'user' — ВСЕГДА
@@ -138,7 +139,7 @@ def needs_text(it) -> bool:
 needs_desc = needs_text
 
 
-def needs_vis(it) -> bool:
+def needs_vis(it: dict[str, Any]) -> bool:
     """У записи нет пригодного vis (что ВИДНО на картинке). По нему
     auto_describe(only_missing=True) отбирает работу: vision дописывает зрительное
     описание даже тем файлам, у которых уже есть исходная фраза (desc). Отказ модели
@@ -147,7 +148,7 @@ def needs_vis(it) -> bool:
     return _field_unfit(v, it.get("path")) or _is_refusal(v)
 
 
-def _doc_text(desc, ru="", vis=""):
+def _doc_text(desc: str | None, ru: str | None = "", vis: str | None = "") -> str:
     """Текст документа для эмбеддера: непустые из desc, ru, vis через пробел в порядке
     «что задумано — первым», лишние пробелы схлопнуты. vis участвует, только если это
     не отказ модели: мусор не должен попадать в вектор до переописания."""
@@ -205,7 +206,7 @@ STYLE_CLEAN_RE = re.compile(
 )
 
 
-def _subject_text(text):
+def _subject_text(text: str | None) -> str:
     """Предметная часть описания (без слов стиля и цвета) для эмбеддера."""
     t = (text or "").strip()
     if not t:
@@ -214,7 +215,7 @@ def _subject_text(text):
     return cleaned or t
 
 
-def _significant_words(text):
+def _significant_words(text: str | None) -> set[str]:
     """Значимые слова: [a-zа-яё0-9]{3,}, не из STYLE_WORDS_SET, не чисто цифровые."""
     if not text:
         return set()
@@ -226,7 +227,7 @@ def _significant_words(text):
     return words
 
 
-def _cand_words(it):
+def _cand_words(it: dict[str, Any]) -> set[str]:
     """Множество значимых слов кандидата: имя файла + desc + ru + vis."""
     fn_text = _norm_filename(it.get("path") or "")
     desc_text = it.get("desc") or ""
@@ -235,7 +236,7 @@ def _cand_words(it):
     return _significant_words(f"{fn_text} {desc_text} {ru_text} {vis_text}")
 
 
-def _lex_bonus(q_words, c_words, df, n_total):
+def _lex_bonus(q_words: set[str], c_words: set[str], df: dict[str, int] | Counter, n_total: int) -> float:
     """Вычисление лексического бонуса для кандидата:
     idf(t) = ln(1 + N / (1 + df(t)))
     bonus = LEX_W * (сумма idf совпавших слов запроса) / (сумма idf всех значимых слов запроса)
@@ -256,7 +257,7 @@ LOOK_MATCH = 0.05
 LOOK_MISS = -0.15
 
 
-def _look_rank(cand_look, want_look):
+def _look_rank(cand_look: str | None, want_look: str | None) -> float:
     """Поправка ранга за стиль. want_look — уже нормализованный стиль текущего спикера
     (в записи индекса look хранится тоже нормализованным, через _norm_look). Совпал ->
     +0.05, у кандидата пусто -> 0 (общая картинка со стока годится всем), чужой непустой
@@ -271,23 +272,23 @@ def _look_rank(cand_look, want_look):
     return 0.0 if not cand_look else LOOK_MISS
 
 
-def _q_text(q):
+def _q_text(q: str | None) -> str:
     """Текст запроса для эмбеддера: без слов стиля (если после чистки пусто — как было)."""
     return " ".join(_STYLE.sub(" ", q or "").split()) or (q or "")
 
 
-def _is_nomic(model):
+def _is_nomic(model: str | None) -> bool:
     return "nomic" in (model or "").lower()
 
 
-def _emb_docs(texts, model):
+def _emb_docs(texts: Sequence[str], model: str | None) -> list[list[float]] | None:
     """Эмбеддинги ОПИСАНИЙ (сторона документа)."""
     if _is_nomic(model):                       # nomic-embed обучен на этих префиксах:
         texts = ["search_document: " + (t or "") for t in texts]   # без них асимметричный
     return _embed(texts, model)                # поиск «короткий запрос -> описание» плывёт
 
 
-def _emb_queries(queries, model):
+def _emb_queries(queries: Sequence[str], model: str | None) -> list[list[float]] | None:
     """Эмбеддинги ЗАПРОСОВ: чистка стиля + свой префикс nomic."""
     qs = [_q_text(q) for q in queries]
     if _is_nomic(model):
@@ -296,14 +297,14 @@ def _emb_queries(queries, model):
 
 
 # ---------- LM Studio embeddings ----------
-def _http_json(url, payload=None, timeout=60):
+def _http_json(url: str, payload: Any = None, timeout: float = 60) -> Any:
     req = http_req(url, headers={"Content-Type": "application/json"},
                    data=json.dumps(payload).encode() if payload is not None else None)
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode("utf-8", "replace"))
 
 
-def _emb_model():
+def _emb_model() -> str | None:
     """Ключ embedding-модели: env или первый /models с 'embed' в id. None = эмбеддера нет."""
     if EMB_MODEL_ENV:
         return EMB_MODEL_ENV
@@ -318,11 +319,11 @@ def _emb_model():
     return None
 
 
-def _embed(texts, model):
+def _embed(texts: Sequence[str], model: str | None) -> list[list[float]] | None:
     """Эмбеддинги батчем. -> list[list[float]] | None (эмбеддер недоступен)."""
     if not model or not texts:
         return None
-    out = []
+    out: list[list[float]] = []
     try:
         for i in range(0, len(texts), 64):
             d = _http_json(LMSTUDIO_URL + "/embeddings",
@@ -337,7 +338,7 @@ def _embed(texts, model):
         return None
 
 
-def _cos(a, b):
+def _cos(a: Sequence[float], b: Sequence[float]) -> float:
     s = sum(x * y for x, y in zip(a, b))
     na = math.sqrt(sum(x * x for x in a)) or 1e-9
     nb = math.sqrt(sum(x * x for x in b)) or 1e-9
@@ -345,7 +346,7 @@ def _cos(a, b):
 
 
 # ---------- скан ----------
-def _media_kind(path):
+def _media_kind(path: str) -> str | None:
     e = os.path.splitext(path)[1].lower()
     if e in IMG_EXT:
         return "photo"
@@ -354,7 +355,7 @@ def _media_kind(path):
     return None
 
 
-def _scan_xml_inserts(xml_path):
+def _scan_xml_inserts(xml_path: str) -> list[str]:
     """Медиа вставок из XML прошлого проекта (дорожки над камерами). -> [path, ...]"""
     try:
         from core import xml2ae
@@ -365,14 +366,14 @@ def _scan_xml_inserts(xml_path):
         return []
 
 
-def scan(dirs, emit=None):
+def scan(dirs: Sequence[str], emit: Any = None) -> dict[str, dict[str, Any]]:
     """Собрать медиа вставок: из всех .xml в папках (что реально использовалось) и
     медиафайлы, лежащие в папках напрямую (пополняемая библиотека).
     -> dict path -> {type, used(раз использовано в проектах), src}"""
     emit = wrap_emit(emit)
-    items = {}
+    items: dict[str, dict[str, Any]] = {}
 
-    def _add(p, src):
+    def _add(p: str, src: str) -> None:
         p = os.path.abspath(p)
         k = _media_kind(p)
         if not k or SKIP_NAME.search(os.path.basename(p)) or SKIP_DIR.search(p) \
@@ -408,7 +409,7 @@ def scan(dirs, emit=None):
     return items
 
 
-def _merge_prev_records(records):
+def _merge_prev_records(records: Sequence[dict[str, Any]]) -> dict[str, Any]:
     """Схлопывание нескольких прежних записей одного пути (после pkey):
     - desc/desc_src: побеждает запись с пригодным desc (см. _field_unfit); если таких
       несколько — та, у которой desc_src != 'name';
@@ -421,7 +422,7 @@ def _merge_prev_records(records):
     if len(records) == 1:
         return dict(records[0])
 
-    def _desc_rank(r):
+    def _desc_rank(r: dict[str, Any]) -> tuple[bool, bool, bool]:
         return (
             not _field_unfit(r.get("desc"), r.get("path") or ""),
             (r.get("desc_src") or "name") != "name",
@@ -434,13 +435,13 @@ def _merge_prev_records(records):
 
     used = max(int(r.get("used") or 0) for r in records)
 
-    rej = []
+    rej: list[str] = []
     for r in records:
         for q in (r.get("rej") or []):
             if q and q not in rej:
                 rej.append(q)
 
-    def _field_val(r, k):
+    def _field_val(r: dict[str, Any], k: str) -> Any:
         v = r.get(k)
         if v is None:
             return None
@@ -488,14 +489,14 @@ def _merge_prev_records(records):
     return res
 
 
-def build_index(dirs, emit=None, use_emb=True):
+def build_index(dirs: Sequence[str], emit: Any = None, use_emb: bool = True) -> dict[str, Any]:
     """Скан + эмбеддинги + сохранение insertlib.json. Описания (desc), правленные руками
     в прошлом индексе, сохраняются; эмбеддинги пересчитываются только для новых/правленых."""
     emit = wrap_emit(emit)
     import copy
     with _LOCK:
         old = copy.deepcopy(_load() or {})
-    old_grouped = {}
+    old_grouped: dict[str, list[dict[str, Any]]] = {}
     for it in old.get("items", []):
         p = it.get("path")
         if p:
@@ -506,7 +507,7 @@ def build_index(dirs, emit=None, use_emb=True):
     stale = old.get("emb_tag") != EMB_TAG        # схема эмбеддинга сменилась -> всё пересчитать
     found = scan(dirs, emit)
     found_nc = {paths.pkey(os.path.abspath(p)) for p in found}
-    items = []
+    items: list[dict[str, Any]] = []
     # 1. Живые файлы, найденные сканом
     for p, meta in sorted(found.items()):
         k = paths.pkey(os.path.abspath(p))
@@ -571,7 +572,7 @@ def build_index(dirs, emit=None, use_emb=True):
     # сделанные другими между началом скана и сохранением
     with _LOCK:
         cur = _load() or {}
-        cur_grouped = {}
+        cur_grouped: dict[str, list[dict[str, Any]]] = {}
         for it in cur.get("items", []):
             p = it.get("path")
             if p:
@@ -579,7 +580,7 @@ def build_index(dirs, emit=None, use_emb=True):
                 cur_grouped.setdefault(k, []).append(it)
         cur_items = {k: _merge_prev_records(recs) for k, recs in cur_grouped.items()}
 
-        built_by_k = {}
+        built_by_k: dict[str, dict[str, Any]] = {}
         for it in items:
             p = it.get("path")
             if p:
@@ -648,11 +649,11 @@ def build_index(dirs, emit=None, use_emb=True):
     return dict(count=len(items), emb=bool(model))
 
 
-_CACHE = {"mtime": 0, "data": None, "mat": None, "mat_items": None, "df": None, "cand_words": None, "N": 0}
+_CACHE: dict[str, Any] = {"mtime": 0, "data": None, "mat": None, "mat_items": None, "df": None, "cand_words": None, "N": 0}
 _LOCK = threading.RLock()        # сериализуем чтение/запись индекса при параллельной генерации
 
 
-def _seed_index():
+def _seed_index() -> None:
     """Тестовый профиль (AUTOCUT_INSERTLIB) без своего индекса — снять КОПИЮ с рабочего.
     Скан с нуля пересчитал бы эмбеддинги полутора тысяч файлов (минуты и VRAM), а
     работать поверх рабочего файла нельзя — ради этого разделение и заводилось."""
@@ -668,7 +669,7 @@ def _seed_index():
                     "база останется пустой", INDEX_PATH, ex)
 
 
-def _load():
+def _load() -> dict[str, Any] | None:
     with _LOCK:
         _seed_index()
         try:
@@ -691,7 +692,7 @@ def _load():
         return _CACHE["data"]
 
 
-def _matrix():
+def _matrix() -> tuple[Any, list[dict[str, Any]]]:
     """Строит из индекса (np.ndarray [N, D] нормализованных float32, list записей).
     Только записи, у которых есть emb и нет gone.
     Результат кэшируется и сбрасывается по mtime индекса и в _save().
@@ -717,7 +718,7 @@ def _matrix():
         mat = (arr / norms).astype(np.float32)
 
         cand_words_list = [_cand_words(it) for it in items]
-        df = Counter()
+        df: Counter[str] = Counter()
         for w_set in cand_words_list:
             for w in w_set:
                 df[w] += 1
@@ -730,7 +731,7 @@ def _matrix():
         return mat, items
 
 
-def info():
+def info() -> dict[str, Any]:
     d = _load()
     if not d:
         return dict(count=0, dirs=[], emb_model="", built=False)
@@ -738,7 +739,7 @@ def info():
                 emb_model=d.get("emb_model", ""), built=True)
 
 
-def _score_tokens(q_toks, it):
+def _score_tokens(q_toks: set[str], it: dict[str, Any]) -> float:
     # Слова кандидата — по всем трём полям (desc + ru + vis), как в _cand_words: после
     # миграции EP vision-описания живут в vis, и у записей с пустым desc фолбэк
     # должен находить их по тому, что ВИДНО на картинке.
@@ -749,7 +750,7 @@ def _score_tokens(q_toks, it):
     return inter / max(1, len(q_toks))
 
 
-def match_many(queries, k=5, type_hint=None, look=None):
+def match_many(queries: Sequence[str], k: int = 5, type_hint: str | None = None, look: str | None = None) -> list[Any]:
     """Подбор по нескольким запросам сразу (эмбеддинги запросов — одним батчем).
     -> список результатов на каждый query: [{path,name,type,score,used,look}, ...].
     type_hint: 'photo'|'video'|None — МЯГКИЙ приоритет (+0.05 к score), не фильтр.
@@ -763,16 +764,16 @@ def match_many(queries, k=5, type_hint=None, look=None):
     if not d or not d.get("items"):
         return [[] for _ in queries]
     _ensure_emb_tag()
-    d = _load()
+    d = cast(dict[str, Any], _load())
     items_all = d.get("items", [])
     model = d.get("emb_model") or None
     qvecs = _emb_queries(queries, model) if model else None
     pos = {id(it): n for n, it in enumerate(items_all)}        # порядок в индексе = «когда добавлен»
     mat, mat_items = _matrix() if qvecs else (None, [])
-    out = []
+    out: list[list[dict[str, Any]]] = []
     for qi, q in enumerate(queries):
         qn = _norm_q(q)
-        scored = []
+        scored: list[tuple[float, dict[str, Any], float, float]] = []
         used_emb = False
         if qvecs and mat is not None and len(mat_items) > 0:
             qv = qvecs[qi]
@@ -818,7 +819,7 @@ def match_many(queries, k=5, type_hint=None, look=None):
         # обрезанной как надо, а не подгоняться скрабберами заново в каждом ролике.
         # Проверка диска подряд до набора k живых записей
         cos_thr = AUTO_COS if used_emb else AUTO_COS_TOK
-        res = []
+        res: list[dict[str, Any]] = []
         for rank, it, cos_sim, lex in scored:
             if os.path.isfile(it["path"]):
                 is_auto = bool((cos_sim >= cos_thr) or (lex >= AUTO_LEX))
@@ -833,11 +834,11 @@ def match_many(queries, k=5, type_hint=None, look=None):
     return out
 
 
-def _norm_q(q):
+def _norm_q(q: str | None) -> str:
     return " ".join((q or "").lower().split())
 
 
-def _ensure_emb_tag(emit=None):
+def _ensure_emb_tag(emit: Any = None) -> bool:
     """Индекс собран по СТАРОЙ схеме эмбеддинга -> пересчитать описания одним батчем
     (~40 с на 1000 файлов, один раз). Полный рескан диска для этого не нужен: тексты
     описаний уже лежат в индексе. Молча выходим, если эмбеддера нет — тогда работает
@@ -881,7 +882,7 @@ def _ensure_emb_tag(emit=None):
     return True
 
 
-def reject(path, query, on=True):
+def reject(path: str, query: str, on: bool = True) -> bool:
     """«Эта картинка не под этот запрос» — жмётся неявно, когда юзер перегенеривает
     поверх автоподбора/генерации. Файл остаётся в базе и доступен руками через 📚,
     но автоподбор по ЭТОМУ запросу его больше не предложит (под другие темы — сколько
@@ -911,12 +912,12 @@ def reject(path, query, on=True):
     return False
 
 
-def match(query, k=5, type_hint=None, look=None):
+def match(query: str, k: int = 5, type_hint: str | None = None, look: str | None = None) -> list[dict[str, Any]]:
     return match_many([query], k=k, type_hint=type_hint, look=look)[0]
 
 
 # ---------- импорт в СВОЮ папку базы ----------
-def _save(data):
+def _save(data: dict[str, Any]) -> None:
     with _LOCK:
         atomic_json_dump(INDEX_PATH, data)
         _CACHE["data"] = None                            # сбросить кэш
@@ -931,7 +932,7 @@ _RB_SESSION = None                                       # сессия rembg (�
 _RB_LOCK = threading.Lock()                              # создание сессии — под локом (1 раз)
 
 
-def remove_bg(img_bytes, trim=True, emit=None):
+def remove_bg(img_bytes: bytes, trim: bool = True, emit: Any = None) -> bytes:
     """«Remove Background» как в фотошопе: PNG с настоящей альфой вместо белого фона.
     Модель u2net (onnx, CPU ~1–2 с/шт) качается один раз в ~/.u2net при первом вызове.
     trim — обрезать полностью прозрачные поля (генератор оставляет широкие пустые
@@ -963,7 +964,7 @@ def remove_bg(img_bytes, trim=True, emit=None):
     return buf.getvalue()
 
 
-def nobg_path(media, emit=None):
+def nobg_path(media: str, emit: Any = None) -> str:
     """Путь к PNG с уже снятым фоном РЯДОМ с исходником: <папка>/<стем>.<расш>.nobg.png.
 
     Галка стиля «без фона»: и сборка (.jsx), и предпросмотр (/api/media?nobg=1)
@@ -1035,7 +1036,7 @@ AE_EXT_FORMAT = {
 }
 
 
-def image_real_format(path):
+def image_real_format(path: str) -> str | None:
     """Реальный формат растровой картинки (PIL im.format), если он не совпадает
     с ожидаемым по расширению AE_EXT_FORMAT. При совпадении, неизвестном расширении
     или нечитаемом файле -> None."""
@@ -1055,7 +1056,7 @@ def image_real_format(path):
     return None
 
 
-def to_ae_image(path, emit=None):
+def to_ae_image(path: str, emit: Any = None) -> str:
     """Перекодировать картинку в PNG, если её не понимает After Effects.
     Рядом с исходником кладём <имя>.png / <имя>-rgb.png (исходник не трогаем — он мог
     прийти из базы, и на него ссылаются прошлые проекты). Альфа сохраняется: webp с
@@ -1086,7 +1087,7 @@ def to_ae_image(path, emit=None):
                   f"After Effects не читает {mode}", emit)
 
 
-def _repng(src, dst, why, emit):
+def _repng(src: str, dst: str, why: str, emit: Any) -> str:
     """src -> PNG в dst с сохранением альфы. -> dst, а при неудаче src (ругнувшись)."""
     emit = wrap_emit(emit)
     if os.path.exists(dst):                        # уже перекодировали раньше
@@ -1112,7 +1113,7 @@ def _repng(src, dst, why, emit):
 AE_BAD_VCODEC = {"av1", "vp8", "vp9", "theora"}
 
 
-def _vcodec(path):
+def _vcodec(path: str) -> str | None:
     """Кодек первой видеодорожки (ffprobe). -> имя в нижнем регистре | None если нечем."""
     import subprocess
     try:
@@ -1125,7 +1126,7 @@ def _vcodec(path):
         return None
 
 
-def to_ae_video(path, emit=None):
+def to_ae_video(path: str, emit: Any = None) -> str:
     """Перекодировать видео в H.264, если кодек не по зубам After Effects.
     Рядом с исходником кладём <имя>-h264.mp4 (исходник не трогаем — на него могли
     сослаться прошлые проекты и индекс базы). Читаемое возвращаем как есть:
@@ -1163,12 +1164,12 @@ def to_ae_video(path, emit=None):
     return dst
 
 
-def to_ae_media(path, emit=None):
+def to_ae_media(path: str, emit: Any = None) -> str:
     """Один вход для сборки: картинку чинит to_ae_image, видео — to_ae_video."""
     return to_ae_video(path, emit) if _media_kind(path) == "video" else to_ae_image(path, emit)
 
 
-def strip_bg_file(path, dest_dir=None, emit=None):
+def strip_bg_file(path: str, dest_dir: str | None = None, emit: Any = None) -> str:
     """Убрать фон у УЖЕ лежащего файла (кнопка на карточке вставки). Исходник не трогаем.
     dest_dir задан -> прозрачный <имя>-nobg.png кладём сразу в базу (<dest>/photos), а не
     рядом с исходником в «Скаченное»: чистая картинка нужна в базе, мусор в Downloads — нет.
@@ -1179,7 +1180,7 @@ def strip_bg_file(path, dest_dir=None, emit=None):
         raise ReelsiError("это видео — фон снимается только у фото")
     from PIL import Image
     with Image.open(path) as im:
-        if im.mode in ("RGBA", "LA") and im.getchannel("A").getextrema()[0] < 250:
+        if im.mode in ("RGBA", "LA") and im.getchannel("A").getextrema()[0] < 250:  # type: ignore[operator]  # PIL getextrema returns tuple[int, int]
             emit("  у файла уже есть прозрачность — пропуск")
             return path
     out = remove_bg(open(path, "rb").read(), emit=emit)
@@ -1197,7 +1198,7 @@ def strip_bg_file(path, dest_dir=None, emit=None):
     return os.path.abspath(dst)
 
 
-def add_generated(img_bytes, query, dest_dir, emit=None, embed=True, ru="", look=""):
+def add_generated(img_bytes: bytes, query: str, dest_dir: str, emit: Any = None, embed: bool = True, ru: str = "", look: str = "") -> str:
     """Сгенерённая картинка-вставка: сохранить в <dest_dir>/generated/ и дописать
     в индекс БЕЗ полного рескана (desc = query, ru = русская подпись, эмбеддинг сразу если эмбеддер жив) —
     следующие ролики найдут её автоподбором бесплатно. Возвращает путь.
@@ -1255,7 +1256,7 @@ def add_generated(img_bytes, query, dest_dir, emit=None, embed=True, ru="", look
     return path
 
 
-def embed_items(items, emit=None):
+def embed_items(items: Sequence[Sequence[str]], emit: Any = None) -> int:
     """Дозаполнить эмбеддинги сгенерённым картинкам ОДНИМ вызовом _embed (вместо
     по одному на картинку). items: [(path, desc), ...] или [(path, desc, ru), ...].
     Возвращает число обновлённых."""
@@ -1300,7 +1301,7 @@ def embed_items(items, emit=None):
         return n
 
 
-def _real_case(p):
+def _real_case(p: str) -> str:
     r"""Реальный регистр пути на диске (Windows case-insensitive ФС). Без \\?\ префикса."""
     try:
         r = os.path.realpath(p)
@@ -1312,9 +1313,9 @@ def _real_case(p):
     return r
 
 
-def _build_base_index(dest):
+def _build_base_index(dest: str) -> dict[str, list[str]]:
     """basename(lower) -> [абс. пути] для всех медиафайлов в базе (photos/videos, рекурсивно)."""
-    idx = {}
+    idx: dict[str, list[str]] = {}
     for sub in ("photos", "videos"):
         d = os.path.join(dest, sub)
         if not os.path.isdir(d):
@@ -1325,7 +1326,7 @@ def _build_base_index(dest):
     return idx
 
 
-def _resolve_by_basename(name, base_idx, kind=None):
+def _resolve_by_basename(name: str, base_idx: dict[str, list[str]], kind: str | None = None) -> str | None:
     """Найти файл по имени (без учёта регистра) внутри базы. Путь или None."""
     for cand in (base_idx.get((name or "").lower()) or []):
         ck = _media_kind(cand)
@@ -1334,12 +1335,12 @@ def _resolve_by_basename(name, base_idx, kind=None):
     return None
 
 
-def _crop_of(it):
+def _crop_of(it: dict[str, Any]) -> tuple[int, int] | None:
     """Форма маски вставки (ширина/высота кропа в % от авторасчёта) -> (mw, mh) или None.
     100/100 — это «как считает JSX сам», запоминать нечего."""
     try:
-        mw = int(round(float(it.get("mw"))))
-        mh = int(round(float(it.get("mh"))))
+        mw = int(round(float(it.get("mw"))))  # type: ignore[arg-type]  # float accepts int/str
+        mh = int(round(float(it.get("mh"))))  # type: ignore[arg-type]  # float accepts int/str
     except (TypeError, ValueError):
         return None
     if not (20 <= mw <= 300 and 20 <= mh <= 300) or (mw == 100 and mh == 100):
@@ -1347,7 +1348,7 @@ def _crop_of(it):
     return mw, mh
 
 
-def _read_import_log(logp):
+def _read_import_log(logp: str) -> dict[str, Any] | None:
     """Прошлый лог переносов `_import_log.json` (путь -> файл) или None.
 
     None — файл ЕСТЬ, но не читается или не словарь: перезаписать его значило бы стереть
@@ -1366,7 +1367,7 @@ def _read_import_log(logp):
     return data
 
 
-def adopt(items, dest_dir, emit=None):
+def adopt(items: Sequence[dict[str, Any]], dest_dir: str, emit: Any = None) -> dict[str, str]:
     """Прибрать в базу файлы, которые РЕАЛЬНО ушли в проект (вызывается на сборке .jsx).
     items = [{"path":..., "desc":..., "mw":..., "mh":...}], desc = запрос вставки: с ним
     файл найдётся автоподбором в следующих роликах, без прогона «Описать через ИИ»;
@@ -1383,6 +1384,10 @@ def adopt(items, dest_dir, emit=None):
     dest = _real_case(os.path.abspath(dest_dir))          # реальный регистр папки базы
     dest_nc = paths.pkey(dest)
     base_idx = _build_base_index(dest)                    # basename(lower) -> [пути в базе]
+    mapping: dict[str, str]
+    seen: dict[str, Any]
+    transferred: dict[str, str]
+    crops: dict[str, tuple[int, int]]
     mapping, seen, transferred, crops = {}, {}, {}, {}
     for it in items:
         p = (it.get("path") or "").strip().strip('"')
@@ -1406,6 +1411,7 @@ def adopt(items, dest_dir, emit=None):
                 crops[real] = crop
             continue
         # 2) файл есть по точному пути? — переезжаем
+        src: str | None
         if kind and os.path.isfile(p):
             src = p
         else:
@@ -1461,7 +1467,7 @@ def adopt(items, dest_dir, emit=None):
     return mapping
 
 
-def _index_adopt(mapping, seen, emit=None, crops=None):
+def _index_adopt(mapping: dict[str, str], seen: dict[str, Any], emit: Any = None, crops: dict[str, tuple[int, int]] | None = None) -> None:
     """Индекс после adopt: переехавшим чиним path (used/desc сохраняются), новых
     дописываем с desc=запрос и ru=русская подпись. Полного рескана не делаем.
     Сравнения — БЕЗ учёта регистра (Windows case-insensitive ФС: desktop==Desktop).
@@ -1494,7 +1500,7 @@ def _index_adopt(mapping, seen, emit=None, crops=None):
         #    дубликат-запись с расщеплённым used (аудит, adopt)
         by_nc = {paths.pkey(it.get("path") or ""): it for it in items}
         model = data.get("emb_model") or ""
-        fresh = []
+        fresh: list[tuple[str, str, str, str]] = []
         for path, sval in seen.items():
             desc = (sval.get("desc") if isinstance(sval, dict) else sval) or ""
             ru = (sval.get("ru") if isinstance(sval, dict) else "") or ""
@@ -1544,7 +1550,7 @@ def _index_adopt(mapping, seen, emit=None, crops=None):
 
 
 
-def import_media(dirs, dest, since_ts=0.0, move=True, emit=None, recursive=False):
+def import_media(dirs: Sequence[str], dest: str, since_ts: float = 0.0, move: bool = True, emit: Any = None, recursive: bool = False) -> dict[str, Any]:
     """Перенести (move) медиа-вставки из папок-источников в СВОЮ папку базы:
     dest/photos и dest/videos. Берутся только файлы наших типов (фильтры как в scan)
     с mtime >= since_ts; по умолчанию БЕЗ подпапок (recursive=False — чтобы из Downloads
@@ -1554,6 +1560,7 @@ def import_media(dirs, dest, since_ts=0.0, move=True, emit=None, recursive=False
     dest = os.path.abspath(dest)
     dest_nc = paths.pkey(dest)
     moved, mapping = 0, {}
+    d: Any
     for d in dirs:
         d = (d or "").strip().strip('"')
         if not os.path.isdir(d):
@@ -1644,7 +1651,7 @@ _DESCRIBE_PROMPT = ("Name the MAIN OBJECT in this image as precisely as you can,
 VISION_MODEL_ENV = os.environ.get("LMSTUDIO_VISION_MODEL", "")
 
 
-def _vision_model():
+def _vision_model() -> str | None:
     """Ключ vision-модели: env, иначе первая подходящая из /models (vl/vision/gemma/llava…).
     Проверено: google/gemma-4-e2b видит изображения. Это reasoning-модель, поэтому в
     describe_file шлём явный запрет размышлений — иначе content приходил пустым."""
@@ -1663,7 +1670,7 @@ def _vision_model():
     return None
 
 
-def _thumb_b64(path):
+def _thumb_b64(path: str) -> str | None:
     """Кадр для vision: фото/гиф — сам файл, видео — кадр из середины; всё ужато до 512px
     (ffmpeg). -> base64 jpeg | None."""
     import subprocess, base64, tempfile
@@ -1692,7 +1699,7 @@ def _thumb_b64(path):
             pass  # временный файл уже убран
 
 
-def describe_file(path, model):
+def describe_file(path: str, model: str) -> str | None:
     """Одно vision-описание файла через LM Studio chat. -> str | None."""
     b64 = _thumb_b64(path)
     if not b64:
@@ -1723,7 +1730,7 @@ def describe_file(path, model):
         return None
 
 
-def auto_describe(emit=None, only_missing=True, progress=None):
+def auto_describe(emit: Any = None, only_missing: bool = True, progress: Any = None) -> dict[str, Any]:
     """Vision-описания для всех файлов индекса (отбирает по needs_vis(it) при only_missing).
     Пишет ТОЛЬКО в vis: desc (исходная фраза/запрос) и desc_src не трогаются. Сбрасывает emb
     (пересчёт батчем в конце). progress(done,total)."""
@@ -1749,9 +1756,9 @@ def auto_describe(emit=None, only_missing=True, progress=None):
                     "описаниями: %s — возможна нехватка видеопамяти", ex)
     emit("vision-описания: {count} файлов через {model}…", count=len(todo), model=model)
 
-    pending = {}
+    pending: dict[str, str] = {}
 
-    def _flush_pending():
+    def _flush_pending() -> None:
         if not pending:
             return
         with _LOCK:
@@ -1791,7 +1798,7 @@ def auto_describe(emit=None, only_missing=True, progress=None):
     if emb_model:
         with _LOCK:
             cur = _load()
-            need = []
+            need: list[tuple[str, str, str, str, str]] = []
             if cur:
                 for it in cur.get("items", []):
                     if not it.get("emb"):
@@ -1820,7 +1827,7 @@ def auto_describe(emit=None, only_missing=True, progress=None):
     return dict(count=done)
 
 
-def set_desc(path, desc):
+def set_desc(path: str, desc: str | None) -> dict[str, Any]:
     """Ручная правка описания файла (+эмбеддинг). -> dict(ok=True)|dict(error=...)."""
     desc = " ".join((desc or "").split()).strip()
     path = os.path.abspath(path)
@@ -1833,7 +1840,7 @@ def set_desc(path, desc):
         if not d:
             return dict(error="индекс не построен")
         target = new_desc = cur_ru = None
-        m = ""
+        m: str | None = ""
         for it in d.get("items", []):
             if paths.pkey(it["path"]) == paths.pkey(path):
                 it["desc"] = desc or _norm_text(it["path"])
@@ -1870,7 +1877,7 @@ def set_desc(path, desc):
     return dict(ok=True, desc=new_desc)
 
 
-def items_list(q="", offset=0, limit=50):
+def items_list(q: str = "", offset: int = 0, limit: int = 50) -> dict[str, Any]:
     """Список для UI: фильтр по подстроке (имя/desc/ru/vis). -> dict(total, items=[...])."""
     d = _load()
     if not d:
@@ -1887,7 +1894,7 @@ def items_list(q="", offset=0, limit=50):
                        for it in rows[offset:offset + limit]])
 
 
-def stats(emit=print):
+def stats(emit: Any = print) -> dict[str, Any]:
     """Инвентаризация текущего индекса (только чтение)."""
     out = emit or print
     d = _load()
@@ -1938,7 +1945,7 @@ def stats(emit=print):
 if __name__ == "__main__":
     try:
         import sys
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        cast(Any, sys.stdout).reconfigure(encoding="utf-8", errors="replace")
         if len(sys.argv) >= 2 and sys.argv[1] == "scan":
             build_index(sys.argv[2:], emit=console_emit)
         elif len(sys.argv) >= 3 and sys.argv[1] == "match":

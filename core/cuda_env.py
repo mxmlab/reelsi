@@ -7,7 +7,7 @@ See memory: faster-whisper-cuda-windows-dll-fix.
 import os, site
 
 
-def setup():
+def setup() -> list[str]:
     bases = set(site.getsitepackages() + [site.getusersitepackages()])
     dirs = []
     for base in bases:
@@ -17,9 +17,13 @@ def setup():
                 dirs.append(d)
     if dirs:
         os.environ["PATH"] = os.pathsep.join(dirs) + os.pathsep + os.environ.get("PATH", "")
-        for d in dirs:
-            try:
-                os.add_dll_directory(d)
-            except OSError:
-                pass  # каталог не принят как DLL-путь — PATH уже дополнен выше
+        # getattr, а не прямой вызов: os.add_dll_directory объявлен в typeshed только для
+        # win32, а mypy под --platform linux даёт [attr-defined].
+        add_dll_directory = getattr(os, "add_dll_directory", None)
+        if add_dll_directory is not None:
+            for d in dirs:
+                try:
+                    add_dll_directory(d)
+                except OSError:
+                    pass  # каталог не принят как DLL-путь — PATH уже дополнен выше
     return dirs

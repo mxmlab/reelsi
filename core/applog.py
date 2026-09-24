@@ -16,7 +16,7 @@ from core.umsg import ReelsiError
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s: %(message)s"
 
 
-def get_logger(name="reelsi"):
+def get_logger(name: str = "reelsi") -> logging.Logger:
     """Возвращает логгер с подключенным выводом в RotatingFileHandler (1 МБ x 3).
 
     Файловый обработчик живёт ТОЛЬКО на базовом логгере 'reelsi' (один на процесс;

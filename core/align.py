@@ -6,12 +6,13 @@ repeated phrases for optional removal.
 All source times are in cam1 seconds; output positions are frames at the sequence rate (`fps`, default 60).
 """
 import re
+from typing import Any, Sequence
 from core import subs
 from core.fileio import atomic_text_write
 FPS = 60
 
 
-def assign_cameras(segments, n_cams, return_every=2, big_chunk_sec=6.0):
+def assign_cameras(segments: Sequence[Any], n_cams: int, return_every: int = 2, big_chunk_sec: float = 6.0) -> list[int]:
     """Активная камера (0-based, 0 = камера 1) на каждый кусок монтажа.
     Одна функция на все пути (нарезка, редактор нарезки, окно раскладки).
 
@@ -37,7 +38,7 @@ def assign_cameras(segments, n_cams, return_every=2, big_chunk_sec=6.0):
     return out
 
 
-def _assign_two(segments):
+def _assign_two(segments: Sequence[Any]) -> list[int]:
     """Две камеры: строгое чередование, начало и конец на кам1.
 
     Чётность. Чередование от кам1 приходит обратно в кам1, только если кусков
@@ -61,16 +62,16 @@ def _assign_two(segments):
     return [alt(i) if i < p else alt(i, 1) for i in range(k)]
 
 
-def _assign_many(segments, n, return_every, big_chunk_sec):
+def _assign_many(segments: Sequence[Any], n: int, return_every: int, big_chunk_sec: float) -> list[int]:
     """3+ камеры: базовая раскладка (большой кусок — на кам1, возврат на кам1 каждые
     `return_every` катов, иначе наименее занятый ракурс), плюс общее требование
     «последний кусок — камера 1»."""
     big = [(e - s) >= big_chunk_sec for s, e in segments]
     usage = [0] * n
-    out = []
+    out: list[int] = []
     run = 0                                   # подряд идущих не-первых кусков
 
-    def least(prev):                          # наименее занятая камера != prev, не кам1
+    def least(prev: int | None) -> int:       # наименее занятая камера != prev, не кам1
         cand = [c for c in range(1, n) if c != prev] or list(range(1, n))
         return min(cand, key=lambda c: (usage[c], c))
 
@@ -100,7 +101,7 @@ def _assign_many(segments, n, return_every, big_chunk_sec):
     return out
 
 
-def timeline_map(segments, fps=FPS):
+def timeline_map(segments: Sequence[Any], fps: int = FPS) -> tuple[list[tuple[float, float, int, int]], int]:
     """segments: list of (s,e) seconds kept. Return list of
     (s, e, out_start_frame, out_end_frame) and total frames."""
     rows = []
@@ -114,7 +115,7 @@ def timeline_map(segments, fps=FPS):
     return rows, tl
 
 
-def map_words_to_clips(words, clips, min_frames=6, max_hold=0.5, fps=FPS, gap_fill=True):
+def map_words_to_clips(words: Sequence[dict[str, Any]], clips: Sequence[Any], min_frames: int = 6, max_hold: float = 0.5, fps: float = FPS, gap_fill: bool = True) -> list[dict[str, Any]]:
     """words: source-second timestamps. clips: (start,end,in,out,...) frames.
     Map each word to its timeline position via the clip whose SOURCE range holds it.
     Assignment is strictly by midpoint of the word in source frames (ci <= sf < co).
@@ -138,7 +139,7 @@ def map_words_to_clips(words, clips, min_frames=6, max_hold=0.5, fps=FPS, gap_fi
                 break
     placed.sort(key=lambda p: p["start"])
     # merge consecutive identical words
-    merged = []
+    merged: list[dict[str, Any]] = []
     for p in placed:
         if merged and _norm(p["w"]) == _norm(merged[-1]["w"]) and p["start"] <= merged[-1]["end"] + 2:
             merged[-1]["end"] = max(merged[-1]["end"], p["end"])
@@ -157,7 +158,7 @@ def map_words_to_clips(words, clips, min_frames=6, max_hold=0.5, fps=FPS, gap_fi
     return merged
 
 
-def map_words(words, segments, min_frames=6, gap_fill=True, max_hold=0.5, fps=FPS):
+def map_words(words: Sequence[dict[str, Any]], segments: Sequence[Any], min_frames: int = 6, gap_fill: bool = True, max_hold: float = 0.5, fps: int = FPS) -> list[dict[str, Any]]:
     """Place each word on the output timeline using map_words_to_clips.
     Segments (s, e) in seconds are converted to clips frames.
     Assignment is strictly by word midpoint (dropped if midpoint is cut out).
@@ -170,7 +171,7 @@ def map_words(words, segments, min_frames=6, gap_fill=True, max_hold=0.5, fps=FP
 
 
 _norm_re = re.compile(r"[^\w]+", re.UNICODE)
-def _norm(w):
+def _norm(w: str) -> str:
     return _norm_re.sub("", w.lower())
 
 
@@ -179,11 +180,11 @@ FILLERS = {"хм", "хмм", "эм", "эмм", "ммм", "мм", "эээ", "ээ
            "ааа", "мхм", "угу", "эх", "кха", "апчхи"}
 
 
-def is_filler(word):
+def is_filler(word: str) -> bool:
     return _norm(word) in FILLERS
 
 
-def dead_air_ranges(words, max_pause=1.0, pad=0.12):
+def dead_air_ranges(words: Sequence[dict[str, Any]], max_pause: float = 1.0, pad: float = 0.12) -> list[tuple[float, float]]:
     """Aggressive-mode extra: cut gaps BETWEEN transcribed words longer than
     max_pause (breaths/hesitations VAD kept as faint 'speech'), leaving a small pad."""
     out = []
@@ -197,7 +198,7 @@ def dead_air_ranges(words, max_pause=1.0, pad=0.12):
     return out
 
 
-def clamp_word_times(words, max_dur=1.2, tail=0.55):
+def clamp_word_times(words: Sequence[dict[str, Any]], max_dur: float = 1.2, tail: float = 0.55) -> list[dict[str, Any]]:
     """Fix Whisper's ballooned word timestamps: a single word whose span is longer
     than max_dur has swallowed a stumble+pause — the real utterance is at the END,
     so re-anchor start to end-tail. Prevents 1-2s+ stretched titles shown too early."""
@@ -224,7 +225,7 @@ _ENUM_EMPTY = FILLERS | ENUM_LINKS | {"ну", "вот", "короче", "тип�
                                       "наверное", "просто", "так", "уже"}
 
 
-def _stub_of(tok, ahead):
+def _stub_of(tok: str, ahead: Sequence[str]) -> bool:
     """Слово — обрубок одного из ближайших слов второго захода («диси» ←
     «дисип»)? Тогда это запинка, а не отдельная мысль."""
     for a in ahead:
@@ -234,7 +235,7 @@ def _stub_of(tok, ahead):
     return False
 
 
-def is_enumeration(toks, i, j, look=6):
+def is_enumeration(toks: Sequence[str], i: int, j: int, look: int = 6) -> bool:
     """Похоже на перечисление, а не на брошенный заход? `toks` — весь поток
     нормализованных слов, i и j (i < j) — начала двух дословно совпадающих
     заходов. True = резать нельзя, обе половины содержательны.
@@ -256,7 +257,7 @@ def is_enumeration(toks, i, j, look=6):
                for t in mid[:-1])
 
 
-def find_repeat_ranges(words, min_words=1, max_span=10, keep="last"):
+def find_repeat_ranges(words: Sequence[dict[str, Any]], min_words: int = 1, max_span: int = 10, keep: str = "last") -> tuple[list[tuple[float, float]], list[tuple[float, float, str]]]:
     """Detect immediately-repeated word spans (re-takes / stutters) and return
     source-time ranges (start_s, end_s) to remove, plus a human log.
     keep='last' removes the earlier copy (typical good take is the retake)."""
@@ -289,7 +290,7 @@ def find_repeat_ranges(words, min_words=1, max_span=10, keep="last"):
         else:
             i += 1
     # merge dropped words into contiguous time ranges
-    ranges = []
+    ranges: list[tuple[float, float]] = []
     for s, e, _ in log:
         if ranges and s - ranges[-1][1] < 0.05:
             ranges[-1] = (ranges[-1][0], e)
@@ -298,7 +299,7 @@ def find_repeat_ranges(words, min_words=1, max_span=10, keep="last"):
     return ranges, log
 
 
-def find_restarts(words, min_span=2, max_span=10, max_gap=6, keep="last"):
+def find_restarts(words: Sequence[dict[str, Any]], min_span: int = 2, max_span: int = 10, max_gap: int = 6, keep: str = "last") -> tuple[list[tuple[float, float]], list[tuple[float, float, str]]]:
     """Detect RE-STARTS: a phrase begun, then started over — the two attempts share
     a common beginning but the first is abandoned (its tail differs / is cut off).
     Signature: words[i:i+L] repeats at words[i+m:i+m+L] with m>=L (the extra m-L words
@@ -342,7 +343,7 @@ def find_restarts(words, min_span=2, max_span=10, max_gap=6, keep="last"):
             i = a1 if keep == "last" else i + m
         else:
             i += 1
-    ranges = []
+    ranges: list[tuple[float, float]] = []
     for s, e, _ in log:
         if ranges and s - ranges[-1][1] < 0.05:
             ranges[-1] = (ranges[-1][0], e)
@@ -351,7 +352,7 @@ def find_restarts(words, min_span=2, max_span=10, max_gap=6, keep="last"):
     return ranges, log
 
 
-def _ts(frames, fps=FPS):
+def _ts(frames: float | int, fps: int = FPS) -> str:
     """Кадры -> время SRT. fps — частота, В КОТОРОЙ посчитаны кадры, а не всегда 60:
     у 25-кадровой секвенции деление на константу давало время в 2.4 раза меньше
     реального (subtitle_xml отдаёт сюда meta["fps"]). Перевод — общий, в
@@ -359,12 +360,12 @@ def _ts(frames, fps=FPS):
     return subs.format_srt_time(frames / fps)
 
 
-def make_srt(sub_words, path, max_chars=42, max_gap_frames=36, min_cue_frames=18, fps=FPS):
+def make_srt(sub_words: Sequence[dict[str, Any]], path: str, max_chars: int = 42, max_gap_frames: int = 36, min_cue_frames: int = 18, fps: int = FPS) -> int:
     """Group output-timeline words (frames) into readable cues and write .srt.
     Keeps original case/punctuation. Timings match the edited timeline.
     fps — частота таймлайна, в кадрах которой пришли sub_words (дефолт прежний)."""
     cues = []
-    cur = []
+    cur: list[dict[str, Any]] = []
     for wd in sub_words:
         if cur:
             gap = wd["start"] - cur[-1]["end"]
@@ -385,12 +386,12 @@ def make_srt(sub_words, path, max_chars=42, max_gap_frames=36, min_cue_frames=18
     return len(cues)
 
 
-def subtract_ranges(segments, drop_ranges, pad=0.0):
+def subtract_ranges(segments: Any, drop_ranges: Sequence[tuple[float, float]], pad: float = 0.0) -> Any:
     """Remove drop_ranges (seconds) from segments; return new segment list."""
     if not drop_ranges:
         return segments
     drops = sorted((max(0, a - pad), b + pad) for a, b in drop_ranges)
-    out = []
+    out: list[Any] = []
     for s, e in segments:
         cur = [(s, e)]
         for da, db in drops:

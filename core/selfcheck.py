@@ -15,7 +15,9 @@
     from core import selfcheck
     keep2, report = selfcheck.check_and_fix(wav, keep, emit=print)
 """
+from __future__ import annotations
 import os
+from typing import Any, Callable, Sequence
 from core.app_meta import console_emit, wrap_emit
 from core.umsg import ReelsiError
 from core.applog import get_logger
@@ -30,7 +32,7 @@ MIN_GAP = 0.02       # сек: не смыкать соседние keep-сег�
 SR = 16000
 
 
-def concat_keep(wav_path, keep, out_wav):
+def concat_keep(wav_path: str, keep: Sequence[Any], out_wav: str) -> tuple[list[float], list[int]]:
     """Склеить keep-интервалы wav в один файл. Возвращает список ВНУТРЕННИХ стыков
     (сек, в таймлайне склейки): стык k = конец сегмента k / начало сегмента k+1."""
     import soundfile as sf
@@ -57,7 +59,7 @@ def concat_keep(wav_path, keep, out_wav):
     return junctions[:-1], used              # последний «стык» = конец файла, не стык
 
 
-def _norm_engine(engine):
+def _norm_engine(engine: str | None) -> str:
     """Старые значения («large-v3») = размеры Whisper; новые — id из asr_backends."""
     engine = (engine or "whisper").strip()
     if engine in ("whisper", "large-v3", "medium", "small"):
@@ -65,7 +67,7 @@ def _norm_engine(engine):
     return engine
 
 
-def _transcribe_words(wav, model=None, engine="whisper:large-v3"):
+def _transcribe_words(wav: str, model: Any = None, engine: str = "whisper:large-v3") -> list[dict[str, Any]]:
     """Склейка -> [{w,start,end,prob}]. Whisper зовём напрямую (нужен уже
     загруженный `model` и vad_filter=False — по склейке и так одна речь),
     остальные движки (GigaAM / CTC других языков) — через общий реестр
@@ -90,7 +92,7 @@ def _transcribe_words(wav, model=None, engine="whisper:large-v3"):
     return out
 
 
-def analyze(words, junctions, tol=TOL, pmin=PMIN):
+def analyze(words: Sequence[dict[str, Any]], junctions: Sequence[float], tol: float = TOL, pmin: float = PMIN) -> list[dict[str, Any]]:
     """Сомнительные слова на стыках. Возвращает [{junction(idx), side('end'|'start'),
     t(стык, сек склейки), w, prob}]: side='end' — обрезан конец сегмента j,
     side='start' — обрезано начало сегмента j+1."""
@@ -113,7 +115,7 @@ def analyze(words, junctions, tol=TOL, pmin=PMIN):
     return uniq
 
 
-def analyze_straddle(ref_words, keep, tol=0.02):
+def analyze_straddle(ref_words: Sequence[dict[str, Any]], keep: Sequence[Any], tol: float = 0.02) -> list[dict[str, Any]]:
     """Для CTC-движков: рез, ПРОХОДЯЩИЙ ПОСЕРЕДИНЕ слова, по исходному звуку.
 
     Почему не по вероятностям, как у Whisper: вероятность Whisper знает язык, и
@@ -145,7 +147,7 @@ def analyze_straddle(ref_words, keep, tol=0.02):
     return uniq
 
 
-def apply_fixes(keep, fixes, total_dur, pad_step=PAD_STEP, used=None):
+def apply_fixes(keep: Sequence[Any], fixes: Sequence[dict[str, Any]], total_dur: float, pad_step: float = PAD_STEP, used: Sequence[int] | None = None) -> list[tuple[float, float]]:
     """Расширить границы проблемных сегментов (не залезая на соседей/за края).
 
     used — соответствие «номер стыка -> индекс в keep» из concat_keep. Нужно,
@@ -171,8 +173,8 @@ def apply_fixes(keep, fixes, total_dur, pad_step=PAD_STEP, used=None):
     return [tuple(se) for se in keep]
 
 
-def check_and_fix(wav_path, keep, emit=console_emit, model=None, model_size=None,
-                  engine="whisper:large-v3", tmp_dir=None, max_iter=1, release_after=True):
+def check_and_fix(wav_path: str, keep: Sequence[Any], emit: Callable[..., Any] = console_emit, model: Any = None, model_size: str | None = None,
+                  engine: str = "whisper:large-v3", tmp_dir: str | None = None, max_iter: int = 1, release_after: bool = True) -> tuple[Any, dict[str, Any]]:
     """Проверка + авто-фикс. Возвращает (keep, report):
     report = {"fixed": [описания правок], "left": [что осталось после повтора], "words": n}.
     max_iter=1: одна волна правок + одна контрольная проверка.
@@ -194,7 +196,7 @@ def check_and_fix(wav_path, keep, emit=console_emit, model=None, model_size=None
     except Exception:
         total_dur = max(e for _s, e in keep) + 1.0
     whisper = engine.startswith("whisper")
-    report = {"fixed": [], "left": [], "words": 0, "engine": engine}
+    report: dict[str, Any] = {"fixed": [], "left": [], "words": 0, "engine": engine}
     ref = None                     # транскрипция исходного wav (CTC-путь), считается один раз
     used = None                    # карта «стык -> индекс в keep» (whisper-путь, см. concat_keep)
     for it in range(max_iter + 1):
@@ -224,7 +226,7 @@ def check_and_fix(wav_path, keep, emit=console_emit, model=None, model_size=None
                 emit("  self-check: стыки чистые ({junctions} стыков, {words} слов)",
                      junctions=nj, words=len(words))
             break
-        def why(b):                           # у whisper-пути признак — вероятность,
+        def why(b: dict[str, Any]) -> str:                           # у whisper-пути признак — вероятность,
             return (f"«{b['w']}» у стыка {b['t']:.1f}с "     # у CTC — рез внутри слова
                     + (f"(p={b['prob']:.2f})" if whisper else "(рез внутри слова)"))
         if it >= max_iter:                    # правки исчерпаны — доложить, что осталось

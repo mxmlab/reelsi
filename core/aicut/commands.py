@@ -6,7 +6,10 @@
 к границам фразы. Это не обвязка вызова модели, а правила, которые применяются к её
 ответу (и без которых модель ставит вставки поверх речи).
 """
+from __future__ import annotations
 import os, re, json, math, time
+from typing import Any, Callable, Sequence, cast
+
 from .config import reason_budget, step_profile, step_reasoning
 from .llm import _ask_json
 from .prompts import (INSERTS_SCHEMA, INSERTS_SYSTEM, INTRO_SCHEMA, INTRO_SYSTEM,
@@ -16,18 +19,18 @@ from core.fileio import atomic_json_dump
 from core.umsg import ReelsiError
 
 
-def _words_from_xml(xml_path):
+def _words_from_xml(xml_path: str) -> list[tuple[int, str, float, float]]:
     from core import xml2ae
     meta, cams, subs, _ = xml2ae.parse_full(xml_path)
     fps = meta["fps"]
     return [(k, w, s / fps, e / fps) for k, (s, e, w) in enumerate(subs)]
 
 
-def _word_lines(words):
+def _word_lines(words: Sequence[tuple[int, str, float, float]]) -> str:
     return "\n".join(f"{k}\t{w}\t{s:.2f}-{e:.2f}" for k, w, s, e in words)
 
 
-def as_ints(seq, lo=None, hi=None):
+def as_ints(seq: Any, lo: int | None = None, hi: int | None = None) -> list[int]:
     """Список из ответа модели -> список int, мусор молча отбрасывается.
 
     Без structured outputs (фолбэк «схема в промпте» после 400) модель свободно
@@ -48,7 +51,7 @@ def as_ints(seq, lo=None, hi=None):
     return out
 
 
-def cmd_yellow(xml_path, system=None, dry=False, model=None, url=None, emit=console_emit):
+def cmd_yellow(xml_path: str, system: str | None = None, dry: bool = False, model: str | None = None, url: str | None = None, emit: Callable[..., Any] = console_emit) -> Any:
     words = _words_from_xml(xml_path)
     # Количество акцентов определяет смысл текста, а не длина ролика.
     user = (f"В ролике {len(words)} слов. Слова ролика (индекс, слово, тайминг в секундах):\n"
@@ -90,12 +93,12 @@ _STYLE_WORDS = {"3d", "2d", "icon", "icons", "render", "rendering", "rendered", 
                 "illustration", "isolated", "hd", "texture", "style"}
 
 
-def _strip_style_words(q):
+def _strip_style_words(q: Any) -> str:
     out = [t for t in str(q).split() if t.strip(".,;:!?\"'()").lower() not in _STYLE_WORDS]
     return " ".join(out).strip()
 
 
-def _finite_float(v):
+def _finite_float(v: Any) -> float | None:
     """float(v), если это КОНЕЧНОЕ число; иначе None (NaN, ±Infinity, строка, None, список).
 
     `float()` пропускает `nan`/`inf`, а сравнения с ними всегда ложны: `nan or 2.5`
@@ -108,13 +111,13 @@ def _finite_float(v):
     return f if math.isfinite(f) else None
 
 
-def _snap_to_phrase(ins, words, emit=console_emit):
+def _snap_to_phrase(ins: list[dict[str, Any]], words: Sequence[tuple[int, str, float, float]], emit: Callable[..., Any] = console_emit) -> None:
     """Прижать start_sec каждой вставки к началу её цитируемой фразы. Промпт требует
     копировать тайминг из ленты, но модели ставят его «на глаз» (главная причина
     «вставка не на своём месте») — ищем фразу в пословной ленте (окно с максимальным
     пересечением слов, при равенстве — ближайшее к таймингу модели) и берём старт
     первого слова окна."""
-    def toks(s):
+    def toks(s: Any) -> list[str]:
         return re.findall(r"[a-zа-я0-9]+", (s or "").lower().replace("ё", "е"))
     line = [("".join(toks(w)), s) for _, w, s, _ in words]
     for it in ins:
@@ -160,7 +163,7 @@ INS_MIN = INS_TARGET
 INS_MAX = INS_TARGET
 
 
-def ins_target(dur):
+def ins_target(dur: float | None) -> int:
     return INS_TARGET
 
 
@@ -170,12 +173,12 @@ def ins_target(dur):
 INS_END_ZONE = (0.06, 4.0, 9.0)
 
 
-def ins_end_sec(dur):
+def ins_end_sec(dur: float | None) -> float:
     frac, lo, hi = INS_END_ZONE
     return max(lo, min(hi, frac * (dur or 0)))
 
 
-def _end_zone_word(words, dur):
+def _end_zone_word(words: Sequence[tuple[int, str, float, float]], dur: float) -> int | None:
     """Индекс первого слова запретной зоны конца: старт попадает после границы
     `dur - ins_end_sec(dur)`. Граница числом, а не «самый конец» — иначе модель сама
     решает, сколько это, и на длинных роликах тянет зону на полминуты."""
@@ -185,7 +188,7 @@ def _end_zone_word(words, dur):
     return next((k for k, _, s, _ in words if s >= dur - end_sec), None)
 
 
-def _apply_zones(ins, dur, occupied=(), emit=console_emit):
+def _apply_zones(ins: list[dict[str, Any]], dur: float, occupied: Sequence[float] = (), emit: Callable[..., Any] = console_emit) -> list[dict[str, Any]]:
     """Отсев вставок, попавших в запретные зоны (начало ролика, впритык к соседу,
     хвост ролика). Вставка УДАЛЯЕТСЯ, а не сдвигается — и это главное.
 
@@ -226,7 +229,7 @@ def _apply_zones(ins, dur, occupied=(), emit=console_emit):
     return kept
 
 
-def _cap_by_quota(ins, photo_quota, video_quota):
+def _cap_by_quota(ins: list[dict[str, Any]], photo_quota: int, video_quota: int) -> list[dict[str, Any]]:
     """Детерминированная обрезка типов до квот ЭТОГО вызова.
 
     Модель может прислать больше нужного типа — лишнее отбирается равномерно по
@@ -239,7 +242,7 @@ def _cap_by_quota(ins, photo_quota, video_quota):
     videos = sorted((x for x in ins if x.get("type") == "video"),
                     key=lambda x: float(x.get("start_sec", 0) or 0))
 
-    def spread(items, quota):
+    def spread(items: list[dict[str, Any]], quota: int) -> list[dict[str, Any]]:
         if len(items) <= quota:
             return items
         if quota <= 0:
@@ -254,8 +257,8 @@ def _cap_by_quota(ins, photo_quota, video_quota):
                   key=lambda x: float(x.get("start_sec", 0) or 0))
 
 
-def cmd_inserts(xml_path, system=None, dry=False, model=None, url=None, emit=console_emit,
-                count=None, avoid=None, rejected=None, window=None):
+def cmd_inserts(xml_path: str, system: str | None = None, dry: bool = False, model: str | None = None, url: str | None = None, emit: Callable[..., Any] = console_emit,
+                count: int | None = None, avoid: list[dict[str, Any]] | None = None, rejected: list[dict[str, Any]] | None = None, window: tuple[float, float] | None = None) -> Any:
     """count/avoid — «добор недостающих»: сгенерить РОВНО count НОВЫХ вставок для других
     мест, не повторяя avoid (список уже выбранных: {type,start_sec,query}). При частичном
     доборе сайдкар .inserts.json НЕ перезаписываем (он держит полный набор).
@@ -306,7 +309,7 @@ def cmd_inserts(xml_path, system=None, dry=False, model=None, url=None, emit=con
         user += (f"\n\nНУЖНЫ вставки ТОЛЬКО для промежутка {t0:.1f}–{t1:.1f} секунд ролика. "
                  f"Бери фразы, которые ЗВУЧАТ внутри этого промежутка.")
     if count:
-        av = "\n".join(f"- {a.get('type','photo')} на ~{float(a.get('start_sec',0)):.0f}с: {a.get('query','')}"
+        av: Any = "\n".join(f"- {a.get('type','photo')} на ~{float(a.get('start_sec',0)):.0f}с: {a.get('query','')}"
                        for a in (avoid or [])) or "—"
         user += (f"\n\nНЕ повторяй уже выбранные (их темы и тайминги):\n{av}\n"
                  f"Возьми другие места и другие идеи картинок.")
@@ -387,7 +390,7 @@ def cmd_inserts(xml_path, system=None, dry=False, model=None, url=None, emit=con
     # Раньше отсев шёл по сырому таймингу модели: удалённая вставка со снапом на 12.0с
     # против сырых 14.5с давала Δ=2.5 > 2.0 — фильтр промахивался, и она возвращалась.
     if rejected:
-        def _sim(q1, q2):
+        def _sim(q1: Any, q2: Any) -> float:
             a = set(re.findall(r"[а-яёa-z]+", (q1 or "").lower()))
             b = set(re.findall(r"[а-яёa-z]+", (q2 or "").lower()))
             return (len(a & b) / len(a | b)) if a and b else 0.0
@@ -470,7 +473,7 @@ def cmd_inserts(xml_path, system=None, dry=False, model=None, url=None, emit=con
 
 
 
-def _busy_windows(inserts):
+def _busy_windows(inserts: list[dict[str, Any]] | None) -> list[tuple[float, float]]:
     """Секунды, занятые вставками (фото/видео): [(start, end), …], по возрастанию."""
     return sorted((float(i.get("start_sec") or 0),
                    float(i.get("start_sec") or 0) + float(i.get("duration_sec") or 2.5))
@@ -485,7 +488,7 @@ INTRO_EST_WORDS = 14
 INTRO_FREE_MIN = 2.5
 
 
-def _free_windows(words, inserts, after=0.0, min_len=INTRO_FREE_MIN):
+def _free_windows(words: Sequence[tuple[int, str, float, float]], inserts: list[dict[str, Any]] | None, after: float = 0.0, min_len: float = INTRO_FREE_MIN) -> list[tuple[float, float]]:
     """Куски хронометража, НЕ занятые вставками (и не попавшие в интро): [(a, b), …].
 
     Порог 2.5 с, а не 8: при 13 вставках на 100-секундный ролик окон длиннее 8 с почти
@@ -502,13 +505,13 @@ def _free_windows(words, inserts, after=0.0, min_len=INTRO_FREE_MIN):
     return free
 
 
-def _free_quota(a, b, per=None):
+def _free_quota(a: float, b: float, per: float | None = None) -> int:
     """Сколько акцентов просить в свободное окно: один на INTRO_MID_PER_SEC секунд,
     но не меньше одного — пустое окно и есть то место, ради которого всё затевается."""
     return max(1, int(round((b - a) / (per or INTRO_MID_PER_SEC))))
 
 
-def _intro_free_hint(words, free):
+def _intro_free_hint(words: Sequence[tuple[int, str, float, float]], free: list[tuple[float, float]]) -> str:
     """КАРТА РОЛИКА для модели: свободные окна с КВОТОЙ на каждое, занятые вставками
     секунды и паузы в речи. Квота по окнам, а не общее число на ролик: задача — занять
     текстом за спиной именно те места, где вставок нет, а не набрать счётчик где угодно."""
@@ -528,7 +531,7 @@ def _intro_free_hint(words, free):
     return "\n".join(out)
 
 
-def _busy_windows_from_free(words, free):
+def _busy_windows_from_free(words: Sequence[tuple[int, str, float, float]], free: list[tuple[float, float]]) -> list[tuple[float, float]]:
     """Инверсия свободных окон — чтобы в карте «занято» и «свободно» не разъезжались."""
     dur = words[-1][3] if words else 0
     out, t = [], 0.0
@@ -574,7 +577,7 @@ INTRO_FUNC_WORDS = frozenset({
 })
 
 
-def _split_words(ws, limit=INTRO_ROW_MAX_CHARS):
+def _split_words(ws: Sequence[str], limit: int = INTRO_ROW_MAX_CHARS) -> list[list[str]]:
     """Перенос по словам: список слов, который длиннее limit символов, режем на две
     части по ближайшей к середине границе слов (и так рекурсивно). Возвращает список
     кусков (списков слов). Одно слово не режем — переносим целиком. Среди кандидатов
@@ -599,7 +602,7 @@ def _split_words(ws, limit=INTRO_ROW_MAX_CHARS):
     return out
 
 
-def _wrap_intro_rows(rows, words, limit=INTRO_HOOK_ROW_MAX_CHARS):
+def _wrap_intro_rows(rows: list[dict[str, Any]], words: Sequence[tuple[int, str, float, float]], limit: int = INTRO_HOOK_ROW_MAX_CHARS) -> list[dict[str, Any]]:
     """Перенос длинных строк интро: каждую строку режем по словам на куски ≤ limit.
     Лимит по умолчанию — хуковый 14 (см. INTRO_HOOK_ROW_MAX_CHARS): строка хука у юзера
     бывает до 16 символов, и порог 9 резал её пополам. Первый кусок наследует break
@@ -628,10 +631,10 @@ INTRO_HOOK_WORDS = 5      # в текущем прекомпе уже 5 слов
 INTRO_HOOK_PAUSE = 0.4    # ≥2 строк и пауза ≥ этой перед строкой — смысловая граница
 
 
-def _hook_split(rows, words, start):
+def _hook_split(rows: list[dict[str, Any]], words: Sequence[tuple[int, str, float, float]], start: int) -> list[dict[str, Any]]:
     """Разложить ленту строк хука на прекомпы по правилам эталона, начиная со слова
     start (не 0, когда режем переросший прекомп модели). Первая строка ленты — голова."""
-    out, off = [], start
+    out, off = cast(list[dict[str, Any]], []), start
     cur_rows, cur_words = 0, 0
     for r in rows:
         n = max(1, r.get("count") or 1)
@@ -653,7 +656,7 @@ def _hook_split(rows, words, start):
     return out
 
 
-def _hook_trim(rows, words, start):
+def _hook_trim(rows: list[dict[str, Any]], words: Sequence[tuple[int, str, float, float]], start: int) -> list[dict[str, Any]]:
     """Дорезка прекомпа модели, переросшего 4 строки или 6 слов (p90 эталона).
     Мелкие прекомпы не трогаем — её разбиение не переигрываем."""
     n_words = sum(max(1, r.get("count") or 1) for r in rows)
@@ -662,7 +665,7 @@ def _hook_trim(rows, words, start):
     return _hook_split(rows, words, start)
 
 
-def _intro_defunc(rows, words):
+def _intro_defunc(rows: list[dict[str, Any]], words: Sequence[tuple[int, str, float, float]]) -> list[dict[str, Any]]:
     """Служебное слово не остаётся последним в строке (2026-08-14).
 
     Модель поняла «до 14 символов» как цель и рвёт фразу где попало: «СТАВЯТ / ПО»,
@@ -708,7 +711,7 @@ def _intro_defunc(rows, words):
     return res
 
 
-def _hook_breaks(rows, words):
+def _hook_breaks(rows: list[dict[str, Any]], words: Sequence[tuple[int, str, float, float]]) -> list[dict[str, Any]]:
     """Механическая страховка разбиения хука на прекомпы.
 
     Модель разбиение может не прислать вовсе — тогда хук собирался ОДНИМ прекомпом.
@@ -718,7 +721,7 @@ def _hook_breaks(rows, words):
     breaks = [i for i, r in enumerate(rows) if r.get("break")]
     if len(breaks) <= 1:                               # только голова хука (по определению)
         return _hook_split(rows, words, 0)
-    out, group, gstart, off = [], [], 0, 0
+    out, group, gstart, off = cast(list[dict[str, Any]], []), cast(list[dict[str, Any]], []), 0, 0
     for r in rows:
         if r.get("break") and group:
             out += _hook_trim(group, words, gstart)
@@ -754,7 +757,7 @@ INTRO_EMPTY_WARN = 6.0
 INTRO_MAX_WORDS = 24
 
 
-def _place_mids(groups, words, intro_len, busy, emit=console_emit):
+def _place_mids(groups: list[tuple[Any, ...]], words: Sequence[tuple[int, str, float, float]], intro_len: int, busy: list[tuple[float, float]], emit: Callable[..., Any] = console_emit) -> list[dict[str, Any]]:
     """Отбор и раскладка акцентов-групп: [(from, count, color, back)] -> строки INTRO.
 
     Выбрасываем группу, если она лезет в интро/за край, перекрыта вставкой (там кадр
@@ -789,7 +792,7 @@ def _place_mids(groups, words, intro_len, busy, emit=console_emit):
     return mids
 
 
-def _intro_look(color, back, nwords):
+def _intro_look(color: Any, back: Any, nwords: int) -> tuple[str, str]:
     """Вывод оформления (anim, fx) по смыслу строки (цвет, задний план, длина).
 
     Единственный источник правды об оформлении строк интро и акцентов.
@@ -810,8 +813,8 @@ def _intro_look(color, back, nwords):
     return ("", "")
 
 
-def cmd_intro(xml_path, system=None, dry=False, model=None, url=None, emit=console_emit,
-              inserts=None):
+def cmd_intro(xml_path: str, system: str | None = None, dry: bool = False, model: str | None = None, url: str | None = None, emit: Callable[..., Any] = console_emit,
+              inserts: list[dict[str, Any]] | None = None) -> Any:
     """ИИ-разметка интро (строки первых слов) + акценты-группы посреди ролика.
     inserts — уже выбранные вставки ({start_sec,duration_sec}); если не переданы,
     подхватываем сайдкар <stem>.inserts.json. Нужны, чтобы акценты вставали ТАМ,
@@ -854,7 +857,7 @@ def cmd_intro(xml_path, system=None, dry=False, model=None, url=None, emit=conso
                      emit=emit, reasoning=_lvl, profile=step_profile("intro"),
                      step="intro")
     emit("  ⏱ ИИ-интро: LLM-вызов {sec:.1f}с", sec=time.time() - _t0)
-    rows = []
+    rows: list[dict[str, Any]] = []
     for r in (data.get("intro_rows") or []):
         if not isinstance(r, dict):
             continue                                   # без structured outputs прилетает что угодно
@@ -876,7 +879,7 @@ def cmd_intro(xml_path, system=None, dry=False, model=None, url=None, emit=conso
     if total > intro_max:
         emit("  интро урезано: модель просила {total} слов, беру {max} (в ролике {words} слов)",
              total=total, max=intro_max, words=len(words))
-        cut, left = [], intro_max
+        cut, left = cast(list[dict[str, Any]], []), intro_max
         for r in rows:
             if left <= 0:
                 break

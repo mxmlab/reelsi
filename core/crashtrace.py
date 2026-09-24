@@ -23,19 +23,20 @@ import subprocess
 import sys
 import threading
 import traceback
+from typing import Any, Callable
 
 from core import app_meta, paths
 from core.app_meta import APP_VERSION
 from core.fileio import atomic_json_dump
 from core.umsg import ReelsiError
 
-_CRASH_FILE_HANDLE = None
-_ORIG_SYS_EXCEPTHOOK = None
-_ORIG_THREADING_EXCEPTHOOK = None
+_CRASH_FILE_HANDLE: Any = None
+_ORIG_SYS_EXCEPTHOOK: Any = None
+_ORIG_THREADING_EXCEPTHOOK: Any = None
 _FAULTHANDLER_WAS_ENABLED = False
 _CURRENT_MARKER_PATH: str | None = None
 _REGISTERED_MARKERS: set[str] = set()
-_ORIG_SIGNAL_HANDLERS: dict = {}
+_ORIG_SIGNAL_HANDLERS: dict[Any, Any] = {}
 
 
 def get_log_dir() -> str:
@@ -52,7 +53,7 @@ def get_crash_log_path() -> str:
     return os.path.join(get_log_dir(), "reelsi_crash.log")
 
 
-def get_run_marker_path(port=None) -> str:
+def get_run_marker_path(port: Any = None) -> str:
     """Путь к маркеру активности сервера (REELSI_RUN_MARKER или reelsi.<port>.running рядом с логом)."""
     custom = app_meta.env("RUN_MARKER")
     if custom:
@@ -73,7 +74,12 @@ def is_pid_alive(pid: int) -> bool:
         try:
             import ctypes
             from ctypes import wintypes
-            kernel32 = ctypes.windll.kernel32
+            # getattr, а не прямой доступ: ctypes.windll объявлен в typeshed только для
+            # win32, а mypy под --platform linux даёт [attr-defined].
+            windll = getattr(ctypes, "windll", None)
+            if windll is None:
+                return False
+            kernel32 = windll.kernel32
             PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
             handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, wintypes.DWORD(pid))
             if handle:
@@ -116,7 +122,7 @@ def is_pid_alive(pid: int) -> bool:
             return False
 
 
-def _parse_iso_datetime(dt_str: str):
+def _parse_iso_datetime(dt_str: Any) -> datetime | None:
     """Безопасный парсинг ISO даты-времени с поддержкой произвольного числа микросекунд."""
     if not dt_str:
         return None
@@ -130,7 +136,7 @@ def _parse_iso_datetime(dt_str: str):
         return None
 
 
-def _extract_wevtutil_events(output: str, prev_started: str = None) -> list[str]:
+def _extract_wevtutil_events(output: str, prev_started: Any = None) -> list[str]:
     """Извлекает из вывода wevtutil события с упоминанием python за время жизни запуска."""
     if not output:
         return []
@@ -163,7 +169,7 @@ def _extract_wevtutil_events(output: str, prev_started: str = None) -> list[str]
     return matching
 
 
-def _check_previous_crash(log: logging.Logger, marker_path: str, crash_path: str):
+def _check_previous_crash(log: logging.Logger, marker_path: str, crash_path: str) -> None:
     """Проверяет маркер предыдущего запуска и логирует предупреждение, если процесс умер не штатно."""
     if not os.path.isfile(marker_path):
         return
@@ -238,7 +244,7 @@ def _check_previous_crash(log: logging.Logger, marker_path: str, crash_path: str
             log.warning("Не удалось получить события Application Windows: %s", e)
 
 
-def _write_marker(marker_path: str, port=None):
+def _write_marker(marker_path: str, port: Any = None) -> None:
     """Атомарная запись маркера запущенного сервера (core.fileio.atomic_json_dump).
 
     fileio — модуль-лист (json/os/stat/tempfile) и ничего из ядра не тянет, поэтому
@@ -256,7 +262,7 @@ def _write_marker(marker_path: str, port=None):
     atomic_json_dump(marker_path, data, indent=2)
 
 
-def _remove_marker(marker_path: str = None, port=None):
+def _remove_marker(marker_path: str | None = None, port: Any = None) -> None:
     """Удаление маркера при штатном выходе (atexit).
 
     Удаляет маркер только если он принадлежит текущему процессу.
@@ -278,7 +284,7 @@ def _remove_marker(marker_path: str = None, port=None):
         pass  # процесс и так завершается — бросать из сторожа нельзя
 
 
-def install(log=None, port=None):
+def install(log: Any = None, port: Any = None) -> dict[str, str]:
     """Инициализирует faulthandler, excepthooks и маркер активности процесса.
 
     1. Включает faulthandler в файл reelsi_crash.log;
@@ -324,8 +330,8 @@ def install(log=None, port=None):
                     _ORIG_SIGNAL_HANDLERS[sig] = signal.getsignal(sig)
                 prev_h = _ORIG_SIGNAL_HANDLERS[sig]
 
-                def _make_handler(prev, m_path):
-                    def _sig_handler(signum, frame):
+                def _make_handler(prev: Any, m_path: str) -> Callable[[int, Any], None]:
+                    def _sig_handler(signum: int, frame: Any) -> None:
                         _remove_marker(m_path)
                         for m in list(_REGISTERED_MARKERS):
                             _remove_marker(m)
@@ -366,7 +372,7 @@ def install(log=None, port=None):
     _ORIG_SYS_EXCEPTHOOK = sys.excepthook
     _ORIG_THREADING_EXCEPTHOOK = threading.excepthook
 
-    def _sys_excepthook(exc_type, exc_value, exc_tb):
+    def _sys_excepthook(exc_type: Any, exc_value: Any, exc_tb: Any) -> None:
         if not issubclass(exc_type, (KeyboardInterrupt, SystemExit)):
             try:
                 tb_text = "".join(traceback.format_exception(exc_type, exc_value, exc_tb))
@@ -383,7 +389,7 @@ def install(log=None, port=None):
         else:
             sys.__excepthook__(exc_type, exc_value, exc_tb)
 
-    def _threading_excepthook(args):
+    def _threading_excepthook(args: Any) -> None:
         if not issubclass(args.exc_type, (KeyboardInterrupt, SystemExit)):
             try:
                 tb = getattr(args, "exc_traceback", getattr(args, "exc_tb", None))
@@ -411,7 +417,7 @@ def install(log=None, port=None):
     }
 
 
-def uninstall():
+def uninstall() -> None:
     """Восстанавливает прежнее состояние faulthandler и хуков (для изоляции тестов)."""
     global _CRASH_FILE_HANDLE, _ORIG_SYS_EXCEPTHOOK, _ORIG_THREADING_EXCEPTHOOK
     global _REGISTERED_MARKERS, _CURRENT_MARKER_PATH, _ORIG_SIGNAL_HANDLERS

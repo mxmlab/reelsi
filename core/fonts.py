@@ -8,7 +8,9 @@
 а nameID 6 даёт только дефолтное начертание. Кэшируется в памяти.
 Если fontTools нет — вернёт пустой список (UI останется свободным вводом).
 """
+from __future__ import annotations
 import os, logging
+from typing import Any
 from core.umsg import ReelsiError, cli_error
 
 logging.getLogger("fontTools").setLevel(logging.ERROR)   # не спамить в консоль на кривых шрифтах
@@ -16,11 +18,11 @@ logging.getLogger("fontTools").setLevel(logging.ERROR)   # не спамить �
 _CACHE = None
 
 # Кэш глифсетов по (файл, координаты осей): файл шрифта на сборку открывается один раз.
-_GS_CACHE = {}
+_GS_CACHE: dict[Any, Any] = {}
 
 # Кэш границ глифа по (файл, координаты осей, имя глифа) — контуры не пересчитываются
 # на каждой строке ролика.
-_GB_CACHE = {}
+_GB_CACHE: dict[Any, Any] = {}
 
 _FONT_DIRS = [
     # Windows
@@ -52,14 +54,14 @@ WIDTH_CLASS_TO_STRETCH = {
 }
 
 
-def _parse_fallback_style(name):
+def _parse_fallback_style(name: str | None) -> tuple[int, float, bool]:
     """(weight, stretch, italic) по имени начертания/файла/PS (запасной источник)."""
     low = (name or "").lower().replace("-", " ").replace("_", " ")
     # italic / oblique
     italic = any(k in low for k in ("italic", "oblique", "ital", "obli", "kursiv", "slanted"))
 
     # stretch / width
-    stretch = 100
+    stretch: float = 100
     if any(k in low for k in ("ultra condensed", "ultracondensed")):
         stretch = 50
     elif any(k in low for k in ("extra condensed", "extracondensed")):
@@ -103,7 +105,7 @@ def _parse_fallback_style(name):
     return weight, stretch, italic
 
 
-def _names(tt, path):
+def _names(tt: Any, path: str) -> list[dict[str, Any]]:
     """Записи {ps, family, weight, stretch, italic, var?, file} из name/fvar одного шрифта fontTools.
 
     Для файла без fvar — одна запись (как было). Для вариативного — записи всех
@@ -219,8 +221,8 @@ def _names(tt, path):
     return out
 
 
-def _read_file(path):
-    out = []
+def _read_file(path: str) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     try:
         from fontTools.ttLib import TTFont, TTCollection
     except Exception:
@@ -241,7 +243,7 @@ def _read_file(path):
     return out
 
 
-def list_fonts(refresh=False):
+def list_fonts(refresh: bool = False) -> list[dict[str, Any]]:
     """[{"ps", "family", "file", "var"?}, ...], отсортировано, без дублей по ps."""
     global _CACHE
     if _CACHE is not None and not refresh:
@@ -263,7 +265,7 @@ def list_fonts(refresh=False):
     return items
 
 
-def _glyph_set(file, coords):
+def _glyph_set(file: str, coords: Any) -> Any:
     """(glyphSet, unitsPerEm, cmap) по (файл, координаты осей), с кэшем.
 
     У вариативных шрифтов координаты осей берутся из записи list_fonts (поле var),
@@ -285,7 +287,7 @@ def _glyph_set(file, coords):
     return ent
 
 
-def _glyph_bounds(file, coords, gn):
+def _glyph_bounds(file: str, coords: Any, gn: str) -> Any:
     """(xMin, yMin, xMax, yMax) контура глифа или None (пустой контур/шрифт не открылся).
     Кэш по (файл, координаты осей, имя глифа): у строки ролика десятки глифов, а контур
     одного глифа на весь кегль один и тот же."""
@@ -306,7 +308,7 @@ def _glyph_bounds(file, coords, gn):
     return _GB_CACHE[key]
 
 
-def ink_extent(ps_name, text, size_px):
+def ink_extent(ps_name: str | None, text: str, size_px: float) -> Any:
     """(asc, desc) чернил строки, px: максимум yMax и минус минимум yMin по глифам.
     Нужно для шага строк интро: шаг считают по ЗАЗОРУ между буквами,
     а он зависит от шрифта — «хвост» вниз у верхней строки плюс высота букв нижней.
@@ -350,7 +352,7 @@ def ink_extent(ps_name, text, size_px):
     return (asc * k, desc * k)
 
 
-def text_width(ps_name, text, size_px):
+def text_width(ps_name: str | None, text: str, size_px: float) -> Any:
     """Ширина строки (px) тем шрифтом, что увидит After Effects. None,
     если шрифт не найден — автофит для этой группы НЕ применяется (ужать по неизвестной
     ширине хуже, чем не ужать). Сумма горизонтальных advance'ов по cmap, делённая на

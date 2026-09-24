@@ -7,9 +7,11 @@
 на каждом кадре находит центр верхней полосы (12% высоты) силуэта человека.
 Результат кэшируется в сайдкар <стем>.head.json рядом с XML.
 """
+from __future__ import annotations
 import json
 import os
 import subprocess
+from typing import Any, Callable, Sequence, Mapping
 
 from core import fileio, roto
 from core.app_meta import wrap_emit
@@ -20,7 +22,7 @@ from core.applog import get_logger
 log = get_logger(__name__)
 
 
-def cam1_ranges(cams, fps):
+def cam1_ranges(cams: Sequence[Mapping[str, Any]], fps: float | int | None) -> list[tuple[float, float]]:
     """Участки исходника Камеры 1, реально показываемые в монтаже (сек): [(in_s, out_s), ...]."""
     if not cams or not cams[0].get("clips"):
         return []
@@ -35,7 +37,7 @@ def cam1_ranges(cams, fps):
 
 
 
-def merge_ranges(ranges):
+def merge_ranges(ranges: Sequence[Any]) -> list[tuple[float, float]]:
     """Слить перекрывающиеся и смежные диапазоны [(a, b), ...]."""
     if not ranges:
         return []
@@ -52,7 +54,7 @@ def merge_ranges(ranges):
     return [(r[0], r[1]) for r in merged]
 
 
-def ranges_cover(cached_ranges, requested_ranges, eps=0.05):
+def ranges_cover(cached_ranges: Sequence[Any], requested_ranges: Sequence[Any], eps: float = 0.05) -> bool:
     """Проверить, что cached_ranges полностью покрывают requested_ranges."""
     merged_cached = merge_ranges(cached_ranges)
     merged_req = merge_ranges(requested_ranges)
@@ -67,7 +69,7 @@ def ranges_cover(cached_ranges, requested_ranges, eps=0.05):
     return True
 
 
-def track(video, ranges, emit=None, cancel=None, fps=10):
+def track(video: str, ranges: Sequence[Any], emit: Callable[..., Any] | None = None, cancel: Callable[[], bool] | None = None, fps: int = 10) -> dict[str, Any]:
     """RVM-трекинг головы спикера по участкам исходника ranges ([(a, b), ...]).
 
     На кадр: alpha > 0.5, верхняя строка силуэта top, полоса [top, top + 0.12*h),
@@ -177,7 +179,7 @@ def track(video, ranges, emit=None, cancel=None, fps=10):
     return {"v": 1, "fps": fps, "w": w_src, "h": h_src, "pts": pts}
 
 
-def load_cached(xml_path, video, ranges=None):
+def load_cached(xml_path: str | None, video: str, ranges: Sequence[Any] | None = None) -> dict[str, Any] | None:
     """Проверить валидность сайдкара <стем>.head.json и вернуть данные или None.
 
     Годен, если файл существует, v == 1, путь, размер и mtime видео совпадают.
@@ -206,7 +208,7 @@ def load_cached(xml_path, video, ranges=None):
     return None
 
 
-def load_or_track(xml_path, video, ranges, emit=None, cancel=None, fps=10):
+def load_or_track(xml_path: str | None, video: str, ranges: Sequence[Any], emit: Callable[..., Any] | None = None, cancel: Callable[[], bool] | None = None, fps: int = 10) -> dict[str, Any]:
     """Загрузить трек из <стем>.head.json или посчитать заново и сохранить."""
     emit = wrap_emit(emit)
     video = os.path.abspath(video)
@@ -237,7 +239,7 @@ def load_or_track(xml_path, video, ranges, emit=None, cancel=None, fps=10):
     return data
 
 
-def head_at(pts, t):
+def head_at(pts: Sequence[Any], t: float) -> float | None:
     """Линейная интерполяция, провалы (None) перешагиваются, за краями — ближайшее значение."""
     if not pts:
         return None

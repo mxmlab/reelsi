@@ -21,6 +21,7 @@ to it — otherwise a stem could never be REMOVED from the UI, and that is half 
 Lists reload when their file changes (by mtime), so edits take effect without a restart.
 """
 import os, re
+from typing import Any
 
 from core import paths
 from core.app_meta import env
@@ -36,30 +37,30 @@ DEFAULT_BAD = [
     # starter set — used only if badwords.txt is missing too
     "наркотик", "суицид", "убива", "убить", "насил",
 ]
-DEFAULT_OK = []
+DEFAULT_OK: list[str] = []
 DEFAULTS = {"bad": DEFAULT_BAD, "ok": DEFAULT_OK}
 _norm_re = re.compile(r"[^\w]+", re.UNICODE)
-_cache = {"bad": (None, None, DEFAULT_BAD), "ok": (None, None, DEFAULT_OK)}
+_cache: dict[str, tuple[str | None, float | None, list[str]]] = {"bad": (None, None, DEFAULT_BAD), "ok": (None, None, DEFAULT_OK)}
 
 
-def path(kind):
+def path(kind: str) -> str:
     """Файл, по которому список работает сейчас: свой (правка из UI), иначе из поставки."""
     p = USER_PATHS[kind]
     return p if os.path.exists(p) else BASE_PATHS[kind]
 
 
-def is_custom(kind):
+def is_custom(kind: str) -> bool:
     """Список правили из UI (лежит свой файл)?"""
     return os.path.exists(USER_PATHS[kind])
 
 
-def _parse(text):
+def _parse(text: str | None) -> list[str]:
     """Stems from the text of a list file (one per line, `#` comments)."""
     return [s for s in (ln.split("#", 1)[0].strip().lower()
                         for ln in (text or "").splitlines()) if s]
 
 
-def _load(kind):
+def _load(kind: str) -> list[str]:
     """Stems for `kind`, reloading only when the file changes on disk."""
     p = path(kind)
     try:
@@ -75,17 +76,17 @@ def _load(kind):
     return _cache[kind][2]
 
 
-def _bad():
+def _bad() -> list[str]:
     """Current bad-word stems (live)."""
     return _load("bad")
 
 
-def _ok():
+def _ok() -> list[str]:
     """Current allow-list stems (live)."""
     return _load("ok")
 
 
-def is_bad(word):
+def is_bad(word: str | None) -> bool:
     """True if `word` should be censored: matches a bad stem and no ok exception."""
     low = _norm_re.sub("", (word or "").lower())
     if not low:
@@ -95,7 +96,7 @@ def is_bad(word):
     return any(b in low for b in _bad())
 
 
-def censor(word):
+def censor(word: str) -> str:
     """Star one (middle) letter if the word should be censored. Case preserved."""
     if is_bad(word):
         m = max(1, len(word) // 2)     # у 1-буквенного слова не стирать единственную букву
@@ -105,7 +106,7 @@ def censor(word):
 
 # ---- правка списков из настроек (⚙ → «Слова») ----
 
-def read_text(kind):
+def read_text(kind: str) -> str:
     """Текст списка для правки в настройках: свой, если заведён, иначе из поставки."""
     try:
         return open(path(kind), encoding="utf-8").read()
@@ -113,7 +114,7 @@ def read_text(kind):
         return "\n".join(DEFAULTS[kind]) + "\n"
 
 
-def write_text(kind, text):
+def write_text(kind: str, text: str | None) -> int:
     """Сохранить свой список. Пустой текст — это ПУСТОЙ список (ничего не цензурим),
     а не «вернуть как было»: возврат к поставочному — отдельное действие (reset).
     -> сколько стемов получилось."""
@@ -127,7 +128,7 @@ def write_text(kind, text):
     return len(_parse(text))
 
 
-def reset(kind):
+def reset(kind: str) -> int:
     """Убрать свой список — вернуться к тому, что идёт в поставке."""
     try:
         os.remove(USER_PATHS[kind])
@@ -137,7 +138,8 @@ def reset(kind):
     return len(_load(kind))
 
 
-def info():
+def info() -> dict[str, dict[str, Any]]:
     """Для настроек: тексты обоих списков, свой ли он и сколько в нём стемов."""
     return {k: {"text": read_text(k), "custom": is_custom(k), "count": len(_load(k))}
             for k in ("bad", "ok")}
+

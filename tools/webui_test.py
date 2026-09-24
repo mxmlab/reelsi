@@ -26,7 +26,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core import paths   # noqa: E402
 
 
-def _own(env, name, seed_from=None):
+def _own(env: str, name: str, seed_from: str | None = None) -> None:
     """Свой файл состояния для профиля; seed_from — с чего скопировать при первом
     запуске (ключи провайдеров, индекс базы вставок)."""
     path = paths.root(name)

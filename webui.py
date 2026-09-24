@@ -10,6 +10,7 @@ static/app.css + static/app/*.js (правки фронта — там, серв
 """
 import os, sys, threading, webbrowser
 import json as _json
+from typing import Any, cast
 
 # Импорт до первого try: сторож `except ReelsiError` ниже обязан видеть это имя.
 from core.umsg import ReelsiError, cli_error
@@ -17,7 +18,7 @@ from core.umsg import ReelsiError, cli_error
 # (ytmusic «случайная музыка», roto и т.п.) валит запрос UnicodeEncodeError. Чиним на входе.
 for _s in (sys.stdout, sys.stderr):
     try:
-        _s.reconfigure(encoding="utf-8", errors="replace")
+        cast(Any, _s).reconfigure(encoding="utf-8", errors="replace")
     except ReelsiError: raise
     except Exception:
         pass  # поток без reconfigure — печатаем с errors=replace
@@ -36,11 +37,11 @@ app.register_blueprint(bp)
 
 _TPL = os.path.join(HERE, "templates", "index.html")
 _STATIC = os.path.join(HERE, "static")
-_CACHE = {"mtime": None, "html": ""}
+_CACHE: dict[str, Any] = {"mtime": None, "html": ""}
 _I18N = I18N_FILE
 
 
-def _dict_en():
+def _dict_en() -> str:
     """Словарь перевода — ВСТРАИВАЕТСЯ В СТРАНИЦУ, а не грузится запросом.
 
     Загрузка через fetch создаёт гонку: часть интерфейса (строки камер, статус
@@ -52,7 +53,7 @@ def _dict_en():
     return dict_en_json()
 
 
-def _app_scripts(v):
+def _app_scripts(v: int | str) -> str:
     """<script>-теги интерфейса в порядке загрузки.
 
     Список берётся из папки (app_meta.app_js_files), а не выписан в шаблоне: иначе
@@ -64,7 +65,7 @@ def _app_scripts(v):
         for p in app_js_files())
 
 
-def _page():
+def _page() -> str:
     """index.html + подстановки. Кэш по mtime — правка шаблона видна по F5 без рестарта."""
     mt = max([os.path.getmtime(_TPL),
               os.path.getmtime(os.path.join(_STATIC, "app.css")),
@@ -83,11 +84,11 @@ def _page():
 
 
 @app.route("/")
-def index():
+def index() -> str:
     return _page()
 
 
-def _cleanup_on_exit():
+def _cleanup_on_exit() -> None:
     """Завершение дочерних процессов при выходе сервера (atexit).
 
     Освобождает VRAM: процессы нарезки (omni_cut/ASR) и aerender/After Effects.
@@ -110,7 +111,7 @@ def _cleanup_on_exit():
         pass  # рендер не запущен — гасить нечего
 
 
-def main():
+def main() -> None:
     import atexit
     from core.applog import get_logger
     from core.paths import require_source_tree

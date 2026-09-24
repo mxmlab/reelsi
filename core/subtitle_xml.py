@@ -8,7 +8,9 @@ and inserts a subtitle graphics track + writes an .srt. This decouples cutting
 
 CLI:  python reelsi/subtitle_xml.py "EditedFromPremiere.xml"
 """
+from __future__ import annotations
 import os, re, sys
+from typing import Any, Callable
 from core import align
 from core import xmlbuild
 from core.fileio import atomic_text_write
@@ -20,7 +22,7 @@ from core.umsg import ReelsiError, cli_error
 FPS = 60
 
 
-def map_words_to_clips(words, clips, min_frames=6, max_hold=0.5, fps=FPS):
+def map_words_to_clips(words: Any, clips: Any, min_frames: int = 6, max_hold: float = 0.5, fps: float = FPS) -> list[Any]:
     """words: source-second timestamps. clips: (start,end,in,out,enabled,scale) frames.
     Map each word to its timeline position via the clip whose SOURCE range holds it.
     Words in cut-out source regions are dropped. Returns [(w,start,end)] output frames.
@@ -31,12 +33,12 @@ def map_words_to_clips(words, clips, min_frames=6, max_hold=0.5, fps=FPS):
     return align.map_words_to_clips(words, clips, min_frames=min_frames, max_hold=max_hold, fps=fps)
 
 
-def _build_subtitle_track(sub_words, start_id, fps=60):
+def _build_subtitle_track(sub_words: Any, start_id: int, fps: float = 60) -> tuple[str, int, list[str]]:
     vtrack, n, longs, _ = xmlbuild.build_subtitle_track(sub_words, start_id, fps=fps)
     return vtrack, n, longs
 
 
-def _sequence_video_close(txt):
+def _sequence_video_close(txt: str) -> int:
     """Индекс закрывающего `</video>` у sequence/media — дорожка вставляется ПЕРЕД ним.
 
     `txt.index("</video>", <первое <media>>)` попадал в `<video>` внутри `<file>` первого
@@ -59,7 +61,7 @@ def _sequence_video_close(txt):
     raise ValueError("в XML не найден закрывающий </video> секвенции")
 
 
-def add_subtitles(xml_path, out_xml=None, model=None, emit=console_emit):
+def add_subtitles(xml_path: str, out_xml: str | None = None, model: str | None = None, emit: Callable[..., Any] = console_emit) -> dict[str, Any]:
     emit = wrap_emit(emit)
     meta, cams, _, _ = parse_full(xml_path)
     if not cams or not cams[0]["path"]:

@@ -1,0 +1,36 @@
+# .pre-commit-config.yaml — локальные хуки контроля качества кода
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff check
+        entry: ruff check
+        language: system
+        types: [python]
+
+      - id: mypy
+        name: mypy (win32)
+        entry: mypy --platform win32
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: mypy-linux
+        name: mypy (linux)
+        entry: mypy --platform linux
+        language: system
+        pass_filenames: false
+        types: [python]
+
+      - id: task-codes
+        name: сторож кодов заданий
+        entry: python -m pytest tests/test_no_task_codes.py -q
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: eol
+        name: смешанные концы строк
+        entry: python tools/check_eol.py
+        language: system
+        types: [text]

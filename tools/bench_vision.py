@@ -21,6 +21,7 @@ import os
 import re
 import sys
 import time
+from typing import Any
 
 # небуферизованный вывод — иначе при piped stdout результаты не видны в логе
 print = functools.partial(builtins.print, flush=True)  # noqa: A001
@@ -194,7 +195,7 @@ def run_bench(oracle: list[tuple[dict, str]]) -> dict[str, list[dict]]:
 
 # ── отчёт ──
 
-def print_report(oracle: list[tuple[dict, str]], all_results: dict[str, list[dict]]):
+def print_report(oracle: list[tuple[dict[Any, Any], str]], all_results: dict[str, list[dict[Any, Any]]]) -> None:
     print("\n" + "=" * 80)
     print("  ОТЧЁТ — замер EN: чем описывать вставки")
     print("=" * 80)
@@ -240,7 +241,7 @@ def print_report(oracle: list[tuple[dict, str]], all_results: dict[str, list[dic
     print()
 
 
-def main():
+def main() -> None:
     # загружаем индекс (только чтение)
     index_path = INDEX_PATH
     print(f"Индекс: {index_path}")

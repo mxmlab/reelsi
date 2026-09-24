@@ -5,16 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.2.1-beta — 2026-09-24
+
+### Highlights
+- The public CI is green on Linux again: a test that killed its own runner is fixed, and every job has a timeout.
+- Render orchestration left the HTTP layer (`core/render_job.py`, `core/jobstate.py`).
+- The whole codebase runs under strict type checking — annotations only, behaviour unchanged.
+- Cloud speech recognition survives a non-JSON provider reply.
+- Guard rails for contributors: per-test timeout, a signal guard in tests, coverage in CI, pre-commit hooks.
 
 ### Added
 - **The pre-release check repeats the whole CI**: `tools/slice_check.py` runs pytest, ruff, mypy, `node --check` on ExtendScript and the interface scripts, byte-compilation with `--help` of the entry points, requirement parsing and gitleaks on the published tree. A missing gitleaks binary is a failure unless skipping is requested explicitly.
 - **Tests for speech recognition**: every function of `core/omni_asr.py` that makes a decision is covered without network, models or GPU.
+- **Per-test timeout**: every test is limited to 120 seconds (`pytest-timeout`), so a hang fails a named test instead of stalling the whole job.
+- **Signal guard in tests**: a test that sends a signal to pid or process group 0 or 1, to itself or to its own group fails with a clear message before the signal is sent.
+- **Coverage in CI**: the Linux test job measures line coverage of `api/`, `core/` and `tools/` (74 %) and fails below 73 %.
+- **Linux step in the pre-release check**: `tools/slice_check.py` ships the published tree over SSH to a Linux host and runs the suite in Docker with `--init`; the image is `tools/docker/ci.Dockerfile`.
+- **`tools/ast_same.py`**: compares two revisions by syntax tree with annotations, docstrings, imports and `cast` optionally ignored — proves that a refactor or a typing change did not touch behaviour.
+- **pre-commit hooks**: ruff, mypy, the task-code guard and a mixed line-ending check, all local — nothing is downloaded.
+- **Type checking on both platforms**: mypy runs for Windows and Linux in the ratchet test, the pre-release check and the pre-commit hook, and CI pins mypy below 2 like `requirements-dev.txt` — Windows-only code no longer hides Linux errors, and the reverse.
 
 ### Changed
 - **Render orchestration left the HTTP layer**: launching After Effects and `aerender`, stall watchdogs, the master project and batch rendering live in `core/render_job.py`; job state without Flask lives in `core/jobstate.py`. `api/render.py` is down from 1633 to 162 lines: the job instance, Stop and two routes. Guards keep Flask and `api` out of both modules.
 - **`scene_plan` split further**: word preparation, asset folders and fonts, and frame decoration (subtitle plate, progress line, caption, disclaimer) moved into their own `plan_*` modules; the function is down from 1213 to 885 lines. The built `.jsx` and plan are byte-identical on real clips.
-- **Strict type checking on all of `api/` and `core/xml2ae/`**: 42 modules under strict mypy, up from 13. Annotations only — the syntax tree without annotations matches the previous code file by file.
+- **Strict type checking on the whole codebase**: all 122 modules of `api/`, `core/`, `tools/` and the entry points run under strict mypy, up from 13. Annotations only — the syntax tree without annotations matches the previous code file by file.
 - **Every CI job has a timeout**, so a stuck job no longer burns six hours.
 
 ### Fixed

@@ -25,8 +25,10 @@
 Без silero-vad/transformers или без весов модуль молча выключается: нарезка
 работает как раньше (`available()` вернёт False с причиной).
 """
+from __future__ import annotations
 import os
 import json
+from typing import Any
 
 import numpy as np
 
@@ -50,14 +52,14 @@ EVENT_IDS = {"вздох": 41, "выдох": 26, "оханье": 44, "кашел
              "кхе": 48, "чих": 49, "шмыг": 50}
 SPEECH_IDS = [0, 1, 2, 3, 70]
 
-_CED = None           # (feature_extractor, model, device) — грузим один раз
-_VAD = None
+_CED: Any = None           # (feature_extractor, model, device) — грузим один раз
+_VAD: Any = None
 
 
 # --------------------------------------------------------------------------- #
 # Доступность
 # --------------------------------------------------------------------------- #
-def available(path=None):
+def available(path: str | None = None) -> tuple[bool, str]:
     """(bool, причина). Проверяем ДО нарезки, чтобы не падать в середине джоба.
 
     path — модель конкретного спикера (у каждого свои вдохи и своя комната,
@@ -79,7 +81,9 @@ def available(path=None):
 # --------------------------------------------------------------------------- #
 # Кандидаты
 # --------------------------------------------------------------------------- #
-def candidates(keep, words, min_dur=MIN_DUR, max_dur=MAX_DUR):
+def candidates(
+    keep: Any, words: list[dict[str, Any]], min_dur: float = MIN_DUR, max_dur: float = MAX_DUR
+) -> list[dict[str, Any]]:
     """Места внутри кусков, где НЕТ слова: начало куска, хвост куска, середина.
 
     Ровно то же, что юзер правит руками. Позиция важна: хвост куска — самый
@@ -103,7 +107,7 @@ def candidates(keep, words, min_dur=MIN_DUR, max_dur=MAX_DUR):
 # --------------------------------------------------------------------------- #
 # Признаки
 # --------------------------------------------------------------------------- #
-def _vad_probs(y):
+def _vad_probs(y: Any) -> tuple[Any, float]:
     """Вероятность речи на каждые 32мс. Модель — ONNX (torch-JIT падал на Windows)."""
     global _VAD
     import torch
@@ -115,7 +119,7 @@ def _vad_probs(y):
                      for i in range(0, max(0, len(y) - 512), 512)]), 512.0 / SR
 
 
-def _ced(y, spans, batch=32):
+def _ced(y: Any, spans: list[tuple[float, float]], batch: int = 32) -> Any:
     """AudioSet-вероятности для каждого участка В ИЗОЛЯЦИИ.
 
     Участок кладём в середину 10с тишины — родная длина модели. Тайлинг (зациклить
@@ -156,7 +160,9 @@ FEATURES = ["длительность", "хвост", "голова", "гром�
             "пауза_до", "пауза_после"]
 
 
-def features(wav_path, cands, words):
+def features(
+    wav_path: str, cands: list[dict[str, Any]], words: list[dict[str, Any]]
+) -> tuple[Any, list[tuple[str, float]]]:
     """Матрица признаков (len(cands) x len(FEATURES)) в порядке FEATURES."""
     import soundfile as sf
     from core import gigaam_cut as G  # ленивый импорт: G импортирует нас
@@ -195,7 +201,7 @@ def features(wav_path, cands, words):
 # --------------------------------------------------------------------------- #
 # Модель
 # --------------------------------------------------------------------------- #
-def load_model(path=MODEL_JSON):
+def load_model(path: str = MODEL_JSON) -> dict[str, Any]:
     d = json.load(open(path, encoding="utf-8"))
     if d.get("features") != FEATURES:
         raise ValueError("breath_model.json обучен на других признаках — переобучи "
@@ -203,7 +209,7 @@ def load_model(path=MODEL_JSON):
     return d
 
 
-def predict(X, mdl):
+def predict(X: Any, mdl: dict[str, Any]) -> Any:
     """Вероятность «это вздох/кхе, который юзер бы убрал».
 
     Модель — градиентный бустинг, но хранится РАЗОБРАННОЙ в json (пороги и листья
@@ -226,7 +232,9 @@ def predict(X, mdl):
     return 1.0 / (1.0 + np.exp(-out))
 
 
-def detect(wav_path, keep, words, model=None, emit=console_emit, path=None):
+def detect(
+    wav_path: str, keep: Any, words: list[dict[str, Any]], model: dict[str, Any] | None = None, emit: Any = console_emit, path: str | None = None
+) -> list[dict[str, Any]]:
     """[{t0,t1,p,pos,класс,piece}] — по убыванию вероятности.
 
     path — json модели этого спикера (профиль, поле `breath_model`); model —
@@ -251,7 +259,9 @@ def detect(wav_path, keep, words, model=None, emit=console_emit, path=None):
     return sorted(cands, key=lambda c: -c["p"])
 
 
-def apply(keep, marks, p_cut=P_CUT, air=AIR, min_island=0.35, speech_max=SPEECH_MAX):
+def apply(
+    keep: Any, marks: list[dict[str, Any]], p_cut: float = P_CUT, air: float = AIR, min_island: float = 0.35, speech_max: float = SPEECH_MAX
+) -> tuple[Any, list[dict[str, Any]], list[int]]:
     """Вырезать уверенные метки. Возвращает (keep, что вырезано).
 
     Порога вероятности мало: страховка — CED-вероятность РЕЧИ на этом участке.
@@ -265,6 +275,8 @@ def apply(keep, marks, p_cut=P_CUT, air=AIR, min_island=0.35, speech_max=SPEECH_
         return keep, [], list(range(len(keep)))
     from core import align
     drops = [(m["t0"] + air, m["t1"] - air) for m in cut if m["t1"] - m["t0"] > 2 * air]
+    out: list[tuple[float, float]]
+    parents: list[int]
     out, parents = [], []
     for a, b in align.subtract_ranges(keep, drops):
         if b - a < min_island:

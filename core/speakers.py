@@ -56,7 +56,9 @@
 Профиль без `cut` = текущее поведение один в один: дефолты здесь и константы в
 `gigaam_cut.tune` — одни и те же числа, за этим следит `tests/test_speakers.py`.
 """
+from __future__ import annotations
 import os, json, re, copy
+from typing import Any
 
 from core import paths
 from core.fileio import atomic_text_write
@@ -113,16 +115,16 @@ CUT_LABELS = [
 ]
 
 
-def _key(name):
+def _key(name: str | None) -> str:
     """Имя файла из имени спикера: пробелы и слэши в файловой системе ни к чему."""
     k = re.sub(r"[^\w\-]+", "_", (name or "").strip(), flags=re.UNICODE).strip("_")
     return k or "speaker"
 
 
-def all_speakers():
+def all_speakers() -> dict[str, dict[str, Any]]:
     """{ключ: профиль} из speakers/*.json. Битый JSON пропускаем молча —
     из-за одного файла не должен пропадать весь список в UI."""
-    out = {}
+    out: dict[str, dict[str, Any]] = {}
     if not os.path.isdir(SPEAKER_DIR):
         return out
     for f in sorted(os.listdir(SPEAKER_DIR)):
@@ -142,7 +144,7 @@ def all_speakers():
     return out
 
 
-def load(key):
+def load(key: str | None) -> dict[str, Any] | None:
     """Профиль по ключу или по label (в UI выбирают человекочитаемое имя)."""
     if not key:
         return None
@@ -155,7 +157,7 @@ def load(key):
     return None
 
 
-def save(name, data):
+def save(name: str | None, data: Any) -> tuple[str, str]:
     """Записать профиль. Возвращает (ключ, путь)."""
     if not isinstance(data, dict):
         raise ValueError("профиль должен быть объектом")
@@ -175,7 +177,7 @@ def save(name, data):
     return key, path
 
 
-def delete(key):
+def delete(key: str | None) -> bool:
     """Удалить профиль. True — файл был и удалён."""
     path = os.path.join(SPEAKER_DIR, _key(key) + ".json")
     if os.path.isfile(path):
@@ -184,7 +186,7 @@ def delete(key):
     return False
 
 
-def resolve_cut(prof):
+def resolve_cut(prof: Any) -> dict[str, Any]:
     """Пороги нарезки для профиля: дефолты + оверрайды. prof = dict, ключ, или
     None (= дефолты). Чужие ключи игнорируются, типы приводятся к дефолтным —
     в JSON легко положить строку, а на ней потом падает сравнение с float."""

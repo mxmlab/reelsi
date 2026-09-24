@@ -12,6 +12,7 @@ Writes refblobs.json (blob per text byte-length) + sub_template.xml (clip struct
 with Position/Anchor forced to horizontal centre 0.5).
 """
 import re, base64, sys, glob, os, json
+from typing import Sequence
 # Скрипт живёт в tools/, репозиторий — на уровень выше: без корня в sys.path
 # не найдётся пакет core.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -26,9 +27,9 @@ BLOB_RE = re.compile(
 CLIP_RE = re.compile(r'<clipitem id="clipitem-\d+">.*?</clipitem>', re.S)
 
 
-def _center_xy(template):
+def _center_xy(template: str) -> str:
     """Force the Position and Anchor Point X to 0.5 (screen / box centre), keep Y."""
-    def fix(m):
+    def fix(m: re.Match[str]) -> str:
         pre, y, post = m.group(1), m.group(3), m.group(4)   # group(2) = старый X, он и заменяется
         return f"{pre}0.5:{y}{post}"
     for pname in ("Position", "Anchor Point"):
@@ -38,7 +39,7 @@ def _center_xy(template):
     return template
 
 
-def resolve_files(args):
+def resolve_files(args: Sequence[str]) -> list[str]:
     files = []
     for a in args:
         if os.path.isdir(a):
@@ -48,7 +49,7 @@ def resolve_files(args):
     return sorted(set(files))
 
 
-def main(args):
+def main(args: Sequence[str]) -> None:
     files = resolve_files(args)
     if not files:
         sys.exit("no reference .xml found in: " + ", ".join(args))
@@ -56,7 +57,7 @@ def main(args):
 
     # blob library: keep the SMALLEST blob per byte-length (auto-width style; the
     # big ~874B blobs are FIXED-width and wrap long words — avoid them)
-    by_len = {}
+    by_len: dict[int, bytes] = {}
     for f in files:
         for name, val in BLOB_RE.findall(open(f, encoding="utf-8").read()):
             b = base64.b64decode(val)

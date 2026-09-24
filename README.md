@@ -106,6 +106,23 @@ python reelsi.py --no-cut     # subtitles only
 - [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md) — contribution guidelines.
 - [CHANGELOG.md](CHANGELOG.md) — release history.
 
+## Development
+
+Install development dependencies and configure git hooks:
+
+```bash
+pip install -r requirements-dev.txt
+pre-commit install
+```
+
+Run test suite and linters locally (CI validates the same checks):
+
+```bash
+python -m pytest tests -q
+ruff check .
+mypy
+```
+
 ## License
 
 Reelsi is licensed under AGPL-3.0-or-later. You may modify and redistribute it under the same license, or contact the author for commercial licensing.

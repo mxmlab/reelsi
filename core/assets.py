@@ -4,6 +4,7 @@
 Non-destructive: keeps original filenames, the JSON maps role -> file. Missing role
 or file -> empty string (feature just skips that asset)."""
 import os, json
+from typing import Callable
 from core.applog import get_logger
 from core.umsg import ReelsiError
 
@@ -12,7 +13,7 @@ log = get_logger("reelsi.assets")
 ROLES = ("intro_riser", "whoosh", "transition", "highlight_pop", "glitch")
 
 
-def resolver(base):
+def resolver(base: str) -> Callable[[str], str]:
     d = os.path.join(base, "assets")
     cfg = os.path.join(d, "assets.json")
     m = {}
@@ -33,7 +34,7 @@ def resolver(base):
     assets_dir_real = os.path.realpath(d)
     warned = set()               # роль, о которой уже предупредили: путь зовут на каждую сборку
 
-    def path(role):
+    def path(role: str) -> str:
         val = m.get(role)
         if not isinstance(val, str):
             return ""            # не строка (число, список) — роль просто пропускаем

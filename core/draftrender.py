@@ -19,6 +19,7 @@
 CLI:  python reelsi/draftrender.py "C:/.../01_C1295.xml" [--cpu] [--height 720] [--no-proxy]
 """
 import os, platform, subprocess, threading
+from typing import Any, Callable, Sequence
 from core import media
 from core.app_meta import console_emit, wrap_emit
 from core.umsg import ReelsiError, cli_error
@@ -36,7 +37,7 @@ class RenderCancelled(Exception):
     «прервано», а не «ОШИБКА»."""
 
 
-def _run_ff(cmd, cancel=None, cwd=None, timeout=FFMPEG_TIMEOUT, on_progress=None):
+def _run_ff(cmd: list[str], cancel: Callable[[], bool] | None = None, cwd: str | None = None, timeout: float = FFMPEG_TIMEOUT, on_progress: Callable[[str], None] | None = None) -> subprocess.CompletedProcess[str] | None:
     """subprocess.run для ffmpeg: с таймаутом И отменой.
 
     Возвращает CompletedProcess; None — отменено по `cancel()`; TimeoutExpired —
@@ -82,7 +83,7 @@ def _run_ff(cmd, cancel=None, cwd=None, timeout=FFMPEG_TIMEOUT, on_progress=None
     lock = threading.Lock()
     broken = []                           # слом приёма прогресса: молча не глотаем
 
-    def _reader(stream, sink, report):
+    def _reader(stream: Any, sink: list[str], report: bool) -> None:
         try:
             for line in stream:           # до EOF: иначе ffmpeg встанет на записи в пайп
                 with lock:
@@ -154,10 +155,10 @@ _ENC_ARGS = {
     "h264_amf":          lambda q, br: ["-b:v", br],
     "h264_qsv":          lambda q, br: ["-b:v", br],
 }
-_HW_CACHE = "unset"          # None = аппаратного нет; строка = имя кодека
+_HW_CACHE: str | None = "unset"          # None = аппаратного нет; строка = имя кодека
 
 
-def _probe_encoder(name):
+def _probe_encoder(name: Any) -> bool:
     """Кодировщик реально работает ПРЯМО СЕЙЧАС? (драйвер, VRAM, лимит сессий)
 
     256x256 — не меньше: NVENC отвергает мелкие кадры («Frame Dimension less than the
@@ -172,7 +173,7 @@ def _probe_encoder(name):
         return False
 
 
-def hw_encoder(refresh=False):
+def hw_encoder(refresh: bool = False) -> str | None:
     """Имя рабочего аппаратного H.264-кодировщика или None. Кэш на процесс."""
     global _HW_CACHE
     if _HW_CACHE != "unset" and not refresh:
@@ -185,12 +186,12 @@ def hw_encoder(refresh=False):
     return _HW_CACHE
 
 
-def _codec_args(name, q, br):
+def _codec_args(name: str, q: int, br: str) -> list[str]:
     """Аргументы кодека по имени; неизвестному — битрейт (безопасный минимум)."""
     return [("-c:v"), name] + _ENC_ARGS.get(name, lambda q, b: ["-b:v", b])(q, br)
 
 
-def tmp_dir(out_xml_or_dir):
+def tmp_dir(out_xml_or_dir: str) -> str:
     """<outdir>/_tmp — единая папка временных артефактов (черновики-скрипты, ass,
     склейки self-check). НЕ %TEMP%: рядом с проектом, чистится кнопкой/новой нарезкой."""
     d = out_xml_or_dir if os.path.isdir(out_xml_or_dir) else os.path.dirname(out_xml_or_dir)
@@ -214,7 +215,7 @@ PROXY_GLOBS = ("pv_*.mp4", "proxy_*.mp4")
 DRAFT_SUBS_NAME = "draft_subs.ass"
 
 
-def proxy_size(outdir):
+def proxy_size(outdir: str) -> int:
     """Сколько занимают прокси (превью и черновика) в <outdir>/_tmp, байт. Нужно, чтобы кнопка
     очистки показывала цену вопроса: удалил — следующее открытие предпросмотра/черновика ждёт пересборку."""
     import glob
@@ -234,7 +235,7 @@ def proxy_size(outdir):
     return total
 
 
-def clean_tmp(outdir, emit=console_emit, proxies=False):
+def clean_tmp(outdir: str, emit: Any = console_emit, proxies: bool = False) -> int:
     """Очистить <outdir>/_tmp. Возвращает освобождённые байты.
 
     proxies=False (по умолчанию) — прокси (превью pv_*.mp4 и черновика proxy_*.mp4) НЕ трогаем.
@@ -249,7 +250,7 @@ def clean_tmp(outdir, emit=console_emit, proxies=False):
     freed = 0
     if not os.path.isdir(t):
         return 0
-    keep = set()
+    keep: set[str] = set()
     if not proxies:
         for pat in PROXY_GLOBS:
             keep.update(os.path.abspath(p) for p in glob.glob(os.path.join(t, pat)))
@@ -285,12 +286,12 @@ def clean_tmp(outdir, emit=console_emit, proxies=False):
     return freed
 
 
-def _ass_time(t):
+def _ass_time(t: float) -> str:
     h = int(t // 3600); m = int(t % 3600 // 60); s = t % 60
     return f"{h:d}:{m:02d}:{s:05.2f}"
 
 
-def _ass_subs(words, tw, th, path):
+def _ass_subs(words: Sequence[dict[str, Any]], tw: int, th: int, path: str) -> str:
     """Слова -> простой .ass: по одному слову, крупно, ~40%% от низа (как в проекте)."""
     fs = max(24, int(tw * 0.13))
     margin_v = int(th * 0.40)                     # низ слова на ~40% от низа кадра
@@ -312,7 +313,7 @@ def _ass_subs(words, tw, th, path):
     return path
 
 
-def _proxy_path(src, tw, th, tdir):
+def _proxy_path(src: str, tw: int, th: int, tdir: str) -> str:
     """Имя прокси-файла камеры в _tmp. В ключ входят mtime/size исходника и размер
     кадра: переснял/перекодировал исходник или сменил height — прокси пересоберётся."""
     import hashlib
@@ -322,7 +323,7 @@ def _proxy_path(src, tw, th, tdir):
     return os.path.join(tdir, "proxy_" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:12] + ".mp4")
 
 
-def _build_proxy(src, dst, tw, th, force_cpu=False, emit=console_emit, cancel=None):
+def _build_proxy(src: str, dst: str, tw: int, th: int, force_cpu: bool = False, emit: Any = console_emit, cancel: Callable[[], bool] | None = None) -> str | None:
     """Собрать 720p-прокси камеры: декод и масштаб на GPU (NVDEC + scale_cuda), кодек
     NVENC. Возвращает путь или None (тогда работаем по исходнику, как раньше).
 
@@ -363,7 +364,7 @@ def _build_proxy(src, dst, tw, th, force_cpu=False, emit=console_emit, cancel=No
     return None
 
 
-def _decode_tries(src, vf_gpu, vf_cpu, hw, rot, hwc, x264):
+def _decode_tries(src: str, vf_gpu: str, vf_cpu: str, hw: str | None, rot: bool, hwc: list[str] | None, x264: list[str]) -> list[tuple[list[str], str, Any]]:
     """Заходы сборки прокси: [(входные аргументы, видеофильтр, аргументы кодека)].
     Порядок — от быстрого к надёжному, побеждает первый успешный.
 
@@ -386,12 +387,12 @@ def _decode_tries(src, vf_gpu, vf_cpu, hw, rot, hwc, x264):
     return [(["-i", src], vf_cpu, hwc), (["-i", src], vf_cpu, x264)]
 
 
-_DIMS_CACHE = {}          # (abspath, mtime, size) -> (w, h, rot): ffprobe на каждый вызов
+_DIMS_CACHE: dict[tuple[str, int, int] | None, tuple[int, int, bool]] = {}          # (abspath, mtime, size) -> (w, h, rot): ffprobe на каждый вызов
                           # заметен — _preview_proxy_plan зовётся на каждое открытие
                           # предпросмотра и на каждый опрос прогресса сборки
 
 
-def _display_dims(src):
+def _display_dims(src: str) -> tuple[int, int, bool]:
     """(w, h, повёрнут ли) КАК ПОКАЗЫВАЕТСЯ, а не как закодировано.
 
     Телефоны и часть камер пишут вертикаль как 3840x2160 с матрицей поворота 90° —
@@ -421,7 +422,7 @@ def _display_dims(src):
     return out
 
 
-def _short_side(src, height):
+def _short_side(src: str, height: int) -> tuple[int, int, bool]:
     """(w, h, повёрнут ли): короткая сторона = height, стороны чётные."""
     w0, h0, rot = _display_dims(src)
     if w0 <= h0:
@@ -429,11 +430,11 @@ def _short_side(src, height):
     return int(round(w0 * height / h0 / 2)) * 2, height, rot
 
 
-_FPS_CACHE = {}           # (abspath, mtime, size) -> fps: ffprobe на каждый прокси
+_FPS_CACHE: dict[tuple[str, int, int], float] = {}           # (abspath, mtime, size) -> fps: ffprobe на каждый прокси
                           # не гоняем — один вызов на сборку, дальше из кэша
 
 
-def _src_fps(src):
+def _src_fps(src: str) -> float:
     """Кадровая частота исходника (для размера GOP превью-прокси)."""
     try:
         st = os.stat(src)
@@ -455,7 +456,7 @@ def _src_fps(src):
         return 25.0
 
 
-def _src_dur(src):
+def _src_dur(src: str) -> float:
     """Длительность исходника, сек. 0.0 — не прочли (тогда процента не будет).
 
     Проба общая (core/media.py): там кэш по (путь, mtime, размер) и таймаут —
@@ -463,7 +464,7 @@ def _src_dur(src):
     return media.probe_duration(src) or 0.0
 
 
-def ff_progress_us(chunk):
+def ff_progress_us(chunk: str | None) -> int | None:
     """Последний `out_time_us=` из потока ffmpeg `-progress pipe:1`. None — прогресса нет.
 
     ffmpeg печатает блок полей раз в 0.5 с, то есть за сборку их набираются сотни:
@@ -481,7 +482,7 @@ def ff_progress_us(chunk):
     return us
 
 
-def ff_progress_pct(chunk, dur):
+def ff_progress_pct(chunk: str | None, dur: float) -> float | None:
     """Проценты готовности ТЕКУЩЕГО файла (0–100) по потоку `-progress pipe:1`.
 
     None — длительность исходника неизвестна или прогресса ещё нет. Выше 100 не бывает:
@@ -494,19 +495,19 @@ def ff_progress_pct(chunk, dur):
     return max(0.0, min(100.0, us / (dur * 1e6) * 100.0))
 
 
-def _progress_hook(progress, dur):
+def _progress_hook(progress: Callable[[float], None] | None, dur: float) -> Callable[[str], None] | None:
     """Приём для _run_ff: накопленный stdout → проценты файла (None — приём не нужен)."""
     if progress is None:
         return None
 
-    def hook(text):
+    def hook(text: str) -> None:
         pct = ff_progress_pct(text, dur)
         if pct is not None:
             progress(pct)
     return hook
 
 
-def _rot_key(src):
+def _rot_key(src: str) -> str:
     """Довесок к ключу кэша для ПОВЁРНУТЫХ исходников.
 
     Прокси, собранные до фикса автоповорота, лежат искажёнными и лежащими на боку, но
@@ -519,7 +520,7 @@ def _rot_key(src):
         return ""
 
 
-def preview_path(src, height, tdir):
+def preview_path(src: str, height: int, tdir: str) -> str:
     """Имя превью-прокси камеры в _tmp. Ключ — как у черновикового (mtime/size/размер),
     но префикс свой: тот собран БЕЗ звука и с fps=30, для превью не годится.
 
@@ -533,8 +534,8 @@ def preview_path(src, height, tdir):
     return os.path.join(tdir, "pv_" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:12] + ".mp4")
 
 
-def build_preview_proxy(src, dst, height=720, force_cpu=False, emit=console_emit,
-                        cancel=None, progress=None):
+def build_preview_proxy(src: str, dst: str, height: int = 720, force_cpu: bool = False, emit: Any = console_emit,
+                        cancel: Callable[[], bool] | None = None, progress: Callable[[float], None] | None = None) -> str | None:
     """Прокси камеры ДЛЯ ПРЕДПРОСМОТРА В БРАУЗЕРЕ. Путь или None.
 
     Зачем отдельно от чернового прокси — три отличия, каждое обязательное:
@@ -603,9 +604,9 @@ def build_preview_proxy(src, dst, height=720, force_cpu=False, emit=console_emit
     return None
 
 
-def render_draft(xml_path, out_mp4=None, height=720, force_cpu=False, emit=console_emit,
+def render_draft(xml_path: str, out_mp4: str | None = None, height: int = 720, force_cpu: bool = False, emit: Any = console_emit,
 
-                 ncams=None, use_proxy=True, cancel=None):
+                 ncams: int | None = None, use_proxy: bool = True, cancel: Callable[[], bool] | None = None) -> str:
     """Собрать <stem>.draft.mp4 по EDL финального XML. Возвращает путь к mp4.
     height — размер КОРОТКОЙ стороны кадра (720 для вертикали = 720x1280).
     use_proxy — сначала собрать 720p-прокси камер в _tmp (кэш между черновиками).
@@ -631,7 +632,7 @@ def render_draft(xml_path, out_mp4=None, height=720, force_cpu=False, emit=conso
 
     # входы: уникальные файлы камер, участвующие в EDL
     paths = []                                     # index -> path
-    def _inp(p):
+    def _inp(p: str) -> int:
         if p not in paths:
             paths.append(p)
         return paths.index(p)
@@ -691,7 +692,7 @@ def render_draft(xml_path, out_mp4=None, height=720, force_cpu=False, emit=conso
     with open(script, "w", encoding="utf-8") as f:
         f.write(";\n".join(flt) + "\n")
 
-    def _cmd(codec):
+    def _cmd(codec: Any) -> list[str]:
         c = ["ffmpeg", "-y", "-v", "error"]
         for p in paths:
             c += ["-i", p]
@@ -701,7 +702,7 @@ def render_draft(xml_path, out_mp4=None, height=720, force_cpu=False, emit=conso
         c += codec + ["-c:a", "aac", "-b:a", "128k", out_mp4]
         return c
 
-    def _vram_used_mib():
+    def _vram_used_mib() -> int | None:
         try:
             r = subprocess.run(["nvidia-smi", "--query-gpu=memory.used",
                                 "--format=csv,noheader,nounits"],
@@ -743,7 +744,7 @@ def render_draft(xml_path, out_mp4=None, height=720, force_cpu=False, emit=conso
             # Раньше здесь всегда писали «не хватило VRAM» — и это врало, когда ffmpeg
             # падал по другой причине (битый вход, фильтр, путь). Проверяем кодировщик
             # отдельным микро-энкодом и говорим то, что есть.
-            log = os.path.join(tdir, os.path.basename(out_mp4) + ".hwenc_fail.log")
+            log: Any = os.path.join(tdir, os.path.basename(out_mp4) + ".hwenc_fail.log")
             try:
                 with open(log, "w", encoding="utf-8") as f:
                     f.write(" ".join(_cmd(codec)) + "\n\n" + err + "\n")

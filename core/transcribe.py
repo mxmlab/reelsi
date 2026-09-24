@@ -2,6 +2,7 @@
 # Copyright (c) 2026 Maxim Si
 """Local word-level transcription via faster-whisper (GPU)."""
 import json, os, hashlib, re
+from typing import Any, Sequence
 from core import cuda_env
 from core.device import ct2_device
 from core.fileio import atomic_json_dump
@@ -11,7 +12,7 @@ cuda_env.setup()
 DEFAULT_MODEL_SIZE = "large-v3"
 
 
-def words_cache_path(src, model_size=DEFAULT_MODEL_SIZE, engine=None, lang=None):
+def words_cache_path(src: str, model_size: str = DEFAULT_MODEL_SIZE, engine: str | None = None, lang: str | None = None) -> str:
     """Путь кэша пословного транскрипта РЯДОМ С ИСХОДНИКОМ.
 
     Ключ включает модель/движок/язык. Раньше кэш звался просто `<src>.words.json`:
@@ -23,7 +24,7 @@ def words_cache_path(src, model_size=DEFAULT_MODEL_SIZE, engine=None, lang=None)
     return os.path.splitext(src)[0] + f".words.{tag}.json"
 
 
-def load_words_cache(path):
+def load_words_cache(path: str) -> list[dict[str, Any]] | None:
     """Читает кэш. Битый/пустой -> None, файл удаляется.
 
     Раньше чтение шло голым `json.load`: «Остановить» во время записи оставляло
@@ -46,17 +47,17 @@ def load_words_cache(path):
     return None
 
 
-def save_words_cache(path, words):
+def save_words_cache(path: str, words: Sequence[dict[str, Any]] | None) -> None:
     """Атомарная запись кэша (core.fileio.atomic_json_dump): прерывание не оставляет огрызок."""
     if not words:
         return                       # пустой транскрипт не кэшируем (см. load_words_cache)
     atomic_json_dump(path, words)
 
 
-_MODEL = None  # cache (key, WhisperModel) so a batch loads large-v3 only once
+_MODEL: tuple[tuple[str, str, str], Any] | None = None  # cache (key, WhisperModel) so a batch loads large-v3 only once
 
 
-def get_model(model_size="large-v3", device="cuda", compute_type="float16"):
+def get_model(model_size: str = "large-v3", device: str = "cuda", compute_type: str = "float16") -> Any:
     global _MODEL
     # Без NVIDIA CTranslate2 умеет только CPU (Metal/ROCm он не поддерживает вовсе),
     # и там нужен int8 вместо float16 — иначе падение на ровном месте.
@@ -71,7 +72,7 @@ def get_model(model_size="large-v3", device="cuda", compute_type="float16"):
     return _MODEL[1]
 
 
-def release_model():
+def release_model() -> bool:
     """Free the cached Whisper model and its GPU memory (call after a batch finishes,
     so VRAM isn't held while the web UI idles)."""
     global _MODEL
@@ -117,12 +118,12 @@ CTA_BOILER = [
 HALLUCINATIONS = CREDITS + CREDITS_BARE + CTA_BOILER   # для обратной совместимости
 
 
-def _is_hallucination(text):
+def _is_hallucination(text: str) -> bool:
     t = text.lower()
     return any(h in t for h in HALLUCINATIONS)
 
 
-def _drop_segment(s):
+def _drop_segment(s: Any) -> bool:
     """Выкинуть сегмент? Титры YouTube и подписи с именем — всегда; явная галлюцинация
     на тишине — всегда; призывы (подписывайтесь и пр.) и голые роли (корректор) без имени —
     только если распозналось неуверенно (иначе это живая речь)."""
@@ -141,8 +142,8 @@ def _drop_segment(s):
     return False
 
 
-def transcribe(wav_path, model_size="large-v3", lang="ru", device="cuda",
-               compute_type="float16", model=None):
+def transcribe(wav_path: str, model_size: str = "large-v3", lang: str = "ru", device: str = "cuda",
+               compute_type: str = "float16", model: Any = None) -> list[dict[str, Any]]:
     model = model or get_model(model_size, device, compute_type)
     segments, info = model.transcribe(
         wav_path, language=lang, word_timestamps=True,
@@ -161,8 +162,8 @@ def transcribe(wav_path, model_size="large-v3", lang="ru", device="cuda",
     return words
 
 
-def transcribe_segments(wav_path, intervals=None, model_size="large-v3", lang="ru",
-                        device="cuda", compute_type="float16", model=None):
+def transcribe_segments(wav_path: str, intervals: Sequence[tuple[float, float]] | None = None, model_size: str = "large-v3", lang: str = "ru",
+                        device: str = "cuda", compute_type: str = "float16", model: Any = None) -> list[dict[str, Any]]:
     """Транскрибировать КАЖДЫЙ речевой интервал отдельным (изолированным) вызовом
     Whisper. Дубли, разделённые паузой, сохраняются, а не «причёсываются» в один —
     у модели нет сквозного контекста между тактами. Тайминги — глобальные (сек).
@@ -197,7 +198,7 @@ def transcribe_segments(wav_path, intervals=None, model_size="large-v3", lang="r
     return words
 
 
-def _ensure_wav(media):
+def _ensure_wav(media: str) -> str:
     """Любой медиа (wav/mp4/mov) -> временный 16kHz mono wav (для vad + сравнения)."""
     import os, tempfile, numpy as np
     from scipy.io import wavfile
@@ -211,7 +212,7 @@ def _ensure_wav(media):
     return tmp
 
 
-def compare(media):
+def compare(media: str) -> None:
     """Сравнить ЦЕЛЬНУЮ транскрипцию (как сейчас) и ПО ИНТЕРВАЛАМ — видно, сохранились
     ли переснятия. Печатает обе + разбивку по интервалам речи."""
     from core import vad

@@ -23,9 +23,10 @@
 ТОЛЬКО если его модуль начинается на «api.» — с writer'ом из ядра структурная
 запись {"t", "v"} потерялась бы, а по ней фронт переводит строку.
 """
+from __future__ import annotations
 import copy, os, queue, re, subprocess, threading
 import time as _time
-from typing import Any, Callable
+from typing import Any, Callable, Sequence
 
 from core.aerender import (AE_FAST_EXIT_SEC, AE_STALL_KILL_SEC, AE_STALL_WARN_SEC, AE_STALLED,
                            DEFAULT_AEP_SEC, DEFAULT_RENDER_SEC, ETA_WINDOW, PHASE_AEP_END,
@@ -106,7 +107,7 @@ class RenderJob(dict):
         return copy.deepcopy(dict(self), memo)
 
 
-def kill_proc(p):
+def kill_proc(p: Any) -> None:
     """taskkill /T /F — дерево: aerender сам по себе не всегда держит детей,
     но после убийства не должен остаться ни один процесс рендера.
 
@@ -115,7 +116,7 @@ def kill_proc(p):
     kill_tree(p)
 
 
-def render_kill(job):
+def render_kill(job: RenderJob) -> None:
     """«Стоп» из интерфейса (/api/cancel зовёт): флаг джобу + реально убить
     текущий subprocess (AfterFX или aerender) с деревом."""
     with job.lock:
@@ -125,13 +126,13 @@ def render_kill(job):
         kill_proc(p)
 
 
-def pump_stdout(p):
+def pump_stdout(p: Any) -> queue.Queue[Any]:
     """Фоновый поток чтения stdout процесса в queue.Queue.
     Предотвращает переполнение OS-буфера трубы при обильном выводе процесса (напр. AfterFX -noui)
     и позволяет сторожу опрашивать активность с таймаутом без зависания в readline()."""
-    q = queue.Queue()
+    q: queue.Queue[Any] = queue.Queue()
 
-    def _pump():
+    def _pump() -> None:
         try:
             for line in p.stdout:
                 q.put(line)
@@ -145,7 +146,7 @@ def pump_stdout(p):
     return q
 
 
-def run_proc(job, cmd, total_frames=None, item_name=None, pct_base=0.0, pct_span=1.0):
+def run_proc(job: RenderJob, cmd: Sequence[str] | list[str], total_frames: int | None = None, item_name: str | None = None, pct_base: float = 0.0, pct_span: float = 1.0) -> int:
     """Запустить процесс (aerender), стримить вывод в лог рендера со сторожем простоя.
     Возвращает код выхода или AE_STALLED. item_name — элемент очереди, которому
     дублируется доля рендера (aerender — единственный этап с честным процентом).
@@ -171,7 +172,7 @@ def run_proc(job, cmd, total_frames=None, item_name=None, pct_base=0.0, pct_span
     stalled = False
     hdr_dur, hdr_fps, hdr_start, hdr_end = None, None, None, None
 
-    def _handle(raw):
+    def _handle(raw: str) -> None:
         """Разбор одной строки aerender: лог, заголовок AE, прогресс,
         Output To. Обработчик ОДИН и на живой цикл, и на добирание хвоста после выхода
         процесса: во второй копии (только запись строк) у конца прогона терялся разбор
@@ -227,7 +228,7 @@ def run_proc(job, cmd, total_frames=None, item_name=None, pct_base=0.0, pct_span
                 pct_calc = min(1.0, pct_base + pct_span)
                 job["pct"] = max(job.get("pct") or 0.0, pct_calc)
 
-    def _drain(tail=False):
+    def _drain(tail: bool = False) -> None:
         """Дочитать то, что насос уже положил в очередь. tail=True — после выхода
         процесса подождать метку конца stdout (хвост ещё в трубе), но не дольше двух
         секунд: застрявший на закрытии трубы насос-демон не должен держать джоб."""
@@ -278,7 +279,7 @@ def run_proc(job, cmd, total_frames=None, item_name=None, pct_base=0.0, pct_span
     return AE_STALLED if stalled else rc
 
 
-def run_proc_afx(job, cmd):
+def run_proc_afx(job: RenderJob, cmd: Sequence[str] | list[str]) -> int:
     """AfterFX -noui -r одиночного ролика со сторожем простоя.
     Раньше здесь был `run_proc` с блокирующим чтением stdout: молчащий AfterFX вешал
     джоб навсегда. Теперь stdout читается фоном, а основной поток ждёт процесс и
@@ -351,7 +352,7 @@ def run_proc_afx(job, cmd):
     return AE_STALLED if stalled else rc
 
 
-def mark_stopped_waits(job):
+def mark_stopped_waits(job: RenderJob) -> None:
     """«Стоп» по job["cancel"]: файлам, до которых работа не дошла (stage="wait"),
     проставить stage="stopped", чтобы очередь показывала их «остановлено», а не «в очереди».
     Своя копия, как `_mark_stopped_waits` в api/jobs.py, но под замком и джобом рендера."""
@@ -361,7 +362,7 @@ def mark_stopped_waits(job):
                 it["stage"] = "stopped"
 
 
-def run_render_single(job, norm, outdir, render_dir):
+def run_render_single(job: RenderJob, norm: Sequence[dict[str, Any]], outdir: str | None, render_dir: str) -> None:
     """Одиночный рендер: безголовый .jsx (очередь+save+quit) -> verify_jsx ->
     AfterFX -noui -r (собрать .aep) -> aerender -project (рендер). Это же путь остаётся
     для набора из ОДНОГО ролика: поведение и .jsx ровно сегодняшние."""
@@ -421,7 +422,7 @@ def run_render_single(job, norm, outdir, render_dir):
             kw = {k: v for k, v in j.items() if k not in ("xml_path", "outdir")}
             job.emit("  {stem}: сборка безголового .jsx…", stem=stem)
             try:
-                comp_name_out = []
+                comp_name_out: list[str] = []
                 xml2ae.to_ae_full(j["xml_path"], jp, render_dir=render_dir,
                                   emit=job.emit, cancel=lambda: job["cancel"],
                                   comp_name_out=comp_name_out, **kw)
@@ -463,15 +464,15 @@ def run_render_single(job, norm, outdir, render_dir):
             stem = os.path.splitext(os.path.basename(jp))[0]
             item_set(job, job.lock, stem, stage="check")   # этап 2: предполётная проверка
             rep = verify_jsx.verify(jp)
-            for e in rep.errors:
+            for e in rep.errors:  # type: ignore[misc]  # variable e reused outside except block
                 bad.append((stem, e))
         if bad:
             job.emit("Предполётная проверка НЕ пройдена — рендер не запущен:")
-            for name, e in bad:
-                job.emit("  ✗ {name}: {err}", name=name, err=str(e))
+            for name, e in bad:  # type: ignore[misc]  # variable e reused outside except block
+                job.emit("  ✗ {name}: {err}", name=name, err=str(e))  # type: ignore[misc]  # variable e reused outside except block
             # это ПОКЛИПОВЫЕ падения (конкретные .jsx), не глобальные — item_fail
-            for name, e in bad:
-                item_fail(job, job.lock, name, e, bucket="failed")
+            for name, e in bad:  # type: ignore[misc]  # variable e reused outside except block
+                item_fail(job, job.lock, name, e, bucket="failed")  # type: ignore[misc]  # variable e reused outside except block
             return
         job.emit("Проверка .jsx пройдена — файлов на диске хватает, запускаю AE")
         # 3) найти AE (самый свежий)
@@ -687,7 +688,7 @@ def run_render_single(job, norm, outdir, render_dir):
                         pct=(1.0 if job["result"] and not job["failed"] else (job["pct"] or 0)))
 
 
-def run_render_combined(job, batch, outdir, render_dir):
+def run_render_combined(job: RenderJob, batch: Sequence[dict[str, Any]], outdir: str | None, render_dir: str) -> None:
     """Рендер набора «Один на всё» (решение 2026-09-11): вместо N клиповых .jsx —
     ОДИН файл Reelsi_all.jsx (build_combined с comps_global=True и префиксами бинов), мастер
     выполняет ровно его. Предполёт verify_jsx — по общему файлу ОДИН раз (верификатор
@@ -730,9 +731,9 @@ def run_render_combined(job, batch, outdir, render_dir):
     # outdir — параметр СБОРКИ, а не плана сцены: build_combined отдаёт словарь в
     # to_ae_full(**kw) -> scene_plan, и лишний ключ ронял бы общий .jsx (см. api/build.py)
     jobs = [{k: v for k, v in j.items() if k != "outdir"} for j in batch]
-    comp_names_out = []
+    comp_names_out: list[str] = []
 
-    def _combined_progress(done, total):
+    def _combined_progress(done: int, total: int) -> None:
         # build_combined зовёт progress ПЕРЕД сборкой done-го таймлайна — показываем
         # «собрано done-1», чтобы счётчик не забегал вперёд
         with job.lock:
@@ -795,8 +796,8 @@ def run_render_combined(job, batch, outdir, render_dir):
     errs = [str(e) for e in rep.errors]
     if errs:
         job.emit("Предполётная проверка НЕ пройдена — рендер не запущен:")
-        for e in errs:
-            job.emit("  ✗ {err}", err=e)
+        for e in errs:  # type: ignore[misc]  # variable e reused outside except block
+            job.emit("  ✗ {err}", err=e)  # type: ignore[misc]  # variable e reused outside except block
         job.emit("Режим «Один на всё»: непрошедший предполёт ролик снимает ВЕСЬ набор — "
               ".jsx один на всех роликов. Исправь файл или убери ролик из набора и запусти снова.")
         for stem in stems:
@@ -953,10 +954,10 @@ def run_render_combined(job, batch, outdir, render_dir):
         save_render_stats(len(good), jsx_dur, aep_dur, render_dur)
 
 
-def run_proc_master(job, afx, *args, good, render_dir, aelog_path,
-                     p_jsx_end=PHASE_JSX_END, p_aep_end=PHASE_AEP_END,
-                     t_aep_base=DEFAULT_AEP_SEC, t_render_base=DEFAULT_RENDER_SEC,
-                     has_stats=False, whole_file=False):
+def run_proc_master(job: RenderJob, afx: str, *args: Any, good: Sequence[Any], render_dir: str, aelog_path: str,
+                     p_jsx_end: float = PHASE_JSX_END, p_aep_end: float = PHASE_AEP_END,
+                     t_aep_base: float = DEFAULT_AEP_SEC, t_render_base: float = DEFAULT_RENDER_SEC,
+                     has_stats: bool = False, whole_file: bool = False) -> int:
     """AfterFX -noui -r мастера с ЖИВЫМ прогрессом и нелинейной оценкой. ExtendScript буферизует
     файл-лог до close(), поэтому мастер после КАЖДОГО ролика закрывает лог и открывает
     заново на дозапись — строки evalFile ok: появляются на диске сразу. Здесь читаем
@@ -1000,7 +1001,7 @@ def run_proc_master(job, afx, *args, good, render_dir, aelog_path,
         by_jsx[os.path.abspath(jp).replace("\\", "/")] = stem
     aelog = aelog_path
     timelines = {"stems": [stem for stem, _cn, _jp, _fr in good], "built": 0} if whole_file else None
-    seen = set()
+    seen: set[str] = set()
     t_build_start = _time.time()
     last_clip_time = t_build_start
     clip_durations = []
@@ -1119,7 +1120,7 @@ def run_proc_master(job, afx, *args, good, render_dir, aelog_path,
     return rc
 
 
-def tail_master_log(job, aelog, seen, by_jsx, timelines=None):
+def tail_master_log(job: RenderJob, aelog: str, seen: set[str], by_jsx: dict[str, str], timelines: dict[str, Any] | None = None) -> int:
     """Дочитать файл-лог мастера с последнего места: evalFile ok/ОШИБКА -> живой прогресс
     этапа «AfterFX собирает проект». seen — уже обработанные строки.
     timelines — словарь состояния {"stems": [...], "built": 0} для режима «Один на всё»
@@ -1184,9 +1185,9 @@ def tail_master_log(job, aelog, seen, by_jsx, timelines=None):
     return new_tl if timelines is not None else new_ok
 
 
-def run_proc_batch(job, aer, aep_call, comps, render_dir,
-                    p_aep_end=PHASE_AEP_END, t_render_base=DEFAULT_RENDER_SEC,
-                    has_stats=False):
+def run_proc_batch(job: RenderJob, aer: str, aep_call: str, comps: Sequence[Any], render_dir: str,
+                    p_aep_end: float = PHASE_AEP_END, t_render_base: float = DEFAULT_RENDER_SEC,
+                    has_stats: bool = False) -> int:
     """aerender для общего проекта: ДВА живых прогресса. comps —
     [(стем, имя_композиции, кадры), …]: стем адресует строку очереди, имя композиции —
     файл на диске, кадры — M для процента текущей композиции, когда aerender его
@@ -1247,7 +1248,7 @@ def run_proc_batch(job, aer, aep_call, comps, render_dir,
     warned = False
     stalled = False
 
-    def _handle(line):
+    def _handle(line: str) -> None:
         """Разбор одной строки aerender — ровно прежнее тело цикла. Обработчик ОДИН и
         на живой цикл, и на добирание хвоста после выхода/снятия процесса."""
         nonlocal total_frames, done_frames, cur_stem, next_idx, last_activity
@@ -1451,7 +1452,7 @@ def run_proc_batch(job, aer, aep_call, comps, render_dir,
     return AE_STALLED if stalled else rc
 
 
-def run_render_job(job, norm, outdir, render_dir):
+def run_render_job(job: RenderJob, norm: Sequence[dict[str, Any]], outdir: str | None, render_dir: str) -> None:
     """Диспетчер рендера. Набор из ОДНОГО ролика — ровно прежний путь
     (_run_render_single: безголовый .jsx, AfterFX, aerender). Набор из нескольких —
     ВСЕГДА _run_render_combined: один проект AE и один общий Reelsi_all.jsx

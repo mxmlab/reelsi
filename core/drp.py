@@ -23,6 +23,7 @@ import struct
 import uuid
 import zipfile
 import zlib
+from typing import Any, Sequence, cast
 
 from core import fileio, paths
 from core.xmltext import xml_text as _esc
@@ -36,7 +37,7 @@ NODES_MARK = b"\x78\xda"               # zlib(9) — начало графа н�
 
 # ---- контейнер композиции --------------------------------------------------
 
-def split_comp(hex_blob):
+def split_comp(hex_blob: str) -> tuple[bytes, bytes, bytes, int]:
     """`<CompositionBA>` -> (префикс, текст композиции, граф нодов, смещение длины).
 
     Префикс отдаём как есть: в нём бинарные ключи, воспроизводить их не нужно —
@@ -54,7 +55,7 @@ def split_comp(hex_blob):
     return outer[:start], outer[start:i - 4], zlib.decompress(outer[i:]), len_off
 
 
-def join_comp(prefix, comp_text, nodes, len_off):
+def join_comp(prefix: bytes | bytearray, comp_text: bytes, nodes: bytes, len_off: int) -> str:
     """Обратно в hex. Поле длины данных ОБЯЗАТЕЛЬНО пересчитывается: Resolve
     читает по нему, и если оставить старое, титр открывается пустым (чёрный слой —
     именно этот баг, ловился долго)."""
@@ -65,12 +66,12 @@ def join_comp(prefix, comp_text, nodes, len_off):
     return (len(outer).to_bytes(4, "big") + zlib.compress(outer, 9)).hex()
 
 
-def timemap(frames, fps=60):
+def timemap(frames: int, fps: float = 60) -> str:
     """`MediaTimemapBA` титра Fusion — один double, длительность клипа в секундах."""
     return "02" + struct.pack(">d", frames / fps).hex()
 
 
-def media_timemap(dur_s, src_fps=SRC_FPS, nominal=None):
+def media_timemap(dur_s: float, src_fps: float = SRC_FPS, nominal: float | None = None) -> str:
     """`MediaTimemapBA` медиаклипа — ПЯТЬ doubles, карта самого исходника.
 
     Одна и та же у всех клипов одной камеры: это описание файла, а не куска.
@@ -88,14 +89,14 @@ def media_timemap(dur_s, src_fps=SRC_FPS, nominal=None):
                            for x in (L, 0.0, mid, 0.0, L)).hex()
 
 
-def _drop_frame_fps(fps):
+def _drop_frame_fps(fps: float) -> bool:
     """Drop-frame бывает только у NTSC-производных (29.97/59.94) — у PAL-камер
     (25) счётчик кадров не пропускает ничего, хотя точку с запятой ffprobe
     отдаёт и там (это запись формата, а не признак drop-frame)."""
     return abs(fps - 30000 / 1001) < 0.01 or abs(fps - 60000 / 1001) < 0.02
 
 
-def timecode_frames(tc, fps=None):
+def timecode_frames(tc: str, fps: float | None = None) -> int:
     """Таймкод -> номер кадра. `;` = drop-frame: счётчик пропускает кадры в начале
     каждой минуты, кроме каждой десятой. Пропуск на минуту = 2 * round(номинал/30):
     у 29.97 это 2, у 59.94 — 4 (жёсткая двойка давала 59.94-часу 3601.8 с вместо
@@ -117,7 +118,7 @@ def timecode_frames(tc, fps=None):
     return frames
 
 
-def media_start_time(tc, fps=None, nominal=None):
+def media_start_time(tc: str, fps: float | None = None, nominal: float | None = None) -> float:
     """`MediaStartTime` у клипа таймлайна — кадры в НОМИНАЛЬНЫХ секундах (÷30).
 
     Не путать с `MediaExtents[0]` в медиапуле: там та же величина, но в реальных
@@ -132,7 +133,7 @@ def media_start_time(tc, fps=None, nominal=None):
 
 # ---- титры -----------------------------------------------------------------
 
-def set_input(nodes, key, value):
+def set_input(nodes: str, key: str, value: str) -> str:
     """Заменить вход Text+ или ДОБАВИТЬ его.
 
     Добавлять приходится потому, что Fusion не сериализует значения по умолчанию:
@@ -145,7 +146,7 @@ def set_input(nodes, key, value):
                          f"{key} = Input {{ Value = {value}, }}, StyledText = Input", 1)
 
 
-def set_text(nodes, text):
+def set_text(nodes: str, text: str) -> str:
     """Подставить текст в `StyledText` титра.
 
     Значение в композиции Fusion — ЛИТЕРАЛ Lua, а не XML-строка: обратный слеш и
@@ -153,7 +154,7 @@ def set_text(nodes, text):
     перевод строки закрывает литерал). Экранируем их ДО кавычек: порядок важен,
     иначе слеши, добавленные переводами строк, удвоятся. Кавычка по-прежнему
     заменяется апострофом — так было и так задумано (`"` внутри `"…"` не escape)."""
-    def esc(t):
+    def esc(t: str) -> str:
         return (t.replace("\\", "\\\\").replace("\r\n", "\\n").replace("\r", "\\n")
                  .replace("\n", "\\n").replace('"', "'"))
 
@@ -162,7 +163,7 @@ def set_text(nodes, text):
                   nodes, count=1)
 
 
-def retime_comp(comp_text, frames):
+def retime_comp(comp_text: str, frames: int) -> str:
     """Диапазоны композиции под длительность титра."""
     c = comp_text
     for k in ("RenderRange", "GlobalRange"):
@@ -174,12 +175,12 @@ def retime_comp(comp_text, frames):
 GUID = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 
 
-def new_ids(element_xml):
+def new_ids(element_xml: str) -> str:
     """Свежие DbId: они обязаны быть уникальны на весь проект."""
     return re.sub(r'DbId="' + GUID + r'"', lambda m: f'DbId="{uuid.uuid4()}"', element_xml)
 
 
-def new_pool_ids(element_xml):
+def new_pool_ids(element_xml: str) -> str:
     """Свежие идентификаторы у КЛОНИРОВАННОЙ записи медиапула.
 
     Мало заменить `DbId="…"`: своя личность у записи хранится ещё в
@@ -192,9 +193,9 @@ def new_pool_ids(element_xml):
     # ключ MediaRef в FieldsBlob — это DbId элемента <BtAudioInfo>, то есть звук
     # записи. Если генерировать GUID в XML и в блобе порознь, ссылка рвётся и
     # звука нет: клипы зелёные, но без волны. Поэтому одна таблица на всё.
-    mapping = {}
+    mapping: dict[str, str] = {}
 
-    def remap(old):
+    def remap(old: str) -> str:
         if old not in mapping:
             mapping[old] = str(uuid.uuid4())
         return mapping[old]
@@ -204,7 +205,7 @@ def new_pool_ids(element_xml):
     el = re.sub(r"(<UniqueMediaPoolItemId>)(" + GUID + r")(<)",
                 lambda m: m.group(1) + remap(m.group(2)) + m.group(3), el, count=1)
 
-    def fresh(data):
+    def fresh(data: bytes) -> bytes:
         """GUID лежат в UTF-16BE и UTF-8, все одной длины — меняем на месте.
         Известные по таблице получают свою пару, остальные — новый идентификатор."""
         for enc in ("utf-16-be", "utf-8"):
@@ -212,7 +213,7 @@ def new_pool_ids(element_xml):
                 data = data.replace(old.encode(enc), remap(old).encode(enc))
         return data
 
-    def fix_blob(m):
+    def fix_blob(m: Any) -> str:
         tag, h = m.group(1), m.group(2)
         try:
             if is_zstd_blob(h):
@@ -230,7 +231,7 @@ def new_pool_ids(element_xml):
 
 # ---- protobuf (блоб <Clip> в записи медиапула) ------------------------------
 
-def _varint(b, i):
+def _varint(b: bytes | bytearray, i: int) -> tuple[int, int]:
     v = s = 0
     while True:
         x = b[i]; i += 1
@@ -239,7 +240,7 @@ def _varint(b, i):
             return v, i
 
 
-def _put_varint(v):
+def _put_varint(v: int) -> bytes:
     out = bytearray()
     while True:
         x = v & 0x7F; v >>= 7
@@ -248,8 +249,9 @@ def _put_varint(v):
             return bytes(out)
 
 
-def pb_fields(data):
+def pb_fields(data: bytes | bytearray) -> list[tuple[int, int, int, int]]:
     """-> [(номер поля, тип, начало значения, конец значения)] верхнего уровня."""
+    out: list[tuple[int, int, int, int]]
     out, i = [], 0
     while i < len(data):
         try:
@@ -272,7 +274,7 @@ def pb_fields(data):
     return out
 
 
-def pb_set_str(data, field_no, text):
+def pb_set_str(data: bytes, field_no: int, text: str) -> bytes:
     """Заменить строковое поле; длина пересчитывается, поэтому не на месте."""
     new = text.encode("utf-8")
     for fn, wt, a, b in pb_fields(data):
@@ -283,7 +285,7 @@ def pb_set_str(data, field_no, text):
     return data
 
 
-def pb_get_str(data, field_no):
+def pb_get_str(data: bytes, field_no: int) -> str | None:
     for fn, wt, a, b in pb_fields(data):
         if fn == field_no and wt == 2:
             return data[a:b].decode("utf-8", "replace")
@@ -292,13 +294,13 @@ def pb_get_str(data, field_no):
 
 # ---- файл ------------------------------------------------------------------
 
-def read(path):
+def read(path: str) -> dict[str, bytes]:
     """-> dict имя_в_архиве -> bytes."""
     with zipfile.ZipFile(path) as z:
         return {n: z.read(n) for n in z.namelist()}
 
 
-def write(path, files):
+def write(path: str, files: dict[str, bytes]) -> None:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for name, data in files.items():
@@ -306,7 +308,7 @@ def write(path, files):
     fileio.atomic_bytes_write(path, buf.getvalue())
 
 
-def seq_name(files):
+def seq_name(files: dict[str, bytes]) -> str:
     """Имя файла таймлайна внутри архива (uuid в названии у каждого проекта свой)."""
     return next(n for n in files if n.startswith("SeqContainer/"))
 
@@ -317,33 +319,33 @@ ZSTD_MAGIC = "28b52ffd"
 KEY_EXTENTS = "MediaExtents".encode("utf-16-be")
 
 
-def timecode_seconds(tc, fps=None):
+def timecode_seconds(tc: str, fps: float | None = None) -> float:
     """Стартовый таймкод исходника в РЕАЛЬНЫХ секундах (÷29.97 для NTSC, ÷25 для
     PAL) — так он лежит в `MediaExtents` медиапула. Для `MediaStartTime` у клипа
     нужны номинальные, см. `media_start_time`. Без fps — legacy÷SRC_FPS."""
     return timecode_frames(tc, fps) / (fps if fps else SRC_FPS)
 
 
-def is_zstd_blob(hex_blob):
+def is_zstd_blob(hex_blob: str) -> bool:
     raw = bytes.fromhex(hex_blob)
     return len(raw) > 13 and raw[9:13].hex() == ZSTD_MAGIC
 
 
-def unpack_fields(hex_blob):
+def unpack_fields(hex_blob: str) -> tuple[bytes, bytes]:
     """`FieldsBlob` медиапула -> (голова 9 байт, распакованные байты)."""
     import zstandard
     raw = bytes.fromhex(hex_blob)
     return raw[:9], zstandard.ZstdDecompressor().decompress(raw[9:])
 
 
-def pack_fields(head, data):
+def pack_fields(head: bytes, data: bytes) -> str:
     """Обратно. Второе поле шапки = длина всего блоба минус 8 — сверено на живом файле."""
     import zstandard
     body = head[8:9] + zstandard.ZstdCompressor(level=19).compress(data)
     return (head[:4] + len(body).to_bytes(4, "big") + body).hex()
 
 
-def set_media_extents(hex_blob, start_s, dur_s):
+def set_media_extents(hex_blob: str, start_s: float, dur_s: float) -> str:
     """Переписать [стартовый таймкод, длительность] в секундах.
 
     Поле фиксированного размера (два double LE), поэтому правится на месте по
@@ -361,7 +363,7 @@ def set_media_extents(hex_blob, start_s, dur_s):
     return pack_fields(head, bytes(buf))
 
 
-def get_media_extents(hex_blob):
+def get_media_extents(hex_blob: str) -> tuple[float, float]:
     _, data = unpack_fields(hex_blob)
     i = data.find(KEY_EXTENTS)
     o = i + len(KEY_EXTENTS) + 4 + 1 + 4
@@ -375,7 +377,7 @@ def get_media_extents(hex_blob):
 # 4 или 8 байт. Полную грамматику разбирать не нужно: всё, что мы меняем, либо
 # фиксированного размера, либо строка той же длины (таймкод всегда HH:MM:SS:FF).
 
-def kv_value(data, name):
+def kv_value(data: bytes | bytearray, name: str) -> tuple[int, int] | None:
     """-> (смещение значения, длина) или None. Ищем по имени ключа в UTF-16BE."""
     key = name.encode("utf-16-be")
     i = data.find(key)
@@ -392,7 +394,7 @@ def kv_value(data, name):
     return None
 
 
-def kv_set(data, name, raw):
+def kv_set(data: bytes | bytearray, name: str, raw: bytes | bytearray) -> bytes:
     """Переписать значение НА МЕСТЕ. Длина обязана совпасть — иначе поехали бы
     длины вложенных контейнеров, а их мы не пересчитываем."""
     pos = kv_value(data, name)
@@ -404,19 +406,19 @@ def kv_set(data, name, raw):
     return data[:off] + raw + data[off + size:]
 
 
-def kv_get(data, name):
+def kv_get(data: bytes | bytearray, name: str) -> bytes | None:
     pos = kv_value(data, name)
     return None if pos is None else data[pos[0]:pos[0] + pos[1]]
 
 
-def _hexblob(el, tag, fn):
+def _hexblob(el: str, tag: str, fn: Any) -> str:
     """Применить fn к hex-содержимому всех тегов tag внутри элемента."""
     return re.sub("<" + tag + r">([0-9a-f]{40,})</" + tag + ">",
                   lambda m: "<" + tag + ">" + fn(m.group(1)) + "</" + tag + ">", el)
 
 
-def set_media_descriptor(entry_xml, path, pr, mtime="Thu Jan 01 00:00:00 2026",
-                         photo=False):
+def set_media_descriptor(entry_xml: str, path: str, pr: dict[str, Any], mtime: str = "Thu Jan 01 00:00:00 2026",
+                         photo: bool = False) -> str:
     """Переписать запись медиапула под конкретный файл.
 
     Запись — это полный дескриптор медиа, а не ссылка: путь, имя, кодек, таймкод,
@@ -439,7 +441,7 @@ def set_media_descriptor(entry_xml, path, pr, mtime="Thu Jan 01 00:00:00 2026",
     fps = pr.get("fps")                              # None — legacy NTSC 29.97
     frames = round(pr["dur_s"] * (fps or SRC_FPS))
 
-    def clip(h):                                      # путь и имя файла
+    def clip(h: str) -> str:                                      # путь и имя файла
         if not is_zstd_blob(h):
             return h
         head, d = unpack_fields(h)
@@ -450,7 +452,7 @@ def set_media_descriptor(entry_xml, path, pr, mtime="Thu Jan 01 00:00:00 2026",
                 d = pb_set_str(d, fno, val)
         return pack_fields(head, d)
 
-    def time(h):
+    def time(h: str) -> str:
         d = bytes.fromhex(h)
         d = kv_set(d, "Timecode", tc.encode("utf-16-be"))
         d = kv_set(d, "NumFrames", frames.to_bytes(4, "big"))
@@ -462,12 +464,12 @@ def set_media_descriptor(entry_xml, path, pr, mtime="Thu Jan 01 00:00:00 2026",
             d = kv_set(d, "FrameRate", struct.pack("<d", fps) + b"\x00\x00\x00\x00\x00\x00\x00\x01")
         return d.hex()
 
-    def geometry(h):
+    def geometry(h: str) -> str:
         d = bytes.fromhex(h)
         res = pr["height"].to_bytes(8, "big") + pr["width"].to_bytes(8, "big")
         return kv_set(d, "Resolution", res).hex()
 
-    def tracks(h):
+    def tracks(h: str) -> str:
         d = bytes.fromhex(h)
         d = kv_set(d, "StartTime", struct.pack(">d", timecode_seconds(pr["timecode"], fps)))
         sr = int.from_bytes(kv_get(d, "SampleRate") or b"\x00\x00\xbb\x80", "big")
@@ -496,18 +498,18 @@ SUB_WHITE, SUB_YELLOW = (1.0, 1.0, 1.0), (1.0, 0.9176, 0.0)
 SUB_FIT_CHARS = 14                     # длиннее — ужимаем, как в xmlbuild
 
 
-def _elements(vec_xml, tag):
+def _elements(vec_xml: str, tag: str) -> list[str]:
     """Разбить `<...Vec>` на элементы верхнего уровня."""
     return re.findall(r"<Element>\s*<" + tag + r"\b.*?</" + tag + r">\s*</Element>",
                       vec_xml, re.S)
 
 
-def _section(text, tag):
+def _section(text: str, tag: str) -> tuple[str, int, int]:
     m = re.search(r"<" + tag + r">(.*?)</" + tag + r">", text, re.S)
     return (m.group(1), m.start(1), m.end(1)) if m else ("", -1, -1)
 
 
-def _set(el, tag, value):
+def _set(el: str, tag: str, value: Any) -> str:
     """Подстановка через лямбду: в путях Windows есть \\U и прочее, что re.sub
     в строке-замене принимает за escape-последовательность и падает. Текст
     экранируем через core.xmltext.xml_text."""
@@ -516,7 +518,7 @@ def _set(el, tag, value):
                   lambda m: new, el, count=1)
 
 
-def _set_items(track_el, clips_xml):
+def _set_items(track_el: str, clips_xml: str) -> str:
     """Заменить содержимое <Items> у дорожки (у пустой дорожки тег самозакрыт).
 
     Через лямбду: в клипах лежат пути Windows, а re.sub разбирает строку-замену
@@ -528,7 +530,7 @@ def _set_items(track_el, clips_xml):
     return track_el.replace("<Items/>", new, 1)
 
 
-def _sub_nodes(base, text, frames, color, scale):
+def _sub_nodes(base: str, text: str, frames: int, color: tuple[float, float, float] | Sequence[float], scale: float) -> str:
     n = set_text(base, text)
     n = re.sub(r'(Font = Input \{ Value = ")[^"]*(")', r"\g<1>" + SUB_FONT + r"\g<2>", n, count=1)
     n = re.sub(r'(Style = Input \{ Value = ")[^"]*(")', r"\g<1>" + SUB_STYLE + r"\g<2>", n, count=1)
@@ -539,8 +541,8 @@ def _sub_nodes(base, text, frames, color, scale):
     return set_input(n, "Center", "{ 0.5, %.6f }" % (1.0 - SUB_Y_FROM_TOP))
 
 
-def build(out_path, cams, segments, offsets, assign=None, sub_words=(), yellow=(),
-          inserts=(), name=None, template=None, fps=60, probe=None):
+def build(out_path: str, cams: Sequence[str], segments: Sequence[tuple[float, float]], offsets: Sequence[float], assign: Sequence[int] | None = None, sub_words: Sequence[tuple[int, int, str]] = (), yellow: Sequence[int] | set[int] = (),
+          inserts: Sequence[dict[str, Any]] = (), name: str | None = None, template: str | None = None, fps: float = 60, probe: Any = None) -> dict[str, Any]:
     """Собрать проект DaVinci Resolve из шаблона.
 
     Вход тот же, что у `xmlbuild.build`: камеры, оставленные куски (секунды),
@@ -610,19 +612,21 @@ def build(out_path, cams, segments, offsets, assign=None, sub_words=(), yellow=(
     # --- медиапул: по записи на каждый файл (камеры + медиа вставок)
     media = list(cams) + [x["media"] for x in inserts if x.get("media")]
     kind_of = {x["media"]: x.get("type") for x in inserts if x.get("media")}
+    pool_xml: list[str]
+    ref: dict[str, Any]
     pool_xml, ref = [], {}
     for path in dict.fromkeys(media):                       # без повторов, порядок стабилен
         pr = probe(path)
         is_photo = kind_of.get(path) == "photo"
-        tpl = t_pool_photo if is_photo and t_pool_photo else t_pool
+        tpl: Any = t_pool_photo if is_photo and t_pool_photo else t_pool
         el = new_pool_ids(tpl)                              # не только DbId — см. функцию
-        did = re.search(r'DbId="([0-9a-f-]+)"', el).group(1)
+        did = cast(Any, re.search(r'DbId="([0-9a-f-]+)"', el)).group(1)
         ref[path] = (did, pr)
         el = _set(el, "Name", os.path.basename(path))
         el = set_media_descriptor(el, path, pr, photo=is_photo)
         pool_xml.append(el)
 
-    def media_clip(tpl, path, start, dur, src_in, off=False, photo=False):
+    def media_clip(tpl: str, path: str, start: int, dur: int, src_in: int, off: bool = False, photo: bool = False) -> str:
         did, pr = ref[path]
         fps = pr.get("fps")
         el = new_ids(tpl)
@@ -650,8 +654,8 @@ def build(out_path, cams, segments, offsets, assign=None, sub_words=(), yellow=(
     # --- камеры: клипЫ по кускам нарезки
     n = len(cams)
     assign = assign or [0] * len(segments)
-    vclips = [[] for _ in range(n)]
-    aclips = [[] for _ in range(n)]
+    vclips: list[list[str]] = [[] for _ in range(n)]
+    aclips: list[list[str]] = [[] for _ in range(n)]
     tl = 0
     for k, (s, e) in enumerate(segments):
         length = round(e * fps) - round(s * fps)
@@ -660,7 +664,7 @@ def build(out_path, cams, segments, offsets, assign=None, sub_words=(), yellow=(
         active = assign[k] if k < len(assign) else 0
         for c in range(n):
             src_in = round((s - offsets[c]) * fps)
-            off = c > 0 and active != c              # камера 1 — база, всегда видна
+            off: Any = c > 0 and active != c              # камера 1 — база, всегда видна
             vclips[c].append(media_clip(t_vclip, cams[c], tl, length, src_in, off))
             aclips[c].append(media_clip(t_aclip, cams[c], tl, length, src_in))
         tl += length
@@ -672,10 +676,10 @@ def build(out_path, cams, segments, offsets, assign=None, sub_words=(), yellow=(
     # субтитры, фото, видео — parse_full ждёт именно такой порядок)
     if sub_words:
         prefix, comp, nodes, off = split_comp(
-            re.search(r"<CompositionBA>([0-9a-f]+)</CompositionBA>", t_title).group(1))
+            cast(Any, re.search(r"<CompositionBA>([0-9a-f]+)</CompositionBA>", t_title)).group(1))
         comp_txt, nodes_txt = comp.decode("utf-8", "surrogateescape"), nodes.decode("utf-8")
         yellow = set(yellow)
-        items = []
+        items: list[str] = []
         for i, (st, en, word) in enumerate(sub_words):
             dur = max(1, en - st)
             scale = 1.0 if len(word) <= SUB_FIT_CHARS else SUB_FIT_CHARS / len(word)
@@ -706,7 +710,7 @@ def build(out_path, cams, segments, offsets, assign=None, sub_words=(), yellow=(
 
     # Запись самого таймлайна в медиапуле тоже несёт длительность — без правки
     # в пуле остаётся хронометраж шаблона.
-    def fix_timeline_len(el):
+    def fix_timeline_len(el: str) -> str:
         if "Sm2MpTimelineClip" not in el:
             return el
         m = re.search(r"<FieldsBlob>([0-9a-f]{200,})</FieldsBlob>", el)

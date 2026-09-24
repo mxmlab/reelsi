@@ -13,7 +13,9 @@
 Отдельный процесс: тяжёлый torch/bnb, не смешивать с ctranslate2 (Whisper) в одном.
 Тяжёлые импорты (torch/transformers) — ТОЛЬКО в локальном пути (облачному не нужны).
 """
+from __future__ import annotations
 import sys, os, json, base64, io, tempfile, urllib.request, urllib.error
+from typing import Any, Sequence, cast
 
 # Импорт до первого try: сторож `except ReelsiError` ниже обязан видеть это имя.
 from core.umsg import ReelsiError, cli_error
@@ -21,8 +23,8 @@ from core.umsg import ReelsiError, cli_error
 # застревает, сеть на нуле). Классический HTTP-download надёжнее и докачивает с места.
 os.environ.setdefault("HF_HUB_DISABLE_XET", "1")
 try:
-    sys.stdout.reconfigure(encoding="utf-8")
-    sys.stderr.reconfigure(encoding="utf-8")   # текст ошибки идёт в stderr:
+    cast(Any, sys.stdout).reconfigure(encoding="utf-8")
+    cast(Any, sys.stderr).reconfigure(encoding="utf-8")   # текст ошибки идёт в stderr:
 except ReelsiError: raise
 except Exception:                              # без utf-8 русский текст превращается в \uXXXX
     pass  # поток без reconfigure — русский текст ошибки и так уходит в stderr
@@ -40,9 +42,9 @@ SYS = ("Ты — предельно точный транскрибатор ру
        "Ничего не исправляй, не сокращай и не убирай повторы. Верни только текст.")
 
 
-def load_model():
+def load_model() -> tuple[Any, Any]:
     import torch
-    from transformers import (Qwen2_5OmniForConditionalGeneration, Qwen2_5OmniProcessor,
+    from transformers import (Qwen2_5OmniForConditionalGeneration, Qwen2_5OmniProcessor,  # type: ignore[attr-defined, unused-ignore]  # атрибут есть не во всех версиях пакета; пакет опционален, в CI не установлен
                               BitsAndBytesConfig)
     proc = Qwen2_5OmniProcessor.from_pretrained(MODEL)
     cfg = BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_compute_dtype=torch.float16,
@@ -58,7 +60,7 @@ def load_model():
     return proc, m
 
 
-def transcribe_clip(proc, model, arr_int16):
+def transcribe_clip(proc: Any, model: Any, arr_int16: Any) -> str:
     import torch
     from qwen_omni_utils import process_mm_info
     tmp = os.path.join(tempfile.gettempdir(), "_omni_clip_%d.wav" % os.getpid())  # pid: два прогона не топчут друг друга
@@ -84,7 +86,7 @@ def transcribe_clip(proc, model, arr_int16):
             pass  # временный wav уже убран
 
 
-def transcribe_clip_gigaam(model, clip_audio):
+def transcribe_clip_gigaam(model: Any, clip_audio: Any) -> str:
     """Транскрибировать чанк через GigaAM. Принимает путь к wav-файлу (грузит через ffmpeg),
     а не numpy-массив. Пишем во временный файл, дескриптор сразу закрываем,
     а сам файл гарантированно удаляем в finally."""
@@ -108,7 +110,7 @@ def transcribe_clip_gigaam(model, clip_audio):
             pass  # временный wav уже убран
 
 
-def _hf_cache_bytes(repo):
+def _hf_cache_bytes(repo: str) -> int:
     """Сколько байт весов репо уже лежит в HF-кэше (вкл. недокачанные .incomplete)."""
     d = os.path.expanduser("~/.cache/huggingface/hub/models--"
                            + repo.replace("/", "--") + "/blobs")
@@ -125,7 +127,7 @@ def _hf_cache_bytes(repo):
     return tot
 
 
-def ensure_weights(repo, emit=console_emit, retries=8):
+def ensure_weights(repo: str, emit: Any = console_emit, retries: int = 8) -> str:
     """Скачать веса repo С ПРОГРЕССОМ (в stdout -> виден в webui-логе) и АВТО-ДОКАЧКОЙ
     при обрыве. snapshot_download resumable: уже скачанное (.incomplete) не теряется,
     докачивается с места. Xet отключён на верхнем уровне модуля (Windows-хэнг)."""
@@ -135,7 +137,7 @@ def ensure_weights(repo, emit=console_emit, retries=8):
     total = 0
     try:
         from huggingface_hub import HfApi
-        info = HfApi().model_info(repo, files_metadata=True)
+        info: Any = HfApi().model_info(repo, files_metadata=True)
         total = sum((s.size or 0) for s in info.siblings
                     if (s.rfilename or "").endswith((".safetensors", ".bin")))
     except ReelsiError: raise
@@ -144,8 +146,8 @@ def ensure_weights(repo, emit=console_emit, retries=8):
     tgb = total / 1e9
     last = None
     for attempt in range(retries + 1):
-        holder = {}
-        def _dl():
+        holder: dict[str, Any] = {}
+        def _dl() -> None:
             try:
                 holder["path"] = snapshot_download(repo, max_workers=4)
             except ReelsiError: raise
@@ -174,10 +176,10 @@ def ensure_weights(repo, emit=console_emit, retries=8):
 
 # модели, которые оказались чистыми ASR (эндпоинт /audio/transcriptions, не /chat) —
 # запоминаем по имени, чтобы следующие чанки сразу шли правильным путём
-_ASR_MODELS = set()
+_ASR_MODELS: set[str] = set()
 
 
-def _asr_transcribe(prof, arr_int16, retries=2):
+def _asr_transcribe(prof: dict[str, Any], arr_int16: Any, retries: int = 2) -> str:
     """Чанк -> ASR-модель через OpenAI-совместимый /audio/transcriptions (Whisper-стиль:
     multipart с wav-файлом). Так работают qwen3-asr-flash, parakeet-tdt и пр. на
     OpenRouter — они ТОЧНЕЕ chat-моделей для транскрипции (это их единственная задача)."""
@@ -251,12 +253,12 @@ _DEAF = ("нет аудио", "не был предоставлен", "не пр
 _deaf_hits = [0]
 
 
-def _looks_deaf(txt):
+def _looks_deaf(txt: str | None) -> bool:
     t = (txt or "").lower()
     return len(t) < 400 and any(k in t for k in _DEAF)
 
 
-def _deaf_guard(prof, txt):
+def _deaf_guard(prof: dict[str, Any], txt: str) -> str:
     """Глухой ответ -> пустая строка + счётчик. Три подряд = эндпоинт не принимает
     звук, дальше гонять чанки бессмысленно (и дорого по времени)."""
     if not _looks_deaf(txt):
@@ -273,7 +275,7 @@ def _deaf_guard(prof, txt):
     return ""
 
 
-def transcribe_clip_cloud(prof, arr_int16, retries=2):
+def transcribe_clip_cloud(prof: dict[str, Any], arr_int16: Any, retries: int = 2) -> str:
     """Чанк -> облачная аудио-модель. Chat-модели (Gemini и т.п.) — через input_audio на
     /chat/completions; чистые ASR (qwen3-asr, parakeet) — через /audio/transcriptions
     (переключаемся автоматически, поймав ответ «is a transcription model»)."""
@@ -284,7 +286,7 @@ def transcribe_clip_cloud(prof, arr_int16, retries=2):
     b64 = base64.b64encode(buf.getvalue()).decode("ascii")
     # max_tokens с запасом: reasoning-модели (nemotron-omni и т.п.) тратят токены на
     # размышления ДО ответа — 700 может съесться целиком и вернуть пустой текст
-    payload = {"model": prof["model"], "temperature": 0.0, "max_tokens": 1600,
+    payload: dict[str, Any] = {"model": prof["model"], "temperature": 0.0, "max_tokens": 1600,
                "messages": [
                    {"role": "system", "content": SYS},
                    {"role": "user", "content": [{"type": "input_audio",
@@ -387,7 +389,7 @@ def transcribe_clip_cloud(prof, arr_int16, retries=2):
     raise ReelsiError(f"облачная Omni-транскрипция упала после {retries + 1} попыток: {last}")
 
 
-def group_chunks(intervals, max_len=24.0):
+def group_chunks(intervals: Sequence[Any], max_len: float = 24.0) -> list[tuple[Any, Any]]:
     chunks, start, last = [], None, None
     for s, e in intervals:
         if start is None:
@@ -400,7 +402,7 @@ def group_chunks(intervals, max_len=24.0):
     return chunks
 
 
-def main(args=None):
+def main(args: Sequence[str] | None = None) -> None:
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("wav")

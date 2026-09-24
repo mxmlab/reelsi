@@ -41,6 +41,7 @@ import re
 import sys
 from collections import OrderedDict
 from difflib import SequenceMatcher
+from typing import Any, Sequence, cast
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -57,11 +58,11 @@ _SKIP_DIRS = {"reelsi", "exp", "plans", "chell2", "assets", "music",
               "Adobe Premiere Pro Auto-Save", "Adobe Premiere Pro Audio Previews"}
 
 
-def find_pairs(root):
+def find_pairs(root: str) -> list[tuple[str, str]]:
     """Все пары `<стем>.xml` / `<стем>.xml.bak` в папках результата уровнем ниже root.
     Папка считается папкой результата, если в ней есть хоть один `*.xml.bak` — так
     не нужно держать список имён, который неизбежно отстанет от реальности."""
-    pairs = []
+    pairs: list[tuple[str, str]] = []
     try:
         entries = sorted(os.listdir(root))
     except OSError:
@@ -78,14 +79,14 @@ def find_pairs(root):
     return pairs
 
 
-def words_of(xml_path):
+def words_of(xml_path: str) -> list[str]:
     """Список слов-субтитров в порядке таймлайна (то же, что aicut.commands)."""
     from core import xml2ae
     _, _, subs, _ = xml2ae.parse_full(xml_path)
     return [w for _, _, w in subs]
 
 
-def classify(old_txt, new_txt):
+def classify(old_txt: str, new_txt: str) -> str:
     """Вид замены: bad (цензура звёздочкой), term (название), num/grammar.
     Термин решает НОВАЯ (правая) часть — «термин = то, на что исправил». Старая часть
     может быть аббревиатурой, но если исправили её в обычное слово — это не термин
@@ -101,13 +102,13 @@ def classify(old_txt, new_txt):
     return "grammar"
 
 
-def _is_abbrev(s):
+def _is_abbrev(s: str) -> bool:
     """Короткая аббревиатура без гласных (ЛП, ЛПНП, ZPHС) — это название, а не слово."""
     s = re.sub(r"[^0-9a-zа-яё]", "", s.lower())
     return 2 <= len(s) <= 6 and not any(c in _VOWELS for c in s)
 
 
-def collect(root):
+def collect(root: str) -> tuple[list[tuple[str, str]], list[dict[str, Any]], list[tuple[str, str]]]:
     """(пары, замены[{old, new, clip, kind}], ошибки чтения)."""
     pairs = find_pairs(root)
     edits, errs = [], []
@@ -129,20 +130,20 @@ def collect(root):
     return pairs, edits, errs
 
 
-def _unq(items):
+def _unq(items: Any) -> list[Any]:
     """Дубликаты в списке роликов не нужны (но счёт = числу вхождений)."""
     return sorted(set(items))
 
 
-def build_report(pairs, edits, errs, terms_data, apply=False, ok_stems=None, all_bad=False):
+def build_report(pairs: Any, edits: Any, errs: Any, terms_data: Any, apply: bool = False, ok_stems: Any = None, all_bad: bool = False) -> dict[str, Any]:
     """Раскладываем замены по кучам и собираем отчёт (и правки для --apply)."""
     counts = {"term": 0, "bad": 0, "num": 0, "grammar": 0}
     if ok_stems is None:
         ok_stems = censor._ok()
     # термины: {термин: {вариант: [ролики]}}
-    terms_prop = OrderedDict()
+    terms_prop: OrderedDict[Any, Any] = OrderedDict()
     # плохие слова: {стем: [ролики]}
-    bad_raw = OrderedDict()
+    bad_raw: OrderedDict[Any, Any] = OrderedDict()
     for e in edits:
         counts[e["kind"]] += 1
         if e["kind"] == "bad":
@@ -197,7 +198,7 @@ def build_report(pairs, edits, errs, terms_data, apply=False, ok_stems=None, all
     for it in existing:
         final[terms._norm_tight(it["term"])] = it
 
-    def _other_collision(nv, own_term, universe):
+    def _other_collision(nv: Any, own_term: Any, universe: Any) -> Any:
         """На какой чужой термин ТОЧНО ложится ослышка (None = ни на какой).
 
         Здесь источник — РУЧНАЯ правка пользователя: он сам заменил это слово на этот
@@ -218,7 +219,7 @@ def build_report(pairs, edits, errs, terms_data, apply=False, ok_stems=None, all
                 return it["term"]
         return None
 
-    def _other_similar(nv, own_term, universe):
+    def _other_similar(nv: Any, own_term: Any, universe: Any) -> Any:
         """На какой чужой термин ослышка ПОХОЖА — только чтобы предупредить в отчёте."""
         own = terms._norm_tight(own_term)
         for k, it in universe.items():
@@ -281,7 +282,7 @@ def build_report(pairs, edits, errs, terms_data, apply=False, ok_stems=None, all
                 errors=errs, pairs=pairs)
 
 
-def print_report(root, apply=False, all_bad=False, terms_path=None, badwords_path=None, okwords_path=None):
+def print_report(root: str, apply: bool = False, all_bad: bool = False, terms_path: str | None = None, badwords_path: str | None = None, okwords_path: str | None = None) -> int:
     # переопределения пути ДО чтения словаря: прогон «на копии» должен и проверять
     # коллизии по копии, а не по боевому terms.json
     if terms_path:
@@ -370,7 +371,7 @@ def print_report(root, apply=False, all_bad=False, terms_path=None, badwords_pat
     return 0
 
 
-def main(argv=None):
+def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--apply", action="store_true",
                     help="внести термины в terms.json (плохие слова НЕ вносятся)")
@@ -392,7 +393,7 @@ def main(argv=None):
 if __name__ == "__main__":
     for _s in (sys.stdout, sys.stderr):
         try:
-            _s.reconfigure(encoding="utf-8", errors="replace")
+            cast(Any, _s).reconfigure(encoding="utf-8", errors="replace")
         except Exception:
             pass
     sys.exit(main())

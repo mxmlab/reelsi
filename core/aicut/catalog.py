@@ -12,8 +12,10 @@
 себя как раньше (фолбэк-списки в config.py). Обновляется раз в сутки при первом
 обращении, кнопка «Обновить» в ⚙ тянет его силой (force).
 """
+from __future__ import annotations
 import os, json, time
 import urllib.request
+from typing import Any, Callable
 
 from .config import AI_CONFIG_PATH, APP_NAME, APP_REFERER
 from core.app_meta import env, http_req
@@ -30,7 +32,7 @@ CATALOG_TTL = 86400        # раз в сутки
 CATALOG_KEY = {"openrouter": "openrouter", "anthropic": "anthropic"}
 
 
-def catalog_cache_path():
+def catalog_cache_path() -> str:
     """Кэш каталога — файл models_dev.json рядом с ai_config.json.
 
     Своя REELSI_MODELS_DEV: без неё изолированный профиль 5098 (REELSI_AI_CONFIG
@@ -39,7 +41,7 @@ def catalog_cache_path():
     return env("MODELS_DEV") or os.path.join(os.path.dirname(AI_CONFIG_PATH), "models_dev.json")
 
 
-def _load_disk(path):
+def _load_disk(path: str) -> Any:
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
@@ -48,7 +50,7 @@ def _load_disk(path):
         return None
 
 
-def _save_disk(path, data):
+def _save_disk(path: str, data: Any) -> None:
     """Записать кэш атомарно (core.fileio.atomic_json_dump).
 
     Имя tmp уникально (mkstemp внутри fileio), а не фиксированный path+".tmp": две
@@ -63,11 +65,11 @@ def _save_disk(path, data):
 
 # Состояние каталога в памяти процесса: словарь и время загрузки. По ним не
 # долбим сеть чаще раза в сутки (CATALOG_TTL).
-_CATALOG = None
+_CATALOG: dict[str, Any] | None = None
 _CATALOG_TS = 0.0
 
 
-def ensure_catalog(emit=None, force=False):
+def ensure_catalog(emit: Callable[..., Any] | None = None, force: bool = False) -> dict[str, Any]:
     """Каталог models.dev в памяти процесса (кэш на диск). force — кнопка
     «Обновить»: тянем сеть в любом случае.
 
@@ -106,7 +108,7 @@ def ensure_catalog(emit=None, force=False):
 
 
 
-def caps(provider, model, emit=None):
+def caps(provider: str | None, model: str | None, emit: Callable[..., Any] | None = None) -> dict[str, Any]:
     """Что умеет модель из каталога models.dev.
 
     Возвращает {reasoning, reasoning_kind, efforts, structured_output, temperature,
@@ -226,7 +228,7 @@ def caps(provider, model, emit=None):
     }
 
 
-def valid_level(provider, model, lvl, emit=None):
+def valid_level(provider: str | None, model: str | None, lvl: str | None, emit: Callable[..., Any] | None = None) -> bool:
     """Принимает ли модель этот уровень «ума» (для set_reasoning_step).
 
     Уровни из каталога (effort-значения: low/high/max/xhigh/none/minimal) плюс
@@ -246,7 +248,7 @@ _LEVEL_RANK = {"off": 0, "none": 0, "minimal": 1, "low": 2, "medium": 3,
                "high": 4, "xhigh": 5, "max": 6}
 
 
-def nearest_supported_level(provider, model, lvl, emit=None):
+def nearest_supported_level(provider: str | None, model: str | None, lvl: str, emit: Callable[..., Any] | None = None) -> str:
     """Ближайший уровень СНИЗУ из efforts модели в каталоге.
 
     У deepseek-v4-flash в каталоге только low/high/max — слать medium нельзя:

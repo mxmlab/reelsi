@@ -14,7 +14,9 @@ SNAP_DB` — то есть связанное один раз значение �
 Кому порог нужен снаружи — берёт его как `tune.SILENCE_SEC` (через модуль, а не
 по имени): так значение читается в момент обращения, уже после профиля.
 """
+from __future__ import annotations
 import os, json
+from typing import Any
 import numpy as np
 import soundfile as sf
 from core import paths
@@ -111,7 +113,7 @@ DEDUPE = False        # чистка дублей кодом после реше
 # переопределяет: значения кладутся в МОДУЛЬНЫЕ константы один раз на старте
 # run(), потому что читают их полтора десятка функций по всему файлу и таскать
 # параметр через все не за что.
-SPEAKER = None            # профиль, применённый к этому запуску (для лога)
+SPEAKER: dict[str, Any] | None = None            # профиль, применённый к этому запуску (для лога)
 DB_AUTO = False           # пороги громкости считать от запаса речи в клипе
 SNAP_FRAC = 0.30
 ONSET_FRAC = 0.50
@@ -128,10 +130,10 @@ _CUT_GLOBALS = {          # ключ профиля -> имя модульной
 # Снимок умолчаний при импорте модуля:
 # apply_speaker(name) всегда начинает с чистого листа, а apply_speaker(None)
 # полностью возвращает модульные пороги к значениям по умолчанию.
-_DEFAULT_CUT_GLOBALS = {gname: globals()[gname] for gname in _CUT_GLOBALS.values()}
+_DEFAULT_CUT_GLOBALS: dict[str, Any] = {gname: globals()[gname] for gname in _CUT_GLOBALS.values()}
 
 
-def apply_speaker(name, emit=console_emit):
+def apply_speaker(name: str | None, emit: Any = console_emit) -> dict[str, Any] | None:
     """Наложить профиль спикера на пороги модуля. name — ключ/label/None.
 
     Возвращает применённый профиль (или None). Профиль без блока `cut` ничего
@@ -173,7 +175,7 @@ def apply_speaker(name, emit=console_emit):
     return prof
 
 
-def _sys(base):
+def _sys(base: str) -> str:
     """Системный промпт решения + личная поправка спикера (`hint` в профиле).
 
     Не все ошибки нарезки — пороги. У спикера B, например, пороги не ошибаются ни
@@ -187,7 +189,7 @@ def _sys(base):
     return base + "\n\nОСОБЕННОСТИ ЭТОГО СПИКЕРА (учитывай при решении):\n" + hint
 
 
-def breath_model_path(emit=console_emit):
+def breath_model_path(emit: Any = console_emit) -> str | None:
     """Json детектора вздохов для текущего спикера (поле `breath_model`), либо
     None = общая модель.
 
@@ -214,7 +216,7 @@ def breath_model_path(emit=console_emit):
     return path
 
 
-def _autotune_db(db, floor, emit=console_emit):
+def _autotune_db(db: Any, floor: float, emit: Any = console_emit) -> None:
     """Пороги громкости от РЕАЛЬНОГО запаса речи в клипе (при db_auto).
 
     Жёсткие 20/12 дБ над полом — это 50%/30% динамики спикера A (замер: речь у
@@ -246,8 +248,10 @@ def _autotune_db(db, floor, emit=console_emit):
     SNAP_DB, ONSET_DB = snap, onset
 
 
-def _ranges(idx_sorted):
+def _ranges(idx_sorted: Any) -> list[tuple[int, int]]:
     """Сгруппировать отсортированные индексы в непрерывные диапазоны [a, b]."""
+    out: list[tuple[int, int]]
+    cur: list[int]
     out, cur = [], []
     for i in idx_sorted:
         if cur and i != cur[-1] + 1:
@@ -258,7 +262,7 @@ def _ranges(idx_sorted):
     return out
 
 
-def _silence_bounds(words, thr=None):
+def _silence_bounds(words: Any, thr: float | None = None) -> set[int]:
     """Индексы i, после которых между словом i и i+1 — пауза > thr (полное
     молчание). Это ЖЁСТКИЕ границы реза: тишина всегда вырезается и никогда
     не восстанавливается самопроверкой (слова тишины не попадают в drop).
@@ -272,11 +276,11 @@ def _silence_bounds(words, thr=None):
             if words[i + 1]["start"] - words[i]["end"] > thr}
 
 
-def keep_segments(words, keep, silence_bounds=None):
+def keep_segments(words: Any, keep: Any, silence_bounds: set[int] | None = None) -> list[tuple[int, int]]:
     """Прогоны оставленных слов как ДИАПАЗОНЫ ИНДЕКСОВ [a, b] — то, что реально
     станет отдельным куском в таймлайне (прогон дополнительно разрывается на
     границах полного молчания, чтобы тишина всегда была вырезана, как VAD)."""
-    out = []
+    out: list[tuple[int, int]] = []
     for a, b in _ranges(sorted(keep)):
         seg_a = a
         for i in range(a, b):
@@ -286,15 +290,15 @@ def keep_segments(words, keep, silence_bounds=None):
     return out
 
 
-def keep_intervals(words, keep, silence_bounds=None):
+def keep_intervals(words: Any, keep: Any, silence_bounds: set[int] | None = None) -> list[tuple[float, float]]:
     """Из множества оставленных слов собрать интервалы (прогоны подряд идущих
     слов). Вырезанные слова = дырки между прогонами -> они и вырезаются."""
     return [(round(words[a]["start"], 3), round(words[b]["end"], 3))
             for a, b in keep_segments(words, keep, silence_bounds)]
 
 
-def drop_micro_keeps(words, kept, drop, silence_bounds=None, min_keep=None,
-                     protect=(), emit=console_emit):
+def drop_micro_keeps(words: Any, kept: set[int], drop: set[int], silence_bounds: set[int] | None = None, min_keep: float | None = None,
+                     protect: tuple[int, ...] | set[int] | list[int] = (), emit: Any = console_emit) -> list[int]:
 
     """Островки короче min_keep — мусор в таймлайне (кадр-другой «а», 0.28с
     «чтобы»): либо от них ничего не слышно, либо это огрызок фразы. В drop.
@@ -306,7 +310,7 @@ def drop_micro_keeps(words, kept, drop, silence_bounds=None, min_keep=None,
     аргумента писать нельзя, он связывается при импорте)."""
     if min_keep is None:
         min_keep = MIN_KEEP
-    removed = []
+    removed: list[int] = []
     changed = True
     while changed:
         changed = False
@@ -331,7 +335,7 @@ def drop_micro_keeps(words, kept, drop, silence_bounds=None, min_keep=None,
 # --------------------------------------------------------------------------- #
 # Подгон резов по звуку
 # --------------------------------------------------------------------------- #
-def _envelope(wav_path, hop=0.010, frame=0.025):
+def _envelope(wav_path: str, hop: float = 0.010, frame: float = 0.025) -> tuple[Any, Any, Any, float]:
     """Огибающая клипа: громкость в дБ + «шумность» каждого кадра (доля энергии
     выше 3 кГц) + уровень шума комнаты. Считается один раз: по ней и снап границ,
     и поиск тихих дыр, и детект вдохов."""
@@ -350,7 +354,7 @@ def _envelope(wav_path, hop=0.010, frame=0.025):
     return db, hf, float(np.percentile(db, 20)), hop
 
 
-def _hush_edge(quiet, step, run):
+def _hush_edge(quiet: Any, step: int, run: int) -> int | None:
     """Край ПЕРВОГО (по ходу `step`) затишья длиной от `run` кадров, либо None.
 
     Серия короче `run` — это провал внутри волны (смычка, стык слогов), по нему
@@ -367,7 +371,7 @@ def _hush_edge(quiet, step, run):
     return None
 
 
-def _walk_sound(db, thr, i, step, limit, tail, stop=None, run=1):
+def _walk_sound(db: Any, thr: float, i: int, step: int, limit: int, tail: int, stop: int | None = None, run: int = 1) -> int:
     """Куда поставить край куска, отступив от края слова в сторону `step`.
 
     Ищем в пределах `limit` кадров КОНЕЦ ВОЛНЫ — начало затишья (`run` тихих
@@ -389,7 +393,7 @@ def _walk_sound(db, thr, i, step, limit, tail, stop=None, run=1):
     return min(max(lo + j + step * tail, 0), n - 1)
 
 
-def _word_onset(db, floor, i0, i1, hop, stop=None):
+def _word_onset(db: Any, floor: float, i0: int, i1: int, hop: float, stop: int | None = None) -> int:
     """Кадр, где слово РЕАЛЬНО начинает звучать (CTC-старт врёт в обе стороны).
 
     Голосом считаем звук громче ONSET_DB над полом и не тише пика самого слова
@@ -425,7 +429,7 @@ def _word_onset(db, floor, i0, i1, hop, stop=None):
     return i0
 
 
-def _start_edge(db, thr, floor, i0, i1, hop, stop=None, run=1):
+def _start_edge(db: Any, thr: float, floor: float, i0: int, i1: int, hop: float, stop: int | None = None, run: int = 1) -> int:
     """Начало куска перед словом [i0..i1] — за START_PAD до ВХОДА ВОЛНЫ.
 
     Так режет юзер: сверка с его ручной доводкой (C1414/C1400/C1397, 80 кусков)
@@ -453,7 +457,7 @@ def _start_edge(db, thr, floor, i0, i1, hop, stop=None, run=1):
                        int(EDGE_TAIL / hop), stop=stop, run=run)
 
 
-def _speech_mask(db, thr, hop, words, n, qrun):
+def _speech_mask(db: Any, thr: float, hop: float, words: Any, n: int, qrun: int) -> Any:
     """Маска речи: кадры, где звучит СЛОВО (с добором волны по краям).
 
     Всё вне маски — вдох, «кхе», чмоканье, пауза: звук есть, а слова на нём нет
@@ -484,7 +488,7 @@ def _speech_mask(db, thr, hop, words, n, qrun):
     return mask
 
 
-def _cut_breaths(keep, assign, wav_path, words, out, emit=console_emit):
+def _cut_breaths(keep: list[tuple[float, float]], assign: list[Any] | None, wav_path: str, words: Any, out: str, emit: Any = console_emit) -> tuple[list[tuple[float, float]], list[Any] | None, list[Any]]:
     """Вздохи/«кхе» после подгона резов: уверенные вырезаем, спорные — в сайдкар.
 
     Отдельным шагом, а не внутри refine_keep: тут работают внешние модели (Silero
@@ -497,7 +501,7 @@ def _cut_breaths(keep, assign, wav_path, words, out, emit=console_emit):
         # «нет внешних моделей» — законный пропуск. Общий except Exception
         # ниже эти два случая не различает, поэтому отсутствие файла отсекаем ДО try.
         raise FileNotFoundError(f"Файл звука не найден для детектора вздохов: {wav_path}")
-    marks = []
+    marks: list[Any] = []
     try:
         from core import breath
         marks = breath.detect(wav_path, keep, words, emit=emit, path=breath_model_path(emit))
@@ -537,8 +541,8 @@ def _cut_breaths(keep, assign, wav_path, words, out, emit=console_emit):
     return keep, assign, show
 
 
-def refine_keep(keep, wav_path, words=None, emit=console_emit, hole=None,
-                air=HOLE_AIR, min_island=None):
+def refine_keep(keep: list[tuple[float, float]], wav_path: str, words: Any = None, emit: Any = console_emit, hole: float | None = None,
+                air: float = HOLE_AIR, min_island: float | None = None) -> tuple[list[tuple[float, float]], list[int]]:
 
     """Подвинуть резы на тихие места и вырезать тишину ВНУТРИ кусков.
 
@@ -590,9 +594,15 @@ def refine_keep(keep, wav_path, words=None, emit=console_emit, hole=None,
         # что просили не резать.
         speech_mask = _speech_mask(db, thr, hop, words, n, qrun)
 
-    def idx(t):
+    def idx(t: float) -> int:
         return min(max(int(round(t / hop)), 0), n - 1)
 
+    out: list[tuple[float, float]]
+    parents: list[int]
+    moved: int
+    cut_holes: int
+    cut_sec: float
+    snapped: int
     out, parents, moved, cut_holes, cut_sec, snapped = [], [], 0, 0, 0.0, 0
     for pi, (s, e) in enumerate(keep):
         # --- 1) границы от слов: дать слову начаться и договорить ---
@@ -651,6 +661,8 @@ def refine_keep(keep, wav_path, words=None, emit=console_emit, hole=None,
             out.append((round(seg_start * hop, 3), round(i1 * hop, 3)))
             parents.append(pi)
 
+    keep2: list[tuple[float, float]]
+    par2: list[int]
     keep2, par2 = [], []
     for (a, b), pi in zip(out, parents):
         if b - a >= min_island:

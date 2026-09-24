@@ -14,13 +14,14 @@ import json
 import os
 import shutil
 import sys
+from typing import Any, cast
 
 from core import paths
 from core.app_meta import t
 from core.umsg import ReelsiError, cli_error
 
 
-def _example_name(example_path, default="Example"):
+def _example_name(example_path: str, default: str = "Example") -> str:
     """Имя пресета/профиля из JSON примера (поле name или label)."""
     try:
         with open(example_path, encoding="utf-8") as f:
@@ -35,7 +36,7 @@ def _example_name(example_path, default="Example"):
     return default
 
 
-def _write_example(src_path, target_path, name):
+def _write_example(src_path: str, target_path: str, name: str) -> None:
     """Скопировать пример с подменой имени внутри (label/name)."""
     try:
         with open(src_path, encoding="utf-8") as f:
@@ -53,7 +54,7 @@ def _write_example(src_path, target_path, name):
         shutil.copy2(src_path, target_path)
 
 
-def ensure_user_files():
+def ensure_user_files() -> list[str]:
     """Создать недостающие пользовательские файлы из *.example.json.
 
     Возвращает список строк сообщений для лога.
@@ -109,7 +110,7 @@ if __name__ == "__main__":
     try:
         for _s in (sys.stdout, sys.stderr):
             try:
-                _s.reconfigure(encoding="utf-8", errors="replace")
+                cast(Any, _s).reconfigure(encoding="utf-8", errors="replace")
             except ReelsiError: raise
             except Exception:
                 pass  # поток без reconfigure (перенаправлен) — служебная печать не критична

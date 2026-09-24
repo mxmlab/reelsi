@@ -6,7 +6,9 @@
 в каталоге models.dev (aicut/catalog.py); здесь остались только ФОЛБЭК-таблицы
 подстрок на случай «каталога нет и кэша нет» (см. шапку секции с таблицами).
 """
+from __future__ import annotations
 import os, json, threading
+from typing import Any, Callable
 
 from core.app_meta import APP_REFERER, APP_NAME, env   # noqa: F401  (переэкспорт)
 from core.fileio import atomic_json_dump
@@ -85,7 +87,7 @@ REASONING_BUDGET = {"off": 0, "minimal": 2000, "low": 4000, "medium": 8000,
                     "high": 16000, "xhigh": 24000, "max": 32000}
 
 
-def step_reasoning(step):
+def step_reasoning(step: str) -> str:
     """Уровень размышлений для шага (из ai_config, иначе дефолт шага).
 
     Уровень может быть из каталога models.dev (low/high/max/xhigh и пр.) — валидный
@@ -129,7 +131,7 @@ def step_reasoning(step):
     return STEP_REASONING_DEFAULT.get(step, "off")
 
 
-def effective_step_reasoning(step):
+def effective_step_reasoning(step: str) -> str:
     """Что РЕАЛЬНО уйдёт в API на этом шаге (задание по UI-состояниям).
 
     step_reasoning возвращает выбранный уровень, а провайдер умеет не всё: у
@@ -148,7 +150,7 @@ def effective_step_reasoning(step):
         return step_reasoning(step)         # каталог недоступен — как раньше
 
 
-def step_profile(step):
+def step_profile(step: str) -> str | None:
     """Имя ИИ-профиля (МОДЕЛИ) для шага — из ai_config.step_profiles, иначе общий
     active. Профиль выбирается ОТДЕЛЬНО на каждый шаг (нарезка/жёлтые/вставки/интро):
     шагам нужны разные модели, а не одна на всё приложение. Невалидное/пустое имя
@@ -160,7 +162,7 @@ def step_profile(step):
     return cfg.get("active")
 
 
-def reason_budget(base, level):
+def reason_budget(base: int, level: str) -> int:
     """max_tokens с запасом на размышления — нужен ТОЛЬКО для Anthropic, где этот
     параметр обязателен по API. OpenAI-совместимым (LM Studio / OpenRouter / свой
     сервер) мы max_tokens не шлём вовсе: он не останавливает модель, а лишь
@@ -216,7 +218,7 @@ CACHE_MODELS = [
 ]
 
 
-def model_supports_caching(mid):
+def model_supports_caching(mid: str | None) -> bool:
     """Поддерживает ли модель provider-side prompt caching (cache_control).
 
     Источник правды — каталог models.dev (caps().cache). Этот фолбэк по подстрокам
@@ -227,13 +229,13 @@ def model_supports_caching(mid):
     return any(s in m for s in CACHE_MODELS)
 
 
-def _default_ai_config():
+def _default_ai_config() -> dict[str, Any]:
     return {"active": "LM Studio", "profiles": {
         "LM Studio": {"provider": "lmstudio", "base_url": DEFAULT_URL,
                       "api_key": "", "model": DEFAULT_MODEL}}}
 
 
-def _seed_ai_config():
+def _seed_ai_config() -> None:
     """Тестовый профиль (REELSI_AI_CONFIG) без своего файла — снять КОПИЮ с рабочего.
     Пустой конфиг сделал бы отдельный порт бесполезным (ни ключей, ни моделей), а
     читать рабочий файл напрямую нельзя: смена провайдера на тесте меняла бы его и в бою."""
@@ -249,7 +251,7 @@ def _seed_ai_config():
                     "профиль останется без ключей", AI_CONFIG_PATH, ex)
 
 
-def load_ai_config():
+def load_ai_config() -> dict[str, Any]:
     """Профили провайдеров. Файла нет/битый -> дефолт (LM Studio, env-переменные)."""
     _seed_ai_config()
     try:
@@ -274,7 +276,7 @@ def load_ai_config():
     return _default_ai_config()
 
 
-def save_ai_config(cfg):
+def save_ai_config(cfg: dict[str, Any]) -> None:
     # Атомарно: прямой open(...,"w") усекал файл ДО сериализации, и любое падение
     # в этот момент оставляло пустой конфиг -> load_ai_config молча уходил на дефолт,
     # а все API-ключи пропадали (файл в .gitignore, восстановить неоткуда).
@@ -302,7 +304,7 @@ def save_ai_config(cfg):
 KEY_ENV_PREFIX = "env:"
 
 
-def key_env_name(value):
+def key_env_name(value: Any) -> str | None:
     """Имя переменной для записи вида env:FOO (с обрезкой пробелов), иначе None."""
     if not isinstance(value, str):
         return None
@@ -312,7 +314,7 @@ def key_env_name(value):
     return None
 
 
-def resolve_key(value):
+def resolve_key(value: Any) -> Any:
     """Разрешить ключ: если env:FOO — взять из os.environ, иначе вернуть само значение."""
     name = key_env_name(value)
     if name is not None:
@@ -328,7 +330,7 @@ def resolve_key(value):
 # как «ключ не менял» и подменяется СОХРАНЁННЫМ ключом профиля.
 
 
-def mask_ai_key(k):
+def mask_ai_key(k: str) -> str:
     """Ключ наружу: «•••xxxx» (последние 4 символа).
 
     env:VAR не маскируется: это имя переменной окружения, а не секрет (значение
@@ -338,7 +340,7 @@ def mask_ai_key(k):
     return ("•••" + k[-4:]) if k else ""
 
 
-def masked_profiles(cfg):
+def masked_profiles(cfg: dict[str, Any]) -> dict[str, Any]:
     """Профили для интерфейса: те же поля, но ключ закрыт маской.
 
     У env-ключа добавляется key_env_ok — «переменная есть в окружении сервера»:
@@ -355,7 +357,7 @@ def masked_profiles(cfg):
     return res
 
 
-def unmask_ai_key(key, saved_name):
+def unmask_ai_key(key: str | None, saved_name: str | None) -> str:
     """Ключ из формы: маска «•••…» = «не менял» -> вернуть сохранённый ключ профиля."""
     key = (key or "").strip()
     if key.startswith("•••"):
@@ -364,7 +366,7 @@ def unmask_ai_key(key, saved_name):
     return key
 
 
-def saved_profile_for_masked(p, name):
+def saved_profile_for_masked(p: dict[str, Any], name: str | None) -> dict[str, Any] | None:
     """Профиль из формы с ключом-маской: отдать СОХРАНЁННЫЙ профиль целиком, иначе None.
 
     Маска значит «ключ не менял», но base_url и headers из тела запроса — это данные
@@ -378,7 +380,7 @@ def saved_profile_for_masked(p, name):
     return load_ai_config()["profiles"].get(name or "") or None
 
 
-def normalize_base_url(u):
+def normalize_base_url(u: Any) -> Any:
     """Нормализация Base URL: обрезка пробелов, слэшей и случайных хвостов-эндпоинтов."""
     if not u:
         return ""
@@ -398,7 +400,7 @@ def normalize_base_url(u):
     return u
 
 
-def parse_headers_text(text):
+def parse_headers_text(text: str | None) -> dict[str, str]:
     """Разбирает многострочный текст 'Имя: значение' в dict {str: str}.
     Пустые строки и строки без ':' пропускаются. Имя и значение обрезаются."""
     if not text or not isinstance(text, str):
@@ -416,7 +418,7 @@ def parse_headers_text(text):
     return out
 
 
-def apply_profile_headers(headers, prof):
+def apply_profile_headers(headers: Any, prof: Any) -> Any:
     """Возвращает новый словарь заголовков: базовые headers + сверху пользовательские из prof['headers'].
     Исходный словарь не мутирует."""
     out = dict(headers) if headers else {}
@@ -430,7 +432,7 @@ def apply_profile_headers(headers, prof):
     return out
 
 
-def _profile_dict(name, prof):
+def _profile_dict(name: str | None, prof: dict[str, Any]) -> dict[str, Any]:
     res = {"provider": prof.get("provider") or "lmstudio",
            "base_url": prof.get("base_url") or PROVIDER_PRESETS.get(
                prof.get("provider") or "lmstudio", {}).get("base_url") or DEFAULT_URL,
@@ -448,7 +450,7 @@ def _profile_dict(name, prof):
     return res
 
 
-def resolve_profile(model=None, url=None, name=None):
+def resolve_profile(model: str | None = None, url: str | None = None, name: str | None = None) -> dict[str, Any]:
     """Профиль по имени (name — для выбора модели ПОШАГОВО, см. step_profile), иначе
     активный. Плюс переопределения model/url (CLI/обратная совместимость).
     Возвращает dict {provider, base_url, api_key, model, name}."""
@@ -472,7 +474,7 @@ OMNI_GIGAAM = "__gigaam__" # GigaAMv3
 OMNI_LOCAL_ENGINES = {OMNI_LOCAL: "qwen", OMNI_GIGAAM: "gigaam"}
 
 
-def resolve_omni_profile():
+def resolve_omni_profile() -> dict[str, Any] | None:
     """Профиль для ОБЛАЧНОЙ Omni-транскрипции. None = локальный движок (см.
     omni_local_engine). ВНИМАНИЕ: облачный профиль отправляет АУДИО-чанки провайдеру."""
     cfg = load_ai_config()
@@ -485,14 +487,14 @@ def resolve_omni_profile():
     return _profile_dict(name, prof)
 
 
-def omni_local_engine():
+def omni_local_engine() -> str:
     """Какой ЛОКАЛЬНЫЙ движок слушает звук: 'qwen' | 'gigaam'. Для облачного
     профиля не вызывается (resolve_omni_profile вернёт dict). Неизвестное имя -> qwen."""
     name = load_ai_config().get("active_omni") or OMNI_LOCAL
     return OMNI_LOCAL_ENGINES.get(name, "qwen")
 
 
-def cut_asr_engine(emit=None):
+def cut_asr_engine(emit: Callable[..., Any] | None = None) -> str:
     """Какой ASR-движок делает пословные тайминги для нарезки.
 
     Берётся из ai_config.json (active_cut_asr), дефолт 'gigaam'.
@@ -521,7 +523,7 @@ def cut_asr_engine(emit=None):
 GLITCH_GLOW_MODES = ("builtin", "deepglow2")
 
 
-def glitch_glow_mode():
+def glitch_glow_mode() -> str:
     """Режим свечения жёлтого глитча: 'builtin' (Blur + Glo2) | 'deepglow2' (сторонний плагин)."""
     val = load_ai_config().get("glitch_glow")
     return val if val in GLITCH_GLOW_MODES else "builtin"

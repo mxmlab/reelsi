@@ -6,6 +6,10 @@
 
 # golden contract tests
 pytest>=8.0
+# per-test timeout to prevent hanging test runs across Windows and Linux
+pytest-timeout>=2.3
+# test coverage measurement and CI coverage ratchet
+pytest-cov>=5
 # linter; same rule set as in CI (ruff.toml)
 ruff>=0.6
 # static type check on the CORE BOUNDARY: the strict module list lives in
@@ -15,3 +19,6 @@ mypy>=1.11,<2
 # ONLY for retraining the breath detector (train_breath.py);
 # production ships the extracted breath_model.json
 scikit-learn>=1.3
+# git pre-commit hooks runner; run `pre-commit install` once
+pre-commit>=3
+

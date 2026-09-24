@@ -6,10 +6,13 @@
 для конкретного слота. Слоты нужны затем, что вставке в кадр и обложке нужны разные
 указания, а техчасть у них одна и та же.
 """
+from __future__ import annotations
 import json
 import socket
 import time
 import urllib.request, urllib.error
+from typing import Any, Callable
+
 from .config import APP_NAME, APP_REFERER, _profile_dict, apply_profile_headers, load_ai_config
 from .llm import ai_log_append, cancel_reason, cancelled
 from core.umsg import ReelsiError, umsg
@@ -29,7 +32,7 @@ IMAGE_MODEL_HINTS = ["google/gemini-3.1-flash-lite-image",   # ~$0.04/карти
                      "google/gemini-2.5-flash-image"]        # ~$0.04, прошлое поколение
 
 
-def image_rembg_on():
+def image_rembg_on() -> bool:
     """Убирать ли фон у сгенерённого (rembg → прозрачный PNG). По умолчанию ДА:
     image-модели отдают предмет на белом фоне, а вставки в базе — с альфой."""
     return bool(load_ai_config().get("image_rembg", True))
@@ -42,7 +45,7 @@ def image_rembg_on():
 IMAGE_PROMPT_SLOTS = ("a", "b", "pa", "pb")
 
 
-def resolve_image_prompt_cfg(slot="a", speaker=None):
+def resolve_image_prompt_cfg(slot: str = "a", speaker: Any = None) -> dict[str, Any]:
     """Настройки промпта генерации выбранного слота с учётом спикера.
     Цепочка разрешения:
     1) профиль спикера этого клипа (speaker: имя, label или dict) -> image_prompts[slot]
@@ -69,7 +72,7 @@ def resolve_image_prompt_cfg(slot="a", speaker=None):
     return {"extra": "", "pos": "suffix"}
 
 
-def build_image_prompt(query, cfg=None, slot="a", speaker=None):
+def build_image_prompt(query: Any, cfg: dict[str, Any] | None = None, slot: str = "a", speaker: Any = None) -> str:
     """Собрать промпт генерации из предмета и стилевой приписки выбранного слота.
     Приписка клеится ПРОБЕЛОМ, а не запятой: «broken eyeglasses 3d icon» — это одна
     именная группа, а «broken eyeglasses, 3d icon» модель читает как два предмета
@@ -81,7 +84,7 @@ def build_image_prompt(query, cfg=None, slot="a", speaker=None):
     return " ".join(p for p in parts if p)
 
 
-def resolve_image_profile():
+def resolve_image_profile() -> dict[str, Any] | None:
     """Профиль-«художник» для генерации картинок-вставок. None = выключено (дефолт).
     Годится только OpenAI-совместимый провайдер с image-моделью (OpenRouter/свой);
     anthropic/lmstudio картинки не генерят."""
@@ -97,10 +100,10 @@ def resolve_image_profile():
 # -> их supported_parameters. Заполняется из api/ai.py кнопкой «Обновить список».
 # Пусто — значит список не подтянут: шлём минимальный запрос (model+prompt), он
 # валиден для всех моделей.
-IMAGE_MODELS = {}
+IMAGE_MODELS: dict[str, Any] = {}
 
 
-def _img_http_error(e, prof):
+def _img_http_error(e: urllib.error.HTTPError, prof: dict[str, Any]) -> str:
     """Разбор HTTPError генерации картинки: фатальное -> ReelsiError, иначе строка
     для ретрая."""
     try:
@@ -117,7 +120,7 @@ def _img_http_error(e, prof):
     return f"{e.code}: {detail}"
 
 
-def _is_timeout(e):
+def _is_timeout(e: BaseException) -> bool:
     if isinstance(e, (TimeoutError, socket.timeout)):
         return True
     if isinstance(e, urllib.error.URLError):
@@ -127,7 +130,7 @@ def _is_timeout(e):
     return False
 
 
-def _check_img_timeout(e):
+def _check_img_timeout(e: BaseException) -> None:
     """Истечение таймаута без повтора: мёртвое соединение не должно удваивать ожидание."""
     if _is_timeout(e):
         raise ReelsiError(umsg("img_timeout", f"провайдер не ответил за {IMAGE_TIMEOUT_S} с — повтори генерацию", s=IMAGE_TIMEOUT_S))
@@ -141,7 +144,7 @@ class _Image404Error(Exception):
     pass
 
 
-def gen_image(prompt, prof=None, emit=console_emit, retries=1):
+def gen_image(prompt: str, prof: dict[str, Any] | None = None, emit: Callable[..., Any] = console_emit, retries: int = 1) -> bytes:
     """Одна картинка. Возвращает bytes (PNG/JPEG — как отдал провайдер).
 
     Модель в IMAGE_MODELS или каталог пуст -> Image API (POST /images).
@@ -176,7 +179,7 @@ def gen_image(prompt, prof=None, emit=console_emit, retries=1):
         raise
 
 
-def _gen_image_openrouter(prompt, prof, emit=console_emit, retries=1):
+def _gen_image_openrouter(prompt: str, prof: dict[str, Any], emit: Callable[..., Any] = console_emit, retries: int = 1) -> bytes:
     """Выделенный Image API: POST /images {model, prompt} ->
     {"data": [{"b64_json": ..., "media_type": ...}], "usage": {"cost": $}}.
     Замер: FLUX.2 Klein ~4с/$0.014 за картинку 1024×1024."""
@@ -242,7 +245,7 @@ def _gen_image_openrouter(prompt, prof, emit=console_emit, retries=1):
     raise ReelsiError(umsg("gen_failed", f"генерация картинки упала после {retries + 1} попыток: {last}", tries=retries + 1, last=last))
 
 
-def _gen_image_chat(prompt, prof, emit=console_emit, retries=1):
+def _gen_image_chat(prompt: str, prof: dict[str, Any], emit: Callable[..., Any] = console_emit, retries: int = 1) -> bytes:
     """Старый путь: OpenAI-совместимый /chat/completions с modalities:["image"]
     (base64 в choices[0].message.images[0].image_url.url)."""
     import base64

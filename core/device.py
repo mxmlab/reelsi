@@ -16,6 +16,7 @@ ROCm (AMD) отдельной ветки не требует: сборка PyTor
 """
 import os
 import platform
+from typing import Any
 from core.umsg import ReelsiError
 
 # MPS покрывает не все операции, и без этой переменной инференс падает на первой же
@@ -27,7 +28,7 @@ if platform.system() == "Darwin":
 VALID = ("cuda", "mps", "cpu")
 
 
-def pick_device(force=None):
+def pick_device(force: str | None = None) -> str:
     """Явный выбор (аргумент или env) приоритетнее авто. Всегда возвращает строку."""
     d = (force or "").strip().lower()
     if d in VALID:
@@ -45,7 +46,7 @@ def pick_device(force=None):
     return "cpu"
 
 
-def autocast_dtype(dev):
+def autocast_dtype(dev: str) -> Any:
     """fp16 — только там, где он проверенно быстрее и стабильнее.
 
     На CUDA половинная точность даёт 2x скорость и вдвое меньше памяти. На MPS fp16
@@ -57,7 +58,7 @@ def autocast_dtype(dev):
     return torch.float16 if dev == "cuda" else torch.float32
 
 
-def ct2_device(device=None, compute_type=None):
+def ct2_device(device: str | None = None, compute_type: str | None = None) -> tuple[str, str]:
     """(device, compute_type) для faster-whisper. Отдельно от pick_device — НЕ описка.
 
     faster-whisper работает на CTranslate2, а он не поддерживает ни Metal, ни ROCm:
@@ -80,7 +81,7 @@ def ct2_device(device=None, compute_type=None):
     return "cpu", (compute_type or "int8")
 
 
-def empty_cache(dev=None):
+def empty_cache(dev: str | None = None) -> None:
     """Отдать память обратно. На Windows переполнение VRAM не даёт честный OOM —
     оно вешает машину целиком, поэтому кэш чистим явно, а не надеемся на GC."""
     try:

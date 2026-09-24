@@ -30,6 +30,7 @@ import subprocess
 import sys
 import time
 import warnings
+from typing import Any, cast
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 from core import paths
@@ -52,7 +53,7 @@ _rows = []
 _bad = 0
 
 
-def row(status, what, detail=""):
+def row(status: str, what: str, detail: str = "") -> None:
     global _bad
     if status == ERR:
         _bad += 1
@@ -64,7 +65,7 @@ _DIST = {"PIL": "pillow", "sklearn": "scikit-learn", "silero_vad": "silero-vad",
          "faster_whisper": "faster-whisper", "fontTools": "fonttools"}
 
 
-def _mod(name):
+def _mod(name: str) -> tuple[bool, str]:
     """Модуль импортируется? Возвращает (bool, версия-или-причина).
 
     Версию берём из метаданных дистрибутива, а не из `__version__`: у Flask этот
@@ -86,7 +87,7 @@ def _mod(name):
 # --------------------------------------------------------------------------- #
 # Обязательное: без этого не запустится вообще
 # --------------------------------------------------------------------------- #
-def check_core():
+def check_core() -> None:
     v = sys.version_info
     ver = f"{v.major}.{v.minor}.{v.micro}"
     if v[:2] == (3, 10):
@@ -119,7 +120,7 @@ def check_core():
 # --------------------------------------------------------------------------- #
 # Вычислитель: какое устройство реально возьмётся
 # --------------------------------------------------------------------------- #
-def check_compute():
+def check_compute() -> None:
     ok, info = _mod("torch")
     if not ok:
         # Причину печатаем: «не установлен» и «установлен, но падает на импорте»
@@ -157,7 +158,7 @@ def check_compute():
                                   "ни ROCm. См. docs/PLATFORMS.md"))
 
 
-def check_whisper_cpp():
+def check_whisper_cpp() -> None:
     # whisper.cpp — опциональная замена faster-whisper для Mac/AMD (Metal/Vulkan).
     # Это не питоновский пакет, поэтому ставится мимо pip; отсутствие бинарника
     # или моделей только отключает быструю транскрипцию (WARN, а не FAIL — как в check_optional).
@@ -197,7 +198,7 @@ OPTIONAL = [
 ]
 
 
-def check_optional():
+def check_optional() -> None:
     for name, feature in OPTIONAL:
         ok, info = _mod(name)
         row(OK if ok else WARN, name,
@@ -207,7 +208,7 @@ def check_optional():
 # --------------------------------------------------------------------------- #
 # Данные и шрифт
 # --------------------------------------------------------------------------- #
-def check_assets():
+def check_assets() -> None:
     for f, why in (("refblobs.json", t("шаблоны субтитр-графики")),
                    ("sub_template.xml", t("шаблон субтитров")),
                    ("refblobs_color.json", t("цветные блобы субтитров"))):
@@ -282,7 +283,7 @@ def check_assets():
 # --------------------------------------------------------------------------- #
 # Куда пишем и откуда берём материал
 # --------------------------------------------------------------------------- #
-def check_workspace():
+def check_workspace() -> None:
     try:
         from core.app_meta import env, out_dir
         from core.cams import find_cam_dirs
@@ -302,7 +303,7 @@ def check_workspace():
     row(OK, t("папка результата"), out_dir(base))
 
 
-def check_ae_tooling():
+def check_ae_tooling() -> None:
     """node нужен только core/verify_jsx.py — проверить .jsx до открытия в AE."""
     if _which("node"):
         row(OK, "node", t("есть — core/verify_jsx.py сможет проверять синтаксис .jsx"))
@@ -311,7 +312,7 @@ def check_ae_tooling():
                           "(остальные его проверки работают)"))
 
 
-def check_external():
+def check_external() -> None:
     """Внешние опциональные бинарники: rclone (гугл-диск) и After Effects (рендер).
 
     То же правило, что у пакетов в check_optional: нет — код 0 и сказано, какая
@@ -361,7 +362,7 @@ def check_external():
                                    "%ProgramFiles%\\Adobe\\Adobe After Effects *)"))
 
 
-def _plur(n, one, few, many, en_one="", en_other=""):
+def _plur(n: int, one: str, few: str, many: str, en_one: str = "", en_other: str = "") -> str:
     """«1 функция» / «2 функции» / «5 функций» — иначе отчёт выглядит машинным."""
     if ui_lang() == "en" and en_one:
         return en_one if abs(n) == 1 else en_other
@@ -372,7 +373,7 @@ def _plur(n, one, few, many, en_one="", en_other=""):
     return one if d == 1 else few if 1 < d < 5 else many
 
 
-def _flush(title=None):
+def _flush(title: str | None = None) -> None:
     """Напечатать накопленные строки. Заголовки печатаются между блоками, а не
     все скопом перед таблицей — иначе секция «опциональное» уезжает наверх."""
     global _rows
@@ -386,7 +387,7 @@ def _flush(title=None):
     _rows = []
 
 
-def main():
+def main() -> int:
     global _bad, _rows
     _bad = 0
     _rows = []
@@ -431,7 +432,7 @@ if __name__ == "__main__":
         # печать UnicodeEncodeError. Та же починка, что в webui.py.
         for _s in (sys.stdout, sys.stderr):
             try:
-                _s.reconfigure(encoding="utf-8", errors="replace")
+                cast(Any, _s).reconfigure(encoding="utf-8", errors="replace")
             except ReelsiError: raise
             except Exception:
                 pass  # поток без reconfigure — печатаем как есть

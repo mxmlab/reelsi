@@ -9,13 +9,14 @@ VRAM: Omni крутится в subprocess (torch, 7.5ГБ) и выходит, о
     python omni_cut.py --cam1 A.MP4 --cam2 B.MP4 --out cut.xml
 """
 import sys, os, re, json, argparse, tempfile, subprocess
+from typing import Any, Generator, Sequence, cast
 
 # Импорт до первого try: сторож `except ReelsiError` ниже обязан видеть это имя.
 from core.umsg import ReelsiError, cli_error
 
 try:
-    sys.stdout.reconfigure(encoding="utf-8")
-    sys.stderr.reconfigure(encoding="utf-8")   # текст ошибки идёт в stderr — иначе \uXXXX
+    cast(Any, sys.stdout).reconfigure(encoding="utf-8")
+    cast(Any, sys.stderr).reconfigure(encoding="utf-8")   # текст ошибки идёт в stderr — иначе \uXXXX
 except ReelsiError: raise
 except Exception:
     pass  # поток без reconfigure — русский текст ошибки и так уходит в stderr
@@ -91,11 +92,11 @@ HALLUC_SEED = {
 }
 
 
-def _norm_phrase(t):
+def _norm_phrase(t: str | None) -> str:
     return " ".join(re.findall(r"[а-яёa-z]+", (t or "").lower()))
 
 
-def _load_halluc():
+def _load_halluc() -> set[str]:
     try:
         return HALLUC_SEED | set(json.load(open(HALLUC_PHRASES_PATH, encoding="utf-8")))
     except ReelsiError: raise
@@ -103,7 +104,7 @@ def _load_halluc():
         return set(HALLUC_SEED)
 
 
-def _learn_halluc(phrases):
+def _learn_halluc(phrases: Sequence[str]) -> None:
     if not phrases:
         return
     if not os.path.exists(HALLUC_PHRASES_PATH):
@@ -129,7 +130,7 @@ def _learn_halluc(phrases):
         atomic_json_dump(HALLUC_PHRASES_PATH, sorted(new), indent=1)
 
 
-def voiced_ratio(seg, sr=16000):
+def voiced_ratio(seg: Any, sr: int = 16000) -> float:
     """Доля фреймов с голосовым тоном (пик автокорреляции в диапазоне F0 60–350 Гц).
     Речь 0.4–0.8; чистый кашель/«кхе»/щелчок — ~0.0 (шум без периодичности).
     ВНИМАНИЕ: вздох С ТОНОМ даёт 0.3–0.55 — акустикой от речи не отличим, его ловят
@@ -153,7 +154,7 @@ def voiced_ratio(seg, sr=16000):
     return voiced / tot if tot else 0.0
 
 
-def halluc_drop(texts, unvoiced=None, emit=console_emit):
+def halluc_drop(texts: Sequence[dict[str, Any]], unvoiced: set[int] | None = None, emit: Any = console_emit) -> set[int]:
     """Пре-фильтр галлюцинаций Omni ДО LLM. Возвращает set индексов на выброс.
     Три слоя (только для коротких интервалов <3.0с — длинные всегда содержат речь):
     1) акустика: интервал без голосового тона (unvoiced из voiced_ratio) = кашель;
@@ -162,9 +163,11 @@ def halluc_drop(texts, unvoiced=None, emit=console_emit):
     3) словарик известных фраз-галлюцинаций (сид + выученные ранее)."""
     dur = lambda t: float(t.get("end", 0)) - float(t.get("start", 0))
     short = {i for i, t in enumerate(texts) if dur(t) < 3.0}
+    drops: set[int]
+    why: dict[int, str]
     drops, why = set(), {}
     known = _load_halluc()
-    counts = {}
+    counts: dict[str, list[int]] = {}
     for i in short:
         n = _norm_phrase(texts[i]["text"])
         if n:
@@ -191,7 +194,7 @@ def halluc_drop(texts, unvoiced=None, emit=console_emit):
     return drops
 
 
-def is_nonspeech(text, dur=None):
+def is_nonspeech(text: str | None, dur: float | None = None) -> bool:
     """Очевидная не-речь/филлер — убираем БЕЗ LLM: пометки [смех]/[Звуки воды]/[respiration],
     одиночные буквы «А», вырожденные «Ааааа», пустое, короткие вздохи-охи-филлеры,
     галлюцинации Omni на кашле (невозможная плотность букв, боилерплейт отказа)."""
@@ -228,7 +231,7 @@ def is_nonspeech(text, dur=None):
     return False
 
 
-def _defective(t):
+def _defective(t: dict[str, Any]) -> bool:
     """Явный брак интервала, который разрешено выкидывать ДАЖЕ если он длинный
     (обходит гард allow_long_drop). NG-пересъёмка, галлюцинация Omni, не-речь."""
     txt = t.get("text", "")
@@ -244,7 +247,7 @@ def _defective(t):
         r"|стоп,? давай|снято,? заново|извините, но я не могу)\b", low))
 
 
-def _rms_env(af, sr=16000, win=0.02, hop=0.01):
+def _rms_env(af: Any, sr: int = 16000, win: float = 0.02, hop: float = 0.01) -> tuple[Any, Any]:
     """Короткие RMS-кадры аудио -> (время, rms). Для привязки резов к тишине."""
     import numpy as np
     fl = max(1, int(win * sr)); hl = max(1, int(hop * sr))
@@ -256,7 +259,7 @@ def _rms_env(af, sr=16000, win=0.02, hop=0.01):
     return t, rms
 
 
-def _snap_silence(t_arr, rms_arr, t, win=0.4, quiet_frac=0.3):
+def _snap_silence(t_arr: Any, rms_arr: Any, t: float, win: float = 0.4, quiet_frac: float = 0.3) -> float | None:
     """Ближайшая тишина к t (локальный минимум RMS в окне ±win), либо None,
     если в окне нет заметно тихого места (тогда резать посередине слова опасно)."""
     import numpy as np
@@ -274,11 +277,11 @@ def _snap_silence(t_arr, rms_arr, t, win=0.4, quiet_frac=0.3):
     return float(t_arr[k])
 
 
-def _wordset(text):
+def _wordset(text: str | None) -> set[str]:
     return set(re.findall(r"[а-яёa-z]+", (text or "").lower()))
 
 
-def _pair_dup(ta, tb, thr=0.6):
+def _pair_dup(ta: str | None, tb: str | None, thr: float = 0.6) -> bool:
     """(Почти-)дубль двух текстов: большое пересечение слов ИЛИ один — подмножество другого."""
     a, b = _wordset(ta), _wordset(tb)
     if not a or not b:
@@ -287,7 +290,7 @@ def _pair_dup(ta, tb, thr=0.6):
     return inter / len(a | b) >= thr or inter >= 0.85 * min(len(a), len(b))
 
 
-def _tail_retake(ta, tb):
+def _tail_retake(ta: str | None, tb: str | None) -> bool:
     """tb — короткий ПЕРЕЗАХОД ХВОСТА длинного ta: слова tb почти целиком внутри ta,
     но tb сильно меньше (< 50% слов). Реальный кейс: 8с вступление «Хотите расти в
     зале … это то что вам нужно» + отдельный пере-заход «это то что вам нужно» —
@@ -298,7 +301,7 @@ def _tail_retake(ta, tb):
     return len(a & b) >= 0.85 * len(b)
 
 
-def _dup_of_neighbor(texts, i, span=4, thr=0.6):
+def _dup_of_neighbor(texts: Sequence[dict[str, Any]], i: int, span: int = 4, thr: float = 0.6) -> bool:
     """True if interval i is (near-)duplicate of an interval within ±span. Guards against
     dropping unique content. Короткий перезаход хвоста соседа дублем НЕ считается —
     иначе длинное вступление гибнет из-за пересъёма 5-словного хвоста."""
@@ -313,7 +316,7 @@ def _dup_of_neighbor(texts, i, span=4, thr=0.6):
     return False
 
 
-def _tail_cut_by_words(wav_path, iv, tail_text, emit=console_emit):
+def _tail_cut_by_words(wav_path: str, iv: Sequence[float], tail_text: str | None, emit: Any = console_emit) -> tuple[float, float] | None:
     """Где в КОНЦЕ длинного интервала начинается старый хвост (тот же текст, что и
     перезаход)? Пословные тайминги Whisper по хвостовому окну; матчим ПОСЛЕДНЕЕ
     вхождение первых 3 слов перезахода. Возвращает (t0, t1) на вырез или None
@@ -340,12 +343,13 @@ def _tail_cut_by_words(wav_path, iv, tail_text, emit=console_emit):
     return (t0, e)
 
 
-def _joint_snippet(a16, keep, t, span=4.0, sr=16000):
+def _joint_snippet(a16: Any, keep: Sequence[Sequence[float]], t: float, span: float = 4.0, sr: int = 16000) -> Any:
     """Склейка звука вокруг стыка t ТОЧНО как в финальном черновике: последние span
     секунд keep-кусков до t + первые span секунд после. Для речека склейки."""
     import numpy as np
     left = [(s, e) for s, e in keep if e <= t + 1e-3]
     right = [(s, e) for s, e in keep if e > t + 1e-3]
+    parts: list[Any]
     parts, need = [], span
     for s, e in reversed(left):
         take = min(need, e - s)
@@ -365,7 +369,7 @@ def _joint_snippet(a16, keep, t, span=4.0, sr=16000):
     return np.concatenate(parts) if parts else None
 
 
-def _count_key(norm_text, key_words):
+def _count_key(norm_text: str, key_words: Sequence[str]) -> int:
     """Сколько раз в нормализованном тексте встречается связка первых слов хвоста."""
     key = " ".join(key_words)
     cnt, start = 0, 0
@@ -378,13 +382,15 @@ def _count_key(norm_text, key_words):
     return cnt
 
 
-def _splice_recheck_omni(a16, keep, tail_list, texts, work, emit=console_emit):
+def _splice_recheck_omni(a16: Any, keep: Sequence[Sequence[float]], tail_list: Sequence[tuple[tuple[float, float], int, int]], texts: Sequence[dict[str, Any]], work: str, emit: Any = console_emit) -> list[tuple[tuple[float, float], int, int]]:
     """РЕЧЕК СКЛЕЕК СЛУХОМ OMNI: склейки стыков (тот же звук, что уйдёт в черновик)
     пишутся в один wav с паузами-разделителями, omni_asr слушает ДОСЛОВНО (повторы
     не причёсывает — в отличие от Whisper, поэтому проверяет именно он). Фраза-хвост
     должна прозвучать ровно один раз; дважды = старый хвост уцелел (тайминги Whisper
     соврали) -> склейку откатываем. Возвращает список проваленных (rng, i, j)."""
     import numpy as np, soundfile as sf
+    spans: list[tuple[float, float] | None]
+    buf: list[Any]
     spans, buf, pos = [], [], 0.0
     gap = np.zeros(int(0.6 * 16000), dtype="int16")
     for rng, i, j in tail_list:
@@ -429,7 +435,7 @@ def _splice_recheck_omni(a16, keep, tail_list, texts, work, emit=console_emit):
     return bad
 
 
-def _splice_recheck(a16, keep, tail_list, texts, work, emit=console_emit):
+def _splice_recheck(a16: Any, keep: Sequence[Sequence[float]], tail_list: Sequence[tuple[tuple[float, float], int, int]], texts: Sequence[dict[str, Any]], work: str, emit: Any = console_emit) -> list[tuple[tuple[float, float], int, int]]:
     """Фолбэк-речек Whisper'ом (если omni_asr упал): та же проверка, но Whisper
     склонен «причёсывать» повторы — может пропустить уцелевший хвост."""
     import soundfile as sf
@@ -462,19 +468,19 @@ def _splice_recheck(a16, keep, tail_list, texts, work, emit=console_emit):
     return bad
 
 
-def _wav_duration(path):
+def _wav_duration(path: str) -> float:
     import soundfile as sf
     return float(sf.info(path).duration)
 
 
-def _frange(start, stop, step):
+def _frange(start: float, stop: float, step: float) -> Generator[float, None, None]:
     x = start
     while x < stop - 0.5:
         yield x
         x += step
 
 
-def _full_pass(wav_path, a, work, emit=console_emit):
+def _full_pass(wav_path: str, a: Any, work: str, emit: Any = console_emit) -> list[dict[str, Any]] | None:
     """«Анализ фулом»: слушаем ролик СПЛОШНЫМИ окнами, тишину НЕ вырезаем.
 
     Зачем отдельно от нарезки: замерено на _c1295 — в поинтервальном режиме кусок
@@ -504,7 +510,7 @@ def _full_pass(wav_path, a, work, emit=console_emit):
         module_cmd("omni_asr", wav_path, "--intervals", ivf, "--out", dst, unbuffered=True),
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, encoding="utf-8", errors="replace", bufsize=1, env=child_env())
-    for line in proc.stdout:
+    for line in cast(Any, proc.stdout):
         if line.strip():
             emit("  {line}", line=line.rstrip())
     proc.wait()
@@ -514,7 +520,7 @@ def _full_pass(wav_path, a, work, emit=console_emit):
     return json.load(open(dst, encoding="utf-8"))
 
 
-def _free_vram_for_render(emit=None):
+def _free_vram_for_render(emit: Any = None) -> None:
     """Освободить VRAM перед NVENC-рендером черновика.
 
     `aicut.unload_ours()` выгружает наши модели LM Studio, а если в VRAM висит ещё модель,
@@ -533,7 +539,7 @@ def _free_vram_for_render(emit=None):
                     "видеопамять может остаться занятой", ex)
 
 
-def _load_omni_cache(omf, intervals):
+def _load_omni_cache(omf: str, intervals: Sequence[Sequence[float]]) -> list[dict[str, Any]] | None:
     """Кэш Omni-транскрипта (<out>.omni.json) -> список или None, если кэш не пригоден.
 
     Пригоден только СОВПАДАЮЩИЙ с этим роликом кэш: та же длина И те же интервалы.
@@ -561,7 +567,7 @@ def _load_omni_cache(omf, intervals):
     return cand
 
 
-def _guard_keep(keep, intervals):
+def _guard_keep(keep: Sequence[Sequence[float]], intervals: Sequence[Sequence[float]]) -> None:
     """Санитарный гард доли речи: меньше 25% (или пусто) — отказ от перезаписи."""
     kept_s = sum(e - s for s, e in keep)
     src_s = sum(e - s for s, e in intervals)
@@ -572,9 +578,9 @@ def _guard_keep(keep, intervals):
             f"Проверь модель и промпт в настройках ⚙ и запусти ещё раз.")
 
 
-def decide(texts, emit=console_emit, model=None, ssm_flags=None, overrides=None, halluc=None,
+def decide(texts: Sequence[dict[str, Any]], emit: Any = console_emit, model: str | None = None, ssm_flags: dict[int, bool] | None = None, overrides: dict[str, Any] | None = None, halluc: set[int] | None = None,
 
-           full_map=None, allow_long_drop=False):
+           full_map: list[dict[str, Any]] | None = None, allow_long_drop: bool = False) -> tuple[set[int], set[int], str, list[tuple[int, int]]]:
     """ssm_flags: {idx: True} — внутри интервала акустика слышит повтор фразы.
     overrides: user_overrides из .project.json прошлого прогона — юзер руками вернул
     вырезанное («не выкидывай похожее»). halluc: set индексов от halluc_drop()
@@ -589,7 +595,7 @@ def decide(texts, emit=console_emit, model=None, ssm_flags=None, overrides=None,
                if i not in halluc and not is_nonspeech(t["text"], dur(t))]
     auto_drop = halluc | {i for i, t in enumerate(texts) if is_nonspeech(t["text"], dur(t))}
 
-    def _line(i, t):
+    def _line(i: int, t: dict[str, Any]) -> str:
         hints = []
         gap = (float(texts[i + 1]["start"]) - float(t["end"])) if i + 1 < len(texts) else None
         if gap is not None and gap >= 0.8:               # значимая пауза = сигнал стыка дублей
@@ -649,7 +655,7 @@ def decide(texts, emit=console_emit, model=None, ssm_flags=None, overrides=None,
     # НЕ дропаем здесь — возвращаем пары наверх: main попробует срезать СТАРЫЙ хвост
     # внутри [i] по пословным таймингам Whisper (идеал: начало [i] + новый хвост [j]);
     # не выйдет — фолбэк там же (дроп [j], [i] целиком)
-    tail_pairs = []
+    tail_pairs: list[tuple[int, int]] = []
     dropped = llm_drop | auto_drop
     for i in range(len(texts)):
         if i in dropped:
@@ -681,7 +687,7 @@ def decide(texts, emit=console_emit, model=None, ssm_flags=None, overrides=None,
     return auto_drop, llm_drop, data.get("notes", ""), tail_pairs
 
 
-def main(work):
+def main(work: str) -> None:
     """Собственно нарезка. `work` — рабочий каталог (создаёт обёртка в
     `__main__`, он же чистит в finally; при «Стоп» его удаляет сервер в
     `_kill_curproc` по маркеру WORK_DIR= из stdout)."""
@@ -760,7 +766,7 @@ def main(work):
               flush=True)
     if gigaam_path:
         from core.gigaam_cut import run as _gc_run
-        stages = {}
+        stages: dict[str, Any] = {}
         # Явный draft: в CLI без флага --no-draft черновик включён; при --omni-review черновик обязателен (как на сервере)
         stages["draft"] = not a.no_draft or bool(a.omni_review)
         if a.dedupe is not None:
@@ -785,7 +791,7 @@ def main(work):
                 "scale": a.scale, "keep": [[round(s, 3), round(e, 3)] for s, e in keep]}
         if a.speaker:
             proj["speaker"] = a.speaker
-        write_project(os.path.splitext(a.out)[0] + ".project.json", proj)
+        write_project(os.path.splitext(a.out)[0] + ".project.json", cast(Any, proj))
         # cut-log: что именно и почему убрано
         cutlog.sort(key=lambda c: c["t0"])
         logf = os.path.splitext(a.out)[0] + ".cuts.json"
@@ -835,7 +841,7 @@ def main(work):
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, encoding="utf-8", errors="replace", bufsize=1, env=child_env())
         errtail = []
-        for line in proc.stdout:
+        for line in cast(Any, proc.stdout):
             line = line.rstrip()
             if line:
                 print("  " + line, flush=True)
@@ -850,6 +856,8 @@ def main(work):
     # SSM-преданализ ДО LLM: акустический детект повторов внутри КАЖДОГО интервала.
     # Двойная польза: подсказка LLM («внутри повтор фразы») + готовые резы для kept
     # (второй раз не считаем). Аудио грузим один раз здесь.
+    af: Any
+    ssm_pre: dict[int, Any]
     af, ssm_pre = None, {}
     import soundfile as sf, numpy as np
     a16, _ = sf.read(wavs[0], dtype="int16")
@@ -921,7 +929,7 @@ def main(work):
         aicut.unload_ours()                              # VRAM под Whisper (для облака no-op)
         aicut.warn_foreign_models()
     for i, j in tail_pairs:
-        rng = None
+        rng: Any = None
         try:
             rng = _tail_cut_by_words(wavs[0], intervals[i], texts[j]["text"])
         except ReelsiError: raise
@@ -994,6 +1002,7 @@ def main(work):
     if a.ssm:
         # SSM режет внутри-фразовый повтор (резы уже посчитаны преданализом до LLM)
         from core import ssm as ssmmod
+        ssm_ranges: list[Any]
         ssm_ranges, n_breath = [], 0
         for i in kept_idx:
             s, e = intervals[i]
@@ -1109,7 +1118,7 @@ def main(work):
     # Повторная запись тех же сайдкаров, что уже положил pipeline (он пишет их до
     # чернового рендера): здесь они дополняются selfcheck/user_overrides. Пишем тем же
     # атомарным способом — open(...,"w") усекал готовую разметку до сериализации (GZ, п. A).
-    write_project(os.path.splitext(a.out)[0] + ".project.json", proj)
+    write_project(os.path.splitext(a.out)[0] + ".project.json", cast(Any, proj))
 
     # cut-log: что именно и почему убрано (ничего молча) — рядом с XML + на экран
     cutlog.sort(key=lambda c: c["t0"])

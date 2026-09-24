@@ -11,6 +11,7 @@ Silicon и Radeon транскрипция всегда идёт на CPU. whisp
 остальные движки работают как работали. Диспетчер и реестр движков —
 в asr_backends.py.
 """
+from __future__ import annotations
 import hashlib
 import io
 import json
@@ -24,6 +25,7 @@ import tarfile
 import tempfile
 import urllib.request
 import zipfile
+from typing import Any, Sequence, cast
 from core.app_meta import console_emit
 from core.umsg import ReelsiError, cli_error
 
@@ -61,7 +63,7 @@ MODEL_FILES = {
 _BIN_NAME = "whisper-cli.exe" if sys.platform == "win32" else "whisper-cli"
 
 
-def whisper_cli_path():
+def whisper_cli_path() -> str | None:
     """Где взять бинарник: явный путь (REELSI_WHISPER_CLI), PATH (brew/scoop/apt),
     своя папка BIN_DIR. Возвращает путь или None."""
     explicit = os.environ.get("REELSI_WHISPER_CLI")
@@ -85,20 +87,20 @@ def whisper_cli_path():
     return None
 
 
-def _model_file(size):
+def _model_file(size: str) -> str:
     f = MODEL_FILES.get(size)
     if not f:
         raise RuntimeError("whisper.cpp: неизвестный размер модели '%s'" % size)
     return f
 
 
-def model_path(size):
+def model_path(size: str) -> str | None:
     """Путь к модели, если она уже скачана в свою папку, иначе None."""
     path = os.path.join(MODELS_DIR, _model_file(size))
     return path if os.path.isfile(path) else None
 
 
-def ensure_model(size):
+def ensure_model(size: str) -> str:
     """Скачать ggml-модель (если ещё нет) и вернуть путь к файлу.
 
     Докачка с места обрыва — встроенная в huggingface_hub (файлы .incomplete),
@@ -122,7 +124,7 @@ def ensure_model(size):
                            % (_model_file(size), type(e).__name__, e))
 
 
-def _hms_to_sec(s):
+def _hms_to_sec(s: str | None) -> float | None:
     """'00:00:00,000' / '00:00:00.000' -> секунды (float)."""
     s = (s or "").replace(",", ".").strip()
     parts = s.split(":")
@@ -134,7 +136,7 @@ def _hms_to_sec(s):
         return None
 
 
-def _scales(data):
+def _scales(data: dict[str, Any]) -> tuple[float, float]:
     """Делители таймкодов -> (для слов, для offsets сегментов).
 
     Форматы плавают между версиями: v1.9+ пишет МИЛЛИСЕКУНДЫ и в словах, и в
@@ -158,7 +160,7 @@ def _scales(data):
     return 100, 1                              # исторический формат без timestamps
 
 
-def parse_words(data):
+def parse_words(data: dict[str, Any]) -> list[dict[str, Any]]:
     """JSON из `whisper-cli -oj` -> [{"w","start","end"}] (секунды).
 
     Версии, у которых слова есть, — берём их; у остальных натягиваем слова на
@@ -191,7 +193,7 @@ def parse_words(data):
     return words
 
 
-def transcribe(wav_path, size="large-v3"):
+def transcribe(wav_path: str, size: str = "large-v3") -> list[dict[str, Any]]:
     """Прогнать whisper-cli по файлу и вернуть [{"w","start","end"}] (сек).
 
     Отдельным процессом (как GigaAM/CTC в asr_backends.py): нативный краш или
@@ -265,7 +267,7 @@ ASSET_SHA256 = {
 }
 
 
-def _pick_asset(assets, names):
+def _pick_asset(assets: Sequence[dict[str, Any]] | None, names: Sequence[str] | set[str]) -> str | None:
     """Выбрать URL ассета по имени из JSON-ответа GitHub API (сохранено для тестов)."""
     for a in assets or []:
         if (a.get("name") or "") in names:
@@ -273,7 +275,7 @@ def _pick_asset(assets, names):
     return None
 
 
-def _is_safe_member_path(base_dir, member_path):
+def _is_safe_member_path(base_dir: str, member_path: str) -> bool:
     """Проверить, что путь внутри архива не выходит за пределы base_dir."""
     if not member_path:
         return False
@@ -291,7 +293,7 @@ def _is_safe_member_path(base_dir, member_path):
     return target == real_base or target.startswith(real_base + os.sep)
 
 
-def _safe_extract_zip(z, target_dir):
+def _safe_extract_zip(z: zipfile.ZipFile, target_dir: str) -> None:
     """Безопасная распаковка zip: проверка всех путей до извлечения."""
     for info in z.infolist():
         if not _is_safe_member_path(target_dir, info.filename):
@@ -302,7 +304,7 @@ def _safe_extract_zip(z, target_dir):
     z.extractall(target_dir)
 
 
-def _norm_member_name(name):
+def _norm_member_name(name: str) -> str:
     """Нормализовать имя члена архива для единообразного сравнения."""
     norm = posixpath.normpath(name.replace("\\", "/"))
     while norm.startswith("./"):
@@ -310,7 +312,7 @@ def _norm_member_name(name):
     return norm
 
 
-def _safe_extract_tar(t, target_dir):
+def _safe_extract_tar(t: tarfile.TarFile, target_dir: str) -> None:
     """Безопасная распаковка tar с поддержкой внутренних симлинков и хардлинков.
 
     ELF-бинарники whisper.cpp (whisper-cli) на Linux линкуются с DT_NEEDED
@@ -426,7 +428,7 @@ def _safe_extract_tar(t, target_dir):
         t.extractall(target_dir)
 
 
-def install_cli(emit=console_emit):
+def install_cli(emit: Any = console_emit) -> str:
     """Скачать whisper-cli под платформу и распаковать в BIN_DIR.
 
     Только по явному запросу (CLI). Скачивает строго закреплённую версию v1.9.2
@@ -482,7 +484,7 @@ if __name__ == "__main__":
         # роняет печать UnicodeEncodeError (та же починка, что в doctor.py/webui.py).
         for _s in (sys.stdout, sys.stderr):
             try:
-                _s.reconfigure(encoding="utf-8", errors="replace")
+                cast(Any, _s).reconfigure(encoding="utf-8", errors="replace")
             except ReelsiError: raise
             except Exception:
                 pass  # поток без reconfigure — служебная печать не критична

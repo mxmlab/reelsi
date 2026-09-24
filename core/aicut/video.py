@@ -8,6 +8,7 @@
 """
 import os, re, json, shutil, subprocess, math, tempfile
 import urllib.request, urllib.error
+from typing import Any, Callable, Optional, cast
 from .config import APP_NAME, APP_REFERER, _profile_dict, apply_profile_headers, load_ai_config, save_ai_config
 from core.umsg import ReelsiError, umsg
 from core.app_meta import SafeRedirectHandler, console_emit, http_req, unsafe_url_reason
@@ -34,7 +35,7 @@ VIDEO_ROLES = ("reference", "first_frame", "last_frame")
 VIDEO_PROMPT_SLOTS = ("a", "b")
 
 
-def resolve_video_prompt_cfg(slot="a", speaker=None):
+def resolve_video_prompt_cfg(slot: str = "a", speaker: Any = None) -> dict[str, str]:
     """Настройки видео-промпта выбранного слота из профиля спикера.
 
     Профиль может прийти ключом/label или уже загруженным словарём. Отсутствие
@@ -59,7 +60,7 @@ def resolve_video_prompt_cfg(slot="a", speaker=None):
     return {"extra": "", "pos": "suffix"}
 
 
-def build_video_prompt(query, slot="a", speaker=None):
+def build_video_prompt(query: Any, slot: str = "a", speaker: Any = None) -> str:
     """Собрать запрос карточки и личную приписку на сервере.
 
     Приписка склеивается пробелом, как у картинок: это один предмет/сцена, а не
@@ -72,7 +73,7 @@ def build_video_prompt(query, slot="a", speaker=None):
     return " ".join(p for p in parts if p)
 
 
-def video_insert_duration(duration_sec, model):
+def video_insert_duration(duration_sec: Any, model: str) -> int:
     """Длительность видео-вставки: вверх, затем 3…4 с и только по caps модели.
 
     Карточка хранит исходное окно отдельно: удлинять его ради ограничений модели
@@ -103,7 +104,7 @@ def video_insert_duration(duration_sec, model):
         model=model, target=target))
 
 
-def video_auto_duration(source_duration, model):
+def video_auto_duration(source_duration: Any, model: str) -> int:
     """Выбрать длину raw-ролика по проверенному исходнику и caps модели.
 
     Длину округляем вверх: сгенерированный ролик не должен оказаться короче
@@ -130,16 +131,16 @@ def video_auto_duration(source_duration, model):
     return next((x for x in allowed if x >= target), allowed[-1])
 
 
-def _aspect_value(value):
+def _aspect_value(value: Any) -> Optional[float]:
     try:
         a, b = str(value).split(":", 1)
-        a, b = float(a), float(b)
-        return a / b if a > 0 and b > 0 else None
+        a, b = float(a), float(b)  # type: ignore[assignment]  # re-assigned to float
+        return cast(float, a) / cast(float, b) if cast(float, a) > 0 and cast(float, b) > 0 else None
     except (TypeError, ValueError, ZeroDivisionError):
         return None
 
 
-def video_auto_aspect(width, height, model):
+def video_auto_aspect(width: Any, height: Any, model: str) -> str:
     """Ближайшая поддерживаемая пропорция к размерам исходника."""
     caps = video_caps(model)
     aspects = list(caps.get("aspect_ratios") or []) if caps else []
@@ -148,16 +149,16 @@ def video_auto_aspect(width, height, model):
     try:
         ratio = float(width) / float(height)
     except (TypeError, ValueError, ZeroDivisionError):
-        return aspects[0]
+        return cast(str, aspects[0])
     if ratio <= 0:
-        return aspects[0]
+        return cast(str, aspects[0])
     scored = [(abs(math.log(ratio / v)), i, aspect)
               for i, aspect in enumerate(aspects)
               if (v := _aspect_value(aspect))]
-    return min(scored)[2] if scored else aspects[0]
+    return cast(str, min(scored)[2] if scored else aspects[0])
 
 
-def video_auto_shape(refs, model):
+def video_auto_shape(refs: Optional[list[dict[str, Any]]], model: str) -> dict[str, Any]:
     """Вернуть raw-форму из первого видео, иначе первой картинки.
 
     Видео без размеров всё ещё является источником длительности, но для aspect
@@ -277,13 +278,13 @@ VIDEO_MODEL_HINTS = list(VIDEO_MODELS)     # порядок в выпадашк�
 # сам отвергнет лишнее. Документированная схема input_references — ТОЛЬКО картинки
 # (image_url), поля text на референсе нет; видео-референс и подпись-к-референсу
 # схемой НЕ описаны — поэтому подписи всегда вплетаем в промпт (_video_prompt).
-VIDEO_MODEL_CAPS = {}
+VIDEO_MODEL_CAPS: dict[str, Any] = {}
 # Ключ провайдера, для которого загружен VIDEO_MODEL_CAPS:
 # (provider, base_url без хвостового «/» в нижнем регистре). None = не привязан/пуст.
-VIDEO_CATALOG_KEY = None
+VIDEO_CATALOG_KEY: Optional[tuple[str, str]] = None
 
 
-def _catalog_key(prof):
+def _catalog_key(prof: Any) -> Optional[tuple[str, str]]:
     """Ключ источника каталога: (provider, base_url без хвостового «/» в нижнем регистре).
     Принимает словарь профиля или кортеж (provider, base_url). Пусто/невалидно -> None."""
     if not prof:
@@ -300,7 +301,7 @@ def _catalog_key(prof):
     return None
 
 
-def _active_video_profile():
+def _active_video_profile() -> Optional[dict[str, Any]]:
     """Разрешить активный видео-профиль с учётом возможного мока на фасаде aicut."""
     import sys
     _mod = sys.modules.get("core.aicut")
@@ -313,7 +314,7 @@ def _active_video_profile():
 _NO_PROFILE = object()
 
 
-def _catalog_matches(prof=None):
+def _catalog_matches(prof: Any = None) -> bool:
     """Совпадает ли ключ текущего каталога в памяти с профилем prof (или active_video).
     Если в месте чтения профиль не передан — пробуем _active_video_profile().
     Если профиля нет вовсе (CLI/изолированный тест): если ключ не был задан (каталог
@@ -329,7 +330,7 @@ def _catalog_matches(prof=None):
     return key is not None and VIDEO_CATALOG_KEY == key
 
 
-def set_video_catalog(key, entries):
+def set_video_catalog(key: Any, entries: Any) -> None:
     """Обновить глобальный каталог видео-моделей под указанный ключ источника.
     Объект словаря один на процесс: VIDEO_MODEL_CAPS не переприсваивается
     (сохраняется идентичность для импортёров aicut.VIDEO_MODEL_CAPS), а очищается
@@ -353,7 +354,7 @@ def set_video_catalog(key, entries):
                     VIDEO_MODEL_CAPS[mid] = m
 
 
-def video_model_entry(model, prof=None):
+def video_model_entry(model: str, prof: Any = None) -> dict[str, Any]:
     """Сырая запись каталога по id модели (или {}). Регистронезависимо.
     Возвращает запись, только если каталог в памяти соответствует профилю prof."""
     if not _catalog_matches(prof):
@@ -361,7 +362,7 @@ def video_model_entry(model, prof=None):
     return VIDEO_MODEL_CAPS.get((model or "").lower()) or {}
 
 
-def _caps_refs(entry):
+def _caps_refs(entry: dict[str, Any]) -> Optional[bool]:
     """Заявляет ли каталог input_references (референсы стиля/движения/персонажа) как
     ВХОД. Каталог OpenRouter (2026-07) перечисляет их СТРУКТУРНО: у Seedance 2.0
     есть `supported_frame_images` (первый/последний кадр), но поля про input_references
@@ -374,7 +375,7 @@ def _caps_refs(entry):
     return None
 
 
-def video_caps(model, prof=None):
+def video_caps(model: Optional[str], prof: Any = None) -> Optional[dict[str, Any]]:
     """Нормализованные возможности модели: ЖИВОЙ каталог + встроенный VIDEO_MODELS.
     None — модель неизвестна обоим (шлём как есть, провайдер сам отвергнет лишнее).
 
@@ -388,18 +389,18 @@ def video_caps(model, prof=None):
     if not e and not b:
         return None
 
-    def _lst(key):
+    def _lst(key: str) -> list[str]:
         v = e.get("supported_" + key)
         if isinstance(v, (list, tuple)) and v:
             return [str(x) for x in v]
-        return [str(x) for x in (b.get(key) or [])]
+        return [str(x) for x in cast(list[Any], (b.get(key) or []))]
 
-    def _flag(ekey, bkey):
+    def _flag(ekey: str, bkey: str) -> bool:
         return bool(e[ekey]) if (e and e.get(ekey) is not None) else bool(b.get(bkey))
 
     refs = _caps_refs(e) if e else None
     if refs is None:
-        refs = b.get("references")             # каталог молчит — что знаем сами (None ок)
+        refs = cast(Optional[bool], b.get("references"))             # каталог молчит — что знаем сами (None ок)
     return {"model": mid,
             "label": b.get("label") or "",
             "note": b.get("note") or "",
@@ -416,7 +417,7 @@ def video_caps(model, prof=None):
             "ref_images": b.get("ref_images"),
             "ref_videos": b.get("ref_videos"),
             "ref_video_total_s": b.get("ref_video_total_s"),
-            "image_formats": list(b.get("image_formats") or []),
+            "image_formats": list(cast(list[Any], b.get("image_formats") or [])),
             "image_formats_strict": bool(b.get("image_formats_strict")),
             "raw": e}
 
@@ -427,7 +428,7 @@ _IMG_FMT = {"mjpeg": "jpeg", "jpeg": "jpeg", "jpg": "jpeg", "png": "png", "apng"
             "avif": "avif", "heif": "heif", "heic": "heif"}
 
 
-def image_format_of(ref):
+def image_format_of(ref: dict[str, Any]) -> str:
     """Формат картинки-референса ('jpeg'/'png'/'webp'/…) или '' — не определили.
     Сначала то, что увидел ffprobe/HEAD (ссылка может быть вообще без расширения),
     потом расширение."""
@@ -440,7 +441,7 @@ def image_format_of(ref):
     return _IMG_FMT.get(ext[-1].lower(), "") if len(ext) == 2 else ""
 
 
-def ensure_video_catalog(prof, emit=None):
+def ensure_video_catalog(prof: Optional[dict[str, Any]], emit: Optional[Callable[..., Any]] = None) -> None:
     """Подтянуть каталог видео-моделей провайдера, если его ещё нет в памяти
     (бесплатный GET). Нужен, чтобы предполёт знал ограничения модели ДАЖЕ когда
     страницу не открывали (CLI, свежий процесс) — и чтобы не улететь запросом на
@@ -472,7 +473,7 @@ def ensure_video_catalog(prof, emit=None):
         emit("  видео: каталог провайдера — {count} моделей", count=len(VIDEO_MODEL_CAPS))
 
 
-def video_model_list(prof=None):
+def video_model_list(prof: Any = None) -> list[dict[str, Any]]:
     """Список моделей для выпадашки на странице «Видео»: встроенные главные (в своём
     порядке) + всё, что вернул живой каталог. Каждой — её caps, чтобы UI подстраивал
     поля СРАЗУ, без сетевого запроса."""
@@ -493,7 +494,7 @@ def video_model_list(prof=None):
 _PROBE_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Reelsi/1.0"
 
 
-def _head_media(url, timeout=12):
+def _head_media(url: str, timeout: int = 12) -> tuple[str, int]:
     """Content-Type и размер по ссылке (HEAD, при отказе — GET первых байт) ->
     (тип, байты). Отличает ПРЯМУЮ ссылку на файл от ссылки на страницу: провайдер
     качает URL сам и на HTML отвечает отказом уже после отправки запроса."""
@@ -516,7 +517,7 @@ def _head_media(url, timeout=12):
     return "", 0
 
 
-def probe_media(url, timeout=25):
+def probe_media(url: str, timeout: int = 25) -> dict[str, Any]:
     """Что лежит по ГОТОВОЙ ссылке -> {kind, duration, width, height, ctype, size}
     ({} — не вышло). kind: image | video | audio | page (ссылка на СТРАНИЦУ, не файл).
 
@@ -580,7 +581,7 @@ def probe_media(url, timeout=25):
     return info
 
 
-def resolve_refs(refs, emit=None):
+def resolve_refs(refs: Optional[list[dict[str, Any]]], emit: Optional[Callable[..., Any]] = None) -> Optional[list[dict[str, Any]]]:
     """Досмотреть референсы ПЕРЕД отправкой: у каждой ссылки выясняем реальный тип и
     длину (probe_media) и пишем их в сам ref. Без этого тип берётся из расширения —
     а у ссылок его часто нет, и видео уходило бы в image_url (гарантированный отказ).
@@ -602,7 +603,9 @@ def resolve_refs(refs, emit=None):
 
 
 
-def video_check(model, opts, refs, caps=None, probe=False, prompt=None, prof=None):
+def video_check(model: str, opts: Optional[dict[str, Any]], refs: Optional[list[dict[str, Any]]],
+                caps: Optional[dict[str, Any]] = None, probe: bool = False,
+                prompt: Optional[str] = None, prof: Any = None) -> list[str]:
     """ПРЕДПОЛЁТНАЯ проверка запроса -> список проблем человеческим текстом (пусто =
     можно слать). Смысл: 400 от провайдера приходит на чужом языке и через полминуты
     ожидания, а половина отказов — правила, которые видно заранее.
@@ -636,7 +639,7 @@ def video_check(model, opts, refs, caps=None, probe=False, prompt=None, prof=Non
             bad.append(f"«{model}» — не видео-модель этого провайдера: выбери модель из списка")
         return bad
 
-    def _in(val, allowed, what):
+    def _in(val: Any, allowed: Optional[list[str]], what: str) -> None:
         if val in (None, "", "auto") or not allowed:
             return
         if str(val) not in allowed:
@@ -716,7 +719,9 @@ def video_check(model, opts, refs, caps=None, probe=False, prompt=None, prof=Non
     return bad
 
 
-def video_warnings(model, refs, caps=None, prompt=None, prof=None):
+def video_warnings(model: str, refs: Optional[list[dict[str, Any]]],
+                   caps: Optional[dict[str, Any]] = None,
+                   prompt: Optional[str] = None, prof: Any = None) -> list[str]:
     """Не отказ, но стоит сказать вслух ДО оплаты: формат картинки под вопросом
     (вендор его не заявлял, но и отказом мы это не видели) и @-тег в промпте без
     приложенного файла. Блокировать такое нельзя — данные неточные."""
@@ -737,7 +742,7 @@ def video_warnings(model, refs, caps=None, prompt=None, prof=None):
     return out
 
 
-def _ref_is_video(r):
+def _ref_is_video(r: Optional[dict[str, Any]]) -> bool:
     """Референс — видео? Сначала явный kind (его ставит ffprobe), потом расширение."""
     k = str((r or {}).get("kind") or "")
     if k:
@@ -745,7 +750,7 @@ def _ref_is_video(r):
     return is_video_url((r or {}).get("url"))
 
 
-def resolve_video_profile():
+def resolve_video_profile() -> Optional[dict[str, Any]]:
     """Профиль-«режиссёр» для генерации видео. None = выключено (дефолт).
     Нужен OpenRouter (или совместимый) с видео-эндпоинтом POST {base_url}/videos;
     anthropic/lmstudio видео не генерят."""
@@ -757,7 +762,7 @@ def resolve_video_profile():
     return _profile_dict(name, prof)
 
 
-def video_model_cfg():
+def video_model_cfg() -> str:
     """Какой моделью генерим: общий выбор из ⚙ (ai_config.video_model) -> модель
     профиля -> первая встроенная. Профиль остаётся только провайдером и ключом."""
     cfg = load_ai_config()
@@ -765,7 +770,7 @@ def video_model_cfg():
     return str(cfg.get("video_model") or prof.get("model") or VIDEO_MODEL_HINTS[0]).strip()
 
 
-def video_resolution_cfg(model=None, prof=None):
+def video_resolution_cfg(model: Optional[str] = None, prof: Any = None) -> str:
     """Разрешение генерации видео из общего ai_config.video_resolution.
 
     Пусто/нет = провайдер решает сам (""). Для ИЗВЕСТНОЙ модели с непустыми caps
@@ -785,7 +790,7 @@ def video_resolution_cfg(model=None, prof=None):
     return saved
 
 
-def video_resolution_sync(model=None, prof=None):
+def video_resolution_sync(model: Optional[str] = None, prof: Any = None) -> str:
     """Переоценить сохранённое разрешение против актуальных caps модели и СБРОСИТЬ
     устаревшее на сервере. Живой каталог мог измениться ПОСЛЕ сохранения (смена модели
     или свежий /videos/models убрал значение) — иначе осталось бы скрытое устаревшее
@@ -810,18 +815,19 @@ def video_resolution_sync(model=None, prof=None):
 _VIDEO_URL_EXTS = (".mp4", ".mov", ".m4v", ".webm", ".mkv", ".avi")
 
 
-def is_video_url(url):
+def is_video_url(url: Any) -> bool:
     """Ссылка ведёт на видео (по расширению, query-строку отбрасываем). Иначе — фото."""
     u = str(url or "").split("?", 1)[0].split("#", 1)[0].lower()
     return u.endswith(_VIDEO_URL_EXTS)
 
 
-def _video_ref_item(url, caption="", frame_type=None, kind=None):
+def _video_ref_item(url: str, caption: str = "", frame_type: Optional[str] = None, kind: Optional[str] = None) -> dict[str, Any]:
     """Один элемент input_references или frame_images по ГОТОВОЙ HTTPS-ссылке.
     OpenRouter Video API качает референс по URL — локальные файлы/data-URI он
     отвергает («Only HTTPS URLs are allowed», проверено на seedance-2.0). Видео ->
     video_url, картинка -> image_url. caption дублируется в text (страховка)."""
     is_vid = (kind == "video") if kind else is_video_url(url)
+    item: dict[str, Any]
     if is_vid:
         item = {"type": "video_url", "video_url": {"url": url}}
     else:
@@ -833,17 +839,17 @@ def _video_ref_item(url, caption="", frame_type=None, kind=None):
     return item
 
 
-def video_ref_tag(kind_is_video, img_n, vid_n):
+def video_ref_tag(kind_is_video: bool, img_n: int, vid_n: int) -> str:
     """@-тег референса по официальному синтаксису Seedance 2.0: изображения ->
     @image1..@image9, видео -> @video1..@video3 (модель связывает файл с промптом
     именно по этому тегу; «Референс N» она игнорирует)."""
     return f"@video{vid_n}" if kind_is_video else f"@image{img_n}"
 
 
-def video_ref_tags(refs):
+def video_ref_tags(refs: Optional[list[dict[str, Any]]]) -> list[str]:
     """Список @-тегов для refs в их порядке (нумерация по ТИПУ — как ждёт Seedance).
     Отдаётся и в UI (показать тег на карточке), и в _video_prompt (вплести в текст)."""
-    tags, img_n, vid_n = [], 0, 0
+    tags, img_n, vid_n = cast(list[str], []), 0, 0
     for r in refs or []:
         is_vid = _ref_is_video(r)
         if is_vid:
@@ -863,7 +869,7 @@ _VIDEO_TAG_ALIASES = [
 ]
 
 
-def normalize_video_tags(text):
+def normalize_video_tags(text: Any) -> str:
     """Привести @-упоминания в тексте к канону Seedance (@image/@video/@audio + число).
     Синонимы -> канон; бесцифровой тег (@video) -> @video1."""
     import re
@@ -875,7 +881,7 @@ def normalize_video_tags(text):
     return t
 
 
-def _video_prompt(prompt, refs):
+def _video_prompt(prompt: Any, refs: Optional[list[dict[str, Any]]]) -> str:
     """Финальный промпт: сцена + инструкции к референсам через @-упоминания
     (@image1/@video1). Именно так Seedance 2.0 связывает приложенный файл с текстом.
     Юзер может САМ вписать @video1 в промпт (синонимы @photo/@видео нормализуются) —
@@ -902,7 +908,7 @@ def _video_prompt(prompt, refs):
     return " ".join(parts).strip()
 
 
-def dangling_tags(text, refs):
+def dangling_tags(text: Any, refs: Optional[list[dict[str, Any]]]) -> list[str]:
     """@-теги, упомянутые в промпте, к которым НЕТ приложенного файла. Модель такой
     тег не свяжет ни с чем — а деньги за генерацию уже возьмут, поэтому предупреждаем."""
     have = set(video_ref_tags(refs))
@@ -916,8 +922,8 @@ class _PollBadResponse(Exception):
     pass
 
 
-def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
-              emit=console_emit, should_cancel=None, poll_every=5.0, max_wait=1800):
+def gen_video(prompt: Any, refs: Optional[list[dict[str, Any]]] = None, opts: Optional[dict[str, Any]] = None, out_dir: Optional[str] = None, prof: Optional[dict[str, Any]] = None,
+              emit: Callable[..., Any] = console_emit, should_cancel: Optional[Callable[[], bool]] = None, poll_every: float = 5.0, max_wait: int = 1800) -> dict[str, Any]:
     """Сгенерировать одно видео. Блокирующая (зовётся в фоновом потоке api/videogen.py).
 
     refs — [{url, caption, role}] (url — ГОТОВАЯ https-ссылка; role: reference|
@@ -960,10 +966,10 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
     bad = video_check(model, opts, refs, caps=caps, probe=True, prompt=prompt, prof=prof)
     if bad:
         raise ReelsiError(umsg("bad_opts", "; ".join(bad), list="; ".join(bad)))
-    payload = {"model": model, "prompt": _video_prompt(prompt, refs)}
+    payload: dict[str, Any] = {"model": model, "prompt": _video_prompt(prompt, refs)}
     for w in video_warnings(model, refs, caps=caps, prompt=prompt, prof=prof):
         emit("  видео: {warning}", warning=w)
-    def _put(key, value, allowed=None, label=None):
+    def _put(key: str, value: Any, allowed: Optional[list[str]] = None, label: Optional[str] = None) -> None:
         if allowed and str(value) not in allowed:
             emit("  видео: {key} «{value}» не в списке модели ({list}) — не шлю",
                  key=label or key, value=value,
@@ -1008,7 +1014,7 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
     # data-URI он отвергает). Подпись в любом случае уже в промпте (_video_prompt).
     refs_ok = caps["references"] if caps else None   # None=каталог не подтверждает
     frame_ok = caps["frame_images"] if caps else None
-    frame_imgs, input_refs = [], []
+    frame_imgs, input_refs = cast(list[dict[str, Any]], []), cast(list[dict[str, Any]], [])
     for r in refs:
         url = str(r.get("url") or "").strip()
         if not url:
@@ -1042,13 +1048,13 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
          model=model, refs=len(input_refs), frames=len(frame_imgs))
     t0 = _t.time()
 
-    def _post(url, data):
+    def _post(url: str, data: Any) -> dict[str, Any]:
         req = http_req(url, data=json.dumps(data).encode("utf-8"),
                        headers=headers)
         with urllib.request.urlopen(req, timeout=180) as r:
-            return json.load(r)
+            return cast(dict[str, Any], json.load(r))
 
-    def _get(url):
+    def _get(url: str) -> dict[str, Any]:
         req = http_req(url, headers=headers)
         with urllib.request.urlopen(req, timeout=180) as r:
             body = r.read()
@@ -1078,7 +1084,7 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
                               resp=json.dumps(job, ensure_ascii=False)[:200]))
     emit("  видео: задача {vid} принята, жду готовности…", vid=vid or '—')
 
-    def _stop():
+    def _stop() -> ReelsiError:
         """«Стоп» после отправки: наша остановка опроса задачу у провайдера НЕ
         отменяет — она досчитается и будет оплачена. Публичной схемой отмена не
         описана, но статус cancelled и вебхук video.generation.cancelled есть, значит
@@ -1097,7 +1103,7 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
                            f"задача {vid} может досчитаться и списаться; готовое видео "
                            f"будет тут: {base}/videos/{vid}")
 
-    status, cost, urls = "", None, []
+    status, cost, urls = "", None, cast(list[str], [])
     errs = 0                                             # подряд идущие ошибки опроса
     while _t.time() - t0 < max_wait:
         if should_cancel():
@@ -1164,7 +1170,7 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
     # на базовом хосте всё равно пробуем с авторизацией.
     from urllib.parse import urlparse
     base_host = urlparse(base).netloc.lower()
-    tries = []
+    tries: list[tuple[str, bool]] = []
     for u in urls:
         same = urlparse(u).netloc.lower() == base_host
         tries += [(u, False)] + ([(u, True)] if same else [])
@@ -1219,7 +1225,7 @@ def gen_video(prompt, refs=None, opts=None, out_dir=None, prof=None,
                     last = "пустой файл"
                     continue
 
-                with open(tmp_path, "rb") as f:
+                with open(tmp_path, "rb") as f:  # type: ignore[assignment]  # re-opened in read mode
                     head = f.read(12)
                 is_mp4 = len(head) >= 8 and head[4:8] in {b"ftyp", b"moov", b"mdat", b"wide", b"free", b"skip"}
                 is_webm = len(head) >= 4 and head[:4] == b"\x1a\x45\xdf\xa3"
@@ -1298,7 +1304,7 @@ _VIDEO_ERR_HINTS = [
 ]
 
 
-def _video_error_text(detail):
+def _video_error_text(detail: Any) -> tuple[str, str]:
     """Вытащить человеческую суть из ответа провайдера. OpenRouter вкладывает ошибку
     апстрима строкой в свой JSON («message»: «HTTP 400: {...}»), и в UI прилетала
     каша из скобок. -> (короткий текст ошибки, подсказка что делать | '')."""
@@ -1324,7 +1330,7 @@ def _video_error_text(detail):
     return msg[:300], ""
 
 
-def _video_http_error(e, prof, where):
+def _video_http_error(e: urllib.error.HTTPError, prof: dict[str, Any], where: str) -> Any:
     """HTTPError видео-эндпоинта -> UMsg с кодом (для ReelsiError)."""
     try:
         detail = e.read().decode("utf-8", "replace")[:1200]

@@ -57,7 +57,7 @@ jobs:
           # Pillow, pyarrow, zstandard — тесты drp, verify, boundaries, arrowfix.
           # Спецификаторы в кавычках: без них `>=` в bash — перенаправление вывода в файл «=10.0».
           # ruff и mypy — оба из requirements-dev.txt, строгий список типов в pyproject.toml.
-          pip install flask numpy scipy soundfile pytest ruff mypy fonttools "pillow>=10.0" pyarrow "zstandard>=0.22"
+          pip install flask numpy scipy soundfile pytest pytest-timeout pytest-cov ruff "mypy>=1.11,<2" fonttools "pillow>=10.0" pyarrow "zstandard>=0.22"
 
       # Отрендеренный .jsx (шаблон AE_FULL с подстановками) проверяет node
       # (test_rendered_jsx_syntax.py): сам шаблон может быть валиден, а сборка —
@@ -77,7 +77,7 @@ jobs:
         run: mypy
 
       - name: Tests
-        run: python -m pytest tests -q
+        run: python -m pytest tests -q --cov=api --cov=core --cov=tools --cov-report=term:skip-covered --cov-fail-under=73
 
   test-windows:
     if: github.repository == 'mxmlab/reelsi'
@@ -99,7 +99,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install torch torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
           # Дополняем PyPI индексом pytorch, а не заменяем — почему, разобрано в джобе test.
-          pip install flask numpy scipy soundfile pytest fonttools "pillow>=10.0" pyarrow "zstandard>=0.22"
+          pip install flask numpy scipy soundfile pytest pytest-timeout fonttools "pillow>=10.0" pyarrow "zstandard>=0.22"
 
       - uses: actions/setup-node@v6
         with:

@@ -31,14 +31,16 @@ CLI (тест качества на одном видео/диапазоне):
     masks = roto.alpha_for_ranges(video, [(0,2.6),(5.3,8.5)], out_dir, emit=print)
     # -> [{"start":0.0,"end":2.6,"mask": ".../roto_000.mp4","f":2.0}, ...]
 """
+from __future__ import annotations
 import os, subprocess, time
+from typing import Any, Callable, Sequence, cast
 
 from core import paths
 from core.app_meta import env, console_emit, wrap_emit
 from core.device import pick_device, autocast_dtype
 from core.umsg import ReelsiError, cli_error
 
-_MODEL = None          # (model, dev, dtype) кэш
+_MODEL: tuple[Any, str, Any] | None = None          # (model, dev, dtype) кэш
 _VARIANT = "mobilenetv3"   # быстрее; "resnet50" — качественнее/медленнее
 # Фиксация коммита (голова master от 2023-03-13) для воспроизводимости и безопасности
 RVM_REPO = "PeterL1n/RobustVideoMatting:53d74c6826735f01f4406b5ca9075eee27bec094"
@@ -46,15 +48,15 @@ RVM_REPO = "PeterL1n/RobustVideoMatting:53d74c6826735f01f4406b5ca9075eee27bec094
 # разрешении 8 кадров ~ 2 ГБ VRAM; на CPU/fp32 движок сам ужмёт до 2.
 SEQ_CHUNK = 8
 _INTERNAL_PX = 960     # внутреннее разрешение RVM по длинной стороне (как v1: 4K*0.25)
-_HW = {"dec": {}, "enc": None}     # кэш доступности NVDEC (по кодеку исходника) / NVENC
+_HW: dict[str, Any] = {"dec": {}, "enc": None}     # кэш доступности NVDEC (по кодеку исходника) / NVENC
 
 
-def _pick_device(force=None):
+def _pick_device(force: str | None = None) -> str:
     """cuda / mps / cpu. force имеет приоритет, затем env REELSI_ROTO_DEVICE, затем авто."""
     return pick_device(force or env("ROTO_DEVICE"))
 
 
-def _is_oom(ex):
+def _is_oom(ex: BaseException) -> bool:
     """Нехватка видеопамяти? torch.cuda.OutOfMemoryError есть не во всех сборках,
     плюс OOM прилетает и текстом из ffmpeg/драйвера — проверяем и то, и другое."""
     try:
@@ -69,7 +71,7 @@ def _is_oom(ex):
             or "cublas_status_alloc_failed" in s or "cudnn_status_alloc_failed" in s)
 
 
-def release(emit=console_emit):
+def release(emit: Any = console_emit) -> bool:
     """Выгрузить модель RVM из памяти/VRAM (звать после сборки, чтобы не держать
     видеопамять, пока веб-интерфейс простаивает). По образцу transcribe.release_model."""
     emit = wrap_emit(emit)
@@ -91,7 +93,7 @@ def release(emit=console_emit):
     return True
 
 
-def _load(force_device=None):
+def _load(force_device: str | None = None) -> tuple[Any, str, Any]:
     """Загрузить модель RVM (torch.hub, с кэшем). На CUDA — fp16 (2x скорость, 1/2 VRAM).
     Если запрошено другое устройство, чем в кэше — перезагрузить (и освободить старое)."""
     global _MODEL
@@ -121,7 +123,7 @@ def _load(force_device=None):
 MIN_SEG_SEC = 0.15   # короче — не рото-ить (микро-вставки/каты дают вырез без кадров -> падение RVM)
 
 
-def _has_frames(path):
+def _has_frames(path: str) -> bool:
     """Проверить, что в файле есть декодируемый видеопоток хотя бы с 1 кадром."""
     if not os.path.isfile(path):
         return False
@@ -137,7 +139,7 @@ def _has_frames(path):
         return False
 
 
-def _probe(video):
+def _probe(video: str) -> tuple[int, int, float, str]:
     """(width, height, fps_float, fps_raw) видеопотока — размеры КАК НА ЭКРАНЕ.
     Вертикальные исходники (side data rotation=±90) ffmpeg авто-поворачивает при
     декоде, поэтому для конвейера w/h меняем местами (иначе кадр сплющит)."""
@@ -166,11 +168,11 @@ def _probe(video):
         return 0, 0, 60.0, "60"
 
 
-def _fps(video):
+def _fps(video: str) -> float:
     return _probe(video)[2]
 
 
-def _codec(video):
+def _codec(video: str) -> str:
     """codec_name видеопотока (для кэша NVDEC: h264 может уметь, а prores/vp9 — нет)."""
     try:
         out = subprocess.run(
@@ -184,7 +186,7 @@ def _codec(video):
     return out or os.path.splitext(video)[1].lower()   # кодек не распознан — хотя бы расширение
 
 
-def _nvdec_ok(video):
+def _nvdec_ok(video: str) -> bool:
     """NVDEC-декод доступен для этого исходника? Кэш ПО КОДЕКУ: в наборе камеры могут
     быть в разных кодеках — глобальный кэш по первому видео молча ронял декод остальных."""
     key = _codec(video)
@@ -197,10 +199,10 @@ def _nvdec_ok(video):
         except ReelsiError: raise
         except Exception:
             _HW["dec"][key] = False        # проба зависла/упала -> CPU-декод
-    return _HW["dec"][key]
+    return cast(bool, _HW["dec"][key])
 
 
-def _nvenc_ok():
+def _nvenc_ok() -> bool:
     """h264_nvenc доступен? (проверка один раз на сессию)
 
     Кадр пробы — 256x256, НЕ меньше: на 64x64 NVENC отвечает «Frame Dimension less
@@ -215,10 +217,10 @@ def _nvenc_ok():
         except ReelsiError: raise
         except Exception:
             _HW["enc"] = False             # проба зависла/упала -> libx264
-    return _HW["enc"]
+    return cast(bool, _HW["enc"])
 
 
-def _read_exact(pipe, n):
+def _read_exact(pipe: Any, n: int) -> bytes:
     """Дочитать ровно n байт из pipe (read может отдать меньше). b'' на EOF."""
     buf = bytearray()
     while len(buf) < n:
@@ -229,7 +231,7 @@ def _read_exact(pipe, n):
     return bytes(buf)
 
 
-def _mask_scale_div(src_h):
+def _mask_scale_div(src_h: int) -> int:
     """Во сколько раз ужимать маску. 4K -> половина (1080p, для luma-матте хватает),
     FHD и меньше — как есть. env REELSI_ROTO_FULLRES=1 = всегда полное разрешение."""
     if env("ROTO_FULLRES"):
@@ -237,9 +239,9 @@ def _mask_scale_div(src_h):
     return 2 if src_h >= 1600 else 1
 
 
-def alpha_for_video(video, out_mask, downsample_ratio=None, bottom_pct=0.0,
-                    device=None, seq_chunk=None, emit=console_emit,
-                    start=0.0, n_frames=None):
+def alpha_for_video(video: str, out_mask: str, downsample_ratio: float | None = None, bottom_pct: float = 0.0,
+                    device: str | None = None, seq_chunk: int | None = None, emit: Any = console_emit,
+                    start: float = 0.0, n_frames: int | None = None) -> tuple[str, float] | None:
     """RVM по `video` -> grayscale альфа-маска в `out_mask` (.mp4). Потоково:
     ffmpeg-декод (NVDEC если есть) -> RVM на GPU -> ffmpeg-энкод (NVENC если есть).
     start/n_frames: окно исходника (сек / кадров) — без промежуточного файла.
@@ -288,12 +290,12 @@ def alpha_for_video(video, out_mask, downsample_ratio=None, bottom_pct=0.0,
          variant=_VARIANT, dev_label=dev_label, ow=ow, oh=oh, chunk=chunk,
          name=os.path.basename(out_mask))
     frame_bytes = ow * oh * 3
-    p_dec = subprocess.Popen(dec, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    p_dec: Any = subprocess.Popen(dec, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                              bufsize=frame_bytes * (chunk + 1))
-    p_enc = subprocess.Popen(enc, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+    p_enc: Any = subprocess.Popen(enc, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL)
     import numpy as np
-    done, t0, t_rep, last = 0, time.time(), time.time(), None
+    done, t0, t_rep, last = 0, time.time(), time.time(), cast(Any, None)
     try:
         with torch.inference_mode():
             rec = [None] * 4
@@ -358,7 +360,7 @@ def alpha_for_video(video, out_mask, downsample_ratio=None, bottom_pct=0.0,
     return (out_mask, float(div)) if _has_frames(out_mask) else None
 
 
-def _mask_key(video, s, e, bottom_pct, div):
+def _mask_key(video: str, s: float, e: float, bottom_pct: float, div: int) -> str:
     """Стабильный ключ маски по СОДЕРЖИМОМУ: pkey-путь, mtime в наносекундах и размер
     (st_mtime_ns + st_size) + границы + низ + делитель разрешения + модель/px RVM.
     st_mtime_ns и st_size защищают от подмены видео на том же пути в ту же секунду
@@ -378,9 +380,9 @@ def _mask_key(video, s, e, bottom_pct, div):
     return hashlib.md5(raw.encode("utf-8")).hexdigest()[:16]
 
 
-def alpha_for_ranges(video, ranges, out_dir, bottom_pct=0.0,
-                     device=None, seq_chunk=None, emit=console_emit, cache_dir=None,
-                     cancel=None, failures=None):
+def alpha_for_ranges(video: str, ranges: Sequence[Any], out_dir: str, bottom_pct: float = 0.0,
+                     device: str | None = None, seq_chunk: int | None = None, emit: Any = console_emit, cache_dir: str | None = None,
+                     cancel: Callable[[], bool] | None = None, failures: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """Для каждого (start,end) сек исходного видео камеры получить альфа-маску его
     сегмента. Возвращает [{start,end,mask,f}] (mask = grayscale .mp4, f = во сколько
     раз маска мельче исходника — AE-слой маски масштабировать на scale*f).
@@ -411,7 +413,7 @@ def alpha_for_ranges(video, ranges, out_dir, bottom_pct=0.0,
     # тихо не срабатывало, хотя фактический чанк на CUDA равен SEQ_CHUNK.
     # _pick_device — тот же резолвер, что внутри _load, только без загрузки модели.
     chunk = int(seq_chunk or (SEQ_CHUNK if _pick_device(device) == "cuda" else 2))
-    res, n_cache = [], 0
+    res, n_cache = cast(list[dict[str, Any]], []), 0
     for i, (s, e) in enumerate(ranges):
         if cancel():
             emit("  ⏹ рото прервано на {cur}/{total} — посчитанные маски в кэше",

@@ -5,6 +5,7 @@
 Дерево «слой → группа → поле». Единственный источник дефолтов — core.styles.BASE.
 """
 import copy
+from typing import Any
 from core import styles
 
 LAYERS = [
@@ -2102,7 +2103,7 @@ EXTERNAL = {
 }
 
 
-def schema():
+def schema() -> dict[str, Any]:
     """Возвращает схему панели стиля, базовые значения BASE и внешние ключи."""
     return {
         "layers": LAYERS,

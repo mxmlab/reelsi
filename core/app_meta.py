@@ -18,7 +18,7 @@ from core import paths
 from core.umsg import ReelsiError
 
 APP_NAME = "Reelsi"
-APP_VERSION = "0.2.0-beta"
+APP_VERSION = "0.2.1-beta"
 APP_REFERER = "https://mxmlab.si/reelsi"
 
 # Дефолтный Python-urllib User-Agent режется Cloudflare (403, error code 1010)

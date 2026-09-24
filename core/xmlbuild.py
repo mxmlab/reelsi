@@ -11,7 +11,9 @@ Timeline model (validated against the real Timeline 2.xml):
   * pproTicks = frame * 4233600000.
   * cam2 source time = cam1 source time + delta, delta = -sync_offset.
 """
+from __future__ import annotations
 import os, re, urllib.parse, subprocess, json
+from typing import Any, Sequence
 from core import fileio, media
 from core.xmltext import xml_text as _esc
 from core.umsg import ReelsiError
@@ -22,7 +24,7 @@ SUB_FIT_CHARS = 14                    # words longer than this get font-scaled d
 SRC_FPS = 30000 / 1001                # 29.97 source rate (display only)
 
 
-def pathurl(p):
+def pathurl(p: str) -> str:
     """Путь ОС -> file://-URL с процентным экранированием.
 
     Кодируем БАЙТЫ пути (`os.fsencode`), а не строку: `quote(str)` падал
@@ -35,7 +37,7 @@ def pathurl(p):
     return "file://localhost/" + q
 
 
-def unpathurl(u):
+def unpathurl(u: str) -> str:
     """file://localhost/C%3a/… -> C:\\… (обратная к pathurl).
 
     Разделитель — os.sep, а не жёсткий бэкслэш: на Linux и macOS «/tmp/a/cam.mp4»
@@ -57,7 +59,7 @@ _FILE_BLOCK = re.compile(r'<file\s+id="[^"]+"\s*>.*?</file>', re.S)
 _TC_STRING = re.compile(r'(<timecode>.*?<string>)[^<]*(</string>)', re.S)
 
 
-def fix_timecodes(text):
+def fix_timecodes(text: str) -> tuple[str, int]:
     """Проставить в ГОТОВОМ XML настоящие таймкоды исходников. Возвращает (текст, сколько).
 
     Нужно для файлов, нарезанных до того, как починили `probe()` (см. pick_timecode):
@@ -70,7 +72,7 @@ def fix_timecodes(text):
     """
     n = 0
 
-    def one(m):
+    def one(m: Any) -> str:
         nonlocal n
         block = m.group(0)
         pu = re.search(r"<pathurl>([^<]+)</pathurl>", block)
@@ -92,10 +94,10 @@ def fix_timecodes(text):
     return _FILE_BLOCK.sub(one, text), n
 
 
-_PROBE_CACHE = {}                     # (path, mtime) -> dict — в батче камера пробуется 1 раз
+_PROBE_CACHE: dict[Any, Any] = {}                     # (path, mtime) -> dict — в батче камера пробуется 1 раз
 
 
-def pick_timecode(d):
+def pick_timecode(d: dict[str, Any]) -> str:
     """Стартовый таймкод исходника из ЛЮБОГО потока или из формата.
 
     Раньше спрашивали только у `v:0`, но камеры Sony (XAVC) кладут таймкод в
@@ -115,7 +117,7 @@ def pick_timecode(d):
     return "00;00;00;00"
 
 
-def probe(path, still_ok=True):
+def probe(path: str, still_ok: bool = True) -> dict[str, Any]:
     """Return dict(width,height,dur_s,timecode,fps?).
 
     `still_ok` — разрешить фото: у картинок ffprobe не даёт `format.duration`
@@ -216,11 +218,11 @@ AUDIO_FILTER = """\t\t\t\t\t\t<filter>
 """
 
 
-def _db_to_gain(db):
+def _db_to_gain(db: float) -> float:
     return round(10 ** (db / 20.0), 6)
 
 
-def _file_def(file_id, name, url, dur_s, width, height, tc):
+def _file_def(file_id: str, name: str, url: str, dur_s: float, width: int, height: int, tc: str) -> str:
     src_dur = round(dur_s * SRC_FPS)
     return f"""\t\t\t\t\t\t<file id="{file_id}">
 \t\t\t\t\t\t\t<name>{_esc(name)}</name>
@@ -236,8 +238,8 @@ def _file_def(file_id, name, url, dur_s, width, height, tc):
 """
 
 
-def _video_clip(cid, mcid, name, enabled, dur_frames, start, end, tin, tout,
-                file_xml, scale):
+def _video_clip(cid: int, mcid: int | str, name: str, enabled: bool, dur_frames: int, start: int, end: int, tin: int, tout: int,
+                file_xml: str, scale: float) -> str:
     return f"""\t\t\t\t\t<clipitem id="clipitem-{cid}">
 \t\t\t\t\t\t<masterclipid>masterclip-{mcid}</masterclipid>
 \t\t\t\t\t\t<name>{_esc(name)}</name>
@@ -257,8 +259,8 @@ def _video_clip(cid, mcid, name, enabled, dur_frames, start, end, tin, tout,
 """
 
 
-def _audio_clip(cid, mcid, name, dur_frames, start, end, tin, tout, file_ref,
-                trackindex=1, level=1.0):
+def _audio_clip(cid: int, mcid: int | str, name: str, dur_frames: int, start: int, end: int, tin: int, tout: int, file_ref: str,
+                trackindex: int = 1, level: float = 1.0) -> str:
     return f"""\t\t\t\t\t<clipitem id="clipitem-{cid}" premiereChannelType="mono">
 \t\t\t\t\t\t<masterclipid>masterclip-{mcid}</masterclipid>
 \t\t\t\t\t\t<name>{_esc(name)}</name>
@@ -277,12 +279,12 @@ def _audio_clip(cid, mcid, name, dur_frames, start, end, tin, tout, file_ref,
 """
 
 
-def probe_audio_dur(path):
+def probe_audio_dur(path: str) -> float:
     """Длительность аудио, сек; 0.0 — не прочли (общая проба core/media.py)."""
     return media.probe_duration(path) or 0.0
 
 
-def _music_file_def(file_id, name, url, dur_s):
+def _music_file_def(file_id: str, name: str, url: str, dur_s: float) -> str:
     return f"""\t\t\t\t\t\t<file id="{file_id}">
 \t\t\t\t\t\t\t<name>{_esc(name)}</name>
 \t\t\t\t\t\t\t<pathurl>{url}</pathurl>
@@ -292,13 +294,13 @@ def _music_file_def(file_id, name, url, dur_s):
 \t\t\t\t\t\t</file>"""
 
 
-def _vtrack(clips_xml, targeted):
+def _vtrack(clips_xml: str, targeted: int | str) -> str:
     return (f'\t\t\t\t<track TL.SQTrackShy="0" TL.SQTrackExpandedHeight="41" '
             f'TL.SQTrackExpanded="0" MZ.TrackTargeted="{targeted}">\n'
             f"{clips_xml}\t\t\t\t\t<enabled>TRUE</enabled>\n\t\t\t\t\t<locked>FALSE</locked>\n\t\t\t\t</track>\n")
 
 
-def clean_sub_text(w, upper=True):
+def clean_sub_text(w: str, upper: bool = True) -> str:
     """Drop dashes (speech dashes slip in), strip surrounding punctuation, censor
     TikTok-unsafe words, uppercase to match the project style. '' for punct-only."""
     for d in ("—", "–", "―", "−"):           # em/en/horizontal/minus dashes -> space
@@ -311,7 +313,7 @@ def clean_sub_text(w, upper=True):
     return w.upper() if upper else w
 
 
-def _atrack(clips_xml, outidx):
+def _atrack(clips_xml: str, outidx: int | str) -> str:
     return (f'\t\t\t\t<track TL.SQTrackAudioKeyframeStyle="0" TL.SQTrackShy="0" '
             f'TL.SQTrackExpandedHeight="41" TL.SQTrackExpanded="0" MZ.TrackTargeted="1" '
             f'PannerCurrentValue="0.5" PannerName="Balance" currentExplodedTrackIndex="0" '
@@ -319,7 +321,7 @@ def _atrack(clips_xml, outidx):
             f"{clips_xml}\t\t\t\t\t<enabled>TRUE</enabled>\n\t\t\t\t\t<locked>FALSE</locked>\n"
             f"\t\t\t\t\t<outputchannelindex>{outidx}</outputchannelindex>\n\t\t\t\t</track>\n")
 
-def build_subtitle_track(sub_words, start_id=1, fps=60):
+def build_subtitle_track(sub_words: Sequence[dict[str, Any]] | None, start_id: int = 1, fps: float = 60) -> tuple[str, int, list[str], int]:
     """Сборка видеодорожки с клипами субтитров для Premiere XML.
 
     sub_words: список словарей {'w': text, 'start': frame, 'end': frame}
@@ -354,9 +356,9 @@ def build_subtitle_track(sub_words, start_id=1, fps=60):
     return v3track, n_subs, long_words, cid
 
 
-def build(cam_paths, segments, offsets, out_path, assign=None,
-          seq_w=1080, seq_h=1920, scale=50.4, sub_words=None, name=None,
-          music_path=None, music_db=-20.0):
+def build(cam_paths: Any, segments: Sequence[Any], offsets: Sequence[float], out_path: str, assign: Sequence[int] | None = None,
+          seq_w: int = 1080, seq_h: int = 1920, scale: float = 50.4, sub_words: Sequence[dict[str, Any]] | None = None, name: str | None = None,
+          music_path: str | None = None, music_db: float = -20.0) -> dict[str, Any]:
     """Multicam timeline for N cameras (N = len(cam_paths), 1..4).
     cam_paths: camera files, camera 1 first (the base). offsets: per-camera sync
     offset in seconds (offsets[0]=0; offsets[k]=find_offset(cam1,camk)). assign:

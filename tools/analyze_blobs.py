@@ -11,6 +11,7 @@ Strategy tested here:
 Report written to analyze_report.txt (UTF-8).
 """
 import re, base64, collections, sys, os
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -19,7 +20,7 @@ from core import paths   # noqa: E402
 # Референсный XML из Premiere (с реальными блобами) — первым аргументом.
 XML = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(paths.ROOT), "Timeline 2.xml")
 OUT = open(paths.root("analyze_report.txt"), "w", encoding="utf-8")
-def p(*a):
+def p(*a: Any) -> None:
     print(*a, file=OUT)
 
 txt = open(XML, encoding="utf-8").read()
@@ -31,7 +32,7 @@ blocks = re.findall(
     txt, re.S)
 p(f"matched effect blocks: {len(blocks)}")
 
-def find_str_region(b, word):
+def find_str_region(b: bytes, word: str) -> Any:
     """Return (start_of_len_prefix, byte_len, padded_total) for the FlatBuffer
     string whose content == word (utf-8)."""
     wb = word.encode("utf-8")
@@ -93,10 +94,10 @@ p(f"\nequal-length groups that are pure-substitution: {ok_groups}")
 # take two real blobs of DIFFERENT text length but otherwise 'same template family'
 # (same blobsize - textlen*? ) and see how they differ.
 p("\n-- cross-length raw diff (two words, different byte length) --")
-def show(word,b,reg):
+def show(word: str, b: bytes, reg: Any) -> str:
     return f"word={word!r} blobsize={len(b)} textlen={reg[1]} text_at=0x{reg[0]:x}"
 # pick samples of a few different lengths
-seen={}
+seen: dict[Any, Any] = {}
 for word,b,reg in found:
     seen.setdefault(reg[1],(word,b,reg))
 keys=sorted(seen)[:6]

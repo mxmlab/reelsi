@@ -22,6 +22,7 @@
 import os, json, re, threading
 from collections import Counter
 from difflib import SequenceMatcher
+from typing import Any, Sequence
 from core.fileio import atomic_json_dump, quarantine_unreadable
 
 from core import paths
@@ -58,14 +59,14 @@ _TRANSLIT = {
 }
 
 
-def _translit(s):
+def _translit(s: Any) -> str:
     """Латинский текст -> кириллица по звучанию. Дефисы и пробелы выбрасываются,
     цифры остаются как есть («RTX 5090» -> «рткс5090»)."""
     return "".join(_TRANSLIT.get(ch, ch if ch.isdigit() else "")
                    for ch in str(s or "").lower())
 
 
-def _similar(a, b, thr=FUZZY_THR, core=CORE_THR):
+def _similar(a: str, b: str, thr: float = FUZZY_THR, core: float = CORE_THR) -> bool:
     """Похожи ли строки: полный SequenceMatcher ИЛИ Dice по множеству букв (доля
     общих букв от суммы длин). Второй критерий — потому что коллизии ослышек бывают
     на пару букв: «модси» против «мотск» даёт ratio 0.6, а Dice 0.6, и это уже надо
@@ -80,13 +81,13 @@ def _similar(a, b, thr=FUZZY_THR, core=CORE_THR):
 
 # Пусто нарочно: какие названия у юзера трудные — знает только он, а неверный термин
 # здесь хуже отсутствующего (подменит НЕ ТО слово в субтитрах). Список набирается в UI.
-DEFAULT_TERMS = []
+DEFAULT_TERMS: list[str] = []
 
 _LOCK = threading.RLock()
-_CACHE = {"mtime": -1, "data": None}
+_CACHE: dict[str, Any] = {"mtime": -1, "data": None}
 
 
-def _norm(s):
+def _norm(s: Any) -> str:
     """Ключ сравнения: регистр, «ё», дефисы и знаки не считаются. «TB-500», «tb 500»
     и «ТБ500» должны попадать в один ключ — иначе вариантов пришлось бы заводить по
     десятку на термин."""
@@ -95,18 +96,18 @@ def _norm(s):
     return " ".join(s.split())
 
 
-def _norm_tight(s):
+def _norm_tight(s: Any) -> str:
     """То же без пробелов: «ти би 500» и «тиби500» — одно и то же."""
     return _norm(s).replace(" ", "")
 
 
-def _valid_file(data):
+def _valid_file(data: Any) -> bool:
     """Формат словаря — объект с СПИСКОМ `terms` (ровно то, что пишет save): и объект
     без поля, и строка в поле — такая же поломка, как обрыв записи."""
     return isinstance(data, dict) and isinstance(data.get("terms"), list)
 
 
-def load():
+def load() -> dict[str, Any]:
     """{"terms": [{"term": str, "variants": [str]}]}. Файла нет — стартовый список."""
     with _LOCK:
         try:
@@ -142,7 +143,7 @@ def load():
         return _CACHE["data"]
 
 
-def save(data):
+def save(data: dict[str, Any]) -> None:
     with _LOCK:
         # Битый файл уводим в сторону ДО записи: иначе словарь из одного нового термина
         # затёр бы всё, что в файле было. Запись при этом не пропускается —
@@ -157,7 +158,7 @@ def save(data):
         _CACHE["data"], _CACHE["mtime"] = None, -1
 
 
-def set_terms(items, emit=None):
+def set_terms(items: Sequence[Any], emit: Any = None) -> list[dict[str, Any]]:
     """Записать список целиком (правка из UI). items: [{term, variants}] или [str].
     Варианты, уже накопленные обучением, сохраняем: юзер редактирует НАЗВАНИЯ, а не
     список ослышек — стерев их случайно, он потерял бы всю память правок."""
@@ -185,7 +186,7 @@ def set_terms(items, emit=None):
 MAX_NGRAM = 4             # длиннее цепочки слов под один термин не бывает
 
 
-def _index():
+def _index() -> tuple[dict[str, str], list[tuple[str, str, str]], int]:
     """(варианты {слитный ключ: термин}, термины [(ключ, tight, термин)], окно поиска).
 
     Ключ СЛИТНЫЙ (без пробелов): ASR разбивает название пробелами где попало — «ГХК-ЦУ»
@@ -206,7 +207,7 @@ def _index():
     return var, terms, min(MAX_NGRAM, max(3, maxn))
 
 
-def _fuzzy(nw, terms):
+def _fuzzy(nw: str, terms: Sequence[tuple[str, str, str]]) -> str | None:
     """Самый похожий термин на нормализованное слово или None. Сравниваем и по
     «слитному» ключу: ASR любит разбивать «GHK Cu» пробелом там, где его нет."""
     if len(nw) < MIN_FUZZY_LEN:
@@ -226,12 +227,12 @@ def _fuzzy(nw, terms):
 _TAIL = re.compile(r"[.,!?;:…»)\"']+$")
 
 
-def _tail_of(w):
+def _tail_of(w: Any) -> str:
     m = _TAIL.search(str(w or ""))
     return m.group(0) if m else ""
 
 
-def fix_words(words, emit=None):
+def fix_words(words: Sequence[dict[str, Any]], emit: Any = None) -> list[dict[str, Any]]:
     """Пословную ленту ASR ([{w,start,end}, ...]) прогнать через словарь. Меняет ТЕКСТ,
     тайминги не трогает; при склейке нескольких слов в один термин берём start первого
     и end последнего. Возвращает НОВЫЙ список (входной не мутируем — его кэшируют)."""
@@ -283,7 +284,7 @@ def fix_words(words, emit=None):
     return out
 
 
-def _collides(nw, term_item):
+def _collides(nw: str, term_item: dict[str, Any]) -> bool:
     """Похожа ли ослышка на ЧУЖОЙ термин: на его имя, на его варианты или на
     транслит его имени. Имя в латинице с кириллической ослышкой буквенно не совпадает
     никогда, поэтому транслит обязателен: «модси» против «MOTS-C» -> «мотск» — общие
@@ -296,7 +297,7 @@ def _collides(nw, term_item):
     return bool(t) and _similar(nw, t)
 
 
-def learn(wrong, right):
+def learn(wrong: Any, right: Any) -> str | None:
     """Ручная правка слова -> запомнить ослышку вариантом термина.
     Учимся ТОЛЬКО когда исправленный текст — уже известный термин: иначе в словарь
     поедут обычные опечатки, а он должен оставаться списком названий.

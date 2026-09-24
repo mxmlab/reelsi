@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
 """Download the audio track from a YouTube (or any yt-dlp-supported) URL."""
+from __future__ import annotations
 import os, sys, subprocess, random
+from typing import Any, Callable
 from core.app_meta import console_emit
 
 AUDIO_EXT = (".m4a", ".mp3", ".wav", ".aac", ".opus", ".flac", ".ogg")
@@ -12,7 +14,7 @@ AUDIO_EXT = (".m4a", ".mp3", ".wav", ".aac", ".opus", ".flac", ".ogg")
 YTDLP_TIMEOUT = 1800
 
 
-def random_track(outdir, emit=console_emit, seed=None):
+def random_track(outdir: str | None, emit: Callable[..., Any] = console_emit, seed: object = None) -> str | None:
     """Случайный (или детерминированный по seed) аудиофайл из папки скачанной музыки (или None, если пусто)."""
     if not outdir or not os.path.isdir(outdir):
         return None
@@ -31,11 +33,11 @@ def random_track(outdir, emit=console_emit, seed=None):
     return p
 
 
-def is_url(s):
+def is_url(s: object) -> bool:
     return isinstance(s, str) and s.strip().lower().startswith(("http://", "https://"))
 
 
-def download_audio(url, outdir, fmt="m4a", emit=console_emit):
+def download_audio(url: str, outdir: str, fmt: str = "m4a", emit: Callable[..., Any] = console_emit) -> str:
     """Download bestaudio → {outdir}/track_N.{fmt} (next free number, ASCII name).
     Returns the path; on failure raises with yt-dlp's reason."""
     os.makedirs(outdir, exist_ok=True)
@@ -62,7 +64,7 @@ def download_audio(url, outdir, fmt="m4a", emit=console_emit):
     return path
 
 
-def resolve(music, outdir, emit=console_emit):
+def resolve(music: str | None, outdir: str, emit: Callable[..., Any] = console_emit) -> Any:
 
     """music may be a URL (download) or an existing local path. Returns a path or None."""
     if not music:

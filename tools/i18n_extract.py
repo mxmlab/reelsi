@@ -30,6 +30,7 @@ import os
 import re
 import sys
 from html.parser import HTMLParser
+from typing import Any, cast
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -42,23 +43,23 @@ CYR = re.compile(r"[А-Яа-яЁё]")
 
 
 class Collect(HTMLParser):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.found = []
+        self.found: list[str] = []
         self._skip = 0
 
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag in SKIP_TAGS:
             self._skip += 1
         for name, val in attrs:
             if name in ATTRS and val and CYR.search(val):
                 self.found.append(val.strip())
 
-    def handle_endtag(self, tag):
+    def handle_endtag(self, tag: str) -> None:
         if tag in SKIP_TAGS and self._skip:
             self._skip -= 1
 
-    def handle_data(self, data):
+    def handle_data(self, data: str) -> None:
         if self._skip:
             return
         text = data.strip()
@@ -67,7 +68,7 @@ class Collect(HTMLParser):
             self.found.append(text)
 
 
-def strings():
+def strings() -> list[str]:
     p = Collect()
     p.feed(open(HTML, encoding="utf-8").read())
     seen, out = set(), []
@@ -78,7 +79,7 @@ def strings():
     return out
 
 
-def main():
+def main() -> int:
     have = {}
     if os.path.exists(EN):
         have = json.load(open(EN, encoding="utf-8"))
@@ -108,7 +109,7 @@ def main():
 if __name__ == "__main__":
     for _s in (sys.stdout, sys.stderr):
         try:
-            _s.reconfigure(encoding="utf-8", errors="replace")
+            cast(Any, _s).reconfigure(encoding="utf-8", errors="replace")
         except Exception:
             pass
     sys.exit(main())

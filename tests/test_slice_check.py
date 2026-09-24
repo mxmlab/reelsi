@@ -12,10 +12,12 @@ r"""Тесты прогона публичного среза через вес�
 tests/test_public_slice.py.
 """
 import hashlib
+import io
 import os
 import stat
 import subprocess
 import sys
+import tarfile
 
 import pytest
 
@@ -70,8 +72,8 @@ class _FakeCommands:
     """Заглушка `slice_check.run_command`: код возврата по подстроке команды.
 
     Ключ `codes` — подстрока в команде (`"pytest"`, `"ruff"`, `"mypy"`, `"node"`,
-    `"compileall"`, `"pip"`, `"gitleaks"`); что не совпало — считается зелёным.
-    Реальные pytest/ruff/mypy/node/pip/gitleaks в тестах не запускаются.
+    `"compileall"`, `"pip"`, `"gitleaks"`, `"ssh"`); что не совпало — считается зелёным.
+    Реальные pytest/ruff/mypy/node/pip/gitleaks/ssh в тестах не запускаются.
     """
 
     def __init__(self, codes=None, text="", err=""):
@@ -80,9 +82,9 @@ class _FakeCommands:
         self.err = err
         self.calls = []
 
-    def __call__(self, args, cwd, env=None, timeout=None):
+    def __call__(self, args, cwd, env=None, timeout=None, input=None, **kwargs):
         joined = " ".join(str(a) for a in args)
-        self.calls.append({"args": joined, "cwd": cwd})
+        self.calls.append({"args": joined, "cwd": cwd, "input": input})
         code = 0
         for marker, value in self.codes.items():
             if marker in joined:
@@ -107,7 +109,7 @@ def _pytest_trees(fake):
     Признак — сама команда, а не подстрока «pytest»: её же содержит путь к
     игрушечным node и gitleaks внутри каталога pytest'а.
     """
-    return [c["cwd"] for c in fake.calls_with(" -m pytest ")]
+    return [c["cwd"] for c in fake.calls_with(" -m pytest ") if not c["args"].startswith("ssh")]
 
 
 @pytest.fixture
@@ -162,6 +164,7 @@ def fake_tools(tmp_path_factory, monkeypatch):
         paths[name] = str(path)
 
     monkeypatch.setattr(slice_check, "find_tool", lambda name: paths.get(name))
+    monkeypatch.setenv(slice_check.ENV_LINUX_SSH, "ci@fakehost")
     return paths
 
 
@@ -242,7 +245,7 @@ def test_ref_берёт_названный_коммит(repo, fake_tools, fake_c
 def test_шаги_повторяют_джобы_ci():
     """Список шагов, запускалки и подсказки описывают один и тот же набор."""
     assert slice_check.STEP_NAMES == (
-        "pytest", "ruff", "mypy", "jsx", "smoke", "requirements", "gitleaks")
+        "pytest", "ruff", "mypy", "jsx", "smoke", "requirements", "gitleaks", "linux")
     assert list(slice_check._step_calls()) == list(slice_check.STEP_NAMES)
     assert set(slice_check.STEP_HINTS) == set(slice_check.STEP_NAMES)
 
@@ -254,6 +257,7 @@ def test_шаги_повторяют_джобы_ci():
     ("compileall", "smoke"),
     ("pip", "requirements"),
     ("gitleaks", "gitleaks"),
+    ("ssh", "linux"),
 ])
 def test_падение_шага_красит_код_возврата(repo, fake_tools, fake_commands, marker, name, capsys):
     """Любой упавший шаг виден строкой FAIL с именем шага и делает код ненулевым."""
@@ -304,12 +308,87 @@ def test_явный_пропуск_gitleaks_не_красит_код(repo, fake_
     assert not fake.calls_with("gitleaks"), "шаг gitleaks всё же запускался"
 
 
+def test_нет_хоста_linux_это_провал(repo, fake_tools, fake_commands, monkeypatch, capsys):
+    """Хост не задан — провал с понятной причиной, а не молчаливый пропуск."""
+    monkeypatch.delenv(slice_check.ENV_LINUX_SSH, raising=False)
+    fake = fake_commands()
+
+    assert slice_check.main(["--root", str(repo)]) != 0
+
+    out = capsys.readouterr().out
+    assert "[FAIL] linux" in out, out
+    assert "--linux-ssh" in out and slice_check.ENV_LINUX_SSH in out, "причина без флага или переменной хоста"
+    assert "--no-linux" in out, "не сказано, как пропустить шаг осознанно"
+    assert not fake.calls_with("ssh"), "ssh всё равно запускался"
+
+
+def test_явный_пропуск_linux_не_красит_код(repo, fake_tools, fake_commands, monkeypatch, capsys):
+    """`--no-linux`: код 0 при остальных зелёных и громкая строка о пропуске."""
+    monkeypatch.delenv(slice_check.ENV_LINUX_SSH, raising=False)
+    fake = fake_commands()
+    assert slice_check.main(["--root", str(repo), "--no-linux"]) == 0
+    out = capsys.readouterr().out
+    assert "linux НЕ ПРОГОНЯЛСЯ" in out, out
+    assert "[ПРОПУЩЕН] linux" in out
+    assert not fake.calls_with("ssh"), "шаг linux всё же запускался"
+
+
+def test_команда_ssh_содержит_init_batchmode_и_образ(repo, fake_tools, fake_commands):
+    """Команда ssh содержит --init, BatchMode=yes и образ по умолчанию reelsi-ci:py310."""
+    fake = fake_commands()
+    assert slice_check.main(["--root", str(repo), "--linux-ssh", "user@host"]) == 0
+    ssh_calls = fake.calls_with("ssh")
+    assert len(ssh_calls) == 1, "ssh должен вызываться ровно один раз"
+    args = ssh_calls[0]["args"]
+    assert "--init" in args, "команда docker не содержит обязательный флаг --init"
+    assert "BatchMode=yes" in args, "команда ssh не содержит BatchMode=yes"
+    assert "reelsi-ci:py310" in args, "команда docker не содержит образ по умолчанию"
+    assert "user@host" in args
+
+
+def test_ненулевой_код_удалённой_стороны_дает_fail(repo, fake_tools, fake_commands, capsys):
+    """Ненулевой код удалённой стороны даёт FAIL и делает код возврата ненулевым."""
+    fake_commands({"ssh": 255}, err="ssh: connect to host failed\n")
+    assert slice_check.main(["--root", str(repo), "--linux-ssh", "user@host"]) != 0
+    out = capsys.readouterr().out
+    assert "[FAIL] linux" in out, out
+    assert "ssh: connect to host failed" in out, "stderr удалённой команды должен быть в выводе"
+
+
+def test_tar_содержит_файлы_среза(repo, fake_tools, fake_commands):
+    """Tar, передаваемый в stdin ssh, содержит файлы публичного среза без вырезанного."""
+    fake = fake_commands()
+    assert slice_check.main(["--root", str(repo), "--linux-ssh", "user@host"]) == 0
+    ssh_calls = fake.calls_with("ssh")
+    assert len(ssh_calls) == 1
+    tar_bytes = ssh_calls[0].get("input")
+    assert isinstance(tar_bytes, bytes) and tar_bytes, "в stdin ssh не передан tar-поток"
+    with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r") as tf:
+        names = sorted(tf.getnames())
+    assert "README.md" in names
+    assert "core/app_meta.py" in names
+    assert ".publicignore" in names
+    for gone in ("TASKS.md", "docs/archive/old.md", "tests/personal_words.txt"):
+        assert gone not in names, f"в tar попал игнорируемый файл: {gone}"
+    assert not any(n.startswith(".git") for n in names), "в tar попал служебный .git"
+
+
+def test_linux_image_позволяет_задать_свой_образ(repo, fake_tools, fake_commands):
+    """`--linux-image` подставляет переданное имя образа в команду docker."""
+    fake = fake_commands()
+    assert slice_check.main(["--root", str(repo), "--linux-ssh", "user@host",
+                             "--linux-image", "my-custom-image:v2"]) == 0
+    ssh_calls = fake.calls_with("ssh")
+    assert len(ssh_calls) == 1
+    assert "my-custom-image:v2" in ssh_calls[0]["args"]
+
+
 def test_only_гоняет_один_шаг(repo, fake_tools, fake_commands):
     """`--only pytest` — при разборе идёт один шаг, остальные на код не влияют."""
-    fake = fake_commands({"ruff": 1, "mypy": 1, "gitleaks": 1})
+    fake = fake_commands({"ruff": 1, "mypy": 1, "gitleaks": 1, "ssh": 1})
     assert slice_check.main(["--root", str(repo), "--only", "pytest"]) == 0
     assert fake.calls_with("pytest"), "pytest не запускался"
-    for other in ("ruff", "mypy", "node", "compileall", "pip", "gitleaks"):
+    for other in ("ruff", "mypy", "node", "compileall", "pip", "gitleaks", "ssh"):
         assert not fake.calls_with(other), f"при --only pytest запускался шаг {other}"
 
 

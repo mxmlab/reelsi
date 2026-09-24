@@ -144,7 +144,9 @@
 Замена ассетов (transition/transition_sfx/pop): если None — дефолт; если абсолютный путь к
 существующему файлу — он; иначе трактуем как ключ assets.json; если и там нет — дефолт.
 """
+from __future__ import annotations
 import os, json, copy
+from typing import Any, cast
 
 from core import paths
 from core.fileio import atomic_json_dump
@@ -156,7 +158,7 @@ log = get_logger(__name__)
 STYLE_DIR = paths.root("styles")
 
 # Базовый пресет. Любой другой наследует отсюда недостающие поля.
-BASE = {
+BASE: dict[str, Any] = {
     "label": "Базовый",
     "font": "SFPro-CondensedSemibold",
     "hl_font": None,                       # шрифт выделения (реальный жирный вариант); None = как база
@@ -457,7 +459,7 @@ BUILTIN = {"base": BASE, "geologica": GEOLOGICA}
 # Читаются из styles/_aliases.json (gitignored) — в старых ключах были фамилии
 # реальных людей, а этот файл наружу не уезжает. Нет файла = нет алиасов: встроенные
 # base/geologica работают как обычно, а незнакомый ключ get() отдаёт базовым.
-def _aliases():
+def _aliases() -> dict[str, Any]:
     p = os.path.join(STYLE_DIR, "_aliases.json")
     try:
         return json.load(open(p, encoding="utf-8"))
@@ -483,7 +485,7 @@ ALL_LAYER_IDS = ("subs", "intro", "photo", "video", "roto")
 DEAD_KEYS = ("roto_video", "caption_padx", "caption_pady", "intro_fx_fade", "intro_fx_fade_last")
 
 
-def migrate_style_dict(data):
+def migrate_style_dict(data: Any) -> tuple[Any, bool]:
     """Миграция старых ключей стиля в layer_order.
 
     insert_above_subs=True -> photo встаёт выше subs
@@ -538,7 +540,7 @@ def migrate_style_dict(data):
     return data, changed
 
 
-def resolve(style):
+def resolve(style: Any) -> Any:
     """style: имя пресета (str) | dict | None -> полный dict с дефолтами базового."""
     base = copy.deepcopy(BASE)
     if style is None:
@@ -554,7 +556,7 @@ def resolve(style):
     return base
 
 
-def _files():
+def _files() -> dict[str, Any]:
     if not os.path.isdir(STYLE_DIR):
         return {}
     out = {}
@@ -586,19 +588,19 @@ def _files():
     return out
 
 
-def all_styles():
+def all_styles() -> dict[str, Any]:
     """Все пресеты: встроенные + пользовательские шаблоны (файлы перекрывают встроенные)."""
     d = copy.deepcopy(BUILTIN)
     d.update(_files())
     return d
 
 
-def get(name):
+def get(name: str) -> dict[str, Any]:
     d = all_styles()
-    return d.get(name) or d.get(ALIASES.get(name)) or copy.deepcopy(BASE)
+    return d.get(name) or d.get(cast(str, ALIASES.get(name))) or copy.deepcopy(BASE)
 
 
-def save(name, data):
+def save(name: str, data: Any) -> tuple[str, str]:
     """Сохранить пользовательский пресет как reelsi/styles/<name>.json.
     Подпись (label) принудительно = введённому имени, чтобы список не показывал
     унаследованное от пресета имя."""
@@ -617,7 +619,7 @@ def save(name, data):
     return safe, os.path.join(STYLE_DIR, fname)
 
 
-def patch(name, patch_dict):
+def patch(name: str, patch_dict: Any) -> tuple[Any, Any]:
     """Точечно обновить ключи в reelsi/styles/<name>.json.
 
     Не трогает остальные поля. Встроенные шаблоны (base/geologica) не меняет.
@@ -629,6 +631,7 @@ def patch(name, patch_dict):
     target = None
     target_name = None
     if os.path.isdir(STYLE_DIR):
+        f: Any
         for f in os.listdir(STYLE_DIR):
             if f.startswith("_"):
                 continue

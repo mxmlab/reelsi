@@ -13,10 +13,11 @@ Qwen2.5-Omni-7B СМОТРИТ draft.mp4 кусками (~45с, видео+зв�
     python omni_review.py <draft.mp4> [--chunk 45] [--out X.review.json]
 """
 import sys, os, json, subprocess, argparse
+from typing import Any, cast
 from core import media
 from core.umsg import ReelsiError, cli_error
 try:
-    sys.stdout.reconfigure(encoding="utf-8")
+    cast(Any, sys.stdout).reconfigure(encoding="utf-8")
 except ReelsiError: raise
 except Exception:
     pass  # поток без reconfigure — служебная печать не критична
@@ -32,12 +33,12 @@ SYS = ("Ты — придирчивый ревьюер ЧЕРНОВОГО мон
        "Если проблем нет — ответь ровно: ок")
 
 
-def _dur(path):
+def _dur(path: str) -> float:
     """Длительность черновика, сек; 0.0 — не прочли (общая проба core/media.py)."""
     return media.probe_duration(path) or 0.0
 
 
-def _cut_chunk(src, t0, t1, dst):
+def _cut_chunk(src: str, t0: float, t1: float, dst: str) -> str:
     """Кусок черновика для Omni: маленький и быстрый (черновик уже 720p/30).
 
     Таймаут: кусок 45 с в 480p собирается секундами, так что 600 с — это «ffmpeg
@@ -50,7 +51,7 @@ def _cut_chunk(src, t0, t1, dst):
     return dst
 
 
-def review_chunk(proc, model, mp4):
+def review_chunk(proc: Any, model: Any, mp4: str) -> str:
     import torch
     from qwen_omni_utils import process_mm_info
     conv = [{"role": "system", "content": [{"type": "text", "text": SYS}]},
@@ -67,7 +68,7 @@ def review_chunk(proc, model, mp4):
                              clean_up_tokenization_spaces=False)[0].strip()
 
 
-def main():
+def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("draft", help="черновой mp4 (<stem>.draft.mp4)")
     ap.add_argument("--chunk", type=float, default=45.0, help="длина куска, сек")

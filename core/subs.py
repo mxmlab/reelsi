@@ -3,6 +3,7 @@
 """Build subtitle GraphicAndType clipitems by cloning a real template clip and
 swapping the word text, its Source Text FlatBuffer blob, ids and timing."""
 import os, re
+from typing import Any, Sequence, cast
 
 from core import paths
 from core.fileio import atomic_text_write
@@ -16,7 +17,7 @@ GFX_IN = 216000  # fixed in-point into the graphic media (mirrors reference)
 PHRASE_GAP = 0.30  # сек: пауза между словами, закрывающая строку субтитров раньше лимита
 
 
-def build_sub_rows(words, per_row=1, max_rows=1, cut_bounds=None, word_timings=None):
+def build_sub_rows(words: Any, per_row: int = 1, max_rows: Any = 1, cut_bounds: Any = None, word_timings: Any = None) -> list[dict[str, Any]]:
     """Сгруппировать слова субтитров в строки.
 
     words — список кортежей (start, end, word) либо словарей {"w", "start", "end"}.
@@ -88,10 +89,10 @@ def build_sub_rows(words, per_row=1, max_rows=1, cut_bounds=None, word_timings=N
             wt_list = word_timings
 
     words_per_replica = per_row * max_rows
-    rows, cur = [], []
+    rows, cur = [], cast(list[dict[str, Any]], [])
     repl_idx = 0
 
-    def flush():
+    def flush() -> None:
         nonlocal cur, repl_idx
         if not cur:
             return
@@ -114,14 +115,14 @@ def build_sub_rows(words, per_row=1, max_rows=1, cut_bounds=None, word_timings=N
         repl_idx += 1
         cur = []
 
-    def _has_cut_after(k):
+    def _has_cut_after(k: int) -> bool:
         if not bounds or k >= len(flat_words) - 1:
             return False
         s_next = flat_words[k + 1]["start"]
         e_cur = flat_words[k]["end"]
         return any(e_cur <= b <= s_next or abs(s_next - b) <= 1 for b in bounds)
 
-    def _raw_word_for(k):
+    def _raw_word_for(k: int) -> str:
         if k < 0 or k >= len(flat_words):
             return ""
         item = flat_words[k]
@@ -134,7 +135,7 @@ def build_sub_rows(words, per_row=1, max_rows=1, cut_bounds=None, word_timings=N
                 return raw
         return item.get("raw_w") or item.get("w") or ""
 
-    def _punct_type(k):
+    def _punct_type(k: int) -> str | None:
         raw = _raw_word_for(k)
         if not raw:
             return None
@@ -149,7 +150,7 @@ def build_sub_rows(words, per_row=1, max_rows=1, cut_bounds=None, word_timings=N
                 return "phrase"
         return None
 
-    def _has_pause_after(k):
+    def _has_pause_after(k: int) -> bool:
         if not wt_list or k >= len(flat_words) - 1:
             return False
         item, nxt = flat_words[k], flat_words[k + 1]
@@ -207,7 +208,7 @@ def build_sub_rows(words, per_row=1, max_rows=1, cut_bounds=None, word_timings=N
     return rows
 
 
-def format_srt_time(sec):
+def format_srt_time(sec: float | int) -> str:
     """Секунды -> время SRT `ЧЧ:ММ:СС,ммм`. Единственная точка перевода времени в
     SRT на весь проект (её же берёт core/align._ts).
 
@@ -220,9 +221,9 @@ def format_srt_time(sec):
     return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
 
 
-def write_srt(rows, srt_path):
+def write_srt(rows: Sequence[dict[str, Any]], srt_path: str) -> None:
     """Выгрузка готовых строк субтитров из плана сцены в стандартный .srt файл."""
-    grouped = []
+    grouped: list[dict[str, Any]] = []
     for r in rows:
         repl_id = r.get("repl")
         if repl_id is not None and grouped and grouped[-1].get("repl") == repl_id:
@@ -255,20 +256,20 @@ def write_srt(rows, srt_path):
 
 
 class SubtitleBuilder:
-    def __init__(self, template_path=None, refblobs_path=None, ref_xml=None):
+    def __init__(self, template_path: str | None = None, refblobs_path: str | None = None, ref_xml: str | None = None) -> None:
         template_path = template_path or paths.data("sub_template.xml")
         self.template = open(template_path, encoding="utf-8").read()
         # exact blob string in the template, to be replaced per word
         m = re.search(r'<name>Source Text</name>\s*<hash>[0-9a-f-]+</hash>\s*<value>([A-Za-z0-9+/=]+)</value>',
                       self.template)
-        self.tmpl_blob = m.group(1)
+        self.tmpl_blob = cast(Any, m).group(1)
         # the word currently embedded in the template effect <name>
         m2 = re.search(r'<name>([^<]*)</name>\s*<effectid>GraphicAndType</effectid>', self.template)
-        self.tmpl_word = m2.group(1)
+        self.tmpl_word = cast(Any, m2).group(1)
         # ids are template-specific; detect them so any source template works
-        self.tmpl_clip = re.search(r'<clipitem id="(clipitem-\d+)">', self.template).group(1)
-        self.tmpl_master = re.search(r'<masterclipid>(masterclip-\d+)</masterclipid>', self.template).group(1)
-        self.tmpl_file = re.search(r'<file id="(file-\d+)"', self.template).group(1)
+        self.tmpl_clip = cast(Any, re.search(r'<clipitem id="(clipitem-\d+)">', self.template)).group(1)
+        self.tmpl_master = cast(Any, re.search(r'<masterclipid>(masterclip-\d+)</masterclipid>', self.template)).group(1)
+        self.tmpl_file = cast(Any, re.search(r'<file id="(file-\d+)"', self.template)).group(1)
         refblobs_path = refblobs_path or paths.data("refblobs.json")
         if os.path.exists(refblobs_path):
             self.lib = BlobLibrary.load(refblobs_path)   # harvested from good files
@@ -276,7 +277,7 @@ class SubtitleBuilder:
             ref_xml = ref_xml or os.path.join(os.path.dirname(paths.ROOT), "Timeline 2.xml")
             self.lib = BlobLibrary.from_reference(ref_xml)
 
-    def clip(self, word, start, end, cid, uid, scale=100.0, fps=60.0):
+    def clip(self, word: str, start: int, end: int, cid: int, uid: int, scale: float = 100.0, fps: float = 60.0) -> str:
         """Return one subtitle <clipitem> xml. start/end are sequence output frames.
         scale (%) shrinks the whole graphic so long words fit with margins."""
         length = max(1, end - start)
@@ -317,9 +318,9 @@ if __name__ == "__main__":
         for i, (w, a, b) in enumerate([("ПРИВЕТ", 0, 20), ("мир", 20, 35), ("ТЕСТ&<", 35, 50)]):
             c = sb.clip(w, a, b, 500 + i, 1000 + i)
             ET.fromstring(c)  # must be well-formed
-            eff = re.search(r'<name>([^<]*)</name>\s*<effectid>GraphicAndType', c).group(1)
-            st = re.search(r'<start>(\d+)</start>', c).group(1)
-            en = re.search(r'<end>(\d+)</end>', c).group(1)
+            eff = cast(Any, re.search(r'<name>([^<]*)</name>\s*<effectid>GraphicAndType', c)).group(1)
+            st = cast(Any, re.search(r'<start>(\d+)</start>', c)).group(1)
+            en = cast(Any, re.search(r'<end>(\d+)</end>', c)).group(1)
             print(f"  ok word={w!r} effectname={eff!r} start={st} end={en}")
         print("subs.py self-test OK")
     except ReelsiError as e:

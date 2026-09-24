@@ -1,12 +1,14 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
 """Audio extraction + two-camera sync by cross-correlation."""
+from __future__ import annotations
 import hashlib
 import io
 import os
 import subprocess
 import tempfile
 import time as _time
+from typing import Any
 import numpy as np
 from scipy.io import wavfile
 from core.fileio import atomic_bytes_write
@@ -40,7 +42,7 @@ ENV_CACHE_TTL_DAYS = 7
 EXTRACT_TIMEOUT = 300
 
 
-def extract_audio(video_path, wav_path, sr=SR, timeout=EXTRACT_TIMEOUT):
+def extract_audio(video_path: str, wav_path: str, sr: int = SR, timeout: int = EXTRACT_TIMEOUT) -> str:
     """Decode the audio track to mono `sr` wav (fast: -vn, no video decode)."""
     subprocess.run(
         ["ffmpeg", "-y", "-i", video_path, "-vn", "-ac", "1", "-ar", str(sr),
@@ -49,7 +51,7 @@ def extract_audio(video_path, wav_path, sr=SR, timeout=EXTRACT_TIMEOUT):
     return wav_path
 
 
-def _prune_env_cache(ttl_days=None):
+def _prune_env_cache(ttl_days: float | int | None = None) -> None:
     """Выбросить огибающие старше ttl_days. Тихо: чистка кэша не повод падать."""
     ttl = (ENV_CACHE_TTL_DAYS if ttl_days is None else ttl_days) * 86400
     try:
@@ -65,14 +67,14 @@ def _prune_env_cache(ttl_days=None):
         pass  # каталога кэша нет — чистить нечего
 
 
-def _load(wav_path):
+def _load(wav_path: str) -> tuple[int, Any]:
     sr, x = wavfile.read(wav_path)
     if x.ndim > 1:
         x = x.mean(axis=1)
     return sr, x.astype(np.float32)
 
 
-def _envelope(x, sr, hop=160):
+def _envelope(x: Any, sr: int, hop: int = 160) -> tuple[Any, float]:
     """RMS energy envelope at sr/hop Hz (~100 Hz with hop=160)."""
     n = len(x) // hop
     e = np.sqrt(np.mean(x[:n * hop].reshape(n, hop) ** 2, axis=1) + 1e-9)
@@ -80,7 +82,7 @@ def _envelope(x, sr, hop=160):
     return e, sr / hop
 
 
-def find_offset(wav_a, wav_b):
+def find_offset(wav_a: str, wav_b: str) -> tuple[float, float]:
     """Return seconds to delay B so it aligns with A (positive => B starts later than A).
     Also returns a 0..1 confidence from peak sharpness."""
     from scipy.signal import correlate
@@ -97,7 +99,7 @@ def find_offset(wav_a, wav_b):
     return offset, conf
 
 
-def wav_envelope(wav_path, hop=160):
+def wav_envelope(wav_path: str, hop: int = 160) -> tuple[Any, float]:
     """RMS-огибающая wav (~100 Гц при 16 кГц) — то же, что считает find_offset."""
     sr, x = _load(wav_path)
     return _envelope(x, sr, hop)
@@ -114,7 +116,9 @@ MATCH_MIN_OVERLAP = 0.5      # доля КОРОТКОЙ огибающей, к�
 MATCH_MIN_OVERLAP_SEC = 40.0
 
 
-def match_score(ea, eb, rate, min_overlap=None, min_overlap_sec=None):
+def match_score(
+    ea: Any, eb: Any, rate: float, min_overlap: float | None = None, min_overlap_sec: float | None = None
+) -> tuple[float, Any]:
     """Лучший сдвиг eb относительно ea (сек; >0 — eb начинается позже) и
     НОРМИРОВАННЫЙ пик корреляции огибающих: 1 = тот же звук, ~0 = другой материал.
     Нормировка обязательна: сырой пик корреляции растёт с длиной файла, и длинный
@@ -163,14 +167,14 @@ def match_score(ea, eb, rate, min_overlap=None, min_overlap_sec=None):
     return (k - (nb - 1)) / rate, float(np.clip(ncc[k], -1.0, 1.0))
 
 
-def match_wavs(wav_a, wav_b):
+def match_wavs(wav_a: str, wav_b: str) -> tuple[float, float]:
     """То же, что match_score, по путям wav (тесты, CLI): (offset, score)."""
     ea, r = wav_envelope(wav_a)
     eb, _ = wav_envelope(wav_b)
     return match_score(ea, eb, r)
 
 
-def video_envelope(video):
+def video_envelope(video: str) -> tuple[Any, float]:
     """RMS-огибающая видео (~100 Гц) с кэшем в %TEMP%. Для автоподбора камер
     полные wav не храним: минута звука — 1.9 МБ, огибающая — 48 КБ. Ключ кэша —
     путь + mtime + размер: перезаписанный файл пересоберётся, остальное достаётся

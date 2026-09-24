@@ -23,7 +23,7 @@ from core import aicut  # noqa: E402
 from core.aicut.commands import INTRO_FUNC_WORDS  # noqa: E402
 
 
-def check(intro_path):
+def check(intro_path: str) -> tuple[int, int, int]:
     """Один .intro.json -> (строк в одно слово, строк со служебным словом в конце, всего строк)."""
     if not intro_path.endswith(".intro.json"):
         raise ValueError(f"жду путь к .intro.json, пришло: {intro_path}")
@@ -51,7 +51,7 @@ def check(intro_path):
     return one_word, func_end, total
 
 
-def main():
+def main() -> int:
     if len(sys.argv) < 2:
         print("использование: python tools/intro_hook_check.py <stem>.intro.json [...]")
         return 1

@@ -889,6 +889,7 @@ floor + 18 дБ.
 | `core/media.py` | длительность медиа: ОДНА проба ffprobe на все места (`probe_duration`; `None` = «не прочли» — нет файла, нет ffprobe, завис, битый контейнер; кэш по пути + mtime + размеру, таймаут 30 с). Копий было пять, и расходились они ровно на ошибке: одни отдавали 0.0, другие падали ValueError |
 | `doctor.py` | диагностика окружения: что стоит, что отвалится, как чинить; отдельно проверяет внешние опциональные бинарники — `rclone` (скачивание с гугл-диска) и After Effects (безголовый рендер, поиском `core.aerender.find_ae` — один источник на doctor и рендер) |
 | `core/aerender.py` | **движок безголового рендера без состояния задания**: поиск и вызов AE (`find_ae`, `ae_running`, `short_path`), разбор вывода `aerender` (регулярки кадров, таймкод, имя композиции, доля кадров), ETA и статистика длительностей фаз (`load_render_stats`/`save_render_stats`, `predict_aep_times`, `eta_secs`), проверки результата (`rendered_ok`, `comp_frames`), папка вывода по умолчанию (`default_render_dir`). Раньше всё это жило в `api/render.py` и было недоступно CLI и `doctor.py` без импорта Flask-слоя |
+| `tools/ast_same.py` | сверка AST двух ревизий без аннотаций/докстрингов/импортов/cast: критерий приёмки типизации и рефакторингов («логика не менялась») |
 | `tools/` | i18n-утилиты (`i18n_extract.py` / `i18n_js_keys.py` / `i18n_merge.py`), исследование интро (`intro_rules.py` / `intro_hook_rules.py` / `intro_hook_check.py`), рабочая копия на сессию (`wt.ps1`) |
 
 **Длинные слова в субтитрах.** Эталонные блобы кончаются на 38 байтах (19 кириллических
@@ -1685,7 +1686,9 @@ voice_db, music_path, music_db, censor:[{ts,te}]}}`. Ключи вставок �
   gitleaks — `--gitleaks PATH` или `$GITLEAKS`, нет его — провал, а `--no-gitleaks` — громкий
   пропуск): срез `tools/public_slice.py` собирается во временный каталог, и в нём повторяется
   весь CI, а не только pytest — `ruff`, `mypy`, `node --check` по ExtendScript и `static/app/*.js`,
-  `compileall` с `--help` точек входа, разбор `requirements*.txt` и gitleaks по дереву среза.
+  `compileall` с `--help` точек входа, разбор `requirements*.txt`, gitleaks по дереву среза
+  и шаг `linux` в docker с `--init` по ssh (`--linux-ssh USER@HOST`, `$REELSI_LINUX_SSH`,
+  `--linux-image reelsi-ci:py310`, `--no-linux`).
   Код возврата ненулевой, если хоть один шаг провален или не прогонялся; часть приёмки перед
   выдачей среза.
 - Правки XML на месте (`set_highlights`/`edit_word`) оставляют `<файл>.xml.bak`

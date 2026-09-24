@@ -11,7 +11,9 @@ Whisper даёт ТЕКСТ, но его тайминги приблизител
 для них тайминг Whisper остаётся, а если рядом есть выровненные соседи, время
 подтягивается к ним (интерполяция), чтобы не выпадать из общего ряда.
 """
+from __future__ import annotations
 import os, re
+from typing import Any
 from core.app_meta import console_emit, wrap_emit
 from core.applog import get_logger
 from core.umsg import ReelsiError
@@ -22,10 +24,10 @@ log = get_logger("reelsi.falign")
 # а torch/wav2vec2 нужен свой встроенный cuDNN → иначе краш cudnnGetLibConfig (EXIT 127).
 
 MODEL_ID = os.environ.get("FALIGN_MODEL", "jonatasgrosman/wav2vec2-large-xlsr-53-russian")
-_MODEL = None      # кэш (proc, model, device) — грузим один раз на батч
+_MODEL: Any = None      # кэш (proc, model, device) — грузим один раз на батч
 
 
-def _resolve(device):
+def _resolve(device: str) -> str:
     """"cuda" в сигнатурах — исторический дефолт «как было», а не выбор юзера.
     Без NVIDIA спрашиваем pick_device: на маке это mps, а не сразу cpu."""
     if device != "cuda":
@@ -41,7 +43,7 @@ def _resolve(device):
         return "cpu"
 
 
-def get_model(device="cuda"):
+def get_model(device: str = "cuda") -> Any:
     global _MODEL
     device = _resolve(device)
     if _MODEL is None:
@@ -52,7 +54,7 @@ def get_model(device="cuda"):
     return _MODEL
 
 
-def release_model():
+def release_model() -> bool:
     """Освободить VRAM под wav2vec2 (вызывать после батча)."""
     global _MODEL
     if _MODEL is None:
@@ -70,7 +72,7 @@ def release_model():
     return True
 
 
-def _blank_kw(blank):
+def _blank_kw(blank: int) -> dict[str, Any]:
     """Аргументы `merge_tokens` для того же blank, что ушёл в `forced_align`.
 
     Дефолт merge_tokens — `blank=0`, и при модели с `pad_token_id != 0` (например 5)
@@ -80,7 +82,9 @@ def _blank_kw(blank):
     return {} if blank == 0 else {"blank": blank}
 
 
-def align_text(audio_f32, text, device="cuda", sr=16000):
+def align_text(
+    audio_f32: Any, text: str, device: str = "cuda", sr: int = 16000
+) -> list[dict[str, Any]]:
     """Выровнять сырой ТЕКСТ (без исходных времён) по короткому аудио-клипу (float32 16k).
     Вернуть [{w,start,end}] в секундах ОТ НАЧАЛА клипа. Слова без кириллицы пропускаются."""
     import torch, torchaudio, numpy as np
@@ -90,9 +94,11 @@ def align_text(audio_f32, text, device="cuda", sr=16000):
     delim = vocab.get("|")
     words = [w for w in re.split(r"\s+", (text or "").strip()) if w]
 
-    def norm(w):
+    def norm(w: str) -> str:
         return "".join(c for c in w.lower() if c in vocab and c != "|")
 
+    targets: list[Any]
+    meta: list[int]
     targets, meta = [], []
     for k, w in enumerate(words):
         s = norm(w)
@@ -119,7 +125,7 @@ def align_text(audio_f32, text, device="cuda", sr=16000):
     # merge_tokens склеивает подряд идущие одинаковые токены: на удвоенной букве
     # («класс») два таргета сливаются в один спан, и спанов становится меньше целей.
     # Тогда пара «спан i ↔ meta[i]» рвётся — уходим на прежний путь, но с логом.
-    wf = {}
+    wf: dict[Any, Any] = {}
     if len(spans) == len(meta):
         for sp, wk in zip(spans, meta):
             if wk == -1 or sp.token == blank:
@@ -151,8 +157,12 @@ def align_text(audio_f32, text, device="cuda", sr=16000):
     return out
 
 
-def _chunks(words, max_len=24.0, gap=0.4, min_len=3.0):
+def _chunks(
+    words: list[dict[str, Any]], max_len: float = 24.0, gap: float = 0.4, min_len: float = 3.0
+) -> list[list[int]]:
     """Резать список слов на чанки по паузам (границы = тихие места), до ~max_len сек."""
+    out: list[list[int]]
+    cur: list[int]
     out, cur = [], []
     for i, w in enumerate(words):
         if cur and ((w["start"] - words[i - 1]["end"] > gap and
@@ -165,7 +175,9 @@ def _chunks(words, max_len=24.0, gap=0.4, min_len=3.0):
     return out
 
 
-def align_words(wav_path, words, device="cuda", emit=console_emit):
+def align_words(
+    wav_path: str, words: list[dict[str, Any]], device: str = "cuda", emit: Any = console_emit
+) -> list[dict[str, Any]]:
     """Вернуть КОПИЮ words с уточнёнными start/end (forced alignment по звуку)."""
     emit = wrap_emit(emit)
     if not words:
@@ -182,7 +194,7 @@ def align_words(wav_path, words, device="cuda", emit=console_emit):
         audio = torchaudio.functional.resample(audio, sr, SR)
     dur = len(audio) / SR
 
-    def norm(w):
+    def norm(w: str) -> str:
         return "".join(c for c in w.lower() if c in vocab and c != "|")
 
     out = [dict(w) for w in words]
@@ -197,6 +209,8 @@ def align_words(wav_path, words, device="cuda", emit=console_emit):
             em = torch.log_softmax(model(clip.unsqueeze(0)).logits, dim=-1)
         T = em.shape[1]
         fd = (a1 - a0) / T                       # длительность одного кадра эмиссии, сек
+        targets: list[Any]
+        meta: list[int]
         targets, meta = [], []                   # meta[j] = индекс слова (или -1 для делимитера)
         for k in ch:
             s = norm(words[k]["w"])
@@ -217,7 +231,7 @@ def align_words(wav_path, words, device="cuda", emit=console_emit):
             continue
         # Соответствие «спан i ↔ meta[i]» — то же самое, что в align_text
         # (там же разбор случая «спанов меньше целей»: удвоенная буква).
-        wf = {}
+        wf: dict[Any, Any] = {}
         if len(spans) == len(meta):
             for sp, wk in zip(spans, meta):
                 if wk == -1 or sp.token == blank:

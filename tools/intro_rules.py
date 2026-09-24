@@ -25,6 +25,7 @@ import os
 import re
 import sys
 from collections import Counter
+from typing import Any, Sequence
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from core import app_meta
@@ -44,7 +45,7 @@ IW = 1080               # ширина кадра-вертикали
 FIT_W = 0.92            # INTRO_FIT_W
 
 
-def _text_width(tt, text):
+def _text_width(tt: Any, text: str) -> float:
     upem = tt["head"].unitsPerEm
     cmap = tt.getBestCmap()
     hmtx = tt["hmtx"]
@@ -56,7 +57,7 @@ def _text_width(tt, text):
     return units / upem * INTRO_PX
 
 
-def camera_at(cam_tracks, frame):
+def camera_at(cam_tracks: Any, frame: int) -> int:
     for ci, tr in enumerate(cam_tracks):
         for cl in tr["clips"]:
             if cl[0] <= frame < cl[1]:
@@ -64,7 +65,7 @@ def camera_at(cam_tracks, frame):
     return -1
 
 
-def intro_groups_from_jsx(jsx_path):
+def intro_groups_from_jsx(jsx_path: str) -> Any:
     raw = open(jsx_path, encoding="utf-8").read()
     m = re.search(r"var INTRO_GROUPS=(\[.*?\]);", raw, re.S)
     if not m:
@@ -75,20 +76,20 @@ def intro_groups_from_jsx(jsx_path):
         return None
 
 
-def med(vals):
+def med(vals: Sequence[Any]) -> Any:
     v = sorted(x for x in vals if x is not None)
     return v[len(v) // 2] if v else None
 
 
-def pct(vals, p):
+def pct(vals: Sequence[Any], p: float) -> Any:
     v = sorted(x for x in vals if x is not None)
     if not v:
         return None
     return v[min(len(v) - 1, int(len(v) * p))]
 
 
-def split_mid_groups_precomps(mids, subs=()):
-    cur = []
+def split_mid_groups_precomps(mids: Any, subs: Any = ()) -> tuple[list[Any], int]:
+    cur: list[Any] = []
     all_pc = []          # прекомпы этого ролика: (fi, last_i, n_lines)
     n_null = 0
     for g in mids + [{"break": True}]:          # фиктивный break в конце закрывает последний
@@ -109,16 +110,16 @@ def split_mid_groups_precomps(mids, subs=()):
     return all_pc, n_null
 
 
-def main():
+def main() -> None:
     from fontTools.ttLib import TTFont
     tt = TTFont(FONT_FILE, lazy=True)
 
-    all_lines = []        # все строки интро: {n, pct, kind}
-    precomps = []         # прекомпы из intro.json: {n_lines, glen, pause, cam}
-    gaps = []             # разрыв конец прекомпа -> начало следующего, сек
-    nulls_all = []        # акцентов без слова-якоря (from=null) на ролик
-    jsx_precomps = []     # прекомпы из .jsx: {n_lines, words_per_line}
-    jsx_stats = {"found": 0, "match": 0, "no_jsx": 0, "rows": []}
+    all_lines: list[dict[str, Any]] = []        # все строки интро: {n, pct, kind}
+    precomps: list[dict[str, Any]] = []         # прекомпы из intro.json: {n_lines, glen, pause, cam}
+    gaps: list[float] = []             # разрыв конец прекомпа -> начало следующего, сек
+    nulls_all: list[int] = []        # акцентов без слова-якоря (from=null) на ролик
+    jsx_precomps: list[dict[str, Any]] = []     # прекомпы из .jsx: {n_lines, words_per_line}
+    jsx_stats: dict[str, Any] = {"found": 0, "match": 0, "no_jsx": 0, "rows": []}
 
     for f in sorted(glob.glob(os.path.join(OUT_DIR, "*.intro.json"))):
         stem = os.path.basename(f).replace(".intro.json", "")

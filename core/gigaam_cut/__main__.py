@@ -6,6 +6,7 @@
 Блок переехал дословно; сменился только способ запуска.
 """
 import argparse, sys
+from typing import Any, cast
 from core import arrowfix  # noqa: F401  # предзагрузка pyarrow до torch во избежание краша arrow.dll, не переставлять ниже
 from .pipeline import run
 from core.app_meta import console_emit
@@ -29,9 +30,9 @@ if __name__ == "__main__":
         ap.add_argument("--dedupe", dest="dedupe", action=argparse.BooleanOptionalAction,
                         default=None, help="чистка дублей")
         a = ap.parse_args()
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
-        stages = {}
+        cast(Any, sys.stdout).reconfigure(encoding="utf-8")
+        cast(Any, sys.stderr).reconfigure(encoding="utf-8")
+        stages: dict[str, Any] = {}
         # Явный draft: в CLI без флага --no-draft черновик включён (дефект 1: normalize подставляет False без ключа)
         stages["draft"] = not a.no_draft
         if a.dedupe is not None:

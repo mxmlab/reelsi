@@ -15,17 +15,18 @@ end (_free_torch), just like gigaam_cut.run() does, so the process exits with
 a clean GPU.
 """
 import os, sys, json, tempfile, traceback, logging
+from typing import Any
 from core.umsg import ReelsiError, cli_error
 
 
 
-def _emit(*a, **k):
+def _emit(*a: Any, **k: Any) -> None:
     # gigaam_cut calls emit(msg, flush=True); accept and ignore any keyword
     # args (flush, etc.) so we stay compatible with the standard `print` API.
     print(*a, file=sys.stderr, flush=True)
 
 
-def main():
+def main() -> str:
     wav = sys.argv[1]
     # argv[2] (необязательный) — чекпойнт GigaAM: v3_ctc (деф.) / v3_rnnt /
     # v3_e2e_rnnt (с пунктуацией) / multilingual_large_ctc и т.д.

@@ -63,9 +63,23 @@ LOWER_BOUND = (
     "core/xml2ae/plan_subs.py",
     "core/xml2ae/plan_words.py",
     "core/xml2ae/template.py",
+    "core/aicut/__init__.py",
+    "core/aicut/__main__.py",
+    "core/aicut/catalog.py",
+    "core/aicut/commands.py",
+    "core/aicut/config.py",
     "core/aicut/config_actions.py",
+    "core/aicut/images.py",
+    "core/aicut/llm.py",
+    "core/aicut/prompts.py",
+    "core/aicut/video.py",
     "core/project_file.py",
     "core/cutjob.py",
+    "core/draftrender.py",
+    "core/drp.py",
+    "core/insertlib.py",
+    "core/omni_cut.py",
+    "core/verify_jsx.py",
     "api/__init__.py",
     "api/_core.py",
     "api/ai.py",
@@ -79,6 +93,74 @@ LOWER_BOUND = (
     "api/previewproxy.py",
     "api/render.py",
     "api/videogen.py",
+    "core/align.py",
+    "core/asr_backends.py",
+    "core/censor.py",
+    "core/crashtrace.py",
+    "core/omni_asr.py",
+    "core/render_job.py",
+    "core/roto.py",
+    "core/subs.py",
+    "core/subtitle_blobs.py",
+    "core/terms.py",
+    "core/transcribe.py",
+    "core/whisper_cpp.py",
+    "core/xmlbuild.py",
+    "core/__init__.py",
+    "core/applog.py",
+    "core/arrowfix.py",
+    "core/assets.py",
+    "core/bootstrap.py",
+    "core/breath.py",
+    "core/ctc_asr.py",
+    "core/cuda_env.py",
+    "core/cutstages.py",
+    "core/cutstate.py",
+    "core/device.py",
+    "core/falign.py",
+    "core/falign_cli.py",
+    "core/fonts.py",
+    "core/gigaam_cut/__init__.py",
+    "core/gigaam_cut/__main__.py",
+    "core/gigaam_cut/asr.py",
+    "core/gigaam_cut/decide.py",
+    "core/gigaam_cut/pipeline.py",
+    "core/gigaam_cut/takes.py",
+    "core/gigaam_cut/tune.py",
+    "core/gigaam_subs.py",
+    "core/headtrack.py",
+    "core/jobstate.py",
+    "core/omni_review.py",
+    "core/selfcheck.py",
+    "core/speakers.py",
+    "core/ssm.py",
+    "core/style_schema.py",
+    "core/styles.py",
+    "core/subtitle_xml.py",
+    "core/sync.py",
+    "core/vad.py",
+    "core/xmltext.py",
+    "core/ytmusic.py",
+    "doctor.py",
+    "reelsi.py",
+    "webui.py",
+    "tools/analyze_blobs.py",
+    "tools/ast_same.py",
+    "tools/bench_vision.py",
+    "tools/check_eol.py",
+    "tools/harvest_good.py",
+    "tools/i18n_extract.py",
+    "tools/i18n_js_keys.py",
+    "tools/i18n_merge.py",
+    "tools/intro_hook_check.py",
+    "tools/intro_hook_rules.py",
+    "tools/intro_rules.py",
+    "tools/mine_edits.py",
+    "tools/public_slice.py",
+    "tools/slice_check.py",
+    "tools/train_breath.py",
+    "tools/verify_ae.py",
+    "tools/webui_test.py",
 )
 
 # Каталоги, которые сканирует сторож писателей .project.json: код, а не тесты
@@ -131,17 +213,19 @@ def test_pyproject_strict_modules_require_annotations():
 
 
 def test_mypy_reports_no_errors():
-    """`mypy` по строгому списку — 0 ошибок (нет mypy — пропуск с причиной)."""
+    """`mypy` по строгому списку — 0 ошибок под win32 и linux (нет mypy — пропуск с причиной)."""
     if importlib.util.find_spec("mypy") is None:
         pytest.skip("mypy не установлен (в CI ставится рядом с ruff: pip install -r "
                     "requirements-dev.txt)")
     # --no-incremental: без него mypy заводит .mypy_cache в корне репозитория, а тесты
     # не должны оставлять следов в дереве (сторож изоляции в conftest.py).
-    r = subprocess.run([sys.executable, "-m", "mypy", "--no-incremental"],
-                       cwd=str(ROOT), capture_output=True, text=True,
-                       encoding="utf-8", errors="replace", timeout=900)
-    assert r.returncode == 0, ("mypy нашёл ошибки в строгом списке:\n"
-                               + (r.stdout or "") + (r.stderr or ""))
+    # Проверяем обе платформы явно (win32 и linux), независимо от ОС хоста.
+    for platform in ("win32", "linux"):
+        r = subprocess.run([sys.executable, "-m", "mypy", "--no-incremental", "--platform", platform],
+                           cwd=str(ROOT), capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=900)
+        assert r.returncode == 0, (f"mypy нашёл ошибки в строгом списке под платформой {platform}:\n"
+                                   + (r.stdout or "") + (r.stderr or ""))
 
 
 def test_write_project_stamps_version(tmp_path):

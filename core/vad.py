@@ -1,20 +1,22 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
 """Energy-based voice activity detection -> speech intervals (seconds)."""
+from __future__ import annotations
+from typing import Any
 import numpy as np
 from scipy.io import wavfile
 
 
-def _load(wav_path):
+def _load(wav_path: str) -> tuple[int, Any]:
     sr, x = wavfile.read(wav_path)
     if x.ndim > 1:
         x = x.mean(axis=1)
     return sr, x.astype(np.float32) / 32768.0
 
 
-def speech_intervals(wav_path, frame=0.025, hop=0.010,
-                     thresh_db=18.0, min_silence=0.30, min_speech=0.20,
-                     pad=0.08):
+def speech_intervals(wav_path: str, frame: float = 0.025, hop: float = 0.010,
+                     thresh_db: float = 18.0, min_silence: float = 0.30, min_speech: float = 0.20,
+                     pad: float = 0.08) -> list[tuple[float, float]]:
     """Return list of (start, end) seconds where speech is present.
     thresh_db: how far above the noise floor counts as speech."""
     sr, x = _load(wav_path)
@@ -45,7 +47,7 @@ def speech_intervals(wav_path, frame=0.025, hop=0.010,
         else:
             i += 1
     # merge gaps shorter than min_silence
-    merged = []
+    merged: list[list[float]] = []
     for s, e in iv:
         if merged and s - merged[-1][1] < min_silence:
             merged[-1][1] = e
@@ -59,7 +61,7 @@ def speech_intervals(wav_path, frame=0.025, hop=0.010,
             continue
         out.append((max(0.0, s - pad), min(dur, e + pad)))
     # re-merge if padding caused overlap
-    final = []
+    final: list[tuple[float, float]] = []
     for s, e in out:
         if final and s <= final[-1][1]:
             final[-1] = (final[-1][0], max(final[-1][1], e))

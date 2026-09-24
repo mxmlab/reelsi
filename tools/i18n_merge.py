@@ -10,6 +10,7 @@ import io
 import json
 import os
 import sys
+from typing import Any, cast
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -334,7 +335,7 @@ ADDITIONS = {
 }
 
 
-def main():
+def main() -> int:
     have = {}
     if os.path.exists(EN):
         have = json.load(io.open(EN, encoding="utf-8"))
@@ -356,7 +357,7 @@ def main():
 if __name__ == "__main__":
     for _s in (sys.stdout, sys.stderr):
         try:
-            _s.reconfigure(encoding="utf-8", errors="replace")
+            cast(Any, _s).reconfigure(encoding="utf-8", errors="replace")
         except Exception:
             pass
     sys.exit(main())

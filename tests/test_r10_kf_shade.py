@@ -102,7 +102,7 @@ def test_frame_1080_intro_scale_100_matches_default(xml_subs):
 
 
 def test_frame_2160_doubles_dimensions(xml_subs, xml_subs_2160):
-    """Кадр 2160 -> w, h, ox, oy, blur, x вдвое больше, scale прежний, y == intro_y + SHADE_DY*2."""
+    """Кадр 2160 -> w, h, ox, oy, blur, x вдвое больше, scale прежний, y == 2*intro_y + SHADE_DY*2."""
     intro_y = 768
     p1080 = _scene_plan(xml_subs, style={"intro_shade": True, "intro_y": intro_y, "intro_scale": 100})
     p2160 = _scene_plan(xml_subs_2160, style={"intro_shade": True, "intro_y": intro_y, "intro_scale": 100})
@@ -116,7 +116,11 @@ def test_frame_2160_doubles_dimensions(xml_subs, xml_subs_2160):
     assert sh2160["blur"] == sh1080["blur"] * 2
     assert sh2160["x"] == sh1080["x"] * 2
     assert sh2160["scale"] == sh1080["scale"]
-    assert sh2160["y"] == intro_y + SHADE_DY * 2
+    # intro_y — число стиля в базовом кадре 1080×1920, а под кадр 2160×3840 стиль
+    # пересчитывается целиком (`style_geometry.scale_style`: вид «y» × H/1920 = 2).
+    # Затемнение следует за нулом интро (INTRO_Y = уже пересчитанный intro_y), поэтому
+    # и позиция удваивается: 2·768 − 215·2 = 1106, а не 768 − 215·2.
+    assert sh2160["y"] == intro_y * 2 + SHADE_DY * 2
     # Отношение ширины затемнения к ширине кадра одинаково
     assert sh1080["w"] / p1080["w"] == sh2160["w"] / p2160["w"]
 

@@ -1,0 +1,357 @@
+{
+ "version": 1,
+ "entries": {
+  "C:\\Program Files\\Common Files\\VST3\\Antares\\AVOX ARTICULATOR.vst3|1639083164.0|30110720": {
+   "ok": true,
+   "names": [
+    "AVOX ARTICULATOR"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Antares\\AVOX ASPIRE.vst3|1639082882.0|21607424": {
+   "ok": true,
+   "names": [
+    "AVOX ASPIRE"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Antares\\AVOX CHOIR.vst3|1639082468.0|9864704": {
+   "ok": true,
+   "names": [
+    "AVOX CHOIR"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Antares\\AVOX DUO.vst3|1639083326.0|13275136": {
+   "ok": true,
+   "names": [
+    "AVOX DUO"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Antares\\AVOX MUTATOR.vst3|1639081572.0|21014016": {
+   "ok": true,
+   "names": [
+    "AVOX MUTATOR"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Antares\\AVOX PUNCH.vst3|1639082754.0|8128512": {
+   "ok": true,
+   "names": [
+    "AVOX PUNCH"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Antares\\AVOX SYBIL.vst3|1639082340.0|13698560": {
+   "ok": true,
+   "names": [
+    "AVOX SYBIL"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Antares\\AVOX THROAT.vst3|1639083458.0|18147328": {
+   "ok": true,
+   "names": [
+    "AVOX THROAT"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Antares\\AVOX WARM.vst3|1639083016.0|17970176": {
+   "ok": true,
+   "names": [
+    "AVOX WARM"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Antares\\Auto-Key.vst3|1639091882.0|9755136": {
+   "ok": true,
+   "names": [
+    "Auto-Key"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Antares\\Auto-Tune Access.vst3|1630278440.0|74255872": {
+   "ok": true,
+   "names": [
+    "Auto-Tune Access"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Antares\\Auto-Tune Artist.vst3|1630281622.0|90320896": {
+   "ok": true,
+   "names": [
+    "Auto-Tune Artist"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Antares\\Auto-Tune EFX.vst3|1630279552.0|38794240": {
+   "ok": true,
+   "names": [
+    "Auto-Tune EFX"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Antares\\Auto-Tune Pro.vst3|1672918436.0|44508672": {
+   "ok": true,
+   "names": [
+    "Auto-Tune Pro"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Antares\\Auto-Tune Slice.vst3|1639043966.0|56704512": {
+   "ok": true,
+   "names": [
+    "Auto-Tune Slice"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Antares\\Auto-Tune Vocodist.vst3|1639100726.0|13942272": {
+   "ok": true,
+   "names": [
+    "Auto-Tune Vocodist"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Antares\\Auto-Tune.vst3|1604327060.0|76783616": {
+   "ok": true,
+   "names": [
+    "Auto-Tune Pro"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Antares\\Harmony Engine 4x.vst3|1639110728.0|16777728": {
+   "ok": true,
+   "names": [
+    "Harmony Engine"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Antares\\Mic Mod.vst3|1639083734.0|12388864": {
+   "ok": true,
+   "names": [
+    "Mic Mod"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Bertom_DenoiserClassic.vst3|1785847042.0248082|3447744": {
+   "ok": true,
+   "names": []
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Celemony\\Melodyne\\Melodyne.vst3|1608757200.0|1290240": {
+   "ok": true,
+   "names": [
+    "Melodyne"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Satin(x64).vst3|1527073614.0|8694272": {
+   "ok": true,
+   "names": [
+    "Satin"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Slate Digital\\Fresh Air.vst3|1720558800.0|250368": {
+   "ok": true,
+   "names": [
+    "Fresh Air"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Valhalla DSP\\ValhallaDelay.vst3|1638565200.0|4877824": {
+   "ok": true,
+   "names": [
+    "ValhallaDelay"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Valhalla DSP\\ValhallaRoom.vst3|1638565200.0|4009472": {
+   "ok": true,
+   "names": [
+    "ValhallaRoom"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Valhalla DSP\\ValhallaShimmer.vst3|1638565200.0|3801088": {
+   "ok": true,
+   "names": [
+    "ValhallaShimmer"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Valhalla DSP\\ValhallaUberMod.vst3|1638565200.0|4144128": {
+   "ok": true,
+   "names": [
+    "ValhallaUberMod"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\Valhalla DSP\\ValhallaVintageVerb.vst3|1638565200.0|4973568": {
+   "ok": true,
+   "names": [
+    "ValhallaVintageVerb"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\ValhallaDSP\\ValhallaDelay.vst3|1668528774.0|4415488": {
+   "ok": true,
+   "names": [
+    "ValhallaDelay"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\ValhallaDSP\\ValhallaFreqEcho.vst3|1603976692.0|3678208": {
+   "ok": true,
+   "names": [
+    "ValhallaFreqEcho"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\ValhallaDSP\\ValhallaPlate.vst3|1600277826.0|4233216": {
+   "ok": true,
+   "names": [
+    "ValhallaPlate"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\ValhallaDSP\\ValhallaRoom.vst3|1600278678.0|4009472": {
+   "ok": true,
+   "names": [
+    "ValhallaRoom"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\ValhallaDSP\\ValhallaShimmer.vst3|1600279722.0|3801088": {
+   "ok": true,
+   "names": [
+    "ValhallaShimmer"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\ValhallaDSP\\ValhallaSpaceModulator.vst3|1600280588.0|3734528": {
+   "ok": true,
+   "names": [
+    "ValhallaSpaceModulator"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\ValhallaDSP\\ValhallaSupermassive.vst3|1668537848.0|3906048": {
+   "ok": true,
+   "names": [
+    "ValhallaSupermassive"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\ValhallaDSP\\ValhallaUberMod.vst3|1600280934.0|4144128": {
+   "ok": true,
+   "names": [
+    "ValhallaUberMod"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\ValhallaDSP\\ValhallaVintageVerb.vst3|1636640486.0|4973568": {
+   "ok": true,
+   "names": [
+    "ValhallaVintageVerb"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\WaveShell1-VST3 13.0_x64.vst3|1744308715.1948943|9580848": {
+   "ok": true,
+   "names": []
+  },
+  "C:\\Program Files\\Common Files\\VST3\\WaveShell1-VST3 13.1_x64.vst3|1744308668.9072711|9622832": {
+   "ok": true,
+   "names": []
+  },
+  "C:\\Program Files\\Common Files\\VST3\\WaveShell1-VST3 13.2_x64.vst3|1744308668.9948058|9629488": {
+   "ok": true,
+   "names": []
+  },
+  "C:\\Program Files\\Common Files\\VST3\\WaveShell1-VST3 13.3_x64.vst3|1744308669.0793207|9777968": {
+   "ok": true,
+   "names": []
+  },
+  "C:\\Program Files\\Common Files\\VST3\\WaveShell1-VST3 13.4_x64.vst3|1744308669.1663077|10282800": {
+   "ok": true,
+   "names": []
+  },
+  "C:\\Program Files\\Common Files\\VST3\\WaveShell1-VST3 13.5_x64.vst3|1744308669.255862|10231600": {
+   "ok": true,
+   "names": []
+  },
+  "C:\\Program Files\\Common Files\\VST3\\WaveShell2-VST3 13.0_x64.vst3|1744308669.3447902|9580848": {
+   "ok": true,
+   "names": []
+  },
+  "C:\\Program Files\\Common Files\\VST3\\WaveShell2-VST3 13.6_x64.vst3|1744308669.429875|10256176": {
+   "ok": true,
+   "names": []
+  },
+  "C:\\Program Files\\Common Files\\VST3\\WaveShell3-VST3 13.0_x64.vst3|1744308669.5179493|9567232": {
+   "ok": true,
+   "names": []
+  },
+  "C:\\Program Files\\Common Files\\VST3\\iZotope\\Ozone 9 Dynamic EQ.vst3|1649624400.0|2593792": {
+   "ok": true,
+   "names": [
+    "Ozone 9 Dynamic EQ"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\iZotope\\Ozone 9 Dynamics.vst3|1649624400.0|2593792": {
+   "ok": true,
+   "names": [
+    "Ozone 9 Dynamics"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\iZotope\\Ozone 9 Equalizer.vst3|1649624400.0|2593792": {
+   "ok": true,
+   "names": [
+    "Ozone 9 Equalizer"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\iZotope\\Ozone 9 Exciter.vst3|1649624400.0|2593792": {
+   "ok": true,
+   "names": [
+    "Ozone 9 Exciter"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\iZotope\\Ozone 9 Imager.vst3|1649624400.0|2593792": {
+   "ok": true,
+   "names": [
+    "Ozone 9 Imager"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\iZotope\\Ozone 9 Low End Focus.vst3|1649624400.0|2593792": {
+   "ok": true,
+   "names": [
+    "Ozone 9 Low End Focus"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\iZotope\\Ozone 9 Master Rebalance.vst3|1649624400.0|2593792": {
+   "ok": true,
+   "names": [
+    "Ozone 9 Master Rebalance"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\iZotope\\Ozone 9 Match EQ.vst3|1649624400.0|2593792": {
+   "ok": true,
+   "names": [
+    "Ozone 9 Match EQ"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\iZotope\\Ozone 9 Maximizer.vst3|1649624400.0|2593792": {
+   "ok": true,
+   "names": [
+    "Ozone 9 Maximizer"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\iZotope\\Ozone 9 Spectral Shaper.vst3|1649624400.0|2593792": {
+   "ok": true,
+   "names": [
+    "Ozone 9 Spectral Shaper"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\iZotope\\Ozone 9 Vintage Compressor.vst3|1649624400.0|2593792": {
+   "ok": true,
+   "names": [
+    "Ozone 9 Vintage Compressor"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\iZotope\\Ozone 9 Vintage EQ.vst3|1649624400.0|2593792": {
+   "ok": true,
+   "names": [
+    "Ozone 9 Vintage EQ"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\iZotope\\Ozone 9 Vintage Limiter.vst3|1649624400.0|2593792": {
+   "ok": true,
+   "names": [
+    "Ozone 9 Vintage Limiter"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\iZotope\\Ozone 9 Vintage Tape.vst3|1649624400.0|2593792": {
+   "ok": true,
+   "names": [
+    "Ozone 9 Vintage Tape"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\iZotope\\Ozone 9.vst3|1649624400.0|2593792": {
+   "ok": true,
+   "names": [
+    "Ozone 9"
+   ]
+  },
+  "C:\\Program Files\\Common Files\\VST3\\iZotope\\Relay.vst3|1649624400.0|2593280": {
+   "ok": true,
+   "names": [
+    "Relay"
+   ]
+  }
+ }
+}

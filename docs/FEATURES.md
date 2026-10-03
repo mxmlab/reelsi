@@ -192,11 +192,47 @@ switches itself off and cutting proceeds as before.
 grey to bring cut material back. 3. Press **Save to XML**.
 **Settings:** wheel zooms, Shift+wheel or the ruler scrolls, Space plays, arrows step
 frame by frame. **Cut** (C), **Delete** (D) and **Undo** (Ctrl+Z) work on blocks. The
-**listen to the cut** checkbox plays the removed audio as well.
+**listen to the cut** checkbox plays the removed audio as well. There is now **one player
+here** — the editor: the "Montage" block with a second player is gone, and the volume and
+the "camera — cuts — length" line moved into its control row. Clicking far along the
+timeline during playback puts the playhead exactly where you clicked (the second player
+used to roll it back to the next montage piece).
+**Processed speaker voice** (the denoiser and the live VST plug-ins) plays in this same
+player, both while listening to the montage and while playing the source. The sound time is
+the source time of camera 1 under the playhead, so over the cut-out places the sound jumps
+with the picture; the level is set by the player row slider (see "Speaker voice" below).
 **Limitations / price:** saving rewrites the XML and reprojects insert timings onto the new
 edit; the window warns before closing with unsaved changes.
 **Code:** `templates/index.html:306`, `static/app/70-editor.js:13`,
 `api/editor.py:256`
+
+### Speaker voice
+
+**Where:** step 1 › cut preview › the **Voice** panel (the speaker profile must have voice
+processing on); on steps 2–3 the same panel sits with the inserts preview.
+**How:** 1. Turn on the **AI denoiser** in the speaker profile and/or add VST3 plug-ins.
+2. Open the preview — the processed voice track plays in the player. 3. Turn the denoiser
+and plug-in knobs by ear; **Configure** opens the plug-in window.
+**Settings:** the chain runs "denoiser first, then plug-ins", like a track in a DAW. While
+the denoiser is being computed (or is off), the plug-ins play LIVE over the camera sound —
+the frame says so; once it is ready the host swaps the track for the cleaned one at the
+same position. Baking `<stem>.voice.wav` with plug-ins happens only on output (AE, XML,
+Resolve, draft render), and changing plug-ins or their knobs never recomputes the denoiser
+(it is computed once and cached). A plug-in that fails to load is skipped, and its name and
+reason are shown in the panel.
+**Volume sliders** — **Volume** in the panel (the clip style's `voice_db`, the same value
+as the **Voice** slider on steps 2–3) and the listening volume in the player row both act
+on the live plug-in sound as well: the host's volume is the speaker's voice volume (dB)
+plus the listening volume. The live host plays at the device's rate and reports a failure
+in the panel, giving the sound back to the page; **Configure** opens the window of the host
+that is already playing, closing that window does not break the sound, and closing the
+preview takes the host down.
+**The cut** listens to the voice after the WHOLE speaker chain: the denoiser (when on) and
+the enabled plug-ins — through the same code as the output. If a plug-in fails, the cut
+falls back to the denoise track and then to the raw sound.
+**Limitations / price:** an NVIDIA card and the denoiser model are required; the plug-in
+window floats above the other windows while the sound plays.
+**Code:** `core/voicefx.py`, `core/voicefx_editor.py`
 
 ### Camera layout
 
@@ -221,8 +257,8 @@ while the queue continues. 3. Or run a custom cut with the **Draft mp4** stage.
 built once per camera file.
 **Limitations / price:** NVENC is used when available, with a fallback to CPU x264, which
 is slow; the log says so explicitly.
-**Code:** `core/draftrender.py:1`, `core/cutstages.py:71`, `api/jobs.py:504`,
-`static/app/50-chrome.js:186`
+**Code:** `core/draftrender.py:1`, `core/cutstages.py:71`, `api/jobs.py:482`,
+`static/app/55-progress.js:145`, `static/app/55-progress.js:362`
 
 ### Temporary files
 
@@ -231,7 +267,7 @@ is slow; the log says so explicitly.
 question separately.
 **Settings:** the dialog shows the size before deleting. Drafts and the roto cache are left
 alone; preview proxies are a per-camera-file cache and are only removed if you say yes.
-**Code:** `api/jobs.py:550`, `api/jobs.py:593`, `static/app/50-chrome.js:194`
+**Code:** `api/jobs.py:528`, `api/jobs.py:571`, `static/app/50-chrome.js:92`
 
 ### Clips list
 
@@ -300,7 +336,11 @@ straight in the XML; clearing the text deletes the word.
 intro rows marked as accents. From the keyboard: Enter highlights, Shift+Enter sends to
 intro, Ctrl+Enter edits. A deleted word gives its time to the next one when the two went
 back to back (a pause of 0.3 s or less): the next word starts where the deleted one started
-and lasts longer. Gaps left by earlier deletions do not close by themselves.
+and lasts longer. Gaps left by earlier deletions do not close by themselves. The particle
+**"не"/"ни"** before a word the AI picked is highlighted TOGETHER with it (a measurement
+over 236 clips found 135 highlighted words with a white "НЕ" in front of them) — otherwise
+the negation stayed white and the point of the highlight was lost. Prepositions and other
+function words are not joined, and the same rule is in the AI hint.
 **Limitations / price:** highlights are written into the XML itself, so they survive a
 manual re-edit; a sidecar `.yellow.json` is kept as a fallback for words that could not be
 coloured.
@@ -320,7 +360,15 @@ never trimmed; it is not rebuilt on every edit, so it does not blink black while
 is being changed. The **scale** scrubber works on every video insert and grows it from the
 centre of the frame, the way layer Scale does in After Effects; **X** and **Y** move a
 video insert freely at any scale, in the preview and in AE alike — a video that went past
-the edge of the frame uncovers the camera shot under it.
+the edge of the frame uncovers the camera shot under it. **Switching the type** (the
+PHOTO/VIDEO badge on a card) switches WHAT is searched: the stock and library options of
+the previous type are cleared, the open panels are searched again for the new type, an
+auto-picked file of the old type is removed and a new one is picked, while a file chosen by
+hand or generated stays. The badge changes at once, and a second click during the search
+does not switch back. Timing and duration adjusted by dragging in the step 3 preview are
+saved into the clip and survive a reopening. The **Inserts** window fills the screen and
+keeps one height for any number of inserts: the list of cards scrolls inside itself while
+the player, the buttons and the timeline stay put.
 
 **On a plate.** The **on plate** checkbox next to the mosaic one puts that single photo
 insert on the plate image from the style (**Inserts** › **Photo** › **Plate (file)**,
@@ -445,7 +493,16 @@ clips from the list only; files on disk stay.
 **How:** 1. Open a clip preview. 2. Press **AI intro**. 3. Check the rows: the first rows
 are the hook behind the speaker, the mid rows are accents.
 **Settings:** the intro appearance mode is **per word** or **per line**. Rows can
-be added and reordered; picking a row and clicking a word moves the group start.
+be added and reordered; picking a row and clicking a word moves the group start. The **add a
+word to the left** button takes the previous word into the row (for an accent it moves the
+start); a row that became empty is deleted and the group start moves with it. The look of the
+rows (animation and effect) is chosen by the AI by rules derived from the owner's hand-made
+edits (12 clips, 400 rows, an 82 % match): an accent is a glitch, a background row of 2+
+words rises, a group of 4+ rows reveals the first row and moves the rest in from the right, a
+white row of 2–3 words rises, everything else has no animation. "Не", prepositions and
+dependent words stay with their word in a row and in accents. **Glow of accent rows** is a
+single style switch (see "Glitch glow" below): the style decides the glow of a row, not the
+AI's markup.
 **Limitations / price:** already marked-up intro is replaced after a confirmation. Intro
 words are cut out of the subtitles, so they do not show up in the subtitle rows either; this
 works the same in the row mode and in the word-by-word mode.
@@ -473,10 +530,11 @@ or **Save as…** for a copy.
 casing, colours), highlights (including **Yellow in a row**, the blur-in and **consecutive
 yellow — stacked**), the subtitle
 plate, the caption, intro colours, glow and shadows, the disclaimer, and the fonts.
-**Frame** holds the camera 1 zoom mode
-(push-in with recoil, hard jumps, drift, none), the take zooms and the yellow-word zoom,
-frame fill, the zoom point, the frame offset, the horizon, head tracking, the Lumetri
-colour, the top progress line and the start blur.
+**Frame** holds a section per camera: the zoom mode
+(push-in with recoil, hard jumps, drift, none), long-take and highlight zooms, highlight
+strength, frame fill, the zoom point, the frame offset, the horizon, head tracking, the
+Lumetri colour and camera 2's link to camera 1's colour, the top progress line and the
+start blur.
 **Inserts** holds the photo style, animation, effects, insert positions, the plate image and
 the continuous rotoscope. **Layers** is the layer order, dragged with the mouse or moved
 with the arrow buttons. **Sound** holds music, voice, transition, glitch and pop levels,
@@ -486,26 +544,81 @@ every file in the set that uses that style. Built-in styles cannot be deleted.
 **Code:** `core/styles.py:1`, `api/presets.py:15`, `templates/index.html:170`,
 `static/app/95-styles.js:496`
 
-### Camera 1: hard jumps, take zooms and yellow words
+### Camera 1: zoom animation, take zooms and highlight zooms
 
-**Where:** step 3 › style › **Frame** › **Cam 1 zoom**.
+**Where:** step 3 › style › **Frame** › **Camera 1** › **Zoom animation**.
 **How:** 1. Pick the mode: **push-in with recoil (smooth)**, **hard jumps 100–140%**,
 **drift 100–160% (smooth between cuts)** or **no zoom (static frame)**. 2. In the **hard
-jumps** mode set **punch-in at start**, **First punch-in, %**, the take zooms and the
-yellow-word zoom.
-**Settings:** in **hard jumps** the scale jumps to a random value between **Pullbacks from, %**
-and **Pullbacks up to, %** at every cut. **punch-in at start** opens the clip with a smooth approach from **First
-punch-in, %** down to the first jump instead of starting on a random value. **zoom-ins on
-long takes** adds one smooth approach inside every take longer than **Take longer than, s**:
-the camera moves in by a value between **Zoom-in from, %** and **Zoom-in to, %** of that
-take's own value, holds it for **Hold
-zoom-in, s** and pulls back; if the next cut comes too soon it stays zoomed in and the cut
-resets it with a jump. **zoom-in on yellow words** lands that approach exactly on the first
-yellow word of the take instead of a fixed moment after the cut; a take without yellow words
-behaves as usual.
-**Limitations / price:** the take zooms and the yellow-word zoom work only in **hard
-jumps**; in the other modes their fields are hidden.
+jumps** mode set **punch-in at start**, **First punch-in, %**, the **Inside a long take**
+block and the **Highlight** checkbox.
+**Settings:** "Zoom animation" is three independent blocks: **At the start of the clip**
+(checkbox + scale), **On a cut** (none / push-in with recoil / jump / jump + drift, the
+scale from–to on one line) and **Inside a long take** (take length, **Zoom in by, +%**
+from–to, **Hold, s**, **Highlight**). **Scale, %** is always the frame size, and **Zoom in
+by** is the only addition, signed "+"; a range written "from > to" swaps itself. In **hard
+jumps** the scale jumps to a random value between **Pullbacks from, %** and **Pullbacks up
+to, %** at every cut. **punch-in at start** opens the clip with a smooth approach from
+**First punch-in, %** down to the first jump instead of starting on a random value.
+**Inside a long take** adds a zoom in every take longer than the threshold — in ANY cut
+type, not only jumps: the camera moves in, holds **Hold, s** and pulls back; the cycle
+shrinks to fit a short take (the reserve, the offset, the approach/pullback and the hold),
+and when even the smallest one does not fit there is no zoom and the camera is not left
+zoomed in. **Highlight** zooms on the highlighted words (the clip's yellow words and the
+intro words coloured as accents): consecutive words count as ONE phrase, the approach
+starts 0.1 s before the first word, and the hold lasts to the end of the last one plus
+**Hold, s**. The pullback is placed only when it fits entirely before the cut — otherwise
+the camera holds the zoom up to the cut. **Only strong highlights** zooms on the strongest
+phrases rather than on every one (see "Highlight strength"). **Limitations / price:** in a
+short take the hold of **Hold, s** is shorter.
 **Code:** `core/xml2ae/plan_camera.py:118`, `core/style_schema.py:1331`, `core/styles.py:184`
+
+### Camera 2: its own zoom, frame and colour
+
+**Where:** step 3 › style › **Frame** › the **Camera 2** section (right under "Camera 1").
+**How:** 1. Set camera 2's **Transform** — **Frame fill, %**, **Zoom point**, **Frame
+offset X/Y, px**, **Horizon, °**. 2. In **Zoom animation** pick the mode (**no zoom** by
+default, which keeps the build as before) and set the zooms. 3. The **Colour (Lumetri)**
+group has a link button in its header: linked keeps the fields grey and reading camera 1's
+colour, unlinked makes them its own.
+**Settings:** camera 2 has a full set of its own: the zoom keys are computed separately
+(zooms and jumps sit on the cuts onto camera 2, take and highlight zooms are camera 2's
+own); camera 1's settings no longer affect camera 2 and the other way round. The fill
+multiplies the zoom keys; with "no zoom" the frame sits at the given scale. The offset goes
+into the Position of camera 2's null, the rotation turns its layers and its roto; the
+intro, the inserts and head tracking on camera 2 ride the frame. **Camera 2 is active**
+means its zoom is on or any Transform field is off default — that decides the intro's
+parent on camera 2 and the target of the zoom-point picker. A style that had the old "Zoom
+camera 2 too" checkbox gets a copy of camera 1's settings once on load, so the look does
+not change.
+**Code:** `core/xml2ae/plan_camera.py:143`, `core/style_schema.py:1234`,
+`static/app/94-stylepanel.js:1314`
+
+### Highlight strength: zoom on strong words only
+
+**Where:** step 3 › style › **Frame** › **Highlight strength** (a group shared by both
+cameras).
+**How:** 1. Turn on **Only strong highlights** for the camera you want (in its **Highlight**
+block). 2. Pick the **Measurement** — **by emotion** or **by voice**. 3. Set the
+**Strength threshold, %**, **Zooms per piece, max.** and **Second zoom — take from, s**.
+**Settings:** the strength of a word is computed automatically (the sidecar
+`<stem>.emph.json` next to the XML) and has two halves: the **emotion of the phrase** —
+GigaAM-Emo measures how non-neutral the phrase around the word is (a 2.5 s window, 65 ms
+per word on the GPU); the **stress of the word by sound** — loudness, pitch and syllable
+length compared with the neighbouring words. Both estimates sit side by side, so switching
+the way recomputes nothing, and in "by voice" mode the emotion model is not loaded at all.
+The **Strength threshold, %** is a percentile of the CLIP's own highlight strengths: 70 (the
+default) zooms on words no weaker than the clip's p70, 50 is the median, 0 zooms on every
+phrase with highlights and 100 only on the clip's strongest word. The text stays yellow
+either way: the threshold is about the camera, not the colour. **Zooms per piece, max.**
+caps the zooms in one piece (1–3), and **Second zoom — take from, s** sets the take length
+from which a second zoom is allowed. A phrase is consecutive highlighted words and its
+strength is the maximum of its words; zooms are placed in timeline order.
+**Limitations / price:** when the strength is not computed (no sound, no model, a word
+added by hand after the calculation), the rule behaves as before — a zoom on every phrase —
+and the log says "highlight strength not computed". The calculation runs after the
+highlight markup and lazily during the build; in the preview it is started by **Compute
+roto and tracking** together with the roto and the head track.
+**Code:** `core/emphasis.py`, `docs/HIGHLIGHT_SPEC.md`
 
 ### Camera 1 frame: fill, zoom point, offset and horizon
 
@@ -530,35 +643,44 @@ frame offset to ±500 px (±2000 px in the extended range).
 
 ### Head tracking
 
-**Where:** step 3 › style › **Frame** › **Transform** › **follow the head**.
+**Where:** step 3 › style › **Frame** › **Transform** › **follow the head** — every camera
+has its own block, so camera 2 can follow the head too.
 **How:** 1. Tick **follow the head**. 2. Set **Head X, %** — where the head should sit in
 the frame. 3. Set **Follow smoothing, s** and, if needed, **Follow from zoom, %**.
 4. Build the set.
 **Settings:** the frame moves horizontally to keep the head at the chosen place. The head is
 found by the person mask — the same Robust Video Matting that rotoscope uses — and not by
 face detection, so a portrait on the wall does not confuse it. The track is computed on the
-GPU during the first build of a clip and cached next to the XML as `<name>.head.json`; later
+GPU during the first build of a clip and cached next to the XML as `<name>.head.json` (camera
+2 keeps its own `<name>.head2.json`); later
 builds just read the cache. **Follow smoothing, s** is the time constant of the movement.
 **Follow from zoom, %** switches the tracking on only from that zoom value: below it the
 frame smoothly returns to its place, 0 means always follow. The threshold is compared in the
-same numbers as the jump and take ranges, without the frame fill. Camera 1 inserts and the
-intro travel with the frame.
+same numbers as the jump and take ranges, without the frame fill. Inserts and the intro on
+that camera travel with the frame; on camera 2 the cut-away frame is tracked over its own
+source.
 **Limitations / price:** the correction is limited by the frame itself: the edge of the
-picture never opens. Tracking needs the GPU and the matting model (downloaded on first use,
-as for rotoscope); if it fails, the build continues without tracking and says so in the log.
+picture never opens (the shift is clamped along AE's curve and by the smallest scale on the
+segment, and the track is keyed at every sample, 10 per second, linearly). Tracking needs the
+GPU and the matting model (downloaded on first use, as for rotoscope); if it fails, the build
+continues without tracking and says so in the log.
 **Code:** `core/headtrack.py:201`, `core/xml2ae/layout.py:1156`,
 `core/xml2ae/build.py:1756`
 
 ### Colour (Lumetri)
 
 **Where:** step 3 › style › **Frame** › **Color (Lumetri)** (the group has its own
-checkbox).
+checkbox); camera 2 has its own group with a link button.
 **How:** 1. Tick the group. 2. Set the nine parameters — **Exposure**, **Contrast**,
 **Highlights**, **Shadows**, **Whites**, **Blacks**, **Temperature**, **Tint** and
 **Saturation**. 3. Build the set.
 **Settings:** one Lumetri Color effect goes on every camera clip and on its rotoscope copy,
 with the same nine values as the Lumetri panel in After Effects. The per-clip exposure of
-the AE step is added to **Exposure**, so the two do not fight.
+the AE step is added to **Exposure**, so the two do not fight. Camera 2's group starts
+**linked** to camera 1: its fields are grey and show camera 1's colour, and edits of camera 1
+show at once. Unlink it and the fields take camera 1's current values as their own — the
+build then writes `LUMETRI2` on camera-2 clips and roto copies, and the preview tints camera
+2 with its own filter. The group's **Reset** links it back.
 **Limitations / price:** the browser preview shows an approximation — the real Lumetri
 formulas are closed — so it is good for judging the direction of the correction, not its
 exact value.
@@ -714,15 +836,24 @@ never trimmed.
 
 ### Rotoscope
 
-**Where:** step 3 › style › **Inserts** › **Rotoscope**.
-**How:** 1. Tick **Auto rotoscope**. 2. Choose the device and the mask bottom. 3. Build the
-set.
+**Where:** step 3 › style › **Inserts** › **Rotoscope**; in the clip preview the **Compute
+roto and tracking** button (words/intro tab, at the top).
+**How:** 1. Tick **Auto rotoscope** (and/or **follow the head**). 2. Choose the device and
+the mask bottom. 3. Press **Compute roto and tracking** in the preview to see the result
+without building the set. 4. Or just build the set.
 **Settings:** the mask is computed by Robust Video Matting on the GPU; the mask bottom
-percentage cuts the mask, and **Roto on Camera 1 only** skips camera 2 pieces.
+percentage cuts the mask, and **Roto on Camera 1 only** skips camera 2 pieces. The compute
+button is shown when the style has roto or tracking on; it computes the masks and the head
+track with per-chunk progress and a **Stop** button, and marks itself "computed" when done.
+The preview then shows the **speaker's cut-out figure**: the camera frame multiplied by the
+mask, above the intro in the style's layer order and in sync with the player; tracking
+appears from the plan right after the calculation. The calculation takes the shared job lock,
+so it never runs on top of a cut, a build or a render, and the build reuses what it computed
+(the caches are shared).
 **Limitations / price:** the model is downloaded on first use, and masks are cached, so a
-second build reuses them. On a VRAM shortage the build stops with a clear message and the
-XML is not overwritten. Add the photo and intro layers below roto to bring the person in
-front of them.
+second build reuses them. RVM is released from video memory right after the calculation. On
+a VRAM shortage the build stops with a clear message and the XML is not overwritten. Add the
+photo and intro layers below roto to bring the person in front of them.
 **Code:** `core/roto.py:1`, `core/roto.py:41`, `core/style_schema.py:1768`
 
 ### Music
@@ -746,7 +877,14 @@ from step 1, and there the window is titled with the name of the open file.
 4. Drag the zoom target point.
 **Settings:** the preview uses the same scene plan that goes into the build — the plan is
 served by `/api/scene` without GPU work, and every style edit comes back as a new plan, so
-the subtitles change at once, on a paused player too. The subtitles do not drag with the
+the subtitles change at once, on a paused player too. When the style has roto or head
+tracking on, a **Compute roto and tracking** button sits at the top of the words/intro tab:
+it computes the RVM masks and the head track on the GPU with per-chunk progress and a
+**Stop** button, marks itself "computed" when done, and the preview then shows the speaker's
+cut-out figure above the intro in the style's layer order, in sync with the player; head
+tracking appears from the plan right after the calculation. The calculation takes the shared
+job lock, so it does not run on top of a cut, a build or a render, and the masks it computes
+are reused by the build. The subtitles do not drag with the
 mouse: their height is the style's **Subtitle height, % from bottom**. The style block moves
 into the preview's **Style** tab while it is open, and returns to the page when it closes;
 there the panel scrolls, so a long list of groups does not push the **Save** row out.
@@ -759,7 +897,7 @@ snappy; until a proxy is ready the preview plays the original, and a block with 
 bar and a percent sits over the player while the build runs. Fonts for the preview come
 from the installed system fonts.
 **Code:** `api/build.py:639`, `static/app/85-inserts-view.js:55`,
-`api/previewproxy.py:66`, `api/files.py:261`, `static/app/50-chrome.js:328`
+`api/previewproxy.py:66`, `api/files.py:261`, `static/app/60-preview.js:113`
 
 ### Exporting `.jsx`
 
@@ -792,7 +930,14 @@ the XML copy — Resolve positions clips by timecode.
 ETA. 4. Press **Stop** to cancel.
 **Settings:** the **Render output folder** defaults to `exp` next to the repository and can
 come from the speaker profile. A set of several clips always becomes one AE project with
-one master script and one `aerender` run; a single clip keeps the plain path. During the
+one master script and one `aerender` run; a single clip keeps the plain path. **How many AE
+copies build the project** is set in ⚙ › **Tools** › **After Effects**
+(`ae_build_workers`, "auto" by default): a set is built by several `AfterFX` copies in
+parallel, each taking its own share of the clips, and one more copy then merges the parts
+into a single project; "auto" picks min(3, the number of clips, free memory / 10 GB), and
+"1" keeps the old path. `aerender` is launched with the memory limit `-mem_usage 40 60` as
+well, otherwise After Effects takes almost all memory, Windows goes into swap and the render
+is slower (361 s against 290 s in one measurement). During the
 **AE project build** stage of a multi-clip set, the progress display shows "N of M", which
 clip is currently building, and the ETA, while already built clips in the queue show "built,
 waiting for render". Batch phase timings from previous runs are remembered and make the ETA
@@ -801,7 +946,7 @@ better over time.
 headless run, so the job refuses to start. There is a stall watchdog, and an instant
 AfterFX exit is reported as a likely open AE copy. Rotoscoping runs during the build and is
 the longest stage.
-**Code:** `core/render_job.py:1495`, `core/aerender.py:34`, `core/render_job.py:1287`,
+**Code:** `core/render_job.py:1483`, `core/aerender.py:34`, `core/render_job.py:1289`,
 `core/aerender.py:151`, `core/aerender.py:49`, `static/app/90-ae.js:176`
 
 ### Progress, queue and logs
@@ -821,8 +966,8 @@ disk, so after a server restart the interface still shows it as interrupted by a
 restart, with the item and the progress it stopped at. A cut whose process has printed
 nothing for 20 minutes is marked as silent in the status and in the log, but the process is
 never killed: a long speech recognition run is silent for a legitimate reason.
-**Code:** `static/app/50-chrome.js:73`, `templates/index.html:530`,
-`templates/index.html:553`, `core/umsg.py:1`, `core/jobstate.py:176`, `api/jobs.py:31`,
+**Code:** `static/app/55-progress.js:276`, `templates/index.html:530`,
+`templates/index.html:553`, `core/umsg.py:1`, `core/jobstate.py:204`, `api/jobs.py:32`,
 `static/app/00-core.js:77`
 
 ## Settings and tools

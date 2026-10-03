@@ -118,3 +118,84 @@ def test_censor_windows_only_by_asterisk(censor):
     wins_manual = _censor_windows([(0, 70, "мон*таж")], fps=10.0)
     assert wins_manual == [(3.0, 4.0)]
 
+
+# ---- звёздочка внутри сработавшего стема и метка «=целое слово» ----
+
+def test_star_lands_inside_the_fired_stem(censor):
+    """Стем «трен» в «тренболон»: звёздочка ВНУТРИ «трен», иначе стем читается целиком."""
+    censor.write_text("bad", "тренболон\nтрен\nтест\n=аст\nbpc157\n")
+    assert censor.censor("тренболон") == "тр*нболон"
+    assert censor.censor("Тренболон") == "Тр*нболон"
+    # Стем «тест» сидит в слове с 6-й позиции, его середина — «с» (глобальный индекс 8):
+    # «внутрите*т», а не «внутрит*ст» (там звезда встала бы на 2-ю букву стема, «е»).
+    assert censor.censor("внутритест") == "внутрите*т"
+    assert censor.censor("аст") == "а*т"
+    assert censor.censor("АСТ") == "А*Т"
+    assert censor.censor("часто") == "часто"
+    assert censor.censor("bpc-157") == "bpc-*57"
+
+
+def test_shortest_stem_wins_regardless_of_list_order(censor):
+    """У «тренболон» срабатывают и «трен», и «тренболон» — мутить надо короткий: он и
+    читается. Длинный в списке стоит первым, так что «первый победитель» не годится."""
+    censor.write_text("bad", "тренболон\nтрен\n")
+    assert censor.censor("тренболон") == "тр*нболон"
+
+
+def test_one_letter_stem_stars_the_whole_one_letter_word(censor):
+    """Однобуквенный стем: `k = p + 0`, слово из одной буквы становится «*» без падения —
+    старое «не стирать единственную букву» тут больше не нужно, звезда внутри стема."""
+    censor.write_text("bad", "х\n")
+    assert censor.censor("х") == "*"
+
+
+def test_word_marker_matches_whole_word_only(censor):
+    """`=аст` — только целое слово: «часто»/«мастер»/«растет» обычные, «аст» плохое.
+    Голый стем «аст» зацензурил бы все четыре."""
+    censor.write_text("bad", "=аст\n")
+    assert not censor.is_bad("часто")
+    assert not censor.is_bad("мастер")
+    assert not censor.is_bad("растет")
+    assert censor.is_bad("аст")
+    assert censor.censor("часто") == "часто"
+
+
+def test_ok_list_word_marker_does_not_disarm_the_stem(censor):
+    """`=тесто` в ok гасит ровно «тесто»: подстрочный стем «тест» при этом продолжает
+    ловить «тестостерон», а исключение «тесто» подстрокой убило бы и его."""
+    censor.write_text("bad", "тест\n")
+    censor.write_text("ok", "=тесто\n")
+    assert not censor.is_bad("тесто")
+    assert censor.censor("тесто") == "тесто"
+    assert censor.is_bad("тестостерон")
+    assert censor.censor("тестостерон") != "тестостерон"
+
+
+def test_word_marker_ignores_spaces_after_sign(censor):
+    """«= аст» и «=аст» — одно и то же; пробелы после знака не значимы."""
+    censor.write_text("bad", "= аст\n")
+    assert censor.is_bad("аст") and not censor.is_bad("часто")
+    assert censor.info()["bad"]["count"] == 1
+    # Строка из одного «=» — пустая, цензурить по ней нечего, но в счётчике настроек она
+    # есть: `_parse` не выбрасывает её, и это осознанно (info() считает строки списка).
+    censor.write_text("bad", "= аст\n=\n")
+    assert censor.is_bad("аст") and not censor.is_bad("часто")
+    assert censor.info()["bad"]["count"] == 2
+
+
+def test_match_returns_the_element_without_the_sign(censor):
+    """`match` отдаёт сам элемент без «=»: по нему censor() ищет позицию в слове."""
+    assert censor.match("аст", ["=аст", "тест"]) == "аст"      # «тест» в «аст» не входит
+    assert censor.match("аст", ["часто", "=аст"]) == "аст"
+    assert censor.match("часто", ["=аст", "аст"]) == "аст"     # из сработавших короче «часто»
+    assert censor.match("трен", ["трен", "тр"]) == "тр"
+    assert censor.match("часто", ["=аст"]) is None             # «=аст» — только целое слово
+    assert censor.match("что-то", []) is None
+
+
+def test_info_counts_word_marker_lines(censor):
+    """Счётчик в настройках считает строки с «=» — это стемы списка, а не мусор."""
+    censor.write_text("bad", "трен\n=аст\n= часто\n")
+    assert censor.info()["bad"]["count"] == 3
+
+

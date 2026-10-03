@@ -42,12 +42,24 @@ ENV_CACHE_TTL_DAYS = 7
 EXTRACT_TIMEOUT = 300
 
 
-def extract_audio(video_path: str, wav_path: str, sr: int = SR, timeout: int = EXTRACT_TIMEOUT) -> str:
-    """Decode the audio track to mono `sr` wav (fast: -vn, no video decode)."""
-    subprocess.run(
-        ["ffmpeg", "-y", "-i", video_path, "-vn", "-ac", "1", "-ar", str(sr),
-         "-c:a", "pcm_s16le", wav_path, "-loglevel", "error"],
-        check=True, timeout=timeout)
+def extract_audio(video_path: str, wav_path: str, sr: int = SR, timeout: int = EXTRACT_TIMEOUT,
+                  ss: float | None = None, duration: float | None = None) -> str:
+    """Decode the audio track to mono `sr` wav (fast: -vn, no video decode).
+
+    `ss`/`duration` (сек) — читать только ОТРЕЗОК: `-ss` стоит ДО `-i`, поэтому ffmpeg
+    прыгает по контейнеру и не декодирует начало файла. Нужно расчёту силы жёлтых
+    (`core/emphasis.py`): на длинном исходнике читаются окна вокруг жёлтых слов, а не
+    весь файл — иначе память и время росли бы с его длиной.
+    """
+    args = ["ffmpeg", "-y"]
+    if ss is not None and ss > 0:
+        args += ["-ss", "%.6f" % float(ss)]
+    args += ["-i", video_path]
+    if duration is not None:
+        args += ["-t", "%.6f" % float(duration)]
+    args += ["-vn", "-ac", "1", "-ar", str(sr), "-c:a", "pcm_s16le", wav_path,
+             "-loglevel", "error"]
+    subprocess.run(args, check=True, timeout=timeout)
     return wav_path
 
 

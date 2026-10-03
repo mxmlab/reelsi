@@ -24,7 +24,7 @@ CLI:  python -m core.xml2ae "C:/.../EditedSequence.xml" [out.jsx]
 (`xml2ae.layout._ins_scale`) — пакет затем и заводили, чтобы не держать одну
 плоскую свалку имён.
 """
-from . import build, highlights, jsutil, layout, parse, template   # noqa: F401
+from . import build, highlights, jsutil, layout, parse, precompute, template   # noqa: F401
 from .parse import Cancelled, parse_full   # noqa: F401
 from .highlights import (   # noqa: F401
     auto_highlights, write_highlights, set_highlights, edit_word, delete_word,

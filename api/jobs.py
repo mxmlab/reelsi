@@ -8,7 +8,8 @@ CURPROC ПЕРЕПРИСВАИВАЕТСЯ (global), а `from ._core import CURP
 _kill_curproc — оба здесь.
 """
 import os, queue, threading, time, traceback, subprocess, shutil, tempfile
-from typing import Any, Sequence, cast
+import concurrent.futures
+from typing import Any, Sequence
 from flask import request, jsonify, Response
 from core import cams
 from core import cutjob
@@ -18,6 +19,7 @@ from ._core import (DEFAULT_BASE, JOB, LOCK, bp, emit, is_reelsi_target, item_do
                     item_fail, item_set, items_init, job_finish, job_start, jstr,
                     journal_interrupted, kill_tree, set_progress, set_stalled,
                     sysexit_text, task_popen_kwargs, umsg_err, _cross_lock_release)
+from core.jobstate import pump_stdout
 from core.umsg import ReelsiError, umsg
 from core.app_meta import child_env, module_cmd
 from core.applog import get_logger
@@ -29,6 +31,17 @@ CURWORK: list[str] = []            # рабочие каталоги задач�
                         # их маркером WORK_DIR= в stdout, а _kill_curproc удаляет — иначе
                         # WAV камер (сотни МБ) переживают «Стоп» в %TEMP%. Путь проверяется
                         # is_safe_work_dir: ту же строку печатает ответ модели — см. там
+# Реестры параллельных подпроцессов: ключ — порядковый номер (i) ролика.
+# CURPROC/CURWORK остаются для обратной совместимости (k==1 и тесты).
+CURPROCS: dict[int, subprocess.Popen[Any]] = {}
+CURWORKS: dict[int, list[str]] = {}
+# Замок записи прогресса пула. set_progress берёт LOCK сам, а LOCK нереентерабельный:
+# звать его под `with LOCK` нельзя — поток виснет навсегда (самодедлок). Но и просто
+# вынести вызов за LOCK мало: два ролика, кончающихся почти одновременно, писали бы
+# прогресс вразнобой — отставший счётчиком мог лечь последним, и в статусе застревало
+# бы «2 из 3». Поэтому счёт и запись идут одной критической секцией: PROGRESS_LOCK
+# берётся РАНЬШЕ LOCK и только ради этого — обратного порядка в файле нет.
+PROGRESS_LOCK = threading.Lock()
 # Сторож простоя процесса нарезки: молчит дольше — в статус идёт флаг
 # stalled и строка в лог, но процесс НЕ убивается. Долгая ASR (GigaAM на 40-минутной
 # камере) молчит законно, и снимать её по тишине значило бы терять готовую работу.
@@ -86,37 +99,25 @@ def is_safe_work_dir(path: Any) -> bool:
 def _kill_curproc() -> None:
     """Убить текущий subprocess вместе с детьми (omni_cut порождает omni_asr — им VRAM),
     и убрать его рабочие каталоги (см. CURWORK). Дерево убивает общая `_core.kill_tree`:
-    раньше та же функция была скопирована здесь третьим экземпляром."""
+    раньше та же функция была скопирована здесь третьим экземпляром.
+    При параллельном режиме (k > 1) убивает ВСЕ живые процессы из реестра CURPROCS."""
     with LOCK:
         p = CURPROC
         works = list(CURWORK)
+        # Реестры параллельных подпроцессов
+        reg_procs = list(CURPROCS.values())
+        reg_works_all: list[str] = []
+        for wl in CURWORKS.values():
+            reg_works_all.extend(wl)
+        CURPROCS.clear()
+        CURWORKS.clear()
     if p and p.poll() is None:
         kill_tree(p)
-    for w in works:                          # temp-каталоги задачи (WAV камер и вырезок)
+    for rp in reg_procs:
+        if rp.poll() is None:
+            kill_tree(rp)
+    for w in works + reg_works_all:          # temp-каталоги задачи (WAV камер и вырезок)
         shutil.rmtree(w, ignore_errors=True)
-
-
-def _pump_stdout(p: subprocess.Popen[Any]) -> queue.Queue[str | None]:
-    """Фоновый поток чтения stdout процесса нарезки в очередь (образец — api/render.py).
-
-    Пока главный поток сидит в `for line in p.stdout`, он не может ни заметить
-    простой процесса, ни среагировать на «Стоп» до следующей строки вывода: зависшая
-    нарезка висела бесконечно, а в статусе не было ни слова. Строки
-    кладём в очередь — их разбирает тот же цикл, что и раньше, только с таймаутом."""
-    q: queue.Queue[str | None] = queue.Queue()
-
-    def _pump() -> None:
-        try:
-            for line in cast(Any, p.stdout):
-                q.put(line)
-        except ReelsiError: raise
-        except Exception:
-            pass  # поток вывода оборвался (процесс умер) — EOF отдаём в finally
-        finally:
-            q.put(None)          # EOF вывода: процесс закрыл stdout или умер
-
-    threading.Thread(target=_pump, daemon=True).start()
-    return q
 
 
 def _mark_stopped_waits() -> None:
@@ -305,15 +306,61 @@ def run_omnicut_job(outdir: str, pairs: list[list[str]], model: str | None = Non
         except Exception:
             pass  # уборка _tmp не удалась — нарезку из-за мусора не останавливаем
         # Очередь этапов по стемам набора: заводим ДО начала цикла, все — wait.
-        items_init(JOB, LOCK, [os.path.splitext(os.path.basename(cams[0]))[0] for cams in pairs])
-        for i, cams in enumerate(pairs, 1):
+        items_init(JOB, LOCK, [os.path.splitext(os.path.basename(cams_i[0]))[0] for cams_i in pairs])
+
+        from core import aicut
+        k = aicut.cut_parallel_width(mode, review, len(pairs))
+        if k > 1:
+            emit("ИИ-нарезка: {k} ролика одновременно", k=k)
+        done_count = 0     # счётчик завершённых роликов (под LOCK)
+        stall_count = 0    # счётчик МОЛЧАЩИХ роликов (под LOCK): флаг «нарезка молчит»
+                           # ставится по нему, а не каждым подпроцессом своим set_stalled
+
+        def _stall_mark(silent: bool) -> None:
+            """Ролик замолчал (True) или снова заговорил/кончился (False).
+
+            Флаг «нарезка молчит» держим счётчиком, а не по-роликовым флагом: при k > 1
+            он мигал — один подпроцесс ставил set_stalled(True), сосед в это же время
+            снимал его своим False, и сторож простоя показывал «тишина кончилась»,
+            пока молчал первый ролик. Один молчит — флаг стоит.
+
+            set_stalled зовём ВНЕ LOCK: он берёт тот же самый замок сам
+            (jobstate.set_stalled(JOB, LOCK, …)), а LOCK не реентерабельный — вызов
+            под ним повесил бы поток навсегда.
+            """
+            nonlocal stall_count
+            with LOCK:
+                if silent:
+                    stall_count += 1
+                elif stall_count:
+                    stall_count -= 1
+                flag = stall_count > 0
+            set_stalled(flag)
+
+        def _one(i: int, cams_i: list[str]) -> None:
+            """Один ролик ИИ-нарезки. Вынесена из цикла без изменения логики."""
+            nonlocal done_count
+            global CURPROC, CURWORK
+            parallel = k > 1
             if JOB["cancel"]:
-                break
-            stem = os.path.splitext(os.path.basename(cams[0]))[0]
+                return
+            stem = os.path.splitext(os.path.basename(cams_i[0]))[0]
             out_xml = os.path.join(outdir, f"{i:02d}_{stem}.xml")
             emit("[{i}/{n}] {stem} — ИИ-нарезка (Omni + LLM + SSM), ~5–10 мин",
                  i=i, n=len(pairs), stem=stem)
-            set_progress(i, len(pairs), stem)
+            if not parallel:
+                set_progress(i, len(pairs), stem)
+            else:
+                with PROGRESS_LOCK:
+                    with LOCK:
+                        # Показать стемы в работе. Под LOCK — только счёт и разбор
+                        # реестра: set_progress берёт этот же замок сам, и вызов под
+                        # ним — самодедлок (LOCK нереентерабельный).
+                        active_stems = [os.path.splitext(os.path.basename(
+                            pairs[j - 1][0]))[0] for j in CURPROCS if j != i]
+                        active_stems.append(stem)
+                        done_now = done_count
+                    set_progress(done_now, len(pairs), ", ".join(active_stems))
             item_set(JOB, LOCK, stem, stage="cut")
             cmd = module_cmd("omni_cut", "--ssm", "--out", out_xml)
             if not norm_stages.get("draft", False):
@@ -346,40 +393,46 @@ def run_omnicut_job(outdir: str, pairs: list[list[str]], model: str | None = Non
                 cmd += ["--no-breath"]
             if norm_stages.get("pauses") == "off":
                 cmd += ["--no-pauses"]
-            for c in cams:                       # аудио всегда с первой; assign_cameras сводит 2..N
+            for c in cams_i:                       # аудио всегда с первой; assign_cameras сводит 2..N
                 if c:
                     cmd += ["--cam", c]
+            stalled = False    # молчит ли ЭТОТ ролик; общий счётчик молчащих — в _stall_mark.
+                               # Объявлен до try: в finally он нужен на любом пути падения
             try:
                 with LOCK:
-                    CURWORK = []                # маркеры нового процесса ещё не печатались
+                    if not parallel:
+                        CURWORK = []                # маркеры нового процесса ещё не печатались
+                    CURWORKS[i] = []
                 p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                      text=True, encoding="utf-8", errors="replace", bufsize=1,
                                      env=child_env(), **task_popen_kwargs())
                 with LOCK:
-                    CURPROC = p
-                if JOB["cancel"]:            # «Стоп» успел проскочить между Popen и CURPROC=p
+                    if not parallel:
+                        CURPROC = p
+                    CURPROCS[i] = p
+                if JOB["cancel"]:            # «Стоп» успел проскочить между Popen и регистрацией
                     _kill_curproc()
+                    return
                 skip = ("Warning", "cudnn", "it/s", "casper", "Deprecat", "rope_scaling",
                         "Token2Wav", "weights_only", "SystemPrompt", "FutureWarning",
                         "torch.load", "Some weights", "newly init", "suggest you", "eager attention")
-                tail = []                        # хвост сырого вывода — причина падения для отчёта
-                key_err = None                   # содержательная строка ошибки (не просто хвост)
+                tail: list[str] = []                 # хвост сырого вывода — причина падения для отчёта
+                key_err: str | None = None           # содержательная строка ошибки (не просто хвост)
                 ERRSIG = ("ImportError", "ModuleNotFoundError", "requires the following",
                           "No module named", "pip install", "CUDA out of memory",
                           "SystemExit", "Error:", "не принимает аудио", "баланс")
                 # Чтение — через очередь с таймаутом: пока ждём строку, проверяем тишину
                 # (сторож CUT_STALL_S). Раньше цикл сидел в блокирующем `for line in
                 # p.stdout` и на зависшем процессе не выходил никогда.
-                q = _pump_stdout(p)
+                q = pump_stdout(p)
                 last_out = time.time()
-                stalled = False
                 while True:
                     try:
                         raw = q.get(timeout=0.5)
                     except queue.Empty:
                         if not stalled and time.time() - last_out >= CUT_STALL_S:
                             stalled = True
-                            set_stalled(True)
+                            _stall_mark(True)
                             mins = int((time.time() - last_out) // 60) or 1
                             emit("  ⚠ нет вывода {min} мин — процесс жив, жду "
                                  "(долгая ASR может молчать)", min=mins)
@@ -389,7 +442,7 @@ def run_omnicut_job(outdir: str, pairs: list[list[str]], model: str | None = Non
                     last_out = time.time()
                     if stalled:              # вывод пошёл — простой кончился
                         stalled = False
-                        set_stalled(False)
+                        _stall_mark(False)
                     line = raw.rstrip()
                     if not line:
                         continue
@@ -400,7 +453,10 @@ def run_omnicut_job(outdir: str, pairs: list[list[str]], model: str | None = Non
                         work = line[len("WORK_DIR="):].strip()
                         if is_safe_work_dir(work):
                             with LOCK:
-                                CURWORK.append(work)
+                                if not parallel:
+                                    CURWORK.append(work)
+                                if i in CURWORKS:
+                                    CURWORKS[i].append(work)
                             continue
                         # Не наш каталог — значит, строку напечатал не движок, а
                         # ответ модели (см. is_safe_work_dir). В CURWORK не пускаем
@@ -410,7 +466,10 @@ def run_omnicut_job(outdir: str, pairs: list[list[str]], model: str | None = Non
                     if any(s in line for s in ERRSIG):
                         key_err = line.strip()   # последняя осмысленная строка ошибки
                     if not any(x in line for x in skip):
-                        emit("  " + line)
+                        if parallel:
+                            emit("  [{stem}] " + line, stem=stem)
+                        else:
+                            emit("  " + line)
                 # stdout отдал EOF — процесс уже мёртв (или убит «Стопом»), так что
                 # ждать тут нечего; таймаут — страховка от призрачных хендлов
                 # (внук, унаследовавший пайп), из-за которых wait() умеет висеть.
@@ -439,9 +498,51 @@ def run_omnicut_job(outdir: str, pairs: list[list[str]], model: str | None = Non
                 emit("  ОШИБКА:\n{tb}", tb=tb)
                 item_fail(JOB, LOCK, stem, tb.strip().splitlines()[-1])
             finally:
-                with LOCK:
-                    CURPROC = None
-                set_stalled(False)   # процесс кончился — «молчит» больше не про что
+                with PROGRESS_LOCK:
+                    with LOCK:
+                        if not parallel:
+                            CURPROC = None
+                        CURPROCS.pop(i, None)
+                        CURWORKS.pop(i, None)
+                        done_count += 1
+                        done_now = done_count
+                        active_stems = ([os.path.splitext(os.path.basename(
+                            pairs[j - 1][0]))[0] for j in CURPROCS] if parallel else [])
+                    if parallel:
+                        # set_progress — ВНЕ LOCK: он берёт этот же замок сам (см. старт
+                        # ролика). Снимок прогресса пишем, уже не держа LOCK.
+                        set_progress(done_now, len(pairs),
+                                     ", ".join(active_stems) if active_stems else "")
+                if stalled:          # ролик кончился молчащим — снять его из счётчика
+                    stalled = False
+                    _stall_mark(False)
+
+        if k == 1:
+            # Последовательный режим: прежний цикл
+            for i, cams_i in enumerate(pairs, 1):
+                if JOB["cancel"]:
+                    break
+                _one(i, cams_i)
+        else:
+            # Параллельный режим: ThreadPoolExecutor
+            with concurrent.futures.ThreadPoolExecutor(max_workers=k) as pool:
+                futs: list[concurrent.futures.Future[None]] = []
+                for i, cams_i in enumerate(pairs, 1):
+                    if JOB["cancel"]:
+                        break
+                    futs.append(pool.submit(_one, i, cams_i))
+                # Ждём завершения всех отправленных задач
+                for fut in concurrent.futures.as_completed(futs):
+                    try:
+                        fut.result()
+                    except ReelsiError:
+                        raise          # понятная ошибка шага идёт наверх, в отчёт джоба
+                    except Exception as e:
+                        # внутри _one ошибки уже разложены по элементам, но падение
+                        # САМОГО потока (в finally, в emit, в общем счётчике) иначе
+                        # не оставляло следа вообще: молча терялся ролик целиком.
+                        log.warning("ИИ-нарезка: поток ролика упал: %s", e, exc_info=True)
+
         if JOB["cancel"]:
             _mark_stopped_waits()          # «Стоп»: до чего не дошло — «остановлено»
         fails = JOB["failed"]
@@ -675,8 +776,9 @@ def api_cancel() -> Response:
                                    # выгруженную модель) + смена epoch убивает старый поток
         def _unload() -> None:     # не выгружать, если поверх уже стартовал новый ИИ-вызов
             try:
-                if aicut.is_current(ep):
+                if aicut.idle_since(ep):
                     aicut.unload_ours()
+                    aicut.unsloth_cancel_ours()
             except ReelsiError: raise
             except Exception:
                 log.warning("Не удалось выгрузить модели aicut при отмене", exc_info=True)

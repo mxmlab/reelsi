@@ -194,6 +194,20 @@ def _block_dns_rebinding() -> Response | tuple[Response, int] | None:
     return None          # «не блокируем» — у before_request это и есть None
 
 
+@bp.after_app_request
+def _block_clickjacking(response: Response) -> Response:
+    """Защита от clickjacking: запрет встраивания страницы во фрейм.
+
+    Клики пользователя внутри <iframe> на чужом сайте идут с заголовком
+    Sec-Fetch-Site: same-origin — проверка _block_dns_rebinding их пропускает
+    (опасные действия: удаление клипов, clean_tmp, delstyle, delete_profile).
+    Заголовки ставятся на все ответы приложения, не перетирая уже установленные.
+    """
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
+    return response
+
+
 @bp.before_request
 def _check_json_body() -> tuple[Response, int] | None:
     """Тело запроса обязано быть JSON-объектом.
@@ -411,56 +425,104 @@ def emit(line: str, /, **vars: Any) -> None:
             JOB["log_base"] += over
 
 
-# --- одиночные ИИ-вызовы (жёлтые / вставки / интро): один в один момент ------------
+# --- одиночные и параллельные ИИ-вызовы (жёлтые / вставки / интро) -----------------
 # «Стоп» и перезагрузка страницы рвут fetch у клиента, но поток сервера ещё сидит в
-# стриме провайдера. Считаем живые потоки и НЕ стартуем новый вызов, пока старый не
-# вышел, иначе оба греют LM Studio, а тот, что доиграл первым, выгружает модель из-под
-# второго (симптом: «показывает старый процесс», потом всё залипает).
+# стриме провайдера. Считаем живые потоки и контролируем лимит одновременных вызовов
+# (одиночные — строго по одному, пачки одного запуска — до concurrency шага).
 AI_ACTIVE = 0
+AI_ACTIVE_BY: dict[str | None, int] = {}
+AI_BATCH_BY_EP: dict[int, str | None] = {}
 AI_WAIT_SEC = 25
 
 
-def _ai_begin(label: str = "") -> int:
-    """Занять одиночный ИИ-вызов. Отменяет предыдущий (по epoch) и ждёт, пока его
-    поток реально умрёт. Возвращает номер вызова для _ai_end."""
+def _ai_begin(label: str = "", batch: str | None = None, step: str | None = None) -> int:
+    """Занять ИИ-вызов (одиночный или в составе пачки batch).
+    Одиночный отменяет предыдущий (по epoch) и ждёт освобождения.
+    Пачка вызовов ждёт завершения чужих вызовов и соблюдает concurrency шага."""
     global AI_ACTIVE
     from core import aicut
-    ep = aicut.begin_call()          # старый поток увидит чужой epoch и выйдет сам
+    if batch is None:
+        ep = aicut.begin_call()          # старый поток увидит чужой epoch и выйдет сам
+        t0 = time.time()
+        warned = False
+        while True:
+            with LOCK:
+                if AI_ACTIVE == 0:
+                    AI_ACTIVE += 1
+                    AI_ACTIVE_BY[None] = AI_ACTIVE_BY.get(None, 0) + 1
+                    AI_BATCH_BY_EP[ep] = None
+                    return ep
+                if time.time() - t0 >= AI_WAIT_SEC:
+                    AI_ACTIVE += 1
+                    AI_ACTIVE_BY[None] = AI_ACTIVE_BY.get(None, 0) + 1
+                    AI_BATCH_BY_EP[ep] = None
+                    break
+            if not warned:
+                warned = True
+                if label:
+                    emit("⏳ жду завершения предыдущего ИИ-вызова ({label})…", label=label)
+                else:
+                    emit("⏳ жду завершения предыдущего ИИ-вызова…")
+            time.sleep(0.25)
+        emit("! предыдущий ИИ-вызов не отпустил провайдера за {sec}с — стартую поверх него", sec=AI_WAIT_SEC)
+        return ep
+
+    limit = aicut.step_concurrency(step) if step else 1
+    ep = aicut.begin_call(batch)
     t0 = time.time()
     warned = False
+    waited_foreign = False
     while True:
+        if aicut.cancelled():
+            aicut.end_call(ep)
+            raise ReelsiError(aicut.cancel_reason())
         with LOCK:
-            if AI_ACTIVE == 0:
-                AI_ACTIVE += 1
-                return ep
-            if time.time() - t0 >= AI_WAIT_SEC:
-                AI_ACTIVE += 1
-                break
-        if not warned:
-            warned = True
-            if label:
-                emit("⏳ жду завершения предыдущего ИИ-вызова ({label})…", label=label)
-            else:
-                emit("⏳ жду завершения предыдущего ИИ-вызова…")
-        time.sleep(0.25)
-    emit("! предыдущий ИИ-вызов не отпустил провайдера за {sec}с — стартую поверх него", sec=AI_WAIT_SEC)
-    return ep
+            other_active = sum(cnt for b, cnt in AI_ACTIVE_BY.items() if b != batch and cnt > 0)
+            foreign_clear = (other_active == 0)
+            if not foreign_clear and not waited_foreign:
+                if time.time() - t0 >= AI_WAIT_SEC:
+                    waited_foreign = True
+            if foreign_clear or waited_foreign:
+                if AI_ACTIVE_BY.get(batch, 0) < limit:
+                    AI_ACTIVE += 1
+                    AI_ACTIVE_BY[batch] = AI_ACTIVE_BY.get(batch, 0) + 1
+                    AI_BATCH_BY_EP[ep] = batch
+                    if waited_foreign:
+                        emit("! предыдущий ИИ-вызов не отпустил провайдера за {sec}с — стартую поверх него", sec=AI_WAIT_SEC)
+                    return ep
+        if not foreign_clear and not waited_foreign:
+            if not warned:
+                warned = True
+                if label:
+                    emit("⏳ жду завершения предыдущего ИИ-вызова ({label})…", label=label)
+                else:
+                    emit("⏳ жду завершения предыдущего ИИ-вызова…")
+        time.sleep(0.1)
 
 
 def _ai_end(ep: int, unload: bool = False) -> None:
-    """Освободить вызов. Выгружаем модель ТОЛЬКО если вызов всё ещё актуален —
-    устаревший поток этим убил бы генерацию того, кто стартовал после него."""
+    """Освободить вызов. Выгружаем модель ТОЛЬКО если вызов всё ещё актуален
+    и нет других живых вызовов — модель выгружает последний вызов пачки,
+    а не первый закончивший."""
     global AI_ACTIVE
     from core import aicut
     with LOCK:
+        batch = AI_BATCH_BY_EP.pop(ep, None)
         AI_ACTIVE = max(0, AI_ACTIVE - 1)
-    if unload and aicut.is_current(ep):
-        try:
-            aicut.unload_ours()      # освободить VRAM после генерации (только наши модели)
-        except ReelsiError: raise
-        except Exception as ex:
-            log.warning("модели ИИ не выгрузились после генерации: %s — "
-                        "видеопамять остаётся занятой", ex)
+        if batch in AI_ACTIVE_BY:
+            AI_ACTIVE_BY[batch] = max(0, AI_ACTIVE_BY[batch] - 1)
+            if AI_ACTIVE_BY[batch] == 0:
+                AI_ACTIVE_BY.pop(batch, None)
+    try:
+        if unload and aicut.is_current(ep) and not aicut.others_live(ep):
+            try:
+                aicut.unload_ours()      # освободить VRAM после генерации (только наши модели)
+            except ReelsiError: raise
+            except Exception as ex:
+                log.warning("модели ИИ не выгрузились после генерации: %s — "
+                            "видеопамять остаётся занятой", ex)
+    finally:
+        aicut.end_call(ep)
 
 
 # Межпроцессный лок задач (job.lock) и журнал заданий (job_state.json) переехали в

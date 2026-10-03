@@ -86,6 +86,7 @@ function inspSubEdit(){
     stRefresh('sub_rows_max');
   }
   syncSubTabUI();
+  if(typeof styleTouched==='function')styleTouched();
   captureAE();
   ipvPlanSoon();
   patchSubStyleSoon(CURSTYLE.sub_words_per_row,CURSTYLE.sub_rows_max);
@@ -168,6 +169,8 @@ function aewSetMode(m){AEWMODE=m;
 // Блок стиля НЕ дублируется в модалке — сам узел #stylebox переезжает туда и обратно.
 // Копия ломала бы всё: id перестали бы быть уникальными, onStyleChange/stEdit писали бы
 // в невидимую копию, а captureAE читал бы старую.
+// Хозяин у блока один — вкладка «Стиль» предпросмотра AE (#aewstyle); styleHome
+// возвращает блок на страницу, в слот #styleslot.
 function styleToModal(){const box=$('stylebox'),host=$('aewstyle');if(!box||!host)return;
   if(box.parentNode!==host)host.appendChild(box);
   host.style.display='';const aw=$('styleaway');if(aw)aw.style.display='';}
@@ -182,6 +185,11 @@ function aewUpdateCaptionUI(){
   const box=$('aewcaption');if(!box)return;
   const on=!!(AEWMODE==='words'&&IPV.plan&&IPV.plan.caption);
   box.style.display=on?'':'none';
+  // Кнопка «Рассчитать рото и трекинг» живёт на той же вкладке, что подпись. Показ
+  // снимается/ставится по стилю клипа: после смены галки план перезапрашивается, а
+  // кэш масок добирает ipvPlanFetch (static/app/87-roto-preview.js) — второго запроса
+  // за кэшем здесь нет, иначе вышел бы цикл «план -> кэш -> план».
+  if(typeof ipvCalcUI==='function')ipvCalcUI(IPVCALC_UP);
 }
 async function aewLoadCaption(xml){
   const box=$('aewcaption');if(!box)return;
@@ -318,7 +326,7 @@ function aewRenderIntro(){const host=$('aewintro');if(!host)return;
     +'<div id="aewintrolist" class="aewintrolist"></div>';
   const list=$('aewintrolist');let total=0,gi=0;
   const cfg={arr:'INTRO',rows:INTRO,sync:'aewSync()',words:WORDS,
-    pick:INTRO_PICK,clearPick:'INTRO_PICK=-1',add:'aewAddLineIn',
+    pick:INTRO_PICK,clearPick:'INTRO_PICK=-1',add:'aewAddLineIn',grow:'aewGrowLeft',
     arm:i=>'INTRO_PICK=(INTRO_PICK==='+i+')?-1:'+i+';aewRender()',
     edit:'aewEditIntroWord'};
   introWalk((r,i,idxs)=>{total+=idxs.length;if(introIsHead(INTRO,i))gi++;
@@ -338,7 +346,7 @@ function syncClipLists(){renderClips2();renderClips3();}   // теги «вст�
 // записывался в другой, открытый к тому моменту.
 async function aiInsertsRun(){if(curIns<0)return;const c=CLIPS[curIns];const xml=c.xml;const el=$('insres');
   el.className='muted';el.textContent=t('подбираю…');uiLog(t('вставки (ИИ) для ')+c.name+t('…'));
-  try{const d=await aiFetch('/api/ai_inserts',{xml,rejected:c.ins_rejected||[]},'insStop','insres');
+  try{const d=await aiFetch('/api/ai_inserts',{xml,rejected:c.ins_rejected||[],speaker:val('speaker')||undefined},'insStop','insres');
     if(d.error){el.className='err';el.textContent='⚠ '+errText(d);uiLog(t('  ОШИБКА: ')+d.error);return;}
     c.inserts=(d.inserts||[]).map(x=>({...x,media:''}));insLog(d);
     c.insTarget=Math.max(d.insTarget||0,c.inserts.length);   // цель «добрать» приезжает с бэкенда (от длины ролика), а не зашита в JS
@@ -349,16 +357,25 @@ async function aiInsertsRun(){if(curIns<0)return;const c=CLIPS[curIns];const xml
     renderInsHost();syncClipLists();saveState();
   }catch(e){if(aiAborted(e)){el.className='muted';el.textContent=t('⏹ остановлено');return;}
     el.className='err';el.textContent='⚠ '+e;}}
+// Цель по числу вставок для текущего спикера: photo + video из профиля (дефолт 10 + 3 = 13).
+function spkInsTarget(){
+  if(typeof SPEAKERS==='undefined')return 13;
+  const p=SPEAKERS[val('speaker')];
+  if(!p||!p.inserts)return 13;
+  const ph=(p.inserts.photo!=null&&!isNaN(parseInt(p.inserts.photo,10)))?parseInt(p.inserts.photo,10):10;
+  const vid=(p.inserts.video!=null&&!isNaN(parseInt(p.inserts.video,10)))?parseInt(p.inserts.video,10):3;
+  const total=ph+vid;
+  return total>=1?total:13;
+}
 // добрать недостающие: сгенерить (target - текущих) НОВЫХ, не повторяя оставленные (тайминги/темы)
 async function aiInsertsMore(){if(curIns<0)return;const c=CLIPS[curIns];const cur=c.inserts||[];
-  // цель — с бэкенда (от длины ролика); 13 — фолбэк для клипов, разметанных до BX,
-  // когда insTarget ещё не приезжал (иначе у длинного ролика набор «полон» на 13 из 22)
-  const target=Math.max(c.insTarget||0,13);const need=Math.max(0,target-cur.length);
+  // цель — из профиля текущего спикера; пересчитывается заново, чтобы правка в профиле действовала сразу
+  const target=spkInsTarget();const need=Math.max(0,target-cur.length);
   const el=$('insres');
   if(need<=0){el.className='muted';el.textContent=t('ничего добирать — удали лишние карточки сначала');return;}
   el.className='muted';el.textContent=t('добираю {n}…',{n:need});uiLog(t('добор вставок ({n}) для {m}…',{n:need,m:c.name}));
   const avoid=cur.map(x=>({start_sec:x.start_sec,type:x.type,query:x.query||''}));
-  try{const d=await aiFetch('/api/ai_inserts',{xml:c.xml,count:need,avoid,rejected:c.ins_rejected||[]},'insStop','insres');
+  try{const d=await aiFetch('/api/ai_inserts',{xml:c.xml,count:need,avoid,rejected:c.ins_rejected||[],speaker:val('speaker')||undefined},'insStop','insres');
     if(d.error){el.className='err';el.textContent='⚠ '+errText(d);uiLog(t('  ОШИБКА: ')+d.error);return;}
     insLog(d);
     const fresh=(d.inserts||[]).map(x=>({...x,media:''}))
@@ -380,8 +397,29 @@ function insAdd(type){if(curIns<0)return;const c=CLIPS[curIns];if(!c.inserts)c.i
   renderInsHost();syncClipLists();saveState();
   if(IPV.vids.length&&!IPV.playing)ipvSeekTo(at+0.01);   // показать заглушку сразу (без сдвига t>=start даёт флоат-промах)
   toast((vid?t('Видео'):t('Фото'))+t('-вставка на ')+fmtIns(at)+t(' — выбери файл'));}
-function insToggleType(i){const x=CLIPS[curIns].inserts[i];x.type=(x.type==='video')?'photo':'video';
-  renderInsHost();syncClipLists();saveState();}
+// Смена типа вставки — это смена ТОГО, ЧТО искать: и сток, и база берут тип из запроса.
+// Прежняя версия меняла только x.type, а stockOpts/libOpts оставались от старого типа и
+// висели на карточке навсегда — владелец и просил «чтобы они перенаходили результаты».
+// Автоподобранный файл был под прежний тип и под новый не годится — убираем его; файл,
+// выбранный руками или сгенерированный (за него плачено), не трогаем.
+async function insToggleType(i){const c=CLIPS[curIns];if(!c||!c.inserts)return;const x=c.inserts[i];if(!x)return;
+  // _typeBusy — гвардия двойного клика на время переискивания. Флаг живой, на вставке,
+  // в состояние НЕ уезжает (stateObj его вычищает, как genBusy): залипший пережил бы F5 и
+  // навсегда глотал бы клики по бейджу — та же ловушка, что с genBusy (2026-08-10).
+  if(x._typeBusy)return;x._typeBusy=true;
+  try{
+  const stockWas=!!x.stockShown,libWas=!!x.libShown;
+  x.type=(x.type==='video')?'photo':'video';
+  x.stockOpts=null;x.libOpts=null;x.stockShown=false;x.libShown=false;   // старые варианты — про прежний тип
+  if(x.libAuto&&x.media&&insKind(x.media)!==x.type){x.media='';x.libAuto=false;}   // автофайл — под прежний тип
+  renderInsHost();   // бейдж и карточка — сразу, до сетевых запросов: клик не выглядит «зависшим»
+  const spkKey=(c.job&&c.job.speaker)||(val('speaker')||'').trim()||undefined;
+  if(stockWas)await insStockFor(i);          // открытые панели переискиваем и оставляем открытыми
+  if(libWas)await insLibFor(i);
+  const auto=illCfg().auto!==false;          // автоподбор для пустой вставки — как при правке запроса
+  if(auto&&(x.query||'').trim()&&!x.media)await insLibFill([x],spkKey);
+  renderInsHost();syncClipLists();saveState();
+  }finally{delete x._typeBusy;}}
 // удаление карточки ЦЕЛИКОМ: ИИ-предложение (есть query) запоминаем в ins_rejected —
 // повторная разметка/«заново» передаст это модели («юзер удалил — не предлагай похожее»).
 // В базу вставок при этом НЕ лезем: «эта вставка тут не нужна» — не то же самое, что
@@ -428,10 +466,26 @@ function insGenBtns(i,x){
       +(x.genBusy?' disabled':'')+'>'
       +(x.genBusy?'…':(ico('ai','gold')+'<span class="mono">'+(n+1)+'</span>'))+'</button>';}).join('');}
 function renderInsHost(){const host=$('insHost');if(!host)return;host.innerHTML='';
-  const gb=$('insGenBtn');if(gb)gb.style.display=imgGenOn()?'':'none';
+  const gb=$('insGenBtn');
+  if(gb){
+    // Счёт — по той же выборке, что insGenBatch (ask=true): фото-карточки без файла
+    // с запросом. Ноль — генерить нечего: кнопка гаснет, а не молчит на клик.
+    const need=(curIns>=0&&CLIPS[curIns]?(CLIPS[curIns].inserts||[]):[])
+      .filter(x=>x.type!=='video'&&!x.media&&(x.query||'').trim()).length;
+    // Иконка к этому моменту уже <svg> (boot заменил data-ic по outerHTML) — правим
+    // только текстовый узел счёта; innerHTML кнопки трогать нельзя, иначе иконка исчезла бы.
+    const cnt=$('insGenCnt');
+    if(cnt)cnt.textContent=need?String(need):'';
+    // Число — и в подсказке: слово с кнопки ушло (остались иконка генерации и счёт), и без
+    // него «сгенерировать недостающие» не сказало бы, о скольких карточках речь. data-t
+    // читает #tipbox в момент наведения, поэтому пересчёт на каждом рендере обязателен.
+    gb.dataset.t=t('Сгенерировать картинки для карточек без файла ({n})',{n:need});
+    gb.disabled=!need;
+    gb.style.display=imgGenOn()?'':'none';
+  }
   if(curIns<0)return;
   const arr=CLIPS[curIns].inserts||[];
-  if(!arr.length){host.innerHTML='<div class="empty">'+t('Вставок нет — нажми «Подобрать заново (все)» или добавь файл вручную.')+'</div>';ipvMarks();ipvRefresh();return;}
+  if(!arr.length){host.innerHTML='<div class="empty">'+t('Вставок нет — добавь фото или видео вручную.')+'</div>';ipvMarks();ipvRefresh();return;}
   arr.forEach((x,i)=>{const vid=x.type==='video';const card=document.createElement('div');
     const fname=(x.media||'').replace(/^.*[\\\/]/,'');
     insScrubInit(x);                                  // скрабберы тянут значение объекта
@@ -458,6 +512,7 @@ function renderInsHost(){const host=$('insHost');if(!host)return;host.innerHTML=
       +(x.prompt?'<div class="muted" data-noi18n style="margin-top:4px;font-size:12px">'+esc(x.prompt)+'</div>':'')
       +'<div style="margin-top:6px;display:flex;gap:8px;align-items:center"><button class="sm" onclick="insPick('+i+')">'+t('Выбрать файл…')+'</button>'
       +'<button class="sm" onclick="insLibFor('+i+')" aria-label="'+t('Варианты из базы вставок')+'" data-t="'+t('Варианты из базы вставок')+'">'+ico('book')+'</button>'
+      +'<button class="sm" onclick="insStockFor('+i+')" aria-label="'+t('Сток')+'" data-t="'+t('Кадры со стоков Pexels/Pixabay по запросу карточки')+'">'+t('Сток')+'</button>'
       +((vid?vidGenOn():imgGenOn())?insGenBtns(i,x):'')
       +(!vid&&fname?'<button class="sm" onclick="insRembg('+i+')" data-t="'+t('Убрать фон у этого файла (как Remove Background в фотошопе) — рядом ляжет прозрачный -nobg.png')+'"'+(x.genBusy?' disabled':'')+'>'+t('Фон долой')+'</button>':'')
       +'<button class="sm" onclick="insCopy('+i+')" data-t="'+t('Скопировать поисковый запрос')+'">'+t('Копировать')+'</button>'
@@ -467,7 +522,8 @@ function renderInsHost(){const host=$('insHost');if(!host)return;host.innerHTML=
       +(fname?'<span class="del" tabindex="0" role="button" aria-label="'+t('Убрать файл')+'" onclick="insClearMedia('+i+')" data-t="'+t('Убрать файл (вставка останется)')+'">'+ico('x')+'</span>':'')
       +(x.libAuto?'<span class="tag on" data-t="'+t('Файл подобран из базы автоматически — проверь, замени или выбери файл вручную')+'">'+ico('book')+t('авто')+'</span>':'')
       +(x.genAuto?'<span class="tag on" data-t="'+t(vid?'Ролик сгенерирован ИИ и будет перенесён в базу при сборке':'Картинка сгенерирована ИИ (Nano Banana) и добавлена в базу вставок')+'">'+ico('ai')+t('ген')+'</span>':'')+'</div>'
-      +(x.libShown?insLibRow(x,i):'');
+      +(x.libShown?insLibRow(x,i):'')
+      +(x.stockShown?insStockRow(x,i):'');
     host.appendChild(card);});
   ipvMarks();ipvRefresh();}
 function insLibRow(x,i){const opts=x.libOpts||[];
@@ -488,7 +544,9 @@ function insKind(p){p=(p||'').trim();if(!p)return '';
 // какой тип у базы ЗАПРАШИВАТЬ в АВТОподборе: пожелание, а не требование (в match_many
 // это +0.05 к score) — заметно более подходящее видео пусть едет вместо фото. Тип может
 // отсутствовать в старых сохранённых состояниях — тогда считаем фото (как в insGenBatch).
-// Ручная выдача 📚 тип НЕ передаёт: там юзер смотрит глазами и решает сам.
+// Ручная выдача 📚 тип тоже передаёт (с 2026-10-02): раньше он не слал его вовсе, и при
+// переключении фото↔видео варианты оставались от прежнего типа. Приоритет у типа мягкий,
+// так что «смотрю глазами» не пострадало — просто нужный тип идёт первым.
 function insWant(x){return (x&&x.type==='video')?'video':'photo';}
 function insSetMedia(x,p){x.media=p||'';const k=insKind(p);if(k)x.type=k;
   if(p)x.noAuto=false;}          // файл снова есть — запрет на автоподбор больше не нужен
@@ -509,7 +567,7 @@ function insVideoJobMatches(x,key){return !!(x&&x.video_job&&(x.video_job==='pen
 function insVideoBindJob(target,key){const found=insVideoFindTarget(target);if(!found)return;
   found.x.video_job=key||'pending';found.x.genBusy=true;saveState();renderInsHost();}
 function insVideoApplyResult(target,res,slot){const found=insVideoFindTarget(target);if(!found)return;
-  const x=found.x;insSetMedia(x,res.path);x.genAuto=true;x.libAuto=false;x.libOpts=null;x.noAuto=false;
+  const x=found.x;insSetMedia(x,res.path);x.genAuto=true;x.libAuto=false;x.libOpts=null;x.stockOpts=null;x.noAuto=false;
   uiLog(t('✨ сгенерено (промпт {p})',{p:(slot==='b'?'2':'1')})+': '+res.path.replace(/^.*[\\\/]/,''));}
 function insVideoSettle(target,d){const found=insVideoFindTarget(target);if(!found)return;
   const x=found.x;x.genBusy=false;
@@ -552,7 +610,8 @@ async function insGenVideo(i,slot){if(curIns<0)return;const c=CLIPS[curIns],x=c&
   // Mark before fetch: F5 между отправкой POST и ответом всё равно знает карточку.
   x.video_job='pending';x.video_slot=actualSlot;x.genBusy=true;saveState();renderInsHost();
   const speaker=(c&&c.job&&c.job.speaker)||(val('speaker')||'').trim()||undefined;
-  logReset();progShow(t('Генерация видео'),t('отправляю запрос…'));
+  logReset();progOpen({title:t('Генерация видео')});
+  progUpdate(null,t('отправляю запрос…'));
   try{await videoStart({query:x.query,slot:(slot==='b'?'b':'a'),speaker:speaker,
     insert_duration:x.duration_sec,xml:c.xml},insVideoContext(target,actualSlot));}
   catch(e){const found=insVideoFindTarget(target);if(found){found.x.genBusy=false;
@@ -568,7 +627,7 @@ async function insGenVideo(i,slot){if(curIns<0)return;const c=CLIPS[curIns],x=c&
 function insApplyCrop(x,o){if(!o||insKind(o.path)!=='photo')return;
   if(o.mw)x.mw=o.mw;
   if(o.mh)x.mh=o.mh;}
-async function insPick(i){try{const d=await (await fetch('/api/pickmedia')).json();if(d.path){const x=CLIPS[curIns].inserts[i];insSetMedia(x,d.path);x.libAuto=false;x.libOpts=null;renderInsHost();syncClipLists();saveState();}}
+async function insPick(i){try{const d=await (await fetch('/api/pickmedia')).json();if(d.path){const x=CLIPS[curIns].inserts[i];insSetMedia(x,d.path);x.libAuto=false;x.libOpts=null;x.stockOpts=null;renderInsHost();syncClipLists();saveState();}}
   catch(e){toast(t('Не открылся выбор файла — сервер не ответил'));uiLog(t('pickmedia: ')+e);}}
 
 // ---- база вставок: скан прошлых проектов + автоподбор файла под ИИ-запрос ----
@@ -576,6 +635,11 @@ function illCfg(){try{return JSON.parse(localStorage.getItem('reelsi_inslib')||'
 function illSaveCfg(){const c=illCfg();c.dirs=val('illdirs');c.auto=$('illauto').checked;
   c.gen=$('illgen')?$('illgen').checked:false;    // генерить недостающие прямо при разметке (платно)
   localStorage.setItem('reelsi_inslib',JSON.stringify(c));}
+// Дверь в окно базы вставок. Из панели вставок кнопку «База» убрали (там остались
+// только действия над карточками), и окно осталось без входа: папки скана, импорт,
+// описания и список файлов открыть стало нечем. Вход теперь в ⚙ → «Инструменты»,
+// рядом с «Обновить»; настройки модалки закрывает разметка кнопки — иначе окно
+// базы уходит ПОД неё (у всех .backdrop один z-index, решает порядок в DOM).
 async function openInsLib(){openModal('mbInsLib');const c=illCfg();
   if(c.dirs!=null)$('illdirs').value=c.dirs;if(c.auto!=null)$('illauto').checked=!!c.auto;
   if($('illgen')){$('illgen').checked=!!c.gen;$('illgenRow').style.display=imgGenOn()?'flex':'none';}
@@ -625,7 +689,7 @@ async function insLibAuto(c){
 async function insQuery(i,v){if(curIns<0)return;const x=CLIPS[curIns].inserts[i];if(!x)return;
   const q=(v||'').trim();
   if(q===(x.query||''))return;
-  x.query=q;x.libOpts=null;x.libShown=false;         // старые варианты — не про этот запрос
+  x.query=q;x.libOpts=null;x.stockOpts=null;x.libShown=false;x.stockShown=false;   // старые варианты — не про этот запрос
   const auto=illCfg().auto!==false;
   const spkKey=(CLIPS[curIns]&&CLIPS[curIns].job&&CLIPS[curIns].job.speaker)||(val('speaker')||'').trim()||undefined;
   if(auto&&x.libAuto){x.media='';x.libAuto=false;}   // старый автофайл был под старое описание
@@ -654,7 +718,7 @@ async function insRejectMedia(media,query){
 async function insClearMedia(i){if(curIns<0)return;const x=CLIPS[curIns].inserts[i];
   if(!x||!x.media)return;
   uiLog(t('убрана картинка: {f} (в базе не бракуем, автоподбор сюда больше не лезет)',{f:x.media.replace(/^.*[\\\/]/,'')}));
-  x.media='';x.libAuto=false;x.genAuto=false;x.libOpts=null;x.noAuto=true;
+  x.media='';x.libAuto=false;x.genAuto=false;x.libOpts=null;x.stockOpts=null;x.noAuto=true;
   renderInsHost();syncClipLists();saveState();}
 // кнопка 📚 на карточке: показать топ-варианты из базы (клик по варианту = выбрать)
 async function insLibFor(i){const x=CLIPS[curIns].inserts[i];if(!x)return;
@@ -663,13 +727,55 @@ async function insLibFor(i){const x=CLIPS[curIns].inserts[i];if(!x)return;
     if(!q){toast(t('У вставки нет запроса — нечем искать'));return;}
     const spkKey=(CLIPS[curIns]&&CLIPS[curIns].job&&CLIPS[curIns].job.speaker)||(val('speaker')||'').trim()||undefined;
     try{const d=await (await fetch('/api/insertlib_match',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({queries:[{q}],k:8,speaker:spkKey||undefined})})).json();      // без типа: показываем всё, что похоже
+      body:JSON.stringify({queries:[{q,type:insWant(x)}],k:8,speaker:spkKey||undefined})})).json();   // тип — как в автоподборе
       x.libOpts=(d.results&&d.results[0])||[];}catch(e){x.libOpts=[];}}
-  if(!x.libOpts.length){toast(t('База пуста или нет совпадений — открой «База» и просканируй папки'));return;}
+  if(!x.libOpts.length){toast(t('База пуста или нет совпадений — открой ⚙ → Инструменты → База вставок и просканируй папки'));return;}
   x.libShown=true;renderInsHost();}
 function insLibPick(i,j){const x=CLIPS[curIns].inserts[i];const o=(x.libOpts||[])[j];if(!o)return;
   insSetMedia(x,o.path);insApplyCrop(x,o);x.libAuto=false;x.libShown=false;
   renderInsHost();syncClipLists();saveState();}
+// кнопка «Сток» на карточке: кадры со стоков (Pexels первым, Pixabay вторым) по тому же
+// запросу, что идёт в базу. Показываем только превью: файл скачивается по клику, ложится
+// в базу вставок — и дальше это обычная вставка, сток для неё больше не нужен.
+function insStockRow(x,i){const opts=x.stockOpts||[];
+  return '<div class="librow">'+opts.map((o,j)=>{
+    const who=[(o.provider||''),(o.author||'')].filter(Boolean).join(' · ');
+    const dim=(o.width&&o.height)?(o.width+'×'+o.height+(o.duration?' · '+Math.round(o.duration)+t('с'):'')):'';
+    return '<div class="libopt" tabindex="0" role="button" onclick="insStockPick('+i+','+j+')" title="'+esc(who+' · '+(o.page_url||''))+'">'
+      +'<img loading="lazy" src="'+esc(o.thumb||'')+'">'
+      +'<span class="nm" data-noi18n>'+esc(who)+'</span><span class="sc">'+esc(dim)+'</span></div>';
+  }).join('')+'</div>';}
+// Формат ролика клипа (ключ core/frame.py) — для поиска стоков. Роут
+// /api/stock_search берёт по нему ОРИЕНТАЦИЮ кадра и целевой размер файла: в
+// вертикаль нужен вертикальный кадр, в квадрат — квадратный, иначе вставка
+// приезжает обрезанной по краям. Спикер — у СВОЕГО клипа (как LUT и рамка камеры).
+function insClipFormat(c){
+  const spk=(c&&c.job&&c.job.speaker)||'';
+  const p=(spk&&typeof SPEAKERS!=='undefined'&&SPEAKERS[spk])||null;
+  return (p&&p.format)||'';}
+async function insStockFor(i){const x=CLIPS[curIns].inserts[i];if(!x)return;
+  if(x.stockShown){x.stockShown=false;renderInsHost();return;}
+  if(!x.stockOpts){const q=(x.query||'').trim()||((x.media||'').replace(/^.*[\\\/]/,''));
+    if(!q){toast(t('У вставки нет запроса — нечем искать'));return;}
+    const kind=(x.type==='video')?'video':'photo';    // тип вставки решает, что искать
+    try{const d=await (await fetch('/api/stock_search',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({query:q,type:kind,format:insClipFormat(CLIPS[curIns])||undefined})})).json();
+      if(d.error){toast('⚠ '+errText(d));x.stockOpts=[];}
+      else x.stockOpts=d.results||[];
+    }catch(e){x.stockOpts=[];toast('⚠ '+e);}}
+  if(!x.stockOpts.length){toast(t('Сток ничего не нашёл — попробуй другой запрос или впиши ключи в ⚙ → Генерация → Стоки'));return;}
+  x.stockShown=true;renderInsHost();}
+async function insStockPick(i,j){const x=CLIPS[curIns].inserts[i];const o=(x.stockOpts||[])[j];
+  if(!o||x.genBusy)return;
+  x.genBusy=true;toast(t('качаю со стока…'));   // скачивание идёт секунды — без тоста кнопка «мертвая»
+  try{const d=await (await fetch('/api/stock_pick',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({candidate:o,dest:(val('illdest')||'').trim()})})).json();
+    if(d.error)toast('⚠ '+errText(d));
+    else{insSetMedia(x,d.path);x.stockShown=false;renderInsHost();syncClipLists();saveState();
+      uiLog(t('сток: ')+d.path.replace(/^.*[\\\/]/,''));}
+  }catch(e){toast('⚠ '+e);}
+  finally{x.genBusy=false;}
+  renderInsHost();}
 // импорт новых файлов в свою папку базы
 async function illImport(){const src=val('illsrc').trim(),dest=val('illdest').trim(),since=val('illsince');
   if(!src||!dest){toast(t('Укажи источник и папку базы'));return;}
@@ -725,7 +831,7 @@ async function illRefresh(){
   if(st.running){toast(t('База уже обновляется — {a} / {b}',{a:st.done,b:(st.total||'…')}));illHdrPoll();return;}
   let dirs=[];try{const inf=await (await fetch('/api/insertlib_info')).json();dirs=inf.dirs||[];}catch(e){}
   if(!dirs.length)dirs=(illCfg().dirs||'').split('\n').map(s=>s.trim()).filter(Boolean);
-  if(!dirs.length){toast(t('База не настроена — открой «База» в окне вставок и укажи папки'));return;}
+  if(!dirs.length){toast(t('База не настроена — открой ⚙ → Инструменты → База вставок и укажи папки'));return;}
   $('illhdrtxt').textContent=t(' скан…');uiLog(t('база вставок: пересканирую {n} папок…',{n:dirs.length}));
   try{const d=await (await fetch('/api/insertlib_scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dirs})})).json();
     if(d.error){toast('⚠ '+errText(d));$('illhdrtxt').textContent='';return;}

@@ -15,6 +15,9 @@ import os
 import re
 import struct
 import sys
+import time
+import uuid
+import zipfile
 import zlib
 
 import pytest
@@ -539,3 +542,59 @@ def test_новые_dbid_уникальны():
     el = '<A DbId="11111111-1111-1111-1111-111111111111"><B DbId="11111111-1111-1111-1111-111111111111"/></A>'
     ids = re.findall(r'DbId="([0-9a-f-]+)"', drp.new_ids(el))
     assert len(ids) == 2 and len(set(ids)) == 2
+
+
+# --- воспроизводимость: время сборки не попадает в байты ---------------------
+
+@pytest.fixture
+def frozen_ids(monkeypatch):
+    """Заморозить UUID сборки; возвращает сброс ряда — он начинается со сборки.
+
+    Без заморозки две сборки не сравнить: `new_ids`/`new_pool_ids` тянут
+    `uuid.uuid4()`, и байты разойдутся на случайных идентификаторах.
+    """
+    state = {"n": 0}
+
+    def fake() -> uuid.UUID:
+        state["n"] += 1
+        return uuid.UUID(int=state["n"])
+
+    monkeypatch.setattr(uuid, "uuid4", fake)
+
+    def reset() -> None:
+        state["n"] = 0
+
+    return reset
+
+
+def test_две_сборки_в_разное_время_дают_одинаковые_байты(tmp_path, monkeypatch, frozen_ids):
+    """Время сборки не уезжает в байты: `.drp` — выгрузка, а не проект с историей.
+
+    Раньше записи архива писались `writestr(имя, ...)`, и zipfile брал время из
+    `time.localtime` (DOS-время локального заголовка, шаг 2 с): две сборки в
+    разных двухсекундных окнах расходились уже на байте 10, хотя содержимое было
+    одно и то же. Часы подменяются, а не «ждём две секунды».
+    """
+    def build_at(name: str, moment: tuple[int, int, int, int, int, int, int, int, int]) -> bytes:
+        frozen_ids()                       # ряд идентификаторов — с начала
+        monkeypatch.setattr(time, "localtime", lambda *a: moment)
+        out = tmp_path / name
+        drp.build(str(out), [_p("media", "a", "A.MP4"), _p("media", "b", "B.MP4")],
+                  [(0.0, 1.0), (2.0, 3.0)], [0.0, 0.0],
+                  sub_words=[(0, 10, "РАЗ")], name="TEST", probe=lambda p: dict(FAKE))
+        return out.read_bytes()
+
+    first = build_at("t1.drp", (2026, 1, 1, 12, 0, 0, 0, 0, 0))
+    second = build_at("t2.drp", (2026, 1, 1, 12, 0, 5, 0, 0, 0))     # +5 с: DOS-окно другое
+    assert first == second, "время сборки попало в байты .drp"
+
+    # Метаданные записей прибиты, состав и порядок файлов — как их отдал build.
+    with zipfile.ZipFile(str(tmp_path / "t1.drp")) as z:
+        infos = z.infolist()
+    assert infos, "архив пуст"
+    assert [i.filename for i in infos] == list(drp.read(str(tmp_path / "t1.drp")))
+    for i in infos:
+        assert i.date_time == drp.ZIP_DATE_TIME, f"{i.filename}: время записи не прибито"
+        assert i.create_system == drp.ZIP_CREATE_SYSTEM, f"{i.filename}: система-создатель своя"
+        assert i.external_attr == drp.ZIP_EXTERNAL_ATTR, f"{i.filename}: права не прибиты"
+        assert i.compress_type == zipfile.ZIP_DEFLATED, f"{i.filename}: запись не сжата"

@@ -425,8 +425,11 @@ function makeDom() {
     };
     el.querySelector = (sel) => el.querySelectorAll(sel)[0] || null;
     el.closest = (sel) => {
+      // Выше <html> идёт сам document (у него нет classList) — как в браузере, closest
+      // до него не доходит и возвращает null. Без этой проверки клик по строке группы
+      // («stFocusGroup» раскрывает путь кликом) падал TypeError'ом на заглушке.
       let n = el;
-      while (n) { if (matchSelector(n, sel)) return n; n = n.parentNode; }
+      while (n) { if (n.classList && matchSelector(n, sel)) return n; n = n.parentNode; }
       return null;
     };
     all.push(el);

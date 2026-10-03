@@ -24,7 +24,10 @@ from dataclasses import dataclass
 from typing import Any, Callable, cast
 
 from .jsutil import _jd
-from .layout import HL_DUR, _stack_layout, hl_appear_dur
+from .layout import (HL_DUR, SubAnim, _stack_layout, hl_appear_dur, hl_size_expr,
+                     hl_size_factor, sub_anim_js, sub_anim_join_call, sub_anim_keys,
+                     sub_anim_preset, sub_fill_call, sub_fill_js, sub_glow_call,
+                     sub_glow_js, sub_wbg, sub_wbg_js, sub_wbg_moment, sub_wbg_plan)
 from .plan_style import StyleValues
 from .template import (SUBS_LOOP_ROWS, SUBS_LOOP_STACK, SUBS_LOOP_STACK_JOINED,
                        SUBS_LOOP_WORDS, SUBS_LOOP_WORDS_JOINED)
@@ -69,8 +72,8 @@ class SubsInputs:
 class SubsPlan:
     """Выход блока субтитров: ровно те имена, что scene_plan читает дальше.
 
-    Первые восемь полей уезжают в .jsx подстановками шаблона, остальные — геометрия
-    полосы субтитров: её читают и план (предпросмотр), и шаблон, и окна интро.
+    Первые поля уезжают в .jsx подстановками шаблона, остальные — геометрия полосы
+    субтитров: её читают и план (предпросмотр), и шаблон, и окна интро.
     """
     subs: list[dict[str, Any]]            # элементы субтитров для плана/превью (plan["subs"])
     subs_js: str          # данные SUBS — строки цикла слов
@@ -79,6 +82,18 @@ class SubsPlan:
     hl_blur_decl: str     # объявление HL_BLUR (блюр появления жёлтых)
     hl_blur_fn: str       # функция hlBlur(L, t0) — сигнатура-контракт
     hl_short_fn: str      # hlDur/hlRowDur и HL_HD для коротких жёлтых
+    sub_anim_decl: str    # объявление чисел пресета появления слов (пусто при sub_anim="none")
+    sub_anim_fn: str      # функция subAnimKeys — те же ключи, что в плане (пусто при "none")
+    sub_anim_font: str    # тонкое начертание пресета weight ("" — ступеньки нет)
+    sub_anim_glitch: bool # пресет появления — глитч: сборке нужна функция глитча интро
+    # Подложка слова, заливка текста и свечение (класс Б каталога): числа для превью
+    # и подстановки .jsx. Выключено — пусто, .jsx прежний байт в байт (golden).
+    sub_wbg_js: str       # создание шейп-слоя подложки и функция wbgKeys
+    sub_wbg_tail: str     # окна показа подложки и кривые — после цикла слов
+    sub_wbg_plan: dict[str, Any] | None   # числа подложки для превью (None — выключена)
+    sub_fill_fn: str      # функция subGrad (пусто при сплошной заливке)
+    sub_glow_fn: str      # функция subGlow (пусто при выключенном свечении)
+    hl_size_k: float      # кегль жёлтого слова множителем базового: 1.0 = как сегодня
     hl_blur_on: bool      # галка блюра — уезжает в план (превью)
     sub_scale: float      # масштаб слоя прекомпа субтитров, %
     posy: int             # Y полосы субтитров, px (sub_y * высота кадра)
@@ -135,6 +150,51 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
     # Масштаб СЛОЯ прекомпа субтитров, %: кегль/раскладка не трогаются,
     # 100 = как сегодня. При 100 подстановка в шаблон пуста — .jsx прежний (golden).
     sub_scale = float(style.sub_scale)
+    # Появление БАЗОВОГО (белого) слова: пресет стиля sub_anim. Ключи считает
+    # layout (единственный источник кривых), а план несёт их каждому белому слову
+    # полем anim; .jsx ставит ТЕ ЖЕ ключи на слой, превью — на спан слова.
+    # Жёлтые пресет не трогает: у них своя анимация появления (подъём/проявление/блюр),
+    # и две анимации на одном слое складывались бы дважды. Слово жёлтое — пресет молчит.
+    _anim: SubAnim | None = sub_anim_preset(style.sub_anim, style.sub_anim_dur,
+                                            style.sub_anim_amt, style.sub_anim_font)
+    _anim_sub = sub_anim_js(_anim)
+    # Тонкое начертание пресета weight уезжает и в план: превью обязано ступенить
+    # начертание в ТОЙ ЖЕ середине dur, что .jsx, иначе картинки разъедутся.
+    _anim_font = _anim.font if _anim is not None else ""
+    # Пресет-глитч: сборке нужна функция глитча интро (introAnimFX) — свой вызов в
+    # subAnimKeys её зовёт, и без неё подстановка упала бы в try/catch и промолчала.
+    _anim_glitch = _anim is not None and _anim.name == "glitch"
+    # Подложка слова (класс Б каталога): числа и подстановки .jsx. Выключена — пусто,
+    # .jsx со стилем по умолчанию остаётся прежним байт в байт (golden_geometry.jsx).
+    _wbg = sub_wbg(style)
+    _wbg_sub = sub_wbg_js(_wbg) if _wbg is not None else {}
+    # Заливка текста градиентом и свечение: эффекты на слоях слов. Функции — одни на
+    # сборку (в циклах только вызовы), выключено — пусто.
+    _grad_fn = sub_fill_js(style)
+    _grad_call = sub_fill_call(style)
+    _glow_fn = sub_glow_js(style)
+    _glow_call_hl = sub_glow_call(style, "hl")
+    _glow_call_rows = sub_glow_call(style, "w_hl")
+    # В циклах стопки признака «жёлтое слово» нет вовсе — там ВСЕ слова жёлтые:
+    # подстановка идёт литералом, а не именем переменной (undefined уронил бы сборку).
+    _glow_call_stack = sub_glow_call(style, "true")
+    # Кегль жёлтого слова (ручка hl_size_k) в циклах субтитров: выражение у каждого
+    # цикла своё — строка кегля общая с белыми словами только в цикле «по слову»
+    # и в цикле строк. При 1.0 каждое выражение — ровно прежний текст FONT_SIZE/cur_fsz,
+    # и .jsx со стилем по умолчанию остаётся прежним байт в байт (golden_geometry.jsx).
+    _hl_k = hl_size_factor(style.hl_size_k)
+    _hl_fsz_words = hl_size_expr(_hl_k, "FONT_SIZE", "hl")    # «по слову» и склейки
+    _hl_fsz_rows = hl_size_expr(_hl_k, "cur_fsz", "w_hl")     # цикл строк
+    _hl_fsz_all = hl_size_expr(_hl_k, "FONT_SIZE")            # стопка: слова только жёлтые
+
+    def _w_fs(is_hl: bool) -> float:
+        """Кегль, которым слово реально нарисуется, — для ЗАМЕРА ширины (автофит).
+
+        У жёлтого кегль умножен на hl_size_k: мерить общим FONT_SIZE значило бы ужать
+        (или не ужать) слово не тем кеглем, каким его ставит .jsx. При 1.0 множитель
+        ничего не меняет — ширина та же, что была.
+        """
+        return _fsize * _hl_k if is_hl else _fsize
     # Жёлтые в режиме строк: HL_ROW_WORD нужен только циклу строк — в режиме
     # «по слову» объявления нет вовсе, и .jsx остаётся прежним байт в байт (golden).
     hl_row_decl = ("" if sub_words_per_row <= 1 else
@@ -169,11 +229,33 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
     _hl_row_hd: dict[int, float] = {}                 # индекс жёлтого слова СТРОКИ -> своя длительность, с
     hl_short_fn = ""
 
-    def _hl_loop(elem: str, **kw: Any) -> dict[str, Any]:
+    def _hl_loop(elem: str, t_expr: str = "sw[0]/FPS", wbg_key: str = "call_hl",
+                 glow: str = "hl", **kw: Any) -> dict[str, Any]:
         """Подстановки цикла субтитров для элемента `elem` (имя переменной строки данных):
         длительность появления в ключах подъёма/проявления и вызов блюра. Пока укороченных
         жёлтых нет — ровно прежний текст: HL_DUR и hlBlur(L, t0). У укороченного длительность
-        едет в блюр через HL_HD (сигнатура hlBlur(L, t0) — контракт )."""
+        едет в блюр через HL_HD (сигнатура hlBlur(L, t0) — контракт ).
+
+        `t_expr` — выражение времени слова в ЭТОМ цикле: градиент текста ставится по
+        прямоугольнику слова, а он у слоя с ключевым текстом (счётчик) свой на каждом
+        моменте — «на глаз» брать нулевой кадр нельзя. `wbg_key` — какой вызов подложки
+        слова кладёт цикл в своё место (`sw`/`rsw`), `glow` — имя признака «слово жёлтое»
+        (в стопке признака нет вовсе — там литерал `true`).
+        """
+        # Появление базового слова — общая часть всех циклов слов: у выключенного
+        # пресета подстановки пустые, и .jsx остаётся прежним байт в байт (golden).
+        # Цикл СО СКЛЕЙКАМИ кладёт свою строку вызова поверх (sub_anim_join_call).
+        kw.update(_anim_sub)
+        # Подложка, градиент и свечение — тоже общая часть: выключены ручки — пустые
+        # подстановки, и .jsx прежний (golden). Своей копии вызовов в шаблоне нет.
+        kw["wbg_base"] = _wbg_sub.get("call_base", "")
+        kw["wbg_hl"] = _wbg_sub.get(wbg_key, "")
+        kw["wbg_row"] = ""
+        kw["grad_call"] = sub_fill_call(style, t_expr)
+        # Цикл СО СКЛЕЙКАМИ рисует жёлтые слова вторым проходом по своим данным (kw):
+        # время слова у него своё, поэтому и выражение для градиента отдельное.
+        kw["grad_call_kw"] = sub_fill_call(style, "kw[0]/FPS")
+        kw["glow_call"] = sub_glow_call(style, glow)
         kw["hl_dur_js"] = ("hlDur(%s)" % elem) if _hl_hd else "HL_DUR"
         if hl_blur_on:
             if _hl_hd:
@@ -225,7 +307,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
             cnt_items.append(item_cnt)
             wd = _sub_w(w)
             ps = hl_font_ps if k in hl else font_ps
-            w_px = _fonts.text_width(ps, w, _fsize)
+            w_px = _fonts.text_width(ps, w, _w_fs(k in hl))
             item = {
                 "s": s / _fps0,
                 "e": _endc(k) / _fps0,
@@ -240,6 +322,14 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
                 item["expr"] = item_cnt[1]
             if k in _hl_hd:
                 item["hd"] = _hl_hd[k]
+            # Появление по пресету — только белому слову (см. _anim выше): у жёлтого
+            # своя анимация, и вторая на том же слое сложилась бы с первой.
+            if _anim is not None and k not in hl:
+                item["anim"] = sub_anim_keys(_anim, s / _fps0)
+            # Подложка слова: момент, с которого слово считается текущим. В режиме
+            # «по слову» это время самого слова — оно и есть своя реплика.
+            if _wbg is not None:
+                item["wbg"] = {"t": sub_wbg_moment(s / _fps0)}
             if w_px is not None and w_px > max_line_w:
                 shrunk_fs = max(40, int(_fsize * max_line_w / w_px))
                 if shrunk_fs < _fsize:
@@ -248,8 +338,11 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
 
         def _sub_row(k: int, end: int, wd: str, hl_v: int) -> list[Any]:
             """Строка данных цикла слов: [начало, конец, слово, hl, ряд, gend] плюс поле
-            счётчика (индекс 6) и — у укороченного жёлтого — поле длительности
-            появления (индекс 7). Пока укороченных нет, полей ровно шесть: .jsx прежний."""
+            счётчика (индекс 6), поле длительности появления укороченного жёлтого
+            (индекс 7) и — у пресета масштаба — поле стартового размера роста (тоже
+            индекс 7: два поля вместе не встречаются, у роста нет укороченных жёлтых).
+            Поля добавляются, только если сборке есть что в них положить: без укороченных
+            жёлтых и пресета .jsx прежний байт в байт (golden)."""
             r = [subs[k][0], end, wd, hl_v, cast(list[int], rows)[k], cast(list[float], gend)[k]]
             if any_sub_count:
                 r.append(cnt_items[k])
@@ -257,12 +350,22 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
                 while len(r) < 7:
                     r.append(None)              # поле счётчика: счётчиков в ролике нет
                 r.append(_hl_hd.get(k, _hl_dur))
+            if _anim is not None and _anim.name == "pop":
+                # Стартовый размер роста едет полем 7 — цикл СО СКЛЕЙКАМИ читает его
+                # оттуда (в обычном цикле то же число стоит в HL_W_SC подстановкой).
+                while len(r) < 7:
+                    r.append(None)
+                r.append(_anim.scale)
             return r
 
         any_joins = bool(joins)
         sub_tpl = SUBS_LOOP_WORDS_JOINED if any_joins else SUBS_LOOP_WORDS
         subs_js = _jd([_sub_row(k, _endc(k), _sub_w(w), 1 if k in hl else 0)
                        for k, (s, e, w) in enumerate(subs)])
+        # Склейки — своя строка вызова появления базового слова: у второго прохода
+        # позиция это finalY, а пик масштаба берётся из данных (sub_anim_join_call).
+        _anim_call = (sub_anim_join_call(_anim) if (any_joins and _anim is not None)
+                      else _anim_sub["call"])
         if any_sub_count:
             sub_count_code = (
                 '\n        var cnt = sw[6];\n'
@@ -284,9 +387,11 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
                 '            }catch(e){}\n'
                 '        }'
             )
-            sub_loop = sub_tpl % _hl_loop("sw", sub_count_code=sub_count_code)
+            sub_loop = sub_tpl % _hl_loop("sw", base_anim=_anim_call, sub_count_code=sub_count_code,
+                                          hl_fsz=_hl_fsz_words)
         else:
-            sub_loop = sub_tpl % _hl_loop("sw", sub_count_code="")
+            sub_loop = sub_tpl % _hl_loop("sw", base_anim=_anim_call, sub_count_code="",
+                                          hl_fsz=_hl_fsz_words)
         sub_rows_js = "[]"
     else:
         hl_row_stack = bool(style.hl_row_stack)
@@ -341,7 +446,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
             meas_ok = True
             for wd in words:
                 ps = hl_font_ps if wd.get("idx") in hl else font_ps
-                ww = _fonts.text_width(ps, wd.get("w") or "", _fsize)
+                ww = _fonts.text_width(ps, wd.get("w") or "", _w_fs(wd.get("idx") in hl))
                 if ww is None:
                     meas_ok = False
                     break
@@ -392,6 +497,15 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
                     "s": w_s,
                     "e": w_e,
                 }
+                # Белое слово: появление по пресету стиля. Ключи кладёт layout, здесь —
+                # только выбор: жёлтое пресет не трогает (у него своя анимация).
+                if not is_hl and _anim is not None:
+                    tw["anim"] = sub_anim_keys(_anim, w_s)
+                # Подложка слова: в строке слово стоит с её начала, а звучит в свой
+                # момент — берём время слова, зажатое в окно строки (та же формула,
+                # что у появления жёлтого). Считает Python, .jsx берёт поле данных.
+                if _wbg is not None:
+                    tw["wbg"] = {"t": sub_wbg_moment(w_s, r_s, r_e)}
                 if is_hl:
                     # Время появления жёлтого в строке (то же правило, что в
                     # цикле строк шаблона): при "word" — время слова, зажатое в окно строки
@@ -433,7 +547,7 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
                 s, e, w = subs[k]
                 wd = _sub_w(w, k)
                 ps = hl_font_ps if k in hl else font_ps
-                w_px = _fonts.text_width(ps, w, _fsize)
+                w_px = _fonts.text_width(ps, w, _w_fs(k in hl))
                 item = {
                     "s": s / _fps0,
                     "e": _endc(k) / _fps0,
@@ -446,6 +560,9 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
                 }
                 if k in _hl_hd:
                     item["hd"] = _hl_hd[k]
+                # Подложка слова: слово стопки — своя реплика, момент — его начало.
+                if _wbg is not None:
+                    item["wbg"] = {"t": sub_wbg_moment(s / _fps0)}
                 if w_px is not None and w_px > max_line_w:
                     shrunk_fs = max(40, int(_fsize * max_line_w / w_px))
                     if shrunk_fs < _fsize:
@@ -470,9 +587,15 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
                 sub_stack_data.append(_sw)
             sub_stack_js = _jd(sub_stack_data)
             stack_tpl = SUBS_LOOP_STACK_JOINED if any_joins else SUBS_LOOP_STACK
-            # В склейке второй проход цикла идёт по r_words, и строка данных там — `rsw`.
-            sub_stack_loop = stack_tpl % _hl_loop("rsw" if any_joins else "sw",
-                                                  sub_stack=sub_stack_js)
+            # В склейке второй проход цикла идёт по r_words, и строка данных там — `rsw`:
+            # своё и имя переменной в вызове подложки, и время слова для градиента (kw).
+            sub_stack_loop = stack_tpl % _hl_loop(
+                "rsw" if any_joins else "sw",
+                t_expr=("kw[0]/FPS" if any_joins else "sw[0]/FPS"),
+                wbg_key=("call_hl_joined" if any_joins else "call_hl"),
+                glow="true",
+                sub_stack=sub_stack_js,
+                hl_fsz=_hl_fsz_all)
 
         # В SUBS (её читает только поп-SFX по индексу начала) у слов серии — их ряд стопки и
         # общий конец; у остальных слов поля прежние. Галка выключена — stacked_indices пуст,
@@ -482,13 +605,23 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
                         cast(list[float], gend)[k] if k in stacked_indices else _endc(k)]
                        for k, (s, e, w) in enumerate(subs)])
 
-        def _row_word(x: dict[str, Any]) -> list[Any]:
+        def _row_word(x: dict[str, Any], mt: float | None) -> list[Any]:
             """Слово строки для цикла: [начало, текст, hl] и — у коротких строк — четвёртым полем длительность появления (у длинных жёлтых и белых —
             общая HL_DUR, как поле 7 у цикла слов). Пока коротких нет, полей ровно три:
-            .jsx прежний байт в байт (golden)."""
+            .jsx прежний байт в байт (golden).
+
+            Подложка слова читает ПЯТОЕ поле (индекс 4): момент, с которого слово
+            считается текущим. Поле всегда на своём месте — при коротких строках
+            пропуск заполняется None, иначе индекс уехал бы и подложка прыгала бы
+            не на то слово.
+            """
             wd = [x["start"], _sub_w(x["w"], x["idx"]), 1 if x["idx"] in hl else 0]
             if _hl_row_hd:
                 wd.append(_hl_row_hd.get(x["idx"], _hl_dur))
+            if mt is not None:
+                while len(wd) < 4:
+                    wd.append(None)
+                wd.append(mt)
             return wd
 
         sub_rows_data = [
@@ -497,7 +630,10 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
                 line["end"],
                 line["row"],
                 0,
-                [_row_word(x) for x in line["words"]]
+                [_row_word(x, (sub_wbg_moment(x["start"] / _fps0, line["start"] / _fps0,
+                                              line["end"] / _fps0)
+                               if _wbg is not None else None))
+                 for x in line["words"]]
             ]
             for line in raw_lines
         ]
@@ -518,7 +654,15 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
         # его можно подставлять по-старому (tests/test_template_sub_wide.py).
         sub_loop = SUBS_LOOP_ROWS % dict(sub_rows=sub_rows_js, sub_step=_sub_step,
                                          hl_dur_js=rows_dur_js,
-                                         hl_blur_call=rows_blur_call) + sub_stack_loop
+                                         hl_blur_call=rows_blur_call,
+                                         base_anim=_anim_sub["call"],
+                                         # Подложка слова в строке: вызов свой — момент
+                                         # слова лежит в данных (поле 4), а не в t0 слоя.
+                                         wbg_base="", wbg_hl="",
+                                         wbg_row=_wbg_sub.get("call_row", ""),
+                                         grad_call=sub_fill_call(style, "wd[0]/FPS"),
+                                         glow_call=sub_glow_call(style, "w_hl"),
+                                         hl_fsz=_hl_fsz_rows) + sub_stack_loop
     # Циклы субтитров собраны, укороченные жёлтые известны — теперь функции шаблона. Обе
     # пусты, пока в ролике нет ни одного такого слова: .jsx прежний побайтово (golden).
     if _hl_hd or _hl_row_hd:
@@ -561,6 +705,12 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
     return SubsPlan(
         subs=subs_plan, subs_js=subs_js, sub_loop=sub_loop,
         hl_row_decl=hl_row_decl, hl_blur_decl=hl_blur_decl, hl_blur_fn=hl_blur_fn,
-        hl_short_fn=hl_short_fn, hl_blur_on=hl_blur_on, sub_scale=sub_scale,
+        hl_short_fn=hl_short_fn, sub_anim_decl=_anim_sub["decl"],
+        sub_anim_fn=_anim_sub["fn"], sub_anim_font=_anim_font,
+        sub_anim_glitch=_anim_glitch,
+        sub_wbg_js=_wbg_sub.get("js", ""), sub_wbg_tail=_wbg_sub.get("tail", ""),
+        sub_wbg_plan=(sub_wbg_plan(_wbg) if _wbg is not None else None),
+        sub_fill_fn=_grad_fn, sub_glow_fn=_glow_fn,
+        hl_size_k=_hl_k, hl_blur_on=hl_blur_on, sub_scale=sub_scale,
         posy=_posy, hl_step=_hl_step, hl_rise=_hl_rise, hl_dur=_hl_dur,
         fsize=_fsize, fsize_base=_fsize_base, sub_step=_sub_step)

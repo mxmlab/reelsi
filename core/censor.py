@@ -5,6 +5,17 @@
 Two lists, one stem per line, lowercase. Matching is by substring on the normalised
 word, so a stem like `убива` covers its forms. Lines starting with `#` are comments.
 
+A line may be written `=слово` — then it matches the WHOLE word only, never a
+substring: `=аст` stars «аст» and leaves «часто» alone, while the bare stem `аст`
+would poison both, and an ok-list `=тесто` whitelists «тесто» without disarming
+`тест` for «тестостерон». Spaces after `=` do not matter (`= аст` == `=аст`); a lone
+`=` is an empty line and is skipped.
+
+The star lands inside the SHORTEST stem that fired, in its middle: a word is usually made
+of a stem plus an ending, so `трен` in «тренболон» must read as «тр*нболон» — a star in
+the middle of the whole word («трен*олон») would leave the stem readable and the bleep
+useless.
+
 - `badwords.txt` — stems to star.
 - `okwords.txt` — allow-list. A word that matches a bad stem is left ALONE if it also
   matches an ok-stem. This is how legit words that merely CONTAIN a bad substring
@@ -40,6 +51,9 @@ DEFAULT_BAD = [
 DEFAULT_OK: list[str] = []
 DEFAULTS = {"bad": DEFAULT_BAD, "ok": DEFAULT_OK}
 _norm_re = re.compile(r"[^\w]+", re.UNICODE)
+# Тот же класс символов, что в `_norm_re`, но по одной позиции: по нему строится карта
+# индексов нормализованного слова в исходном. Один источник, иначе `low` и карта разъедутся.
+_word_char = re.compile(r"\w")
 _cache: dict[str, tuple[str | None, float | None, list[str]]] = {"bad": (None, None, DEFAULT_BAD), "ok": (None, None, DEFAULT_OK)}
 
 
@@ -86,22 +100,59 @@ def _ok() -> list[str]:
     return _load("ok")
 
 
+def _norm(word: str | None) -> str:
+    """Слово для сравнения со стемами: lower() и только `\\w` (регистр и пунктуация прочь)."""
+    return _norm_re.sub("", (word or "").lower())
+
+
+def match(low: str, stems: list[str]) -> str | None:
+    """Самый короткий сработавший элемент списка для нормализованного слова `low`
+    (уже lower() и без не-\\w символов) или None. `=x` срабатывает при low == x,
+    обычный стем — при вхождении подстрокой. Возвращает элемент БЕЗ знака '='."""
+    best: str | None = None
+    for it in stems:
+        # У `=x` пробелы после знака не значимы; нормализуем только сам x, чтобы
+        # «= узи» и «=узи» вели себя одинаково.
+        s = _norm(it[1:]) if it.startswith("=") else it
+        if not s:
+            continue                              # строка из одного «=» — пустая
+        hit = (low == s) if it.startswith("=") else (s in low)
+        if hit and (best is None or len(s) < len(best)):
+            best = s                              # при равной длине остаётся первый по списку
+    return best
+
+
 def is_bad(word: str | None) -> bool:
     """True if `word` should be censored: matches a bad stem and no ok exception."""
-    low = _norm_re.sub("", (word or "").lower())
+    low = _norm(word)
     if not low:
         return False
-    if any(o in low for o in _ok()):
+    if match(low, _ok()) is not None:
         return False
-    return any(b in low for b in _bad())
+    return match(low, _bad()) is not None
 
 
 def censor(word: str) -> str:
-    """Star one (middle) letter if the word should be censored. Case preserved."""
-    if is_bad(word):
-        m = max(1, len(word) // 2)     # у 1-буквенного слова не стирать единственную букву
-        return word[:m] + "*" + word[m + 1:]
-    return word
+    """Star the middle letter of the shortest stem that fired. Case and length preserved.
+
+    Звёздочка встаёт ВНУТРЬ сработавшего стема, а не в середину слова: стем «трен»
+    в «тренболон» читался бы целиком как «трен*олон» — цензура, которая не цензурит.
+    """
+    low = _norm(word)
+    if not low:
+        return word
+    if match(low, _ok()) is not None:
+        return word
+    s = match(low, _bad())
+    if s is None:
+        return word
+    # Позиции `low` в исходном слове: пунктуация («bpc-157») в них не попадает, и
+    # звёздочка ложится на букву, а не на дефис. `low` собирается из этого же каркаса —
+    # иначе `low` и карта разъехались бы на первом же расхождении классов.
+    idx = [i for i, ch in enumerate(word) if _word_char.match(ch)]
+    low = "".join(word[i] for i in idx).lower()
+    k = low.find(s) + len(s) // 2                 # для `=x` это 0: low == x
+    return word[:idx[k]] + "*" + word[idx[k] + 1:]
 
 
 # ---- правка списков из настроек (⚙ → «Слова») ----

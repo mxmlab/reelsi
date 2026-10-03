@@ -81,9 +81,10 @@ def test_ai_inserts_contract(client, xml_nosubs, monkeypatch, no_model_unload):
     seen, emitted = {}, []
 
     def fake_cmd(xml_path, system=None, dry=False, model=None, url=None,
-                 emit=None, count=None, avoid=None, rejected=None, window=None):
+                 emit=None, count=None, avoid=None, rejected=None, window=None,
+                 speaker=None):
         seen.update(xml_path=xml_path, model=model, count=count,
-                    avoid=avoid, rejected=rejected)
+                    avoid=avoid, rejected=rejected, speaker=speaker)
         emit("подбираю вставки…")
         emit("вставок: {total}, цель {target}", total=len(inserts), target=13)
         return {"path": xml_path + ".inserts.json", "inserts": inserts, "ins_target": 13}
@@ -104,7 +105,8 @@ def test_ai_inserts_contract(client, xml_nosubs, monkeypatch, no_model_unload):
     assert d["insTarget"] == 13                       # цель набора — для кнопки «добрать»
     assert d["log"] == ["подбираю вставки…", "вставок: 2, цель 13"]
     assert seen == {"xml_path": xml_nosubs, "model": "test-model", "count": 2,
-                    "avoid": avoid, "rejected": rejected}
+                    "avoid": avoid, "rejected": rejected, "speaker": None}
+    assert seen["speaker"] is None
     # строки ушли и в серверный лог (не только клиенту)
     assert [line for line, _v in emitted] == ["подбираю вставки…", "вставок: {total}, цель {target}"]
     assert emitted[1][1] == {"total": 2, "target": 13}

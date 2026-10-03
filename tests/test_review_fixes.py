@@ -27,6 +27,8 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import public_slice  # noqa: E402
 
+from tests import gitfiles  # noqa: E402
+
 
 def test_umsg_err_json_safe():
     """umsg_err с URLError, Exception, Path в vars -> json.dumps проходит, значение = str()."""
@@ -115,12 +117,9 @@ def test_public_files_have_no_dangling_links():
         "tests/test_review_fixes.py", "tests/test_no_task_codes.py",
     }
 
-    out = subprocess.check_output(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
-        cwd=ROOT, text=True, encoding="utf-8",
-    )
+    out = gitfiles.git_files(ROOT)
     public_files = [
-        f for f in out.splitlines()
+        f for f in out
         if f and os.path.exists(os.path.join(ROOT, f)) and not public_slice.is_ignored(f, patterns)
     ]
 

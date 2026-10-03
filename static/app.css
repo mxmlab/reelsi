@@ -34,7 +34,9 @@
    --subsh:0 2px 7px #000, 0 0 3px #000;
    /* Кегль интро-строк в предпросмотре: как --subfs, ставится из плана
       (fsize/w — в AE у интро и субтитров один FONT_SIZE); здесь — фолбэк «плана нет». */
-   --introsfs:8.4cqw}
+   --introsfs:8.4cqw;
+   /* Пропорции стойки предпросмотра: ставятся из плана сцены (w/h), здесь — фолбэк по умолчанию (9:16). */
+   --stage-ar: 9 / 16;}
 *{box-sizing:border-box}
 html,body{margin:0}
 body{font:14px/1.55 Inter,system-ui,Segoe UI,Roboto,sans-serif;color:var(--tx);background:var(--bg);min-height:100vh;
@@ -197,6 +199,11 @@ header.top{position:sticky;top:0;z-index:30;background:var(--bg);border-bottom:1
 /* Сброс группы — текст 11px --mut без рамки и фона, hover --tx, в колонке значений */
 #stpanel .streset,.streset{height:20px !important;min-height:0 !important;max-height:20px !important;font-size:11px !important;color:var(--mut) !important;background:none !important;border:none !important;box-shadow:none !important;cursor:pointer !important;padding:0 2px !important;user-select:none !important;line-height:20px !important;border-radius:0;text-align:left !important;width:auto !important}
 #stpanel .streset:hover,.streset:hover{color:var(--tx) !important;background:none !important;border:none !important}
+/* Кнопка-цепочка связи параметров */
+#stpanel .stlink-btn,.stlink-btn{height:18px !important;min-height:0 !important;max-height:18px !important;background:none !important;border:none !important;box-shadow:none !important;cursor:pointer !important;padding:0 2px !important;color:var(--tx) !important;display:inline-flex !important;align-items:center !important;justify-content:center !important}
+#stpanel .stlink-btn.st-unlinked,.stlink-btn.st-unlinked{color:var(--mut) !important;opacity:.6}
+#stpanel .stlink-btn:hover,.stlink-btn:hover{color:#fff !important;background:none !important}
+#stpanel .strow.stdisabled,.strow.stdisabled{opacity:.45;pointer-events:none}
 /* Доступность с клавиатуры в панели стиля */
 #stpanel .stnum-val:focus-visible{outline:1px solid var(--mut);outline-offset:1px;border-radius:var(--r-sm);color:#fff;border-bottom-color:var(--tx)}
 #stpanel .sttw:focus-visible{outline:1px solid var(--mut);outline-offset:1px;border-radius:var(--r-sm)}
@@ -251,6 +258,12 @@ button.primary:hover{filter:brightness(.92);background:var(--acc)}
 /* радиус тут НЕ переопределять: правило идёт после .primary и при «primary sm»
    перебивало пилюлю на 8px — белая главная кнопка становилась прямоугольной */
 button.sm{min-height:var(--h-sm);padding:0 12px;font-size:12.5px}
+/* Самая нужная кнопка панели вставок («Недостающие») выделена положением — первой в ряду —
+   и чуть более толстой рамкой, а не другим стилем: акцентная белая заливка .primary
+   выбивалась из ряда соседних кнопок. Толщину рамки менять безопасно, глобальный
+   *{box-sizing:border-box} держит высоту. Неактивную (ноль карточек) не трогаем: правило
+   button:disabled ниже гасит её ровно как любую другую кнопку. */
+button.key{border-width:2px}
 button:disabled{opacity:.4;cursor:default}
 button.icon,a.icon{border:0;min-height:0;padding:5px 8px;color:var(--mut);background:transparent;border-radius:var(--r);display:inline-block}
 button.icon:hover,a.icon:hover{color:var(--tx);background:#141414}
@@ -264,7 +277,17 @@ button.icon:hover,a.icon:hover{color:var(--tx);background:#141414}
 .seg input{position:absolute;inset:auto auto 0 0;opacity:0;width:1px;height:1px;min-height:0;padding:0;
   margin:0;border:0;pointer-events:none}
 .seg label:has(input:focus-visible){outline:1px solid var(--mut);outline-offset:2px}
-.muted{color:var(--mut)}.ok{color:var(--ok)}.err{color:var(--dng)}.grow{flex:1}
+.muted{color:var(--mut)}.ok{color:var(--ok)}.err{color:var(--dng)}
+/* min-width:0 обязателен: авто-минимум flex-элемента равен ширине его содержимого,
+   поэтому колонка с полем или длинной строкой распирала родителя вбок вместо того,
+   чтобы сжаться (окно настроек уезжало в горизонтальную прокрутку — скриншот владельца).
+   Там, где сжатие в ноль что-то прячет, ниже стоят нижние границы. */
+.grow{flex:1;min-width:0}
+/* Ползунок перемотки и итог по монтажу — исключения из правила выше: с нулевым
+   минимумом ползунок сжимается в невидимую точку, а строка итога — в пустоту.
+   Нижняя граница вместо нуля; ряд (.row) при нехватке места переносит их строкой ниже. */
+input[type=range].grow{min-width:120px}
+#edcut{min-width:64px}
 .hint{color:var(--mut);font-size:12.5px}
 table{width:100%;border-collapse:collapse;margin-top:12px}
 td,th{text-align:left;padding:9px 8px;border-bottom:1px solid var(--bd);font-size:13px}
@@ -304,6 +327,10 @@ summary:hover{color:var(--tx)}
 .navbar button,.actbar button{min-height:var(--h);border-radius:var(--r-pill);padding:0 22px;font-size:13.5px}
 /* иконочные кнопки в таком ряду — не действия-пары, геометрия своя */
 .navbar button.icon,.actbar button.icon{min-height:0;border-radius:var(--r);padding:5px 8px;font-size:inherit}
+/* Ряд действий переносится: без flex-wrap ряд кнопок профиля в ⚙ («Проверить /
+   Сохранить / Сделать активным / Дублировать / Удалить») не влезал в правую колонку,
+   распирал её и тянул горизонтальную прокрутку всего окна настроек. */
+.actbar{flex-wrap:wrap}
 /* clip list */
 .clips{display:flex;flex-direction:column;gap:8px;margin-top:6px}
 .clip{display:flex;align-items:center;gap:14px;border:1px solid var(--bd);border-radius:var(--r);padding:13px 15px;background:transparent}
@@ -351,6 +378,11 @@ summary:hover{color:var(--tx)}
 .aisItem:hover{border-color:var(--iron)}
 .aisItem.on{border-color:var(--iron);color:var(--tx)}
 .aisItem:focus-visible{outline:1px solid var(--mut);outline-offset:1px}
+/* Имя профиля — одной строкой с многоточием, полное имя лежит в title пункта.
+   text-overflow на самом .aisItem не срабатывает: он flex-контейнер, а свойство
+   обрезает содержимое блока, поэтому текст обрезался краем без многоточия
+   («Unsloth Studio / Qwen-Image» — скриншот владельца). */
+.aisItem .nm{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .aisItem .dot{color:var(--acc);font-size:11px}   /* активность — выбор, а не «поработал»: зелёный только у «готово» (правка юзера)
 /* вкладки настроек: список слева (колонка), панели справа */
 .aislayout{display:flex;align-items:stretch}
@@ -369,7 +401,53 @@ summary:hover{color:var(--tx)}
 .ais-diagnostics{width:100%;min-width:0;border-top:1px solid var(--bd);padding-top:9px;margin-top:10px}
 .ais-diagnostics>summary{cursor:pointer;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
 .ais-diagnostics #aistats_host{overflow-x:auto;max-width:100%;margin-top:9px}
-.ais-profile-row{flex:none}
+/* ---- «Подключения»: список профилей слева, форма профиля справа ----
+   Прокручивается ТОЛЬКО тело формы (.conn-body), подвал с «Сохранить» закреплён
+   внизу колонки. До этого прокручивалась панель целиком, и длинная колонка уходила
+   за нижний край окна: до «Сохранить» приходилось долистывать всю форму. Цепочка
+   высот — от панели вкладки до подвала, каждый уровень с min-height:0, иначе
+   flex-элемент не сжимается меньше содержимого и подвал уезжает вниз. */
+#mbAISettings #aistab_models{display:flex;flex-direction:column;overflow:hidden}
+.conn{display:flex;flex:1;gap:16px;align-items:stretch;min-height:0;min-width:0}
+.conn-list{flex:0 0 190px;min-width:0;overflow-y:auto;overflow-x:hidden;
+  border-right:1px solid var(--bd);padding-right:12px;overscroll-behavior:contain}
+.conn-body{display:flex;flex-direction:column;gap:10px;flex:1;min-height:0;
+  overflow-y:auto;overflow-x:hidden;padding-right:4px;overscroll-behavior:contain}
+.conn-foot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;flex:none;
+  border-top:1px solid var(--bd);padding-top:10px}
+/* Кнопки подвала — обычные прямоугольные, без «пилюль» (утверждённый макет): ряд из
+   двух кнопок не главный на экране, «Сохранить» отличается только заливкой. */
+.conn-foot button{border-radius:var(--r);min-height:var(--h-sm);padding:0 14px;font-size:12.5px}
+/* Строка настройки: подпись узкой колонкой слева, поле справа. Колонка значений —
+   minmax(0,1fr): поле сжимается, а не распирает форму за правый край окна. */
+.conn-row{display:grid;grid-template-columns:92px minmax(0,1fr);gap:10px;align-items:center;min-width:0}
+.conn-row>label{margin:0;min-width:0;font-size:12px}
+.conn-row>select{width:auto;max-width:100%;justify-self:start}   /* провайдер — по ширине своего текста, а не на всю строку */
+.conn-row>textarea,.conn-row>input{min-width:0;max-width:100%}
+/* Поле с кнопкой: поле сжимается, кнопка остаётся целой и не рвётся по словам,
+   а длинный результат проверки переносится на свою строку, а не распирает колонку. */
+.conn-ctl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;min-width:0}
+.conn-ctl>input,.conn-ctl>select{flex:1;min-width:130px;max-width:100%}
+.conn-ctl>button{flex:none;white-space:nowrap}
+/* Результат проверки встаёт на свою строку под полем — и переносится по буквам:
+   провайдер отвечает простыней без пробелов (URL, JSON), и такое слово распирало бы
+   колонку вбок. Цвет даёт общий .ok/.err (см. выше): «✓ работает» — зелёный статус
+   действия, ошибка — красная. Своей палитры у поля нет. */
+#connTestRes{flex:1 1 100%;min-width:0;overflow-wrap:anywhere;font-size:12.5px}
+/* Строки подвала — той же природы: сообщение сервера не должно двигать кнопки */
+#aisStatus,#connDirty{min-width:0;overflow-wrap:anywhere}
+/* Строка имени профиля: имя — заголовок формы, справа значки дубля и удаления */
+.conn-name{display:flex;gap:6px;align-items:center;min-width:0}
+.conn-name>input{flex:1;min-width:0}
+.conn-name>button{flex:none;padding:0 9px}
+/* «Дополнительно»: редкие ручки свёрнуты, чтобы форма не превращалась в простыню */
+.conn-adv{border-top:1px solid var(--bd);padding-top:8px}
+.conn-adv>summary{cursor:pointer;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.06em}
+.conn-adv[open]>summary{margin-bottom:10px}
+.conn-adv .conn-row{margin-top:8px}
+/* Служебная строка под моделью («уровни ума: … · контекст … · вывод … · цена»):
+   переносится, длинное имя уровня не распирает колонку. */
+#ais_reas{min-width:0;font-size:12px;white-space:normal;overflow-wrap:anywhere}
 #aistab_words details[name="aiswords"]{border-top:1px solid var(--bd);padding-top:8px}
 #aistab_words details[name="aiswords"]>summary{cursor:pointer;color:var(--mut);font-size:11px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}
 /* колонка вкладок: индикатор активной — левая полоса, а не нижняя (список вертикальный) */
@@ -388,6 +466,10 @@ summary:hover{color:var(--tx)}
   .tabs .tab{border-left:none;border-bottom:2px solid transparent;white-space:nowrap}
   .tabs .tab.on{border-bottom-color:var(--acc)}
   .ais-matrix-row{grid-template-columns:minmax(64px,.65fr) minmax(0,1.35fr) minmax(0,.9fr);gap:5px;padding:6px}
+  /* список профилей и форма встают друг под друга: рядом им уже не хватает места,
+     а с min-width:0 у формы она сжалась бы в нитку */
+  .conn{flex-direction:column}
+  .conn-list{flex:none;max-height:132px;border-right:0;border-bottom:1px solid var(--bd);padding:0 0 10px}
 }
 /* строка настройки: подпись слева фиксированной ширины, контрол справа */
 .setrow{display:flex;gap:12px;align-items:center}
@@ -414,21 +496,62 @@ summary:hover{color:var(--tx)}
 /* preview + editor */
 /* container-type: субтитры и интро внутри кадра считаются в cqw — иначе на большом
    предпросмотре (1440p) кегль оставался «телефонным» и пропорции кадра врали */
-.pvstage{position:relative;background:#000;border-radius:var(--r);overflow:hidden;width:100%;max-width:320px;margin:0 auto;aspect-ratio:9/16;
+.pvstage{position:relative;background:#000;border-radius:var(--r);overflow:hidden;width:100%;max-width:320px;margin:0 auto;aspect-ratio:var(--stage-ar, 9/16);
   container-type:inline-size}
+/* Режим рендера без AE (страница /render): кадр снимается по номеру, поэтому ни один
+   переход и ни одна анимация не должны играть по реальному времени — иначе картинка
+   зависела бы от того, как быстро снимают. Класс ставит ipvRenderAt на корень
+   документа. Величины, которые в живом превью везёт переход (ширина плашки субтитров),
+   в этом режиме считаются на момент кадра — см. ipvSubsBgAt. */
+.render-mode,.render-mode *,.render-mode *::before,.render-mode *::after{
+  transition:none !important;animation:none !important}
+/* В режиме рендера в кадре нет НИ ОДНОГО элемента правки: снимок идёт с той же
+   страницы, что играет живое превью, а ручки и маркеры — не картинка ролика.
+   Живой случай: под текстом интро в готовом ролике нашлась черта с ручкой масштаба
+   (`.intro-scale-handle`), а по краям — маркер точки наезда и полоса подсказки рото.
+   !important здесь не «на всякий случай»: размеры и показ этих элементов ставятся
+   инлайново из JS (ipvIntro, zoomPickMark, rotoMask), и обычное правило проиграло бы
+   инлайновому стилю. Список — перечень ВСЕГО, что JS рисует в кадре для правки;
+   новый такой элемент обязан попасть сюда же — сторож в tests/test_render_overlay.py. */
+.render-mode .ipvintro .intro-scale-handle,
+.render-mode .zoommark,
+.render-mode .rotomask{display:none !important}
+/* Подчёркивание слова интро — та же правка, а не картинка: `.iword` получает
+   `border-bottom:1px dashed` ради клика по слову (правка текста в превью), и в
+   готовом ролике под текстом шла тонкая черта (владелец: «черта под “КУД”, y≈553
+   полукадра»). `display:none` тут нельзя — пропадёт САМО слово: гасим только линию
+   и ровно её цветом, чтобы коробка слова не поехала на пиксель. */
+.render-mode .ipvintro .iword{border-bottom-color:transparent !important}
 .pvstage video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000}
-/* Прогресс сборки превью-прокси поверх плеера: сборка идёт десятки секунд,
-   и раньше её было видно только хвостом подписи камер без процента. Блок висит у низа
-   кадра (z-index 20 — выше субтитров/вставок), клики не перехватывает: pointer-events
-   none, поэтому драг вставок и интро под ним работает как раньше. Зелёный не используем —
-   он про «готово», а тут работа идёт. */
-.pvpx{position:absolute;left:0;right:0;bottom:0;z-index:20;pointer-events:none;
-  display:flex;flex-direction:column;gap:6px;padding:10px 12px 12px;
+/* Прогресс поверх плеера: ОДИН контейнер `.pvprog` на стойку, в нём строки стопкой —
+   сборка превью-прокси (`.pvpx`) и ход обработки голоса (`.pvpxv`). Идти разом могут
+   оба (разные задания), и раньше это были два абсолютных блока у `bottom:0`: второй
+   рисовался поверх первого. Теперь контейнер один, строки в нём в потоке; порядок
+   задаёт `order` (прокси выше, голос ниже), а не очерёдность появления. Пустой
+   контейнер снимается из JS. Клики контейнер не перехватывает (pointer-events:none) —
+   драг вставок и интро под ним работает как раньше, — а кнопка «Стоп» у строки
+   голоса включает их себе точечно. Зелёный не используем: он про «готово», а тут
+   работа идёт. */
+.pvprog{position:absolute;left:0;right:0;bottom:0;z-index:20;pointer-events:none;
+  display:flex;flex-direction:column;gap:8px;padding:10px 12px 12px;
   background:rgba(16,16,16,.86);border-top:1px solid var(--bd)}
+.pvpx,.pvpxv{display:flex;flex-direction:column;gap:6px}
+.pvpx{order:0}
+.pvpxv{order:1}
+/* Строка расчёта рото и трекинга: тот же контейнер и те же подписи, что у прокси и
+   голоса (pvProgRow в static/app/60-preview.js), но идёт она ПЕРВОЙ — этот расчёт
+   запускают вручную и ждут его глазами. Цвет строки — не зелёный: зелёный тут только
+   статус «посчитано» у кнопки (docs/DESIGN.md). */
+.pvpxr{order:-1}
+/* Текст и подсказка строки — одной строкой, а не поверх друг друга. */
+.pvpx_line{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap}
 .pvpx_bar{height:4px;border-radius:var(--r-sm);background:var(--bd);overflow:hidden}
 .pvpx_fill{display:block;height:100%;width:0;background:var(--acc);transition:width .3s linear}
 .pvpx_txt{font-size:12px;line-height:1.35;color:var(--tx)}
 .pvpx_hint{font-size:11px;line-height:1.3;color:var(--mut)}
+/* Кнопка «Стоп» у строки хода голоса — та же мелкая кнопка интерфейса, но ниже: у
+   кадра не должно быть крупной кнопки в пол-кадра. */
+.pvpx_stop{min-height:0;padding:1px 8px;font-size:11px;margin-left:auto;flex:none;pointer-events:auto}
 .pvstage.zoompick{cursor:crosshair}
 /* маркер точки наезда (часть 4): перекрестие в долях кадра */
 .zoommark{position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;pointer-events:none;z-index:20;
@@ -454,11 +577,19 @@ summary:hover{color:var(--tx)}
    неверно — стопка уезжала. Повторяем ту привязку, которая уже сверена глазами, а не
    подбираем em по метрикам шрифта. */
 #ipvsub .pvsubs_host{position:absolute;inset:0;pointer-events:none}
+/* Подложка СЛОВА (sub_wbg): фигура под текущим произносимым словом — маркер,
+   раскрывающийся при появлении, или «таблетка», прыгающая от слова к слову.
+   Один элемент на кадр (как один шейп-слой в .jsx), размеры и позицию ставит ipvSubWbg
+   по прямоугольнику выбранного слова; z-index 0 — под словами (у строк z-index 1). */
+#ipvsub .pvsub_wbg{position:absolute;pointer-events:none;z-index:0}
 #ipvsub .pvsub_bg{position:absolute;left:50%;transform:translate(-50%,50%);
   box-shadow:0 0.463cqw 4.074cqw rgba(0,0,0,0.68);pointer-events:none;z-index:0;
   transition:width .22s cubic-bezier(.165,.84,.44,1)}
 #ipvsub .pvsubw{position:absolute;left:0;right:0;text-align:center;z-index:1;
   font-size:21px;font-size:var(--subfs,7.7cqw);line-height:1;color:var(--subfc,#fff);text-shadow:var(--subsh,0 2px 7px #000,0 0 3px #000);padding:0;white-space:nowrap}
+/* опора базовой линии для замера в ipvSubs: строка садится по POSY, а это базовая
+   линия текстового слоя в AE, не низ коробки — тот же приём, что у интро и подписи */
+#ipvsub .pvsubw .pvcap_strut{display:inline-block;width:0;height:0;vertical-align:baseline}
 #ipvsub .pvsubw.yel{color:var(--subhl,var(--yel))}
 #ipvsub .pvsubw .yel{color:var(--subhl,var(--yel))}
 /* живая подсказка «Низ маски %» в редакторе стиля: полупрозрачная красная полоса
@@ -599,7 +730,25 @@ pre.log{background:var(--bg2);border:1px solid var(--bd);border-radius:var(--r);
   white-space:pre-wrap;font:12px/1.55 ui-monospace,Consolas,monospace;margin:0;color:var(--tx)}
 /* editor layout */
 .edcols{display:flex;gap:20px;align-items:stretch;margin-bottom:16px}
-.edcols .pvstage{margin:0;flex:0 0 250px}
+/* align-self:flex-start — кадр превью держит формат КЛИПА (9:16), а не тянется на
+   высоту правой колонки: при align-items:stretch он растягивался вместе с панелью
+   голоса (250×785 вместо 250×444) и переставал быть похожим на ролик. Панель справа
+   колонку не распирает: списки в ней по ширине содержимого (см. «Голос»). */
+/* Кадр превью шага 1: формат КЛИПА (9:16), высота — по доступной высоте окна, ширина
+   от высоты. Раньше тут был жёсткий flex-basis 250px (250×444) — кадр не тянулся вместе
+   с окном, и на большом экране лицо было мельче, чем в готовом ролике. Теперь высота
+   считается ОТ ОКНА: 100vh минус шапка модалки, подпись с бегунком и панель редактора с
+   таймлайном (≈380px у окна модалки: отступы backdrop 40+40 и mbody 20+20 съедают свои
+   120). Ширина — из той же высоты по 9:16, то есть 0.5625; венчает `min(...)` базовый
+   `max-width:320px` СНЯТ (max-width:none): с ним ширина упиралась в 320, а высота нет,
+   и кадр переставал быть 9:16 (приёмка: 315×729 при 1080p). `max()` в
+   селекторе ширины не нужен: высота уже ограничена `max(360px, ...)`, и на низком окне
+   (768p) кадр просто мельче — по доступной высоте, без прокрутки модалки.
+   Правая колонка стала уже (250 -> ~393 при 1080p): ручки панели «Голос» и редактор
+   переносятся сами, списки в них и так по ширине содержимого. */
+.edcols .pvstage{margin:0;flex:0 0 auto;align-self:flex-start;
+  height:max(444px,min(820px,calc(100vh - 340px)));aspect-ratio:9/16;max-width:none;
+  width:calc(max(444px,min(820px,calc(100vh - 340px)))*.5625)}
 .edside{flex:1;min-width:0;display:flex;flex-direction:column;gap:14px}
 .edgrp{border:1px solid var(--bd);border-radius:var(--r);padding:14px 16px;background:var(--bg2)}
 .edgrp.grow2{flex:1}
@@ -607,7 +756,7 @@ pre.log{background:var(--bg2);border:1px solid var(--bd);border-radius:var(--r);
 .edtlbar{display:flex;gap:4px;align-items:center;margin:0 0 6px}
 /* margin-left убран: кнопка теперь flex с gap:6px, отступ шёл вторым слоем поверх него */
 .kbd{font:11px ui-monospace,monospace;border:1px solid var(--bd2);border-radius:var(--r-sm);padding:1px 5px;color:var(--mut)}
-@media(max-width:900px){.edcols{flex-direction:column}.edcols .pvstage{flex:none;max-width:280px;margin:0 auto}}
+@media(max-width:900px){.edcols{flex-direction:column}.edcols .pvstage{flex:none;max-width:280px;width:100%;height:auto;margin:0 auto}}
 /* site polish */
 *{scrollbar-width:thin;scrollbar-color:#2e2e2e var(--bg)}
 ::selection{background:rgba(255,255,255,.18)}
@@ -678,13 +827,60 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 .illrow .meta{flex:1;min-width:0}
 .illrow .nm{font-size:11.5px;color:var(--mut);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .illrow .desc{width:100%;font-size:12px;margin-top:3px}
-/* предпросмотр вставок (окно «Вставки»): плеер слева, карточки справа */
+/* предпросмотр вставок (окно «Вставки»): плеер слева, карточки справа.
+   Каркас из cc632e3 действует ТОЛЬКО на шаге 2 (`:not(.aemode)`): шаг 3 открывает ту же
+   модалку в режиме .aemode, и у него свой, ПРЕЖНИЙ каркас (блок .modal.aemode ниже — как
+   до cc632e3). Без :not() правила по id (#mbInserts .modal и потомки) перебивали
+   .modal.aemode по специфичности: в превью AE показывалась лишняя колонка «Вставки» с
+   пустым списком карточек, а панель слов ужималась (жалоба владельца 03.10.2026). */
 .inscols{display:flex;gap:18px;align-items:flex-start}
+/* Окно «Вставки» — постоянного размера: высота берётся от окна браузера и НЕ зависит от
+   числа вставок. Раньше модалку распирала колонка карточек (у 54 вставок таймлайн уезжал
+   под нижний край, у трёх — окно ужималось, и кнопки переезжали с места). Отсюда каркас:
+   модалка = колонка на всю высоту, прокручивается ТОЛЬКО список карточек, а плеер слева,
+   кнопки сверху и таймлайн снизу стоят на месте. Образец — #mbAISettings (см. выше).
+   Высота — 94vh, ровно как у предпросмотра шага 3 (.modal.aemode ниже): потолок
+   min(720px,…) на 1080p оставлял от экрана половину и ужимал кадр — «окно маленьким
+   прямоугольником посреди экрана, видео крошечное» (жалоба владельца 03.10.2026).
+   Ширину заводить не нужно: шаг 2 и шаг 3 — ОДНА И ТА ЖЕ модалка .modal.wide
+   (max-width:min(1560px,97vw,100%)), у aemode своего правила ширины нет.
+   align-items:stretch — тоже каркас шага 2: в aemode колонки выравниваются по верху, как
+   было (общее .inscols выше). */
+#mbInserts .modal:not(.aemode){height:94vh;max-height:94vh;
+  display:flex;flex-direction:column;overflow:hidden}
+#mbInserts .modal:not(.aemode) .mhead{flex:none}
+#mbInserts .modal:not(.aemode) .mbody{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+#mbInserts .modal:not(.aemode) .inscols{flex:1;min-height:0;overflow:hidden;align-items:stretch}
 /* Ширина плеера тянется по высоте окна: 272px на ноутбуке съедали кадр, а на 1440p
-   половина экрана простаивала — фото-вставки было не разглядеть. Вычитаемое = всё, что
-   в модалке стоит выше и ниже кадра (шапка, кнопки, таймлайн, отступы), 9/16 = 0.5625. */
-.inspv{flex:0 0 clamp(272px,calc((100vh - 420px) * 0.5625),480px);min-width:0}
-.inspv .pvstage{margin:0;max-width:100%}
+   половина экрана простаивала — фото-вставки было не разглядеть. Вычитаемое 230px — всё,
+   что в модалке стоит выше и ниже кадра (шапка, кнопки, таймлайн, отступы), 9/16 = 0.5625;
+   модалка теперь 94vh, от неё и считаем. container-type/cqh — чтобы кадр считался от
+   высоты СВОЕЙ колонки: на низком окне 9/16-стойка иначе не влезает по высоте и выдавливает
+   таймлайн за экран. Потолок поднят 480 -> 720px: на 1440p кадру нужно ~550px ширины, и
+   прежние 480 держали его маленьким на высоком экране; 720 оставляет половину строки
+   колонке карточек даже на горизонтальном источнике (--stage-ar 16/9), который хочет
+   втрое больше. */
+#mbInserts .modal:not(.aemode) .inspv{container-type:size;height:100%;flex:0 0 clamp(200px,calc((94vh - 230px) * var(--stage-ar, 0.5625)),720px);min-height:0;max-height:100%;display:flex;flex-direction:column}
+/* max-width:none — иначе базовый `max-width:320px` (правило .pvstage выше) держал кадр
+   в 320×569 на ЛЮБОЙ высоте окна: кадр «рос» вместе с колонкой только до 320px ширины.
+   Приём тот же, что у кадра шага 1 (.edcols .pvstage): ширина считается от высоты колонки.
+   На узком экране (≤768px) правило перебито своим max-width:100% — там как было. */
+#mbInserts .modal:not(.aemode) .inspv .pvstage{flex:none;margin:0 auto;max-width:none;max-height:calc(100% - 175px);max-height:calc(100cqh - 175px);width:min(100%,calc((100cqh - 175px) * var(--stage-ar, 9/16)));height:auto;aspect-ratio:var(--stage-ar, 9/16)}
+#mbInserts .modal:not(.aemode) .itlbar,#mbInserts .modal:not(.aemode) .itl{flex:none}
+#mbInserts .modal:not(.aemode) .insside{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+/* Звено цепочки, которого не хватало: #inspart_inserts — обычный блок, а не flex-контейнер,
+   поэтому flex:1/min-height:0 у .inshostscroll ничего не ограничивали — список рос по
+   содержимому (замер в живом Chrome: height 1704.67 при clientH=scrollH=1731 — 30 карточек
+   на всю высоту, окно уезжало за нижний край). Теперь прокручивается ТОЛЬКО список. */
+#mbInserts .modal:not(.aemode) #inspart_inserts{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+#mbInserts .modal:not(.aemode) #inspart_inserts>.row{flex:none}   /* кнопки над списком не сжимаются вместе с ним */
+/* «Сабы» — не список карточек: у вкладки своя прокрутка, иначе низ обрезался бы новым каркасом. */
+#mbInserts .modal:not(.aemode) #inspart_subs{flex:1;min-height:0;overflow-y:auto}
+#mbInserts .modal:not(.aemode) .inshostscroll{flex:1;min-height:0;max-height:none;overflow-y:auto;overflow-x:hidden;padding-right:4px}
+/* Прежние общие правила колонок окна вставок (до cc632e3) — их читает шаг 3, который новые
+   правила каркаса не трогают (`:not(.aemode)` выше по специфичности id перебивает их у шага 2):
+   выравнивание колонок, ширина кадра и своя прокрутка списка карточек. */
+.inspv .pvstage{margin:0;max-width:100%;aspect-ratio:var(--stage-ar, 9/16)}
 .insside{flex:1;min-width:0}
 .inshostscroll{max-height:calc(88vh - 150px);overflow:auto;padding-right:4px}
 .itlbar{display:flex;gap:8px;align-items:center;margin-top:14px}
@@ -714,13 +910,30 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 /* overflow:hidden — коробка ужатого видео может быть ШИРЕ кадра (16:9 ролик, вписанный по
    высоте, вылезает по ширине втрое): в AE лишнее срезает композиция, в предпросмотре — рамка */
 .ipvins{position:absolute;inset:0;z-index:4;display:none;align-items:center;justify-content:center;pointer-events:none;overflow:hidden}
+/* Слой рото в превью AE: холст во весь кадр, содержимое — кадр СВОЕЙ камеры, умноженный
+   на luma-маску (то же, что Track Matte LUMA в .jsx). z-index ставит ipvRotoShow по
+   layer_order: рото — обычный слой (над кадром и фото, под видео и интро), а фронт-интро
+   уходит выше него, как moveToBeginning в AE. Пусто — холст скрыт (ipvRotoClear). */
+canvas.ipvroto{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;display:none}
 .ipvins.on{display:block}
 /* обёртка одной вставки: каждая лежит поверх предыдущих (позже в DOM = выше в AE-стеке),
    внутри — та же центровка по кадру, что была у прямых детей .ipvins */
 .ipvins .ipvwrap{position:absolute;inset:0;display:flex;align-items:center;justify-content:center}
 .ipvins img,.ipvins video{max-width:72%;max-height:46%;object-fit:contain;filter:drop-shadow(0 6px 18px rgba(0,0,0,.6))}
 .ipvins .ipvwrap.full img,.ipvins .ipvwrap.full video{max-width:100%;max-height:100%;width:100%;height:100%;object-fit:cover;filter:none}
-.ipvins .ipvwrap.mosaic img,.ipvins .ipvwrap.mosaic video{filter:blur(10px)}
+/* «Мозаика» вставки: НАСТОЯЩАЯ пикселизация, как эффект Mosaic в AE.
+   Здесь было `filter:blur(10px)` — размытие вместо мозаики, и это видел владелец: в AE
+   на 30-й секунде видеовставка закрыта мозаикой, у нас — размытием. Размытие вдобавок
+   лезло за края коробки: блюр гасит пиксели у самой кромки, и по краю кадра шла тёмная
+   полоса (второй дефект той же правки). Рисует её `ipvPixelate`
+   (static/app/85-inserts-view.js): кадр сводится к блокам MOSAIC_BLOCK и растягивается
+   обратно БЕЗ сглаживания — блочная картинка, а не мыло. */
+/* Холст мозаики — ПОВЕРХ источника и ровно на его месте: источник центрирован (фото —
+   CSS left/top 50% + translate, видео — флекс обёртки), холст повторяет это и сверху
+   несёт сдвиг источника (инлайновый transform). Обычным флекс-элементом он вставал бы
+   РЯДОМ с видео (обёртка — flex-строка), а не поверх него. */
+.ipvins canvas.ipvmosaic{position:absolute;left:50%;top:50%;flex:none;
+  max-width:none;max-height:none;object-fit:fill;filter:none;display:block}
 /* Видеовставка — ФЛЕКС-элемент обёртки, а не абсолютная коробка кадра.
    Правило .pvstage video написано для камер: position:absolute;inset:0 прижимало
    видео вставки к левому верхнему углу — абсолютного ребёнка .ipvwrap не центрирует,
@@ -736,7 +949,6 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 .ipvins .insmask{position:relative;overflow:hidden;flex:none;filter:drop-shadow(0 6px 18px rgba(0,0,0,.6))}
 .ipvins .insmask img{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
   max-width:none;max-height:none;object-fit:fill;filter:none}
-.ipvins .ipvwrap.mosaic .insmask img{filter:blur(10px)}
 #ipvsub{z-index:5}
 /* ===== Затемнение под интро =====
    Слой-фигура из .jsx: мягкое чёрное затемнение снизу кадра под текстом интро. Живёт в
@@ -744,6 +956,15 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
    layer_order) и вставок и ВЫШЕ картинки камеры (canvas — 3): затемнять надо кадр, а не
    текст. Размер, позицию, размытие и прозрачность ставит ipvShade из plan.shade. */
 .ipvshade{position:absolute;left:50%;top:50%;background:#000;pointer-events:none;z-index:4}
+/* ===== Переход на входе/выходе видеовставки (Quick 2) =====
+   Слой из .jsx (addTransAt): файл во ВСЮ свою величину (3840x2160 при кадре 1080x1920 —
+   видна центральная часть кадра 1:1), наложением Add и ПОВЕРХ всего, включая субтитры и
+   интро (transLayers.moveToBeginning). Слоёв столько, сколько стыков видеовставок:
+   вход каждой и выход, если его не срезал кат. Размер и время ставит ipvTrans из
+   plan.trans — z-index выше субтитров (5...10) и фронт-интро (11), как в AE. */
+.ipvtrans{position:absolute;inset:0;z-index:12;pointer-events:none;overflow:hidden}
+.ipvtrans video{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+  max-width:none;max-height:none;object-fit:fill;background:transparent}
 /* ===== Верхняя строка-прогресс ===== */
 .ipvtopline{position:absolute;left:50%;transform:translate(-50%,-50%);pointer-events:none;z-index:6;overflow:hidden}
 .ipvtopline .pvtl_track{position:absolute;inset:0;pointer-events:none}
@@ -785,18 +1006,32 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
    а не драгом. pointer-events:none — строка не перехватывает клик по кадру (было auto
    с курсором ns-resize). */
 #ipvsub .pvsubw{pointer-events:none;touch-action:none;user-select:none;-webkit-user-select:none}
-/* режим AE-предпросмотра: модалка ограничена окном, скроллится только правая колонка */
+/* режим AE-предпросмотра: модалка ограничена окном, скроллится только правая колонка.
+   Здесь ВСЁ — как до cc632e3, и это ровно тот вид, который владелец просил вернуть шагу 3:
+   каркас шага 2 помечен `:not(.aemode)` и до этой модалки не достаёт. Отдельного правила
+   высоты (#mbInserts .modal.aemode) больше нет — оно было костылём на то время, пока каркас
+   шага 2 перебивал .modal.aemode по специфичности id; теперь высоту задаёт строка ниже,
+   как и до cc632e3. */
 .modal.aemode{height:94vh;max-height:94vh;display:flex;flex-direction:column}
 .modal.aemode .mbody{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden}
-.modal.aemode .inscols{flex:1;min-height:0}
+.modal.aemode .inscols{flex:1;min-height:0;overflow:hidden}
+/* Колонка плеера шага 3 — прежние числа (до cc632e3): потолок 480px и вычет 360px.
+   min-width:0 пришло из тогдашнего общего .inspv{…min-width:0}, действовавшего и на шаг 3;
+   здесь оно то же, но уже не задевает шаг 2. */
+.modal.aemode .inspv{container-type:size;height:100%;min-width:0;flex:0 0 clamp(200px,calc((100vh - 360px) * var(--stage-ar, 0.5625)),480px);min-height:0;max-height:100%;display:flex;flex-direction:column}
+/* Под сценой — строка плеера и ползунки громкости (~175 px): высоту кадра считаем ЗА их вычетом,
+   а сам кадр не сжимается флексом (flex:none) — иначе при низком окне он обрезался по высоте
+   и терял пропорцию плана (1000×640: 272×186 вместо 9:16). */
+.modal.aemode .inspv .pvstage{flex:none;max-height:calc(100% - 175px);max-height:calc(100cqh - 175px);width:min(100%,calc((100cqh - 175px) * var(--stage-ar, 9/16)));height:auto;aspect-ratio:var(--stage-ar, 9/16);margin:0 auto}
 .modal.aemode .itlbar,.modal.aemode .itl{flex:none}
 .modal.aemode .insside{display:none}
 .aewpanel{flex:1;min-width:0;display:none}
 .modal.aemode .aewpanel{display:flex;flex-direction:column;align-self:stretch;min-height:0}
 .aewpanel .words{flex:1;min-height:0;max-height:none;overflow:auto;margin-top:8px}
 /* вкладка «Стиль» в предпросмотре: занимает всю доступную высоту колонки */
-#aewstyle{flex:1;min-height:0;overflow:hidden;margin-top:10px;padding-right:6px}
-#aewstyle #stylebox,#aewstyle #stylecustom{display:flex;flex-direction:column;max-height:100%;height:100%}
+#aewstyle{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;margin-top:10px;padding-right:6px}
+#aewstyle #stylebox{display:flex;flex-direction:column;flex:1;min-height:0;max-height:100%;overflow:hidden}
+#aewstyle #stylecustom{display:flex;flex-direction:column;flex:1;min-height:0;max-height:100%;margin-top:8px;overflow:hidden}
 /* Прокручивается САМА панель, а не модалка: раскрытых групп много, и они
    уходили за нижний край без возможности долистать. Селектор из двух id — чтобы перебить
    `.stpanel{overflow:visible !important}` общей панели; строка «Сохранить» (#styleSaveRow)
@@ -806,6 +1041,10 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 #aewstyle #styleSaveRow{flex:none}
 #aewstyle .sect:first-child{margin-top:0}
 #aewstyle select,#aewstyle input[type=text],#aewstyle input:not([type]){max-width:100%}
+/* Указка «сюда» на пару секунд (stFocusGroup, 94-stylepanel.js): строка группы, которую
+   просили показать. Тонкой рамкой, а не заливкой: заливка спорит с подсветкой наведения,
+   а зелёный тут был бы враньём — зелёный в интерфейсе только про «готово». */
+#stpanel .stgroup.st-focus,#stpanel .stlayer.st-focus{outline:1px solid var(--acc);outline-offset:-1px;background:#202020}
 .aewintrolist{max-height:24vh;overflow:auto;border:1px solid var(--bd);border-radius:var(--r);padding:4px 10px 8px;background:var(--bg2)}
 .chip.sel{outline:2px solid var(--acc);outline-offset:1px}
 /* полосы таймлайна в AE-режиме: интро-группы тонкой серой полосой сверху, вставки ниже */
@@ -816,8 +1055,37 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 .itlblk.roto{top:17px;height:5px;background:var(--amber);opacity:.7;border:none;border-radius:0}
 .itlblk.lo{top:42px;height:36px}
 @media(max-width:980px){.inscols{flex-direction:column}.inspv{flex:none;width:100%}
-  /* колонкой кадр иначе растянулся бы на всю модалку и ушёл под сгиб */
+  /* колонкой кадр иначе растянулся бы на всю модалку и ушёл под сгиб;
+     .modal.aemode в этой ширине кадр ужимает сам (calc(100cqh - 175px)).
+     `.inshostscroll{max-height:44vh}` — правило из тех времён (до cc632e3): у шага 2 высоту
+     списка задаёт каркас выше по id, а у шага 3 список карточек скрыт; строка нужна ровно
+     затем, чтобы раскладка шага 3 здесь осталась прежней. */
   .inspv .pvstage{margin:0 auto;max-width:min(360px,calc((100vh - 420px) * 0.5625))}.inshostscroll{max-height:44vh}}
+/* Узкое окно (≤768px): колонки стоят друг под другом, у окна «Вставки» постоянная высота.
+   Высота закрыта от окна браузера, ширину стережём явно (max-width:100% + сжатие колонок):
+   фиксированные ширины плеера (200px в basis) иначе выдавили бы горизонтальную прокрутку
+   страницы. Прокручивается по-прежнему ТОЛЬКО список карточек. Всё это — каркас ШАГА 2
+   (`:not(.aemode)`): до cc632e3 такого блока не было вовсе, и превью AE его не знает. */
+@media(max-width:768px){
+  /* На узком экране каркас прежний — «как сейчас» (так просило задание): 94vh на телефоне
+     вместе с отступами backdrop (40+40) вылезает за окно и добавляет прокрутку. */
+  #mbInserts .modal:not(.aemode){max-width:100%;height:min(720px,calc(100vh - 80px));max-height:calc(100vh - 80px)}
+  #mbInserts .modal:not(.aemode) .inspv{flex:none;width:100%;max-width:100%;height:auto;max-height:100%}
+  #mbInserts .modal:not(.aemode) .inspv .pvstage{max-width:100%;width:auto;
+    max-height:min(52vh,calc(100vh - 420px));height:auto}
+  #mbInserts .modal:not(.aemode) .insside{max-width:100%;overflow-x:hidden}
+  /* Колонки друг под другом каркас «плеер, а карточки в остатке» не держат: плееру нужна
+     почти вся высота окна, и колонка карточек осталась бы нулевой. Хуже того, container-type:size
+     вместе с height:auto схлопывает плеер в 0: contain:size считает размер без содержимого.
+     Поэтому на узком экране прокручивается содержимое модалки целиком — окно по-прежнему
+     постоянной высоты, страница не растёт, список карточек виден весь. */
+  #mbInserts .modal:not(.aemode) .mbody{overflow-y:auto}
+  #mbInserts .modal:not(.aemode) .inscols{flex:none;min-height:auto;flex-direction:column;overflow:visible}
+  #mbInserts .modal:not(.aemode) .inspv{container-type:normal}
+  #mbInserts .modal:not(.aemode) .insside{flex:none;min-height:auto}
+  #mbInserts .modal:not(.aemode) #inspart_inserts{flex:none;min-height:auto;overflow:visible}
+  #mbInserts .modal:not(.aemode) #inspart_subs{flex:none;min-height:auto;overflow:visible}
+  #mbInserts .modal:not(.aemode) .inshostscroll{flex:none;min-height:auto;overflow-y:visible}}
 .badge.photo{color:var(--blue)!important;border-color:rgba(110,168,255,.4)!important}
 .badge.video{color:var(--amber)!important;border-color:rgba(224,168,101,.4)!important}
 summary::marker{color:var(--mut2)}
@@ -906,17 +1174,25 @@ button.icon .ic{width:16px;height:16px;vertical-align:-3.5px}
 /* Один список items на нарезку/сборку/рендер прямо в оверлее прогресса.
    Зелёный #98ff38 (--ok) — ТОЛЬКО у done, это статус «готово», а не украшение (правило DESIGN.md). */
 #qwrap{margin-top:14px;text-align:left}
-#qlist{display:flex;flex-direction:column;gap:5px;max-height:36vh;overflow-y:auto;text-align:left;padding-right:2px}
+/* overflow-x:hidden: по горизонтали список не прокручивается вовсе. Строка очереди
+   растянута по ширине списка, и без этого её содержимое распирало #qlist вбок. */
+#qlist{display:flex;flex-direction:column;gap:5px;max-height:36vh;overflow-y:auto;overflow-x:hidden;text-align:left;padding-right:2px}
 .qrow{display:flex;align-items:baseline;gap:10px;padding:6px 10px;border:1px solid var(--bd2);
   border-radius:var(--r-sm);background:var(--bg);font-size:12.5px;transition:border-color .12s,background .12s}
 .qrow.qcur{border-color:var(--iron);background:#181818}
-.qrow .qname{flex:1;word-break:break-word;color:var(--tx)}
+/* min-width:0 обязателен: у flex-элемента авто-минимум равен ширине содержимого,
+   и длинный detail распирал строку (а с ней и #qlist) вбок вместо многоточия.
+   Имя — одной строкой: вторая строка под ним уже есть (.qdetail). */
+.qrow .qname{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--tx)}
+/* Вторая строка строки очереди: что с клипом происходит прямо сейчас (хвост лога,
+   итог фазы). block внутри .qname — своя строка под именем; длинное режем многоточием. */
+.qdetail{display:block;font-size:11px;color:var(--mut);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .qstage{flex:none;color:var(--mut)}
 .qstage.qdone{color:var(--ok)}
 .qstage.qerr{color:var(--dng)}
 .qpct{flex:none;font-variant-numeric:tabular-nums;color:var(--tx)}
 .qpath{flex:none;max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--ok)}
-.qreason{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dng)}
+.qreason{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dng)}
 
 /* ===== Порядок слоёв в стиле ===== */
 .layer-order-list{display:flex;flex-direction:column;width:100%;box-sizing:border-box;

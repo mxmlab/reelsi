@@ -13,8 +13,9 @@ Timeline model (validated against the real Timeline 2.xml):
 """
 from __future__ import annotations
 import os, re, urllib.parse, subprocess, json
+import xml.etree.ElementTree as ET
 from typing import Any, Sequence
-from core import fileio, media
+from core import fileio, frame, media
 from core.xmltext import xml_text as _esc
 from core.umsg import ReelsiError
 
@@ -22,6 +23,10 @@ FPS = 60
 TICKS_PER_FRAME = 4233600000          # ppro ticks per 60fps frame
 SUB_FIT_CHARS = 14                    # words longer than this get font-scaled down to fit
 SRC_FPS = 30000 / 1001                # 29.97 source rate (display only)
+# id файла итогового обработанного голоса камеры 1 (`<стем>.voice.wav`, core/voicefx).
+# Это аудио без видео: камерой он не считается, и по нему нельзя искать камеры
+# (их определяют по видео-дорожкам — см. core/xml2ae/parse.py).
+VOICE_FILE_ID = "file-voice"
 
 
 def pathurl(p: str) -> str:
@@ -117,14 +122,35 @@ def pick_timecode(d: dict[str, Any]) -> str:
     return "00;00;00;00"
 
 
+def _rotation_of(st: dict[str, Any]) -> int:
+    """Поворот кадра из метаданных потока (side data «Display Matrix»), градусы.
+
+    У вертикальных съёмок телефонов и части камер кадр ЗАПИСАН горизонтально
+    (1280×720), а показывается вертикально — поворот лежит матрицей отображения,
+    а не в размерах. Значение нужно там, где размер исходника переводится в
+    масштаб клипа (`core/frame.cover_scale`): по закодированному кадру масштаб
+    выходит 266 % вместо 150 %, и вертикаль встаёт мимо кадра.
+    """
+    for sd in (st.get("side_data_list") or []):
+        if isinstance(sd, dict) and sd.get("rotation") is not None:
+            try:
+                return int(float(sd["rotation"]))
+            except (TypeError, ValueError):
+                return 0          # мусор вместо градусов — считаем «без поворота»
+    return 0
+
+
 def probe(path: str, still_ok: bool = True) -> dict[str, Any]:
-    """Return dict(width,height,dur_s,timecode,fps?).
+    """Return dict(width,height,dur_s,timecode,fps?,rotation).
 
     `still_ok` — разрешить фото: у картинок ffprobe не даёт `format.duration`
     (PNG) или даёт чепуху 0.04 с (JPG), длительность им не нужна вовсе. Для
     фаз, где фото бывают (сборка .drp), это не ошибка, а `dur_s = 0`.
     `fps` — реальная частота видеопотока (`avg_frame_rate`): 25.0 для PAL-камер,
     29.97 для NTSC. По ней считается таймкод-математика в drp.py.
+    `rotation` — поворот кадра из метаданных (градусы, 0 если нет): у вертикальных
+    съёмок кадр записан горизонтально, и без поворота масштаб клипа считался бы
+    по чужому кадру (см. core/frame.display_size).
     """
     try:
         key = (path, os.path.getmtime(path))
@@ -140,7 +166,8 @@ def probe(path: str, still_ok: bool = True) -> dict[str, Any]:
         out = subprocess.run(
             ["ffprobe", "-v", "error",
              "-show_entries", "stream=width,height,codec_type,avg_frame_rate"
-                              ":stream_tags=timecode:format=duration:format_tags=timecode",
+                              ":stream_tags=timecode:format=duration:format_tags=timecode"
+                              ":stream_side_data=rotation",
              "-of", "json", path], capture_output=True, text=True, encoding="utf-8",
              errors="replace", check=True, timeout=60).stdout
     except subprocess.TimeoutExpired:
@@ -160,7 +187,7 @@ def probe(path: str, still_ok: bool = True) -> dict[str, Any]:
                                f"(битый контейнер или duration=N/A)")
         dur_s = 0.0                                  # фото: длительности нет, и не нужна
     res = {"width": int(st["width"]), "height": int(st["height"]),
-           "dur_s": dur_s, "timecode": tc}
+           "dur_s": dur_s, "timecode": tc, "rotation": _rotation_of(st)}
     ar = (st.get("avg_frame_rate") or "").strip()
     if ar and "/" in ar:                        # "25/1", "30000/1001"
         n, d = ar.split("/", 1)
@@ -174,6 +201,9 @@ def probe(path: str, still_ok: bool = True) -> dict[str, Any]:
 
 
 # ---- filter snippets -------------------------------------------------------
+# Basic Motion клипа камеры: масштаб «заполнить кадр» (с рамкой — ещё × zoom) и
+# центр — сдвиг рамки кадра в пикселях секвенции (0,0 = центр кадра). Числа
+# считает core/frame.py, здесь только подстановка.
 VIDEO_FILTERS = """\t\t\t\t\t\t<filter>
 \t\t\t\t\t\t\t<effect>
 \t\t\t\t\t\t\t\t<name>Basic Motion</name>
@@ -192,11 +222,16 @@ VIDEO_FILTERS = """\t\t\t\t\t\t<filter>
 \t\t\t\t\t\t\t\t<parameter authoringApp="PremierePro">
 \t\t\t\t\t\t\t\t\t<parameterid>center</parameterid>
 \t\t\t\t\t\t\t\t\t<name>Center</name>
-\t\t\t\t\t\t\t\t\t<value><horiz>0</horiz><vert>0</vert></value>
+\t\t\t\t\t\t\t\t\t<value><horiz>{cx}</horiz><vert>{cy}</vert></value>
 \t\t\t\t\t\t\t\t</parameter>
 \t\t\t\t\t\t\t</effect>
 \t\t\t\t\t\t</filter>
 """
+
+
+def _px(v: float) -> str:
+    """Пиксели в XML: без хвостовых нулей («0», «-123.45»), как остальные числа."""
+    return "%g" % round(float(v), 2)
 
 AUDIO_FILTER = """\t\t\t\t\t\t<filter>
 \t\t\t\t\t\t\t<effect>
@@ -222,16 +257,43 @@ def _db_to_gain(db: float) -> float:
     return round(10 ** (db / 20.0), 6)
 
 
-def _file_def(file_id: str, name: str, url: str, dur_s: float, width: int, height: int, tc: str) -> str:
-    src_dur = round(dur_s * SRC_FPS)
+def _src_rate(fps: float | None) -> tuple[int, bool, bool]:
+    """Параметры частоты исходника для Premiere FCP7 XML: (timebase, ntsc, drop).
+
+    Таблица соответствий:
+    - None или <= 0: timebase=30, ntsc=True, drop=True (DF, по умолчанию 29.97)
+    - NTSC (≈23.976, ≈29.97, ≈59.94): timebase=round(fps), ntsc=True, drop=(timebase in (30, 60))
+    - Целые и остальные (24, 25, 30, 50, 60): timebase=round(fps), ntsc=False, drop=False (NDF)
+    """
+    if fps is None or fps <= 0:
+        return 30, True, True
+    rfps = round(fps)
+    if rfps in (24, 30, 60) and abs(fps - rfps * 1000 / 1001) < 0.01:
+        return rfps, True, rfps in (30, 60)
+    return rfps, False, False
+
+
+def _file_def(file_id: str, name: str, url: str, dur_s: float, width: int, height: int, tc: str,
+              fps: float | None = None) -> str:
+    timebase, is_ntsc, is_drop = _src_rate(fps)
+    ntsc_str = "TRUE" if is_ntsc else "FALSE"
+    df_str = "DF" if is_drop else "NDF"
+    if fps is None or fps <= 0:
+        rate_fps = SRC_FPS
+    elif is_ntsc:
+        rate_fps = timebase * 1000 / 1001
+    else:
+        rate_fps = float(timebase)
+    src_dur = round(dur_s * rate_fps)
+    tc_str = tc if is_drop else tc.replace(";", ":")
     return f"""\t\t\t\t\t\t<file id="{file_id}">
 \t\t\t\t\t\t\t<name>{_esc(name)}</name>
 \t\t\t\t\t\t\t<pathurl>{url}</pathurl>
-\t\t\t\t\t\t\t<rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate>
+\t\t\t\t\t\t\t<rate><timebase>{timebase}</timebase><ntsc>{ntsc_str}</ntsc></rate>
 \t\t\t\t\t\t\t<duration>{src_dur}</duration>
-\t\t\t\t\t\t\t<timecode><rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate><string>{tc}</string><displayformat>DF</displayformat></timecode>
+\t\t\t\t\t\t\t<timecode><rate><timebase>{timebase}</timebase><ntsc>{ntsc_str}</ntsc></rate><string>{tc_str}</string><displayformat>{df_str}</displayformat></timecode>
 \t\t\t\t\t\t\t<media>
-\t\t\t\t\t\t\t\t<video><samplecharacteristics><rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate><width>{width}</width><height>{height}</height><anamorphic>FALSE</anamorphic><pixelaspectratio>square</pixelaspectratio><fielddominance>none</fielddominance></samplecharacteristics></video>
+\t\t\t\t\t\t\t\t<video><samplecharacteristics><rate><timebase>{timebase}</timebase><ntsc>{ntsc_str}</ntsc></rate><width>{width}</width><height>{height}</height><anamorphic>FALSE</anamorphic><pixelaspectratio>square</pixelaspectratio><fielddominance>none</fielddominance></samplecharacteristics></video>
 \t\t\t\t\t\t\t\t<audio><samplecharacteristics><depth>16</depth><samplerate>48000</samplerate></samplecharacteristics><channelcount>2</channelcount></audio>
 \t\t\t\t\t\t\t</media>
 \t\t\t\t\t\t</file>
@@ -239,7 +301,7 @@ def _file_def(file_id: str, name: str, url: str, dur_s: float, width: int, heigh
 
 
 def _video_clip(cid: int, mcid: int | str, name: str, enabled: bool, dur_frames: int, start: int, end: int, tin: int, tout: int,
-                file_xml: str, scale: float) -> str:
+                file_xml: str, scale: float, center: tuple[float, float] = (0.0, 0.0)) -> str:
     return f"""\t\t\t\t\t<clipitem id="clipitem-{cid}">
 \t\t\t\t\t\t<masterclipid>masterclip-{mcid}</masterclipid>
 \t\t\t\t\t\t<name>{_esc(name)}</name>
@@ -255,7 +317,7 @@ def _video_clip(cid: int, mcid: int | str, name: str, enabled: bool, dur_frames:
 \t\t\t\t\t\t<alphatype>none</alphatype>
 \t\t\t\t\t\t<pixelaspectratio>square</pixelaspectratio>
 \t\t\t\t\t\t<anamorphic>FALSE</anamorphic>
-{file_xml}{VIDEO_FILTERS.format(scale=scale)}\t\t\t\t\t</clipitem>
+{file_xml}{VIDEO_FILTERS.format(scale=scale, cx=_px(center[0]), cy=_px(center[1]))}\t\t\t\t\t</clipitem>
 """
 
 
@@ -285,6 +347,11 @@ def probe_audio_dur(path: str) -> float:
 
 
 def _music_file_def(file_id: str, name: str, url: str, dur_s: float) -> str:
+    """Определение АУДИО-файла без видео: музыкальная подложка и итоговый голос.
+
+    Длительность — в кадрах секвенции (`dur_s * FPS`): Premiere по ней считает
+    границы медиа, и файл короче последнего `<out>` клипа там выглядит обрезанным.
+    """
     return f"""\t\t\t\t\t\t<file id="{file_id}">
 \t\t\t\t\t\t\t<name>{_esc(name)}</name>
 \t\t\t\t\t\t\t<pathurl>{url}</pathurl>
@@ -292,6 +359,82 @@ def _music_file_def(file_id: str, name: str, url: str, dur_s: float) -> str:
 \t\t\t\t\t\t\t<duration>{round(dur_s*FPS)}</duration>
 \t\t\t\t\t\t\t<media><audio><samplecharacteristics><depth>16</depth><samplerate>48000</samplerate></samplecharacteristics><channelcount>2</channelcount></audio></media>
 \t\t\t\t\t\t</file>"""
+
+
+def make_voice_file_elem(voice_path: str, fps: float = FPS) -> ET.Element:
+    """XML-нода <file id="file-voice"> для обработанного голоса."""
+    dur_s = probe_audio_dur(voice_path)
+    xml_str = _music_file_def(VOICE_FILE_ID, os.path.basename(voice_path),
+                              pathurl(voice_path), dur_s).strip()
+    return ET.fromstring(xml_str)
+
+
+def sync_xml_voice(xml_path: str, out_path: str | None = None, voice: str | None = None) -> bool:
+    """Подменить аудиодорожку камеры 1 в XML на обработанный голос (<stem>.voice.wav)
+    или вернуть на file-1, если голос не задан/очищен.
+    """
+    if not os.path.isfile(xml_path):
+        return False
+    from core import voicefx
+    if voice is None:
+        vpath = voicefx.final_voice_path(xml_path)
+        voice = vpath if os.path.isfile(vpath) else ""
+    voice_ok = bool(voice and os.path.isfile(voice))
+    try:
+        raw = open(xml_path, encoding="utf-8").read()
+        cut = raw.find("<xmeml")
+        prolog = raw[:cut] if cut > 0 else '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE xmeml>\n'
+        root = ET.fromstring(raw)
+        media_el = root.find(".//media")
+        if media_el is None:
+            return False
+        audio_el = media_el.find("audio")
+        if audio_el is None:
+            return False
+        tracks = audio_el.findall("track")
+        if not tracks:
+            return False
+        track1 = tracks[0]
+        clipitems = track1.findall("clipitem")
+        if not clipitems:
+            return False
+
+        changed = False
+        first = True
+        for ci in clipitems:
+            old_file = ci.find("file")
+            cur_id = old_file.get("id") if old_file is not None else None
+            if voice_ok:
+                target_id = VOICE_FILE_ID
+                if cur_id != target_id or (first and (old_file is None or len(list(old_file)) == 0)):
+                    changed = True
+                    new_file = make_voice_file_elem(voice) if first else ET.Element("file", {"id": VOICE_FILE_ID})
+                    if old_file is not None:
+                        idx = list(ci).index(old_file)
+                        ci.insert(idx, new_file)
+                        ci.remove(old_file)
+                    else:
+                        ci.append(new_file)
+            else:
+                target_id = "file-1"
+                if cur_id != target_id:
+                    changed = True
+                    new_file = ET.Element("file", {"id": "file-1"})
+                    if old_file is not None:
+                        idx = list(ci).index(old_file)
+                        ci.insert(idx, new_file)
+                        ci.remove(old_file)
+                    else:
+                        ci.append(new_file)
+            first = False
+
+        if changed or out_path:
+            body = ET.tostring(root, encoding="unicode")
+            fileio.atomic_text_write(out_path or xml_path, prolog + body, encoding="utf-8")
+            return True
+        return False
+    except Exception:
+        return False
 
 
 def _vtrack(clips_xml: str, targeted: int | str) -> str:
@@ -357,13 +500,28 @@ def build_subtitle_track(sub_words: Sequence[dict[str, Any]] | None, start_id: i
 
 
 def build(cam_paths: Any, segments: Sequence[Any], offsets: Sequence[float], out_path: str, assign: Sequence[int] | None = None,
-          seq_w: int = 1080, seq_h: int = 1920, scale: float = 50.4, sub_words: Sequence[dict[str, Any]] | None = None, name: str | None = None,
+          seq_w: int | None = None, seq_h: int | None = None, sub_words: Sequence[dict[str, Any]] | None = None, name: str | None = None,
           music_path: str | None = None, music_db: float = -20.0) -> dict[str, Any]:
     """Multicam timeline for N cameras (N = len(cam_paths), 1..4).
     cam_paths: camera files, camera 1 first (the base). offsets: per-camera sync
     offset in seconds (offsets[0]=0; offsets[k]=find_offset(cam1,camk)). assign:
     active-camera index (0-based) per KEPT segment (None -> all camera 1).
-    Camera 1 is always enabled (base); camera k>0 is enabled only where assign==k."""
+    Camera 1 is always enabled (base); camera k>0 is enabled only where assign==k.
+    Звук камеры 1 берётся из `<стем>.voice.wav` рядом с `out_path`, если файл есть
+    (обработанный голос, core/voicefx): он ссылается отдельным `<file id="file-voice">`,
+    видео камеры 1 при этом остаётся на `file-1`. Файла нет — XML прежний.
+
+    `seq_w`/`seq_h` — размер секвенции, он же формат ролика. Не заданы (обычный
+    случай) — берутся по XML и профилю спикера этого ролика из сайдкара рядом с
+    `out_path` (`core/frame.output_frame_size`): формат профиля главнее, только
+    если задан в нём явно, иначе кадр задаёт сам XML, а нет ни того ни другого —
+    9:16, как было. Явно их передают только те, кто пишет XML ДО сайдкара —
+    нарезка (`gigaam_cut.pipeline`, `omni_cut`): там формат известен из
+    параметров нарезки.
+
+    Масштаб клипа камеры считается по ЕЁ пробе (`core/frame.cover_scale`): кадр
+    заполняется целиком. Раньше тут стояла одна константа на все камеры, и камера
+    с другим разрешением вставала в кадр не целиком."""
     # Пустой монтаж — отказ ДО открытия файла. Проверку держим ЗДЕСЬ, а не у восьми
     # вызывающих: цикл по кускам просто не выполнялся, и atomic_text_write клал поверх
     # XML пользователя валидный файл с нулём клипов и нулевой длительностью. Так терялась
@@ -380,7 +538,29 @@ def build(cam_paths: Any, segments: Sequence[Any], offsets: Sequence[float], out
     N = len(cam_paths)
     if assign is None:
         assign = [0] * len(segments)
+    if seq_w is None or seq_h is None:
+        # Кадр ролика по XML: спикер этого ролика — в сайдкаре рядом (тем же путём
+        # его берут LUT и обработка голоса, core/lutbake, core/voicefx). Профиль
+        # распоряжается кадром, только если формат задан в нём явно; иначе кадр
+        # задаёт сам XML (core/frame.output_frame_size) — пересохранение не должно
+        # ужимать чужой 4K в 1080×1920.
+        seq_w, seq_h = frame.output_frame_size(out_path)
     probes = [probe(p) for p in cam_paths]
+    # Масштаб клипа — свой у каждой камеры и по РЕАЛЬНОМУ разрешению её файла
+    # (с учётом поворота из метаданных): 4K-вертикаль заполняет кадр при 50 %,
+    # горизонтальная камера — по ширине. Константы 50.4 больше нет: она была
+    # верна ровно для одного разрешения и молча врала на всех остальных.
+    # Поверх — рамка кадра камеры (поле `frame` профиля спикера, core/frame.py):
+    # масштаб × zoom и сдвиг Basic Motion. Рамки у камеры нет — числа прежние.
+    seq_frames = frame.xml_frames(out_path)
+    scales = []
+    centers = []
+    for k, pr in enumerate(probes):
+        dw, dh = frame.display_size(pr["width"], pr["height"], pr.get("rotation"))
+        fr = frame.frame_of(seq_frames, k + 1)
+        scales.append(round(frame.cover_scale(dw, dh, seq_w, seq_h)
+                            * frame.frame_zoom(fr), 2))
+        centers.append(frame.frame_shift(fr, dw, dh, seq_w, seq_h))
     names = [os.path.basename(p) for p in cam_paths]
     urls = [pathurl(p) for p in cam_paths]
     durfs = [round(pr["dur_s"] * FPS) for pr in probes]
@@ -390,6 +570,18 @@ def build(cam_paths: Any, segments: Sequence[Any], offsets: Sequence[float], out
     aclips = ["" for _ in range(N)]
     fdefined = [False] * N
     cid = 100
+    # Итоговый обработанный голос камеры 1: правило одно на всех читателей
+    # (`voicefx.clip_voice_wav` — спикер клипа из сайдкара плюс обработка включена).
+    # Рядом с XML лежит `<стем>.voice.wav` — он посчитан по звуку камеры 1 и с тем же
+    # таймкодом, поэтому клипы берут из него те же in/out, что и раньше. Правило не
+    # выполнено или файла нет — XML прежний, байт в байт: обработка голоса надстройка,
+    # и её отсутствие не должно ничего менять. Импорт ленивый: voicefx тянет core.sync
+    # (numpy/scipy), а xmlbuild импортирует разбор XML (core/xml2ae/parse.py) — на
+    # верхнем уровне это удорожало бы импорт всем.
+    from core import voicefx
+    voice = voicefx.clip_voice_wav(out_path)
+    voice_ok = bool(voice)
+    voice_defined = False                 # определение пишем ОДИН раз, дальше — ссылка (как у музыки)
     tl = 0                                # timeline cursor (frames)
     kept = 0                              # index into assign (per kept segment)
     for s, e in segments:
@@ -415,15 +607,27 @@ def build(cam_paths: Any, segments: Sequence[Any], offsets: Sequence[float], out
             if not fdefined[k]:
                 fx = ("\t\t\t\t\t\t" + _file_def(f"file-{k+1}", names[k], urls[k],
                       probes[k]["dur_s"], probes[k]["width"], probes[k]["height"],
-                      probes[k]["timecode"]).strip() + "\n")
+                      probes[k]["timecode"], probes[k].get("fps")).strip() + "\n")
                 fdefined[k] = True
             else:
                 fx = f'\t\t\t\t\t\t<file id="file-{k+1}"/>\n'
             enabled = (k == 0) or (active == k)   # cam1 base always on; others on their cuts
             vclips[k] += _video_clip(cid, k+1, names[k], enabled, durfs[k], start, end,
-                                     ink, outk, fx, scale); cid += 1
+                                     ink, outk, fx, scales[k], centers[k]); cid += 1
+            # Звук камеры 1 — из обработанного голоса, видео — по-прежнему file-1.
+            # Остальные камеры не трогаем: их звук в ролик не идёт, он остаётся сырым.
+            if k == 0 and voice_ok:
+                if voice_defined:
+                    afx = f'<file id="{VOICE_FILE_ID}"/>'
+                else:
+                    afx = ("\t\t\t\t\t\t" + _music_file_def(
+                        VOICE_FILE_ID, os.path.basename(voice), pathurl(voice),
+                        probe_audio_dur(voice)).strip() + "\n")
+                    voice_defined = True
+            else:
+                afx = f'<file id="file-{k+1}"/>'
             aclips[k] += _audio_clip(cid, k+1, names[k], durfs[k], start, end, ink, outk,
-                                     f'<file id="file-{k+1}"/>'); cid += 1
+                                     afx); cid += 1
         tl = end
         kept += 1
     total = tl

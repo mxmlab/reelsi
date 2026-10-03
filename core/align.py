@@ -38,6 +38,19 @@ def assign_cameras(segments: Sequence[Any], n_cams: int, return_every: int = 2, 
     return out
 
 
+def assign_for_project(proj: Any, segments: Sequence[Any], n_cams: int) -> list[int] | None:
+    """Раскладка камер для проекта: сохранённая ручная (если валидна)
+    или автовыбор через assign_cameras при n_cams > 1. При n_cams <= 1 — None.
+    """
+    if n_cams <= 1 or not segments:
+        return None
+    p = proj if isinstance(proj, dict) else {}
+    stored = p.get("assign")
+    if isinstance(stored, list) and len(stored) == len(segments):
+        return [max(0, min(n_cams - 1, int(x))) for x in stored]
+    return assign_cameras(segments, n_cams, return_every=p.get("cam_return", 2), big_chunk_sec=6.0)
+
+
 def _assign_two(segments: Sequence[Any]) -> list[int]:
     """Две камеры: строгое чередование, начало и конец на кам1.
 

@@ -7,136 +7,11 @@
 // Порядок важен — объявления функций поднимаются в пределах своего файла.
 
 // ================= progress overlay =================
-let PROGMIN=false;   // прогресс свёрнут в чип (оверлей скрыт, задача продолжается)
-// Контекст текущей очереди: заголовок операции, номер и имя клипа. Держится, пока идёт
-// очередь, и НЕ затирается сообщениями об этапах — иначе на экране остаётся один этап
-// без ответа на вопрос «над каким клипом и сколько ещё осталось».
-let PROGQ=null;   // {title, i, n, name}
-function progMini(){PROGMIN=true;$('prog').classList.remove('on');$('progmini').classList.add('on');}
-function progMaxi(){PROGMIN=false;$('progmini').classList.remove('on');$('prog').classList.add('on');}
-function progShow(stage,sub){$('progStage').textContent=stage||t('Работаю…');$('progSub').textContent=sub||'';
-  const f=$('progFill');f.className='progfill indet';f.style.width='';$('progPct').textContent='';$('progClose').style.display='none';
-  UICANCEL=false;const ps=$('progStop');ps.style.display='';ps.disabled=false;
-  PROGMIN=false;$('progmini').classList.remove('on');
-  progReadySet(0);
-  const pf=$('pmFill');pf.className='fill indet';pf.style.width='';$('pmPct').textContent='';$('pmText').textContent=stage||t('Работаю…');
-  $('prog').classList.add('on');}
-// Оверлей перекрывает страницу, а нарезанные клипы уже в списке — кнопка сворачивает
-// его и уводит на шаг 1, чтобы правку можно было начать не дожидаясь очереди.
-function progReadySet(n){const b=$('progReady');if(!b)return;
-  b.style.display=n?'':'none';b.textContent=t('Править готовые: ')+n;}
-function progToReady(){progMini();goStep(1);
-  const h=$('clips1');if(h)h.scrollIntoView({behavior:'smooth',block:'center'});}
-// Строка очереди: «клип i из N · имя клипа». Пусто, если контекста нет или он без счётчика.
-function progQueueText(){const q=PROGQ;if(!q)return '';
-  const pos=(q.n>0)?t('клип {i} из {n}',{i:q.i,n:q.n}):'';
-  return [pos,q.name].filter(Boolean).join(' · ');}
-// Выставить/обновить контекст очереди: заголовок операции, номер и имя клипа. Зовётся в
-// начале длинной операции и на каждом её клипе, а не на каждом этапе: этапы меняет progStep.
-function progQueue(title,i,n,name){PROGQ={title:title||'',i:i||0,n:n||0,name:name||''};
-  if(PROGQ.title)$('progStage').textContent=PROGQ.title;
-  $('progSub').textContent=progQueueText();}
-// Сменить ТОЛЬКО этап (и, если задан, процент): строка очереди остаётся на экране —
-// без неё этап не отвечает на вопрос «над каким клипом и сколько ещё осталось».
-function progStep(stage,frac){progUpdate(frac,stage);}
-function progUpdate(frac,stage,title,sub){if(title)$('progStage').textContent=title;
-  // Явный sub главнее (хвост лога, версия AE): у него своя строка. Без него подпись
-  // собирает контекст очереди — «клип i из N · имя клипа» + этап.
-  const s=sub||progQueueText();
-  if(stage!=null)$('progSub').textContent=s?(s+' · '+stage):stage;else if(s!=null)$('progSub').textContent=s;
-  const f=$('progFill'),pf=$('pmFill');       // pf — зеркало в свёрнутый чип
-  // frac===undefined — процент не передан (так зовёт progStep): шкалы не трогаем, иначе
-  // смена этапа сбрасывала бы уже показанный процент в «бегающую» полоску.
-  if(frac!==undefined){
-    if(frac==null){f.className='progfill indet';$('progPct').textContent='';
-      pf.className='fill indet';pf.style.width='';$('pmPct').textContent='';}
-    else{const w=Math.max(3,Math.min(100,frac*100))+'%',p=Math.round(frac*100)+'%';
-      f.className='progfill';f.style.width=w;$('progPct').textContent=p;
-      pf.className='fill';pf.style.width=w;$('pmPct').textContent=p;}
-  }
-  $('pmText').textContent=$('progSub').textContent||$('progStage').textContent;}
-function progDone(msg){PROGQ=null;const f=$('progFill');f.className='progfill done';f.style.width='100%';
-  $('progStage').textContent=t('Готово');$('progSub').textContent=msg||'';$('progPct').textContent='100%';$('progClose').style.display='';
-  $('progStop').style.display='none';progReadySet(0);   // очередь кончилась — список и так на экране
-  const pf=$('pmFill');pf.className='fill done';pf.style.width='100%';$('pmPct').textContent='';
-  $('pmText').textContent=t('Готово — открыть');}
-function hideProg(){PROGQ=null;PROGMIN=false;$('prog').classList.remove('on');$('progmini').classList.remove('on');}
-// «Остановить»: серверная задача (нарезка/сборка) гасится через /api/cancel (subprocess убивается
-// сразу, внутрипроцессный шаг — после текущего клипа); клиентские циклы (разметка) смотрят UICANCEL.
-let UICANCEL=false;
-async function cancelTask(){UICANCEL=true;const b=$('progStop');b.disabled=true;
-  progUpdate(null,t('останавливаю…'));uiLog(t('⏹ остановка по кнопке'));
-  // Генерация видео живёт в своём джобе (VJOB) — /api/cancel её не касается. А во время
-  // генерации на экране висит именно этот оверлей, кнопка «Остановить» на странице под
-  // ним: жали сюда, оно писало «останавливаю…» и спокойно досчитывало (за деньги).
-  // Видео НЕ ставит UIBUSY: генерацию свернули, ушли на шаг 1 и запустили нарезку —
-  // оверлей теперь у нарезки, а «Остановить» гасил видео (в фоне) и оставлял нарезку
-  // без остановки. Здесь и сейчас оверлей принадлежит JOB-задаче (UIBUSY), а видео
-  // останавливается своей кнопкой на вкладке «Видео» (аудит 2026-08-10, B1).
-  if(VIDPOLL&&!UIBUSY){await vidCancel();b.disabled=false;return;}
-  let fail=0;
-  try{await fetch('/api/cancel',{method:'POST'});}catch(e){fail++;}
-  // разметка идёт обычными POST-ами без JOB — текущую ИИ-генерацию рвёт только ai_stop
-  try{await fetch('/api/ai_stop',{method:'POST'});}catch(e){fail++;}
-  // Оба запроса упали — сервер не ответил, и без выхода из оверлея остаётся только F5
-  // (кнопка «Остановить» disabled, «Закрыть» скрыта). Возвращаем кнопку и показываем
-  // «Закрыть»: у юзера обязан быть выход из оверлея без перезагрузки (задание по UI-состояниям).
-  if(fail===2){b.disabled=false;progUpdate(null,t('сервер не ответил — остановка не отправлена'));
-    $('progClose').style.display='';toast(t('Сервер не ответил: ')+t('остановка не отправлена'));}}
-
-// ================= Очередь этапов пофайловая =================
-// Один список items на нарезку/сборку/рендер: имя файла, этап, процент у render,
-// результат у done, причина у error. Показывается прямо в модалке прогресса по дефолту.
-// Зелёный #98ff38 — ТОЛЬКО у done (это статус «готово», а не украшение, DESIGN.md).
-// Эмодзи и инлайновые подсказки запрещены.
-const QSTAGE={
-  wait:t('в очереди'), cut:t('нарезка'), jsx:t('сборка скрипта'),
-  check:t('проверка файлов'), aep:t('сборка проекта в AE'),
-  built:t('собран, ждёт рендера'), render:t('рендер'),
-  done:t('готово'), error:t('ошибка'), stopped:t('остановлено')};
-function queueRender(d){
-  const items=(d&&d.items)||[];
-  const qw=$('qwrap'), ql=$('qlist');
-  if(!items.length){
-    if(qw)qw.style.display='none';
-    if(ql)ql.innerHTML='';
-    return;
-  }
-  if(qw)qw.style.display='';
-  let doneN=0,wait=0,bad=0;const rows=[];
-  let curIndex=-1;
-  for(let i=0;i<items.length;i++){
-    const it=items[i];
-    const st=it.stage||'wait';
-    if(st==='done')doneN++;else if(st==='error')bad++;else if(st==='wait')wait++;
-    const isCur=(st==='render'||st==='cut'||st==='jsx'||st==='aep'||st==='check');
-    if(isCur&&curIndex===-1)curIndex=i;
-    let tail='';
-    if(st==='render'&&it.pct!=null)tail=' <span class="qpct">'+Math.round(it.pct*100)+'%</span>';
-    else if(st==='done'&&it.path)tail=' <span class="qpath">'+esc(String(it.path).replace(/^.*[\\\/]/,''))+'</span>';
-    else if(st==='error'&&it.reason)tail=' <span class="qreason">'+esc(it.reason)+'</span>';
-    const cls=(st==='done'?'qdone':(st==='error'?'qerr':''));
-    rows.push('<div class="qrow'+(isCur?' qcur':'')+'" id="qrow_'+i+'"><span class="qname">'+esc(it.name||'')+'</span>'
-      +'<span class="qstage '+cls+'">'+esc(QSTAGE[st]||st)+'</span>'+tail+'</div>');
-  }
-  if(ql){
-    ql.innerHTML=rows.join('');
-    const targetIdx=curIndex>=0?curIndex:(doneN<items.length?doneN:-1);
-    if(targetIdx>=0){
-      const el=$('qrow_'+targetIdx);
-      if(el&&ql.scrollHeight>ql.clientHeight){
-        el.scrollIntoView({block:'nearest'});
-      }
-    }
-  }
-}
-function fmtEta(sec){
-  sec=Math.max(0,Math.round(sec));
-  const m=Math.floor(sec/60),s=sec%60;
-  if(m>=60)return t('{h} ч {m} мин',{h:Math.floor(m/60),m:m%60});
-  if(m>0)return t('{m} мин {s} с',{m:m,s:s});
-  return t('{s} с',{s:s});
-}
+// Сама форма прогресса — в static/app/55-progress.js: одно окно, один словарь статусов
+// (PROGEV), одна разметка строк и шапки, API progOpen/progItem/progDone. Здесь её нет и
+// быть не должно — иначе вернётся вторая копия, которую потом правят в одном месте из
+// двух. Отсюда наружу торчат только двери прогресса (progShow/progUpdate/progQueue/
+// progStep/progDone/queueRender/localQ*), и живут они в том же модуле.
 
 // ================= log =================
 let LOGCACHE=[],CLIENTLOG=[];   // серверный лог (нарезка/сборка) + клиентские действия (разметка и т.п.)
@@ -208,7 +83,7 @@ async function openLog(){try{const d=await (await fetch('/api/status')).json();
 // пер-клип кнопки черновика нет с 2026-07-17.
 async function pollDraft(){pollJob(pollDraft,t('Черновик mp4'),null,d=>{const res=d.results||[];
     if(res.length){progDone(t('Готово: ')+res.map(p=>p.replace(/^.*[\\\/]/,'')).join(' · '));toast(t('Черновик собран — лежит рядом с XML'));}
-    else progDone(UICANCEL?t('Остановлено'):t('Ошибка — смотри Логи'));});}
+    else progDone(UICANCEL?t('Остановлено'):t('Ошибка — смотри Логи'),true);});}
 
 // ---- очистка временных файлов (_tmp) в папке результата ----
 // Прокси предпросмотра спрашиваем ОТДЕЛЬНО: это не мусор, а кэш по файлу камеры
@@ -290,8 +165,12 @@ function _closeModal(id){
   // старую функцию (аудит 2026-08-25).
   if(id==='mbConfirm'&&CONFIRM_RESOLVE){CONFIRM_RESOLVE(false);CONFIRM_RESOLVE=null;}
   tipHide();
-  $(id).classList.remove('on');if(id==='mbPreview'){pvPause();edPause();}
-  if(id==='mbInserts'){ipvPause();aeAfterPreview();}if(id==='mbCams')cpvPause();
+  $(id).classList.remove('on');if(id==='mbPreview'){edPause();   // плеер шага 1 один — редактор
+    // Превью закрыли — живой хост плагинов гасим (процесс по PID, на сервере): по
+    // закрытии превью не должно оставаться ни одного.
+    if(typeof voiceFxHostStop==='function')voiceFxHostStop();}
+  if(id==='mbInserts'){ipvPause();if(typeof ipvClose==='function')ipvClose();aeAfterPreview();if(typeof voiceFxHostStop==='function')voiceFxHostStop();}
+  if(id==='mbCams'){cpvPause();if(typeof cpvReset==='function')cpvReset();if(typeof voiceFxHostStop==='function')voiceFxHostStop();}
   const back=MODALBACK[id];MODALBACK[id]=null;
   if(back&&back.isConnected&&back.focus)back.focus({preventScroll:true});}
 // Tab не выпускает из верхней модалки

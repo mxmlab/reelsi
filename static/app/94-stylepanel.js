@@ -167,14 +167,15 @@ function stView(field, stored) {
     if (!stored || !Array.isArray(stored)) return '';
     return stRgb2hex(stored).toUpperCase();
   }
-  if (ctl === 'num' || ctl === 'int' || ctl === 'angle') {
+  if (ctl === 'num' || ctl === 'int' || ctl === 'angle' || ctl === 'range') {
     if (stored == null) {
       // Пусто у nullable-поля — это «авто» (как пустой input с placeholder в старой
       // разметке): stStore('') вернёт null, и ключ не заведётся сам собой.
       if (field.nullable) return '';
-      return baseDef != null ? baseDef : 0;
+      const defVal = baseDef != null ? baseDef : 0;
+      return field.plus ? ('+' + defVal) : defVal;
     }
-    return stored;
+    return field.plus ? ('+' + stored) : stored;
   }
   if (ctl === 'point') {
     const v = missing ? (baseDef != null ? baseDef : 0.5) : (stored != null ? stored : 0.5);
@@ -251,8 +252,9 @@ function stStore(field, view, opt) {
       Math.round((b / 255) * 10000) / 10000
     ];
   }
-  if (ctl === 'num' || ctl === 'angle') {
-    const num = parseFloat(view);
+  if (ctl === 'num' || ctl === 'angle' || ctl === 'range') {
+    const raw = (typeof view === 'string') ? view.replace(/^\+/, '') : view;
+    const num = parseFloat(raw);
     if (isNaN(num)) {
       if (field.nullable) return null;
       return baseDef != null ? baseDef : 0;
@@ -379,6 +381,55 @@ function toggleExpanded(id) {
   return next;
 }
 
+// ---- указка на группу панели ----
+// Строка слоя или группы по id схемы: строки панели помечены data-tw (renderStylePanel).
+// Две двери, а не один селектор с запятой: заглушка DOM в node-стендах разбирает
+// селекторы по одному.
+function stRowById(id) {
+  return document.querySelector('.stgroup[data-tw="' + id + '"]') ||
+    document.querySelector('.stlayer[data-tw="' + id + '"]');
+}
+
+// Раскрыть строку панели — тем же кликом по ней, что у человека: состояние раскрытия
+// живёт в localStorage (toggleExpanded), и второй двери для него быть не должно.
+function stRowOpen(row) {
+  const tw = row.querySelector('.sttw');
+  if (tw && tw.getAttribute('aria-expanded') === 'true') return;
+  if (typeof row.onclick === 'function') {
+    row.onclick({ target: row, stopPropagation: () => {}, preventDefault: () => {} });
+  }
+}
+
+// Показать группу панели: раскрыть путь до неё (слой и внешние группы), прокрутить и
+// подсветить на пару секунд. Панель могла ещё не построиться — схема приезжает запросом,
+// тогда указку доводит renderStylePanel (ST_FOCUS_WANT).
+let ST_FOCUS_WANT = '';
+let ST_FOCUS_T = 0;
+function stFocusGroup(id, hold_ms) {
+  if (!id) return false;
+  ST_FOCUS_WANT = id;
+  const row = stRowById(id);
+  if (!row) return false;
+  ST_FOCUS_WANT = '';
+  const path = [];
+  for (let el = row.parentNode; el && el !== document.body; el = el.parentNode) {
+    if (el.dataset && (el.dataset.group || el.dataset.layer)) path.unshift(el);
+  }
+  for (const box of path) {
+    const r = stRowById(box.dataset.group || box.dataset.layer);
+    if (r) stRowOpen(r);
+  }
+  stRowOpen(row);
+  row.classList.add('st-focus');
+  clearTimeout(ST_FOCUS_T);
+  ST_FOCUS_T = setTimeout(() => row.classList.remove('st-focus'), hold_ms || 2000);
+  // Прокрутка — браузерная дверь: заглушка DOM её не знает, и это не повод падать.
+  if (typeof row.scrollIntoView === 'function') {
+    row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
+  return true;
+}
+
 function getStyleParent() {
   let orig = (typeof STYLE_EDIT_ORIG !== 'undefined' && STYLE_EDIT_ORIG) ? STYLE_EDIT_ORIG : null;
   if (!orig) {
@@ -397,6 +448,13 @@ function isNodeOn(item) {
     return s.disclaimer !== '';
   }
   const baseDef = (STSCHEMA && STSCHEMA.base) ? STSCHEMA.base[item.toggle] : false;
+  // Галка Камеры 2 при замкнутой цепи повторяет галку Камеры 1: своего значения в
+  // старом стиле нет вовсе, и группа не должна выглядеть выключенной, пока цвет
+  // Камеры 1 включён (показ серых полей живёт под этой же галкой).
+  if (item.toggle === 'lm2_on' && s.lm2_link !== false) {
+    const baseLm = (STSCHEMA && STSCHEMA.base) ? STSCHEMA.base.lm_on : false;
+    return Boolean((s.lm_on !== undefined && s.lm_on !== null) ? s.lm_on : baseLm);
+  }
   const val = (s[item.toggle] !== undefined && s[item.toggle] !== null) ? s[item.toggle] : baseDef;
   return Boolean(val);
 }
@@ -476,6 +534,24 @@ function renderStylePanel() {
         const lbl = document.createElement('span');
         lbl.className = 'stlabel';
         lbl.textContent = t(item.label || item.id);
+        if (item.link) {
+          const btnLink = document.createElement('button');
+          btnLink.type = 'button';
+          btnLink.id = 'st_' + item.link;
+          btnLink.className = 'stlink-btn icon';
+          const linkTip = t('Связано: камера 2 берёт цвет камеры 1. Разомкни, чтобы задать свой');
+          btnLink.title = linkTip;
+          btnLink.setAttribute('aria-label', linkTip);
+          btnLink.dataset.t = linkTip;
+          btnLink.onclick = (e) => {
+            e.stopPropagation();
+            stToggleCam2Link();
+          };
+          lbl.style.display = 'inline-flex';
+          lbl.style.alignItems = 'center';
+          lbl.style.gap = '6px';
+          lbl.appendChild(btnLink);
+        }
         gRow.appendChild(lbl);
 
         // col 4: кнопка сброса в колонке значений (180px)
@@ -591,7 +667,9 @@ function renderStylePanel() {
         } else if (item.ctl === 'color' || item.ctl === 'color_opt') {
           fLbl.htmlFor = 'st_' + item.key + '_hex';
         } else if (item.ctl === 'point') {
-          fLbl.htmlFor = 'st_pickzoom';
+          fLbl.htmlFor = item.key === 'cam2_zoom_cx' ? 'st_pickzoom2' : 'st_pickzoom';
+        } else if (item.ctl === 'range') {
+          fLbl.htmlFor = 'st_' + item.key + '_val';
         } else if (item.key === 'layer_order') {
           fLbl.id = 'st_lbl_layer_order';
         } else if (item.ctl === 'textarea') {
@@ -799,11 +877,12 @@ function renderStylePanel() {
           const btnPick = document.createElement('button');
           btnPick.type = 'button';
           btnPick.className = 'sm';
-          btnPick.id = 'st_pickzoom';
+          // у поля камеры 2 свой id (два одинаковых id на странице нельзя) и явная цель
+          btnPick.id = item.key === 'cam2_zoom_cx' ? 'st_pickzoom2' : 'st_pickzoom';
           btnPick.textContent = t('Прицел');
           btnPick.setAttribute('aria-label', fTitle);
           btnPick.onclick = () => {
-            if (typeof pickZoomPoint === 'function') pickZoomPoint();
+            if (typeof pickZoomPoint === 'function') pickZoomPoint(item.key === 'cam2_zoom_cx' ? 'cam2' : undefined);
           };
 
           ptWrap.appendChild(lblX);
@@ -814,6 +893,82 @@ function renderStylePanel() {
           ptWrap.appendChild(editY);
           ptWrap.appendChild(btnPick);
           right.appendChild(ptWrap);
+        } else if (item.ctl === 'range') {
+          const rngWrap = document.createElement('div');
+          rngWrap.className = 'stpoint-wrap';
+
+          const lbl1 = document.createElement('span');
+          lbl1.className = 'stpoint-lbl';
+          lbl1.textContent = t('от');
+
+          const span1 = document.createElement('span');
+          span1.className = 'stnum-val';
+          span1.id = 'st_' + item.key + '_val';
+          span1.tabIndex = 0;
+          span1.setAttribute('role', 'spinbutton');
+          span1.setAttribute('aria-label', fTitle + ' ' + t('от'));
+          span1.textContent = item.plus ? '+0' : '0';
+
+          const edit1 = document.createElement('input');
+          edit1.type = 'text';
+          edit1.className = 'stnum-edit';
+          edit1.id = 'st_' + item.key + '_input';
+          edit1.dataset.key = item.key;
+          edit1.style.display = 'none';
+          edit1.setAttribute('aria-label', fTitle + ' ' + t('от'));
+
+          const field1 = {
+            key: item.key,
+            ctl: 'num',
+            min: item.min,
+            max: item.max,
+            lim_min: item.lim_min,
+            lim_max: item.lim_max,
+            step: item.step || 1,
+            plus: item.plus
+          };
+          initNumDrag(span1, edit1, field1);
+
+          const lbl2 = document.createElement('span');
+          lbl2.className = 'stpoint-lbl';
+          lbl2.textContent = t('до');
+
+          const key2 = item.key2;
+          const span2 = document.createElement('span');
+          span2.className = 'stnum-val';
+          span2.id = 'st_' + key2 + '_val';
+          span2.tabIndex = 0;
+          span2.setAttribute('role', 'spinbutton');
+          span2.setAttribute('aria-label', fTitle + ' ' + t('до'));
+          span2.textContent = item.plus ? '+0' : '0';
+
+          const edit2 = document.createElement('input');
+          edit2.type = 'text';
+          edit2.className = 'stnum-edit';
+          edit2.id = 'st_' + key2 + '_input';
+          edit2.dataset.key = key2;
+          edit2.style.display = 'none';
+          edit2.setAttribute('aria-label', fTitle + ' ' + t('до'));
+
+          const field2 = {
+            key: key2,
+            ctl: 'num',
+            min: item.min,
+            max: item.max,
+            lim_min: item.lim_min,
+            lim_max: item.lim_max,
+            step: item.step || 1,
+            plus: item.plus
+          };
+          initNumDrag(span2, edit2, field2);
+
+          rngWrap.appendChild(lbl1);
+          rngWrap.appendChild(span1);
+          rngWrap.appendChild(edit1);
+          rngWrap.appendChild(lbl2);
+          rngWrap.appendChild(span2);
+          rngWrap.appendChild(edit2);
+          right.appendChild(rngWrap);
         } else if (item.ctl === 'textarea') {
           const ta = document.createElement('textarea');
           ta.id = item.key === 'disclaimer' ? 'st_disc_text' : ('st_' + item.key);
@@ -1005,6 +1160,9 @@ function renderStylePanel() {
   }
 
   fillStyleFields();
+  // Группу просили показать раньше, чем панель построилась (схема приезжает запросом):
+  // доводим указку здесь, иначе фокус уходил бы в пустоту.
+  if (ST_FOCUS_WANT) stFocusGroup(ST_FOCUS_WANT);
 }
 
 function initNumDrag(span, input, field) {
@@ -1030,10 +1188,11 @@ function initNumDrag(span, input, field) {
   const commitInput = () => {
     input.style.display = 'none';
     span.style.display = '';
-    const v = parseFloat(input.value);
+    const raw = String(input.value).replace(/^\+/, '');
+    const v = parseFloat(raw);
     if (!isNaN(v)) {
       const fin = (field.ctl === 'int') ? Math.round(v) : v;
-      span.textContent = fin;
+      span.textContent = field.plus ? ('+' + fin) : fin;
       span.setAttribute('aria-valuenow', fin);
       const slider = document.getElementById('st_' + field.key + '_slider');
       if (slider) slider.value = Math.max(field.min != null ? field.min : -Infinity, Math.min(field.max != null ? field.max : Infinity, fin));
@@ -1050,7 +1209,8 @@ function initNumDrag(span, input, field) {
       if (e.preventDefault) e.preventDefault();
       const mult = e.shiftKey ? 10 : 1;
       const delta = (e.key === 'ArrowUp' ? 1 : -1) * step * mult;
-      const viewVal = parseFloat(span.textContent) || 0;
+      const rawNow = String(span.textContent).replace(/^\+/, '');
+      const viewVal = parseFloat(rawNow) || 0;
       let v = viewVal + delta;
       if (field.ctl === 'int') {
         v = Math.round(v);
@@ -1061,9 +1221,9 @@ function initNumDrag(span, input, field) {
       const minB = Math.min(viewVal, limMin);
       const maxB = Math.max(viewVal, limMax);
       v = Math.max(minB, Math.min(maxB, v));
-      span.textContent = v;
+      span.textContent = field.plus ? ('+' + v) : v;
       span.setAttribute('aria-valuenow', v);
-      input.value = v;
+      input.value = field.plus ? ('+' + v) : v;
       const slider = document.getElementById('st_' + field.key + '_slider');
       if (slider) slider.value = Math.max(field.min != null ? field.min : -Infinity, Math.min(field.max != null ? field.max : Infinity, v));
       if (field.ctl === 'angle') updateAngleDial(field.key, v);
@@ -1076,7 +1236,8 @@ function initNumDrag(span, input, field) {
     if (e.button !== 0) return;
     if (e.preventDefault) e.preventDefault();
     const startX = e.clientX;
-    const viewVal = parseFloat(span.textContent) || 0;
+    const rawNow = String(span.textContent).replace(/^\+/, '');
+    const viewVal = parseFloat(rawNow) || 0;
     const minB = Math.min(viewVal, limMin);
     const maxB = Math.max(viewVal, limMax);
     let moved = false;
@@ -1097,9 +1258,9 @@ function initNumDrag(span, input, field) {
           v = parseFloat(v.toFixed(Math.max(dec, 1)));
         }
         v = Math.max(minB, Math.min(maxB, v));
-        span.textContent = v;
+        span.textContent = field.plus ? ('+' + v) : v;
         span.setAttribute('aria-valuenow', v);
-        input.value = v;
+        input.value = field.plus ? ('+' + v) : v;
         const slider = document.getElementById('st_' + field.key + '_slider');
         if (slider) slider.value = Math.max(field.min != null ? field.min : -Infinity, Math.min(field.max != null ? field.max : Infinity, v));
         if (field.ctl === 'angle') updateAngleDial(field.key, v);
@@ -1290,13 +1451,37 @@ function stColorSwatchChange(key, v) {
 
 function fillStyleFields() {
   const s = CURSTYLE || {};
+  if (typeof stMigrateCamZoom === 'function') stMigrateCamZoom(s);
   if (!STSCHEMA || !STSCHEMA.layers) return;
+
+  const isLm2Linked = (s.lm2_link !== false);
+  const btnLink = document.getElementById('st_lm2_link');
+  if (btnLink) {
+    // ico живёт в 20-widgets.js; node-стенды панели его не грузят — там иконки просто нет
+    // (эмодзи в хроме интерфейса запрещены, запасной картинкой им не место).
+    btnLink.innerHTML = typeof ico === 'function' ? ico(isLm2Linked ? 'link' : 'unlink', 'ic-sm') : '';
+    btnLink.classList.toggle('st-linked', isLm2Linked);
+    btnLink.classList.toggle('st-unlinked', !isLm2Linked);
+  }
 
   function walk(items) {
     for (const item of items) {
       if (item.type === 'field') {
-        const val = s[item.key];
+        let val = s[item.key];
+        const isCam2Field = item.key && item.key.startsWith('lm2_');
+        if (isLm2Linked && isCam2Field) {
+          const k1 = 'lm_' + item.key.slice(4);
+          val = s[k1];
+        }
         const view = stView(item, val);
+        if (isCam2Field) {
+          const fRow = document.getElementById('strow_' + item.key);
+          if (fRow) fRow.classList.toggle('stdisabled', isLm2Linked);
+          const inp = document.getElementById('st_' + item.key + '_input');
+          if (inp) inp.disabled = isLm2Linked;
+          const slider = document.getElementById('st_' + item.key + '_slider');
+          if (slider) slider.disabled = isLm2Linked;
+        }
 
         if (item.ctl === 'bool') {
           const chk = document.getElementById('st_' + item.key);
@@ -1345,6 +1530,36 @@ function fillStyleFields() {
             }
             if (inpY) inpY.value = vy;
           }
+        } else if (item.ctl === 'range') {
+          const baseDef1 = (STSCHEMA && STSCHEMA.base && STSCHEMA.base[item.key]) != null ? STSCHEMA.base[item.key] : 0;
+          const baseDef2 = (item.key2 && STSCHEMA && STSCHEMA.base && STSCHEMA.base[item.key2]) != null ? STSCHEMA.base[item.key2] : 0;
+          let v1 = s[item.key] != null ? s[item.key] : baseDef1;
+          let v2 = (item.key2 && s[item.key2] != null) ? s[item.key2] : baseDef2;
+          if (item.key2 && v1 > v2) {
+            const tmp = v1; v1 = v2; v2 = tmp;
+            s[item.key] = v1;
+            s[item.key2] = v2;
+          }
+          const disp1 = item.plus ? ('+' + v1) : String(v1);
+          const disp2 = item.plus ? ('+' + v2) : String(v2);
+
+          const span1 = document.getElementById('st_' + item.key + '_val');
+          const inp1 = document.getElementById('st_' + item.key + '_input');
+          if (span1) {
+            span1.textContent = disp1;
+            span1.setAttribute('aria-valuenow', v1);
+          }
+          if (inp1) inp1.value = disp1;
+
+          if (item.key2) {
+            const span2 = document.getElementById('st_' + item.key2 + '_val');
+            const inp2 = document.getElementById('st_' + item.key2 + '_input');
+            if (span2) {
+              span2.textContent = disp2;
+              span2.setAttribute('aria-valuenow', v2);
+            }
+            if (inp2) inp2.value = disp2;
+          }
         } else if (item.ctl === 'textarea') {
           const ta = document.getElementById(item.key === 'disclaimer' ? 'st_disc_text' : ('st_' + item.key));
           if (ta) ta.value = view != null ? view : '';
@@ -1356,7 +1571,18 @@ function fillStyleFields() {
         if (item.toggle) {
           const chk = document.getElementById('st_' + item.toggle);
           if (chk) {
-            if (item.toggle === 'disclaimer') {
+            if (item.toggle === 'lm2_on') {
+              chk.disabled = isLm2Linked;
+              if (isLm2Linked) {
+                const baseDef = (STSCHEMA && STSCHEMA.base) ? STSCHEMA.base.lm_on : false;
+                const val1 = (s.lm_on !== undefined && s.lm_on !== null) ? s.lm_on : baseDef;
+                chk.checked = Boolean(val1);
+              } else {
+                const baseDef = (STSCHEMA && STSCHEMA.base) ? STSCHEMA.base.lm2_on : false;
+                const val2 = (s.lm2_on !== undefined && s.lm2_on !== null) ? s.lm2_on : baseDef;
+                chk.checked = Boolean(val2);
+              }
+            } else if (item.toggle === 'disclaimer') {
               chk.checked = (s.disclaimer !== '');
             } else {
               const baseDef = (STSCHEMA && STSCHEMA.base) ? STSCHEMA.base[item.toggle] : false;
@@ -1386,7 +1612,8 @@ function fillStyleFields() {
 
 function stEdit() {
   CURSTYLE = CURSTYLE || {};
-  if (typeof STYLE_TOUCHED !== 'undefined') STYLE_TOUCHED = true;
+  if (typeof styleTouched === 'function') styleTouched();
+  else if (typeof STYLE_TOUCHED !== 'undefined') STYLE_TOUCHED = true;
   if (!STSCHEMA || !STSCHEMA.layers) return;
 
   // hl_font пишется как null при снятой галке «Выделять жирным» (как в старом stEdit).
@@ -1397,6 +1624,19 @@ function stEdit() {
   function walk(items) {
     for (const item of items) {
       if (item.type === 'field') {
+        if (CURSTYLE.lm2_link !== false && item.key && item.key.startsWith('lm2_')) {
+          // Цепочка замкнута: своё значение камеры 2 не действует, в стиль не пишется.
+          // Своё, оставшееся от разомкнутой цепи, не стираем («можно их не стирать»),
+          // а незаведённого ключа панель не оставляет: туда уезжает значение камеры 1 —
+          // ровно то, что показывало серое поле.
+          if (CURSTYLE[item.key] === undefined || CURSTYLE[item.key] === null) {
+            const k1 = 'lm_' + item.key.slice(4);
+            const b = (STSCHEMA && STSCHEMA.base) || {};
+            CURSTYLE[item.key] = (CURSTYLE[k1] !== undefined && CURSTYLE[k1] !== null)
+              ? CURSTYLE[k1] : b[k1];
+          }
+          continue;
+        }
         let view = null;
         if (item.ctl === 'bool') {
           const chk = document.getElementById('st_' + item.key);
@@ -1436,6 +1676,44 @@ function stEdit() {
           }
           if (typeof zoomPickMark === 'function') zoomPickMark();
           continue;
+        } else if (item.ctl === 'range') {
+          const span1 = document.getElementById('st_' + item.key + '_val');
+          const inp1 = document.getElementById('st_' + item.key + '_input');
+          const raw1 = (span1 && span1.style.display !== 'none') ? span1.textContent : (inp1 ? inp1.value : '');
+          const span2 = item.key2 ? document.getElementById('st_' + item.key2 + '_val') : null;
+          const inp2 = item.key2 ? document.getElementById('st_' + item.key2 + '_input') : null;
+          const raw2 = (span2 && span2.style.display !== 'none') ? span2.textContent : (inp2 ? inp2.value : '');
+
+          let v1 = raw1 !== '' ? parseFloat(String(raw1).replace(/^\+/, '')) : NaN;
+          let v2 = raw2 !== '' ? parseFloat(String(raw2).replace(/^\+/, '')) : NaN;
+
+          const baseDef1 = (STSCHEMA && STSCHEMA.base && STSCHEMA.base[item.key]);
+          const baseDef2 = (item.key2 && STSCHEMA && STSCHEMA.base && STSCHEMA.base[item.key2]);
+
+          if (isNaN(v1)) v1 = CURSTYLE[item.key] != null ? CURSTYLE[item.key] : (baseDef1 != null ? baseDef1 : 0);
+          if (isNaN(v2)) v2 = (item.key2 && CURSTYLE[item.key2] != null) ? CURSTYLE[item.key2] : (baseDef2 != null ? baseDef2 : 0);
+
+          if (item.key2 && !isNaN(v1) && !isNaN(v2) && v1 > v2) {
+            const tmp = v1;
+            v1 = v2;
+            v2 = tmp;
+            const disp1 = item.plus ? ('+' + v1) : String(v1);
+            const disp2 = item.plus ? ('+' + v2) : String(v2);
+            if (span1) {
+              span1.textContent = disp1;
+              span1.setAttribute('aria-valuenow', v1);
+            }
+            if (inp1) inp1.value = disp1;
+            if (span2) {
+              span2.textContent = disp2;
+              span2.setAttribute('aria-valuenow', v2);
+            }
+            if (inp2) inp2.value = disp2;
+          }
+
+          CURSTYLE[item.key] = v1;
+          if (item.key2) CURSTYLE[item.key2] = v2;
+          continue;
         } else if (item.ctl === 'textarea') {
           if (item.key === 'disclaimer') {
             const chk = document.getElementById('st_disclaimer');
@@ -1463,20 +1741,32 @@ function stEdit() {
         if (item.fallback_key && CURSTYLE[item.key] == null) stRefresh(item.key);
       } else if (item.type === 'group' || item.id) {
         if (item.toggle) {
-          const chk = document.getElementById('st_' + item.toggle);
-          if (chk) {
-            if (item.toggle === 'disclaimer') {
-              if (!chk.checked) CURSTYLE.disclaimer = '';
-              else if (CURSTYLE.disclaimer === '') CURSTYLE.disclaimer = null;
-            } else {
-              CURSTYLE[item.toggle] = chk.checked;
+          if (CURSTYLE.lm2_link !== false && item.toggle === 'lm2_on') {
+            // При замкнутой цепи галка lm2_on повторяет lm_on: своё оставшееся значение
+            // не трогаем, а незаведённое заводим как у камеры 1 — панель не оставляет
+            // ключей без значения (см. ту же дверь у полей выше).
+            if (CURSTYLE.lm2_on === undefined || CURSTYLE.lm2_on === null) {
+              const b = (STSCHEMA && STSCHEMA.base) || {};
+              const v1 = (CURSTYLE.lm_on !== undefined && CURSTYLE.lm_on !== null)
+                ? CURSTYLE.lm_on : b.lm_on;
+              CURSTYLE.lm2_on = Boolean(v1);
             }
           } else {
-            if (item.toggle === 'disclaimer') {
-              if (CURSTYLE.disclaimer === undefined) CURSTYLE.disclaimer = null;
-            } else if (CURSTYLE[item.toggle] === undefined || CURSTYLE[item.toggle] === null) {
-              const baseDef = (STSCHEMA && STSCHEMA.base) ? STSCHEMA.base[item.toggle] : false;
-              CURSTYLE[item.toggle] = Boolean(baseDef);
+            const chk = document.getElementById('st_' + item.toggle);
+            if (chk) {
+              if (item.toggle === 'disclaimer') {
+                if (!chk.checked) CURSTYLE.disclaimer = '';
+                else if (CURSTYLE.disclaimer === '') CURSTYLE.disclaimer = null;
+              } else {
+                CURSTYLE[item.toggle] = chk.checked;
+              }
+            } else {
+              if (item.toggle === 'disclaimer') {
+                if (CURSTYLE.disclaimer === undefined) CURSTYLE.disclaimer = null;
+              } else if (CURSTYLE[item.toggle] === undefined || CURSTYLE[item.toggle] === null) {
+                const baseDef = (STSCHEMA && STSCHEMA.base) ? STSCHEMA.base[item.toggle] : false;
+                CURSTYLE[item.toggle] = Boolean(baseDef);
+              }
             }
           }
         }
@@ -1486,6 +1776,27 @@ function stEdit() {
   }
 
   walk(STSCHEMA.layers);
+
+  if (CURSTYLE.lm2_link !== false) {
+    const chk2 = document.getElementById('st_lm2_on');
+    if (chk2) chk2.checked = Boolean(CURSTYLE.lm_on);
+    for (const p of ST_LM_PARAMS) {
+      const k2 = 'lm2_' + p;
+      const f2 = findFieldByKey(k2);
+      if (!f2) continue;
+      const v = CURSTYLE['lm_' + p];
+      const view = stView(f2, v);
+      const span = document.getElementById('st_' + k2 + '_val');
+      const inp = document.getElementById('st_' + k2 + '_input');
+      const slider = document.getElementById('st_' + k2 + '_slider');
+      if (span) {
+        span.textContent = view;
+        span.setAttribute('aria-valuenow', view);
+      }
+      if (inp) inp.value = view;
+      if (slider) slider.value = Math.max(f2.min != null ? f2.min : -Infinity, Math.min(f2.max != null ? f2.max : Infinity, view));
+    }
+  }
 
   const imEl = document.getElementById('intromode');
   if (imEl && imEl.value) CURSTYLE.intro_mode = imEl.value;
@@ -1600,6 +1911,17 @@ function updateStyleDiffDots() {
       const y2 = defY != null ? defY : 0.5;
       return Math.abs(Number(x1) - Number(x2)) > 1e-4 || Math.abs(Number(y1) - Number(y2)) > 1e-4;
     }
+    if (field.ctl === 'range') {
+      const base1 = (STSCHEMA && STSCHEMA.base && STSCHEMA.base[field.key]) != null ? STSCHEMA.base[field.key] : 0;
+      const base2 = (field.key2 && STSCHEMA && STSCHEMA.base && STSCHEMA.base[field.key2]) != null ? STSCHEMA.base[field.key2] : 0;
+      const x1 = curVal != null ? curVal : base1;
+      const x2 = defVal != null ? defVal : base1;
+      const curY = getNormVal(s, field.key2, false);
+      const defY = getNormVal(orig, field.key2, false);
+      const y1 = curY != null ? curY : base2;
+      const y2 = defY != null ? defY : base2;
+      return Math.abs(Number(x1) - Number(x2)) > 1e-4 || Math.abs(Number(y1) - Number(y2)) > 1e-4;
+    }
     if (field.ctl === 'layer_order') {
       const arr1 = Array.isArray(curVal) ? curVal : [];
       const arr2 = Array.isArray(defVal) ? defVal : [];
@@ -1690,6 +2012,13 @@ function stResetKey(key) {
     const v2 = (k2 && orig[k2] !== undefined && orig[k2] !== null) ? orig[k2] : (k2 ? baseDef[k2] : null);
     CURSTYLE[k1] = v1 != null ? v1 : 0.5;
     if (k2) CURSTYLE[k2] = v2 != null ? v2 : 0.5;
+  } else if (field.ctl === 'range') {
+    const k1 = field.key;
+    const k2 = field.key2;
+    const v1 = (orig[k1] !== undefined && orig[k1] !== null) ? orig[k1] : baseDef[k1];
+    const v2 = (k2 && orig[k2] !== undefined && orig[k2] !== null) ? orig[k2] : (k2 ? baseDef[k2] : null);
+    CURSTYLE[k1] = v1 != null ? v1 : 0;
+    if (k2) CURSTYLE[k2] = v2 != null ? v2 : 0;
   } else {
     const defVal = (orig[key] !== undefined && (field.nullable || orig[key] !== null)) ? orig[key] : baseDef[key];
     CURSTYLE[key] = Array.isArray(defVal) ? [...defVal] : defVal;
@@ -1698,8 +2027,35 @@ function stResetKey(key) {
   stEdit();
 }
 
+const ST_LM_PARAMS = ['exposure', 'contrast', 'highlights', 'shadows', 'whites', 'blacks', 'temp', 'tint', 'sat'];
+
+function stToggleCam2Link() {
+  const s = CURSTYLE || {};
+  const isLinked = (s.lm2_link !== false);
+  if (isLinked) {
+    s.lm2_link = false;
+    const base = (STSCHEMA && STSCHEMA.base) || {};
+    s.lm2_on = (s.lm_on !== undefined && s.lm_on !== null) ? Boolean(s.lm_on) : Boolean(base.lm_on);
+    for (const p of ST_LM_PARAMS) {
+      const k1 = 'lm_' + p;
+      const k2 = 'lm2_' + p;
+      s[k2] = (s[k1] !== undefined && s[k1] !== null) ? s[k1] : base[k1];
+    }
+  } else {
+    s.lm2_link = true;
+  }
+  fillStyleFields();
+  stEdit();
+}
+
 function stReset(groupId) {
   if (!CURSTYLE || !STSCHEMA || !STSCHEMA.layers) return;
+  if (groupId === 'cam2.lm') {
+    CURSTYLE.lm2_link = true;
+    fillStyleFields();
+    stEdit();
+    return;
+  }
   const orig = getStyleParent();
   const baseDef = (STSCHEMA && STSCHEMA.base) || {};
 
@@ -1794,6 +2150,34 @@ function stRefresh(key) {
       if (inpY) inpY.value = vy;
     }
     if (typeof zoomPickMark === 'function') zoomPickMark();
+  } else if (field.ctl === 'range') {
+    const baseDef1 = (STSCHEMA && STSCHEMA.base && STSCHEMA.base[field.key]) != null ? STSCHEMA.base[field.key] : 0;
+    const baseDef2 = (field.key2 && STSCHEMA && STSCHEMA.base && STSCHEMA.base[field.key2]) != null ? STSCHEMA.base[field.key2] : 0;
+    let v1 = s[field.key] != null ? s[field.key] : baseDef1;
+    let v2 = (field.key2 && s[field.key2] != null) ? s[field.key2] : baseDef2;
+    if (field.key2 && v1 > v2) {
+      const tmp = v1; v1 = v2; v2 = tmp;
+    }
+    const disp1 = field.plus ? ('+' + v1) : String(v1);
+    const disp2 = field.plus ? ('+' + v2) : String(v2);
+
+    const span1 = document.getElementById('st_' + field.key + '_val');
+    const inp1 = document.getElementById('st_' + field.key + '_input');
+    if (span1) {
+      span1.textContent = disp1;
+      span1.setAttribute('aria-valuenow', v1);
+    }
+    if (inp1) inp1.value = disp1;
+
+    if (field.key2) {
+      const span2 = document.getElementById('st_' + field.key2 + '_val');
+      const inp2 = document.getElementById('st_' + field.key2 + '_input');
+      if (span2) {
+        span2.textContent = disp2;
+        span2.setAttribute('aria-valuenow', v2);
+      }
+      if (inp2) inp2.value = disp2;
+    }
   } else if (field.ctl === 'textarea') {
     const ta = document.getElementById(key === 'disclaimer' ? 'st_disc_text' : ('st_' + key));
     if (ta) ta.value = view != null ? view : '';
@@ -1806,18 +2190,21 @@ function stRefresh(key) {
   updateStyleDiffDots();
 }
 
-function applyZoomPoint(cx, cy) {
+function applyZoomPoint(cx, cy, target) {
   if (!CURSTYLE) {
     CURSTYLE = JSON.parse(JSON.stringify(
       (typeof STYLES !== 'undefined' && STYLES.base) ||
       (typeof STSCHEMA !== 'undefined' && STSCHEMA.base) || {}
     ));
   }
-  CURSTYLE.cam1_zoom_cx = cx;
-  CURSTYLE.cam1_zoom_cy = cy;
+  // Ключи цели — из одной функции (95-styles.js); без неё — камера 1, как было.
+  const zk = (typeof zoomPickKeys === 'function') ? zoomPickKeys(target) : ['cam1_zoom_cx', 'cam1_zoom_cy'];
+  CURSTYLE[zk[0]] = cx;
+  CURSTYLE[zk[1]] = cy;
   if (typeof zoomPickMark === 'function') zoomPickMark();
-  if (typeof stRefresh === 'function') stRefresh('cam1_zoom_cx');
+  if (typeof stRefresh === 'function') stRefresh(zk[0]);
   else if (typeof updateStyleDiffDots === 'function') updateStyleDiffDots();
+  if (typeof styleTouched === 'function') styleTouched();
   if (typeof captureAE === 'function') captureAE();
   if (typeof ipvPlanSoon === 'function') ipvPlanSoon();
   if (typeof updateStyleSaveUI === 'function') updateStyleSaveUI();
@@ -1842,6 +2229,7 @@ if (typeof window !== 'undefined') {
   window.stResetKey = stResetKey;
   window.stRefresh = stRefresh;
   window.stReadView = stReadView;
+  window.stFocusGroup = stFocusGroup;
   window.applyZoomPoint = applyZoomPoint;
   Object.defineProperty(window, 'SFX_PREFIX', { get: () => SFX_PREFIX, configurable: true });
   Object.defineProperty(window, 'SFX_ISVIDEO', { get: () => SFX_ISVIDEO, configurable: true });

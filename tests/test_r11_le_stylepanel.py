@@ -73,6 +73,7 @@ def _env_src():
 # стиля. Подставлены один в один по смыслу (`$` — это getElementById).
 BROWSER_GLOBALS = r"""
 global.$ = (id) => document.getElementById(id);
+global.val = (id) => { const el = document.getElementById(id); return (el && el.value) || ''; };
 global.esc = (s) => String(s == null ? '' : s);
 global.ico = () => '<svg></svg>';
 """
@@ -469,3 +470,284 @@ def test_translation_guard_sees_style_panel_strings():
     # Тем же шаблоном по всему интерфейсу: строки панели обязаны в него попадать.
     app_keys = {_js_unescape(k) for k in GUARD.findall(app_meta.app_js_text())}
     assert panel_keys <= app_keys, "строки панели не доезжают до общего сторожа"
+
+
+@node
+def test_style_change_cancel_restores_previous_selection(tmp_path):
+    """Отмена смены стиля при несохранённых правках возвращает прежний выбор (п. 1)."""
+    body = r"""
+global.val = (id) => { const el = $(id); return el ? el.value : ''; };
+global.t = (s) => s;
+global.uiLog = () => {};
+global.captureAE = () => {};
+global.updateStyleDiffDots = () => {};
+global.renderStyleInfo = () => {};
+global.renderStylePanel = () => {};
+global.fillStyleFields = () => {};
+global.styleEq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+const sel = document.createElement('select');
+sel.id = 'style';
+sel.dataset.prev = 'base';
+sel.value = 'base';
+document.body.appendChild(sel);
+
+const custom = document.createElement('div');
+custom.id = 'stylecustom';
+document.body.appendChild(custom);
+
+STYLES = {
+  base: Object.assign({}, BASE, { font: 'BaseFont' }),
+  alt: Object.assign({}, BASE, { font: 'AltFont' })
+};
+CURSTYLE = Object.assign({}, STYLES.base);
+STYLE_TOUCHED = true;
+
+(async () => {
+  // 1. Выбираем другой стиль, на вопрос — Отмена
+  global.askConfirm = async () => false;
+  sel.value = 'alt';
+  await onStyleChange();
+
+  const cancel_val = sel.value;
+  const cancel_prev = sel.dataset.prev;
+  const cancel_font = CURSTYLE.font;
+
+  // 2. Выбираем другой стиль, на вопрос — Да
+  global.askConfirm = async () => true;
+  sel.value = 'alt';
+  await onStyleChange();
+
+  const confirm_val = sel.value;
+  const confirm_prev = sel.dataset.prev;
+  const confirm_font = CURSTYLE.font;
+
+  console.log(JSON.stringify({
+    cancel: { val: cancel_val, prev: cancel_prev, font: cancel_font },
+    confirm: { val: confirm_val, prev: confirm_prev, font: confirm_font }
+  }));
+})();
+"""
+    res = _run_node(tmp_path, "test_cancel.js", body, with_styles=True)
+    assert res["cancel"]["val"] == "base", f"в списке не прежний стиль на Отмена: {res}"
+    assert res["cancel"]["prev"] == "base"
+    assert res["cancel"]["font"] == "BaseFont", f"CURSTYLE изменился на Отмена: {res}"
+
+    assert res["confirm"]["val"] == "alt", f"в списке не новый стиль на Да: {res}"
+    assert res["confirm"]["prev"] == "alt"
+    assert res["confirm"]["font"] == "AltFont", f"CURSTYLE не обновился на Да: {res}"
+
+
+AE_JS = os.path.join(ROOT, "static", "app", "90-ae.js")
+INSERTS_JS = os.path.join(ROOT, "static", "app", "80-inserts.js")
+
+
+def _run_node_full(tmp_path, name, body, with_inserts=False):
+    path = str(tmp_path / name)
+    src = DOM_STUB + BROWSER_GLOBALS + _env_src() + _src(PANEL_JS) + _src(STYLES_JS) + _src(AE_JS)
+    if with_inserts:
+        src += _src(INSERTS_JS)
+    src += "\nSTSCHEMA = {base: BASE, layers: LAYERS};\n"
+    src += body
+    with io.open(path, "w", encoding="utf-8") as f:
+        f.write(src)
+    p = subprocess.run(["node", path], capture_output=True, text=True,
+                       encoding="utf-8-sig", errors="replace", timeout=120)
+    assert p.returncode == 0, (p.stderr or p.stdout).strip()[:900]
+    return json.loads(p.stdout.strip().splitlines()[-1])
+
+
+@node
+def test_unsaved_style_edits_survive_clip_switch():
+    """Несохранённые правки именованного стиля уходят в клип кастомом, а не пропадают.
+
+    При смене клипа вопроса «сменить стиль без сохранения?» нет: клип берёт свой стиль.
+    Без копии в задании правки жили бы только в CURSTYLE и молча терялись.
+    """
+    from test_preview_cam import _func, _run_node
+    code = _func(_src(AE_JS), "captureAE") + """
+    let curAE = 0, AEXML = 'a.xml', HLXML = '', STYLE_EDITING = null;
+    const HL = new Set(), BRK = new Set(), CNT = new Set(), JNS = new Set(), INTRO = [], INS = [];
+    const STYLES = {mak: {label: 'mak'}};
+    let CURSTYLE = {label: 'mak', cam2_fit: 141};
+    let DIRTY = true;
+    const CLIPS = [{xml: 'a.xml', job: {styleKey: 'mak'}}];
+    function styleDirty(){ return DIRTY; }
+    function defJob(){ return {}; }
+    function introResolve(){ return {lines: [], remove: [], splits: []}; }
+    function saveState(){}
+    function val(id){ return {style: 'mak', aeexposure: '0', musicmode: 'file', aemusic: ''}[id] || ''; }
+    function $(id){ return {checked: true}; }
+    captureAE();
+    const dirty = {key: CLIPS[0].job.styleKey, fit: CLIPS[0].job.style && CLIPS[0].job.style.cam2_fit};
+    DIRTY = false; captureAE();
+    const clean = {key: CLIPS[0].job.styleKey, has: 'style' in CLIPS[0].job};
+    console.log(JSON.stringify({dirty, clean}));
+    """
+    out = _run_node(code)
+    assert out["dirty"] == {"key": "__custom__", "fit": 141}, "правки стиля не ушли в клип"
+    assert out["clean"] == {"key": "mak", "has": False}, "без правок клип обязан ссылаться на имя стиля"
+
+
+@node
+def test_set_style_db_marks_clip_style_dirty_and_survives_clip_switch(tmp_path):
+    """setStyleDb('voice', -7) при именованном стиле -> styleDirty() true; captureAE -> __custom__; смена клипа и обратно -> -7."""
+    body = r"""
+    STYLES = {
+      base: Object.assign({}, BASE, { label: 'base', voice_db: 0 }),
+      mak: Object.assign({}, BASE, { label: 'mak', voice_db: 0 })
+    };
+    const sel = document.createElement('select');
+    sel.id = 'style';
+    sel.value = 'mak';
+    document.body.appendChild(sel);
+
+    ['aecfg', 'aename', 'pvvoicedb', 'pvvoicedbv', 'ipvvoicedb', 'ipvmusicdb', 'st_name', 'intromode'].forEach(id => {
+      const el = document.createElement('div');
+      el.id = id;
+      document.body.appendChild(el);
+    });
+    const censor = document.createElement('input'); censor.id = 'censor'; censor.type = 'checkbox'; document.body.appendChild(censor);
+    const aeexp = document.createElement('input'); aeexp.id = 'aeexposure'; aeexp.value = '0'; document.body.appendChild(aeexp);
+    const aemusic = document.createElement('input'); aemusic.id = 'aemusic'; aemusic.value = ''; document.body.appendChild(aemusic);
+
+    CLIPS = [
+      { xml: 'a.xml', name: 'clip0', job: { styleKey: 'mak' } },
+      { xml: 'b.xml', name: 'clip1', job: { styleKey: 'base' } }
+    ];
+    curAE = -1; AEXML = ''; HLXML = ''; HL = new Set(); BRK = new Set(); CNT = new Set(); JNS = new Set(); INTRO = []; INS = [];
+    function defJob() { return {}; }
+    function introResolve() { return { lines: [], remove: [], splits: [] }; }
+    function saveState() {}
+    function applyDbGains() {}
+    function renderIns() {}
+    function musicUI() {}
+    function renderClips3() {}
+    function renderAeDirField() {}
+    function loadWordsFor() {}
+    function ensureCustomOption() {}
+    function styleKeyFor(s) { return null; }
+    function stMigrateCamZoom(s) { return s; }
+    function stMigrateIntroCam2(s) { return s; }
+    function stMigrateCam2Zoom(s) { return s; }
+    function stMigrateIntroPos2(s) { return s; }
+
+    selectAE(0);
+    const initialDirty = styleDirty();
+
+    setStyleDb('voice', -7);
+    const dirtyAfter = styleDirty();
+    const jobStyleKeyAfter = CLIPS[0].job.styleKey;
+    const jobStyleVoiceDbAfter = CLIPS[0].job.style ? CLIPS[0].job.style.voice_db : null;
+
+    selectAE(1);
+    selectAE(0);
+    const restoredVoiceDb = CURSTYLE ? CURSTYLE.voice_db : null;
+    const finalJobStyleKey = CLIPS[0].job.styleKey;
+
+    console.log(JSON.stringify({
+      initialDirty,
+      dirtyAfter,
+      jobStyleKeyAfter,
+      jobStyleVoiceDbAfter,
+      restoredVoiceDb,
+      finalJobStyleKey
+    }));
+    """
+    res = _run_node_full(tmp_path, "test_style_db_dirty.js", body)
+    assert res["initialDirty"] is False, "стиль изначально не должен быть dirty"
+    assert res["dirtyAfter"] is True, "setStyleDb обязан пометить стиль изменённым (styleDirty() === true)"
+    assert res["jobStyleKeyAfter"] == "__custom__", "captureAE обязан перевести клип в __custom__"
+    assert res["jobStyleVoiceDbAfter"] == -7.0, f"в j.style.voice_db должно быть -7, получено {res['jobStyleVoiceDbAfter']}"
+    assert res["restoredVoiceDb"] == -7.0, f"после смены клипа и возврата voice_db должен остаться -7, получено {res['restoredVoiceDb']}"
+    assert res["finalJobStyleKey"] == "__custom__"
+
+
+@node
+def test_sub_words_and_layer_order_mark_style_dirty(tmp_path):
+    """inspSubEdit и layer_order помечают стиль изменённым и сохраняются в кастом задания клипа."""
+    body = r"""
+    STYLES = {
+      base: Object.assign({}, BASE, { label: 'base', sub_words_per_row: 1, sub_rows_max: 1 }),
+      mak: Object.assign({}, BASE, { label: 'mak', sub_words_per_row: 1, sub_rows_max: 1 })
+    };
+    const sel = document.createElement('select'); sel.id = 'style'; sel.value = 'mak'; document.body.appendChild(sel);
+    ['aecfg', 'aename', 'pvvoicedb', 'pvvoicedbv', 'ipvvoicedb', 'ipvmusicdb', 'st_name', 'intromode', 'subrowslist'].forEach(id => {
+      const el = document.createElement('div'); el.id = id; document.body.appendChild(el);
+    });
+    const swInp = document.createElement('input'); swInp.id = 'insp_subwords'; swInp.value = '3'; document.body.appendChild(swInp);
+    const srInp = document.createElement('input'); srInp.id = 'insp_subrows'; srInp.value = '2'; document.body.appendChild(srInp);
+    const censor = document.createElement('input'); censor.id = 'censor'; censor.type = 'checkbox'; document.body.appendChild(censor);
+    const aeexp = document.createElement('input'); aeexp.id = 'aeexposure'; aeexp.value = '0'; document.body.appendChild(aeexp);
+    const aemusic = document.createElement('input'); aemusic.id = 'aemusic'; aemusic.value = ''; document.body.appendChild(aemusic);
+
+    CLIPS = [
+      { xml: 'a.xml', name: 'clip0', job: { styleKey: 'mak' } },
+      { xml: 'b.xml', name: 'clip1', job: { styleKey: 'base' } }
+    ];
+    curAE = -1; AEXML = ''; HLXML = ''; HL = new Set(); BRK = new Set(); CNT = new Set(); JNS = new Set(); INTRO = []; INS = [];
+    let IPV = { plan: null };
+    function defJob() { return {}; }
+    function introResolve() { return { lines: [], remove: [], splits: [] }; }
+    function saveState() {}
+    function applyDbGains() {}
+    function renderIns() {}
+    function musicUI() {}
+    function renderClips3() {}
+    function renderAeDirField() {}
+    function loadWordsFor() {}
+    function ensureCustomOption() {}
+    function syncSubTabUI() {}
+    function ipvPlanSoon() {}
+    function patchSubStyleSoon() {}
+    function styleKeyFor(s) { return null; }
+    function stMigrateCamZoom(s) { return s; }
+    function stMigrateIntroCam2(s) { return s; }
+    function stMigrateCam2Zoom(s) { return s; }
+    function stMigrateIntroPos2(s) { return s; }
+
+    // 1. Проверяем inspSubEdit
+    selectAE(0);
+    inspSubEdit();
+    const subsDirty = styleDirty();
+    const subsKey = CLIPS[0].job.styleKey;
+    const subsSw = CLIPS[0].job.style ? CLIPS[0].job.style.sub_words_per_row : null;
+
+    selectAE(1);
+    selectAE(0);
+    const restoredSw = CURSTYLE ? CURSTYLE.sub_words_per_row : null;
+
+    // 2. Проверяем layer_order через кнопку перемещения слоя
+    // Выбираем снова именованный mak
+    sel.value = 'mak';
+    CLIPS[0].job.styleKey = 'mak';
+    delete CLIPS[0].job.style;
+    selectAE(0);
+
+    const loBox = document.createElement('div'); loBox.id = 'layer_order_box'; document.body.appendChild(loBox);
+    renderLayerOrderUI();
+    const upBtn = loBox.querySelector('button[data-t="Поднять слой выше"]');
+    // Нажимаем поднять слой (если есть) или перемещаем layer_order
+    const oldOrder = [...(CURSTYLE.layer_order || [])];
+    const newOrder = [oldOrder[1], oldOrder[0], ...oldOrder.slice(2)];
+    CURSTYLE.layer_order = newOrder;
+    stEdit();
+    const loDirty = styleDirty();
+    const loKey = CLIPS[0].job.styleKey;
+
+    console.log(JSON.stringify({
+      subsDirty,
+      subsKey,
+      subsSw,
+      restoredSw,
+      loDirty,
+      loKey
+    }));
+    """
+    res = _run_node_full(tmp_path, "test_sub_and_lo_dirty.js", body, with_inserts=True)
+    assert res["subsDirty"] is True, "inspSubEdit обязан пометить стиль изменённым"
+    assert res["subsKey"] == "__custom__", "inspSubEdit обязан перевести стиль клипа в __custom__"
+    assert res["subsSw"] == 3
+    assert res["restoredSw"] == 3
+    assert res["loDirty"] is True, "смена layer_order обязана пометить стиль изменённым"
+    assert res["loKey"] == "__custom__"

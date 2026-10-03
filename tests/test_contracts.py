@@ -153,7 +153,9 @@ def test_cam1_fit_is_frame_fill_not_premiere_scale(xml_nosubs, tmp_path):
     """«Заполнение кадра» считается от РАЗМЕРА ИСХОДНИКА (его знает AE), а не от масштаба из
     Премьера. Тот описывает файл, который лежал в Премьере: после пережатия 4K->1080p из XML
     приезжает scale=50.4, и картинка встаёт вполовину кадра (vik.aep, 2026-08-01 — юзер
-    компенсировал это +98% на зум-нуле). Рото-копия и её маска считаются от того же числа."""
+    компенсировал это +98% на зум-нуле). Рото-копия и её маска считаются от того же числа.
+    Масштаб из Премьера (c[5]) не участвует вовсе: у перебивок теперь та же формула fitS,
+    что у Камеры 1, плюс рамка кадра камеры (поле `frame` профиля спикера)."""
     import re
     out = str(tmp_path / "fit.jsx")
     xml2ae.to_ae_full(xml_nosubs, out, style={"cam1_fit": 115})
@@ -161,7 +163,8 @@ def test_cam1_fit_is_frame_fill_not_premiere_scale(xml_nosubs, tmp_path):
     # заполнение переехало в ключи зума нула (как в превью), слои кам1 — ровно 100
     assert re.search(r"var CAM1_FIT=100;", txt)
     assert "fitS = 100*Math.max(W/src.width, H/src.height)" in txt        # заполнение кадра
-    assert "var csc = isSecond ? c[5] : fitS*CAM1_FIT/100;" in txt        # кам1 — от него, кам2 — как в Премьере
+    assert "var csc = fitS*(track.frame?track.frame.zoom:100)/100*(isSecond?1:CAM1_FIT/100);" in txt
+    assert "isSecond ? c[5]" not in txt                                   # масштаб из Премьера ушёл
     assert "var rsc = (ci==0) ? rfit*CAM1_FIT/100 : rr.scale;" in txt     # рото-копия
     assert "var msc=rsc*(rr.mf||1);" in txt                               # и её маска
 

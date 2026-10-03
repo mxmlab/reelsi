@@ -19,6 +19,7 @@ const IC={
  pause:'<path d="M8 4.5v15M16 4.5v15"/>',
  cut:'<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M8.2 7.7 20 19M8.2 16.3 20 5"/>',
  trash:'<path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/>',
+ copy:'<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
  undo:'<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
  save:'<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/>',
  ai:'<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8Z"/><path d="M19 15l.8 2.4 2.4.8-2.4.8L19 21.5l-.8-2.5-2.4-.8 2.4-.8Z"/>',
@@ -36,7 +37,10 @@ const IC={
  refresh:'<path d="M20.5 12a8.5 8.5 0 1 1-2.5-6"/><path d="M21 3v6h-6"/>',
  arrow_up:'<path d="m18 15-6-6-6 6"/>',
  arrow_down:'<path d="m6 9 6 6 6-6"/>',
+ arrow_left_plus:'<path d="M10 7 5 12l5 5M5 12h8"/><path d="M18 9v6M15 12h6"/>',
  grip:'<circle cx="9" cy="6" r="1.2" fill="currentColor"/><circle cx="9" cy="12" r="1.2" fill="currentColor"/><circle cx="9" cy="18" r="1.2" fill="currentColor"/><circle cx="15" cy="6" r="1.2" fill="currentColor"/><circle cx="15" cy="12" r="1.2" fill="currentColor"/><circle cx="15" cy="18" r="1.2" fill="currentColor"/>',
+ link:'<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+ unlink:'<path d="m18.84 12.25 1.72-1.71a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="m5.16 11.75-1.72 1.71a5 5 0 0 0 7.07 7.07l1.72-1.71"/><line x1="2" y1="2" x2="22" y2="22"/>',
 };
 function ico(n,cls){return '<svg class="ic'+(cls?' '+cls:'')+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'+(IC[n]||'')+'</svg>';}
 
@@ -122,6 +126,7 @@ function insScrubInit(x){if(x.mw==null)x.mw=100;if(x.mh==null)x.mh=100;if(x.sc==
 // ================= steps =================
 let STEP=1;
 function goStep(n){
+  if(typeof voiceFxHostStop==='function')voiceFxHostStop();
   if(n===2 && !CLIPS.length){toast(t('Сначала сделай нарезку или добавь XML'));return;}
   if(STEP===3&&n!==3&&curAE>=0)captureAE();   // уход с шага AE — не потерять интро/жёлтые/вставки в джобе
   const pv=$('pageVideo');if(pv)pv.classList.remove('on');   // уходим с вкладки «Видео» (если были на ней)

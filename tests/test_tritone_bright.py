@@ -23,7 +23,9 @@ Tritone красит по яркости: цвет мидтонов уезжае
 tests/test_intro_hl_glow.py): фикстура timeline_subs.xml.gz и строки интро со свечением.
 """
 import gzip
+import json
 import os
+import re
 import shutil
 import sys
 
@@ -61,12 +63,20 @@ def _build(xml, tmp_path, intro, style=None, name="out.jsx"):
     return open(path, encoding="utf-8-sig").read(), path
 
 
+def _lines(jsx):
+    """Строки интро из INTRO_GROUPS собранного .jsx (то, что план положил в сборку)."""
+    return [x for g in json.loads(re.search(r"var INTRO_GROUPS=(\[.*?\]);", jsx).group(1))
+            for x in g]
+
+
 def _intro():
     """Две группы (intro_splits=[1]), чтобы в сборке были ОБЕ подстановки тритона:
-    жёлтая строка со свечением — ветка introAnimFX, жёлтая без свечения и глитча —
-    ветка introHlGlow (её зовут только там, где группа без глитча и строка без свечения)."""
+    accent-строка со свечением — ветка introAnimFX (fx="glow" ей ставит план по галке
+    стиля intro_accent_glow, поле fx строки не читается), жёлтая строка без свечения и
+    глитча — ветка introHlGlow (её зовут только там, где группа без глитча и строка без
+    свечения). Жёлтая строка свечения не получает вовсе: светятся только accent-строки."""
     return [
-        dict(words=["СВЕЧЕНИЕ"], color="yellow", times=[T_CAM1], fx="glow"),
+        dict(words=["СВЕЧЕНИЕ"], color="accent", times=[T_CAM1]),
         dict(words=["ЯРКОЕ"], color="yellow", times=[T_CAM1 + 0.4]),
     ]
 
@@ -95,6 +105,11 @@ def test_яркий_жёлтый_тритона_нет(xml_subs, tmp_path):
     assert "function introHlGlow(L)" in jsx
     assert ('var fxGl=addFX(L,"ADBE Glo2"); setP(fxGl,"ADBE Glo2-0002",149);'
             ' setP(fxGl,"ADBE Glo2-0003",77); setP(fxGl,"ADBE Glo2-0004",0.62);') in jsx
+    # Жёлтая строка свечения не получает: fx="glow" план ставит только accent-строке и
+    # только по галке стиля intro_accent_glow — поле fx строки не читается вовсе.
+    lines = _lines(jsx)
+    assert [x.get("color") for x in lines if x.get("fx") == "glow"] == ["accent"]
+    assert not [x for x in lines if x.get("color") == "yellow" and x.get("fx") == "glow"]
 
 
 def test_тёмный_красный_тритон_есть(xml_subs, tmp_path):
@@ -114,6 +129,8 @@ def test_дефолтный_жёлтый_ярче_порога_тритона_н
     """Без intro_hl_fill цвет мидтонов — дефолтный hl_fill [1,0.9176,0] (0.87): выкл."""
     jsx, _ = _build(xml_subs, tmp_path, _intro(), style={}, name="default.jsx")
 
-    assert "var HL_FILL = [1,0.9176,0];" in jsx
+    # Значение дефолтное. За запятой — HL_FILL3: он дописывается в то же объявление,
+    # когда в сборке есть accent-строка (она и несёт свечение по галке стиля).
+    assert re.search(r"var HL_FILL = \[1,0\.9176,0\](,|;)", jsx)
     assert "ADBE Tritone" not in jsx
     assert 'setP(fxGl,"ADBE Glo2-0004",0.62);' in jsx

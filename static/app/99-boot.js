@@ -19,6 +19,9 @@ let SRVST_OK_T=Date.now(); // с нулём потолок ожидания ср
 let SRVST_ERR=false;       // «об этой серии провалов уже сообщили» — не спамить uiLog
 function stateObj(){return {
   base:val('base'),ai_outdir:val('ai_outdir'),aeoutdir:AEGLOBAL,aerender:AERENDER,aemusicdir:val('aemusicdir'),
+  // Движок рендера (какой из двух) — настройка рендера, как папка вывода: живёт в
+  // состоянии, а не в разметке. Значение читает сам переключатель (rendEngine).
+  rendengine:rendEngine(),
   cams:nCams(),CAMDIRS,CAMFILES,CAMFROM,QUEUE,newonly:$('newonly').checked,
   dedupe:(CUT_STAGES&&CUT_STAGES.dedupe!==undefined)?!!CUT_STAGES.dedupe:false,
   cut_stages:CUT_STAGES,
@@ -26,7 +29,8 @@ function stateObj(){return {
   // genBusy — мгновенный флаг «идёт генерация», в состояние НЕ пишется: иначе
   // flushSave успевает сохранить залипшую «…», и она переживает F5 навсегда —
   // гвардия двойного клика глотает нажатия, а снять некому (поймано 2026-08-10).
-  CLIPS:CLIPS.map(c=>{const cc={...c};cc.inserts=(c.inserts||[]).map(x=>{const xx={...x};delete xx.genBusy;return xx;});return cc;}),
+  // _typeBusy (переискивание при смене типа вставки) — та же история: только в памяти.
+  CLIPS:CLIPS.map(c=>{const cc={...c};cc.inserts=(c.inserts||[]).map(x=>{const xx={...x};delete xx.genBusy;delete xx._typeBusy;return xx;});return cc;}),
   curAE,styleSel:val('style'),CURSTYLE,STEP,subengine:val('subengine'),speaker:val('speaker'),
   VID:vidStateObj()};}
 function saveState(){const s=JSON.stringify(stateObj());
@@ -52,6 +56,9 @@ function applyState(s){try{
   // поле показывает её или папку тега открытого клипа (см. renderAeDirField).
   if(s.aeoutdir!=null)AEGLOBAL=s.aeoutdir;
   if(s.aerender!=null)AERENDER=s.aerender;
+  // Движок рендера — до первого сохранения состояния: rendEngineUI внутри ставит
+  // выбранную радиокнопку и зовёт saveState (без него выбор так и остался бы в файле).
+  if(s.rendengine!=null)rendEngineSet(s.rendengine);
   // s.aimodel (старый ключ) больше не читаем — выбор модели переехал в серверный ai_config.json
   if(s.cams){const rb=document.querySelector('input[name=cams][value="'+s.cams+'"]');if(rb)rb.checked=true;}
   if(Array.isArray(s.CAMDIRS))CAMDIRS=s.CAMDIRS;if(Array.isArray(s.CAMFILES))CAMFILES=s.CAMFILES;
@@ -70,7 +77,7 @@ function applyState(s){try{
     (CLIPS||[]).forEach(c=>(c.inserts||[]).forEach(x=>{delete x.genBusy;}));}
   if(typeof s.curAE==='number')curAE=s.curAE;
   if(curAE>=CLIPS.length)curAE=-1;      // состояние могло сохраниться с индексом длиннее списка
-  if(s.CURSTYLE)CURSTYLE=s.CURSTYLE;if(s.styleSel)STYLESAVED=s.styleSel;
+  if(s.CURSTYLE)CURSTYLE=stMigrateIntroCam2(stMigrateCam2Zoom(stMigrateIntroPos2(s.CURSTYLE)));if(s.styleSel)STYLESAVED=s.styleSel;
   if(s.subengine!=null){SUBWANT=asrMigrate(s.subengine);const se=$('subengine');if(se&&se.options.length)se.value=SUBWANT;}
   // s.selfcheck_model и устаревшие ключи в старом состоянии просто игнорируем
   // Список спикеров грузится асинхронно — запоминаем выбор, ставит его loadSpeakers
@@ -116,6 +123,11 @@ loadCams();
 loadAIProfiles();
 // спикеры — после стилей: выбор спикера подставляет стиль, а его надо знать
 loadStyles().then(loadSpeakers);loadFonts();
+// Схема стиля — на загрузке, а не только при открытии панели: из неё превью берёт
+// таблицу «поле -> вид» и поле-представитель вида, которыми пересчитывает живой стиль
+// под кадр формата (stScaleStyle/stScaleKind, 95-styles.js). Без неё драг в превью
+// двигал бы стиль в базовых единицах, а кадр ролика у форматов разной высоты.
+if(typeof loadStyleSchema==='function')loadStyleSchema();
 edBind();
 let bootStep=1,bootRaw='';try{bootRaw=localStorage.getItem('reelsi_step')||'';bootStep=parseInt(bootRaw)||1;}catch(e){}
 if(bootRaw==='video')openVideo(); else goStep(CLIPS.length?bootStep:1);
@@ -123,7 +135,8 @@ if(bootRaw==='video')openVideo(); else goStep(CLIPS.length?bootStep:1);
 (async()=>{try{const d=await (await fetch('/api/video_status')).json();
   const ctx=videoContextForStatus(d);
   if(d.running){if(!ctx&&bootRaw!=='video')openVideo();
-    logReset();progShow(t('Генерация видео'),t('возобновляю после перезагрузки…'));
+    logReset();progOpen({title:t('Генерация видео')});
+    progUpdate(null,t('возобновляю после перезагрузки…'));
     vidBusy(true);            // F5 во время генерации — «Остановить» должна вернуться вместе с прогрессом
     VIDCANCEL=false;VIDCTX=ctx;VIDPOLL=true;VIDRETRY=0;pollVideo();}
   else if(d.done){if(ctx){VIDCTX=null;vidBusy(false);videoFinish(d,ctx);}
@@ -140,7 +153,8 @@ illHdrPoll();                        // если описание базы уж�
     // kind/label приходят структурно из JOB (сниффинг лога — только фолбэк для старого сервера)
     const kind=d.kind||((d.log||[]).some(l=>fmtLog(l).indexOf('=== Сборка')===0)?'build':'cut');
     const label=d.label||(/Omni|27b/.test((d.log||[]).map(fmtLog).join('\n'))?t('ИИ-нарезка'):t('Нарезка'));
-    progShow(label,t('возобновляю после перезагрузки…'));
+    progOpen({title:label});
+    progUpdate(null,t('возобновляю после перезагрузки…'));
     if(kind==='build')pollBuild();
     else if(kind==='draft')pollDraft();
     else{CUTLABEL=label;cutBusy(true);pollAI();}
@@ -153,7 +167,11 @@ illHdrPoll();                        // если описание базы уж�
   // а не только в поле: загрузка спикеров (applySpeakerDirs -> renderRenderDirField)
   // идёт позже и перезаписала бы значение, оставленное только в DOM.
   if(d.default_dir&&!AERENDER){AERENDER=d.default_dir;renderRenderDirField();}
-  if(d.running){logReset();progShow(t('Рендер AE'),t('возобновляю после перезагрузки…'));uiBusySet(true);pollRender();}
+  // Движок идущего рендера — от СЕРВЕРА (d.engine), а не от переключателя на странице:
+  // встроенный рендер подписывался бы «Рендер AE» до первого ответа pollRender.
+  if(d.running){RENDERENGINE=(d.engine==='builtin')?'builtin':'ae';logReset();
+    progOpen({title:rendEngineLabel()});
+    progUpdate(null,t('возобновляю после перезагрузки…'));uiBusySet(true);pollRender();}
   else if(d.interrupted)jobInterrupted(d.interrupted);   // рендер оборван перезапуском сервера
 }catch(e){}})();
 // bfcache возвращает страницу целиком — вместе с застрявшим в «…» genBusy старого

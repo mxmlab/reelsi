@@ -18,8 +18,10 @@ from core.app_meta import http_req, t
 # Маскирование ключей живёт в core/aicut/config.py: это логика
 # безопасности, а не HTTP. Имена-алиасы оставлены ради соседних роутов этого модуля
 # (/api/ai_test, /api/ai_models): реализация при этом одна на всех, а не копия в роуте.
-# mask_ai_key алиаса не требует — в этом модуле его звал только masked_profiles.
-from core.aicut.config import (masked_profiles as _masked_profiles,
+# mask_ai_key зовёт _masked_stock (ключи стоков в ответе) — тоже алиасом: имя
+# реализации обязано жить в одном месте.
+from core.aicut.config import (mask_ai_key as _mask_ai_key,
+                               masked_profiles as _masked_profiles,
                                saved_profile_for_masked as _saved_profile_for_masked,
                                unmask_ai_key as _unmask_ai_key)
 # Действия роута /api/ai_config: ветки переехали в core целиком.
@@ -28,6 +30,19 @@ from core.aicut.config_actions import ACTIONS
 
 
 
+
+
+def _log_tag(xml_path: str, batch: str | None) -> str:
+    """Префикс строки лога в пачке: «[имя XML] » — по нему фронт берёт хвост СВОЕГО клипа.
+
+    Ролики пачки считаются параллельно и пишут в общий JOB-лог: без префикса строки разных
+    клипов перемешивались в одной подписи прогресса. Тег — то же имя XML без расширения,
+    что и на фронте (stem файла), поэтому сторонам не нужно согласовывать его отдельно.
+    Без batch (одиночный вызов) префикса нет — как было.
+    """
+    if not batch:
+        return ""
+    return "[" + os.path.splitext(os.path.basename(xml_path))[0] + "] "
 
 
 @bp.route("/api/ai_yellow", methods=["POST"])
@@ -41,11 +56,18 @@ def api_ai_yellow() -> Response:
         if not os.path.isfile(xml_path):
             raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml_path}",
                                   path=xml_path))
-        ep = _ai_begin("жёлтые")
+        batch = jstr(d, "batch").strip()[:64] or None
+        ep = _ai_begin("жёлтые", batch=batch, step="yellow")
         try:
             from core import aicut
+            # В пачке строки лога принадлежат КОНКРЕТНОМУ клипу — помечаем их именем XML
+            # (без расширения): параллельные ролики пишут в общий лог, и без префикса фронт
+            # не мог отделить свой хвост от чужого. Без batch — как раньше, без префикса.
+            def _emit(line: str = "", /, **vars: Any) -> None:
+                emit((_log_tag(xml_path, batch) + line) if line else line, **vars)
+
             res = aicut.cmd_yellow(xml_path, model=(jstr(d, "model") or None),
-                                   url=(jstr(d, "url") or None), emit=emit)
+                                   url=(jstr(d, "url") or None), emit=_emit)
             return jsonify(ok=True, yellow=res["yellow"], colored=res.get("colored", []),
                            total=res["total"])
         except (ReelsiError, SystemExit) as e:      # LM Studio недоступен / отказ модели
@@ -70,22 +92,26 @@ def api_ai_inserts() -> Response:
         if not os.path.isfile(xml_path):
             raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml_path}",
                                   path=xml_path))
-        ep = _ai_begin("вставки")
+        batch = jstr(d, "batch").strip()[:64] or None
+        ep = _ai_begin("вставки", batch=batch, step="inserts")
         unload = False
         try:
             from core import aicut
             notes = []                      # сдвиги таймингов/зон видны в UI-логе, а не глушатся
             def _emit(line: str = "", /, **vars: Any) -> None:
                 s = t(line, **vars) if line else ""
-                notes.append(s)
-                emit(line, **vars)         # дублируем в JOB-лог (серверный прогресс стриминга)
+                notes.append(s)             # notes — готовый текст ответа, он без служебного префикса
+                emit((_log_tag(xml_path, batch) + line) if line else line,
+                     **vars)                # в JOB-лог строка уходит с именем клипа
 
+            speaker = jstr(d, "speaker") or None
             res = aicut.cmd_inserts(xml_path, model=(jstr(d, "model") or None),
                                     count=d.get("count"), avoid=d.get("avoid"),
                                     rejected=d.get("rejected"),
-                                    emit=_emit)
+                                    emit=_emit,
+                                    speaker=speaker)
             unload = True
-            # ins_target — цель набора (от длительности ролика): фронт хранит её в
+            # ins_target — цель набора (из профиля спикера): фронт хранит её в
             # c.insTarget и по ней считает «добрать», не зашивая 13 в JS.
             return jsonify(ok=True, inserts=res["inserts"], insTarget=res["ins_target"],
                            log=notes)
@@ -104,6 +130,20 @@ def api_ai_inserts() -> Response:
 # ---- профили ИИ-провайдеров (шестерёнка в webui, как в Roo Code) ----------
 # Маскирование ключей — в core/aicut/config.py, действия — в core/aicut/config_actions.py
 # в HTTP-модуле от них остались только импорты выше и диспетчер ниже.
+def _masked_stock(cfg: dict[str, Any]) -> dict[str, str]:
+    """Ключи стоков (раздел `stock` ai_config.json) наружу — только маской «•••xxxx»,
+    как ключи профилей: браузер не место для секрета. `env:VAR` не маскируется: это
+    имя переменной окружения, значение подставит resolve_key уже на сервере."""
+    from core import stock
+    section = cfg.get("stock")
+    section = section if isinstance(section, dict) else {}
+    out: dict[str, str] = {}
+    for prov in stock.PROVIDERS:
+        raw = section.get(prov + "_key")
+        out[prov + "_key"] = _mask_ai_key(raw if isinstance(raw, str) else "")
+    return out
+
+
 def _ai_config_answer(cfg: dict[str, Any], full: bool = False) -> dict[str, Any]:
     """Ответ /api/ai_config — ОДНА функция на обе ветки: набор полей у них общий.
 
@@ -113,8 +153,15 @@ def _ai_config_answer(cfg: dict[str, Any], full: bool = False) -> dict[str, Any]
     каталог возможностей (models.dev) и пресеты провайдеров, нужные вкладке «ИИ» при
     загрузке. Набор полей каждой ветки при этом не изменился.
     """
-    from core import aicut
-    ans = {
+    from core import aicut, encoders
+    step_conc: dict[str, int] = {}
+    for k in aicut.STEP_REASONING_DEFAULT:
+        try:
+            step_conc[k] = aicut.step_concurrency(k)
+        except ReelsiError: raise
+        except Exception:
+            step_conc[k] = 1
+    ans: dict[str, Any] = {
         "active": cfg.get("active"),
         "profiles": _masked_profiles(cfg),
         "active_omni": cfg.get("active_omni") or aicut.OMNI_LOCAL,
@@ -127,6 +174,7 @@ def _ai_config_answer(cfg: dict[str, Any], full: bool = False) -> dict[str, Any]
         # режим мог остаться от старой версии — наружу отдаём только известный
         "glitch_glow": (cfg.get("glitch_glow")
                         if cfg.get("glitch_glow") in aicut.GLITCH_GLOW_MODES else "builtin"),
+        "ae_build_workers": cfg.get("ae_build_workers", "auto"),
         "reasoning_steps": {k: aicut.step_reasoning(k)
                             for k in aicut.STEP_REASONING_DEFAULT},
         # Что РЕАЛЬНО уйдёт в API (после понижения невалидного уровня
@@ -135,7 +183,24 @@ def _ai_config_answer(cfg: dict[str, Any], full: bool = False) -> dict[str, Any]
                                 for k in aicut.STEP_REASONING_DEFAULT},
         "step_profiles": {k: aicut.step_profile(k)
                           for k in aicut.STEP_REASONING_DEFAULT},
+        "step_concurrency": step_conc,
+        # Переопределения НА ШАГЕ (вкладки «Нарезка»/«Разметка»): словарь как в
+        # конфиге — интерфейсу нужно СВОЁ число шага, а не только итоговое.
+        "step_concurrency_override": (dict(cfg["step_concurrency_override"])
+                                      if isinstance(cfg.get("step_concurrency_override"), dict)
+                                      else {}),
+        # Ключи стоков — маской, как ключи профилей (вкладка «Генерация» → «Стоки»)
+        "stock": _masked_stock(cfg),
+        # Чем кодировать видео, которое Reelsi пишет сам (⚙ → Инструменты → «Видеокодек»):
+        # "auto" или семейство (nvidia/intel/amd/apple/cpu) — настройка МАШИННАЯ.
+        "video_encoder": encoders.video_encoder_cfg(),
     }
+    # Живые кодеки этой машины. Проба — микро-энкод (секунды), поэтому поля нет, пока
+    # список не посчитан: GET /api/ai_config зовётся часто и обязан отвечать сразу.
+    # Не посчитан — фронт сходит за ним отдельным запросом (/api/encoders).
+    live = encoders.cached_available("master")
+    if live is not None:
+        ans["video_encoders"] = {"available": live, "auto": encoders.auto_family("master")}
     if not full:
         return ans
     # Возможности моделей профилей из каталога models.dev: по ним
@@ -190,6 +255,22 @@ def api_ai_config() -> Response:
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("ai_config_failed", f"{type(e).__name__}: {e}",
                                                   err=f"{type(e).__name__}: {e}"))))
+
+
+@bp.route("/api/encoders", methods=["GET"])
+def api_encoders() -> Response:
+    """Что реально работает на этой машине для кодека МАСТЕРА (⚙ → Инструменты → «Видеокодек»).
+
+    Проба — микро-энкод каждого семейства: первый заход занимает секунды, дальше ответ
+    берётся из кэша процесса (core.encoders). Поэтому и отдельный роут: GET /api/ai_config
+    зовётся часто и ждать пробы ему нельзя. `auto` — то, что выберет «Авто», `available` —
+    всё живое в порядке предпочтения (по ним интерфейс гасит недоступные пункты)."""
+    from core import encoders
+    try:
+        return jsonify(ok=True, available=encoders.available("master"),
+                       auto=encoders.auto_family("master"))
+    except (ReelsiError, SystemExit) as e:
+        return jsonify(**umsg_err(e))
 
 
 @bp.route("/api/ai_test", methods=["POST"])
@@ -482,15 +563,17 @@ def api_ai_intro() -> Response:
         if not os.path.isfile(xml_path):
             raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml_path}",
                                   path=xml_path))
-        ep = _ai_begin("интро")
+        batch = jstr(d, "batch").strip()[:64] or None
+        ep = _ai_begin("интро", batch=batch, step="intro")
         unload = False
         try:
             from core import aicut
             notes = []                      # прогресс стрима и переносы строк — в UI-лог, не в /dev/null
             def _emit(line: str = "", /, **vars: Any) -> None:
                 s = t(line, **vars) if line else ""
-                notes.append(s)
-                emit(line, **vars)
+                notes.append(s)             # notes — готовый текст ответа, он без служебного префикса
+                emit((_log_tag(xml_path, batch) + line) if line else line,
+                     **vars)                # в JOB-лог строка уходит с именем клипа
 
             # inserts из UI (если фронт держит актуальный список) — акценты встанут туда,
             # где вставок нет; иначе cmd_intro подхватит сайдкар .inserts.json
@@ -524,8 +607,9 @@ def api_ai_stop() -> Response:
             def _unload() -> None:
                 # выгрузка отложена в поток — но если к этому моменту уже стартовал НОВЫЙ
                 # вызов (юзер сменил reasoning и запустил заново), модель трогать нельзя
-                if aicut.is_current(ep):
+                if aicut.idle_since(ep):
                     aicut.unload_ours()
+                    aicut.unsloth_cancel_ours()
             threading.Thread(target=_unload, daemon=True).start()
         except ReelsiError: raise
         except Exception as e:

@@ -207,3 +207,11 @@ function isPhotoPath(p){return /\.(png|jpe?g|webp|gif|bmp|avif|tiff?)$/i.test(St
 // склонение по числу: plur(3,'пара','пары','пар') -> 'пары'
 function plur(n,one,few,many){n=Math.abs(n)%100;const d=n%10;
   return (n>10&&n<20)?many:(d>1&&d<5)?few:(d===1)?one:many;}
+// освободить медиа-элемент: пауза, снятый src (файл перестаёт держать соединение)
+// и load() — им браузер отпускает ресурс, и убрать из DOM
+function mediaFree(v){if(!v)return;
+  try{v.pause();}catch(e){}
+  try{v.removeAttribute('src');}catch(e){}
+  try{v.load();}catch(e){}
+  if(v.parentNode&&v.parentNode.removeChild)try{v.parentNode.removeChild(v);}catch(e){}}
+

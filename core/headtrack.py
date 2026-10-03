@@ -22,13 +22,14 @@ from core.applog import get_logger
 log = get_logger(__name__)
 
 
-def cam1_ranges(cams: Sequence[Mapping[str, Any]], fps: float | int | None) -> list[tuple[float, float]]:
-    """Участки исходника Камеры 1, реально показываемые в монтаже (сек): [(in_s, out_s), ...]."""
-    if not cams or not cams[0].get("clips"):
+def cam1_ranges(cams: Sequence[Mapping[str, Any]], fps: float | int | None, cam: int = 1) -> list[tuple[float, float]]:
+    """Участки исходника Камеры cam (1 или 2), реально показываемые в монтаже (сек): [(in_s, out_s), ...]."""
+    idx = cam - 1
+    if not cams or len(cams) <= idx or not cams[idx].get("clips"):
         return []
     fps0 = float(fps or 60)
     ranges = []
-    for cl in cams[0].get("clips", []):
+    for cl in cams[idx].get("clips", []):
         if len(cl) > 4 and cl[4] and cl[1] > cl[0]:
             in_s = cl[2] / fps0
             dur_s = (cl[1] - cl[0]) / fps0
@@ -179,8 +180,14 @@ def track(video: str, ranges: Sequence[Any], emit: Callable[..., Any] | None = N
     return {"v": 1, "fps": fps, "w": w_src, "h": h_src, "pts": pts}
 
 
-def load_cached(xml_path: str | None, video: str, ranges: Sequence[Any] | None = None) -> dict[str, Any] | None:
-    """Проверить валидность сайдкара <стем>.head.json и вернуть данные или None.
+def head_cache_path(xml_path: str, cam: int = 1) -> str:
+    """Путь к сайдкару трека головы: .head.json для Камеры 1, .head{cam}.json для остальных."""
+    suffix = ".head.json" if cam == 1 else f".head{cam}.json"
+    return os.path.splitext(xml_path)[0] + suffix
+
+
+def load_cached(xml_path: str | None, video: str, ranges: Sequence[Any] | None = None, cam: int = 1) -> dict[str, Any] | None:
+    """Проверить валидность сайдкара трека головы и вернуть данные или None.
 
     Годен, если файл существует, v == 1, путь, размер и mtime видео совпадают.
     Если переданы ranges — кэш годен, только если cached['ranges'] покрывают ranges.
@@ -190,7 +197,7 @@ def load_cached(xml_path: str | None, video: str, ranges: Sequence[Any] | None =
     video = os.path.abspath(video)
     if not os.path.isfile(video):
         return None
-    head_path = os.path.splitext(xml_path)[0] + ".head.json"
+    head_path = head_cache_path(xml_path, cam)
     if not os.path.isfile(head_path):
         return None
     data = fileio.json_load_soft(head_path)
@@ -208,24 +215,24 @@ def load_cached(xml_path: str | None, video: str, ranges: Sequence[Any] | None =
     return None
 
 
-def load_or_track(xml_path: str | None, video: str, ranges: Sequence[Any], emit: Callable[..., Any] | None = None, cancel: Callable[[], bool] | None = None, fps: int = 10) -> dict[str, Any]:
-    """Загрузить трек из <стем>.head.json или посчитать заново и сохранить."""
+def load_or_track(xml_path: str | None, video: str, ranges: Sequence[Any], emit: Callable[..., Any] | None = None, cancel: Callable[[], bool] | None = None, fps: int = 10, cam: int = 1) -> dict[str, Any]:
+    """Загрузить трек из сайдкара или посчитать заново и сохранить."""
     emit = wrap_emit(emit)
     video = os.path.abspath(video)
     if not os.path.isfile(video):
         raise FileNotFoundError(f"Видео не найдено: {video}")
     size = os.path.getsize(video)
     mtime = os.path.getmtime(video)
-    head_path = os.path.splitext(xml_path)[0] + ".head.json" if xml_path else None
+    head_path = head_cache_path(xml_path, cam) if xml_path else None
     merged_ranges = merge_ranges(ranges)
 
-    cached = load_cached(xml_path, video, ranges=merged_ranges)
+    cached = load_cached(xml_path, video, ranges=merged_ranges, cam=cam)
     if cached is not None:
         if head_path:
             emit("  · трек головы: из кэша {path}", path=os.path.basename(head_path))
         return cached
 
-    emit("  · трек головы Камеры 1 (RVM)...")
+    emit(f"  · трек головы Камеры {cam} (RVM)...")
     res = track(video, merged_ranges, emit=emit, cancel=cancel, fps=fps)
     data = dict(res)
     data["video"] = video

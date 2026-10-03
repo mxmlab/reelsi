@@ -278,3 +278,23 @@ def test_origin_helper_разбирает_хост():
     assert not api._origin_is_local("http://localhost.evil.example")
     assert not api._origin_is_local("null")
     assert not api._origin_is_local("")
+
+
+def test_clickjacking_frame_protection_headers():
+    """Защита от clickjacking: ответы содержат X-Frame-Options и Content-Security-Policy.
+
+    Клики внутри <iframe> отправляются браузером как same-origin, поэтому
+    страница защищается запретом встраивания во фреймы на уровне заголовков.
+    Проверяем и главную страницу /, и API-эндпоинт через клиент webui.app.
+    """
+    import webui
+
+    client = webui.app.test_client()
+
+    r_index = client.get("/", headers={"Host": "127.0.0.1:5001"})
+    assert r_index.headers.get("X-Frame-Options") == "DENY"
+    assert r_index.headers.get("Content-Security-Policy") == "frame-ancestors 'none'"
+
+    r_api = client.get("/api/status", headers={"Host": "127.0.0.1:5001"})
+    assert r_api.headers.get("X-Frame-Options") == "DENY"
+    assert r_api.headers.get("Content-Security-Policy") == "frame-ancestors 'none'"

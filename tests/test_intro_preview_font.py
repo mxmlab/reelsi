@@ -98,6 +98,27 @@ def test_plan_fonts_parallel_lines_and_not_in_jsx_lines(xml_subs):
             assert "fonts" not in ln, "в .jsx-строки поле fonts не попадает"
 
 
+def test_plan_carries_the_subtitle_fonts_the_jsx_gets(xml_subs):
+    """Шрифты СУБТИТРОВ план несёт теми же именами, что уезжают в .jsx (FONT/HL_FONT).
+
+    Превью брало их из своей копии стиля (CURSTYLE), а страница рендера получает тело
+    сборки, где стиль может быть и ИМЕНЕМ (строкой — так строит CLI): тогда `s.font` пуст,
+    и субтитры рисовались запасным SFPro-CondensedSemibold, хотя .jsx собрал заказанный.
+    Замер по кадру владельца (30 с): «КУБИК» 344 px против 284 в AE при одинаковом кегле.
+    """
+    plan = _plan(xml_subs, {"font": "FontA", "hl_font": "FontB"},
+                 [{"words": ["МАКСИМАЛЬНО"], "color": "white"}])
+    assert plan["sub_font"] == "FontA", "план не несёт шрифт субтитров"
+    assert plan["sub_hl_font"] == "FontB", "план не несёт шрифт выделения"
+    # Те же имена уходят и в .jsx (FONT/HL_FONT): подстановка одна на оба пути.
+    build_src = open(os.path.join(ROOT, "core", "xml2ae", "build.py"), encoding="utf-8").read()
+    assert "font=_js(font_ps), hl_font=_js(hl_font_ps)" in build_src, (
+        "в .jsx шрифты берутся не из font_ps/hl_font_ps — план и сборка разъехались")
+    # Стиль без hl_font: выделение падает на базовый шрифт (как FONT в .jsx).
+    plan2 = _plan(xml_subs, {"font": "FontA"}, [{"words": ["МАКСИМАЛЬНО"], "color": "white"}])
+    assert plan2["sub_hl_font"] == "FontA", plan2["sub_hl_font"]
+
+
 def test_front_reads_fonts_from_plan_and_space_text_node():
     """Сторож фронта: превью берёт шрифт из plan.intro[].fonts (не досчитывает),
     introGroupWindows передаёт fonts, ipvIntro ставит между словами текстовый узел-пробел."""

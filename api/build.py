@@ -325,13 +325,8 @@ def api_cams_load() -> Response:
                              "dur": round(dur, 3), "tl": round(tl, 3)})
                 tl += dur
             stored = None if d.get("auto") else p.get("assign")
-            if isinstance(stored, list) and len(stored) == len(keep):
-                assign = [max(0, min(N - 1, int(x))) for x in stored]
-            elif N > 1:
-                assign = align.assign_cameras(keep, N, return_every=p.get("cam_return", 2),
-                                              big_chunk_sec=6.0)
-            else:
-                assign = [0] * len(keep)
+            proj_dict = dict(p, assign=None) if d.get("auto") else p
+            assign = align.assign_for_project(proj_dict, keep, N) or [0] * len(keep)
             return jsonify(ok=True, n=N, fps=p.get("fps", 60), total=round(tl, 1),
                            names=[os.path.basename(c) for c in cams], segs=segs,
                            assign=[int(x) for x in assign], manual=isinstance(stored, list))
@@ -380,7 +375,7 @@ def api_cams_save() -> Response:
             try:
                 info = xmlbuild.build(cams, keep, offsets, xml,
                                       assign=(assign if N > 1 else None),
-                                      scale=p.get("scale", 50.4), sub_words=sub_words, music_path=None)
+                                      sub_words=sub_words, music_path=None)
             except (ReelsiError, SystemExit) as e:
                 # Пустой монтаж: build файл не тронул — текст гарда отдаём как есть.
                 raise ReelsiError(umsg("cams_save_failed", str(e), err=str(e)))
@@ -477,17 +472,10 @@ def api_swap_cam() -> Response:
             cams[k] = new_path
             offsets[k] = round(float(off), 3)
             # раскладка камер: ручная из проекта (если валидна) иначе авто — та же, что была
-            stored = p.get("assign")
-            if N > 1 and isinstance(stored, list) and len(stored) == len(keep):
-                assign = [max(0, min(N - 1, int(x))) for x in stored]
-            elif N > 1:
-                assign = align.assign_cameras(keep, N, return_every=p.get("cam_return", 2),
-                                              big_chunk_sec=6.0)
-            else:
-                assign = None
+            assign = align.assign_for_project(p, keep, N)
             try:
                 xmlbuild.build(cams, keep, offsets, xml, assign=assign,
-                               scale=p.get("scale", 50.4), sub_words=sub_words, music_path=None)
+                               sub_words=sub_words, music_path=None)
             except (ReelsiError, SystemExit) as e:
                 # Пустой монтаж: build файл не тронул — текст гарда отдаём как есть.
                 raise ReelsiError(umsg("swap_cam_failed", str(e), err=str(e)))
@@ -545,6 +533,7 @@ def api_export_xml() -> Response | tuple[str, int]:
         return ("not found", 404)
     from core import xmlbuild
     try:
+        xmlbuild.sync_xml_voice(path)
         text = open(path, encoding="utf-8", newline="").read()
         text, n = xmlbuild.fix_timecodes(text)
     except ReelsiError: raise
@@ -565,6 +554,10 @@ def api_export_drp() -> Response | tuple[str, int]:
     XML их нет, они живут только в состоянии UI). Данные сборки берём из сайдкара
     `<stem>.project.json`, как при пересборке XML: кто не нарезан там — вставки
     без media в сборку не уйдут.
+
+    Рядом с XML может лежать `<stem>.voice.wav` — обработанный голос камеры 1
+    (`core/voicefx`): у записи камеры 1 звук берётся из него, видео и клипы
+    таймлайна не меняются. Файла нет — `.drp` прежний.
     """
     d = request.get_json() or {}
     xml = jstr(d, "xml").strip().strip('"')
@@ -593,18 +586,11 @@ def api_export_drp() -> Response | tuple[str, int]:
             offsets = [float(x) for x in (p.get("offsets") or [0.0] * len(cams))]
             if len(cams) != len(offsets):
                 offsets = [0.0] * len(cams)
-            stored = p.get("assign")
-            assign = ([max(0, min(len(cams) - 1, int(x))) for x in stored]
-                      if len(cams) > 1 and isinstance(stored, list)
-                      and len(stored) == len(keep) else None)
-            if assign is None and len(cams) > 1 and keep:
-                from core import align
-                assign = align.assign_cameras(keep, len(cams),
-                                              return_every=p.get("cam_return", 2),
-                                              big_chunk_sec=6.0)
+            from core import align
+            assign = align.assign_for_project(p, keep, len(cams))
 
             from core import xml2ae
-            _m, _c, subs, _i = xml2ae.parse_full(xml)
+            _meta, _c, subs, _i = xml2ae.parse_full(xml)
             yellow = _sidecar_yellow(xml)
             inserts = []
             for x in (d.get("inserts") or []):
@@ -620,10 +606,18 @@ def api_export_drp() -> Response | tuple[str, int]:
                                     end=int(round((st + dur) * fps))))
 
             stem = os.path.splitext(os.path.basename(xml))[0]
+            # Обработанный голос камеры 1 — тем же правилом, что у XML, черновика и
+            # сборки AE (`core/voicefx.clip_voice_wav`): спикер клипа из сайдкара плюс
+            # включённая обработка. Второй копии правила быть не должно. Правило не
+            # выполнено или файла нет — в сборку уходит пустая строка, и `.drp`
+            # остаётся прежним, байт в байт.
+            from core import voicefx
+            voice: str | None = voicefx.clip_voice_wav(xml) or None
             fd, tmp = tempfile.mkstemp(suffix=".drp"); os.close(fd)
             try:
                 drp.build(tmp, cams, keep, offsets, assign=assign, sub_words=subs,
-                          yellow=yellow, inserts=inserts, name=stem, fps=fps)
+                          yellow=yellow, inserts=inserts, name=stem, fps=fps,
+                          seq_w=_meta["w"], seq_h=_meta["h"], voice=voice)
                 data = open(tmp, "rb").read()
             finally:
                 try:

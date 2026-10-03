@@ -30,6 +30,48 @@ def _word_lines(words: Sequence[tuple[int, str, float, float]]) -> str:
     return "\n".join(f"{k}\t{w}\t{s:.2f}-{e:.2f}" for k, w, s, e in words)
 
 
+# Частицы-отрицания: взятое моделью слово без них переворачивает смысл
+# («ПОМОГАЕТ» -> «НЕ ПОМОГАЕТ»). Своё содержимое, а НЕ срез INTRO_PREFIX_WORDS:
+# предлоги («В», «НА», «ЗА»…) из интро сюда не входят намеренно — владелец
+# дописывал их перед жёлтым руками 5 раз из 236, а частица «не» — 135.
+YELLOW_NEGATION_PARTICLES = frozenset({"НЕ", "НИ"})
+
+# Знаки препинания по краям слова: в ленте субтитров частица приезжает и как «не,»,
+# и как «НЕ» в кавычках. Ё к Е — тот же приём нормализации, что у интро-префиксов.
+_PARTICLE_EDGE_PUNCT = "«»\"'()[]{}.,!?;:—–-…"
+
+
+def _norm_particle(word: str) -> str:
+    """Слово для сравнения с частицей: без краевых знаков препинания, регистр не важен, ё=е.
+
+    «не,» / «НЕ.» / «Ни!» обязаны попадать в YELLOW_NEGATION_PARTICLES наравне с
+    голым «НЕ» — иначе частица, которую модель/Премьер приклеили к пунктуации,
+    молча остаётся белой.
+    """
+    w = word.strip().upper().replace("Ё", "Е")
+    return w.strip(_PARTICLE_EDGE_PUNCT)
+
+
+def _yellow_fix_negation(idx: list[int], words: Sequence[tuple[int, str, float, float]]) -> list[int]:
+    """Частица «не»/«ни» перед жёлтым словом тоже жёлтая (03.10.2026).
+
+    Замер владельца по 236 клипам: жёлтое слово с белым «НЕ» перед ним — 135 случаев,
+    «НИ» — 3. Модель выбирает смысловой пик («ПОМОГАЕТ»), а частица остаётся белой —
+    жёлтое на экране утверждает обратное сказанному. Предлоги владелец перед жёлтым
+    дописывал руками 5 раз — их НЕ добавляем (см. YELLOW_NEGATION_PARTICLES).
+    Возвращает дополненный список (дубликаты не плодятся, слово 0 не трогается).
+    """
+    have = set(idx)
+    add = []
+    for i in idx:
+        if i <= 0 or (i - 1) in have:                   # начало ленты / частица уже жёлтая
+            continue
+        prev = _norm_particle(words[i - 1][1])
+        if prev in YELLOW_NEGATION_PARTICLES:
+            add.append(i - 1)
+    return sorted(have | set(add)) if add else idx
+
+
 def as_ints(seq: Any, lo: int | None = None, hi: int | None = None) -> list[int]:
     """Список из ответа модели -> список int, мусор молча отбрасывается.
 
@@ -51,7 +93,7 @@ def as_ints(seq: Any, lo: int | None = None, hi: int | None = None) -> list[int]
     return out
 
 
-def cmd_yellow(xml_path: str, system: str | None = None, dry: bool = False, model: str | None = None, url: str | None = None, emit: Callable[..., Any] = console_emit) -> Any:
+def cmd_yellow(xml_path: str, system: str | None = None, dry: bool = False, model: str | None = None, url: str | None = None, emit: Callable[..., Any] = console_emit, style: Any = None) -> Any:
     words = _words_from_xml(xml_path)
     # Количество акцентов определяет смысл текста, а не длина ролика.
     user = (f"В ролике {len(words)} слов. Слова ролика (индекс, слово, тайминг в секундах):\n"
@@ -67,6 +109,12 @@ def cmd_yellow(xml_path: str, system: str | None = None, dry: bool = False, mode
                      step="yellow")
     emit("  ⏱ ИИ-жёлтые: LLM-вызов {sec:.1f}с", sec=time.time() - _t0)
     idx = sorted(set(as_ints(data.get("yellow"), lo=0, hi=len(words))))
+    _n0 = len(idx)
+    idx = _yellow_fix_negation(idx, words)
+    if len(idx) > _n0:
+        # частица встаёт вплотную к выбранному слову: соседние жёлтые без зазора
+        # остаются ОДНОЙ группой (auto_highlights не режет их палочкой)
+        emit("  частица «не» к жёлтым: +{n}", n=len(idx) - _n0)
     # красим ПРЯМО в XML (цвет едет с клипом, переживает ручной до-монтаж; парсер AE читает сам)
     from core import xml2ae
     res = xml2ae.write_highlights(xml_path, idx)
@@ -82,6 +130,18 @@ def cmd_yellow(xml_path: str, system: str | None = None, dry: bool = False, mode
     if res["skipped"]:
         emit("  не покрашены (фолбэк на .yellow.json): {items}",
              items=", ".join(f"{w}[{r}]" for _, w, r in res["skipped"]))
+    # Сила жёлтых (core/emphasis.py) — прямо за покраской: жёлтые только что определены, и
+    # сайдкар `<стем>.emph.json` нужен правилу «наезд только на сильные жёлтые». Зовём
+    # предрасчёт ОДНОЙ двери со сборкой и превью; сбой силы шаг жёлтых не роняет.
+    # `style` — какой стиль уедет в сборку, если вызывающий его знает: по нему решается,
+    # включён ли вообще наезд на жёлтых (не знает — считаем, вреда нет).
+    try:
+        from core import xml2ae
+        xml2ae.precompute.emphasis_precompute(xml_path, style, idx=idx, emit=emit)
+    except ReelsiError:
+        raise
+    except Exception as ex:
+        emit("  ! сила жёлтых не посчитана: {err}", err=ex)
     return {"path": out, "yellow": idx, "colored": colored, "total": len(words)}
 
 
@@ -151,8 +211,8 @@ INS_ZONE_PHOTO = 6.0     # фото не раньше 6-й секунды (на�
 INS_ZONE_VIDEO = 10.0    # видео — не раньше 10-й
 INS_MIN_GAP = 2.5        # минимальный зазор между стартами соседних вставок
 INS_MIN_DUR = 1.0        # короче — мигание в кадре, смысла нет
-# Цель автоподбора — постоянная 13: десять фото и три видео. Длина ролика
-# больше не повышает цель до 14–22 (BX отменён): плотность не растёт, набор всегда один.
+# Дефолтная цель автоподбора — 13: десять фото и три видео. Личное число
+# для спикера задаётся в его профиле (поле inserts) и возвращается ins_quota.
 INS_TARGET = 13
 INS_PHOTO = 10
 INS_VIDEO = 3
@@ -165,6 +225,45 @@ INS_MAX = INS_TARGET
 
 def ins_target(dur: float | None) -> int:
     return INS_TARGET
+
+
+def _quota_val(v: Any, default: int) -> int:
+    if isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 30:
+        return v
+    return default
+
+
+def ins_quota(speaker: Any = None) -> tuple[int, int]:
+    """Квота вставок (фото, видео) для спикера: из профиля или дефолт (10, 3).
+
+    speaker — ключ, label или dict (профиль целиком или словарь inserts).
+    """
+    if not speaker:
+        return INS_PHOTO, INS_VIDEO
+    prof: Any = None
+    if isinstance(speaker, dict):
+        prof = speaker
+    elif isinstance(speaker, str):
+        try:
+            from core import speakers
+            prof = speakers.load(speaker)
+        except ReelsiError: raise
+        except Exception:
+            # битый профиль не роняет подбор: дефолт 10+3 лучше, чем упавший шаг 2
+            prof = None
+    if not isinstance(prof, dict):
+        return INS_PHOTO, INS_VIDEO
+
+    raw_ins = prof.get("inserts") if "inserts" in prof else prof
+    if not isinstance(raw_ins, dict):
+        return INS_PHOTO, INS_VIDEO
+
+    ph = _quota_val(raw_ins.get("photo"), INS_PHOTO) if "photo" in raw_ins else INS_PHOTO
+    vid = _quota_val(raw_ins.get("video"), INS_VIDEO) if "video" in raw_ins else INS_VIDEO
+
+    if ph + vid < 1:
+        return INS_PHOTO, INS_VIDEO
+    return ph, vid
 
 
 # Зона конца — как зона начала: числом, а не словами. Доля 6% длины в интервале
@@ -258,7 +357,8 @@ def _cap_by_quota(ins: list[dict[str, Any]], photo_quota: int, video_quota: int)
 
 
 def cmd_inserts(xml_path: str, system: str | None = None, dry: bool = False, model: str | None = None, url: str | None = None, emit: Callable[..., Any] = console_emit,
-                count: int | None = None, avoid: list[dict[str, Any]] | None = None, rejected: list[dict[str, Any]] | None = None, window: tuple[float, float] | None = None) -> Any:
+                count: int | None = None, avoid: list[dict[str, Any]] | None = None, rejected: list[dict[str, Any]] | None = None, window: tuple[float, float] | None = None,
+                speaker: Any = None) -> Any:
     """count/avoid — «добор недостающих»: сгенерить РОВНО count НОВЫХ вставок для других
     мест, не повторяя avoid (список уже выбранных: {type,start_sec,query}). При частичном
     доборе сайдкар .inserts.json НЕ перезаписываем (он держит полный набор).
@@ -268,15 +368,16 @@ def cmd_inserts(xml_path: str, system: str | None = None, dry: bool = False, mod
     ({type,start_sec,query}) — модель просим не повторять, похожие фильтруем кодом."""
     words = _words_from_xml(xml_path)
     dur = words[-1][3] if words else 0
-    target = ins_target(dur)
+    ph_total, vid_total = ins_quota(speaker)
+    target = ph_total + vid_total
     # Квота основного вызова постоянна; рекурсивный добор получает только недостающие типы.
     if count:
         keep_photo = sum(1 for a in (avoid or []) if a.get("type") != "video")
         keep_video = sum(1 for a in (avoid or []) if a.get("type") == "video")
-        photo_quota = max(0, INS_PHOTO - keep_photo)
-        video_quota = max(0, INS_VIDEO - keep_video)
+        photo_quota = max(0, ph_total - keep_photo)
+        video_quota = max(0, vid_total - keep_video)
     else:
-        photo_quota, video_quota = INS_PHOTO, INS_VIDEO
+        photo_quota, video_quota = ph_total, vid_total
     user = (f"Длина ролика ~{dur:.0f} секунд. Слова ролика (индекс, слово, тайминг в секундах):\n"
             + _word_lines(words))
     # В доборе общий target не упоминается: модель получает только дефициты типов.
@@ -410,14 +511,14 @@ def cmd_inserts(xml_path: str, system: str | None = None, dry: bool = False, mod
     # срезаем по времени. Дальше считаем недостачу и добираем только недостающие типы.
     ins = _cap_by_quota(ins, photo_quota, video_quota)
     # 6) добор недостающего. Отсев зонами/квотой честнее сдвига, но юзер нажал «подобрать
-    # заново» и ждёт полный набор 13 (10 фото + 3 видео), а не «13 минус то, что модель
-    # поставила не туда». Просим модель ровно недостающее число КАЖДОГО типа для ДРУГИХ
+    # заново» и ждёт полный набор из профиля спикера (по умолчанию 10 фото + 3 видео), а не
+    # «13 минус то, что модель поставила не туда». Просим модель ровно недостающее число КАЖДОГО типа для ДРУГИХ
     # мест (avoid = оставшиеся). Рекурсия ровно на один уровень: у вложенного вызова
     # count уже задан, и квота там считается из avoid.
     if not count:
         n_photo = sum(1 for x in ins if x.get("type") != "video")
         n_video = sum(1 for x in ins if x.get("type") == "video")
-        need = max(0, INS_PHOTO - n_photo) + max(0, INS_VIDEO - n_video)
+        need = max(0, ph_total - n_photo) + max(0, vid_total - n_video)
     else:
         need = 0
     if need > 0 and not count:
@@ -429,7 +530,8 @@ def cmd_inserts(xml_path: str, system: str | None = None, dry: bool = False, mod
                "query": x.get("query") or ""} for x in ins]
         try:
             extra = (cmd_inserts(xml_path, system=system, model=model, url=url, emit=emit,
-                                 count=need, avoid=av, rejected=rejected) or {}).get("inserts") or []
+                                 count=need, avoid=av, rejected=rejected,
+                                 speaker=speaker) or {}).get("inserts") or []
         except ReelsiError: raise
         except Exception as e:                       # добор не критичен: отдаём что есть
             emit("  ! добор не удался: {err_type}: {err}", err_type=type(e).__name__, err=e)
@@ -441,7 +543,7 @@ def cmd_inserts(xml_path: str, system: str | None = None, dry: bool = False, mod
     if not count and ins and dur:
         n_photo = sum(1 for x in ins if x.get("type") != "video")
         n_video = sum(1 for x in ins if x.get("type") == "video")
-        need2 = max(0, INS_PHOTO - n_photo) + max(0, INS_VIDEO - n_video)
+        need2 = max(0, ph_total - n_photo) + max(0, vid_total - n_video)
         end_sec = ins_end_sec(dur)
         tail_at = dur - end_sec
         step = dur / target
@@ -455,14 +557,15 @@ def cmd_inserts(xml_path: str, system: str | None = None, dry: bool = False, mod
             try:
                 extra2 = (cmd_inserts(xml_path, system=system, model=model, url=url,
                                       emit=emit, count=need2, avoid=av2, rejected=rejected,
-                                      window=(last, tail_at)) or {}).get("inserts") or []
+                                      window=(last, tail_at),
+                                      speaker=speaker) or {}).get("inserts") or []
             except ReelsiError: raise
             except Exception as e:
                 emit("  ! добор окна не удался: {err_type}: {err}", err_type=type(e).__name__, err=e)
                 extra2 = []
             ins = sorted(ins + extra2[:need2], key=lambda x: float(x.get("start_sec", 0) or 0))
     # Финальная страховка полного набора: не больше общей и типовых квот.
-    ins = _cap_by_quota(ins, INS_PHOTO, INS_VIDEO)
+    ins = _cap_by_quota(ins, ph_total, vid_total)
     out = os.path.splitext(xml_path)[0] + ".inserts.json"
     if not count:                                   # полный набор -> обновляем сайдкар; добор -> нет
         atomic_json_dump(out, {"inserts": ins}, indent=1)
@@ -711,6 +814,112 @@ def _intro_defunc(rows: list[dict[str, Any]], words: Sequence[tuple[int, str, fl
     return res
 
 
+# Слова, которые не должны отрываться от следующего слова: «не», «ни», предлоги,
+# указательные/определительные — переезжают в начало цветной строки (задание 02.10.2026).
+INTRO_PREFIX_WORDS = frozenset({
+    "НЕ", "НИ",
+    # предлоги (закрытый список из задания)
+    "В", "ВО", "НА", "О", "ОБ", "БЕЗ", "ДЛЯ", "ДО", "ИЗ", "К", "КО", "ПО", "ПОД",
+    "ПРИ", "ПРО", "С", "СО", "У", "ЗА", "ОТ", "НАД", "ПЕРЕД", "ЧЕРЕЗ",
+    # указательные/определительные
+    "ЭТИ", "ЭТОТ", "ЭТА", "ЭТО", "КАЖДОГО", "КАЖДЫЙ", "КАЖДАЯ", "КАЖДОЕ",
+})
+
+
+def _intro_fix_prefix(rows: list[dict[str, Any]], words: Sequence[tuple[int, str, float, float]]) -> list[dict[str, Any]]:
+    """«Не»/предлог/указательное не отрываются от слова (02.10.2026).
+
+    Если цветная строка (yellow/accent) или строка с back начинается со слова,
+    а ПЕРЕД ним стоит «не»/«ни» или предлог/указательное из INTRO_PREFIX_WORDS —
+    слово переезжает из предыдущей белой строки в начало цветной (count ±1).
+    Строка из одного предлога («О», «НА») — склеивается со следующей строкой.
+    Пустые строки удаляются. Для хука (intro_rows) — по count,
+    для mid_groups — используй _intro_fix_prefix_mids (по полю from).
+    """
+    # Развернуть rows в список слов
+    out, k = [], 0
+    for r in rows:
+        n = max(1, r.get("count") or 1)
+        item = {"w": [w[1] for w in words[k:k + n]],
+                "color": r["color"], "break": r.get("break", False)}
+        if "back" in r:
+            item["back"] = bool(r["back"])
+        out.append(item)
+        k += n
+    # Проход: если цветная/back строка начинается со слова, а перед ним в предыдущей
+    # строке стоит предлог/«не» — перетащить в начало цветной строки
+    changed = True
+    while changed:
+        changed = False
+        for i in range(1, len(out)):
+            cur = out[i]
+            prev = out[i - 1]
+            if not prev["w"] or not cur["w"]:
+                continue
+            # Правило: цветная/accent/back строка перед которой в белой строке стоит
+            # предлог — перетаскиваем
+            is_target = (cur.get("color") in ("yellow", "accent") or cur.get("back"))
+            if not is_target:
+                continue
+            if prev["w"][-1].upper() not in INTRO_PREFIX_WORDS:
+                continue
+            # Перетащить последнее слово из предыдущей строки
+            cur["w"].insert(0, prev["w"].pop())
+            if not prev["w"]:
+                del out[i - 1]
+            changed = True
+            break
+    # Строка из одного предлога — склеить со следующей
+    changed = True
+    while changed:
+        changed = False
+        for i in range(len(out) - 1):
+            cur = out[i]
+            if len(cur["w"]) == 1 and cur["w"][0].upper() in INTRO_PREFIX_WORDS:
+                nxt = out[i + 1]
+                nxt["w"] = cur["w"] + nxt["w"]
+                # Если текущая была head прекомпа, следующая наследует break
+                if cur.get("break"):
+                    nxt["break"] = True
+                del out[i]
+                changed = True
+                break
+    # Собрать обратно
+    res = []
+    for r in out:
+        if not r["w"]:
+            continue
+        item = {"count": len(r["w"]), "color": r["color"],
+                "break": bool(r["break"])}
+        if "back" in r:
+            item["back"] = bool(r["back"])
+        res.append(item)
+    if res:
+        res[0]["break"] = True             # первая строка — голова хука по определению
+    return res
+
+
+def _intro_fix_prefix_mids(mids: list[dict[str, Any]], words: Sequence[tuple[int, str, float, float]]) -> list[dict[str, Any]]:
+    """Аналог _intro_fix_prefix для mid_groups: работает по полю from.
+
+    Если акцент/жёлтый начинается со слова, а перед ним (words[from-1]) стоит
+    предлог/«не» — сдвигаем from на −1, count на +1.
+    """
+    for m in mids:
+        f = m.get("from")
+        if f is None or f <= 0:
+            continue
+        c = m.get("count", 1)
+        color = m.get("color")
+        if color not in ("yellow", "accent"):
+            continue
+        prev_word = words[f - 1][1].upper() if f - 1 < len(words) else ""
+        if prev_word in INTRO_PREFIX_WORDS:
+            m["from"] = f - 1
+            m["count"] = c + 1
+    return mids
+
+
 def _hook_breaks(rows: list[dict[str, Any]], words: Sequence[tuple[int, str, float, float]]) -> list[dict[str, Any]]:
     """Механическая страховка разбиения хука на прекомпы.
 
@@ -792,24 +1001,37 @@ def _place_mids(groups: list[tuple[Any, ...]], words: Sequence[tuple[int, str, f
     return mids
 
 
-def _intro_look(color: Any, back: Any, nwords: int) -> tuple[str, str]:
+def _intro_look(color: Any, back: Any, nwords: int,
+                 group_pos: int = 0, group_size: int = 1) -> tuple[str, str]:
     """Вывод оформления (anim, fx) по смыслу строки (цвет, задний план, длина).
 
     Единственный источник правды об оформлении строк интро и акцентов.
-    Основано на замере ручной разметки (.jsx) двух спикеров (298 строк):
-    - свечение (fx='glow') стоит ТОЛЬКО на цветной строке (77 из 77);
-    - белая строка не светится НИКОГДА (0 из 174);
-    - accent ВСЕГДА с анимацией (97–100%) и со свечением (74–92%): при nwords <= 2
-      ставится glitch, при более длинных строках — reveal;
-    - glitch стоит только на цветной строке;
-    - back — почти всегда белая строка и мягкая анимация (reveal), никогда не glitch;
-    - у жёлтых устойчивого правила нет (анимация 49–53%, свечение 33–45% — это дело вкуса,
-      а не правило), поэтому им оформление не навязывается.
+    Пересчитано по ручной разметке владельца (02.10.2026, 400 строк; было 228 = 57 %):
+    - accent → glitch, ЛЮБОЙ длины (108 из 109 accent-строк; раньше 3+ слова уходили
+      в reveal — у владельца этого нет);
+    - back → up при 2+ словах (10 из 16), при одном слове — без анимации (reveal,
+      как было, владелец back-строкам не ставит);
+    - группа из 4+ строк (white/yellow) → первая reveal, остальные right, каскад
+      (15 из 17 групп);
+    - белая строка 2–3 слова → up (вне каскада); белая 1 слово → без анимации
+      (57 из 69);
+    - жёлтая 1 слово → без анимации (105 из 124);
+    - иначе — без анимации.
+    Правило пары «1+1 → left/right» УДАЛЕНО: у владельца так 3 пары из 43, остальные
+    40 пар без анимации. Свечения (fx) разметка не ставит никому — его даёт стиль,
+    ключ intro_accent_glow. Итог замера — совпадение 327 из 400 строк (82 %).
+
+    group_pos — позиция строки в группе (0-based), group_size — число строк в группе.
+    Без них группа считается из одной строки: правило каскада «4+» не срабатывает.
     """
     if color == "accent":
-        return ("glitch" if nwords <= 2 else "reveal", "glow")
+        return ("glitch", "")
     if back:
-        return ("reveal", "")
+        return ("up" if nwords >= 2 else "", "")
+    if group_size >= 4 and color in ("white", "yellow"):
+        return ("reveal" if group_pos == 0 else "right", "")
+    if color == "white" and 2 <= nwords <= 3:
+        return ("up", "")
     return ("", "")
 
 
@@ -894,6 +1116,10 @@ def cmd_intro(xml_path: str, system: str | None = None, dry: bool = False, model
         rows = _intro_defunc(rows, words)              # служебное слово не в конце строки
         if len(rows) != n0:
             emit("  склейка служебных слов: {before} -> {after} строк", before=n0, after=len(rows))
+        n1 = len(rows)
+        rows = _intro_fix_prefix(rows, words)          # «не»/предлог не отрываются от слова
+        if len(rows) != n1:
+            emit("  перенос предлогов: {before} -> {after} строк", before=n1, after=len(rows))
         nrows = _wrap_intro_rows(rows, words)
         if len(nrows) != len(rows):
             emit("  перенос строк интро: {before} -> {after}", before=len(rows), after=len(nrows))
@@ -915,8 +1141,22 @@ def cmd_intro(xml_path: str, system: str | None = None, dry: bool = False, model
         except (TypeError, ValueError, OverflowError):
             continue
     mids = _place_mids(groups, words, intro_len, busy, emit=emit)
-    for r in rows + mids:
-        r["anim"], r["fx"] = _intro_look(r.get("color"), r.get("back"), r.get("count", 1))
+    mids = _intro_fix_prefix_mids(mids, words)         # «не»/предлог при акценте
+    # Оформление по группам: позиция строки и размер группы определяют анимацию.
+    # Группа — строки между break (одна анимация на группу, где правило не говорит иного).
+    for batch in (rows, mids):
+        grp_start, grp_end = 0, 1
+        for i, r in enumerate(batch):
+            if r.get("break") or i == 0:
+                # начало новой группы — посчитать её размер до следующего break
+                grp_start = i
+                grp_end = i + 1
+                while grp_end < len(batch) and not batch[grp_end].get("break"):
+                    grp_end += 1
+            r["anim"], r["fx"] = _intro_look(r.get("color"), r.get("back"),
+                                              r.get("count", 1),
+                                              group_pos=i - grp_start,
+                                              group_size=grp_end - grp_start)
     ngrp = sum(1 for m in mids if m["break"])
     # Пустые окна называем поимённо: «мало акцентов» ни о чём не говорит, а «65–73с без
     # акцента» — это ровно то место, куда потом руками лезет юзер.

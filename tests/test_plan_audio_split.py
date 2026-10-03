@@ -38,7 +38,7 @@ from core.xml2ae import build as build_mod  # noqa: E402
 from core.xml2ae.build import read_style  # noqa: E402
 from core.xml2ae.jsutil import _jd, _js, _r  # noqa: E402
 from core.xml2ae.layout import _cam_change_frames, _project_base  # noqa: E402
-from core.xml2ae.plan_audio import AudioInputs, plan_audio  # noqa: E402
+from core.xml2ae.plan_audio import AudioInputs, plan_audio, voice_segments  # noqa: E402
 from core.xml2ae.plan_inserts import (InsertTimingInputs,  # noqa: E402
                                       plan_insert_timings)
 from core.xml2ae.plan_intro import _g_at  # noqa: E402
@@ -171,6 +171,9 @@ def _door(xml, ckpt=None, **kw):
         censor_source=list(subs), censor_audio=bool(kw.get("censor_audio", True)),
         censor_fps=meta["fps"],
         voice_src=(cams[0].get("path") or "") if cams else "",
+        # Куски голоса считает scene_plan (у него на руках клипы камер в секундах) —
+        # дверь получает готовое, как и остальные входы. Функция — та же, что в сборке.
+        voice_segments=voice_segments((cams[0].get("clips") or []) if cams else [], fps),
         music_db=kw.get("music_db", -20.0),
         ckpt=ckpt or (lambda stage: None), emit=lambda *a, **k: None))
 

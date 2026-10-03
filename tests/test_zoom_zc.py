@@ -60,7 +60,7 @@ def _func(src, name):
 
 
 def test_follow_head_direction_and_stationary():
-    """1. Голова уходит вправо -> off уменьшается (знак); при неподвижной голове — ключей только на краях клипов."""
+    """1. Голова уходит вправо -> off уменьшается (знак); при неподвижной голове — ключ на каждом отсчёте держит константу."""
     # Один клип Камеры 1 на 600 кадров (10 секунд при 60 fps)
     cams = [{"clips": [[0, 600, 0, 600, True, 100]]}]
     fps = 60.0
@@ -88,10 +88,11 @@ def test_follow_head_direction_and_stationary():
         zoom_keys=zoom_keys, holds=holds, fps=fps, W=W, H=H,
         cx=0.5, pan_x=0.0, cam1_fit=100.0, target=0.5, smooth_s=0.6,
     )
-    # При неподвижной голове оператор держит константу, RDP оставляет только первый и последний кадр
-    assert len(keys_static) == 2
+    # При неподвижной голове оператор держит константу на каждом отсчёте (без прореживания _rdp)
+    assert len(keys_static) == 101
+    assert all(k[1] == keys_static[0][1] for k in keys_static)
     assert keys_static[0][0] == 0
-    assert keys_static[1][0] == 599
+    assert keys_static[-1][0] == 599
 
 
 def test_follow_boundary_clamping_and_narrow_frame():

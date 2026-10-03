@@ -148,7 +148,11 @@ def test_фронт_одна_функция_правила():
     # точка наезда кадра — из плана, а не жёсткий центр: ipvZoom больше не вешает
     # transform на видео, он зовёт ipvCamPaint, и тот режет кадр от pl.zoom.cx/cy
     zoom = _func(src, "ipvZoom")
-    paint = _func(src, "ipvCamPaint")
+    # Вырезку кадра ipvCamPaint отдал общей геометрии ipvFrameGeom (её зовёт ipvDrawFrame,
+    # а тот — ipvCamPaint): точка наезда по-прежнему берётся из плана, а не из жёсткого
+    # центра, но правило живёт в геометрии. Стенд смотрит на дверь вызова и на ту функцию,
+    # где правило теперь записано. Утверждения ниже не менялись.
+    paint = _func(src, "ipvCamPaint") + "\n" + _func(src, "ipvFrameGeom")
     assert "ipvCamPaint(s)" in zoom, "ipvZoom обязан звать ipvCamPaint(s) — кадр рисует canvas"
     assert "pl.zoom.cx" in paint and "pl.zoom.cy" in paint, \
         "точка наезда в ipvCamPaint берётся из плана (pl.zoom.cx/cy), а не жёсткий центр"

@@ -126,9 +126,11 @@ def test_paint_draws_whole_source():
     Заодно: при пустом `plan.lumetri` фильтр превью снят (`'none'`) и документа не трогает."""
     # ipvCamPaint надевает на холст фильтр Lumetri, поэтому в сборку идут и он
     # сам, и всё, что он зовёт: без них node падал на ReferenceError, а не проверял рисование.
+    # ipvFrameGeom/ipvDrawFrame — та же отрисовка кадра, что у слоя рото (одна на оба места).
     code = _js("keysAt", "ipvZoomAt", "ipvCamShift", "ipvCamMatrix",
                "ipvLmSmooth", "ipvLumetriTone", "ipvLumetriTable",
-               "ipvLumetriFilter", "ipvCamPaint") + _PLAN_JS + """
+               "ipvLumetriFilter", "ipvFrameGeom", "ipvDrawFrame",
+               "ipvCamPaint") + _PLAN_JS + """
     const calls = [];
     const dom = [];                                    // следы обращений к документу
     const ctx = {imageSmoothingEnabled: true, imageSmoothingQuality: '',
@@ -143,6 +145,10 @@ def test_paint_draws_whole_source():
     const document = {body: null,
       createElementNS: function(){dom.push('createElementNS'); return null;}};
     const window = {devicePixelRatio: 1};
+    // LUT-превью живёт в 86-lut.js и в сборку стенда не входит, а ipvCamPaint его зовёт.
+    // Заглушки — «LUT не наложен»: кадр как есть, масштаб координат вырезки 1.
+    function lutApply(ci,v){return v;}
+    function lutKS(ci,v){return [1,1];}
     const IPV = {curCi: 0, fps: 60, vids: [{readyState: 4, videoWidth: 1920, videoHeight: 1080}],
                  plan: zoomPlan(150, 3, [40, 0], 0.5, 0.5)};
     ipvCamPaint(1.5);

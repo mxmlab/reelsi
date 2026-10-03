@@ -9,8 +9,10 @@ from flask import request, jsonify, send_file, Response
 from core.fileio import atomic_json_dump
 from core.project_file import read_project
 from core import cams
+from core import lutbake
 from core import sync
 from core import xmlbuild
+from core.lut import load_cube
 from ._core import (DEFAULT_BASE, UI_STATE_PATH, _never_serve, app_out_dir, bp,
                     is_reelsi_target, jstr, umsg_err, sidecar_path)
 from core.umsg import ReelsiError, umsg
@@ -113,6 +115,11 @@ def api_cammatch() -> Response:
 
 # Префикс очереди в имени результата: nn_<имя исходника>.xml (см. run_omnicut_job)
 _QUEUE_PREFIX = re.compile(r"^\d+_")
+# <file id="…">…</file> вместе с id: по id отсеиваем не-камеры (итоговый голос камеры 1).
+# Кавычки у id бывают и одинарные (XML собирают руками и другие программы — на этом уже
+# попадались, tests/test_newtakes.py), поэтому оба вида. Ссылки вида <file id="x"/> —
+# самозакрытые: под шаблон они не подходят (там нужен `>` сразу после id) и не мешают.
+_FILE_BLOCK = re.compile(r"<file(?:\s+id=(['\"])([^'\"]+)\1)?\s*>(.*?)</file>", re.S)
 _PATHURL = re.compile(r"<pathurl>([^<]+)</pathurl>")
 
 
@@ -144,7 +151,41 @@ def _clip_cams(xml_path: str) -> list[str]:
     # Сюда попадут и вставки с музыкой — своих имён у них с дублями камеры не
     # бывает (C1437.MP4 против имени из «Скаченного»), а у нарезок Reelsi есть
     # сайдкар, и до этой ветки они не доходят вовсе.
-    return [xmlbuild.unpathurl(u) for u in _PATHURL.findall(text) if u]
+    # А вот итоговый обработанный голос камеры 1 (`file-voice`, core/voicefx) — это
+    # АУДИО без видео, и камерой он не является: камеры определяются по видео-дорожкам
+    # (xml2ae.parse_full). Раньше он уезжал в список камер, и `<стем>.voice.wav`
+    # «защищался» от удаления вместе с нарезкой — оставался на диске навсегда.
+    out: list[str] = []
+    for m in _FILE_BLOCK.finditer(text):
+        if m.group(2) == xmlbuild.VOICE_FILE_ID:
+            continue
+        pu = _PATHURL.search(m.group(3))
+        if pu and pu.group(1):
+            out.append(xmlbuild.unpathurl(pu.group(1)))
+    return out
+
+
+def _graded_files(xml_path: str, xml_dir: str) -> list[str]:
+    """Прожжённые LUT файлы клипа (core/lutbake) — существующие, из его же `_graded`.
+
+    Лежат они в подпапке `_graded`, и обычный обход «<стем>.*» рядом с XML их не
+    видит: списком служит `<стем>.graded.json` (его пишет прожиг на сборке).
+
+    Берём ТОЛЬКО файлы внутри `<xml_dir>/_graded`: список — обычный JSON рядом с XML,
+    и удалять по нему что-то за пределами своей же папки нельзя. Нет списка (сборки
+    без LUT) — пусто: вести себя как раньше.
+    """
+    if not xml_path:
+        return []
+    base = os.path.normcase(os.path.abspath(os.path.join(xml_dir, lutbake.GRADED_DIR)))
+    out: list[str] = []
+    for p in lutbake.graded_paths(xml_path):
+        full = os.path.abspath(p)
+        if os.path.normcase(os.path.dirname(full)) != base:
+            continue                    # чужой путь в сайдкаре — не наше дело
+        if os.path.isfile(full):
+            out.append(full)
+    return out
 
 
 def _cut_sources(outdir: str) -> tuple[set[str], set[str]]:
@@ -272,6 +313,19 @@ def api_pickmedia() -> Response:
     except ReelsiError: raise
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("pickmedia_failed", str(e)))))
+
+
+@bp.route("/api/pickcube")
+def api_pickcube() -> Response:
+    """Выбор таблицы LUT (.cube) для камеры спикера. Фильтр — только .cube:
+    таблицу кладут рядом с исходниками, и в общей папке её иначе не найти."""
+    try:
+        return jsonify(path=_native_pick(
+            "filedialog.askopenfilename(title='Выбери LUT', "
+            "filetypes=[('Таблица LUT','*.cube'),('Все файлы','*.*')])"))
+    except ReelsiError: raise
+    except Exception as e:
+        return jsonify(**umsg_err(ReelsiError(umsg("pickcube_failed", str(e)))))
 
 
 @bp.route("/api/fonts")
@@ -492,6 +546,29 @@ def api_media() -> Response | tuple[str, int]:
     return send_file(path, conditional=True)
 
 
+# Allowlist расширений для /api/lut: только таблицы .cube. В ALLOWED_MEDIA_EXTS
+# его нет нарочно — .cube не медиа, а данные для шейдера превью (и для прожига в
+# видео на сборке), и мешать его с видео/картинками в одном списке незачем.
+ALLOWED_LUT_EXTS = {"cube"}
+
+
+@bp.route("/api/lut")
+def api_lut() -> Response | tuple[str, int]:
+    """Таблица LUT камеры (.cube) для превью: браузер накладывает её шейдером.
+
+    Защита и ПОРЯДОК проверок — как у /api/media: расширение (и у присланного
+    пути, и у realpath), денилист секретов (`_media_path_ok`), существование.
+    Раньше `isfile` стоял бы первым, и посторонний клиент узнавал бы про
+    существование любого файла на диске по коду ответа.
+    """
+    path = (request.args.get("path") or "").strip().strip('"')
+    if not _media_path_ok(path, ALLOWED_LUT_EXTS):
+        return ("forbidden", 403)
+    if not os.path.isfile(path):
+        return ("not found", 404)
+    return jsonify(ok=True, **load_cube(path))
+
+
 @bp.route("/api/music_random", methods=["POST"])
 def api_music_random() -> Response:
     """Случайный аудиофайл из папки музыки — ТОТ ЖЕ выбор, что на сборке
@@ -678,6 +755,21 @@ def api_clip_delete() -> Response:
                             sz = 0
                         files_to_delete.append({"path": jsx_file, "size": sz})
 
+    # 3. Прожжённые LUT файлы клипа (core/lutbake): папка `_graded` — подпапка, и
+    # обход по префиксу стема выше их не видит. Список — `<стем>.graded.json` рядом
+    # с XML. В сухом прогоне они тоже показываются: «что уйдёт» — вопрос, на который
+    # человек смотрит глазами до удаления.
+    for fpath in _graded_files(xml_path, xml_dir):
+        rp = os.path.realpath(fpath).lower()
+        if rp in seen_paths:
+            continue
+        seen_paths.add(rp)
+        try:
+            sz = os.path.getsize(fpath)
+        except OSError:
+            sz = 0
+        files_to_delete.append({"path": fpath, "size": sz})
+
     total_bytes = sum(f["size"] for f in files_to_delete)
 
     if not dry:
@@ -693,6 +785,12 @@ def api_clip_delete() -> Response:
                 skipped.append({"path": p, "why": f"ошибка удаления: {e}"})
         files_to_delete = deleted
         total_bytes = sum(f["size"] for f in files_to_delete)
+        try:
+            # Пустая `_graded` после уборки не нужна; непустая (файлы других нарезок)
+            # остаётся — os.rmdir на ней и падает, а падать тут не из-за чего.
+            os.rmdir(os.path.join(xml_dir, lutbake.GRADED_DIR))
+        except OSError:
+            pass  # папки нет или она не опустела — оставляем как есть
 
     seen_cams = set()
     cam_names = []

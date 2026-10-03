@@ -94,6 +94,7 @@ def test_combined_render_e2e_two_clips(batch_fixture, tmp_path, monkeypatch):
     # Открытая копия After Effects останавливает прогон ДО запуска AfterFX (задание
     # AE-Hygiene) — в тесте AE «закрыт», иначе результат зависел бы от машины.
     monkeypatch.setattr(render_job, "ae_running", lambda: False)
+    monkeypatch.setenv("REELSI_AE_BUILD_WORKERS", "1")
 
     class FakePopen:
         def __init__(self, cmd, *args, **kwargs):
@@ -226,6 +227,7 @@ def test_render_job_batch_dispatcher(batch_fixture, tmp_path, monkeypatch):
     # Открытая копия After Effects останавливает прогон ДО запуска AfterFX (задание
     # AE-Hygiene) — в тесте AE «закрыт», иначе результат зависел бы от машины.
     monkeypatch.setattr(render_job, "ae_running", lambda: False)
+    monkeypatch.setenv("REELSI_AE_BUILD_WORKERS", "1")
 
     class FakePopen:
         def __init__(self, cmd, *args, **kwargs):

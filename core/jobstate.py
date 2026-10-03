@@ -17,8 +17,8 @@
 Журнал заданий (`job_state.json`) и межпроцессный лок видеокарты (`job.lock`) —
 тоже состояние, поэтому пути и открытый хэндл лока живут здесь.
 """
-import json, os, signal, subprocess, threading, time
-from typing import IO, Any, Iterable
+import json, os, queue, signal, subprocess, threading, time
+from typing import IO, Any, Iterable, cast
 
 from core import paths
 from core.fileio import atomic_json_dump
@@ -104,7 +104,7 @@ def sysexit_text(e: BaseException) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Процессы заданий: убийство дерева и аргументы запуска
+# Процессы заданий: убийство дерева, аргументы запуска, чтение вывода
 # --------------------------------------------------------------------------- #
 def kill_tree(p: subprocess.Popen[Any]) -> None:
     """Убить процесс ВМЕСТЕ С ДЕТЬМИ (POSIX).
@@ -115,6 +115,11 @@ def kill_tree(p: subprocess.Popen[Any]) -> None:
     POSIX: свои процессы заданий стартуют в СВОЕЙ группе (см. task_popen_kwargs),
     поэтому дерево гасится одним сигналом группе — иначе `p.kill()` снимал только
     родителя, а внук (omni_asr с моделями) оставался жив с занятой видеопамятью.
+
+    Сам способ убийства живёт в ОДНОМ месте — `kill_pid`: «Стоп» из интерфейса
+    снимает счёт по PID, когда `Popen` у нас уже нет, и второй копии правил
+    («какие группы не трогать») быть не должно. Заодно это и `p.kill()`: на POSIX
+    сигнал уходит тому же процессу.
     """
     if os.name == "nt":
         for _ in range(2):
@@ -127,33 +132,61 @@ def kill_tree(p: subprocess.Popen[Any]) -> None:
             except Exception:
                 pass  # процесс уже убит или не убивается — ниже добираем p.kill()
     else:
-        # getattr, а не прямые имена: в типах эти POSIX-функции объявлены только для
-        # не-Windows сборок Python, а mypy проверяет ОБЕ ветки (os.name он не сужает) —
-        # прямой вызов дал бы [attr-defined] на Windows-хосте, а `# type: ignore` на
-        # Linux оказался бы лишним и упал бы на warn_unused_ignores.
-        getpgid = getattr(os, "getpgid")
-        getpgrp = getattr(os, "getpgrp")
-        killpg = getattr(os, "killpg")
-        sigkill = getattr(signal, "SIGKILL")
-        try:
-            pgid = getpgid(p.pid)
-        except OSError:                    # процесс уже кончился — ниже p.kill()
-            pgid = None
-        # Группы 0/1 и группу СЕРВЕРА не трогаем никогда:
-        # pgid 0 — текущая группа процессов, pgid 1 — init/системная группа (ловили на CI:
-        # фальшивый pid=1 в тесте слал SIGKILL всей группе init и убивал контейнер runner).
-        # Процесс, стартовавший без своей сессии (старый код, чужая обвязка),
-        # сидит в нашей группе — killpg убил бы и нас.
-        if pgid is not None and pgid > 1 and pgid != getpgrp():
-            try:
-                killpg(pgid, sigkill)
-            except OSError:
-                pass  # группы уже нет (процесс умер сам) — дерево добирает p.kill() ниже
+        kill_pid(p.pid)
     try:
         p.kill()
     except ReelsiError: raise
     except Exception:
         pass  # процесс уже мёртв (гонка с выходом) — убивать нечего
+
+
+def kill_pid(pid: int, what: str = "") -> None:
+    """Убить ЧУЖОЙ процесс по PID — тот случай, когда `Popen` уже не у нас.
+
+    «Стоп» в интерфейсе снимает счёт по PID: объект `Popen` в этот момент живёт в
+    рабочем потоке счёта, а очередь идёт своим ходом и ждать его нельзя (core/
+    voicefx: `pid_of` отдаёт PID наружу). `kill_tree` для такого случая не годится —
+    он про `Popen`, — а способ убийства обязан быть ОДИН: иначе «Стоп» и таймаут
+    гасили бы процессы по-разному, и один из двух путей остался бы с дырой.
+    Windows: `taskkill /F /T /PID` (две попытки — `/T` иногда таймаутит). POSIX:
+    сигнал СВОЕЙ группе процесса (свою сессию им выдаёт `task_popen_kwargs`), затем
+    `os.kill` как последний шанс.
+
+    `what` — только для строки в консоли сервера: по ней видно, чей процесс снят.
+    """
+    if pid <= 0:
+        return
+    if os.name == "nt":
+        for _ in range(2):
+            try:
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(pid)],
+                               capture_output=True, timeout=15)
+                return
+            except Exception:
+                pass  # процесса уже нет (или его не убить) — добирать нечем
+        return
+    # getattr, а не прямые имена: см. объяснение в kill_tree — mypy проверяет обе
+    # ветки, и прямой вызов дал бы [attr-defined] на Windows-хосте.
+    getpgid = getattr(os, "getpgid")
+    getpgrp = getattr(os, "getpgrp")
+    killpg = getattr(os, "killpg")
+    sigkill = getattr(signal, "SIGKILL")
+    try:
+        pgid = getpgid(pid)
+    except OSError:
+        pgid = None
+    if pgid is not None and pgid > 1 and pgid != getpgrp():
+        try:
+            killpg(pgid, sigkill)
+            return
+        except OSError:
+            pass  # группы уже нет — добираем сам процесс
+    try:
+        os.kill(pid, sigkill)
+    except OSError:
+        pass  # процесс умер сам (гонка с выходом) — убивать нечего
+    if what:
+        print(f"{what}: процесс снят по PID {pid}", flush=True)
 
 
 def task_popen_kwargs() -> dict[str, Any]:
@@ -166,6 +199,34 @@ def task_popen_kwargs() -> dict[str, Any]:
     процессов — поведение оставляем как было.
     """
     return {"start_new_session": True} if os.name == "posix" else {}
+
+
+def pump_stdout(p: subprocess.Popen[str]) -> queue.Queue[str | None]:
+    """Фоновый поток чтения stdout процесса задания в очередь — одно место на всех.
+
+    Два «почему» разом. Первое — переполнение трубы: пока главный поток сидел в
+    `for line in p.stdout`, обильный вывод AfterFX -noui набивал OS-буфер, и процесс
+    вставал в WriteFile навсегда (живой прогон 6 роликов встал на шестом). Второе —
+    сторож простоя и «Стоп»: блокирующее чтение не даёт ни заметить молчание
+    процесса, ни среагировать на отмену до следующей строки вывода, поэтому зависшая
+    нарезка и молчащий AE висели бесконечно. Строки кладём в очередь — разбирает их
+    тот же цикл, что и раньше, только с таймаутом (`get(timeout=…)`).
+    None закрывает очередь (EOF stdout): и нормальный конец процесса, и оборванный
+    вывод — ждать после неё нечего."""
+    q: queue.Queue[str | None] = queue.Queue()
+
+    def _pump() -> None:
+        try:
+            for line in cast(Any, p.stdout):
+                q.put(line)
+        except ReelsiError: raise
+        except Exception:
+            pass  # поток вывода оборвался (процесс умер) — EOF отдаём в finally
+        finally:
+            q.put(None)          # EOF stdout
+
+    threading.Thread(target=_pump, daemon=True).start()
+    return q
 
 
 # --------------------------------------------------------------------------- #

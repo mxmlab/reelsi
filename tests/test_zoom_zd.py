@@ -7,11 +7,11 @@
    после отъезда возвращается к 0 (последний ключ клипа == 0). min_scale=0 — ключи
    равны нынешним.
 2. Кат в клип ниже порога при ненулевой поправке — ключ на кате == 0.
-3. _cam1_jump_keys с words: один длинный тейк, жёлтое слово на кадре 900 — ключ
-   (900, vm, 2, 1), a = 900 - 96; то же без words — a = f + 96 (прежнее);
-   значения vm в обоих случаях равны.
-4. Слово слишком близко к кату (w - 96 < f + 18) — берётся следующее подходящее, а если
-   его нет — прежнее правило.
+3. _cam1_jump_keys с words: один длинный тейк, фраза хайлайта на кадре 900 — наезд
+   на самой фразе (a = 894 за 0.1 с до слова, b = 930 — через 0.6 с), а свободный
+   наезд строится в промежутке до неё; без words — прежний свободный цикл посередине.
+4. Фраза слишком близко к концу куска (пик не влезает) — цикла нет, работает длинный
+   наезд куска; фраза, у которой пик успевает, но отъезд нет, даёт два ключа.
 5. Сборка фикстуры с cam1_take_yellow=True и без жёлтых слов — .jsx как без галки.
 """
 import gzip
@@ -118,53 +118,72 @@ def test_cam1_follow_keys_cut_to_subthreshold_clip():
 
 
 def test_cam1_jump_keys_with_words():
-    """3. _cam1_jump_keys с words: один длинный тейк, жёлтое слово на кадре 900 — ключ
-    (900, vm, 2, 1), a = 900 - 96; то же без words — a = f + 96 (прежнее);
-    значения vm в обоих случаях равны.
+    """3. _cam1_jump_keys с words: фраза хайлайта наезжает на себя, свободный наезд
+    строится в самом длинном свободном промежутке до неё.
+
+    Кусок 0..1500: фраза на кадре 900 (a = 894 — за 0.1 с до слова, b = 930 — через
+    0.6 с, c = 1050, d = 1194). Свободный промежуток перед фразой — 0..834 (первое
+    слово фразы минус зазор 1 с), в нём удержание 2 с по центру промежутка (b = 357)
+    с прежним подъездом 1.6 с: a = 261, c = 477, d = 621.
     """
     fps = 60.0
     cams = [{"clips": [[0, 1500, 0, "cam1.mov", True]]}]
     take_base = {"min_s": 8.0, "lo": 25.0, "hi": 40.0, "hold_s": 2.0}
 
-    # Без words
+    # Без words: центр удержания 2.0 с в середине куска 0..1500 (середина 750: 690..810,
+    # подъезд 1.6 с = 96 кадров -> a = 594, b = 690, c = 810, d = 954)
     keys_no_words = layout._cam1_jump_keys(cams, fps=fps, start=False, take=take_base)
     extra_no_words = [k for k in keys_no_words if k[0] > 0]
-    assert len(extra_no_words) >= 2
-    assert extra_no_words[0][0] == 96
-    assert extra_no_words[1][0] == 192
-    vm_no_words = extra_no_words[1][1]
+    assert len(extra_no_words) == 4
+    assert extra_no_words[0][0] == 594.0  # 690 - 96 (подъезд 1.6 с к пику 690)
+    assert extra_no_words[1][0] == 690.0  # пик начала удержания (середина 750 - hold/2 60)
+    assert extra_no_words[2][0] == 810.0  # конец удержания (690 + hold 120)
+    assert extra_no_words[3][0] == 954.0  # возврат в 100% (810 + out 144)
 
-    # С words: жёлтое слово на кадре 900
+    # С words: фраза на кадре 900 наезжает на себя (894, 930, 1050, 1194),
+    # а свободный наезд в окне 0..834 (b = 357, a = 261) идёт первым
     take_words = dict(take_base, words=[900])
     keys_words = layout._cam1_jump_keys(cams, fps=fps, start=False, take=take_words)
     extra_words = [k for k in keys_words if k[0] > 0]
-    assert len(extra_words) >= 2
-    assert extra_words[0] == (804, 100.0, 1, 0)
-    assert extra_words[1] == (900, vm_no_words, 2, 1)
+    assert len(extra_words) == 8
+    # Первый свободный цикл в окне 0..834 (центр удержания 417: b=357, c=477, a=261, d=621)
+    assert extra_words[0][0] == 261.0
+    assert extra_words[1][0] == 357.0
+    assert extra_words[2][0] == 477.0
+    assert extra_words[3][0] == 621.0
+    # Второй цикл — наезд на фразу 900: a=894 (900−6), b=930 (894+36), c=1050 (930+120), d=1194 (1050+144)
+    assert extra_words[4][0] == 894.0
+    assert extra_words[5][0] == 930.0
+    assert extra_words[6][0] == 1050.0
+    assert extra_words[7][0] == 1194.0
 
 
-def test_cam1_jump_keys_word_too_close_to_cut():
-    """4. Слово слишком близко к кату (w - 96 < f + 18) — берётся следующее подходящее, а если
-    его нет — прежнее правило.
+def test_cam1_jump_keys_phrase_too_close_to_cut():
+    """4. Фраза ближе минимального подъезда к концу куска не наезжает вовсе: пик
+    (t_start + 0.6 с) не влезает в кусок минус хвост — остаётся только длинный цикл.
+
+    Фраза на кадре 1470 в куске 0..1500: a = 1464, b = 1500 > 1500 − 18 даже с
+    подъездом-минимумом (1464 + 30 = 1494) — цикла нет, длинный наезд куска
+    (a=594, b=690, c=810, d=954) остаётся.
     """
     fps = 60.0
     cams = [{"clips": [[0, 1500, 0, "cam1.mov", True]]}]
     take_base = {"min_s": 8.0, "lo": 25.0, "hi": 40.0, "hold_s": 2.0}
 
-    # Первое слово 100 слишком близко: 100 - 96 = 4 < 0 + 18.
-    # Второе слово 900 подходит: 900 - 96 = 804 >= 18.
-    take_two_words = dict(take_base, words=[100, 900])
-    keys_two = layout._cam1_jump_keys(cams, fps=fps, start=False, take=take_two_words)
-    extra_two = [k for k in keys_two if k[0] > 0]
-    assert extra_two[0][0] == 804
-    assert extra_two[1][0] == 900
+    take_close = dict(take_base, words=[1470])
+    keys = layout._cam1_jump_keys(cams, fps=fps, start=False, take=take_close)
+    extra = [k for k in keys if k[0] > 0]
+    assert len(extra) == 4, f"фраза у среза не должна наезжать: ключей {len(extra)}"
+    assert extra[0][0] == 594.0  # 690 − 96 (подъезд длинного цикла 1.6 с)
+    assert extra[1][0] == 690.0  # пик длинного цикла (середина 750 − hold/2 60)
 
-    # Если подходящих слов нет (только слово 100) — прежнее правило (a = 96, b = 192)
-    take_one_close = dict(take_base, words=[100])
-    keys_one = layout._cam1_jump_keys(cams, fps=fps, start=False, take=take_one_close)
-    extra_one = [k for k in keys_one if k[0] > 0]
-    assert extra_one[0][0] == 96
-    assert extra_one[1][0] == 192
+    # Слово, у которого подъезд до пика успевает, — наезжает: фраза 1300 (a = 1294,
+    # b = 1330, c = 1450) отъезда не получает (d = 1594 > 1482) — два ключа, а
+    # свободный промежуток 0..1234 (фраза минус зазор 1 с) получает длинный цикл
+    # (a=461, b=557, c=677, d=821).
+    take_ok = dict(take_base, words=[1300])
+    extra_ok = [k for k in layout._cam1_jump_keys(cams, fps=fps, start=False, take=take_ok) if k[0] > 0]
+    assert [k[0] for k in extra_ok] == [461.0, 557.0, 677.0, 821.0, 1294.0, 1330.0]
 
 
 def test_build_take_yellow_without_yellow_words(xml_subs, tmp_path):

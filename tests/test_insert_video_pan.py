@@ -99,8 +99,11 @@ def app_js():
     from core import app_meta
     pan = _func(app_meta.app_js_text(), "insVideoPan")
     fill = _func(app_meta.app_js_text(), "insVideoFill")
+    # Кадр по умолчанию в этих функциях берётся из ipvPlanWH (формат спикера клипа):
+    # в стенде профиля нет — функция отдаёт прежнюю вертикаль 1080×1920.
+    planwh = _func(app_meta.app_js_text(), "ipvPlanWH")
     script = (
-        "var W=1080,H=1920;\n%s\n%s\n"
+        "var W=1080,H=1920;\n%s\n%s\n%s\n"
         "var out=%s.map(function(s){\n"
         "  var a=insVideoPan(s[0],s[1],0,0);\n"
         "  var far=insVideoPan(s[0],s[1],99999,-99999);\n"
@@ -109,7 +112,7 @@ def app_js():
         "  return {app:[a.sx,a.sy], far:[far.x,far.y], nodims:[nodims.x,nodims.y],"
         "          fill:fv.w/s[0]*100};});\n"
         "console.log(JSON.stringify(out));"
-    ) % (pan, fill, json.dumps([list(s) for s in SIZES]))
+    ) % (pan, fill, planwh, json.dumps([list(s) for s in SIZES]))
     return _run_node(script)
 
 

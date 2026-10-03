@@ -86,12 +86,26 @@ def api_style_patch() -> Response:
 def api_speakers() -> Response:
     """Профили спикеров для селектора: у каждого своя студия, микрофон и говор,
     а значит свои пороги нарезки (см. speakers.py). Отдаём вместе с дефолтами и
-    подписями порогов — редактор профиля рисуется по ним."""
+    подписями порогов — редактор профиля рисуется по ним.
+
+    `formats` — что вообще бывает (9:16, 1:1, 4:5, 16:9) и размеры кадра каждого
+    из `core/frame.py`: список форматов один на весь проект, и копии его в
+    интерфейсе быть не должно.
+
+    `format_order` — те же ключи, но в порядке `frame.FORMATS`. У словаря JSON
+    порядка нет: Flask сортирует ключи по алфавиту, и список «Формат» в редакторе
+    профиля шёл бы 16:9, 1:1, 4:5, 9:16 — то есть формат по умолчанию последним.
+    Словарь `formats` остаётся: по нему интерфейс берёт размеры кадра
+    (`static/app/87-camframe.js`), и второй копии размеров быть не должно.
+    """
     try:
         try:
-            from core import speakers
+            from core import frame, speakers
             return jsonify(ok=True, speakers=speakers.all_speakers(),
-                           defaults=speakers.CUT_DEFAULTS, labels=speakers.CUT_LABELS)
+                           defaults=speakers.CUT_DEFAULTS, labels=speakers.CUT_LABELS,
+                           formats={k: list(v) for k, v in frame.FORMATS.items()},
+                           format_order=list(frame.FORMATS),
+                           default_format=frame.DEFAULT)
         except ReelsiError: raise
         except Exception as e:
             raise ReelsiError(umsg("speakers_load_failed", f"{type(e).__name__}: {e}",

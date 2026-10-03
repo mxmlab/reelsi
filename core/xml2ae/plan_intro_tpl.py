@@ -54,7 +54,10 @@ class IntroTplInputs:
     intro: IntroPlan
     # Точка масштабирования прекомпа (intro_scale_anchor): режим на всю сборку и готовые
     # числа на группу — Y якоря слоя (px прекомпа) и компенсация Position по Y (px слоя).
+    # Режимов два, и оба здесь: у камеры 1 (scale_anchor) и у групп на перебивке
+    # (scale_anchor2) своя ручка. Подстановки непустые, если не-дефолтен ХОТЬ ОДИН.
     scale_anchor: str
+    scale_anchor2: str
     anchor_y: list
     anchor_dy: list
     # Флаги строк, посчитанные в build.py: их читает не только этот блок (ассет и звук
@@ -62,6 +65,11 @@ class IntroTplInputs:
     any_glitch: bool
     any_back: bool
     any_big: bool
+    # Пресет появления субтитров «глитч» (стиль sub_anim): его ключи в .jsx ставит ТА ЖЕ
+    # introAnimFX, что играет глитч строк интро. Строк интро с глитчем может и не быть —
+    # функция всё равно нужна, поэтому признак отдельный, а не any_glitch: подмешать его
+    # в any_glitch значило бы завести автотень и прочие ветки глитча там, где их нет.
+    subs_glitch: bool
     # Строки со своим цветом: accent объявляет HL_FILL3, custom — аргумент cf у introDoc.
     accent_color_used: bool
     custom_color_used: bool
@@ -152,9 +160,11 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
     _intro_front, _intro_above_roto = _intro.front, _intro.above_roto
     _intro_anchor = _intro.anchor
     _scale_anchor = inp.scale_anchor
+    _scale_anchor2 = inp.scale_anchor2
     _anchor_y, _anchor_dy = inp.anchor_y, inp.anchor_dy
     _sq_used = _intro.sq_used
     _any_glitch, _any_back, _any_big = inp.any_glitch, inp.any_back, inp.any_big
+    _subs_glitch = inp.subs_glitch
     _accent_color_used, _custom_color_used = inp.accent_color_used, inp.custom_color_used
     # Стиль — структурой, прочитанной один раз: цвета, тени, свечение
     # (все четыре двери — intro_glitch_glow/intro_fx_glow и двери «glowfix»
@@ -220,7 +230,11 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
     _any_right = any(x.get("anim") == "right" for g in _intro_groups for x in g)
     _any_up = any(x.get("anim") == "up" for g in _intro_groups for x in g)
     _any_count = any(_has_valid_count(x) for g in _intro_groups for x in g)
-    _any_fx_glow = any(x.get("fx") == "glow" for g in _intro_groups for x in g)
+    # Свечение строки — по строкам ПЛАНА (они же уезжают в INTRO_GROUPS): fx у строки
+    # ставит сам план по ЕДИНОЙ галке стиля intro_accent_glow (plan_intro.py) — accent-
+    # строкам при включённой галке, белым и жёлтым никогда. Поле fx строки (старые
+    # сохранённые клипы) не читается нигде: у отдельной строки свечение не выбирается.
+    _any_fx_glow = any(x.get("fx") == "glow" for g in _intro.intro for x in g["lines"])
     _any_intro_yellow = any(x.get("color") == "yellow" for g in _intro_groups for x in g)
     # Автотень — только у глитча и строк заднего плана, и только если её разрешает галка
     # этого вида строк. Свечение (fx=="glow") её по-прежнему НЕ приносит:
@@ -234,6 +248,9 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
         _any_glitch or _any_reveal or _any_fx_glow
         or _any_left or _any_right or _any_up
         or _any_count
+        # Глитч появления субтитров зовёт эту же функцию: без неё в .jsx её не было бы
+        # вовсе, и подстановка молча ушла бы в try/catch.
+        or _subs_glitch
     )
 
     # Тень (Drop Shadow) на КАЖДОМ слове/строке интро — пресет intro_shadow, либо
@@ -296,10 +313,11 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
     # Точка масштабирования прекомпа интро (intro_scale_anchor): готовые числа на группу —
     # Y якоря слоя в прекомпе и компенсация Position по Y. Шаблон только применяет: Anchor
     # Point ставится в [IW/2, INTRO_ANCHOR_Y[gI]], к Position добавляется
-    # INTRO_ANCHOR_DY[gI]. Всё это нужно, ТОЛЬКО когда режим не дефолтный: при "comp" (центр
-    # композиции прекомпа) ни объявления, ни установки якоря, ни добавки в .jsx нет — файл
-    # прежний байт в байт (golden), тем же приёмом собраны соседние подстановки.
-    _any_scale_anchor = _scale_anchor != "comp"
+    # INTRO_ANCHOR_DY[gI]. Всё это нужно, ТОЛЬКО когда не-дефолтен ХОТЬ ОДИН режим: при "comp"
+    # (центр композиции прекомпа) у группы полей anchor_y нет вовсе, а когда оба режима "comp" —
+    # в .jsx нет ни объявления, ни установки якоря, ни добавки: файл прежний байт в байт
+    # (golden), тем же приёмом собраны соседние подстановки.
+    _any_scale_anchor = _scale_anchor != "comp" or _scale_anchor2 != "comp"
     _intro_anchor_decl = (
         "    var INTRO_ANCHOR_Y=%s, INTRO_ANCHOR_DY=%s;    // [группа] — Y якоря слоя"
         " прекомпа и добавка к его Position по Y: точка масштабирования знает Y строк"

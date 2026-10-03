@@ -56,10 +56,11 @@ from .config import (   # noqa: F401
                      PROVIDER_PRESETS, REASONING_BUDGET, REASONING_EXAMPLES, REASONING_LEVELS,
                      REASONING_MODELS, STEP_REASONING_DEFAULT, STEP_TITLES,
                      _default_ai_config, _profile_dict, _seed_ai_config,
-                     apply_profile_headers, cut_asr_engine, glitch_glow_mode, key_env_name, load_ai_config, model_supports_caching,
+                     apply_profile_headers, cut_asr_engine, glitch_glow_mode, ae_build_workers_cfg, key_env_name, load_ai_config, model_supports_caching,
                      normalize_base_url, omni_local_engine, parse_headers_text, reason_budget,
                      resolve_key, resolve_omni_profile, resolve_profile, save_ai_config, step_profile,
-                     effective_step_reasoning, step_reasoning)
+                     effective_step_reasoning, step_reasoning, step_concurrency,
+                     step_is_local, cut_parallel_width)
 from . import catalog  # noqa: F401   (возможности моделей из models.dev)
 from .prompts import (   # noqa: F401
                       INSERTS_SCHEMA, INSERTS_SYSTEM, INTRO_SCHEMA, INTRO_SYSTEM,
@@ -69,14 +70,16 @@ from .llm import (   # noqa: F401
                   StreamStalled, UpstreamBusy, _anthropic_supports_thinking, _api_base,
                   _ask_anthropic, _ask_json, _ask_openai, _extract_json_obj, _lms_bin,
                   _read_stream, begin_call, cancel_call, cancel_reason, cancelled,
-                  clear_cancel, ensure_loaded, is_current, loaded_info, loaded_models,
-                  our_loaded_models, unload_ours, warn_foreign_models)
+                  clear_cancel, end_call, ensure_loaded, idle_since, is_current,
+                  loaded_info, loaded_models, others_live, our_loaded_models,
+                  unload_ours, warn_foreign_models)
 from .images import (   # noqa: F401
                      IMAGE_MODEL_HINTS, IMAGE_OFF, IMAGE_PROMPT_SLOTS,
                      IMAGE_MODELS,
                      _gen_image_chat, _gen_image_openrouter, _img_http_error,
                      build_image_prompt, gen_image, image_rembg_on,
-                     resolve_image_profile, resolve_image_prompt_cfg)
+                     resolve_image_profile, resolve_image_prompt_cfg,
+                     unsloth_cancel_ours, unsloth_unload_ours)
 from .video import (   # noqa: F401
                     VIDEO_MODEL_CAPS, VIDEO_ASPECTS, VIDEO_MODELS, VIDEO_MODEL_HINTS,
                     VIDEO_OFF, VIDEO_PROMPT_SLOTS, VIDEO_RESOLUTIONS, VIDEO_ROLES,
@@ -104,7 +107,8 @@ from .commands import (   # noqa: F401
                        INTRO_FUNC_WORDS,
                        _STYLE_WORDS, _apply_zones, _busy_windows, _busy_windows_from_free,
                        _end_zone_word, _free_quota, _free_windows, _hook_breaks, _intro_defunc,
-                       _intro_free_hint, _intro_look,
+                       _intro_fix_prefix, _intro_fix_prefix_mids, _intro_free_hint, _intro_look,
+                       INTRO_PREFIX_WORDS,
                        _place_mids, _snap_to_phrase, _split_words, _strip_style_words,
                        _word_lines, _words_from_xml, _wrap_intro_rows, as_ints, cmd_inserts,
-                       cmd_intro, cmd_yellow, ins_end_sec, ins_target)
+                       cmd_intro, cmd_yellow, ins_end_sec, ins_quota, ins_target)

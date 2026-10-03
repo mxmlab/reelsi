@@ -60,6 +60,11 @@ okwords.test.txt
 # keep: *.py, refblobs.json, sub_template.xml, README — these are the working data
 insertlib.json
 insertlib.json.tmp.*
+# кеш ответов стоков (Pexels/Pixabay разрешают кешировать ~24 ч) — рядом с базой
+# вставок; у изолированного профиля свой (REELSI_STOCK_CACHE)
+stock_cache.json
+stock_cache.test.json
+stock_cache.json.tmp.*
 ui_state.json
 ui_state.json.tmp
 render_stats.json
@@ -93,6 +98,11 @@ breath_model.*.json
 ui_state.test.json
 job.lock
 job.test.lock
+# межпроцессный замок видеокарты (core/gpulock.py): путь = замок джоба + ".gpu"
+job.lock.gpu
+job.test.lock.gpu
+# окружение RoFormer-шумодава тестового профиля (core/voicefx_sep.py, ~2 ГБ)
+_voice_sep.test/
 # копии рабочего состояния для тестового профиля (launch.json, порт 5098) — заводятся сами
 ai_config.test.json
 insertlib.test.json
@@ -100,4 +110,8 @@ insertlib.test.json
 _videogen/
 # то же у изолированного профиля (AUTOCUT_VIDEO_DIR в launch.json / webui_test.py)
 _videogen.test/
+# обработка голоса спикера: запечённые треки и превью «было/стало» (локальные медиа)
+_voicefx/
+# то же у изолированного профиля (REELSI_VOICEFX_DIR в webui_test.py)
+_voicefx.test/
 scratch/

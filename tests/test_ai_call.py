@@ -479,3 +479,147 @@ def test_reasoning_level_ladder_on_retry(monkeypatch):
     efforts = [c["reasoning"]["effort"] for c in calls]
     assert efforts == ["high", "medium", "low"]
 
+
+# ---- «Родной» effort: потолок самой модели, а не наш бюджет (баг 02.10.2026) ----
+# Разметка вставок на openai/gpt-6-luna через OpenRouter: 6 вызовов подряд
+# finish=length ровно по 26000 токенов (ответ 10000 + REASONING_BUDGET["high"]=16000),
+# из них 25682–26000 на размышления. У openai/* effort — родной параметр, наш
+# потолок размышления не ограничивает, а обрывает уже посчитанный ответ: таким
+# моделям шлём out_limit из каталога.
+NATIVE_CAPS = {"reasoning": True, "reasoning_kind": "effort",
+               "efforts": ["low", "medium", "high"], "structured_output": True,
+               "temperature": True, "out_limit": 128000, "ctx_limit": 1050000,
+               "cache": True, "default": False,
+               "cost": {"input": 0.2, "output": 1.2}}
+
+
+def _native_prof(model="openai/gpt-5.6-luna", lvl="high"):
+    return {"provider": "openrouter", "base_url": "https://x/v1", "api_key": "k",
+            "model": model, "reasoning": lvl, "name": "t"}
+
+
+def _sse_usage(**kw):
+    return ("data: " + json.dumps({"usage": kw}) + "\n").encode()
+
+
+def _sse_finish(reason):
+    return ("data: " + json.dumps({"choices": [{"delta": {},
+                                                "finish_reason": reason}]}) + "\n").encode()
+
+
+def test_openai_family_gets_model_out_limit(monkeypatch):
+    """openai/* + «ум» high: max_tokens = out_limit модели из каталога, не наш бюджет."""
+    sent = []
+
+    def fake_urlopen(req, timeout=None):
+        sent.append(json.loads(req.data.decode("utf-8")))
+        return FakeResp([sse(content='{"ok": true}'), DONE])
+
+    monkeypatch.setattr(aicut.llm.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(aicut.llm.catalog, "caps", lambda p, m, emit=None: dict(NATIVE_CAPS))
+    aicut._ask_openai(_native_prof(), "sys", "user", {"type": "object"},
+                      max_tokens=26000, emit=lambda *a, **k: None)
+    assert sent[0]["max_tokens"] == 128000      # out_limit модели, а не 26000
+    assert sent[0]["reasoning"] == {"effort": "high"}
+
+
+def test_other_families_keep_answer_plus_budget(monkeypatch):
+    """Другие семейства не трогаем: у anthropic/* потолок — доля effort, шлём бюджет."""
+    sent = []
+
+    def fake_urlopen(req, timeout=None):
+        sent.append(json.loads(req.data.decode("utf-8")))
+        return FakeResp([sse(content='{"ok": true}'), DONE])
+
+    monkeypatch.setattr(aicut.llm.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(aicut.llm.catalog, "caps",
+                        lambda p, m, emit=None: dict(NATIVE_CAPS, out_limit=64000))
+    aicut._ask_openai(_native_prof("anthropic/claude-sonnet-4-20250514"), "sys", "user",
+                      {"type": "object"}, max_tokens=26000, emit=lambda *a, **k: None)
+    assert sent[0]["max_tokens"] == 26000       # ответ + бюджет, как раньше
+
+
+def test_native_effort_without_out_limit_keeps_budget(monkeypatch):
+    """Нет out_limit в каталоге — поведение как раньше (наш бюджет)."""
+    sent = []
+
+    def fake_urlopen(req, timeout=None):
+        sent.append(json.loads(req.data.decode("utf-8")))
+        return FakeResp([sse(content='{"ok": true}'), DONE])
+
+    monkeypatch.setattr(aicut.llm.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(aicut.llm.catalog, "caps",
+                        lambda p, m, emit=None: dict(NATIVE_CAPS, out_limit=None))
+    aicut._ask_openai(_native_prof(), "sys", "user", {"type": "object"},
+                      max_tokens=26000, emit=lambda *a, **k: None)
+    assert sent[0]["max_tokens"] == 26000
+
+
+def test_native_effort_off_sends_no_max_tokens(monkeypatch):
+    """Ум off — потолок не шлём и для openai/* (как раньше)."""
+    sent = []
+
+    def fake_urlopen(req, timeout=None):
+        sent.append(json.loads(req.data.decode("utf-8")))
+        return FakeResp([sse(content='{"ok": true}'), DONE])
+
+    monkeypatch.setattr(aicut.llm.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(aicut.llm.catalog, "caps", lambda p, m, emit=None: dict(NATIVE_CAPS))
+    aicut._ask_openai(_native_prof(lvl="off"), "sys", "user", {"type": "object"},
+                      max_tokens=26000, emit=lambda *a, **k: None)
+    assert "max_tokens" not in sent[0]
+    assert sent[0]["reasoning"] == {"enabled": False}
+
+
+def test_finish_length_at_our_ceiling_names_our_ceiling(monkeypatch):
+    """completion_tokens == отправленному потолку -> это НАШ потолок, и числа в тексте."""
+    def fake_urlopen(req, timeout=None):
+        return FakeResp([sse(content='{"a": 1}'),
+                         _sse_usage(prompt_tokens=10, completion_tokens=128000,
+                                    completion_tokens_details={"reasoning_tokens": 125000}),
+                         _sse_finish("length"), DONE])
+
+    monkeypatch.setattr(aicut.llm.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(aicut.llm.catalog, "caps", lambda p, m, emit=None: dict(NATIVE_CAPS))
+    with pytest.raises(ReelsiError) as ei:
+        aicut._ask_openai(_native_prof(), "sys", "user", {"type": "object"},
+                          max_tokens=26000, emit=lambda *a, **k: None)
+    e = ei.value
+    assert e.code == "output_cut_ours"
+    assert "потолок вывода 128000 токенов" in str(e)
+    assert "125000 на размышления" in str(e)
+    # В журнал уходит и отправленный потолок — по нему видно, кто обрезал ответ.
+    rows = _read_ai_log(aicut.llm.AI_LOG_PATH)
+    assert rows[-1]["ok"] is False and rows[-1]["mt"] == 128000
+
+
+def test_finish_length_below_our_ceiling_names_provider_limit(monkeypatch):
+    """completion_tokens меньше отправленного потолка -> лимит провайдера/модели."""
+    def fake_urlopen(req, timeout=None):
+        return FakeResp([sse(content='{"a": 1}'),
+                         _sse_usage(prompt_tokens=10, completion_tokens=5000),
+                         _sse_finish("length"), DONE])
+
+    monkeypatch.setattr(aicut.llm.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(aicut.llm.catalog, "caps", lambda p, m, emit=None: dict(NATIVE_CAPS))
+    with pytest.raises(ReelsiError) as ei:
+        aicut._ask_openai(_native_prof(), "sys", "user", {"type": "object"},
+                          max_tokens=26000, emit=lambda *a, **k: None)
+    e = ei.value
+    assert e.code == "output_cut"               # НЕ наш потолок
+    assert "по своему лимиту вывода" in str(e)
+
+
+def test_ai_log_records_sent_max_tokens(monkeypatch):
+    """В ai_calls.jsonl попадает ФАКТИЧЕСКИ отправленный max_tokens (поле mt)."""
+    def fake_urlopen(req, timeout=None):
+        return FakeResp([sse(content='{"ok": true}'), DONE])
+
+    monkeypatch.setattr(aicut.llm.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(aicut.llm.catalog, "caps", lambda p, m, emit=None: dict(NATIVE_CAPS))
+    aicut._ask_openai(_native_prof(), "sys", "user", {"type": "object"},
+                      max_tokens=26000, emit=lambda *a, **k: None)
+    rows = _read_ai_log(aicut.llm.AI_LOG_PATH)
+    assert rows[-1]["ok"] is True
+    assert rows[-1]["mt"] == 128000
+

@@ -425,6 +425,31 @@ word text edit via `/api/edit_word`), green "✎ edited" label on clips, the cam
 layout button is hidden for 1-cam, space in modals is always play/pause, insert
 library (see `core/insertlib.py`).
 
+**Changed 2026-10-02: step 1 has ONE player — the cut editor.** The "Montage" block with a
+second player on the same video is gone: two players fought over `currentTime`, and a click
+far along the timeline during playback rolled back to the start of the next montage piece
+(the second player drove the video by its own piece number). The playhead and the picture
+are driven by `ED` (`static/app/70-editor.js`), and the volume and the "camera — cuts —
+length" line moved into the editor's control row. The speaker's processed voice (the
+denoise track `vt*` and the live VST plug-ins) plays in the SAME player, both when
+listening to the montage and when playing the source: the sound time is the SOURCE time of
+camera 1 under the playhead (`ED.cs`), and over the cut-out places the sound jumps with the
+picture. `ED.cams` (set by `openPreview`) gives the voice track and the live host camera 1's
+file, and `ED.voicePanel` says which "Voice" panel to read the live knobs from. The "Voice"
+panel is read AFTER the editor opens on the first opening of the preview, otherwise the
+clip's speaker was not found.
+
+**The live voice host (`core/voicefx_editor.py`, `--live`)** is a separate process per clip:
+it plays the track (the voice after the denoiser) through the enabled VST plug-ins in step
+with the picture (commands `play`/`seek`/`pause`/`track`/`chain`/`gain` over stdin) and
+opens plug-in windows in the MAIN thread (JUCE cannot otherwise), without interrupting the
+sound. The output stream is opened at the DEVICE's rate (`sample_rate=None` when it refuses
+48 kHz), and a streaming resampler sits at the end of the chain: the plug-ins still compute
+at 48 kHz, and `write` gets the stream's rate. A sound failure (device, stream) is reported
+as an `audio_error` event in the status of `/api/voicefx_live`, and the page then gives the
+sound back to ITSELF instead of muting its own voice in favour of a silent host. The host's
+volume is the speaker's voice volume (dB) plus the play volume (20·log10).
+
 **Added 2026-07-23: shared volume control** on all three video previews (edit
 `PV`, inserts `IPV`, layout `CPV`). An `<input data-vol>` slider in each panel,
 one `MEDIA_VOL` value (localStorage `autocut2_vol`, 0..1) for all players —
@@ -591,6 +616,8 @@ over-the-shoulder fly-out loses its point, a deliberate choice).
 | `core/gigaam_cut/` | **Engine 1 (main)**: GigaAM whole-file cutting: `tune` (thresholds), `takes` (takes + code post-pass), `asr` (transcription + alignment), `decide` (decision prompts), `pipeline` (run orchestrator). Thresholds are ONLY in `tune`, read via the module, never imported by name |
 | `core/xml2ae/` | export to After Effects: `to_ae_full()` assembles `.jsx`, `build_combined()` — several clips into one. `scene_plan` is the ASSEMBLER of the scene plan (parse the XML, call the block entry points, lay the result out by key); the plan maths itself is split into blocks: `plan_words` (word prep: index alignment, intro word exclusion, `censor_source`, `.words.json` timings), `plan_assets` (project & asset folders, asset resolver, font ladder), `plan_subs` (subtitles), `plan_intro` (intro maths), `plan_intro_tpl` (intro template substitutions), `plan_inserts` (inserts), `plan_decor` (decorations: subtitle hide on rise inserts, shadow, plate, progress bar, caption, disclaimer), `plan_audio` (sound and censorship), `plan_camera` (camera: zoom, pan, roto markup, head follow) |
 | `core/xml2ae/plan_style.py` | **the style is read ONCE** into a `StyleValues` structure (`read_style`, task NO): the plan blocks take ready values from it instead of calling `_sv`/`_sv_or` on every line |
+| `core/emphasis.py` | **the strength of highlighted words** for the "only strong highlights" zoom rule: the emotion of the phrase (GigaAM-Emo, `1 − p(neutral)` over a 2.5 s window) plus the stress of the word by sound (RMS, `librosa.yin`, syllable length, compared with the neighbouring words by a median/MAD z-score). Both components live in the sidecar `<stem>.emph.json` next to the XML, so switching the way (`hl_zoom_strength`) recomputes nothing. The sound is read in WINDOWS around the wanted words (`_merge_windows`), pitch and RMS once per window (`tone_track`), and the emotion model is loaded for the calculation and released right after (VRAM). `EMPH_VERSION` in the cache key is raised when the weights or the windows change |
+| `core/xml2ae/precompute.py` | **precompute for the build and the preview through the SAME functions**: `head_track` (the head track of the cameras the style follows), `emphasis_precompute` (highlight strength, before the plan), `roto_masks` (masks by `plan["roto"]`; `strict` — the build fails, the preview returns what it has), `precompute` (all of it — the door of the preview button), `cached_plan` (what is already computed, from the caches and without a GPU), `_release_roto` (releasing RVM — one door for the build and the preview) |
 | `core/aicut/` | LLM markup: yellow words / inserts / intro / cut decision; package since 2026-08-06; `llm.py` (begin_call, cancel_stream), `commands.py` (yellow_cmd, inserts_cmd, intro_cmd), `config.py` (profiles CRUD), `config_actions.py` (the `/api/ai_config` actions, one function per action — `set_glitch_glow`, `save_profile` and the rest; the key mask `•••…` = "key unchanged" is handled here too, via `unmask_ai_key` from `config`; the route stays thin, task NZ), `images.py`, `video.py` |
 | `core/omni_cut.py` | CLI/job of AI cutting: default `gigaam`, legacy `--mode old`; `--speaker`, `--selfcheck-model`, `--no-draft`; entry for both engines |
 | `core/xmlbuild.py` | Premiere xmeml assembly (cameras, segments, subtitles) |
@@ -629,6 +656,8 @@ over-the-shoulder fly-out loses its point, a deliberate choice).
 | `core/jobstate.py` | **job state management without Flask**: job logging, journal (`job_state.json`), stage queue (`items_init`/`item_set`/`item_done`/`item_fail`, `journal_*`), progress and stall watchdog (`set_progress`/`set_stalled`), cross-process GPU lock (`job.lock`), error parsing. State instances (`JOB`, `LOCK`, `RJOB`, `PJOB`) stay with owners in `api/`; `api/_core.py` re-exports functions under old names |
 | `core/insertlib.py` | insert library: XML + folder scan, `insertlib.json` index, semantic lookup; also `remove_bg` (rembg) and `nobg_path(media)` — ONE cache of a photo without background for the build and the preview (`<folder>/<stem>.nobg.png`; error of rembg or a non-image returns the source path and reports through `emit`) |
 | `api/` | **shared backend**: all `/api/*` (Blueprint), JOB/LOCK, jobs |
+| `api/previewcalc.py` | the preview door "compute roto and tracking": `/api/preview_calc` (the button, a background calculation through `core/xml2ae/precompute.py`), `/api/preview_calc_status` (per-chunk progress and "what is already computed"), `/api/preview_calc_cancel`. Its own state `PCJOB` and the shared job lock (`_cross_lock_acquire`), so the heavy GPU stage never runs on top of a cut, a build or a render. The body is the one of `/api/scene` and is normalized by the same door, otherwise the plan and the masks would diverge |
+| `api/voicefx.py` | the speaker's voice: the denoiser, the VST chain and the live host (`/api/voicefx_live`, commands `play`/`seek`/`pause`/`track`/`chain`/`gain`), the plug-in window (`/api/voicefx_host`, `_host_edit`, `_host_stop`) and baking `<stem>.voice.wav` (`/api/voicefx_bake`, `..._status`, `..._cancel`). The sound is computed by `core/voicefx.py`, the live host is `core/voicefx_editor.py` (one process per clip) |
 | `webui.py` | **main** web UI (port 5001) |
 | `tests/` | pytest golden tests of contracts |
 | `core/draftrender.py` | draft render 720p |
@@ -691,9 +720,29 @@ in the set, which one is "base" for AE is NOT determined (simplification — ste
 works with the assembly, not with cameras).
 
 **`.jsx` assembly** — `xml2ae.to_ae_full()`: `parse_full` (timeline parse) →
-`styles.resolve` (style preset) → `roto` (RVM character alpha, GPU) → substitution
-into the JS template `AE_FULL` → write `.jsx`. Separately `build_combined()`
+`styles.resolve` (style preset) → **precompute** (`core/xml2ae/precompute.py`: the head
+track, the highlight strength `<stem>.emph.json` and the roto masks — the SAME functions
+the preview button calls, so the caches are shared and there is no second copy of any
+calculation; the strength is computed BEFORE the plan, because the plan reads its sidecar
+to decide which highlights get a zoom, and RVM is released from video memory here) →
+`roto` (RVM character alpha, GPU) → substitution into the JS template `AE_FULL` → write
+`.jsx`. Separately `build_combined()`
 merges several files into one `.jsx` (set → "one for all").
+
+**A set is built by several AE copies.** A multi-clip set is no longer built by one
+`AfterFX` one clip after another: `ae_build_workers` (`auto` by default) starts N copies
+(`AfterFX -m -noui`), each building its own share of the clips into a fresh project, and
+one more copy merges the parts into a single `reelsi_batch.aep` (importing the parts,
+merging the repeated footage, then the render queue as before). `auto` = min(3, clips,
+free RAM / 10 GB); `1` keeps the old path. The `.jsx` is still ONE file for the whole set:
+a part builds only its own timelines (`$.global.REELSI_ONLY`), so running the `.jsx` by
+hand in AE is unchanged. Measured on 12 clips (AE 26.2): one `AfterFX` 1534 s (the time
+per clip grew 10 → 284 s, as AE accumulates undo history), 3 copies plus the merge 237 s.
+Hygiene: old part and merge logs are removed before the run, an `.aep` not re-saved by this
+run fails the clips (no `aerender`), and Stop kills every copy by its own process tree.
+Both paths pass `-mem_usage 40 60` (`AERENDER_MEM_USAGE`): without the limit AE takes
+almost all memory, Windows swaps (+513 MB on one clip) and the render is SLOWER — 361 s
+against 290/296 s; with the limit 34–40 GB stay free and the swap file does not grow.
 
 **Step-3 verification** — `core/verify_jsx.py` (without AE), `tools/verify_ae.py` +
 `tools/ae_inspect.jsx` (over a dump).
@@ -812,6 +861,22 @@ in AE (tasks ZA–ZQ):
 (metadata: who, when, model, model key). The head track is a sidecar next to the
 XML (`<stem XML>.head.json`, task ZC).
 
+**`emph` contracts** — the strength of highlighted words: the sidecar
+`<stem>.emph.json` next to the XML (`core/emphasis.py`),
+`{"key": …, "scores": {index: {"emo": …, "stress": …}}}`. The key holds `EMPH_VERSION`,
+camera 1's source and its mtime, the set of scored words (index, start, end, text), the
+set of highlights and the intro word times. A key mismatch means the sidecar is not read
+at all (`valid=False`) and the zoom rule falls back to its previous behaviour: a word
+added by hand after the calculation is not in the sidecar, and calling it "weak" silently
+would be wrong. The word numbering follows the PLAN (`plan_words`: words after the intro
+words are removed plus the intro words that continue the row), otherwise the calculation
+and the reading would diverge on a clip with an intro. The zoom rule lives in
+`plan["zoom"]["cam1"]["take"]["yellow"]` (and the camera-2 twin): `strong`,
+`min_pct` (the percentile of the CLIP's highlight strengths), `max_per_piece`,
+`second_min_s`, `scores`/`uncomputed`. A phrase is as strong as its strongest word, and
+cycles are counted along the timeline rather than by strength, because the
+"camera already at its peak" state must stay correct.
+
 **`styles` contracts** — clip styles: `core/styles.py` + `styles/*.json` — style
 preset.
 
@@ -849,17 +914,38 @@ with camera strings.
 - `20-widgets.js` — SVG icons, number scrubbers, step switching.
 - `30-video.js` — "Video" tab: video generation and task history.
 - `40-queue.js` — project, cameras, clip queue, cutting job launch and polling.
-- `50-chrome.js` — progress overlay, log window, modals, tooltip helpers.
+- `50-chrome.js` — log window, modals, tooltip helpers.
+- `55-progress.js` — the ONE progress form (header, bar, clip rows, buttons): the
+  `PROGEV` dictionary (event code → human status), `PROGLOG` (log line → event code,
+  one place for the whole interface), API `progOpen`/`progItem`/`progDone`. Every long
+  operation goes through it; its markup lives nowhere else.
 - `60-preview.js` — preview player, volume controls, word bar, intro markup.
 - `70-editor.js` — cut editor (timeline) and step 2 markup.
 - `80-inserts.js` — inserts modal and asset library: scanning, auto-matching, import.
+- `87-roto-preview.js` — the "Compute roto and tracking" button in the AE preview: it
+  calls `/api/preview_calc` (the same precompute as the build, `core/xml2ae/precompute.py`),
+  shows the progress row inside the frame and marks "computed" once the shared cache holds
+  the masks. The button is visible only on the Intro tab and only when the clip style has
+  roto or head follow enabled.
 - `85-inserts-view.js` — insert preview: virtual player and timeline. The camera 1
   frame is drawn through ONE matrix, `ipvCamMatrix` (`screen = C + S·(R·p − C_c) + T`
   from `zoom.keys`, `zoom.rot` and `ipvCamShift` = `pan` + head follow), the whole
   source is drawn with `drawImage(v, 0, 0, vw, vh, …)`; `ipvCamChild` is only for
   children of the camera 1 null (its inserts, the intro, the shade), free camera 2
   inserts get no shift; `ipvLumetriFilter` builds the approximate `plan.lumetri`
-  filter (the real Lumetri formulas are closed).
+  filter (the real Lumetri formulas are closed). Camera 2 uses its own
+  `plan.lumetri2` filter only while its link chain is open (`lm2_link=False`);
+  with the chain closed the plan carries no `lumetri2` and camera 2 takes camera 1's
+  filter.
+- `86-lut.js` — the camera LUT from the speaker profile: the `.cube` table comes from
+  `/api/lut` and is applied to the preview frame on the fly in a hidden WebGL2 canvas
+  (`lutApply`, one context per preview, the 3D texture is rebuilt only when the table
+  changes); without WebGL2 the preview runs without a LUT.
+- `87-camframe.js` — the camera frame: which part of the source goes into the reel frame
+  (`frame` in the speaker profile, per camera). Editing mode in the step 3 preview
+  (the whole source fitted, the reel-aspect rectangle on top, drag to shift, wheel to
+  zoom, "Save to speaker" through `/api/savespeaker`); the numbers are a mirror of
+  `core/frame.py` (the single source of the clamp, checked by `tests/test_cam_frame.py`).
 - `88-cams.js` — camera layout editor and CPV mini-player.
 - `90-ae.js` — After Effects step: words, intro, manual inserts.
 - `94-stylepanel.js` — style panel (Effect Controls) built from the `/api/style_schema`
@@ -995,6 +1081,11 @@ generation profiles (separate from LLM), models from the catalog.
   only, `aerender`), own job.
 - `POST /api/preview_proxy`, `GET /api/preview_proxy_status` — 720p 4:2:0 proxies
   for 4:2:2 10-bit sources the browser can't decode, own `PXJOB`.
+- `POST /api/preview_calc`, `GET /api/preview_calc_status`,
+  `POST /api/preview_calc_cancel` — roto and tracking calculation from the preview
+  button (`api/previewcalc.py`): the same `core/xml2ae/precompute.py` the build uses,
+  the shared job lock, its own `PCJOB`. The first request answers "what is already
+  computed" without touching the GPU.
 
 **GDRIVE** (`api/gdrive.py`):
 - `POST /api/gdrive_download`, `GET /api/gdrive_status` — material from a Google
@@ -1021,7 +1112,45 @@ generation profiles (separate from LLM), models from the catalog.
 
 ## Gotchas
 
-**GOTCHA 0 — A precomp layer and a shape layer scale differently (task FE,
+**GOTCHA 0 — two doors to one state are a bug even when both "work" (2026-10-02).** An
+insert on step 3 lives in two places: the PREVIEW list and the clip card (what is saved).
+Dragging or stretching it on the timeline edited only the preview list, which was rebuilt
+from the cards on the next opening — the timing edit disappeared silently. The same
+happened with camera 2's zoom (two copies of "which keys") and with intro row glow (the
+row's `fx` field against the style switch `intro_accent_glow`). The rule: one value has ONE
+source; the second door must write where the first one lives (a shared card-lookup helper,
+as the X/Y shift has), and a "saved but not read" field is better removed. Test the value
+ARRIVING in the state and surviving a reopening, not that a function was called.
+
+**GOTCHA 1 — GigaAM-Emo takes a PATH, and an array only through `forward` (2026-10-03).**
+`get_probs` of the `emo` head runs `prepare_wav` → `load_audio` → ffmpeg and therefore
+expects a string: calling it with an already read array raises
+`TypeError: expected str, bytes or os.PathLike object, not ndarray` (caught in a live run).
+Pushing the window through a temporary file is no good either — there is one window per
+highlighted word (dozens). So `core/emphasis.py:emotion_probs` repeats the steps of
+`get_probs` over the array: mono float32 → 16 kHz (`EMO_SR`) → a tensor on the model's
+`_device`/`_dtype` → `forward` → `avg_pool1d` over time → `head` → softmax → `id2name`.
+The error only shows up in a live run — a stubbed model in a test does not reproduce it.
+
+**GOTCHA 2 — AE merges zoom keys on one frame, and the HOLD/ease flags shift (2026-10-02).**
+A cut jump and the start of a highlight zoom in one and the same frame produced TWO keys in
+one frame; AE merges them and moves the ease/HOLD flags onto the neighbouring key, so the
+zoom became a jump ("it snaps") and camera 2 revealed its frame edge by up to 169 px. Such
+keys are merged into one in the plan, the `.jsx`, the preview and the tracking — by ONE
+rule. Next to it: the shift clamp must compute the scale along AE's CURVE and take the
+SMALLEST scale on the segment (a straight line missed), and the tracking samples must be
+keyed at EVERY sample (10/s), linearly, in batches: thinning with a 4 px tolerance plus
+Easy Ease on every key pushed the line off the frame and made the camera "brake" at the
+keys. Only AE (frame by frame) can measure this; tests over the Python geometry cannot.
+
+**GOTCHA 3 — the UI geometry tests run in Chrome, not by eye (2026-10-02).** The layout of
+the "Inserts" window and of the step-3 preview is checked in a real browser: one window
+height with 2 and with 30 inserts, no page scroll, the timeline inside the window, and the
+step-3 layout compared against a CSS stand with a ±2 px tolerance. Reason: frame defects
+(the window grew with the list, a hidden column of cards leaked into the step-3 preview)
+are invisible in jsdom — a JS stand without a layout engine misses them entirely.
+
+**GOTCHA 4 — a precomp layer and a shape layer scale differently (task FE,
 2026-08-25).** The AE formula: `screen = Position + (P_local − Anchor) * Scale`. For a
 PRECOMP layer local coordinates match the comp pixels, so the anchor `[W/2, POSY]`
 puts the scaling center exactly at the subtitle line. For a SHAPE layer (subtitle
@@ -1034,12 +1163,12 @@ fact missed the defect. Same place: preview and AE must match — in the preview
 plate lives INSIDE `#ipvsub` and rides the shared `transform: scale()`, so a wrong
 anchor in `.jsx` gave a "preview says one thing, AE another" divergence.
 
-**GOTCHA 1 — XML files with captions.** `core/xmlbuild.py` has duplicate lines —
+**GOTCHA 5 — XML files with captions.** `core/xmlbuild.py` has duplicate lines —
 traces of past edits (the code works but reads hard). Don't touch without need.
 
-**GOTCHA 2 — AE rendering.** `core/verify_jsx.py` doesn't catch animation errors.
+**GOTCHA 6 — AE rendering.** `core/verify_jsx.py` doesn't catch animation errors.
 
-**GOTCHA 3 — GigaAM and VRAM.** GigaAM and 27b can't live in VRAM simultaneously
+**GOTCHA 7 — GigaAM and VRAM.** GigaAM and 27b can't live in VRAM simultaneously
 (16 GB) — the "holds/unloads" scheme (see above).
 
 **GOTCHA 4 — UI state.** localStorage is primary, `/api/ui_state` →

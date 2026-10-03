@@ -234,7 +234,7 @@ def test_preview_proxy_gpu_lock_busy(client, tmp_path, clean_state, monkeypatch)
 
     # Имитируем план с несозданным прокси
     monkeypatch.setattr(previewproxy, "_preview_proxy_plan",
-                        lambda p, h: ([("/path/cam1.mp4", "/path/pv.mp4", False)], str(tmp_path)))
+                        lambda p, h, allintra=False: ([("/path/cam1.mp4", "/path/pv.mp4", False)], str(tmp_path)))
 
     # Занимаем кросс-лок заранее
     assert _core._cross_lock_acquire() is True
@@ -256,7 +256,7 @@ def test_preview_proxy_gpu_lock_acquired_and_released(client, tmp_path, clean_st
     xml.write_text("<xmeml/>", encoding="utf-8")
 
     monkeypatch.setattr(previewproxy, "_preview_proxy_plan",
-                        lambda p, h: ([("/path/cam1.mp4", "/path/pv.mp4", False)], str(tmp_path)))
+                        lambda p, h, allintra=False: ([("/path/cam1.mp4", "/path/pv.mp4", False)], str(tmp_path)))
 
     built = []
     lock_held_during_build = []
@@ -293,7 +293,7 @@ def test_preview_proxy_no_build_does_not_acquire_lock(client, tmp_path, clean_st
     xml.write_text("<xmeml/>", encoding="utf-8")
 
     monkeypatch.setattr(previewproxy, "_preview_proxy_plan",
-                        lambda p, h: ([("/path/cam1.mp4", "/path/pv.mp4", False)], str(tmp_path)))
+                        lambda p, h, allintra=False: ([("/path/cam1.mp4", "/path/pv.mp4", False)], str(tmp_path)))
 
     acquire_called = []
     orig_acquire = _core._cross_lock_acquire
@@ -341,7 +341,7 @@ def test_preview_proxy_thread_fail_releases_gpu_lock(client, tmp_path, clean_sta
     xml.write_text("<xmeml/>", encoding="utf-8")
 
     monkeypatch.setattr(previewproxy, "_preview_proxy_plan",
-                        lambda p, h: ([("/path/cam1.mp4", "/path/pv.mp4", False)], str(tmp_path)))
+                        lambda p, h, allintra=False: ([("/path/cam1.mp4", "/path/pv.mp4", False)], str(tmp_path)))
 
     r = client.post("/api/preview_proxy", json={"xml": str(xml), "build": True})
     assert r.status_code == 500

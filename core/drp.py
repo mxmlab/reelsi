@@ -21,6 +21,7 @@ import os
 import re
 import struct
 import uuid
+import wave
 import zipfile
 import zlib
 from typing import Any, Sequence, cast
@@ -300,11 +301,30 @@ def read(path: str) -> dict[str, bytes]:
         return {n: z.read(n) for n in z.namelist()}
 
 
+# Время и атрибуты записей архива прибиты: `.drp` — ВЫГРУЗКА, а не проект с
+# историей правок, а время сборки внутри архива делает две одинаковые выгрузки
+# разными. `writestr(имя, ...)` берёт время из `time.localtime` (DOS-время в
+# локальном заголовке, шаг 2 с): две сборки в разных двухсекундных окнах
+# расходились байтом 10 — на этом и плавал тест «нечитаемый голос изменил .drp».
+# Права и «система-создатель» прибиты по той же причине: `ZipInfo` берёт их из
+# платформы (POSIX — 3 и 0o600<<16, Windows — 0 и 0), и один и тот же проект на
+# разных ОС давал бы разные байты. Значения сняты с эталонного экспорта Resolve
+# (`data/drp_template.drp`): у него нули в младших 16 битах и 0o600 в старших.
+ZIP_DATE_TIME = (1980, 1, 1, 0, 0, 0)    # минимум, который вообще допускает ZIP
+ZIP_CREATE_SYSTEM = 0                    # 0 = FAT/Windows, как в экспорте Resolve
+ZIP_EXTERNAL_ATTR = 0o600 << 16          # старшие 16 бит = rw-------, DOS-флагов нет
+
+
 def write(path: str, files: dict[str, bytes]) -> None:
+    """Собрать `.drp`. Байты не зависят ни от времени сборки, ни от платформы."""
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for name, data in files.items():
-            z.writestr(name, data)
+            info = zipfile.ZipInfo(name, date_time=ZIP_DATE_TIME)
+            info.compress_type = zipfile.ZIP_DEFLATED    # метод ZipInfo хранит сам:
+            info.create_system = ZIP_CREATE_SYSTEM       # у writestr(имя, ...) его берут
+            info.external_attr = ZIP_EXTERNAL_ATTR       # из ZipFile, у ZipInfo — нет
+            z.writestr(info, data)
     fileio.atomic_bytes_write(path, buf.getvalue())
 
 
@@ -317,6 +337,9 @@ def seq_name(files: dict[str, bytes]) -> str:
 
 ZSTD_MAGIC = "28b52ffd"
 KEY_EXTENTS = "MediaExtents".encode("utf-16-be")
+# Кодек звукового <Clip> у обработанного голоса: `<стем>.voice.wav` — PCM, и в
+# шаблоне у звуковой дорожки камеры стоит ровно это имя. Значение не выдумано.
+VOICE_CODEC = "Linear PCM"
 
 
 def timecode_seconds(tc: str, fps: float | None = None) -> float:
@@ -417,8 +440,89 @@ def _hexblob(el: str, tag: str, fn: Any) -> str:
                   lambda m: "<" + tag + ">" + fn(m.group(1)) + "</" + tag + ">", el)
 
 
+def wav_audio_info(path: str) -> tuple[int, int, float] | None:
+    """WAV -> (частота, каналы, длительность в секундах) или None, если не читается.
+
+    Читаем своим `wave`, как `core/voicefx`: обработанный голос — наш же PCM, и
+    лишний ffprobe на каждый экспорт ни к чему. Не читается — подмены нет: запись
+    остаётся с сырым звуком камеры, а не с выдуманными числами.
+    """
+    try:
+        with wave.open(path, "rb") as w:
+            rate, channels, frames = w.getframerate(), w.getnchannels(), w.getnframes()
+    except (OSError, EOFError, wave.Error):
+        return None
+    if rate <= 0 or channels <= 0:
+        return None
+    return rate, channels, frames / float(rate)
+
+
+def _in_audio(el: str, fn: Any) -> str:
+    """Применить fn к содержимому блоков `<BtAudioInfo>` — звуковой части записи.
+
+    Звуковой дескриптор (свой `<Clip>` и своя `<TracksBA>`) лежит именно там, а
+    видео (`<BtVideoInfo>`) при подмене звука трогать нельзя: у камеры голос
+    подменяет только звук, картинка остаётся с камеры.
+    """
+    return re.sub(r"<BtAudioInfo\b.*?</BtAudioInfo>", lambda m: fn(m.group(0)), el, flags=re.S)
+
+
+def set_voice_descriptor(entry_xml: str, voice: str, mtime: str = "Thu Jan 01 00:00:00 2026") -> str:
+    """Звуковой дескриптор записи медиапула -> обработанный голос камеры 1.
+
+    У записи камеры два `<Clip>`: видео и звук — звук отдельный, со своим путём,
+    именем, mtime, кодеком, и своя `<TracksBA>` с `SampleRate`, `NumChannels` и
+    длительностью в сэмплах. Так Resolve хранит и привязанный звук с внешнего
+    рекордера. Подменяем ровно его: видео остаётся камерой, а клипы таймлайна не
+    меняются вовсе — голос посчитан по звуку камеры 1 и живёт на той же шкале
+    времени (`core/voicefx`).
+
+    Ничего не выдумываем: пишем только те поля, смысл которых снят с шаблона.
+    Файл не читается или контейнер другой формы — запись возвращается как была:
+    сырой звук камеры честнее записи с выдуманными числами, а .drp важнее голоса.
+    """
+    info = wav_audio_info(voice)
+    if info is None:
+        return entry_xml
+    rate, channels, dur_s = info
+    vdir, vbase = os.path.split(os.path.abspath(voice))
+
+    def clip(h: str) -> str:
+        """Звуковой `<Clip>` — путь, имя, mtime и кодек голоса."""
+        if not is_zstd_blob(h):
+            return h
+        head, d = unpack_fields(h)
+        for fno, val in ((1, vdir), (2, vbase), (3, mtime)):
+            if pb_get_str(d, fno) is not None:      # у звукового <Clip> полей меньше
+                d = pb_set_str(d, fno, val)
+        if pb_get_str(d, 5) is not None:            # кодек: у WAV он тоже PCM
+            d = pb_set_str(d, 5, VOICE_CODEC)
+        return pack_fields(head, d)
+
+    def tracks(h: str) -> str:
+        """`<TracksBA>` — частота, каналы и длительность в сэмплах из голоса.
+
+        `StartTime` остаётся камерным: он задаёт шкалу времени (таймкод исходника),
+        а клипы таймлайна берут из неё же свои `In`/`MediaStartTime`.
+        """
+        d: bytes | bytearray = bytes.fromhex(h)
+        d = kv_set(d, "SampleRate", int(rate).to_bytes(4, "big"))
+        d = kv_set(d, "NumChannels", int(channels).to_bytes(4, "big"))
+        d = kv_set(d, "Duration", round(dur_s * rate).to_bytes(8, "big"))
+        return d.hex()
+
+    def block(x: str) -> str:
+        """Подмена целиком или никак: контейнер другой формы — звук остаётся с камеры."""
+        try:
+            return _hexblob(_hexblob(x, "TracksBA", tracks), "Clip", clip)
+        except (KeyError, ValueError):
+            return x
+
+    return _in_audio(entry_xml, block)
+
+
 def set_media_descriptor(entry_xml: str, path: str, pr: dict[str, Any], mtime: str = "Thu Jan 01 00:00:00 2026",
-                         photo: bool = False) -> str:
+                         photo: bool = False, voice: str | None = None) -> str:
     """Переписать запись медиапула под конкретный файл.
 
     Запись — это полный дескриптор медиа, а не ссылка: путь, имя, кодек, таймкод,
@@ -431,6 +535,11 @@ def set_media_descriptor(entry_xml: str, path: str, pr: dict[str, Any], mtime: s
     Resolve): нет `Timecode` в <Time> (вместо него `StartFrame`), нет аудио и
     <TracksBA> вовсе, `FieldsBlob` не zstd. Поэтому для фото не трогаем Time и
     звук, а длительность из probe не нужна вовсе.
+
+    `voice` — путь к обработанному голосу камеры 1 (`<стем>.voice.wav`,
+    `core/voicefx`). Он подменяет ЗВУКОВОЙ дескриптор записи (см.
+    `set_voice_descriptor`): видео и клипы таймлайна при этом не меняются. Путь не
+    задан или файл не читается — запись прежняя, байт в байт.
 
     Всё, что здесь меняется, либо фиксированного размера, либо строка той же
     длины (таймкод всегда `HH:MM:SS:FF`), кроме путей в `<Clip>` — там protobuf
@@ -482,6 +591,8 @@ def set_media_descriptor(entry_xml: str, path: str, pr: dict[str, Any], mtime: s
         # у фото нет ключа Resolution в Geometry (только ScanType) — менять нечего
         el = _hexblob(el, "Geometry", geometry)
         el = _hexblob(el, "TracksBA", tracks)
+    if voice is not None:
+        el = set_voice_descriptor(el, voice, mtime)
     return _hexblob(el, "FieldsBlob", lambda h: set_media_extents(
         h, timecode_seconds(pr["timecode"], fps), pr["dur_s"]) if is_zstd_blob(h) else h)
 
@@ -492,7 +603,10 @@ TEMPLATE = paths.data("drp_template.drp")
 
 # стиль титров — из HIGHLIGHT_SPEC.md
 SUB_FONT, SUB_STYLE = "Open Sans", "Bold"
-SUB_SIZE = 140 / 1920                  # кегль 140 при высоте кадра 1920
+# Кегль субтитров долей ВЫСОТЫ кадра: у Fusion `Size` относительный, и 140 px при
+# кадре 1920 — это 0.0729. Число берётся от формата ролика (build(seq_h=…)): в
+# кадре 1080 та же доля — другой кегль, и прибитое 140/1920 в нём врало бы.
+SUB_SIZE_PX = 140                      # кегль субтитров при высоте кадра 1920, px
 SUB_Y_FROM_TOP = 0.5964                # якорь строки; у Fusion отсчёт снизу
 SUB_WHITE, SUB_YELLOW = (1.0, 1.0, 1.0), (1.0, 0.9176, 0.0)
 SUB_FIT_CHARS = 14                     # длиннее — ужимаем, как в xmlbuild
@@ -530,19 +644,31 @@ def _set_items(track_el: str, clips_xml: str) -> str:
     return track_el.replace("<Items/>", new, 1)
 
 
-def _sub_nodes(base: str, text: str, frames: int, color: tuple[float, float, float] | Sequence[float], scale: float) -> str:
+def _sub_nodes(base: str, text: str, frames: int, color: tuple[float, float, float] | Sequence[float], scale: float,
+               seq_w: int = 1080, seq_h: int = 1920) -> str:
+    """Узел титра Fusion: текст, кегль, цвет, якорь строки.
+
+    `seq_w`/`seq_h` — кадр ролика: у Fusion `Size` и `Width`/`Height` узла
+    относительны кадру, поэтому кегль считается долей ВЫСОТЫ (140 px при 1920 —
+    это 0.0729), а не прибитым числом. Сам размер таймлайна в .drp не пишется
+    (он в настройках проекта шаблона, см. build) — а вот узел титра свой размер
+    несёт, и в другом формате он обязан совпасть с кадром.
+    """
     n = set_text(base, text)
     n = re.sub(r'(Font = Input \{ Value = ")[^"]*(")', r"\g<1>" + SUB_FONT + r"\g<2>", n, count=1)
     n = re.sub(r'(Style = Input \{ Value = ")[^"]*(")', r"\g<1>" + SUB_STYLE + r"\g<2>", n, count=1)
     n = set_input(n, "GlobalOut", str(frames - 1))
-    n = set_input(n, "Size", f"{SUB_SIZE * scale:.6f}")
+    n = set_input(n, "Width", str(int(seq_w)))
+    n = set_input(n, "Height", str(int(seq_h)))
+    n = set_input(n, "Size", f"{SUB_SIZE_PX / float(seq_h or 1920) * scale:.6f}")
     for key, val in zip(("Red1", "Green1", "Blue1"), color):
         n = set_input(n, key, f"{val:.6f}")
     return set_input(n, "Center", "{ 0.5, %.6f }" % (1.0 - SUB_Y_FROM_TOP))
 
 
 def build(out_path: str, cams: Sequence[str], segments: Sequence[tuple[float, float]], offsets: Sequence[float], assign: Sequence[int] | None = None, sub_words: Sequence[tuple[int, int, str]] = (), yellow: Sequence[int] | set[int] = (),
-          inserts: Sequence[dict[str, Any]] = (), name: str | None = None, template: str | None = None, fps: float = 60, probe: Any = None) -> dict[str, Any]:
+          inserts: Sequence[dict[str, Any]] = (), name: str | None = None, template: str | None = None, fps: float = 60, probe: Any = None,
+          seq_w: int = 1080, seq_h: int = 1920, voice: str | None = None) -> dict[str, Any]:
     """Собрать проект DaVinci Resolve из шаблона.
 
     Вход тот же, что у `xmlbuild.build`: камеры, оставленные куски (секунды),
@@ -550,9 +676,21 @@ def build(out_path: str, cams: Sequence[str], segments: Sequence[tuple[float, fl
     кадрах таймлайна (как отдаёт `xml2ae.parse_full`), `yellow` — индексы жёлтых,
     `inserts` — [{type, media, start, end}] в кадрах.
 
+    `seq_w`/`seq_h` — кадр ролика (формат спикера, `core/frame.py`): от него
+    считается кегль субтитров и размер узла титра. Размер САМОГО таймлайна Resolve
+    тут не пишется и писаться не может: он лежит в настройках проекта шаблона
+    (`project.xml` → `SetupBA`, сжатый блоб, формат которого не разобран), а не в
+    разметке. Каждый клип несёт своё разрешение (<Geometry> из пробы), таймлайн
+    раскладывается по нему.
+
     Раскладка дорожек снизу вверх: камеры 1..N (камера 1 всегда есть, остальные —
     по наличию, до 4), сразу над камерами субтитры, выше — вставки ФОТО, ещё выше —
     ВИДЕО. Так и Resolve это показывает, и ждёт `parse_full`.
+
+    `voice` — обработанный голос камеры 1 (`<стем>.voice.wav`, `core/voicefx`):
+    у записи камеры 1 звуковой дескриптор указывает на него, видео остаётся
+    камерой, клипы таймлайна не меняются. Не задан (или файла нет) — сборка ровно
+    та же, что была, байт в байт.
     """
     if probe is None:
         from core import xmlbuild
@@ -615,6 +753,7 @@ def build(out_path: str, cams: Sequence[str], segments: Sequence[tuple[float, fl
     pool_xml: list[str]
     ref: dict[str, Any]
     pool_xml, ref = [], {}
+    cam1 = cams[0] if cams else None
     for path in dict.fromkeys(media):                       # без повторов, порядок стабилен
         pr = probe(path)
         is_photo = kind_of.get(path) == "photo"
@@ -623,7 +762,9 @@ def build(out_path: str, cams: Sequence[str], segments: Sequence[tuple[float, fl
         did = cast(Any, re.search(r'DbId="([0-9a-f-]+)"', el)).group(1)
         ref[path] = (did, pr)
         el = _set(el, "Name", os.path.basename(path))
-        el = set_media_descriptor(el, path, pr, photo=is_photo)
+        # Голос — только у записи КАМЕРЫ 1: у остальных камер звук остаётся свой.
+        el = set_media_descriptor(el, path, pr, photo=is_photo,
+                                  voice=voice if path == cam1 else None)
         pool_xml.append(el)
 
     def media_clip(tpl: str, path: str, start: int, dur: int, src_in: int, off: bool = False, photo: bool = False) -> str:
@@ -683,7 +824,8 @@ def build(out_path: str, cams: Sequence[str], segments: Sequence[tuple[float, fl
         for i, (st, en, word) in enumerate(sub_words):
             dur = max(1, en - st)
             scale = 1.0 if len(word) <= SUB_FIT_CHARS else SUB_FIT_CHARS / len(word)
-            nd = _sub_nodes(nodes_txt, word, dur, SUB_YELLOW if i in yellow else SUB_WHITE, scale)
+            nd = _sub_nodes(nodes_txt, word, dur, SUB_YELLOW if i in yellow else SUB_WHITE,
+                            scale, seq_w=seq_w, seq_h=seq_h)
             el = new_ids(t_title)
             el = re.sub(r"<CompositionBA>[0-9a-f]+</CompositionBA>",
                         "<CompositionBA>" + join_comp(

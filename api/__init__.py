@@ -26,7 +26,10 @@
 | `build`    | сборка .jsx для AE и раскладка камер                            |
 | `inserts`  | база вставок                                                    |
 | `previewproxy` | превью-прокси камер: /api/preview_proxy, /api/preview_proxy_status |
+| `previewcalc` | расчёт рото и трекинга превью: /api/preview_calc, /api/preview_calc_status, /api/preview_calc_cancel |
 | `render` | безголовый рендер в AE: /api/render_run, /api/render_status |
+| `webrender` | рендер без AE: тело сборки для страницы /render (/api/render_body) |
+| `voicefx` | обработка голоса спикера: список VST3, окно плагина, прослушивание |
 | `gdrive` | скачивание с гугл-диска по ссылке через rclone        |
 | `videogen` | вкладка «Видео»                                                 |
 
@@ -39,8 +42,8 @@
 ним модули, которые ни от кого не зависят, и только потом те, кто тянет соседей.
 """
 from . import _core                                   # noqa: F401  (первым — sys.path)
-from . import editor, files, gdrive, inserts, presets, previewproxy, render, videogen   # noqa: F401
-from . import ai, build, jobs                         # noqa: F401
+from . import editor, files, gdrive, inserts, presets, previewcalc, previewproxy, render, videogen, voicefx   # noqa: F401
+from . import ai, build, jobs, webrender                                                       # noqa: F401
 
 # Имена, которые снаружи берут прямо из `api` — webui.py и тесты. Всё остальное
 # доступно через свой модуль (`api.editor.api_words`), и специально сюда не тащится:

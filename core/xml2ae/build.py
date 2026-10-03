@@ -4,25 +4,37 @@
 
 Здесь же virtual_edl — тот же разбор, но для черновика ffmpeg, без AE.
 """
+import json
 import os
 import re
 from typing import Any, Sequence
 from core.app_meta import console_emit, wrap_emit
 from core.applog import get_logger
 from core import fonts as _fonts
-from core import styles as _styles
+from core import frame as _frame
+from core import emphasis as _emphasis
+from core import lutbake
+from core import voicefx
 from core.fileio import atomic_text_write
 
 from .jsutil import _fill_js, _jd, _js, _js_multiline, _r
 from .layout import (DEFAULT_DISCLAIMER, EASE_DEFAULT, HL_DUR, HL_EASE_IN, HL_EASE_OUT,
+                     INS_MASK_R,
                      INTRO_F_DUR, INTRO_FIT_W, INTRO_LINE_STEP, INTRO_SCALE,
-                     SHADE_BLUR, SHADE_DY, SHADE_H, SHADE_OX, SHADE_OY, SHADE_REF_W, SHADE_SCALE,
+                     SHADE_BLUR, SHADE_DY, SHADE_H, SHADE_OX, SHADE_OY, SHADE_SCALE,
                      SHADE_W, SHADE_X,
+                     SUB_GLITCH_BLUR, SUB_GLITCH_DUR, SUB_GLITCH_END_KEYS,
+                     SUB_GLITCH_OP_KEYS,
                      cover_sweep,
+                     css_blur_px,
                      _cam_change_frames,
+                     _ins_box,
                      _ins_scale,
-                     _media_dims, _project_base,
-                     _zoom_max)
+                     _media_dims,
+                     _px_k,
+                     _zoom_max,
+                     hl_size_decl)
+from . import precompute
 from .parse import Cancelled, parse_full
 # Числа огибающей звука глитча переехали в plan_audio.py (этап 4 распила scene_plan), но
 # остаются контрактом сборки: их берут снаружи (tests/test_intro_anims_and_glitch_sound.py)
@@ -30,7 +42,7 @@ from .parse import Cancelled, parse_full
 from .plan_assets import AssetsInputs, plan_assets
 from .plan_audio import (GLITCH_SFX_ATTACK_S, GLITCH_SFX_HOLD_S,  # noqa: F401
                          GLITCH_SFX_PRE_S, GLITCH_SFX_QUIET_DB, GLITCH_SFX_RELEASE_S,
-                         AudioInputs, plan_audio)
+                         AudioInputs, plan_audio, voice_segments)
 from .plan_camera import CameraInputs, plan_camera
 # Выражения плашки и подписи переехали в plan_decor.py вместе с кодом, который их зовёт,
 # но остаются контрактом сборки: их берут снаружи по-прежнему из build — второй копии нет,
@@ -39,7 +51,7 @@ from .plan_decor import (DecorInputs, _caption_bg_size_expr,  # noqa: F401
                          _sub_bg_expr, plan_decor)
 from .plan_inserts import (InsertTimingInputs, InsertsInputs, plan_insert_timings,
                            plan_inserts)
-from .plan_intro import IntroInputs, _g_at, _grp_big_i, plan_intro
+from .plan_intro import IntroInputs, _g_at, _grp_big_i, intro_hl_words, plan_intro
 from .plan_intro_tpl import IntroTplInputs, plan_intro_tpl
 # Стиль читается ОДИН раз: структура и её чтение уехали в plan_style.py.
 # _sv/_sv_or остаются контрактом сборки: их берут снаружи (tests/test_build_style_defaults.py,
@@ -47,7 +59,7 @@ from .plan_intro_tpl import IntroTplInputs, plan_intro_tpl
 from .plan_style import StyleValues, _sv, _sv_or, read_style  # noqa: F401
 from .plan_subs import SubsInputs, plan_subs
 from .plan_words import WordsInputs, plan_words
-from .template import AE_FULL
+from .template import AE_FULL, VOICE_CLIP_DECL, VOICE_SRC_DECL, VOICE_WAV_DECL
 from core.umsg import ReelsiError
 
 log = get_logger(__name__)
@@ -303,28 +315,27 @@ DEEP_GLOW2_GLITCH = [
 # Параметры анимаций интро (глитч, раскрытие): сборка .jsx берёт числа
 # из этого словаря, а план сцены (scene_plan) передаёт их в превью браузера.
 # Единый источник истины — вторая копия в JS не заводится.
-INTRO_ANIMS: dict[str, dict[str, Any]] = {
+INTRO_ANIMS: dict[str, Any] = {
+    # f_dur — сколько играет появление обычной строки интро (F_DUR .jsx): фейд, масштаб,
+    # up/left/right, РАСКРЫТИЕ и счётчик без своей анимации. Лежит здесь, потому что это
+    # число той же таблицы: его читает превью (план несёт его как intro_anims.f_dur) —
+    # своей копии у JS нет.
+    "f_dur": INTRO_F_DUR,
     "glitch": {
-        "dur": 0.44,
+        # Числа — из layout (SUB_GLITCH_*): ими же играет пресет появления субтитров
+        # «глитч». Один источник на интро и на субтитры: вторая копия разошлась бы
+        # молча, а разъехавшийся глитч виден только рендером.
+        "dur": SUB_GLITCH_DUR,
         # сила Gaussian Blur на слое слова глитча (было 6.8, пользователь 2026-09-11: вдвое слабее)
-        "blur": 3.4,
-        "end_keys": [
-            [0.017, 100],
-            [0.205, 5],
-            [0.392, 100],
-        ],
-        "op_keys": [
-            [0.0, 0],
-            [0.05, 100],
-            [0.1, 100],
-            [0.1417, 0],
-            [0.1833, 93],
-            [0.225, 0],
-            [0.2667, 100],
-        ],
+        "blur": SUB_GLITCH_BLUR,
+        "end_keys": [list(k) for k in SUB_GLITCH_END_KEYS],
+        "op_keys": [list(k) for k in SUB_GLITCH_OP_KEYS],
     },
     "reveal": {
-        "dur": 0.44,
+        # Длительность раскрытия — F_DUR .jsx (INTRO_F_DUR), а не длительность глитча:
+        # ключи блюра, Scale слоя и Percent Offset селектора в introAnimFX стоят на
+        # t0+F_DUR*SQ. Иначе поле читало бы превью и открывало слово позже AE.
+        "dur": INTRO_F_DUR,
         "blur": 26.8,
         "scale": 0.7,
         "scale_3d": [11, 11, 91.66667],
@@ -350,30 +361,48 @@ def _intro_appear_dur(anim: str | None, count: bool = False) -> float:
     return float(INTRO_F_DUR)
 
 
-def _lumetri_decl(lum: dict[str, float] | None) -> str:
-    """Объявление LUMETRI и функции applyLumetri для .jsx.
+def _lumetri_decl(lum: dict[str, float] | None, lum2: dict[str, float] | None = None) -> str:
+    """Объявление LUMETRI / LUMETRI2 и функций applyLumetri / applyLumetri2 для .jsx.
 
     Один эффект ADBE Lumetri на слой, значения — по matchName из LUMETRI_PARAMS;
     ошибки уходят в _LOG (пустых catch нет: иначе неверный цвет ищут в AE вслепую).
-    При выключенной галке стиля (lum = None) подстановка пустая — .jsx побайтово
+    При выключенной галке стиля (lum = None, lum2 = None) подстановка пустая — .jsx побайтово
     прежний (golden держит).
     """
-    if not lum:
+    if not lum and not lum2:
         return ""
     # Начинается без ведущего \n и кончается \n: подстановка стоит в НАЧАЛЕ строки
     # шаблона (перед `var ROTO=`) — при выключенной галке строка шаблона не меняется.
-    js = ["    // Цвет камер через Lumetri: значения из стиля, exposure уже"
-          "\n    // включает экспозицию клипа. Один эффект на слой — как в панели Lumetri в AE.",
-          "\n    var LUMETRI = {%s};"
-          % ", ".join('%s: %g' % (k, lum[k]) for k, _mn, _lb in LUMETRI_PARAMS),
-          "\n    function applyLumetri(L){",
-          "\n        try{",
-          "\n            var lc = L.property(\"ADBE Effect Parade\").addProperty(\"ADBE Lumetri\");"]
-    for _key, _mn, _label in LUMETRI_PARAMS:
-        js.append("\n            try{ lc.property(\"%s\").setValue(LUMETRI.%s); }"
-                  "catch(e){ _LOG(\"Lumetri %s: \" + e); }" % (_mn, _key, _label))
-    js.append("\n        }catch(e){ _LOG(\"Lumetri на слое: \" + e); }")
-    js.append("\n    }\n")
+    js: list[str] = []
+    if lum:
+        js.extend([
+            "    // Цвет камер через Lumetri: значения из стиля, exposure уже",
+            "\n    // включает экспозицию клипа. Один эффект на слой — как в панели Lumetri в AE.",
+            "\n    var LUMETRI = {%s};"
+            % ", ".join('%s: %g' % (k, lum[k]) for k, _mn, _lb in LUMETRI_PARAMS),
+            "\n    function applyLumetri(L){",
+            "\n        try{",
+            "\n            var lc = L.property(\"ADBE Effect Parade\").addProperty(\"ADBE Lumetri\");",
+        ])
+        for _key, _mn, _label in LUMETRI_PARAMS:
+            js.append("\n            try{ lc.property(\"%s\").setValue(LUMETRI.%s); }"
+                      "catch(e){ _LOG(\"Lumetri %s: \" + e); }" % (_mn, _key, _label))
+        js.append("\n        }catch(e){ _LOG(\"Lumetri на слое: \" + e); }")
+        js.append("\n    }\n")
+    if lum2:
+        prefix = "" if not lum else "    // Цвет Камеры 2 через Lumetri (разомкнутая цепочка связи).\n"
+        js.extend([
+            prefix + "    var LUMETRI2 = {%s};"
+            % ", ".join('%s: %g' % (k, lum2[k]) for k, _mn, _lb in LUMETRI_PARAMS),
+            "\n    function applyLumetri2(L){",
+            "\n        try{",
+            "\n            var lc = L.property(\"ADBE Effect Parade\").addProperty(\"ADBE Lumetri\");",
+        ])
+        for _key, _mn, _label in LUMETRI_PARAMS:
+            js.append("\n            try{ lc.property(\"%s\").setValue(LUMETRI2.%s); }"
+                      "catch(e){ _LOG(\"Lumetri2 %s: \" + e); }" % (_mn, _key, _label))
+        js.append("\n        }catch(e){ _LOG(\"Lumetri2 на слое: \" + e); }")
+        js.append("\n    }\n")
     return "".join(js)
 
 
@@ -388,6 +417,34 @@ LUMETRI_ROTO_OFF = (
     "if (EXPOSURE!=0){ try{ var lc=cc.property(\"ADBE Effect Parade\").addProperty(\"ADBE Lumetri\");\n"
     "                lc.property(\"ADBE Lumetri-0011\").setValue(EXPOSURE); }catch(e){} }")
 LUMETRI_ROTO_ON = "applyLumetri(cc);"
+
+
+def _speaker_frames(xml_path: str) -> dict[str, dict[str, float]]:
+    """Поле `frame` профиля спикера ролика: спикер — в сайдкаре рядом с XML.
+
+    Тем же путём его берут формат кадра (`core/frame.output_frame_size`), LUT
+    (`core/lutbake`) и обработка голоса (`core/voicefx`). Геометрия рамки — в
+    `core/frame.py` (`xml_frames`), здесь только имя, по которому её спрашивают.
+    """
+    return _frame.xml_frames(xml_path)
+
+
+def _trans_plan(trans: str, tr_in: float) -> dict[str, Any] | None:
+    """Поле плана `trans`: файл перехода видеовставок, сдвиг TR_IN и размер исходника.
+
+    Переход (`Quick 2.mov` из стиля) — ProRes 4K, и браузер его не декодирует: превью
+    играет ПРОКСИ, а прокси мельче исходника. «Во всю величину, как слой в AE» по прокси
+    не посчитать — поэтому размер едет в плане (w/h читает `_media_dims`, та же дверь,
+    что у видеовставок). Размер не прочитался — полей нет: превью возьмёт размер
+    элемента у самого файла (переход в mp4 браузер играет исходником, и там он верный).
+    """
+    if not trans:
+        return None
+    out: dict[str, Any] = {"media": trans, "in": tr_in}
+    wh = _media_dims(trans)
+    if wh:
+        out["w"], out["h"] = wh
+    return out
 
 
 def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по сменам кам1→кам2
@@ -417,7 +474,25 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
             raise Cancelled()
 
     _ckpt("разбор XML")
+    # Кадр ролика — ДО разбора XML: формат из профиля спикера главнее того, что лежит
+    # в XML, но ТОЛЬКО когда задан в профиле явно (`core/frame.ensure_frame`). Формат
+    # выбирают в профиле, а XML пишется нарезкой, и между этими событиями формат мог
+    # поменяться: тогда XML пересобирается в новый кадр тем же путём, что «Сохранить»
+    # в редакторе нарезки, — и только если разошлись ПРОПОРЦИИ (XML 2160×3840 при
+    # формате 9:16 не трогаем: тот же формат, просто крупнее). Здесь, а не в роуте, —
+    # потому что сюда приходят ВСЕ сборки: сборка .jsx, превью шага 3 (`/api/scene`),
+    # черновик (`virtual_edl`) и набор. Профиля нет или формат в нём не задан — кадр
+    # берётся из самого XML, как раньше.
+    _fw, _fh = _frame.ensure_frame(xml_path, emit=emit)
     meta, cams, subs, xml_inserts = parse_full(xml_path, ncams=ncams)
+    # Кадр плана — кадр ролика (формат, заданный явно), даже если XML пересобрать не
+    # удалось (битый сайдкар, нет исходников под рукой): показать и собрать ролик в
+    # заказанном формате честнее, чем в том, что осталось в XML. Premiere при этом
+    # покажет XML, и о расхождении в логе уже сказано предупреждением `ensure_frame`.
+    if (_fw, _fh) != (int(meta["w"]), int(meta["h"])):
+        emit("⚠ формат кадра: XML в {ow}×{oh}, а ролик собирается в {nw}×{nh} — "
+             "пересобери XML в редакторе нарезки", ow=meta["w"], oh=meta["h"], nw=_fw, nh=_fh)
+        meta["w"], meta["h"] = int(_fw), int(_fh)
     if not cams:
         # ValueError, а НЕ SystemExit: вызывающие ловят только Exception, поэтому
         # SystemExit пролетал сквозь них — /api/to_ae отдавал 500-HTML вместо {error},
@@ -427,13 +502,18 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         if not (_c.get("path") or "").strip():
             emit("⚠ Камера {cam} без пути к файлу (нул создастся пустым — проверь XML).", cam=_ci + 1)
     _fp = meta["fps"]
+    # Множитель пиксельных констант раскладки под кадр ролика (layout._px_k: min(W, H)/1080,
+    # то же правило, что у вида «size» стиля): им живут карточка вставки, её блюр и вылет,
+    # затемнение под интро и коробка карточки для превью. Кадр здесь уже окончательный —
+    # формат спикера главнее XML. Считается один раз: второй копии правила нет.
+    _px = _px_k(meta["w"], meta["h"])
     inserts = [dict(x) for x in (inserts or [])]       # копии: не мутируем словари вызывающего
     if include_xml_inserts:
         inserts += [dict(
             type=xi["type"], style=xi.get("style") or "cam2", media=xi["media"],
             start_s=xi["start"] // _fp, start_f=xi["start"] % _fp,
             dur_s=(xi["end"] - xi["start"]) // _fp, dur_f=(xi["end"] - xi["start"]) % _fp,
-            scale=_ins_scale(xi["media"], xi.get("style") or "cam2"), mosaic=False,
+            scale=_ins_scale(xi["media"], xi.get("style") or "cam2", meta["w"], _px), mosaic=False,
             sin=xi.get("sin", 0) / _fp)                # source in-point в секундах
             for xi in xml_inserts]
     from core import styles as _styles  # пресет стиля (шрифт/цвет/звуки/рото/вставки)
@@ -441,7 +521,15 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
     # Стиль читается ОДИН раз: дальше scene_plan берёт значения из структуры,
     # а шесть модулей plan_* получают её одним полем style=. Сырой st нужен только на
     # резолв и на дисклеймер/ризер ниже — их же читает и структура.
-    stv = read_style(st)
+    # Кадр стиля — кадр ролика (_fw/_fh: формат спикера, `core/frame.ensure_frame`).
+    # Стиль задуман в 1080×1920, и в кадре другого формата его числа пересчитываются
+    # РОВНО здесь (core/style_geometry.scale_style внутри read_style) — и .jsx, и
+    # превью, и черновик берут готовые числа, второй копии правила нет.
+    stv = read_style(st, _fw, _fh)
+    # Градиент текста и свечение — галка/режим стиля: по ним в план уезжают числа для
+    # превью (цвета, угол, сила, радиус). Сами эффекты ставит .jsx (subGrad/subGlow).
+    _grad_on = str(stv.sub_fill_mode or "").strip().lower() == "gradient"
+    _glow_on = bool(stv.sub_glow_on)
     if stv.disclaimer is not None:                     # стиль переопределяет дисклеймер ("" = скрыть)
         disclaimer = stv.disclaimer
     if stv.intro_riser is not None:                    # стиль может отключить интро-SFX (ризер)
@@ -473,7 +561,8 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
     # сборка данных режет окно.
     _ins_t = plan_insert_timings(InsertTimingInputs(
         inserts=inserts, fps=_fps0, cam_change_sec=_cam_change_sec,
-        active_cam_at=_active_cam_at, style=stv, emit=emit))
+        active_cam_at=_active_cam_at, style=stv, emit=emit, comp_w=meta["w"],
+        comp_h=meta["h"]))
     inserts, _clip_end = _ins_t.inserts, _ins_t.clip_end
     # ---- Подготовка слов вынесена в plan_words.py (остаток распила scene_plan) ----
     # Разметка (жёлтые hl_raw, brk_raw, cnt_raw, joins_raw = ...) приводится к индексам
@@ -551,6 +640,19 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
             "tint": stv.lm_tint,
             "sat": stv.lm_sat,
         }
+    lumetri2 = None
+    if not stv.lm2_link and stv.lm2_on:
+        lumetri2 = {
+            "exposure": stv.lm2_exposure + float(exposure or 0),
+            "contrast": stv.lm2_contrast,
+            "highlights": stv.lm2_highlights,
+            "shadows": stv.lm2_shadows,
+            "whites": stv.lm2_whites,
+            "blacks": stv.lm2_blacks,
+            "temp": stv.lm2_temp,
+            "tint": stv.lm2_tint,
+            "sat": stv.lm2_sat,
+        }
     # Цвет мидтонов жёлтой строки — тот самый, что уезжает в подстановку _yellow_expr:
     # своя подстановка intro_hl_fill перебивает hl_fill. Яркость у него ОДНА на двоих
     # по ней не ставится ни Tritone (выбеливает букву), ни Deep Glow
@@ -608,6 +710,39 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
     # цензура голоса, огибающая слоёв глитча и данные звука для шаблона. Имена ниже —
     # ровно те, что читает остальной scene_plan: перенос построчный, порядок операций и
     # подстановки не менялись.
+    # Голос камеры 1 после обработки (core/voicefx.py, флаг voice_fx.final у спикера
+    # нарезки): файл лежит рядом с XML, и его играют и превью, и проект AE. Пусто —
+    # голос не обработан, звук идёт с камеры, как раньше.
+    voice_wav = voicefx.final_voice_for_build(xml_path, (cams[0].get("path") or ""), emit=emit)
+    # ---- Сила жёлтых (core/emphasis.py) ----
+    # Наезд хайлайта в режиме «только сильные жёлтые» ставится не на каждую фразу, а на
+    # самые сильные (см. `plan_camera` и `layout._take_zoom_segment_keys`), и силы
+    # приходят из сайдкара `<стем>.emph.json`. Читает его ОДНА дверь — здесь: сборка
+    # .jsx, превью (`/api/scene`) и черновик видят одни и те же числа. Сайдкар считает
+    # предрасчёт (`precompute.emphasis_precompute`) при сборке и в конце шага ИИ-жёлтых;
+    # план сцены только читает и о непосчитанном честно пишет в лог — второго расчёта
+    # силы в сборке нет.
+    _emp_src = (cams[0].get("path") if cams else "") or ""
+    # Нумер слов — как у ПЛАНА: `subs` здесь уже без слов интро (их вынул `plan_words`),
+    # а `hl` — та же разметка после переиндексации. Слова интро продолжают ряд
+    # (`len(subs) + j`) — ровно так же их нумерует `plan_camera._yellow_need`, и тем же
+    # нумером пишет сайдкар предрасчёт (`precompute.emphasis_precompute`, он зовёт
+    # `plan_words` — одну дверь переиндексации, второй копии правила нет).
+    # Времена слов интро берутся из ПОЛНОГО списка (`censor_source`): `intro_remove` —
+    # индексы исходного списка ролика, до вырезания слов интро.
+    _emp_words = _emphasis.word_refs(subs, meta["fps"])
+    _emp_intro = intro_hl_words(intro, intro_splits, intro_remove, censor_source)
+    _emp_idx = [int(k) for k in hl] + [len(subs) + j for j in range(len(_emp_intro))]
+    # Способ оценки силы (`hl_zoom_strength`) выбирает ПЛАН, и он же решает, какую
+    # компоненту сайдкара взять (обе лежат рядом). Предрасчёт читает тот же ключ —
+    # иначе в режиме «по голосу» он бы грузил модель эмоций впустую.
+    _emph = _emphasis.read_emphasis(xml_path, _emp_words, _emp_intro, hl, _emp_src, idx=_emp_idx,
+                                    mode=stv.hl_zoom_strength)
+    if not _emph.valid:
+        emit("  · сила жёлтых не посчитана — наезд на каждую фразу хайлайта (как раньше)")
+    elif _emph.uncomputed:
+        emit("  · сила жёлтых не посчитана для {n} слов — наезд на каждую фразу "
+             "(жёлтые правили после расчёта)", n=len(_emph.uncomputed))
     _au = plan_audio(AudioInputs(
         intro_groups=_intro_groups, any_glitch=_any_glitch, inserts=inserts,
         subs=subs, hl=hl, cam_change_sec=_cam_change_sec, fps=_fps0,
@@ -616,12 +751,18 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         base=base, xml_path=xml_path,
         # Цензор считаем по ВСЕМ словам (censor_source): интро-слова звучат.
         censor_source=censor_source, censor_audio=censor_audio, censor_fps=meta["fps"],
-        # Словарь плана: путь голоса (Камера 1) и громкость музыки знает только scene_plan.
-        voice_src=(cams[0].get("path") or "") if cams else "", music_db=music_db,
+        # Словарь плана: путь голоса (Камера 1, обработанный — если он запечён) и
+        # громкость музыки знает только scene_plan.
+        voice_src=voice_wav or (cams[0].get("path") or ""), music_db=music_db,
+        # Куски голоса по монтажному времени: клипы камеры 1 в СЕКУНДАХ — их режет
+        # рендер без AE. Считает их plan_audio (там же, где окна цензуры и фейды),
+        # а клипы камер есть только здесь.
+        voice_segments=voice_segments(cams[0].get("clips") or [], _fps0),
         # Общее с другими блоками: точка «музыка» (этап в логе + проверка «Стоп») и лог.
         ckpt=_ckpt, emit=emit))
     riser, pop = _au.riser, _au.pop
     trans, trans_sfx = _au.trans, _au.trans_sfx
+    trans_plan = _trans_plan(trans, _au.trans_in)
     music_path = _au.music_path
     censor_js = _au.censor_js
     audio, glitch_sfx = _au.audio, _au.glitch_sfx
@@ -635,7 +776,47 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         cams_plan.append({"ci": ci, "path": c["path"] or "", "name": c["name"],
                           "clips": [[s, e, i, o, bool(en), _r(sc)]
                                     for s, e, i, o, en, sc in c["clips"]]})
-    cams_js = _jd([{"path": c["path"], "name": c["name"], "clips": c["clips"]} for c in cams_plan])
+    # ---- рамка кадра камер (поле `frame` профиля спикера) ----
+    # Спикер — из сайдкара рядом с XML: тем же путём его берут формат кадра
+    # (core/frame.output_frame_size), LUT и обработка голоса. Размер исходника ведает
+    # только After Effects, поэтому долями рамки уезжает и готовая геометрия:
+    # сдвиг слоя в px кадра (core/frame.frame_shift — единственный зажим рамки)
+    # и множитель масштаба. Клип, рото-копия и Basic Motion в Premiere берут ОДНИ
+    # И ТЕ ЖЕ числа отсюда, второй копии формулы нет.
+    _frames = _speaker_frames(xml_path)
+    for _fr_ent, _fr_cam in zip(cams_plan, cams):
+        _fr = _frame.frame_of(_frames, _fr_ent["ci"] + 1)
+        if _frame.is_frame_default(_fr):
+            continue                     # камера без правок — ключа нет (golden прежний)
+        _dims = _media_dims(_fr_cam.get("path") or "")
+        _dx, _dy = (_frame.frame_shift(_fr, _dims[0], _dims[1], meta["w"], meta["h"])
+                    if _dims else (0.0, 0.0))
+        _fr_ent["frame"] = {"x": _fr["x"], "y": _fr["y"], "zoom": _fr["zoom"],
+                            "dx": _dx, "dy": _dy}
+    cams_js = _jd([{"path": c["path"], "name": c["name"], "clips": c["clips"],
+                    **({"frame": c["frame"]} if "frame" in c else {})} for c in cams_plan])
+    # Подстановки шаблона под рамку. Ни одной рамки в ролике — все три пустые, и .jsx
+    # остаётся прежним, кроме строки масштаба клипов (она перешла на fitS у всех камер).
+    # Числа сдвига считает Python (core/frame.frame_shift), ExtendScript только применяет:
+    # размера исходника план не знает, а масштаб слоя AE считает сам (fitS).
+    cam_frame_pos = roto_frame_scale = roto_frame_pos = ""
+    if any("frame" in c for c in cams_plan):
+        cam_frame_pos = (
+            "            // рамка кадра: сдвиг исходника — в МИРОВЫХ координатах композиции\n"
+            "            // и ДО привязки к нулу: AE при присвоении parent сохраняет мировое\n"
+            "            // положение слоя, а числа рамки посчитаны от центра кадра\n"
+            "            if (track.frame) try{ lay.property(\"ADBE Transform Group\")\n"
+            "                .property(\"ADBE Position\").setValue([W/2+track.frame.dx, H/2+track.frame.dy]); }catch(e){}\n")
+        roto_frame_scale = (
+            "\n            // рамка кадра своей камеры: у рото-копии тот же масштаб, что у клипа\n"
+            "            var rfr = CAM[ci] && CAM[ci].frame;\n"
+            "            if (rfr) rsc = rfit*rfr.zoom/100*(ci==0?CAM1_FIT/100:1);")
+        roto_frame_pos = (
+            "\n            // и тот же сдвиг: копия обязана лежать пиксель-в-пиксель с кадром камеры\n"
+            "            if (rfr) try{ cc.property(\"ADBE Transform Group\").property(\"ADBE Position\")\n"
+            "                .setValue([rfr.dx,rfr.dy]); }catch(e){}\n"
+            "            if (rfr) try{ mk.property(\"ADBE Transform Group\").property(\"ADBE Position\")\n"
+            "                .setValue([rfr.dx,rfr.dy]); }catch(e){}")
     # ---- Блок субтитров вынесен в plan_subs.py (этап 1 распила scene_plan) ----
     # Слова -> строки -> стопка подряд жёлтых -> появление жёлтых -> данные циклов
     # SUBS/SUB_ROWS/SUB_STACK. Имена ниже — ровно те, что читает остальной код scene_plan:
@@ -665,16 +846,28 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         cams=cams, meta=meta, fps=_fps0, subs=subs, hl=hl, style=stv,
         # Ключи зума из kwarg (None — режим стиля), галка ротоскопа и путь XML
         # (рядом с ним кэш трека головы) — камера решает по ним и разметку, и слежение.
-        cam1_scale=cam1_scale, roto=roto, xml_path=xml_path))
+        # Рамка камеры 1 — готовые числа из плана: слежение за головой зажимает сдвиг
+        # по КРАЯМ слоя, а с рамкой слой смещён и увеличен (core/frame.frame_shift).
+        cam1_scale=cam1_scale, roto=roto, xml_path=xml_path,
+        cam1_frame=(cams_plan[0].get("frame") if cams_plan else None),
+        # Слова интро, выделенные цветом (color yellow/accent), наезжают наравне с жёлтыми
+        # словами ролика. Индексы этих слов берёт intro_remove — ТОТ ЖЕ список, по которому
+        # plan_words вынимает слова интро из титров, — а времена начала и конца: subs_all
+        # (censor_source, слова ДО вырезания интро). Второй копии сопоставления нет.
+        intro_groups=_intro_groups, intro_remove=list(intro_remove or []),
+        subs_all=censor_source, emph=_emph))
     cam1_scale, holds = _cam.cam1_scale, _cam.holds
     cam1scale_js, cam1_ease_js = _cam.cam1scale_js, _cam.cam1_ease_js
     cam1holds_js = _cam.cam1holds_js
     roto_plan, zoom_plan = _cam.roto, _cam.zoom
     cam1_cx, cam1_cy = _cam.cam1_cx, _cam.cam1_cy
     cam1_anchor = _cam.cam1_anchor
+    cam2_js = _cam.cam2_js
     cam1_follow_decl, cam1_follow_js = _cam.cam1_follow_decl, _cam.cam1_follow_js
+    cam2_follow_decl, cam2_follow_js = _cam.cam2_follow_decl, _cam.cam2_follow_js
     roto_pos_cc, roto_pos_mk = _cam.roto_pos_cc, _cam.roto_pos_mk
     cam1_rot_decl, cam1_rot_cam = _cam.cam1_rot_decl, _cam.cam1_rot_cam
+    cam2_rot_decl, cam2_rot_cam = _cam.cam2_rot_decl, _cam.cam2_rot_cam
     roto_rot_cc, roto_rot_mk = _cam.roto_rot_cc, _cam.roto_rot_mk
     # ---- Вставки: данные плана и подстановки вынесены в plan_inserts.py ----
     # Окна показа (_isec/_win), подложка и «без фона», масштабы видео, готовые ключи
@@ -726,6 +919,20 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         _intro_cam_decl = ""
         _intro_cam_cond = ""
         _intro_cam_shade_cmt = ""
+    # Интро на кам2 при активной Камере 2 и СВОЕЙ галке «интро едет с камерой» (intro_cam2) —
+    # ребёнок нула КАМЕРЫ 2 (тот же зум с её точкой наезда, что у кадра перебивки). Нул камеры 1
+    # ему не родитель никогда: её зум прячется на перебивке. Позиция — в системе родителя, как у
+    # ребёнка нула Камеры 1 (x, INTRO_Y2). Камера 2 неактивна или галка кам2 снята — подстановка
+    # пустая: нул остаётся в координатах кадра (строка шаблона), и ни зум, ни сдвиг, ни поворот
+    # Камеры 2 на него не действуют. Строка идёт ПОСЛЕ cam2_js: там объявлен cam2null.
+    if stv.intro_cam2 and _cam.cam2_active:
+        _intro2_cam2_js = (
+            "\n    // интро на кам2 едет с зумом Камеры 2 (не Камеры 1)\n"
+            "    if(cam2null && introNull2){ introNull2.parent=cam2null;\n"
+            "        introNull2.property(\"ADBE Transform Group\").property(\"ADBE Position\")"
+            ".setValue([" + ("%g" % float(stv.intro_x) if stv.intro_x else "0") + ",INTRO_Y2]); }")
+    else:
+        _intro2_cam2_js = ""
     # ---- Расчёт интро вынесен в plan_intro.py (этап 2 распила scene_plan) ----
     # Окна групп, автофит и ширина блока, безопасная зона, раскладка строк и «большое
     # слева», затухание к субтитру, сжатие появления, камера группы, тень
@@ -747,7 +954,10 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         accent_word=_accent_word, parse_count=_parse_intro_count,
         cnt_positions=_intro_cnt_positions, line_font=_intro_line_font,
         fit_ds=_intro_fit_ds, appear_dur=_intro_appear_dur, anims=INTRO_ANIMS,
-        cam1_scale=cam1_scale, holds=holds))
+        cam1_scale=cam1_scale, holds=holds,
+        # Свой зум Камеры 2 (пусто, если она неактивна): автофит интро, выпавшего на
+        # перебивку, считает по нему, а не по зумам Камеры 1.
+        cam2_scale=_cam.cam2_scale, cam2_holds=_cam.cam2_holds))
     _accent_used = _intro.accent_used
 
     # ---- Оформление кадра вынесено в plan_decor.py (остаток распила scene_plan) ----
@@ -765,13 +975,16 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
     # этот план, из него их берут и шаблон (.jsx), и предпросмотр. Выключенная галка = None:
     # подстановка в шаблоне пустая, .jsx не меняется ни на байт (golden). Координаты — в
     # системе нула «Камера 1» (та же, в которой стоит нул «интро»: [0, INTRO_Y], template.py).
-    # k масштабирует пиксели под ширину композиции относительно эталона SHADE_REF_W (доля
-    # кадра постоянна при любом W). stv.intro_scale_k (intro_scale / 100, бывшее _G) —
+    # k — множитель пиксельных констант кадра (`_px` = min(W, H)/1080): затемнение снято
+    # с композиций шириной 1080 и растёт вместе с короткой стороной кадра — тем же правилом,
+    # что карточка вставки и числа стиля. Раньше здесь стояло своё k = W/1080, и в 16:9
+    # (1920×1080) затемнение росло в 1.78 раза, хотя текст интро — нет.
+    # stv.intro_scale_k (intro_scale / 100, бывшее _G) —
     # масштаб нула интро: затемнение висит на нуле «Камера 1», поэтому его scale и сдвиг
     # SHADE_DY от intro_y масштабируются на него вслед за размером и положением текста интро.
     shade_plan = None
     if bool(stv.intro_shade):
-        k = meta["w"] / SHADE_REF_W
+        k = _px
         shade_plan = {
             "x": _r(SHADE_X * k), "y": _r(float(stv.intro_y) + SHADE_DY * k * stv.intro_scale_k),
             "scale": _r(SHADE_SCALE * stv.intro_scale_k), "w": _r(SHADE_W * k), "h": _r(SHADE_H * k),
@@ -850,9 +1063,16 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         # к нулу Камеры 1. Числом из плана живёт предпросмотр (ipvIntroChild): при False
         # блок идёт в координатах кадра без зума/сдвига/слежения — второй копии правила нет.
         "intro_cam": stv.intro_cam,
+        # то же для камеры 2: False — нул «интро на кам2» стоит в координатах кадра, и
+        # превью (ipvIntroChild по on2) считает ту же ветку. Своя галка, не общая с
+        # камерой 1: у стилей без ключа её значение дала миграция (styles.migrate_intro_cam2).
+        "intro_cam2": stv.intro_cam2,
         # параметры анимаций интро: превью анимирует теми же числами,
-        # что AE — вторая копия не заводится.
+        # что AE — вторая копия не заводится. f_dur — длительность появления строки
+        # (F_DUR .jsx: ею играют ключи блюра, Scale слоя, Percent Offset селектора и
+        # фейд): её читает превью, своей копии числа у него нет.
         "intro_anims": {
+            "f_dur": INTRO_ANIMS["f_dur"],
             "glitch": {
                 "dur": INTRO_ANIMS["glitch"]["dur"],
                 "blur": INTRO_ANIMS["glitch"]["blur"],
@@ -862,6 +1082,10 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
             "reveal": {
                 "dur": INTRO_ANIMS["reveal"]["dur"],
                 "blur": INTRO_ANIMS["reveal"]["blur"],
+                # Раскрытие рисуется блюром CSS на слове, а число шаблона — «Blurriness»
+                # Gaussian Blur в AE: превью нужна сигма того же размытия, иначе буквы
+                # выходят вчетверо мягче собранных (число переводит layout.css_blur_px).
+                "blur_css": css_blur_px(INTRO_ANIMS["reveal"]["blur"]),
                 "scale": INTRO_ANIMS["reveal"]["scale"],
                 "scale_3d": list(INTRO_ANIMS["reveal"]["scale_3d"]),
                 "shape": INTRO_ANIMS["reveal"]["shape"],
@@ -870,6 +1094,17 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
             },
         },
         "inserts": inserts_plan,
+        # Переход видеовставок (Quick 2): файл, сдвиг TR_IN и размер исходника — те же
+        # числа, что уехали в .jsx подстановками trans/tr_in. Превью рисует ИМИ слой
+        # перехода: он начинается за TR_IN до стыка (tl.startTime=cut-TR_IN в шаблоне),
+        # поэтому вход вставки виден РАНЬШЕ её start — как в AE. Нет видеовставок или
+        # файла — поля нет вовсе, и превью не заводит ни элемента, ни правила.
+        "trans": trans_plan,
+        # Коробка карточки фотовставки (ширина, высоты Кам1/Кам2 и отношение сторон маски)
+        # в пикселях кадра ролика: её читает превью — своей копии чисел (1030/528/2.2) у
+        # него больше нет, в 4K-кадре она расходилась с собранной карточкой вдвое.
+        # Считает layout._ins_box тем же правилом, что и геометрия вставок.
+        "ins_box": _ins_box(meta["w"], meta["h"]),
         "layer_order": list(stv.layer_order),
         # Цвет камер через Lumetri: None при выключенной галке, иначе девять
         # значений стиля (exposure уже с экспозицией клипа). Их же читает превью —
@@ -928,6 +1163,23 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         # что литералом HL_DUR в шаблоне, hl_row_anim — режим (word/row).
         "hl_dur": _hl_dur, "hl_row_anim": stv.hl_row_anim,
         "hl_blur": hl_blur_on, "hl_blur_amt": stv.hl_blur_amt,
+        # Тот же блюр, переведённый в пиксели CSS: превью рисует размытие фильтром
+        # браузера, а «Blurriness» AE и сигма blur() — разные числа (layout.css_blur_px).
+        # Число считается ОДИН раз здесь: своей копии перевода у превью нет, а .jsx
+        # по-прежнему получает само значение стиля — AE читает его как «Blurriness».
+        "hl_blur_css": css_blur_px(stv.hl_blur_amt),
+        # Кегль жёлтого слова: множитель базового (ручка hl_size_k). Превью рисует
+        # жёлтый спан тем же кеглем, что .jsx ставит слово, — своей копии числа нет.
+        "hl_size_k": _subs.hl_size_k,
+        # Тонкое начертание пресета «начертание» (sub_anim_font): по нему превью
+        # ступенит шрифт слова в той же середине появления, что .jsx (поле anim слова).
+        "sub_anim_font": _subs.sub_anim_font,
+        # Шрифты субтитров: те же PostScript-имена, что уезжают в .jsx (FONT/HL_FONT,
+        # лесенка стиля — sub_font, выделение — hl_font). Превью берёт их ОТСЮДА, а не из
+        # своей копии стиля: страница рендера получает тело сборки, где стиль может быть
+        # и ИМЕНЕМ (строкой) — тогда CURSTYLE это строка, и субтитры рисовались запасным
+        # шрифтом, хотя .jsx собрал заказанный (замер: «КУБИК» 344 px против 284 в AE).
+        "sub_font": font_ps, "sub_hl_font": hl_font_ps,
         "intro_fsize": _fsize_base,
         # масштаб слоя прекомпа субтитров: превью рисует transform: scale()
         # с origin в posy — то же число, что уходит в Scale в .jsx
@@ -943,8 +1195,26 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         # сдвиг интро по горизонтали, px (пара к intro_y)
         "intro_x": round(float(stv.intro_x)),
     }
+    if not stv.lm2_link:
+        plan["lumetri2"] = lumetri2
     if _decor.sub_bg_plan:
         plan["sub_bg"] = _decor.sub_bg_plan
+    # Подложка слова (класс Б каталога): числа фигуры — превью ставит ею ОДИН элемент
+    # за текущим словом; момент слова лежит в самом слове плана (поле wbg). Выключена —
+    # поля нет вовсе, и превью не заводит ни элемента, ни правила.
+    if _subs.sub_wbg_plan:
+        plan["sub_wbg"] = _subs.sub_wbg_plan
+    # Заливка текста градиентом: два цвета и угол — те же числа, что уехали в .jsx
+    # (эффект ADBE Ramp на слое слова); превью рисует их background-clip:text.
+    # Имя поля — sub_grad, а не sub_fill: sub_fill в плане уже занят цветом субтитров.
+    if _grad_on:
+        plan["sub_grad"] = {"mode": "gradient", "from": list(stv.sub_grad_from),
+                            "to": list(stv.sub_grad_to), "angle": stv.sub_grad_angle}
+    # Свечение текста: сила, радиус и цвет — те же числа, что у Glo2 в .jsx; превью
+    # приближает свечение цветной тенью (CSS-аналога Glo2 нет).
+    if _glow_on:
+        plan["sub_glow"] = {"amt": stv.sub_glow_amt, "rad": stv.sub_glow_rad,
+                            "fill": list(stv.sub_glow_fill), "yellow": bool(stv.sub_glow_yellow)}
     if _decor.top_line_plan:
         plan["top_line"] = _decor.top_line_plan
     if _decor.caption_plan:
@@ -957,10 +1227,17 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
     _itpl = plan_intro_tpl(IntroTplInputs(
         groups=_intro_groups, intro=_intro,
         # Точка масштабирования прекомпа (intro_scale_anchor): режим и готовые числа на
-        # группу посчитал plan_intro — здесь только проброс ключа, второй копии нет.
-        scale_anchor=_intro.scale_anchor, anchor_y=_intro.anchor_y,
+        # группу посчитал plan_intro — здесь только проброс ключей, второй копии нет.
+        # Режимов два: у камеры 1 свой, у групп на перебивке свой (intro_scale_anchor2);
+        # подстановки шаблона непустые, если не-дефолтен ХОТЬ ОДИН из них.
+        scale_anchor=_intro.scale_anchor, scale_anchor2=_intro.scale_anchor2,
+        anchor_y=_intro.anchor_y,
         anchor_dy=_intro.anchor_dy,
         any_glitch=_any_glitch, any_back=_any_back, any_big=_any_big,
+        # Пресет появления субтитров «глитч» зовёт ту же introAnimFX: без неё подстановка
+        # молча ушла бы в try/catch, и глитч не играл бы вовсе. Функция собирается, даже
+        # когда строк интро с глитчем в ролике нет, — иначе её негде взять.
+        subs_glitch=_subs.sub_anim_glitch,
         accent_color_used=_accent_color_used, custom_color_used=_custom_color_used,
         yellow_dark=_yellow_dark, dg_on=_dg_on,
         # Цвета, тени и свечение слов интро, тень прекомпа и геометрия заднего плана —
@@ -983,6 +1260,8 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         cam1_fit=100.0,
         cam1_follow_decl=cam1_follow_decl,
         cam1_follow_js=cam1_follow_js,
+        cam2_follow_decl=cam2_follow_decl,
+        cam2_follow_js=cam2_follow_js,
         intro_scale=float(stv.intro_scale), intro_y=float(stv.intro_y),
         intro_y2=float(stv.intro_y2), intro_on2=_jd(_intro.on2),
         # Открепление интро от Камеры 1: объявление INTRO_CAM и добавка
@@ -1053,12 +1332,22 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         # Сами строки (якорь, позиции и повороты рото) собраны в plan_camera.py.
         cam1_cx=cam1_cx, cam1_cy=cam1_cy,
         cam1_anchor=cam1_anchor,
+        cam2_js=cam2_js,
+        intro2_cam2_js=_intro2_cam2_js,
         roto_pos_cc=roto_pos_cc,
         roto_pos_mk=roto_pos_mk,
         cam1_rot_decl=cam1_rot_decl,
         cam1_rot_cam=cam1_rot_cam,
+        cam2_rot_decl=cam2_rot_decl,
+        cam2_rot_cam=cam2_rot_cam,
         roto_rot_cc=roto_rot_cc,
         roto_rot_mk=roto_rot_mk,
+        # Рамка кадра камеры: сдвиг слоя клипа, масштаб и сдвиг рото-копии с маской.
+        # Без рамок ни в одной камере все три пустые — .jsx прежний (golden), кроме
+        # строки масштаба клипов: она одна на все камеры (fitS × zoom рамки).
+        cam_frame_pos=cam_frame_pos,
+        roto_frame_scale=roto_frame_scale,
+        roto_frame_pos=roto_frame_pos,
         # вставки Кам2: точка покоя по X и Y в px (в стиле insert_c2_x/y, долями кадра).
         # Дефолт 0.5/0.172 — X остаётся W/2, Y как INS_C2_Y_FR*H: объявление INS_C2_X
         # и подстановка в позицию пустые, .jsx прежний (golden).
@@ -1072,6 +1361,14 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         # Громкость голоса и микро-фейд клипов посчитаны в plan_audio.py:
         # те же числа уехали в plan["audio"], второй копии чтения стиля нет.
         voice_db=voice_db, audio_fade=audio_fade,
+        # Обработанный голос камеры 1: объявление VOICE_WAV, импорт WAV и аудиослой
+        # клипа; voice_lay — на кого ложатся громкость, фейды и цензура. Голос не
+        # обработан — все четыре подстановки прежние (пусто и "lay"), .jsx байт в
+        # байт прежний (golden).
+        voice_wav=(VOICE_WAV_DECL % _js(voice_wav)) if voice_wav else "",
+        voice_src=(VOICE_SRC_DECL if voice_wav else ""),
+        voice_clip=(VOICE_CLIP_DECL if voice_wav else ""),
+        voice_lay=("vl" if voice_wav else "lay"),
         riser=_js(riser) if riser else '""',
         pop=_js(pop) if pop else '""', censor=censor_js, intro_groups=_intro.groups_js,
         # Звуки с обрезкой/точкой удара/громкостью: дефолты = прежние
@@ -1125,13 +1422,39 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         exposure=float(exposure or 0), roto="[]",
         # Цвет камер через Lumetri: при выключенной галке подстановки несут
         # ровно прежний текст шаблона и пустое объявление — .jsx побайтово как раньше
-        # (golden). При включённой: LUMETRI + applyLumetri вместо покадровой экспозиции
-        # на клипах камер и их рото-копиях (экспозиция клипа уже внутри LUMETRI.exposure).
-        lumetri_decl=_lumetri_decl(lumetri),
-        lumetri_cam=(LUMETRI_CAM_ON if lumetri else LUMETRI_CAM_OFF),
-        lumetri_roto=(LUMETRI_ROTO_ON if lumetri else LUMETRI_ROTO_OFF),
+        # (golden). При включённой: LUMETRI / LUMETRI2 + applyLumetri / applyLumetri2 вместо
+        # покадровой экспозиции на клипах камер и их рото-копиях.
+        lumetri_decl=_lumetri_decl(lumetri, lumetri2),
+        lumetri_cam=(
+            (LUMETRI_CAM_ON if lumetri else LUMETRI_CAM_OFF)
+            if stv.lm2_link else (
+                LUMETRI_CAM_OFF if (not lumetri and not lumetri2) else
+                ("if (isSecond){\n"
+                 "                %s\n"
+                 "            }else{\n"
+                 "                %s\n"
+                 "            }" % ("applyLumetri2(lay);" if lumetri2 else LUMETRI_CAM_OFF,
+                                    LUMETRI_CAM_ON if lumetri else LUMETRI_CAM_OFF))
+            )
+        ),
+        lumetri_roto=(
+            (LUMETRI_ROTO_ON if lumetri else LUMETRI_ROTO_OFF)
+            if stv.lm2_link else (
+                LUMETRI_ROTO_OFF if (not lumetri and not lumetri2) else
+                ("if (ci==1){\n"
+                 "                %s\n"
+                 "            }else{\n"
+                 "                %s\n"
+                 "            }" % ("applyLumetri2(cc);" if lumetri2 else LUMETRI_ROTO_OFF,
+                                    LUMETRI_ROTO_ON if lumetri else LUMETRI_ROTO_OFF))
+            )
+        ),
         inserts=inserts_js, trans=_js(trans) if trans else '""',
         trans_sfx=_js(trans_sfx) if trans_sfx else '""',
+        # Сдвиги перехода: те же числа, что считают события звука в плане (plan_audio:
+        # TR_IN/TR_SFX_LEAD). Подстановка печатает их %g — .jsx остаётся прежним байт
+        # в байт (0.386/0.083), а число теперь одно на шаблон и на план.
+        tr_in=_au.trans_in, tr_sfx_lead=_au.trans_sfx_lead,
         hl_rise=_hl_rise, hl_step=_hl_step, hl_dur=_hl_dur,
         hl_ease_out=HL_EASE_OUT, hl_ease_in=HL_EASE_IN,
         # Жёлтые в строке, блюр появления и длительность появления короткого
@@ -1199,8 +1522,18 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         font=_js(font_ps), hl_font=_js(hl_font_ps), hlfill=_fill_js(stv.hl_fill),
         fill=_fill_js(stv.sub_fill if stv.sub_fill else [1, 1, 1]),
         hl_bold=("true" if stv.hl_bold else "false"),
+        # Кегль жёлтого слова: множитель hl_size_k. При 1.0 подстановка пуста, а кегль
+        # в циклах субтитров остаётся прежним FONT_SIZE — .jsx прежний байт в байт
+        # (golden_geometry.jsx). Считает его layout: выражения циклов и объявление
+        # берутся из одного места.
+        hl_size_decl=hl_size_decl(stv.hl_size_k),
         sh_op=68, sh_dir=181, sh_dist=5, sh_soft=44,
         ins_fx=_js(stv.insert_fx),
+        # Радиус скругления маски фотовставки — ОДНО число на .jsx и план (превью):
+        # раньше оно стояло константой в шаблоне, и у превью радиуса не было вовсе.
+        # При 60 подстановка даёт ровно прежний текст шаблона — .jsx прежний байт в байт
+        # (golden_geometry.jsx).
+        ins_mask_r=("%g" % INS_MASK_R),
         # Задание FC: «none»-вставки без анимации и без эффектов. Подстановки при
         # дефолтах (zoom/card/white) дают ровно прежний текст шаблона — .jsx не меняется
         # (golden); при none — пусто: ни вызова insFX, ни маски, ни wiggle.
@@ -1233,6 +1566,19 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         ins_photo_pos="[W/2, H/2]",
         ins_photo_scale="[_f*100,_f*100]",
         sub_loop=sub_loop,
+        # Появление БАЗОВЫХ слов (пресет sub_anim): объявление чисел и функция
+        # subAnimKeys. У выключенного пресета обе подстановки пусты — .jsx прежний
+        # байт в байт (golden). Считает их layout: ключи плана и .jsx берутся из
+        # одного места, второй копии кривых нет.
+        sa_decl=_subs.sub_anim_decl,
+        sa_fn=_subs.sub_anim_fn,
+        # Градиент текста и свечение (класс Б каталога): функции эффектов — ОДНИ на
+        # сборку, в циклах слов стоят только их вызовы. Выключено — пусто (golden).
+        sub_fx_fn=(_subs.sub_fill_fn + _subs.sub_glow_fn),
+        # Подложка слова: создание ОДНОГО шейп-слоя до цикла слов и хвост (окна показа
+        # и кривые) после него. Выключена галкой — обе подстановки пусты (golden).
+        sub_wbg_js=_subs.sub_wbg_js,
+        sub_wbg_tail=_subs.sub_wbg_tail,
         sub_shadow_js=_decor.sub_shadow_js,
         sub_bg_js=_decor.sub_bg_js,
         layer_order=_jd(list(stv.layer_order)),
@@ -1279,78 +1625,30 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
 
 def _roto_js(plan: dict[str, Any], xml_path: str, kw: dict[str, Any], emit: Any, cancel: Any) -> str:
     """Рото-маски (GPU, самый долгий этап) по разметке plan.roto. `roto` выкл -> "[]".
-    Превью масок не делает — оно читает ту же разметку из плана сцены."""
+
+    Сам расчёт живёт в `precompute.roto_masks` — той же функции, которой считает превью
+    по кнопке «Рассчитать рото и трекинг»: второй копии правил «какие куски ротоить»,
+    «где кэш масок» и «что делать со «Стопом»» быть не должно. Там же и выгрузка RVM из
+    видеопамяти (одна на сборку и превью): своей выгрузки здесь нет — был бы второй
+    вызов `roto.release`. Здесь остаётся только перевод разметки в .jsx-контракт.
+    """
     if not kw.get("roto") or not plan.get("roto"):
         return "[]"
-    from core import styles as _styles
-    from core.umsg import umsg
-    stv = read_style(_styles.resolve(kw.get("style")))
-    _roto: Any = None
     try:
-        from core import roto as _roto
-        cams = plan["cams"]
-        _plan = [p for p in plan["roto"] if cams[p["ci"]].get("path")]   # нужен исходник камеры
-        if stv.roto_cam1_only:             # рото только на кусках Камеры 1 (cam2 без рото)
-            _plan = [p for p in _plan if p["ci"] == 0]
-        if not _plan:
-            return "[]"
-        # ОБЩИЙ кэш масок (имена по хэшу камера+фрагмент+низ) — реюз между пересборками
-        # и XML: тот же камера+кусок не пересчитывается заново. Overwrite исключён (имена
-        # уникальны по содержимому), поэтому одна папка на весь набор.
-        base = kw.get("base") or _project_base(xml_path)
-        roto_dir = os.path.join(base, "roto", "_cache")
-        masks_by_cam: dict[int, Any] = {}    # маски делаем из ИСХОДНИКА своей камеры
-        by_cam: dict[int, list[dict[str, Any]]] = {}
-        for p in _plan:
-            by_cam.setdefault(p["ci"], []).append(p)
-        emit("  · рото: {chunks} кусков по {cams} камере(ам) — самый долгий этап сборки",
-             chunks=len(_plan), cams=len(by_cam))
-        failures: list[dict[str, Any]] = []
-        for ci, ps in by_cam.items():
-            masks_by_cam[ci] = _roto.alpha_for_ranges(
-                cams[ci]["path"], [(p["src_start"], p["src_end"]) for p in ps],
-                os.path.join(roto_dir, "cam%d" % (ci + 1)),
-                bottom_pct=float(kw.get("roto_bottom") or 0), device=kw.get("roto_device"),
-                emit=emit, cancel=cancel, failures=failures)
-        ents = []
-        missing = []
-        for p in _plan:
-            ms = masks_by_cam.get(p["ci"], [])
-            m = next((mm for mm in ms if abs(mm["start"] - p["src_start"]) < 0.02), None)
-            if m:
-                ents.append({"ci": p["ci"], "ts": p["ts"], "te": p["te"],
-                             "cs": _r(p["ts"] - p["src_start"]),
-                             "scale": p["scale"], "mf": _r(m.get("f") or 1),
-                             "mask": m["mask"]})
-            elif (p["src_end"] - p["src_start"]) >= _roto.MIN_SEG_SEC:
-                missing.append(p)
-        if missing:
-            non_micro = [p for p in _plan if (p["src_end"] - p["src_start"]) >= _roto.MIN_SEG_SEC]
-            n = len(missing)
-            m = len(non_micro)
-            first_err = failures[0]["error"] if failures else "маска не найдена"
-            msg = (f"рото не посчитано для {n} из {m} кусков "
-                   f"(первая причина: {first_err}). "
-                   f"Готовые маски в кэше — собери заново, или сними галку рото в стиле")
-            raise ReelsiError(umsg("roto_incomplete", msg, n=n, m=m, err=first_err, error=first_err))
-        return _jd(ents)
+        ents = precompute.roto_masks(plan, xml_path, kw, emit=emit, cancel=cancel)
+        # «Стоп» во время рото: `alpha_for_ranges` выходит из цикла и отдаёт то, что
+        # успела (маски остались в кэше) — недосчитанные в .jsx писать нельзя, сборку
+        # прерываем. Проверка ДО strict-ошибки: «Стоп» — это команда человека, а не
+        # «рото не посчитано».
+        if (cancel or (lambda: False))():
+            raise Cancelled()
+        return precompute.js_roto(ents)
     except (ReelsiError, Cancelled, SystemExit):
         raise                                    # «Стоп» — не «рото пропущен», SystemExit — пробрасывать
-    except ReelsiError: raise
     except Exception as ex:
+        from core.umsg import umsg
         msg = f"рото не удалось: {ex}. Сними галку рото в стиле или исправь причину"
         raise ReelsiError(umsg("roto_failed", msg, err=str(ex), error=str(ex))) from ex
-    finally:
-        if _roto is not None:
-            try:
-                _roto.release(emit=emit)         # выгрузить RVM из VRAM после сборки
-            except ReelsiError: raise
-            except Exception as ex:
-                # Не выгрузилась — модель держит видеопамять, и следующая сборка
-                # упадёт по памяти без видимой причины: говорим в лог и в вывод сборки.
-                log.warning("RVM не выгрузился после рото: %s", ex)
-                emit("  ! модель рото не выгрузилась ({err}) — видеопамять занята "
-                     "до перезапуска сервера", err=ex)
 
 
 def to_ae_full(xml_path: str, jsx_path: str | None = None, return_source: bool = False, emit: Any = console_emit, cancel: Any = None,
@@ -1369,23 +1667,36 @@ def to_ae_full(xml_path: str, jsx_path: str | None = None, return_source: bool =
     (meta["name"], то самое, по которому om.file пишет .mov). Рендер ждёт файл по нему,
     а не по стему .jsx — на наборе это разные вещи (файл 01_C0233.xml → композиция C0233)."""
     emit = wrap_emit(emit)
-    st_pre = _styles.resolve(kw.get("style"))
-    if bool(st_pre.get("cam1_head_follow")):
-        try:
-            meta_pre, cams_pre, _, _ = parse_full(xml_path, ncams=kw.get("ncams"))
-            if cams_pre and cams_pre[0].get("path") and os.path.isfile(cams_pre[0]["path"]):
-                from core import headtrack
-                ranges = headtrack.cam1_ranges(cams_pre, meta_pre.get("fps"))
-                if ranges:
-                    headtrack.load_or_track(xml_path, cams_pre[0]["path"], ranges, emit=emit, cancel=cancel, fps=10)
-        except Cancelled:
-            raise
-        except ReelsiError: raise
-        except Exception as ex:
-            emit("слежение за головой пропущено: {err}", err=ex)
+    # Трек головы — предстадия сборки, общая с превью (`precompute.head_track`): кнопка
+    # «Рассчитать рото и трекинг» считает ровно тем же кодом и кладёт ровно в тот же
+    # кэш `<стем>.head.json`, поэтому посчитанное в превью сборка берёт готовым.
+    precompute.head_track(xml_path, kw.get("style"), emit=emit, cancel=cancel,
+                          ncams=kw.get("ncams"))
+    # Сила жёлтых — вторая предстадия (core/emphasis.py): сайдкар `<стем>.emph.json`
+    # нужен ДО `scene_plan` — план читает его и решает, на какие жёлтые ставить наезд.
+    # Кэш тот же, что у кнопки превью (`precompute.emphasis_precompute`), поэтому
+    # посчитанное там сборка берёт готовым; при выключенном «наезде на жёлтых» функция
+    # сразу отдаёт пустой ответ и модель не грузит.
+    precompute.emphasis_precompute(xml_path, kw.get("style"), idx=kw.get("highlights"),
+                                   emit=emit, cancel=cancel, ncams=kw.get("ncams"),
+                                   intro=kw.get("intro"), intro_splits=kw.get("intro_splits"),
+                                   intro_remove=kw.get("intro_remove"))
     plan = scene_plan(xml_path, emit=emit, cancel=cancel, hl_count=hl_count, hl_joins=hl_joins, **kw)
     if comp_name_out is not None:
         comp_name_out.append(plan.get("name") or os.path.splitext(os.path.basename(xml_path))[0])
+    # Прожиг LUT спикера — ЗДЕСЬ, а не в scene_plan: план зовёт и превью (/api/scene),
+    # а ему прожигать нельзя (долго и не нужно — у превью своя покраска кадра). До рото:
+    # сбой прожига обязан всплыть за секунды, а не после сорока минут масок. Пути
+    # подменяются только в данных для .jsx (`plan["_ae"]["cams"]` — то, что уезжает в
+    # `var CAM=`): `plan["cams"]` остаётся оригиналами, по ним считает рото (геометрия
+    # от цвета не зависит) и по ним же рисует предпросмотр. Прожигать нечего (пусто) —
+    # подстановки нет вовсе, .jsx прежний байт в байт (golden).
+    cams_baked = lutbake.baked_cams_for_build(xml_path, plan["cams"], emit=emit, cancel=cancel)
+    if cams_baked:
+        plan["_ae"]["cams"] = _jd([{"path": cams_baked.get(c["path"], c["path"]),
+                                    "name": c["name"], "clips": c["clips"],
+                                    **({"frame": c["frame"]} if "frame" in c else {})}
+                                   for c in plan["cams"]])
     # рото могло оборваться на середине (alpha_for_ranges выходит из цикла по
     # «Стопу») — недосчитанные маски в .jsx писать нельзя
     roto_js = _roto_js(plan, xml_path, kw, emit=emit, cancel=cancel)
@@ -1452,7 +1763,13 @@ def virtual_edl(xml_path: str, ncams: int | None = None) -> dict[str, Any]:
     segs=[{ci,ts,te,src}] (видео: верхняя включённая дорожка побеждает, сек),
     audio=[{ts,te,src}] (звук ВСЕГДА с камеры 1), words=[{s,e,w}] (сек).
     Используется предпросмотром (/api/aicut_preview) и draft-рендером."""
+    # Кадр ролика — у спикера, а не у XML (core/frame.ensure_frame): черновик обязан
+    # совпасть по формату с .jsx и Premiere, даже если формат сменили после нарезки.
+    _fw, _fh = _frame.ensure_frame(xml_path, emit=wrap_emit(lambda *a, **k: None))
     meta, cams, subs, _ins = parse_full(xml_path, ncams=ncams)
+    # Пересобрать XML не удалось — черновик всё равно режется в кадре спикера:
+    # он для того и черновик, чтобы показать, как уедет сборка.
+    meta["w"], meta["h"] = int(_fw), int(_fh)
     fps = meta["fps"] or 60
     raw: list[tuple[Any, ...]] = []
     for ci, c in enumerate(cams):
@@ -1641,7 +1958,8 @@ def _render_tail(render_dir: str | None = None, aep_path: str | None = None, com
 
 
 def build_combined(jobs: list[dict[str, Any]], out_jsx: str, emit: Any = None, cancel: Any = None, progress: Any = None,
-                   comps_global: bool = False, comp_names_out: list[str] | None = None) -> tuple[str, int]:
+                   comps_global: bool = False, comp_names_out: list[str] | None = None,
+                   timeline_filter: bool | None = None) -> tuple[str, int]:
     """jobs: list of dicts, each = {"xml_path": ..., **to_ae_full kwargs}. Concatenate
     every file's build script into ONE .jsx that creates several comps in one AE project.
 
@@ -1687,6 +2005,28 @@ def build_combined(jobs: list[dict[str, Any]], out_jsx: str, emit: Any = None, c
                 from core.subs import write_srt
                 write_srt(plan_j["subs"], os.path.splitext(j["xml_path"])[0] + ".srt")
         emit("  готово: {clips} клипов, {subs} субтитров", clips=nc, subs=ns)
+        idx = i - 1
+        if timeline_filter is True or (timeline_filter is None and comps_global):
+            check_js = (
+                "    // REELSI_ONLY: сборка только указанных таймлайнов\n"
+                "    var _only = null;\n"
+                "    try {\n"
+                "        if (typeof $.global !== \"undefined\" && $.global && Object.prototype.toString.call($.global.REELSI_ONLY) === \"[object Array]\") {\n"
+                "            _only = $.global.REELSI_ONLY;\n"
+                "        } else {\n"
+                "            var _g = (typeof window !== \"undefined\" ? window : (typeof global !== \"undefined\" ? global : this));\n"
+                "            if (_g && Object.prototype.toString.call(_g[\"REELSI_ONLY\"]) === \"[object Array]\") {\n"
+                "                _only = _g[\"REELSI_ONLY\"];\n"
+                "            }\n"
+                "        }\n"
+                "    } catch (e) {}\n"
+                "    if (_only) {\n"
+                "        var _skip = true;\n"
+                f"        for (var _oi = 0; _oi < _only.length; _oi++) {{ if (_only[_oi] === {idx}) {{ _skip = false; break; }} }}\n"
+                "        if (_skip) return;\n"
+                "    }\n"
+            )
+            src = src.replace("(function () {\n", "(function () {\n" + check_js, 1)
         parts.append(src)
     body = "\n\n// ===== следующий таймлайн =====\n\n".join(parts)
     if not comps_global and "REELSI_DG_MISS" in body:
@@ -1793,3 +2133,195 @@ def _write_master(jsx_list: Sequence[str], master_path: str, aep_path: str, rend
     )
     atomic_text_write(master_path, jsx, encoding="utf-8-sig")
     return master_path
+
+
+def _write_part_master(combined_jsx: str, master_path: str, part_aep: str,
+                       part_aelog: str, part_indices: Sequence[int]) -> str:
+    """Мастер-скрипт части набора: лог части, REELSI_ONLY, evalFile общего Reelsi_all.jsx,
+    save reelsi_batch.part<k>.aep (без очереди рендера)."""
+    combined = combined_jsx.replace("\\", "/")
+    aep = part_aep.replace("\\", "/")
+    aelog = part_aelog.replace("\\", "/")
+    indices_js = json.dumps(list(part_indices))
+    jsx = (
+        "// Reelsi -> мастер части набора: параллельная сборка таймлайнов\n"
+        "$.global.REELSI_MASTER_LOG = %s;\n"
+        "var _log = new File($.global.REELSI_MASTER_LOG);\n"
+        "    _log.encoding = \"UTF-8\";\n"
+        "    _log.open(\"w\");\n"
+        "    _log.writeln(\"REELSI-MASTER: начат\");\n"
+        "try{\n"
+        "    $.global.REELSI_ONLY = %s;\n"
+        "    var REELSI_ONLY = $.global.REELSI_ONLY;\n"
+        "    $.global.REELSI_COMPS = [];\n"
+        "    _log.close();\n"
+        "    var _evalErr = null;\n"
+        "    try{\n"
+        "        $.evalFile(new File(%s));\n"
+        "    }catch(e){\n"
+        "        _evalErr = e;\n"
+        "    }\n"
+        "    _log = new File($.global.REELSI_MASTER_LOG);\n"
+        "    _log.encoding = \"UTF-8\";\n"
+        "    _log.open(\"a\");\n"
+        "    if (_evalErr){\n"
+        "        _log.writeln(\"evalFile ОШИБКА: \" + %s + \" — \" + _evalErr);\n"
+        "    } else {\n"
+        "        _log.writeln(\"evalFile ok: \" + %s);\n"
+        "    }\n"
+        "    _log.close();\n"
+        "    var f = new File(%s);\n"
+        "    try{\n"
+        "        app.project.save(f);\n"
+        "        _log = new File($.global.REELSI_MASTER_LOG);\n"
+        "        _log.encoding = \"UTF-8\";\n"
+        "        _log.open(\"a\");\n"
+        "        _log.writeln(\"save#1: ok\");\n"
+        "    }catch(e){\n"
+        "        _log = new File($.global.REELSI_MASTER_LOG);\n"
+        "        _log.encoding = \"UTF-8\";\n"
+        "        _log.open(\"a\");\n"
+        "        _log.writeln(\"первый save не выполнился: \" + e);\n"
+        "    }\n"
+        "    _log.writeln(\"exists=\" + f.exists);\n"
+        "    _log.writeln(\"REELSI-MASTER: готово\");\n"
+        "}catch(e){\n"
+        "    try{\n"
+        "        _log = new File($.global.REELSI_MASTER_LOG);\n"
+        "        _log.encoding = \"UTF-8\";\n"
+        "        _log.open(\"a\");\n"
+        "        _log.writeln(\"непредвиденная ошибка мастера части: \" + e);\n"
+        "    }catch(e2){}\n"
+        "}finally{\n"
+        "    try{ _log.close(); }catch(e){}\n"
+        "    $.global.REELSI_MASTER_LOG = null;\n"
+        "    $.global.REELSI_ONLY = null;\n"
+        "    app.quit();\n"
+        "}\n" % (_js(aelog), indices_js, _js(combined), _js(combined), _js(combined), _js(aep))
+    )
+    atomic_text_write(master_path, jsx, encoding="utf-8-sig")
+    return master_path
+
+
+def _write_merge_master(merge_jsx_path: str, merge_aep_path: str, merge_aelog_path: str,
+                        part_aeps: Sequence[str], comp_names: Sequence[str], render_dir: str) -> str:
+    """Скрипт слияния частей проекта: импорт каждой part<k>.aep, consolidateFootage,
+    очистка пустых папок, очередь рендера с Best Settings + Untitled 1, save reelsi_batch.aep."""
+    render_dir = render_dir.replace("\\", "/").rstrip("/")
+    aep = merge_aep_path.replace("\\", "/")
+    aelog = merge_aelog_path.replace("\\", "/")
+    parts_js = ",\n        ".join(_js(p.replace("\\", "/")) for p in part_aeps)
+    comps_js = ",\n        ".join(_js(c) for c in comp_names)
+    jsx = (
+        "// Reelsi -> слияние частей набора в единый проект AE\n"
+        "$.global.REELSI_MASTER_LOG = %s;\n"
+        "var _log = new File($.global.REELSI_MASTER_LOG);\n"
+        "    _log.encoding = \"UTF-8\";\n"
+        "    _log.open(\"w\");\n"
+        "    _log.writeln(\"REELSI-MASTER: начат\");\n"
+        "    _log.writeln(\"REELSI-MERGE: начат\");\n"
+        "try{\n"
+        "    var _partFiles = [\n"
+        "        %s\n"
+        "    ];\n"
+        "    var _compNames = [\n"
+        "        %s\n"
+        "    ];\n"
+        "    // 1) импорт каждого проекта части\n"
+        "    for (var _pi=0; _pi<_partFiles.length; _pi++){\n"
+        "        var _pf = new File(_partFiles[_pi]);\n"
+        "        if (!_pf.exists){\n"
+        "            _log.writeln(\"part не найден: \" + _partFiles[_pi]);\n"
+        "            continue;\n"
+        "        }\n"
+        "        try{\n"
+        "            var _io = new ImportOptions(_pf);\n"
+        "            _io.importAs = ImportAsType.PROJECT;\n"
+        "            var _imported = app.project.importFile(_io);\n"
+        "            if (_imported && _imported instanceof FolderItem){\n"
+        "                while (_imported.numItems > 0){\n"
+        "                    _imported.item(1).parentFolder = app.project.rootFolder;\n"
+        "                }\n"
+        "                try { _imported.remove(); } catch(e){}\n"
+        "            }\n"
+        "            _log.writeln(\"import ok: \" + _partFiles[_pi]);\n"
+        "        }catch(e){\n"
+        "            _log.writeln(\"import ОШИБКА: \" + _partFiles[_pi] + \" — \" + e);\n"
+        "        }\n"
+        "    }\n"
+        "    // 2) слияние дублирующегося футажа\n"
+        "    try{\n"
+        "        app.project.consolidateFootage();\n"
+        "        _log.writeln(\"consolidateFootage: ok\");\n"
+        "    }catch(e){\n"
+        "        _log.writeln(\"consolidateFootage: \" + e);\n"
+        "    }\n"
+        "    // 3) удаление пустых папок импорта\n"
+        "    for (var _fi=app.project.numItems; _fi>=1; _fi--){\n"
+        "        var _it = app.project.item(_fi);\n"
+        "        if (_it instanceof FolderItem && _it.numItems === 0){\n"
+        "            try { _it.remove(); } catch(e){}\n"
+        "        }\n"
+        "    }\n"
+        "    // 4) сбор композиций по именам в исходном порядке\n"
+        "    var _orderedComps = [];\n"
+        "    for (var _cni=0; _cni<_compNames.length; _cni++){\n"
+        "        var _tName = _compNames[_cni];\n"
+        "        for (var _ii=1; _ii<=app.project.numItems; _ii++){\n"
+        "            var _cItem = app.project.item(_ii);\n"
+        "            if (_cItem instanceof CompItem && _cItem.name === _tName){\n"
+        "                _orderedComps.push(_cItem);\n"
+        "                break;\n"
+        "            }\n"
+        "        }\n"
+        "    }\n"
+        "    // 5) очередь рендера: чистим, save ДО очереди\n"
+        "    var rq0 = app.project.renderQueue;\n"
+        "    while (rq0.numItems > 0) rq0.item(rq0.numItems).remove();\n"
+        "    var f = new File(%s);\n"
+        "    try{\n"
+        "        app.project.save(f);\n"
+        "        _log.writeln(\"save#1: ok\");\n"
+        "    }catch(e){\n"
+        "        _log.writeln(\"первый save не выполнился: \" + e);\n"
+        "    }\n"
+        "    // 6) композиции в очередь (Best Settings + Untitled 1)\n"
+        "    for (var _ci=0; _ci<_orderedComps.length; _ci++){\n"
+        "        var _c = _orderedComps[_ci];\n"
+        "        try{\n"
+        "            var rq = rq0.items.add(_c);\n"
+        "            rq.applyTemplate(\"Best Settings\");\n"
+        "            var om = rq.outputModule(1);\n"
+        "            om.applyTemplate(\"Untitled 1\");\n"
+        "            var _out = new File(%s + \"/\" + _c.name + \".mov\");\n"
+        "            if(_out.exists){ _out.remove(); _log.writeln(\"перезаписан: \" + _c.name + \".mov\"); }\n"
+        "            om.file = _out;\n"
+        "            _log.writeln(\"comp ok: \" + _c.name);\n"
+        "        }catch(e){\n"
+        "            _log.writeln(\"композиция «\" + _c.name + \"» не встала в очередь: \" + e);\n"
+        "        }\n"
+        "        _log.close();\n"
+        "        _log = new File($.global.REELSI_MASTER_LOG);\n"
+        "        _log.encoding = \"UTF-8\";\n"
+        "        _log.open(\"a\");\n"
+        "    }\n"
+        "    // 7) save ПОСЛЕ очереди\n"
+        "    try{\n"
+        "        app.project.save(f);\n"
+        "        _log.writeln(\"save#2: ok\");\n"
+        "    }catch(e){\n"
+        "        _log.writeln(\"второй save не выполнился: \" + e);\n"
+        "    }\n"
+        "    _log.writeln(\"rq.numItems=\" + rq0.numItems);\n"
+        "    _log.writeln(\"exists=\" + f.exists);\n"
+        "    _log.writeln(\"REELSI-MASTER: готово\");\n"
+        "}catch(e){\n"
+        "    _log.writeln(\"непредвиденная ошибка мастера слияния: \" + e);\n"
+        "}finally{\n"
+        "    try{ _log.close(); }catch(e){}\n"
+        "    $.global.REELSI_MASTER_LOG = null;\n"
+        "    app.quit();\n"
+        "}\n" % (_js(aelog), parts_js, comps_js, _js(aep), _js(render_dir))
+    )
+    atomic_text_write(merge_jsx_path, jsx, encoding="utf-8-sig")
+    return merge_jsx_path

@@ -15,7 +15,6 @@ r"""Сторож ссылок во всех публичных документ�
 """
 import os
 import re
-import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -23,6 +22,8 @@ ROOT = os.path.dirname(HERE)
 
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import public_slice  # noqa: E402
+
+from tests import gitfiles  # noqa: E402
 
 LINK_RE = re.compile(r"!?\[([^\]]*)\]\(([^)]+)\)")
 BACKTICK_RE = re.compile(r"`([^`\n]+)`")
@@ -34,9 +35,8 @@ _SKIP_IGNORED_REF_DOCS = {"CLAUDE.md", "OPENSOURCE_PLAN.md"}
 
 
 def _git_files():
-    out = subprocess.check_output(["git", "ls-files"], cwd=ROOT,
-                                  text=True, encoding="utf-8")
-    return [f for f in out.splitlines() if f]
+    """Файлы дерева: git, а в распакованном дереве без `.git` — обход (tests/gitfiles)."""
+    return gitfiles.tracked(ROOT)
 
 
 def _ignored_patterns():

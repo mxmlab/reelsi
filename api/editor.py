@@ -312,11 +312,10 @@ def api_editor_save() -> Response:
             # (столько пишет build). Одна частота уводила слова на чужое время.
             sub_words, yellow = _reproject_subs(sub_words, yellow, old_keep, segs, fps,
                                                 xmlbuild.FPS)
-            assign = align.assign_cameras(segs, N, return_every=p.get("cam_return", 2),
-                                          big_chunk_sec=6.0) if N > 1 else None
+            assign = align.assign_for_project(p, segs, N)
             try:
                 info = xmlbuild.build(cams, segs, offsets, xml, assign=assign,
-                                      scale=p.get("scale", 50.4), sub_words=sub_words, music_path=None)
+                                      sub_words=sub_words, music_path=None)
             except (ReelsiError, SystemExit) as e:
                 # Пустой монтаж (убрали все блоки): build файл не тронул — отдаём отказ
                 # роута с текстом гарда КАК ЕСТЬ, а не «SystemExit: …».
@@ -474,17 +473,10 @@ def api_gen_subs() -> Response:
             sub_words = [{"w": w["w"], "start": round(w["start"]*xmlbuild.FPS),
                           "end": round(w["end"]*xmlbuild.FPS)}
                          for w in words]
-            stored = p.get("assign")                      # ручная раскладка камер (если валидна по длине)
-            if N > 1 and isinstance(stored, list) and len(stored) == len(keep):
-                assign = [max(0, min(N - 1, int(x))) for x in stored]
-            elif N > 1:
-                assign = align.assign_cameras(keep, N, return_every=p.get("cam_return", 2),
-                                              big_chunk_sec=6.0)
-            else:
-                assign = None
+            assign = align.assign_for_project(p, keep, N)
             try:
                 info = xmlbuild.build(cams, keep, offsets, xml, assign=assign,
-                                      scale=p.get("scale", 50.4), sub_words=sub_words, music_path=None)
+                                      sub_words=sub_words, music_path=None)
             except (ReelsiError, SystemExit) as e:
                 # Пустой монтаж: build файл не тронул — текст гарда отдаём как есть.
                 raise ReelsiError(umsg("gen_subs_failed", str(e), err=str(e)))
@@ -596,16 +588,11 @@ def api_clear_subs() -> Response:
             p = _ensure_project(xml)
             cams = p["cams"]; offsets = p["offsets"]; N = len(cams)
             keep = [(float(s), float(e)) for s, e in p.get("keep", [])]
-            stored = p.get("assign")
-            assign = ([max(0, min(N - 1, int(x))) for x in stored]
-                       if N > 1 and isinstance(stored, list) and len(stored) == len(keep) else None)
-            if assign is None and N > 1:
-                from core import align
-                assign = align.assign_cameras(keep, N, return_every=p.get("cam_return", 2),
-                                              big_chunk_sec=6.0)
+            from core import align
+            assign = align.assign_for_project(p, keep, N)
             try:
                 info = xmlbuild.build(cams, keep, offsets, xml, assign=assign,
-                                      scale=p.get("scale", 50.4), sub_words=None, music_path=None)
+                                      sub_words=None, music_path=None)
             except (ReelsiError, SystemExit) as e:
                 # Пустой монтаж: build файл не тронул — текст гарда отдаём как есть.
                 raise ReelsiError(umsg("clear_subs_failed", str(e), err=str(e)))

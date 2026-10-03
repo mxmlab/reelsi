@@ -221,13 +221,13 @@ def test_поле_back_проходит_через_все_двери():
 
     select_ae = _func(ae_js, "selectAE")
     capture_ae = _func(ae_js, "captureAE")
-    ai_intro = _func(ae_js, "aiIntroAllRun")
+    ai_intro = _func(ae_js, "aiIntroOne")
     resolve_intro = _func(ae_js, "resolveIntroFor")
 
     doors = [
         ("90-ae.js: selectAE", select_ae),
         ("90-ae.js: captureAE", capture_ae),
-        ("90-ae.js: aiIntroAllRun", ai_intro),
+        ("90-ae.js: aiIntroOne", ai_intro),
         ("90-ae.js: resolveIntroFor", resolve_intro),
     ]
 

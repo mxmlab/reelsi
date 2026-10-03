@@ -30,6 +30,8 @@ import pytest
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
+from tests import gitfiles  # noqa: E402
+
 # 41 модуль, переехавший в core/ (TASKS.md, «Целевая раскладка»).
 CORE_MODULES = [
     "align", "app_meta", "arrowfix", "asr_backends", "assets", "bootstrap", "breath",
@@ -111,9 +113,11 @@ def _tracked_files():
     выглядит как «старый путь ещё отслеживается, нового нет». Старый путь при этом
     файла на диске не имеет — это артефакт индекса, а не нарушение раскладки;
     после `git add` оба списка совпадают.
+
+    Дерево без `.git` (docker-прогон CI) читается обходом — см. `tests/gitfiles.py`:
+    сторож раскладки не должен краснеть от того, что рядом нет git.
     """
-    out = subprocess.check_output(["git", "ls-files"], cwd=ROOT, text=True, encoding="utf-8")
-    return [f for f in out.splitlines() if f and os.path.exists(os.path.join(ROOT, f))]
+    return [f for f in gitfiles.tracked(ROOT) if os.path.exists(os.path.join(ROOT, f))]
 
 
 def _core_py_files():

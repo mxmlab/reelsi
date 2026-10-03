@@ -23,9 +23,12 @@ if __name__ == "__main__":
         ap.add_argument("--template", help="файл со своим system-промптом")
         ap.add_argument("--model", help="ID модели LM Studio")
         ap.add_argument("--url", help="эндпоинт LM Studio (…/v1)")
+        ap.add_argument("--speaker", help="имя профиля спикера (квоты вставок)")
         a = ap.parse_args()
         tmpl = open(a.template, encoding="utf-8").read() if a.template else None
-        {"yellow": cmd_yellow, "inserts": cmd_inserts}[a.cmd](
-            a.path, system=tmpl, dry=a.dry_run, model=a.model, url=a.url)
+        if a.cmd == "inserts":
+            cmd_inserts(a.path, system=tmpl, dry=a.dry_run, model=a.model, url=a.url, speaker=a.speaker)
+        else:
+            cmd_yellow(a.path, system=tmpl, dry=a.dry_run, model=a.model, url=a.url)
     except ReelsiError as e:
         cli_error(e)

@@ -4,11 +4,18 @@
 
 Быстрый низкоразрешённый рендер смонтированного результата — «посмотреть глазами
 без Premiere/AE»: trim+concat сегментов камер + звук с камеры 1 (с микро-фейдами
-10мс на стыках) + слова-субтитры (.ass). Кодек: h264_nvenc, при недоступности /
-занятой VRAM — авто-фолбэк на libx264 (CPU).
+10мс на стыках) + слова-субтитры (.ass). Звук берётся из `<стем>.voice.wav` рядом с
+XML, если он есть (обработанный голос, core/voicefx), — тайминг у файла тот же.
+Кодек: аппаратный H.264 по настройке «Видеокодек» (⚙ → Инструменты), по умолчанию —
+авто по железу (core.encoders); при недоступности / занятой VRAM — авто-фолбэк на
+libx264 (CPU). Настройка читается при КАЖДОЙ сборке: сменил кодек — следующий черновик
+и следующий прокси идут другим кодеком и другим декодом, без перезапуска сервера.
 
-Через карту идёт всё, что реально можно: 720p-прокси камер собираются NVDEC-декодом
-и scale_cuda, итоговый черновик пишет NVENC. Прокси кэшируются в _tmp и переиспользуются
+Через карту идёт всё, что реально можно, но ТОЛЬКО когда выбрано семейство NVIDIA:
+720p-прокси камер собираются NVDEC-декодом и scale_cuda, итоговый черновик пишет NVENC.
+При «Процессор» и «Intel (Quick Sync)» декод идёт процессором (у Intel — без
+`-hwaccel qsv`: фильтр `crop` рамки кадра на кадрах QSV не работает, см. `_decode_tries`),
+аппаратным остаётся только энкод. Прокси кэшируются в _tmp и переиспользуются
 всеми следующими черновиками проекта — без них каждый черновик заново гонит через
 декодер ВЕСЬ 4K-исходник (trim стоит после декодера), а черновик пересобирается на
 каждой итерации самопроверки.
@@ -18,10 +25,15 @@
 
 CLI:  python reelsi/draftrender.py "C:/.../01_C1295.xml" [--cpu] [--height 720] [--no-proxy]
 """
-import os, platform, subprocess, threading
+import os, re, subprocess, threading
+# platform — РАДИ ТЕСТОВ: они подменяют `draftrender.platform.system`, проверяя порядок
+# семейств на Mac/AMD (tests/test_encoder_choice.py). Выбор семейства живёт в
+# core.encoders и смотрит на ТОТ ЖЕ модуль platform — подмена доходит и туда.
+import platform                                             # noqa: F401
 from typing import Any, Callable, Sequence
-from core import media
+from core import encoders, frame, media
 from core.app_meta import console_emit, wrap_emit
+from core.gpulock import codec_gpu_lock
 from core.umsg import ReelsiError, cli_error
 
 
@@ -134,61 +146,134 @@ DRAFT_FPS = 30        # черновик — 30fps, хватает для оце
 # --------------------------------------------------------------------------- #
 # Аппаратный кодировщик: какой брать на этом железе
 # --------------------------------------------------------------------------- #
-# Наличие кодека в `ffmpeg -encoders` НИЧЕГО не значит: полные сборки содержат и
-# h264_amf, и h264_qsv на машине, где нет ни AMD, ни Intel-графики. Единственный
-# честный способ — микро-энкод. Пробуем один раз за процесс и запоминаем.
+# Знание о кодеках переехало в общий core.encoders (он же обслуживает прожиг LUT в
+# видео камер и настройку «Видеокодек» в ⚙). Здесь остались имена, которые зовут
+# код и тесты: таблица кандидатов, таблица аргументов, проба и кэш ПРОБ.
 #
 # Декод на карте (-hwaccel + scale_cuda) оставлен только для NVIDIA: он там проверен
 # годом работы. Остальным отдаём CPU-декод и аппаратный только ЭНКОД — это уже даёт
 # основной выигрыш, а рисковать зависанием на чужом железе, которого у нас нет, незачем.
-_CANDIDATES = {
-    "Darwin":  ["h264_videotoolbox"],                    # медиадвижок Apple Silicon
-    "Windows": ["h264_nvenc", "h264_amf", "h264_qsv"],
-    "Linux":   ["h264_nvenc", "h264_amf", "h264_qsv"],   # vaapi требует -vaapi_device, отдельно
-}
-# Параметры качества у каждого свои. Для не-NVIDIA взят битрейт, а не квантователь:
-# флаги качества у amf/qsv/videotoolbox разъезжаются от версии к версии ffmpeg, а
-# `-b:v` понимают все и всегда. Для ЧЕРНОВИКА этого достаточно.
-_ENC_ARGS = {
-    "h264_nvenc":        lambda q, br: ["-preset", "p4", "-cq", str(q)],
-    "h264_videotoolbox": lambda q, br: ["-b:v", br],
-    "h264_amf":          lambda q, br: ["-b:v", br],
-    "h264_qsv":          lambda q, br: ["-b:v", br],
-}
-_HW_CACHE: str | None = "unset"          # None = аппаратного нет; строка = имя кодека
+#
+# _CANDIDATES — ПРОИЗВОДНАЯ от encoders.OS_ORDER: второй копии порядка быть не должно,
+# разъехались бы молча. Имена аппаратных кандидатов без cpu: «нет аппаратного» в
+# draftrender — это None, за который отвечает libx264 (см. hw_encoder).
+_CANDIDATES = {os_name: [encoders.DRAFT_CODECS[f] for f in fams if f != "cpu"]
+               for os_name, fams in encoders.OS_ORDER.items()}
+# Аргументы кодеков черновика: у nvenc свой квантователь, остальным битрейт (флаги
+# качества у amf/qsv/videotoolbox разъезжаются от версии ffmpeg к версии).
+_ENC_ARGS = encoders.DRAFT_ARGS
+
+# Кэш ПРОБ (имя кодека -> работает ли он на этой машине), не кэш выбора.
+#
+# Кэшировать итоговый выбор нельзя: раньше он лежал здесь и держал первый ответ до
+# конца процесса сервера. Первый черновик после старта запоминал NVENC — и смена
+# «Видеокодека» на «Intel Quick Sync» или «Процессор» не меняла НИЧЕГО: ни кодека,
+# ни декода (`-hwaccel cuda` включается от выбранного семейства), пока сервер не
+# перезапустят. Итог выбирается при КАЖДОМ вызове (encoders.pick читает текущую
+# настройку), а помнится только то, что и правда стоит запуска ffmpeg, — работает
+# ли семейство.
+_PROBE_CACHE: dict[str, bool] = {}
 
 
-def _probe_encoder(name: Any) -> bool:
+def reset_cache() -> None:
+    """Забыть пробы кодировщиков — их зовут при смене настройки «Видеокодек».
+
+    Сами пробы от настройки не зависят (работает ли семейство на этой машине), но
+    именно смена настройки — тот момент, когда пользователь ждёт другого кодека
+    прямо сейчас: пробуем заново, а не отвечаем «как было при старте».
+    """
+    _PROBE_CACHE.clear()
+
+
+def probe_family(family: str, prober: Callable[[str], bool] | None = None) -> bool:
+    """Работает ли СЕМЕЙСТВО кодировщиков — с кэшем на процесс.
+
+    `prober` — своя проба вызывающего (её подменяют тесты): получает ИМЯ кодека
+    (`h264_nvenc`), а не семейство. Кэш — по имени кодека, поэтому «авто» и явный
+    выбор одного и того же семейства не пробуют его дважды.
+    """
+    codec = encoders.codec_name(family, "draft")
+    hit = _PROBE_CACHE.get(codec)
+    if hit is not None:
+        return hit
+    ok = (prober or probe_encoder)(codec)
+    _PROBE_CACHE[codec] = ok
+    return ok
+
+
+def probe_encoder(name: Any) -> bool:
     """Кодировщик реально работает ПРЯМО СЕЙЧАС? (драйвер, VRAM, лимит сессий)
 
-    256x256 — не меньше: NVENC отвергает мелкие кадры («Frame Dimension less than the
-    minimum supported value»), и проба врала бы «недоступен»."""
-    try:
-        p = subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i",
-                            "color=black:s=256x256:d=0.1", "-c:v", name,
-                            "-f", "null", "-"], capture_output=True, timeout=60)
-        return p.returncode == 0
-    except ReelsiError: raise
-    except Exception:
-        return False
+    Проба общая (core.encoders), назначение — черновик: кадр 256x256, H.264 8 бит.
+    Отвечает СВЕЖИМ результатом мимо кэша: сюда приходят ПОСЛЕ падения ffmpeg, чтобы
+    понять, виноват кодировщик или вход, — закэшированное «работает» тут соврало бы.
+
+    Имя оставлено ради тестов и лога: они подменяют и зовут именно его.
+    """
+    codec = str(name)
+    return encoders.probe(encoders.family_of(codec) or codec, "draft", refresh=True)
 
 
 def hw_encoder(refresh: bool = False) -> str | None:
-    """Имя рабочего аппаратного H.264-кодировщика или None. Кэш на процесс."""
-    global _HW_CACHE
-    if _HW_CACHE != "unset" and not refresh:
-        return _HW_CACHE
-    _HW_CACHE = None
-    for name in _CANDIDATES.get(platform.system(), ["h264_nvenc"]):
-        if _probe_encoder(name):
-            _HW_CACHE = name
-            break
-    return _HW_CACHE
+    """Имя рабочего аппаратного H.264-кодировщика или None.
+
+    Кодек выбирает общий core.encoders: он знает настройку «Видеокодек» (auto или
+    семейство) и порядок семейств по ОС, и спрашивается ПРИ КАЖДОМ вызове — сменил
+    настройку, и следующий вызов идёт другим кодеком, без перезапуска сервера.
+    Помнится только проба (`probe_family`): её подменяют тесты, и она же отвечает
+    «работает ли это прямо сейчас» после падения ffmpeg.
+
+    `refresh=True` — «перепроверить»: карту могли занять или освободить (драйвер,
+    VRAM), поэтому пробы забываются и идут заново.
+
+    None означает «аппаратного нет» — вызывающие уходят на libx264 (он же выбор «cpu»)."""
+    if refresh:
+        reset_cache()                   # драйвер могли занять или освободить — спрашиваем заново
+        encoders.reset_cache()
+    choice = encoders.pick("draft", prober=probe_family)
+    if choice.family == "cpu":
+        return None
+    return choice.args[1]               # аргументы начинаются с ["-c:v", имя, ...]
 
 
 def _codec_args(name: str, q: int, br: str) -> list[str]:
     """Аргументы кодека по имени; неизвестному — битрейт (безопасный минимум)."""
-    return [("-c:v"), name] + _ENC_ARGS.get(name, lambda q, b: ["-b:v", b])(q, br)
+    return encoders.codec_args(name, "draft", q=q, br=br)
+
+
+def _codec_name(args: Sequence[Any] | None) -> str:
+    """Имя кодека из аргументов ffmpeg (`-c:v <имя>`) или пусто.
+
+    По имени решается, занимать ли видеокарту (`core.gpulock.codec_gpu_lock`): NVENC
+    карту занимает, Quick Sync/AMF/x264 — нет. Пустые аргументы (аппаратного захода
+    нет) — пустое имя: замок такому участку не нужен."""
+    a = [str(x) for x in (args or [])]
+    return a[a.index("-c:v") + 1] if "-c:v" in a else ""
+
+
+def _codec_label(codec: Sequence[str], hw: str | None) -> str:
+    """Кодек захода для лога: аппаратное имя или «libx264 (CPU)».
+
+    Заход с именем аппаратного кодека — это аппаратный и есть, а x264 приходит и
+    как CPU-фолбэк, и как выбор «Процессор»; в логе оба случая читаются одинаково.
+    """
+    name = _codec_name(codec)
+    if not name:
+        name = hw or "libx264"
+    return name if name != "libx264" else "libx264 (CPU)"
+
+
+def _decode_label(inp: Sequence[str]) -> str:
+    """Декод захода для лога — по входным аргументам ffmpeg (источник правды).
+
+    `-hwaccel cuda` — декод на карте NVIDIA (NVDEC), `qsv` — Quick Sync. Пусто —
+    декод процессором: аппаратным остаётся только энкод (у Intel/AMD/Apple так и
+    заведено нарочно, см. `_decode_tries`).
+    """
+    accel = str(inp[inp.index("-hwaccel") + 1]) if "-hwaccel" in inp else ""
+    if not accel:
+        return "процессор"
+    return "NVDEC (CUDA)" if accel == "cuda" else accel + " (аппаратный)"
 
 
 def tmp_dir(out_xml_or_dir: str) -> str:
@@ -202,7 +287,11 @@ def tmp_dir(out_xml_or_dir: str) -> str:
 
 PROXY_GLOB = "pv_*.mp4"          # превью-прокси камер (build_preview_proxy)
 # В _tmp живут два независимых кэша прокси:
-# 1) `pv_*.mp4` — превью-прокси для плеера веба (build_preview_proxy);
+# 1) `pv_*.mp4` — прокси кадра для плеера веба (build_preview_proxy): у превью длинный
+#    GOP ради размера файла. Разновидность с ключевым КАЖДЫЙ кадр (`pv_r*.mp4`,
+#    build_render_proxy) рендер без AE больше НЕ заказывает: кадры камер он вынимает
+#    из исходников (core/webrender), а не играет прокси. Сборщик оставлен — им жил
+#    рендер, и он же собирает прокси перехода по общей двери /api/preview_proxy;
 # 2) `proxy_*.mp4` — 720p-прокси камер для быстрого рендера черновика (_proxy_path).
 # У них разные имена/префиксы, но одинаковая суть: пересборка декода камеры стоит десятки
 # секунд. Поэтому рутинная авто-очистка перед нарезкой (proxies=False) бережёт оба вида,
@@ -313,38 +402,76 @@ def _ass_subs(words: Sequence[dict[str, Any]], tw: int, th: int, path: str) -> s
     return path
 
 
-def _proxy_path(src: str, tw: int, th: int, tdir: str) -> str:
+def _proxy_path(src: str, tw: int, th: int, tdir: str, crop: str = "") -> str:
     """Имя прокси-файла камеры в _tmp. В ключ входят mtime/size исходника и размер
-    кадра: переснял/перекодировал исходник или сменил height — прокси пересоберётся."""
+    кадра: переснял/перекодировал исходник или сменил height — прокси пересоберётся.
+    `crop` — обрезка рамки кадра (core/frame.py): рамку правят в превью, и прокси,
+    собранный по прежней, обязан пересобраться, а не показывать старый кадр."""
     import hashlib
     st = os.stat(src)
     key = (f"{os.path.abspath(src)}|{int(st.st_mtime)}|{st.st_size}|{tw}x{th}@{DRAFT_FPS}"
-           + _rot_key(src))
+           + _rot_key(src) + ("|" + crop if crop else ""))
     return os.path.join(tdir, "proxy_" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:12] + ".mp4")
 
 
-def _build_proxy(src: str, dst: str, tw: int, th: int, force_cpu: bool = False, emit: Any = console_emit, cancel: Callable[[], bool] | None = None) -> str | None:
+def _crop_filter(fr: Any, src: str, fw: int, fh: int) -> str:
+    """Обрезка исходника по рамке камеры для ffmpeg: "crop=W:H:X:Y," или "".
+
+    Рамки нет (или размеры исходника не прочитались) — пусто: фильтр-цепочка
+    остаётся прежней, байт в байт. Стороны и позицию округляем до чётных: yuv420p
+    не переносит нечётные. Размер кадра ролика (fw, fh) — тот же, по которому
+    считает core/frame.py: кусок рамки всегда с пропорциями кадра.
+    """
+    if frame.is_frame_default(fr):
+        return ""
+    w, h, _rot = _display_dims(src)
+    if not w or not h:
+        return ""
+    x, y, cw, ch = frame.frame_crop(fr, w, h, fw, fh)
+    cw, ch = int(cw) // 2 * 2, int(ch) // 2 * 2
+    if cw < 2 or ch < 2:
+        return ""
+    return "crop=%d:%d:%d:%d," % (cw, ch, int(x) // 2 * 2, int(y) // 2 * 2)
+
+
+def _build_proxy(src: str, dst: str, tw: int, th: int, force_cpu: bool = False, emit: Any = console_emit,
+                 cancel: Callable[[], bool] | None = None, crop: str = "",
+                 allintra: bool = False) -> str | None:
     """Собрать 720p-прокси камеры: декод и масштаб на GPU (NVDEC + scale_cuda), кодек
     NVENC. Возвращает путь или None (тогда работаем по исходнику, как раньше).
 
     Зачем: `trim` стоит ПОСЛЕ декодера, поэтому каждый черновик прогоняет весь 4K-исходник
     целиком — а черновик пересобирается на каждой итерации самопроверки и после каждой
     правки. С прокси тяжёлый декод платится один раз, дальше сборка идёт по крошечному
-    720p-файлу (замер: 3.8 с -> 0.8 с при 60 сегментах, на реальном 4K разрыв больше)."""
+    720p-файлу (замер: 3.8 с -> 0.8 с при 60 сегментах, на реальном 4K разрыв больше).
+
+    `crop` — обрезка рамки кадра (пиксели ИСХОДНИКА): она вшивается в прокси, потому
+    что кадр камеры дальше масштабируется целиком. С обрезкой GPU-заход не годится:
+    `crop` — фильтр CPU, а на кадрах CUDA он не работает, поэтому идём CPU-декодом.
+
+    `allintra` — ключевой кадр КАЖДЫЙ (`-g 1`, только x264): прокси рендера без AE, где
+    перемотка <video> на каждый кадр не должна декодировать от далёкого ключевого."""
     emit = wrap_emit(emit)
-    vf_gpu = f"fps={DRAFT_FPS},scale_cuda={tw}:{th}:format=yuv420p"
-    vf_cpu = f"fps={DRAFT_FPS},scale={tw}:{th},format=yuv420p"
-    x264 = ["-c:v", "libx264", "-crf", "28", "-preset", "veryfast"]
-    hw = None if force_cpu else hw_encoder()
+    vf_gpu = f"fps={DRAFT_FPS},{crop}scale_cuda={tw}:{th}:format=yuv420p"
+    vf_cpu = f"fps={DRAFT_FPS},{crop}scale={tw}:{th},format=yuv420p"
+    x264 = _x264_args(q=RENDER_PROXY_Q if allintra else 28, allintra=allintra)
+    # all-intra — только CPU-заход: ключевой каждый кадр это режим x264, у аппаратных
+    # кодировщиков он зовётся иначе (intra-refresh) и на части драйверов не заводится
+    # вовсе, а нам тут важна не скорость сборки прокси, а гарантия формата.
+    hw = None if (force_cpu or allintra) else hw_encoder()
     tries = _decode_tries(src, vf_gpu, vf_cpu, hw,
-                          _display_dims(src)[2], _codec_args(hw, 30, "3M") if hw else None, x264)
+                          _display_dims(src)[2], _codec_args(hw, 30, "3M") if hw else None, x264,
+                          gpu=not crop)
     tmp = dst + ".part.mp4"
     for inp, vf, codec in tries:
         if cancel is not None and cancel():
             return None
         try:
-            r = _run_ff(["ffmpeg", "-y", "-v", "error"] + inp +
-                        ["-an", "-vf", vf] + codec + [tmp], cancel=cancel)
+            # Замок видеокарты — только под NVENC-заходом: Quick Sync, AMF и процессор
+            # карту NVIDIA не занимают, и ждать им чужое запекание голоса нечего.
+            with codec_gpu_lock(_codec_name(codec), "прокси камер", emit):
+                r = _run_ff(["ffmpeg", "-y", "-v", "error"] + inp +
+                            ["-an", "-vf", vf] + codec + [tmp], cancel=cancel)
         except subprocess.TimeoutExpired:
             emit("  ⚠ прокси: ffmpeg завис ({timeout} с) — следующая попытка", timeout=FFMPEG_TIMEOUT)
             continue
@@ -355,6 +482,10 @@ def _build_proxy(src: str, dst: str, tw: int, th: int, force_cpu: bool = False, 
             # памяти его нет — от общей инфраструктуры тут только публикация готового
             # .part после проверки размера. Недописанный .part не подхватится.
             os.replace(tmp, dst)
+            # Каким кодеком и каким декодом собран файл — по ФАКТУ захода, а не по
+            # выбору: заходы идут от быстрого к надёжному, и победил именно этот.
+            emit("  кодек {codec}, декод {dec}", codec=_codec_label(codec, hw),
+                 dec=_decode_label(inp))
             return dst
     try:
         os.remove(tmp)
@@ -364,9 +495,50 @@ def _build_proxy(src: str, dst: str, tw: int, th: int, force_cpu: bool = False, 
     return None
 
 
-def _decode_tries(src: str, vf_gpu: str, vf_cpu: str, hw: str | None, rot: bool, hwc: list[str] | None, x264: list[str]) -> list[tuple[list[str], str, Any]]:
+def _x264_args(q: int, allintra: bool = False) -> list[str]:
+    """Аргументы x264 для прокси: постоянное качество, без B-кадров.
+
+    `allintra` — `-g 1 -bf 0 -keyint_min 1`: каждый кадр ключевой. Одна строка на оба
+    вида прокси, чтобы «какой GOP у рендера» не разъезжалось с ключом кэша (он в
+    RENDER_PROXY_VERSION)."""
+    args = ["-c:v", "libx264", "-crf", str(q), "-preset", "veryfast"]
+    return args + (["-g", "1", "-bf", "0", "-keyint_min", "1"] if allintra else [])
+
+
+def build_render_proxy(src: str, dst: str, height: int = 720, emit: Any = console_emit,
+                       cancel: Callable[[], bool] | None = None,
+                       crop: str = "") -> str | None:
+    """Прокси камеры с ключевым КАЖДЫЙ кадр: кадр как у превью, перемотка — одно
+    декодирование вместо прогона от ближайшего ключевого.
+
+    Рендер без AE эту разновидность больше не заказывает: кадры камер он вынимает из
+    ИСХОДНИКОВ (core/webrender), потому что прокси короткой стороны кадра ролика зум
+    клипа растягивал. Дверь оставлена для того, кому нужен именно all-intra прокси.
+
+    Звук не нужен (`-an` внутри _build_proxy): рендер без AE собирает видео, звук к нему
+    клеит ffmpeg из voice.wav/камеры 1. Кадр — короткая сторона как у превью."""
+    tw, th, _rot = _short_side(src, height)
+    return _build_proxy(src, dst, tw=tw, th=th, emit=emit, cancel=cancel,
+                        crop=crop, allintra=True)
+
+
+def _decode_tries(src: str, vf_gpu: str, vf_cpu: str, hw: str | None, rot: bool, hwc: list[str] | None,
+                  x264: list[str], gpu: bool = True) -> list[tuple[list[str], str, Any]]:
     """Заходы сборки прокси: [(входные аргументы, видеофильтр, аргументы кодека)].
     Порядок — от быстрого к надёжному, побеждает первый успешный.
+
+    ДЕКОД — по выбранному семейству, а не «раз есть аппаратный энкод, значит карта»:
+    `-hwaccel cuda` + `scale_cuda` возможны только там, где это проверено годом
+    работы, то есть на NVIDIA. Выбрал «Процессор» — `hw` приходит None и остаётся
+    единственный заход с CPU-декодом; выбрал «Intel (Quick Sync)» — энкод `h264_qsv`,
+    а декод процессором, в том числе потому, что на аппаратных кадрах не работает
+    фильтр `crop` (обрезка рамки кадра, core/frame.py): цепочка рвётся ровно так же,
+    как на CUDA-кадрах. Аппаратный ЭНКОД при этом остаётся — основной выигрыш
+    (кодирование 4K) не теряется; аппаратный ДЕКОД Quick Sync — отдельная работа
+    (`-hwaccel qsv`), и заводить его вслепую на железе, которого у нас нет, незачем.
+
+    `gpu=False` — заход с `-hwaccel_output_format cuda` ЗАПРЕЩЁН: на кадрах CUDA
+    фильтр CPU (обрезка рамки кадра) не работает, и цепочка рвётся.
 
     ПОВЁРНУТЫЙ кадр через NVDEC не гоняем ВОВСЕ. С `-hwaccel_output_format cuda`
     автоповорот ffmpeg не применяется: `scale_cuda` получает ещё не развёрнутый кадр
@@ -378,12 +550,12 @@ def _decode_tries(src: str, vf_gpu: str, vf_cpu: str, hw: str | None, rot: bool,
     с этим: `камера1/C1387-008.MP4`, `Камера2/C1385-004.MP4` (3840x2160, rotation=90)."""
     if not hw:
         return [(["-i", src], vf_cpu, x264)]
-    if hw == "h264_nvenc" and not rot:
+    if hw == "h264_nvenc" and not rot and gpu:
         # 4:2:2 10 бит (Sony/Canon) NVDEC до Blackwell не умеет — следующий заход спасает
         return [(["-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-i", src], vf_gpu, hwc),
                 (["-i", src], vf_cpu, hwc),
                 (["-i", src], vf_cpu, x264)]
-    # Не-NVIDIA или повёрнутый кадр: декод на CPU, аппаратный только ЭНКОД
+    # Intel/AMD/Apple и любой повёрнутый кадр: декод на CPU, аппаратный только ЭНКОД
     return [(["-i", src], vf_cpu, hwc), (["-i", src], vf_cpu, x264)]
 
 
@@ -520,6 +692,27 @@ def _rot_key(src: str) -> str:
         return ""
 
 
+def _proxy_key(name: str, key: str, tdir: str) -> str:
+    """Путь прокси в `_tmp`: префикс вида, имя — хеш ключа.
+
+    Хеш берётся от СТРОКИ ключа: у каждого вида прокси ключ свой, и разойтись они не
+    могут — в имя попадает ровно то, от чего прокси зависит.
+    """
+    import hashlib
+    h = hashlib.sha1(key.encode("utf-8")).hexdigest()[:12]
+    return os.path.join(tdir, name + h + ".mp4")
+
+
+def _src_version(src: str) -> str:
+    """Общая часть ключа кэша: файл камеры по (путь, mtime, размер) и его поворот.
+
+    Переснял/перекодировал исходник — прокси пересобирается; поворот в ключе — потому
+    что прокси, собранные до фикса автоповорота, лежат на боку, а имя у них прежнее.
+    """
+    st = os.stat(src)
+    return f"{os.path.abspath(src)}|{int(st.st_mtime)}|{st.st_size}" + _rot_key(src)
+
+
 def preview_path(src: str, height: int, tdir: str) -> str:
     """Имя превью-прокси камеры в _tmp. Ключ — как у черновикового (mtime/size/размер),
     но префикс свой: тот собран БЕЗ звука и с fps=30, для превью не годится.
@@ -528,10 +721,32 @@ def preview_path(src: str, height: int, tdir: str) -> str:
     кадры раз в 10 секунд (дефолтный GOP NVENC/X.264 = 250 фреймов), и каждый seek
     в браузере заставлял декодер прогонять до 10 секунд с последнего ключевого кадра.
     Сменили формат — старые прокси обязаны пересобраться, иначе кэш раздавал бы битые."""
-    import hashlib
-    st = os.stat(src)
-    key = f"{os.path.abspath(src)}|{int(st.st_mtime)}|{st.st_size}|prev{height}:g" + _rot_key(src)
-    return os.path.join(tdir, "pv_" + hashlib.sha1(key.encode("utf-8")).hexdigest()[:12] + ".mp4")
+    return _proxy_key("pv_", f"{_src_version(src)}|prev{height}:g", tdir)
+
+
+# Имя прокси КАДРА РЕНДЕРА без AE (`pv_r…`). Разбирается по имени, а не по числу в
+# списке: сборщику прокси (api/previewproxy) план приходит путями, и «какой это прокси»
+# решается ровно там, где имя собрано.
+RENDER_PROXY_RE = re.compile(r"^pv_r[0-9a-f]{12}\.mp4$")
+# Версия формата прокси рендера. Ключевой кадр КАЖДЫЙ: перемотка <video> стоит одного
+# декодированного кадра вместо прогона с далёкого ключевого (у превью GOP ~1 с — ради
+# размера файла, у рендера важна скорость перемотки, а размер он платит свой).
+RENDER_PROXY_VERSION = "allintra1"
+# Качество прокси рендера: q=18 не нужен (кадр 1:1 всё равно ужмётся кодеком
+# назначения), но и 28-й мылит кадр. Меняешь число — меняй версию выше: ключ кэша
+# состоит из неё, и старые прокси обязаны пересобраться, а не подхватиться молча.
+RENDER_PROXY_Q = 23
+
+
+def render_proxy_path(src: str, height: int, tdir: str) -> str:
+    """Имя прокси камеры ДЛЯ РЕНДЕРА БЕЗ AE: тот же кадр, что у превью, но все кадры
+    ключевые (см. RENDER_PROXY_VERSION) и БЕЗ звука.
+
+    Отдельный файл, а не тот же самый: превью играет длинным GOP и со звуком камеры 1,
+    и подмена формата сломала бы ему перемотку и звук. Ключ кэша отличается версией
+    формата, поэтому оба файла живут рядом и не подхватывают друг друга.
+    """
+    return _proxy_key("pv_r", f"{_src_version(src)}|rend{height}:{RENDER_PROXY_VERSION}", tdir)
 
 
 def build_preview_proxy(src: str, dst: str, height: int = 720, force_cpu: bool = False, emit: Any = console_emit,
@@ -584,9 +799,11 @@ def build_preview_proxy(src: str, dst: str, height: int = 720, force_cpu: bool =
         try:
             # -progress pipe:1 -nostats: ход сборки уходит в stdout (его разбирает
             # _progress_hook), а не в stderr — там по-прежнему только ошибки (-v error).
-            r = _run_ff(["ffmpeg", "-y", "-v", "error", "-nostats", "-progress", "pipe:1"] +
-                        inp + ["-vf", vf] + codec + aac +
-                        ["-movflags", "+faststart", tmp], cancel=cancel, on_progress=on_prog)
+            # Замок видеокарты — только под NVENC-заходом (см. `_build_proxy`).
+            with codec_gpu_lock(_codec_name(codec), "превью-прокси", emit):
+                r = _run_ff(["ffmpeg", "-y", "-v", "error", "-nostats", "-progress", "pipe:1"] +
+                            inp + ["-vf", vf] + codec + aac +
+                            ["-movflags", "+faststart", tmp], cancel=cancel, on_progress=on_prog)
         except subprocess.TimeoutExpired:
             emit("  ⚠ превью-прокси: ffmpeg завис ({timeout} с) — следующая попытка", timeout=FFMPEG_TIMEOUT)
             continue
@@ -640,20 +857,34 @@ def render_draft(xml_path: str, out_mp4: str | None = None, height: int = 720, f
     for ci in used:
         if not (cams[ci].get("path") and os.path.isfile(cams[ci]["path"])):
             raise RuntimeError(f"Не найден исходник камеры {ci + 1}: {cams[ci].get('path')}")
-    a_idx = _inp(cams[0]["path"])                  # звук всегда с камеры 1 (из ОРИГИНАЛА)
+    # Звук всегда с камеры 1 — но если обработка голоса включена (одно правило:
+    # `voicefx.clip_voice_wav`), берём запечённый `<стем>.voice.wav`: тайминг у файла
+    # тот же (он посчитан по звуку камеры 1 и той же длины), поэтому фейды и трим
+    # остаются прежними, а черновик звучит так же, как уедет в AE. Выключено или файла
+    # нет — всё как раньше.
+    from core import voicefx
+    voice = voicefx.clip_voice_wav(xml_path, emit=emit)   # ход запекания — в лог черновика
+    a_idx = _inp(voice or cams[0]["path"])
 
     # 720p-прокси камер: тяжёлый 4K-декод один раз на все черновики этого проекта
+    # Рамка кадра камеры (поле `frame` профиля спикера, core/frame.py) вшивается в
+    # прокси: дальше кадр масштабируется целиком, и обрезать его уже негде.
+    frames = frame.xml_frames(xml_path)
+    crops: dict[int, str] = {}
+    for ci in used:
+        crops[ci] = _crop_filter(frame.frame_of(frames, ci + 1), cams[ci]["path"], w0, h0)
     proxy = {}
     if use_proxy:
         for ci in used:
             src = cams[ci]["path"]
-            dst = _proxy_path(src, tw, th, tdir)
+            dst = _proxy_path(src, tw, th, tdir, crops[ci])
             if os.path.isfile(dst) and os.path.getsize(dst) > 0:
                 proxy[src] = dst
                 continue
             emit("  прокси камеры {cam}: {tw}x{th} (один раз, дальше черновики быстрые)",
                  cam=ci + 1, tw=tw, th=th)
-            p = _build_proxy(src, dst, tw, th, force_cpu=force_cpu, emit=emit, cancel=cancel)
+            p = _build_proxy(src, dst, tw, th, force_cpu=force_cpu, emit=emit, cancel=cancel,
+                             crop=crops[ci])
             if p is None and cancel is not None and cancel():
                 raise RenderCancelled()
             if p:
@@ -663,10 +894,12 @@ def render_draft(xml_path: str, out_mp4: str | None = None, height: int = 720, f
     flt = []
     for k, s in enumerate(segs):
         src = cams[s["ci"]]["path"]
+        # По исходнику (прокси нет) обрезку рамки делаем здесь; в прокси она уже вшита
+        crop = "" if src in proxy else crops.get(s["ci"], "")
         i = _inp(proxy.get(src, src))
         d = s["te"] - s["ts"]
         flt.append(f"[{i}:v]trim=start={s['src']:.4f}:duration={d:.4f},"
-                   f"setpts=PTS-STARTPTS,scale={tw}:{th},fps={DRAFT_FPS},"
+                   f"setpts=PTS-STARTPTS,{crop}scale={tw}:{th},fps={DRAFT_FPS},"
                    f"format=yuv420p[v{k}]")
     for k, s in enumerate(audio):
         d = s["te"] - s["ts"]
@@ -716,6 +949,12 @@ def render_draft(xml_path: str, out_mp4: str | None = None, height: int = 720, f
     hwc = _codec_args(hw, 28, "4M") if hw else None
     x264 = ["-c:v", "libx264", "-crf", "26", "-preset", "veryfast"]
     tries = [x264] if not hw else [hwc, x264]   # аппаратный может не влезть в VRAM рядом с LLM
+    # Декод по кодекам заходов. Черновик декодирует ПРОКСИ (720p) — а прокси собраны
+    # тем же выбором (`_build_proxy`), и декод им выпал тот же. Прокси не собрался
+    # (или прокси отключены) — декодируется исходник, но это тот же CPU-путь.
+    decode_of = {"libx264 (CPU)": _decode_tries("", "", "", None, False, None, x264)[0][0]}
+    if hw:
+        decode_of[hw] = _decode_tries("", "", "", hw, False, hwc, x264)[0][0]
     emit("  черновик: {segs} сегм. -> {tw}x{th}@{fps} {name}",
          segs=len(segs), tw=tw, th=th, fps=DRAFT_FPS, name=os.path.basename(out_mp4))
     last_err = ""
@@ -723,7 +962,11 @@ def render_draft(xml_path: str, out_mp4: str | None = None, height: int = 720, f
         if cancel is not None and cancel():
             raise RenderCancelled()
         try:
-            r = _run_ff(_cmd(codec), cancel=cancel, cwd=tdir)
+            # Замок видеокарты — только под NVENC-заходом (`codec_gpu_lock`): черновик
+            # с кодеком Quick Sync или «Процессор» карту NVIDIA не занимает и чужого
+            # запекания голоса не ждёт.
+            with codec_gpu_lock(_codec_name(codec), "черновик mp4", emit):
+                r = _run_ff(_cmd(codec), cancel=cancel, cwd=tdir)
         except subprocess.TimeoutExpired:
             err = f"ffmpeg завис ({FFMPEG_TIMEOUT} с) — попытка прервана"
             emit("  ⚠ {err}", err=err)
@@ -734,7 +977,16 @@ def render_draft(xml_path: str, out_mp4: str | None = None, height: int = 720, f
         if r is None:
             raise RenderCancelled()
         if r.returncode == 0 and os.path.isfile(out_mp4) and os.path.getsize(out_mp4) > 0:
-            codec_label = hw if codec is hwc else "CPU x264"
+            # «CPU x264» — прежняя подпись лога. Именно строкой: hw при CPU-заходе
+            # пуст, и «кодек None» в строке о кодеке читалось бы как поломка.
+            codec_label = hw if codec is hwc and hw else "CPU x264"
+            # Чем собран файл и каким декодом — строкой в лог, ДО «готово». Кодек
+            # выбирается по текущей настройке при каждом вызове, и эта строка и есть
+            # ответ на «выбрал Quick Sync, а грузит NVIDIA»: в логе видно, что вышло.
+            # Декод берётся из заходов того же сборщика: черновик декодирует ПРОКСИ
+            # (или исходник, если прокси не собрался), а не входные файлы как есть.
+            emit("  кодек {codec}, декод {dec}", codec=codec_label,
+                 dec=_decode_label(decode_of[codec_label]))
             emit("  черновик готов ({codec}, {mb:.0f} МБ)",
                  codec=codec_label, mb=os.path.getsize(out_mp4) / 1e6)
             return out_mp4
@@ -753,7 +1005,7 @@ def render_draft(xml_path: str, out_mp4: str | None = None, height: int = 720, f
             emit("  ⚠ {hw} не взлетел ({err})", hw=hw, err=last_err)
             for ln in err.splitlines()[-4:-1]:          # хвост stderr, а не одна строка
                 emit("     {line}", line=ln)
-            if _probe_encoder(hw):
+            if probe_encoder(hw):
                 emit("     сам {hw} рабочий — значит упало НЕ из-за кодировщика "
                      "(смотри ошибку выше: вход/фильтр/путь). CPU-фолбэк это замаскирует.",
                      hw=hw)

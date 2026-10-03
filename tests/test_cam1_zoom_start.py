@@ -114,14 +114,14 @@ def test_cam1_zoom_start_jump_keys(xml_subs, tmp_path):
 
 
 def test_ui_index_html_checkbox_cam1_zoom_start():
-    """Галка «наезд в начале» есть в схеме и прячется при cam1_zoom='none'.
+    """Галка «наезд в начале» есть в схеме как тумблер подгруппы и видна всегда.
 
     Раньше галка жила в разметке (id st_cam1zoomstart, обёртка cam1zoomstartwrap),
-    которую правил fillStyleFields; теперь поле строит панель по core/style_schema.py,
-    а видимость считает show_if — то же правило, что прятало обёртку.
+    которую правил fillStyleFields; теперь блок строит панель по core/style_schema.py
+    как подгруппу 'cam1.zoom_start' с тумблером 'cam1_zoom_start', независимо от cam1_zoom.
     """
-    field = watcher.schema_field("cam1_zoom_start")
-    assert field, "в схеме пропало поле cam1_zoom_start"
-    assert field["ctl"] == "bool", "cam1_zoom_start перестал быть галкой"
-    assert field.get("show_if") == {"key": "cam1_zoom", "ne": "none"}, (
-        "галка «наезд в начале» больше не прячется при cam1_zoom='none'")
+    node = next((it for _kind, it in watcher.schema_items() if it.get("toggle") == "cam1_zoom_start"), None)
+    assert node, "в схеме пропал тумблер cam1_zoom_start"
+    assert node.get("type") == "group", "cam1_zoom_start теперь тумблер подгруппы"
+    assert "show_if" not in node or node["show_if"] is None, (
+        "подгруппа «наезд в начале» больше не должна прятаться при cam1_zoom='none'")

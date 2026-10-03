@@ -32,7 +32,6 @@ r"""Сторож: в публикуемых файлах не остаётся �
 import io
 import os
 import re
-import subprocess
 import sys
 import tokenize
 import unicodedata
@@ -42,6 +41,8 @@ ROOT = os.path.dirname(HERE)
 
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import public_slice  # noqa: E402
+
+from tests import gitfiles  # noqa: E402
 
 # Оборот целиком: «задания ZI/ZK», «задание HL, п. 1», «заданию BP». Ловим по
 # первой заглавной букве после слова — так в сеть попадают и «задание C», и
@@ -70,12 +71,10 @@ def _ignored_patterns():
 
 
 def _public_files():
-    """Публикуемые файлы: `git ls-files` минус `.publicignore`."""
-    out = subprocess.check_output(["git", "ls-files"], cwd=ROOT,
-                                  text=True, encoding="utf-8")
+    """Публикуемые файлы: список дерева (git, а без него — обход) минус `.publicignore`."""
     patterns = _ignored_patterns()
     files = []
-    for rel in out.splitlines():
+    for rel in gitfiles.tracked(ROOT):
         if not rel or public_slice.is_ignored(rel, patterns):
             continue
         rel_norm = rel.replace("\\", "/")

@@ -89,6 +89,7 @@ def test_combined_render_stages_and_monotonicity(batch_fixture, tmp_path, monkey
     with open(mov2, "wb") as f:
         f.write(b"quicktime_data")
 
+    monkeypatch.setenv("REELSI_AE_BUILD_WORKERS", "1")
     monkeypatch.setenv("REELSI_RENDER_STATS", str(tmp_path / "stats.json"))
     monkeypatch.setattr(
         render_job, "find_ae",
@@ -120,6 +121,8 @@ def test_combined_render_stages_and_monotonicity(batch_fixture, tmp_path, monkey
     monkeypatch.setattr(render, "remit", hooked_remit)
     monkeypatch.setattr(render.RJOB, "emit", hooked_remit)
 
+    batch_aer_cmds = []
+
     class FakePopen:
         def __init__(self, cmd, *args, **kwargs):
             self.cmd = cmd
@@ -141,6 +144,7 @@ def test_combined_render_stages_and_monotonicity(batch_fixture, tmp_path, monkey
                     f.write("REELSI-MASTER: готово\n")
                 self.stdout = iter(["AfterFX master execution finished"])
             elif "aerender" in exe:
+                batch_aer_cmds.append(cmd)
                 aerender_lines = [
                     "PROGRESS: Launching After Effects...",
                     "PROGRESS:  Start: 0:00:00:00",
@@ -200,6 +204,11 @@ def test_combined_render_stages_and_monotonicity(batch_fixture, tmp_path, monkey
     assert not render.RJOB["failed"], f"Рендер упал: {render.RJOB['failed']}"
     assert len(render.RJOB["result"]) == 2
     assert render.RJOB["pct"] == 1.0
+    assert batch_aer_cmds, "aerender не вызывался в наборе"
+    b_cmd = batch_aer_cmds[0]
+    assert "-mem_usage" in b_cmd
+    b_idx = b_cmd.index("-mem_usage")
+    assert b_cmd[b_idx:b_idx + 3] == ["-mem_usage", "40", "60"]
 
     # 1. Проверяем наличие всех трех фаз в истории
     labels_seen = {lbl for _, lbl, _, _, _ in history if lbl}
@@ -271,6 +280,8 @@ def test_single_render_stages_and_monotonicity(batch_fixture, tmp_path, monkeypa
     monkeypatch.setattr(render, "remit", hooked_remit)
     monkeypatch.setattr(render.RJOB, "emit", hooked_remit)
 
+    single_aer_cmds = []
+
     class FakePopenSingle:
         def __init__(self, cmd, *args, **kwargs):
             self.cmd = cmd
@@ -287,6 +298,7 @@ def test_single_render_stages_and_monotonicity(batch_fixture, tmp_path, monkeypa
                     f.write("REELSI: ок\n")
                 self.stdout = iter(["AfterFX finished"])
             elif "aerender" in exe:
+                single_aer_cmds.append(cmd)
                 aerender_lines = [
                     "PROGRESS: Launching After Effects...",
                     "PROGRESS:  Start: 0:00:00:00",
@@ -332,6 +344,11 @@ def test_single_render_stages_and_monotonicity(batch_fixture, tmp_path, monkeypa
 
     assert not render.RJOB["failed"]
     assert render.RJOB["pct"] == 1.0
+    assert single_aer_cmds, "aerender не вызывался в одиночном пути"
+    s_cmd = single_aer_cmds[0]
+    assert "-mem_usage" in s_cmd
+    s_idx = s_cmd.index("-mem_usage")
+    assert s_cmd[s_idx:s_idx + 3] == ["-mem_usage", "40", "60"]
 
     # Проверяем монотонность
     pcts = [p for p, _, _, _ in history]

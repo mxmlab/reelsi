@@ -24,6 +24,7 @@ from typing import Any
 
 from core.app_meta import APP_NAME, APP_REFERER, http_req
 from core.umsg import ReelsiError, umsg
+from core import encoders
 
 from . import catalog
 from .config import (GLITCH_GLOW_MODES, OMNI_LOCAL, OMNI_LOCAL_ENGINES, REASONING_LEVELS,
@@ -109,6 +110,34 @@ def set_step_profile(cfg: dict[str, Any], d: dict[str, Any]) -> None:
         sp[step] = name
     else:
         sp.pop(step, None)          # сброс на общий active
+
+
+def set_step_concurrency(cfg: dict[str, Any], d: dict[str, Any]) -> None:
+    """Сколько роликов шаг гонит ОДНОВРЕМЕННО — настройка НА ШАГЕ (вкладки
+    «Нарезка»/«Разметка»), поверх числа из профиля модели (см. step_concurrency).
+    Пусто/None — снять переопределение: шаг снова живёт по профилю (умолчание)."""
+    step = _s(d, "step")
+    if step not in STEP_REASONING_DEFAULT:
+        raise ReelsiError(umsg("unknown_step", f"Неизвестный шаг «{step}»", step=step))
+    raw = d.get("value")
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        ov = cfg.get("step_concurrency_override")
+        if isinstance(ov, dict):
+            ov.pop(step, None)
+            if not ov:
+                cfg.pop("step_concurrency_override", None)   # пустой словарь в конфиге не нужен
+        return
+    # bool — не число: True прошёл бы как 1 и молча поставил «по одному»
+    # (та же проверка, что у поля concurrency профиля).
+    if isinstance(raw, bool):
+        raise ReelsiError(umsg("bad_concurrency", "Одновременных запросов: число от 1 до 16"))
+    try:
+        val = int(raw if isinstance(raw, int) else str(raw).strip())
+        if not 1 <= val <= 16:
+            raise ValueError()
+    except (ValueError, TypeError):
+        raise ReelsiError(umsg("bad_concurrency", "Одновременных запросов: число от 1 до 16"))
+    cfg.setdefault("step_concurrency_override", {})[step] = val
 
 
 def set_active(cfg: dict[str, Any], d: dict[str, Any]) -> None:
@@ -229,6 +258,52 @@ def set_glitch_glow(cfg: dict[str, Any], d: dict[str, Any]) -> None:
     cfg["glitch_glow"] = val
 
 
+def set_ae_build_workers(cfg: dict[str, Any], d: dict[str, Any]) -> None:
+    """Число процессов AfterFX для параллельной сборки AE: 'auto' или 1..16."""
+    val = d.get("value")
+    if val is None or val == "" or str(val).strip().lower() == "auto":
+        cfg["ae_build_workers"] = "auto"
+        return
+    try:
+        n = int(val)
+        if 1 <= n <= 16:
+            cfg["ae_build_workers"] = n
+            return
+    except (ValueError, TypeError):
+        pass  # не число или вне диапазона — ниже уйдёт в ошибку ae_build_workers_invalid
+    raise ReelsiError(umsg("ae_build_workers_invalid",
+        f"Недопустимое число процессов «{val}» — можно 'auto' или число от 1 до 16",
+        val=val))
+
+
+def set_video_encoder(cfg: dict[str, Any], d: dict[str, Any]) -> None:
+    """Чем кодировать видео, которое Reelsi пишет САМ (черновой рендер и видео камер
+    с прожжённым LUT): «auto» или имя семейства кодеков (core.encoders.SETTINGS).
+
+    Настройка машинная, а не спикера: она про железо этой машины, а не про ролик.
+    Пробой значение не проверяем нарочно: выбранное, но нерабочее семейство encoders
+    сам заменяет авто с предупреждением в лог — иначе смена железа запирала бы рендер.
+
+    Смена настройки тут же ЗАБЫВАЕТ всё, что зависело от прежнего выбора: пробы
+    кодека у черновика (`draftrender.reset_cache`) и списки живых семейств у
+    `encoders` (`reset_cache`: `_PROBE_CACHE` и `_AVAILABLE`). Без этого выбор
+    держался до конца процесса сервера: первый черновик после старта запоминал
+    NVENC, и переключение на «Intel Quick Sync»/«Процессор» не меняло ни кодека,
+    ни декода (`-hwaccel cuda` включается от выбранного семейства) — «выбрал
+    Quick Sync, а всё равно грузит NVIDIA». Сброс идёт ПОСЛЕ записи значения в
+    `cfg`: конфиг сохраняет роут уже после действия, и проба, случившаяся в этот
+    момент, обязана прочитать новое значение, а не прежнее."""
+    val = d.get("value")
+    if val not in encoders.SETTINGS:
+        raise ReelsiError(umsg("video_encoder_invalid",
+            f"Недопустимый видеокодек «{val}» — можно: " + ", ".join(encoders.SETTINGS),
+            value=val, list=", ".join(encoders.SETTINGS)))
+    cfg["video_encoder"] = val
+    encoders.reset_cache()
+    from core import draftrender          # ленивый: тянет xml2ae и медиа — не нужны на каждый вызов
+    draftrender.reset_cache()
+
+
 def save_profile(cfg: dict[str, Any], d: dict[str, Any]) -> None:
     """Профиль из формы: провайдер, адрес, ключ, модель, свои заголовки.
 
@@ -264,6 +339,18 @@ def save_profile(cfg: dict[str, Any], d: dict[str, Any]) -> None:
             else parse_headers_text(_s(p, "headers_text")))
     if hdrs:
         newp["headers"] = hdrs
+    raw_c = p.get("concurrency")
+    if raw_c is not None and not (isinstance(raw_c, str) and raw_c.strip() == ""):
+        if isinstance(raw_c, bool):
+            raise ReelsiError(umsg("bad_concurrency", "Одновременных запросов: число от 1 до 16"))
+        try:
+            c_val = int(raw_c if isinstance(raw_c, int) else str(raw_c).strip())
+            if 1 <= c_val <= 16:
+                newp["concurrency"] = c_val
+            else:
+                raise ValueError()
+        except (ValueError, TypeError):
+            raise ReelsiError(umsg("bad_concurrency", "Одновременных запросов: число от 1 до 16"))
     # «Ум» в профиле больше не редактируется (переехал на страницы, по шагам),
     # но старое значение не затираем: вдруг вернёмся к профильному уровню
     _old = cfg["profiles"].get(old_name or name) or {}
@@ -304,6 +391,30 @@ def clone_profile(cfg: dict[str, Any], d: dict[str, Any]) -> None:
     cfg["profiles"][new_name] = copy.deepcopy(cfg["profiles"][name])
 
 
+def set_stock_keys(cfg: dict[str, Any], d: dict[str, Any]) -> None:
+    """Ключи стоков (Pexels/Pixabay) — раздел `stock` ai_config.json.
+
+    Как у ключей профилей: маска «•••…» значит «не менял» (в поле показана маска
+    уже сохранённого ключа — записать её вместо ключа означало бы потерять ключ),
+    а пустая строка — «ключа нет»: провайдер молча выключается, и поиск идёт по
+    остальным. Поля нет в теле — не трогаем вовсе."""
+    st = cfg.get("stock")
+    if not isinstance(st, dict):
+        st = {}
+        cfg["stock"] = st
+    for prov in ("pexels", "pixabay"):
+        field = prov + "_key"
+        if field not in d:
+            continue
+        val = _s(d, field).strip()
+        if val.startswith("•••"):
+            continue                     # маска = «ключ не менял»
+        if val:
+            st[field] = val
+        else:
+            st.pop(field, None)          # пустая строка — ключа нет
+
+
 def delete_profile(cfg: dict[str, Any], d: dict[str, Any]) -> None:
     """Удаление профиля: привязки (общий active, шаги, omni, картинки, видео) не должны
     остаться на несуществующем имени — иначе шаг молча падал бы на пустом профиле."""
@@ -332,6 +443,7 @@ def delete_profile(cfg: dict[str, Any], d: dict[str, Any]) -> None:
 ACTIONS = {
     "set_reasoning_step": set_reasoning_step,
     "set_step_profile": set_step_profile,
+    "set_step_concurrency": set_step_concurrency,
     "set_active": set_active,
     "set_active_omni": set_active_omni,
     "set_active_cut_asr": set_active_cut_asr,
@@ -341,6 +453,9 @@ ACTIONS = {
     "set_video_resolution": set_video_resolution,
     "set_image_rembg": set_image_rembg,
     "set_glitch_glow": set_glitch_glow,
+    "set_ae_build_workers": set_ae_build_workers,
+    "set_video_encoder": set_video_encoder,
+    "set_stock_keys": set_stock_keys,
     "save_profile": save_profile,
     "clone_profile": clone_profile,
     "delete_profile": delete_profile,

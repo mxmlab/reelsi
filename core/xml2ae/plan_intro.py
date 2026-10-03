@@ -33,6 +33,7 @@ from .layout import (INTRO_BASE_Y, INTRO_F_OUT, INTRO_SAFE_TOP, INTRO_SCALE,
                      intro_big_layout, intro_block_span, intro_clamp_window,
                      intro_hits_subs, intro_line_sizes, intro_line_ys,
                      intro_sub_window)
+from .plan_camera import _intro_hl_words
 from .plan_style import StyleValues
 from .plan_subs import SubsPlan
 
@@ -91,6 +92,11 @@ class IntroInputs:
     # субтитров считают по ним, пока интро привязано к камере.
     cam1_scale: list
     holds: list
+    # То же для Камеры 2 (plan_camera.cam2_scale/cam2_holds): автофит группы, выпавшей на
+    # перебивку, считает по ЕЁ зуму — свой зум и свой fit. Пусто — Камера 2 неактивна,
+    # и автофит такой группы видит зум 100%.
+    cam2_scale: list
+    cam2_holds: list
     # Полка ПОСЛЕДНЕЙ группы интро после её последнего слова, с (ключ стиля
     # intro_last_hold). Читает его сборка (build.py, тем же _sv, что и остальные ключи
     # стиля) и отдаёт сюда ОДНИМ полем: по нему работают и формула окна
@@ -112,7 +118,8 @@ class IntroPlan:
     front: list           # группа легла на видеовставку — прекомп поднимается над всем
     above_roto: list      # группа в нижней половине кадра — прекомп над рото
     anchor: list          # якорь блока на группу: center | first
-    scale_anchor: str     # точка масштабирования прекомпа: comp | first | block
+    scale_anchor: str     # точка масштабирования прекомпа: comp | first | block (камера 1)
+    scale_anchor2: str    # то же для интро, попавшего на перебивку (камера 2)
     anchor_y: list        # INTRO_ANCHOR_Y: Y якоря слоя прекомпа на группу (px прекомпа)
     anchor_dy: list       # INTRO_ANCHOR_DY: компенсация Position по Y на группу (px слоя)
     ly: list              # INTRO_LY: Y базовых линий строк на группу
@@ -134,6 +141,24 @@ def _g_at(g: list[dict[str, Any]]) -> float:
     """Момент первого слова группы (группы идут по таймингу; см. вызов в build.py)."""
     ts = [t for x in g for t in (x.get("times") or [])]
     return min(ts) if ts else 0.0
+
+
+def intro_hl_words(intro: Any, intro_splits: Any, intro_remove: Any,
+                   subs_all: Sequence[Any]) -> list[tuple[float, float]]:
+    """Слова интро, выделенные цветом, — времена (начало, конец) в кадрах.
+
+    ОДНА дверь на сборку (.jsx) и на предрасчёт силы жёлтых: строки интро разбиваются
+    на группы по `intro_splits` (пустые строки выбрасываются), группы сортируются по
+    времени (`_g_at` — по этому порядку `_intro_hl_words` раздаёт индексы
+    `intro_remove`), а сами цветные слова берёт `_intro_hl_words`. Второй копии
+    правила «строка интро -> слова subs» нигде нет.
+    """
+    lines = [x for x in (intro or []) if (x.get("words") or (x.get("text") or "").strip())]
+    splits = sorted(set(int(s) for s in (intro_splits or []) if 0 < int(s) < len(lines)))
+    bounds = [0] + splits + [len(lines)]
+    groups = [lines[bounds[k]:bounds[k + 1]] for k in range(len(bounds) - 1)]
+    groups.sort(key=_g_at)
+    return _intro_hl_words(groups, list(intro_remove or []), list(subs_all))
 
 
 def _grp_big_i(g: list[dict[str, Any]]) -> int | None:
@@ -230,7 +255,8 @@ def _sub_row_at(t: float, subs_plan: list[dict[str, Any]], hl_step: float, sub_s
     return row, (hl_step if stack else sub_step)
 
 
-def _intro_line_js(x: dict[str, Any], accent_font_ps: str, accent_case: str, back_font_ps: str, back_case: str,
+def _intro_line_js(x: dict[str, Any], accent_glow: bool, accent_font_ps: str, accent_case: str,
+                   back_font_ps: str, back_case: str,
                    cnt_positions: Callable[..., Any], parse_count: Callable[..., Any], accent_word: Callable[[str, str], str]) -> dict[str, Any]:
     line = {"color": x.get("color") or "white",
             "words": [str(wd) for wd in (x.get("words") or (x.get("text") or "").split())],
@@ -273,8 +299,13 @@ def _intro_line_js(x: dict[str, Any], accent_font_ps: str, accent_case: str, bac
             line["fill"] = [_r(v) for v in list(_cf)[:3]]
     if x.get("anim"):
         line["anim"] = str(x["anim"])
-    if x.get("fx"):
-        line["fx"] = str(x["fx"])
+    # Свечение строки — ЕДИНАЯ настройка стиля intro_accent_glow (решение владельца
+    # 02.10.2026): включена — светятся ВСЕ accent-строки и accent-акценты, выключена —
+    # ни одна. Белые и жёлтые строки свечения не получают никогда. Поле fx строки (из
+    # старых сохранённых клипов) НЕ читается: у отдельной строки свечение больше не
+    # выбирается, а «снято руками» и «не задано» в нём неразличимы.
+    if accent_glow and line["color"] == "accent":
+        line["fx"] = "glow"
     if isinstance(x.get("cnt_words"), list):
         # Новый формат: счётчик на КАЖДОЕ слово-число, позиции слов — в cnt_words.
         # Скаляры cnt/expr/dec/cnt_idx остаются и равны ПЕРВОМУ счётчику: на них
@@ -367,8 +398,10 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
     # оставлены прежними, источник у них теперь поля структуры.
     style = inp.style
     # Точка масштабирования прекомпа (intro_scale_anchor): от неё слой интро уменьшается и
-    # увеличивается. Ключ общий на все группы — читается ОДИН раз (второго чтения нет).
+    # увеличивается. Ключ читается ОДИН раз (второго чтения нет) — но их два: у групп
+    # камеры 1 свой, у выпавших на перебивку свой (intro_scale_anchor2).
     _scale_anchor = style.intro_scale_anchor
+    _scale_anchor2 = style.intro_scale_anchor2
     _accent_word, _parse_intro_count = inp.accent_word, inp.parse_count
     _intro_cnt_positions = inp.cnt_positions
     _intro_line_font, _intro_fit_ds = inp.line_font, inp.fit_ds
@@ -384,7 +417,12 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
     intro_sub_cut, intro_sub_fade = style.intro_sub_cut, style.intro_sub_fade
     _G, _fit_w, _fit_max = style.intro_scale_k, style.fit_w, style.fit_max
     _intro_cam = style.intro_cam
+    # Ручка камеры 2 — своя: нул «интро на кам2» либо ребёнок нула Камеры 2, либо в
+    # координатах кадра (см. build_intro2_cam2 в build.py). Значение по умолчанию для
+    # старых стилей даёт миграция (styles.migrate_intro_cam2) — здесь второго чтения нет.
+    _intro_cam2 = style.intro_cam2
     cam1_scale, holds = inp.cam1_scale, inp.holds
+    cam2_scale_raw, cam2_holds_raw = inp.cam2_scale, inp.cam2_holds
     intro_comp_shadow_fill, intro_comp_shadow_op = style.intro_comp_shadow_fill, style.intro_comp_shadow_op
     intro_comp_shadow2_fill, intro_comp_shadow2_op = (style.intro_comp_shadow2_fill,
                                                       style.intro_comp_shadow2_op)
@@ -402,7 +440,8 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
     # шаблон (INTRO_FX) получают одни и те же числа.
     _grp_stats = []
     for _grp in _intro_groups:
-        _l = [_intro_line_js(x, accent_font_ps, accent_case, back_font_ps, back_case,
+        _l = [_intro_line_js(x, style.intro_accent_glow, accent_font_ps, accent_case,
+                             back_font_ps, back_case,
                              _intro_cnt_positions, _parse_intro_count, _accent_word)
               for x in _grp]
         _l_tms = [t for _x in _l for t in _x["times"]]
@@ -463,6 +502,14 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
         # первая строка стоит на месте, остальные ложатся ниже.
         _anchor = cast(str, style.intro_anchor2 if _on2 else style.intro_anchor)
         _intro_anchor.append(_anchor)
+        # Камера группы — ОДИН выбор на всю группу: и галка «интро едет с камерой», и
+        # ключи её зума (автофит, правило полосы субтитров), и точка масштабирования
+        # прекомпа. У камеры 2 своя ручка и свой зум: раньше и то и другое брали от
+        # камеры 1, и текст на перебивке ужимался по чужому кадру.
+        _cs: Any = _intro_cam2 if _on2 else _intro_cam
+        _cam_keys = (cam2_scale_raw if _on2 else cam1_scale) if _cs else []
+        _cam_holds = (cam2_holds_raw if _on2 else holds) if _cs else []
+        _anchor_mode = _scale_anchor2 if _on2 else _scale_anchor
         # Смещение ГРУППЫ: живёт на головной строке (первой в группе) и
         # добавляется к позиции прекомпа в шаблоне. После разрезания/слияния групп
         # оно остаётся у той строки, которая стала головной, — новая группа с чистой
@@ -511,7 +558,7 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
         _intro_lx.append(_lx)
         _intro_lk.append(_lk)
         # Базовая позиция блока интро: невзведённая (без зума) позиция по
-        # вертикали от ЦЕНТРА кадра = INTRO_Y(+INTRO_Y2) − INTRO_BASE_Y + iDy. gDy НЕ
+        # вертикали от ЦЕНТРА кадра = (INTRO_Y | INTRO_Y2 на кам2) − INTRO_BASE_Y + iDy. gDy НЕ
         # включаем — он уже живёт отдельным полем dy (драг правит dy в кэше
         # плана), а превью сложит y + dy. iDy (опускание под INTRO_SAFE_TOP) считает
         # Python — шаблон берёт готовое число, CSS-позиция блока в превью уходит.
@@ -528,21 +575,21 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
         # Автофит: применяется ТОЛЬКО если группу НЕ трогали руками
         # (_gs == 100). Если gs != 100 — пользователь явно задал масштаб рукой (рука
         # сильнее автофита), автофит не урезает его значение.
-        # Зум Камеры 1 в автофит входит, только пока интро к ней привязано:
+        # Зум камеры СВОЕЙ группы в автофит входит, только пока интро к ней привязано:
         # откреплённый текст её зумом не растёт — ключей нет, значит _zoom_max даёт 100.
         # Откреплённое интро подгоняется к ширине кадра в ОБЕ стороны:
         # увеличивать его зумом больше некому, поэтому доля ширины — из ручки intro_fit_w,
         # а потолок увеличения — из intro_fit_max.
         if _gs == 100:
             _ds = _intro_fit_ds(_lines, _ts, _te, _ds, meta["w"], _G,
-                                cam1_scale if _intro_cam else [],
+                                _cam_keys,
                                 meta["fps"], back_scale, intro_font_ps, intro_hl_font_ps,
-                                _fsize_base, holds=holds, big_w=_big_total,
-                                fit_w=None if _intro_cam else _fit_w,
-                                both_ways=not _intro_cam,
-                                fit_max=None if _intro_cam else _fit_max)
+                                _fsize_base, holds=_cam_holds, big_w=_big_total,
+                                fit_w=None if _cs else _fit_w,
+                                both_ways=not _cs,
+                                fit_max=None if _cs else _fit_max)
         _idy = _intro_i_dy(meta["h"], 1 if _anchor == "first" else _n_stack,
-                           _gs if _intro_cam else _ds, step_k=_line_step_k)
+                           _gs if _cs else _ds, step_k=_line_step_k)
         # ds головной строки = готовое значение автофита: шаблон читает GRP[0].ds,
         # превью — plan.intro[].ds, второй копии расчёта нет.
         if _lines:
@@ -550,9 +597,14 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
                 _lines[0]["ds"] = _r(_ds)
             else:
                 _lines[0].pop("ds", None)
-        _y = round((style.intro_y) + _G * (-INTRO_BASE_Y + _idy), 2)
-        if _on2:
-            _y = round(_y + (style.intro_y2), 2)
+        # Положение блока задаёт СВОЙ ключ камеры: intro_y у камеры 1, intro_y2 у камеры 2.
+        # Раньше кам2 стояла на intro_y + intro_y2 — двигая камеру 1, человек двигал и вторую.
+        _base_y = style.intro_y2 if _on2 else style.intro_y
+        # Масштаб нула (_G) множит смещение ребёнка ТОЛЬКО пока нул привязан к нулу
+        # камеры. Откреплённый нул стоит в координатах кадра и масштаба родителя не
+        # наследует: его базу _G множить не должен — иначе текст уезжал бы от смены
+        # общего масштаба интро, которой в кадре не видно.
+        _y = round(_base_y + (_G * (-INTRO_BASE_Y + _idy) if _cs else (-INTRO_BASE_Y + _idy)), 2)
         # Кегль каждой строки (back_scale/lk) и Y базовых линий — одни и те же числа нужны
         # и безопасной зоне ниже, и решению про полосу субтитров.
         _line_sizes = intro_line_sizes(_lines, _fsize_base, back_scale, _lk)
@@ -565,18 +617,17 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
         # (layout.intro_block_span): второй копии формулы не заводится.
         # Привязанное интро сюда не заходит вовсе, как и группа, которой автофит не менял
         # масштаб (ручной gs и gs по умолчанию): их числа держит golden.
-        if not _intro_cam and _ds != _gs and any(v is not None for v in _ys):
+        if not _cs and _ds != _gs and any(v is not None for v in _ys):
             _top, _ = intro_block_span(_ys, _line_sizes, meta["h"], ds=_ds, g=_G * 100.0,
                                        y=_y, dy=_dy, zoom=100.0, intro_cam=False,
                                        fonts=_line_fonts)
             if _top < INTRO_SAFE_TOP:
                 # Сдвиг едет в тот же iDy/y, что уже уходят в .jsx (INTRO_IDY) и план (y):
                 # превью покажет то же, второй копии сдвига нет. У откреплённого интро зум
-                # не применяется (zk = 1), поэтому сдвиг кадра = G·ΔiDy — отсюда деление на G.
-                _idy += (INTRO_SAFE_TOP - _top) / _G
-                _y = round((style.intro_y) + _G * (-INTRO_BASE_Y + _idy), 2)
-                if _on2:
-                    _y = round(_y + (style.intro_y2), 2)
+                # не применяется (zk = 1), поэтому сдвиг кадра = ΔiDy — деления на G нет
+                # ровно потому же, почему и у базы выше.
+                _idy += INTRO_SAFE_TOP - _top
+                _y = round(_base_y + (-INTRO_BASE_Y + _idy), 2)
         # ---- Задание MH: группа стоит на полосе субтитров — гаснет к появлению
         # следующего. Решение — одна функция (layout.intro_hits_subs) на готовых числах
         # плана: Y базовых линий и кегли строк группы (back_scale/lk), масштаб прекомпа
@@ -605,9 +656,9 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
             if intro_hits_subs(
                     _ys, _line_sizes, _posy, _fsize, h=meta["h"], ds=_ds, g=_G * 100.0,
                     y=_y, dy=_dy,
-                    zoom=_zoom_max(cam1_scale if _intro_cam else [], meta["fps"],
-                                   _ns, _ns, holds=holds),
-                    intro_cam=_intro_cam, fonts=_line_fonts, sub_font=font_ps,
+                    zoom=_zoom_max(_cam_keys, meta["fps"],
+                                   _ns, _ns, holds=_cam_holds),
+                    intro_cam=_cs, fonts=_line_fonts, sub_font=font_ps,
                     sub_row=_srow, sub_step=_sstep):
                 _te, _fade, _fstart = intro_sub_window(_ts, _te, _ns, intro_sub_fade)
                 if _fade > intro_fade:
@@ -669,13 +720,14 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
                 _row_sq.append(None if _k >= 1.0 else _r(_k))
             _grp_sq.append(_row_sq)
         _intro_sq.append(_grp_sq)
-        # Галка «интро над рото по положению»: группу Камеры 1, чей блок
-        # от центра кадра в НИЖНЕЙ половине (зона субтитров), в .jsx поднимают над
-        # рото; блок в верхней половине остаётся под ним. Зум камеры не учитываем —
-        # он множит позицию и сам блок одинаково, знак суммы (_y + _G*_dy) не меняется.
-        # Группы на перебивке (свой нул) и на видеовставке (им и так наверх) не трогаем.
-        _above_roto = bool(style.intro_roto_by_pos) and not _on2 and not _front \
-            and (_y + _G * _dy) > 0
+        # Галка «интро над рото по положению»: группу, чей блок от центра кадра в НИЖНЕЙ
+        # половине (зона субтитров), в .jsx поднимают над рото; блок в верхней половине
+        # остаётся под ним. У камеры 1 своя галка, у групп на перебивке (камера 2) — своя:
+        # кадр другой, и «низ кадра» там другой. Зум камеры не учитываем — он множит
+        # позицию и сам блок одинаково, знак суммы (_y + _G*_dy) не меняется.
+        # Группы на видеовставке (им и так наверх) не трогаем.
+        _by_pos = style.intro_roto_by_pos2 if _on2 else style.intro_roto_by_pos
+        _above_roto = bool(_by_pos) and not _front and (_y + _G * _dy) > 0
         _intro_above_roto.append(_above_roto)
         intro_idy.append(_idy)
         # ---- Точка масштабирования прекомпа (intro_scale_anchor) -------------------------
@@ -689,11 +741,15 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
         # ручкой масштаба (картинка при смене ds не менялась бы вовсе), и текст снова уезжал
         # бы к середине кадра. При ds = 100 числа совпадают, картинка не сдвигается ни на
         # пиксель. Числа готовые: ни в шаблоне, ни в превью формул нет.
-        _ay = _scale_anchor_y(_scale_anchor, _ys, meta["h"])
+        _ay = _scale_anchor_y(_anchor_mode, _ys, meta["h"])
         _ay_dy = _r((_ay - meta["h"] / 2.0) * (INTRO_SCALE / 100.0))
         _intro_anchor_y.append(_ay)
         _intro_anchor_dy.append(_ay_dy)
         intro_plan.append({"group": _g, "on2": bool(_on2),
+                           # Привязано ли интро ЭТОЙ группы к камере: у группы на перебивке
+                           # своя ручка (intro_cam2) и свой нул. Преимущество читает ровно
+                           # одним полем: им решается и база y (выше), и масштаб блока.
+                           "cam": bool(_cs),
                            "ts": _ts, "te": _te, "fade": _r(_fade), "lines": _lines,
                            "dx": _dx, "dy": _dy, "ds": _ds,
                            # База блока — от центра кадра. У не-дефолтного
@@ -701,7 +757,7 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
                            # px — та же добавка, что уезжает в Position прекомпа): превью
                            # зовёт это число базой, а центр масштабирования ставит
                            # transform-origin по anchor_y. Второй копии расчёта нет.
-                           "y": round(_y + _G * _ay_dy, 2), "ys": _ys,
+                           "y": round(_y + (_G * _ay_dy if _cs else _ay_dy), 2), "ys": _ys,
                            # Множитель длительности появления: [строка][слово],
                            # null — слово успевает (его анимация не сжата). Поля НЕТ, когда
                            # в группе сжимать нечего: превью читает отсутствие как 1, а
@@ -719,7 +775,7 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
                            # transform-origin (второго чтения ключей стиля во фронте нет).
                            # У "comp" поля НЕТ вовсе: origin остаётся прежним — центр
                            # контейнера (как у блока без ключа), и .jsx прежний байт в байт.
-                           **({"anchor_y": _ay} if _scale_anchor != "comp" else {}),
+                           **({"anchor_y": _ay} if _anchor_mode != "comp" else {}),
                            # Тень прекомпа этой группы: цвет и непрозрачность
                            # ТОЙ камеры, на которой группа (_on2). Тем же числом живёт
                            # превью (filter: drop-shadow), второй копии выбора камеры нет.
@@ -799,7 +855,7 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
     return IntroPlan(
         intro=intro_plan, groups_js=intro_groups_js, idy=intro_idy,
         on2=_intro_on2, front=_intro_front, above_roto=_intro_above_roto,
-        anchor=_intro_anchor, scale_anchor=_scale_anchor,
+        anchor=_intro_anchor, scale_anchor=_scale_anchor, scale_anchor2=_scale_anchor2,
         anchor_y=_intro_anchor_y, anchor_dy=_intro_anchor_dy,
         ly=_intro_ly, lx=_intro_lx, lk=_intro_lk,
         sq=_intro_sq, sub_fx=_intro_sub_fx,

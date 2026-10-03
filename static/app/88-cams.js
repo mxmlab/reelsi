@@ -12,6 +12,7 @@
 const CAMCOL=['#6ea8ff','#e0a865','#c98ade','#5fc9d6'];
 let CAMED={xml:'',i:-1,n:1,segs:[],assign:[],total:0,names:[]};
 async function openCamsFor(i){const c=CLIPS[i];CAMED={xml:c.xml,i,n:1,segs:[],assign:[],total:0,names:[]};
+  if(curAE!==i||AEXML!==c.xml)selectAE(i);
   $('camsname').textContent=c.name;$('camsres').textContent='';$('camsstrip').innerHTML='';$('camslegend').innerHTML='';$('camsswap').innerHTML='';
   $('camslist').innerHTML='<div class="empty">'+t('Загрузка…')+'</div>';cpvReset();openModal('mbCams');
   try{const d=await (await fetch('/api/cams_load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml:c.xml})})).json();
@@ -27,9 +28,9 @@ async function openCamsFor(i){const c=CLIPS[i];CAMED={xml:c.xml,i,n:1,segs:[],as
 // НЕПРЕРЫВНО (постоянный оффсет delta[k] от аудио кам1), даже когда её картинки на экране нет.
 let CPV={vids:[],bufs:[],scrubbing:false,scrubT:0,
   segs:[],audio:[],words:[],dur:0,aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,playing:false,raf:0,itv:0,xml:'',audioCi:0,delta:[]};
-function cpvReset(){cpvPause();CPV={vids:[],bufs:[],scrubbing:false,scrubT:0,
+function cpvReset(){cpvPause();if(typeof vtStop==='function')vtStop(CPV);CPV={vids:[],bufs:[],scrubbing:false,scrubT:0,
   segs:[],audio:[],words:[],dur:0,aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,playing:false,raf:0,itv:0,xml:'',audioCi:0,delta:[]};
-  const st=$('cpvstage');if(st)[...st.querySelectorAll('video')].forEach(v=>v.remove());
+  const st=$('cpvstage');if(st)[...st.querySelectorAll('video')].forEach(v=>mediaFree(v));
   $('cpvsub').textContent='';$('cpvtime').textContent='0:00 / 0:00';$('cpvseek').value=0;$('cpvaudio').innerHTML='';}
 async function cpvOpen(xml){
   let d;try{d=await (await fetch('/api/aicut_preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml})})).json();}
@@ -38,7 +39,7 @@ async function cpvOpen(xml){
   CPV.xml=xml;CPV.segs=d.segs||[];CPV.audio=(d.audio&&d.audio.length?d.audio:d.segs)||[];
   CPV.words=d.words||[];CPV.dur=d.dur||(CPV.audio.length?CPV.audio[CPV.audio.length-1].te:0);CPV.audioCi=0;
   CPV.cams=d.cams;   // дублёру нужны пути камер, чтобы переезжать на прокси
-  const stage=$('cpvstage');[...stage.querySelectorAll('video')].forEach(v=>v.remove());
+  const stage=$('cpvstage');[...stage.querySelectorAll('video')].forEach(v=>mediaFree(v));
   const px=await pvProxyLoad(xml,true);pvProxyMerge(px);   // прокси камер: без него 4:2:2 10 бит встаёт на каждом стыке
   CPV.vids=d.cams.map((c,ix)=>{const v=document.createElement('video');
     v.src=pvSrc(c.path);v.preload='auto';v.muted=(ix!==0);v.playsInline=true;
@@ -51,6 +52,7 @@ async function cpvOpen(xml){
   // кнопки выбора звука
   $('cpvaudio').innerHTML=d.cams.map((c,ix)=>'<label class="'+(ix===0?'on':'')+'"><input type="radio" name="cpvaud" '+(ix===0?'checked':'')+' onchange="cpvAudio('+ix+')"> '+t('К')+(ix+1)+'</label>').join('');
   cpvSeekTo(0);
+  if(typeof vtPrep==='function')vtPrep(CPV);
   if(px&&px.building){PVPX.xml=xml;pvProxyWatch('cpvstage');}   // прокси готовятся — догнать их на переезде
 }
 // Смена «слушаем К1/К2/К3»: дублёр звуковой камере больше не нужен отдельно — он у неё уже
@@ -62,18 +64,19 @@ function cpvAudio(k){CPV.audioCi=k;
   if(!CPV.vids.length)return;
   if(CPV.vids[k])CPV.vids[k].playbackRate=1;   // звуковой камере скорость не правим: с неё идёт звук
   // мгновенно применить: перемотать выбранную камеру к текущему моменту и (пере)запустить
-  const tm=cpvNow();cpvApply(tm,CPV.playing);if(CPV.playing){cpvSyncAudioCam();sparePrime(CPV);}}
+  const tm=cpvNow();cpvApply(tm,CPV.playing);if(CPV.playing){cpvSyncAudioCam();sparePrime(CPV);}
+  if(typeof vtTick==='function')vtTick(CPV,cpvNow());}
 function cpvSyncAudioCam(){const k=CPV.audioCi;if(k<=0||!CPV.vids[k])return;   // подвести звуковую камеру к моменту кам1
   const want=CPV.vids[0].currentTime+(CPV.delta[k]||0);
   if(Math.abs(CPV.vids[k].currentTime-want)>0.25){try{CPV.vids[k].currentTime=want;}catch(e){}}}
 // Картинка ракурса — общая машина всех плееров (camApply в 60-preview.js). Звуковая камера
 // (CPV.audioCi) — отдельная непрерывная дорожка: её время ведёт cpvSyncAudioCam, машина
 // ракурсов только показывает её и не трогает ни seek, ни скорость (иначе поехал бы звук).
-function cpvApply(tm,play){camApply(CPV,tm,play);if(play)cpvSyncAudioCam();}
+function cpvApply(tm,play){camApply(CPV,tm,play);if(play)cpvSyncAudioCam();if(typeof vtTick==='function')vtTick(CPV,tm);}
 function cpvSeekTo(tm){if(!CPV.vids.length||!CPV.audio.length)return;tm=Math.max(0,Math.min(tm,CPV.dur));
   CPV.aidx=pvSegAt(CPV.audio,tm);CPV.vidx=-1;CPV.primed=-1;const a=CPV.audio[CPV.aidx];
   try{CPV.vids[0].currentTime=a.src+Math.max(0,tm-a.ts);}catch(e){}
-  spareIdle(CPV);camIdle(CPV);cpvApply(tm,false);cpvSyncAudioCam();cpvUI(tm);}
+  spareIdle(CPV);camIdle(CPV);cpvApply(tm,false);cpvSyncAudioCam();cpvUI(tm);if(typeof vtTick==='function')vtTick(CPV,tm);}
 function cpvNow(){const a=CPV.audio[CPV.aidx];return (a&&CPV.vids.length)?a.ts+(CPV.vids[0].currentTime-a.src):0;}
 // Дублёр подменяет ВЕДУЩУЮ камеру (слот 0) — она же таймбаза. Если звук слушают с другой
 // камеры (К2/К3), её всё равно подтягивает cpvSyncAudioCam по допуску 0.25с, и вот там
@@ -87,9 +90,11 @@ function cpvStep(){if(!CPV.playing)return;
 function cpvTick(){if(!CPV.playing)return;cpvStep();CPV.raf=requestAnimationFrame(cpvTick);}
 function cpvPlay(){if(!CPV.vids.length)return;CPV.playing=true;$('cpvplay').innerHTML=ico('pause');
   CPV.vids[0].play().catch(()=>{});cpvApply(cpvNow(),true);sparePrime(CPV);
+  if(typeof vtTick==='function')vtTick(CPV,cpvNow());
   CPV.raf=requestAnimationFrame(cpvTick);clearInterval(CPV.itv);CPV.itv=setInterval(cpvStep,120);}
 function cpvPause(){if(!CPV||!CPV.vids)return;CPV.playing=false;const b=$('cpvplay');if(b)b.innerHTML=ico('play');
-  cancelAnimationFrame(CPV.raf);clearInterval(CPV.itv);CPV.vids.forEach(v=>v.pause());spareStop(CPV);camIdle(CPV);}
+  cancelAnimationFrame(CPV.raf);clearInterval(CPV.itv);CPV.vids.forEach(v=>v.pause());spareStop(CPV);camIdle(CPV);
+  if(typeof vtPause==='function')vtPause(CPV);}
 function cpvToggle(){CPV.playing?cpvPause():cpvPlay();}
 // разбег готовим один раз, когда протяжка улеглась (см. pvScrub — та же причина)
 function cpvScrub(x){if(!CPV.vids.length)return;const tm=x/1000*CPV.dur;const was=CPV.playing;
@@ -104,7 +109,7 @@ function renderSwap(){const host=$('camsswap');if(!host)return;const N=CAMED.n;
   let rows='';for(let k=1;k<N;k++){
     rows+='<div class="row" style="align-items:center;gap:8px;margin-top:6px">'
       +'<span style="display:inline-flex;align-items:center;gap:6px;font-size:12px;min-width:120px"><span style="width:12px;height:12px;border-radius:var(--r-sm);background:'+CAMCOL[k%4]+'"></span>'+t('Камера ')+(k+1)+'</span>'
-      +'<span class="mono muted grow" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">'+esc(CAMED.names[k]||'—')+'</span>'
+      +'<span class="mono muted grow" title="'+esc(CAMED.names[k]||'—')+'" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0">'+esc(CAMED.names[k]||'—')+'</span>'
       +'<button class="sm" onclick="swapCam('+k+')">'+t('Заменить файл…')+'</button></div>';}
   // справка — в «!», не абзацем в карточке (правка юзера №2)
   host.innerHTML='<div class="pcgroup"><div class="pchdr">'+t('Заменить камеру ')

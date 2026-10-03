@@ -19,6 +19,7 @@ from core import align
 from core import sync
 from core import draftrender
 from core import cutstages
+from core import frame
 from core.app_meta import env, wrap_emit
 from core.app_meta import console_emit
 from core.fileio import atomic_json_dump
@@ -30,6 +31,7 @@ from .decide import decide_markup
 from .takes import build_cutlog, postprocess
 from .tune import (_cut_breaths, _silence_bounds, apply_speaker, keep_intervals,
                    refine_keep)
+from core.gpulock import gpu_lock
 from core.umsg import ReelsiError
 
 
@@ -156,12 +158,13 @@ def _run(wav_path: str, cams: Sequence[str], offsets: Sequence[float], out: str,
 
     # --- Шаг 1-2: GigaAM/CTC целиком -> слова с РОДНЫМИ таймингами (без wav2vec2) ---
     emit("== GigaAM whole-file нарезка ==", flush=True)
-    aicut.unload_ours(emit=emit)                    # VRAM под GigaAM / CTC
-    aicut.warn_foreign_models(emit=emit)
-    if transcribe_words_whole is not _orig_transcribe_words_whole:
-        full_text, words = transcribe_words_whole(wav_path, emit=emit)
-    else:
-        full_text, words = transcribe_words_for_cut(wav_path, engine=engine, emit=emit)
+    with gpu_lock("распознавание", emit=emit):
+        aicut.unload_ours(emit=emit)                    # VRAM под GigaAM / CTC
+        aicut.warn_foreign_models(emit=emit)
+        if transcribe_words_whole is not _orig_transcribe_words_whole:
+            full_text, words = transcribe_words_whole(wav_path, emit=emit)
+        else:
+            full_text, words = transcribe_words_for_cut(wav_path, engine=engine, emit=emit)
     if not words:
         raise RuntimeError("GigaAM не дал ни одного слова — проверь аудио")
     src_s = (words[-1]["end"] - words[0]["start"]) if words else 0.0
@@ -230,7 +233,8 @@ def _run(wav_path: str, cams: Sequence[str], offsets: Sequence[float], out: str,
             k = cur_keep
             a = cur_assign
         if stages.get("breath", True):
-            k, a, b_marks = _cut_breaths(k, a, wav_path, words, out, emit=emit)
+            with gpu_lock("вздохи", emit=emit):
+                k, a, b_marks = _cut_breaths(k, a, wav_path, words, out, emit=emit)
         else:
             b_marks = []
         return k, a, b_marks
@@ -273,8 +277,13 @@ def _run(wav_path: str, cams: Sequence[str], offsets: Sequence[float], out: str,
                 f"подгон по звуку и детектор вздохов не разделили речь. "
                 f"Ничего не перезаписываю — прошлая нарезка цела.")
 
+    # Формат ролика берём у спикера нарезки — сайдкара рядом с XML ещё нет (его
+    # пишем ниже, после XML), а формат нужен прямо сейчас: он задаёт размер
+    # секвенции. Профиля нет (обычная CLI-нарезка) — 9:16, как было.
+    _seq_w, _seq_h = frame.frame_size(frame.speaker_format(speaker))
     last_info = xmlbuild.build(cams, keep, offsets, out, assign=assign,
-                               scale=scale, sub_words=None, music_path=None)
+                               seq_w=_seq_w, seq_h=_seq_h,
+                               sub_words=None, music_path=None)
     # обновить cutlog под итоговый drop (после возможных возвратов). rule — имя
     # функции/источника, снявшего каждый кусок: без него «кто виноват
     # в лишнем резе» не видно, всё помечено «GigaAM + 27b».

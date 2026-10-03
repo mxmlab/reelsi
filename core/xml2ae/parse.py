@@ -10,6 +10,7 @@ from typing import Any
 import xml.etree.ElementTree as ET
 
 # HERE — корень репозитория, а НЕ папка пакета: assets/ лежат уровнем выше него.
+from core import frame
 from core import paths
 
 HERE = paths.ROOT
@@ -102,7 +103,10 @@ def parse_full(xml_path: str, ncams: int | None = None) -> tuple[dict[str, Any],
     ntsc = (_txt(rate, "ntsc", "FALSE") or "").strip().upper() == "TRUE"
     fps = timebase * 1000 / 1001 if ntsc else timebase
     fmt = seq.find(".//media/video/format/samplecharacteristics")
-    w = int(_txt(fmt, "width", "1080")); h = int(_txt(fmt, "height", "1920"))
+    # Размера в XML нет (чужая/сокращённая секвенция) — считаем её кадром формата
+    # по умолчанию: своих чисел тут не держим, они жили бы второй копией 9:16.
+    _dw, _dh = frame.frame_size(frame.DEFAULT)
+    w = int(_txt(fmt, "width", str(_dw))); h = int(_txt(fmt, "height", str(_dh)))
     dur = int(_txt(seq, "duration", "0"))
     if dur <= 0:
         # sequence без <duration>: порог «покрывает >= 40% таймлайна» схлопывался в

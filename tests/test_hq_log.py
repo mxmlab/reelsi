@@ -132,6 +132,7 @@ def test_unload_ours_exception_logged(tmp_path, monkeypatch):
     fake_aicut.warn_foreign_models = MagicMock()
     fake_aicut.cancel_call = MagicMock(return_value="ep1")
     fake_aicut.is_current = MagicMock(return_value=True)
+    fake_aicut.idle_since = MagicMock(return_value=True)
     import core
     monkeypatch.setitem(sys.modules, "core.aicut", fake_aicut)
     monkeypatch.setattr(core, "aicut", fake_aicut, raising=False)

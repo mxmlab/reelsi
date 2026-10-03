@@ -79,7 +79,8 @@ def schema_field(key):
 
 
 def schema_keys():
-    """Ключи, которые панель показывает: поля (key и key2) и тумблеры слоёв/групп."""
+    """Ключи, которые панель показывает: поля (key и key2), тумблеры слоёв/групп и
+    ключ связи группы (кнопка-цепочка в её заголовке)."""
     keys = set()
     for kind, it in schema_items():
         if kind == "field":
@@ -89,6 +90,8 @@ def schema_keys():
                 keys.add(it["key2"])
         if it.get("toggle"):
             keys.add(it["toggle"])
+        if it.get("link"):
+            keys.add(it["link"])
     return keys
 
 

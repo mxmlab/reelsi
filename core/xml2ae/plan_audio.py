@@ -57,6 +57,53 @@ GLITCH_SFX_HOLD_S = 0.45      # полка звука после последн�
 GLITCH_SFX_RELEASE_S = 0.12   # спад до тишины, с
 GLITCH_SFX_QUIET_DB = -48.0   # уровень «тихо» (как у микро-фейдов клипов камеры), dB
 
+# Переход видеовставки (Quick 2): сколько файла играет ДО стыка — слой видео ставится
+# как `tl.startTime = cut - TR_IN` (шаблон), и whoosh стартует ещё на TR_SFX_LEAD раньше.
+# Числа объявлены ОДИН раз здесь: ими считаются события звука в плане, они же уезжают
+# подстановкой в .jsx (`tr_in`/`tr_sfx_lead`) и в план полем `trans.in` — превью рисует
+# слой перехода с ТЕМ ЖЕ сдвигом, и на кадре перед входом вставки видно то же, что в AE
+# (раньше превью не рисовало переход вовсе — кадр расходился).
+TR_IN = 0.386
+TR_SFX_LEAD = 0.083
+
+
+def voice_segments(clips: Any, fps: float) -> list[dict[str, float]]:
+    """Куски голоса камеры 1: [{ts, te, src}] — монтажное время и вход в исходник, сек.
+
+    Это ровно те куски, на которые `.jsx` кладёт аудиослои клипов камеры 1 (`addCam`:
+    `startTime=(c[0]-c[2])/FPS`, `inPoint=c[0]/FPS`, `outPoint=c[1]/FPS`), только
+    переведённые в секунды: рендер без AE режет ими звук в ffmpeg, и второй копии
+    правила «какой кусок исходника играет в этот момент» быть не должно. Клипы в XML
+    живут в КАДРАХ — перевод в секунды здесь и один раз (fps ролика).
+
+    Соседние куски, стыкующиеся вплотную И в монтаже, И в исходнике, склеиваются в
+    один: так их отдаёт EDL предпросмотра (`virtual_edl`), и для звука это одно и то
+    же — лишний вход ffmpeg вместо продолжения уже открытого. Куски сортируются по
+    монтажному времени: в XML клипы камеры идут по порядку, но полагаться на это в
+    миксе не на что — цена ошибки — звук не в том месте.
+
+    Клипы без звука (выключенные и пустые) пропускаются: у них и слоя в AE нет.
+    """
+    out: list[dict[str, float]] = []
+    for c in clips or []:
+        try:
+            s, e, i = float(c[0]), float(c[1]), float(c[2])
+        except (IndexError, TypeError, ValueError):
+            continue
+        if len(c) > 4 and not c[4]:
+            continue
+        if e <= s:
+            continue
+        if out and abs(out[-1]["te"] - s) < 1e-6 \
+                and abs((out[-1]["src"] + (out[-1]["te"] - out[-1]["ts"])) - i) < 1e-6:
+            out[-1]["te"] = e
+            continue
+        out.append({"ts": s, "te": e, "src": i})
+    out.sort(key=lambda x: x["ts"])
+    step = 1.0 / (float(fps) or 60.0)
+    return [{"ts": v["ts"] * step, "te": v["te"] * step, "src": v["src"] * step}
+            for v in out]
+
 
 @dataclass(frozen=True)
 class AudioInputs:
@@ -102,6 +149,9 @@ class AudioInputs:
     censor_fps: float
     # Словарь плана: путь голоса (Камера 1) и громкость музыки — их знает только scene_plan.
     voice_src: str
+    # Куски голоса по монтажному времени (см. voice_segments): их режет рендер без AE.
+    # Считает scene_plan — у него на руках клипы камер, а модуль получает готовое.
+    voice_segments: list[dict[str, float]]
     music_db: float
     # Точка между этапами («музыка»): показать, где мы, и проверить «Стоп».
     ckpt: Callable[[str], Any]
@@ -115,7 +165,8 @@ class AudioPlan:
 
     Файлы звуков уезжают в шаблон подстановками RISER/POP/GLITCH/TRANS/TRANS_SFX,
     `*_place`/`*_tail` — готовый код слоёв (при дефолтах стиля это прежние строки
-    шаблона), `audio` — словарь plan["audio"] для предпросмотра.
+    шаблона), `audio` — словарь plan["audio"] для предпросмотра и для рендера без AE
+    (он режет голос кусками `audio["segments"]` и берёт оттуда же громкости и цензуру).
     """
     riser: str             # файл ризера интро, "" — звука нет (или галка снята)
     pop: str               # файл «попа» жёлтых, "" — нет
@@ -123,10 +174,16 @@ class AudioPlan:
     glitch_db: float       # громкость глитча, dB (полка огибающей)
     trans: str             # файл перехода, "" — нет (или нет видеовставок)
     trans_sfx: str         # файл whoosh перехода, "" — нет
+    # Сдвиги перехода, с: насколько файл слоя играет ДО стыка (TR_IN) и насколько раньше
+    # стыка стартует whoosh (TR_SFX_LEAD). Одни числа на план (trans.in — по нему превью
+    # рисует слой перехода) и на подстановки шаблона (tr_in/tr_sfx_lead) — второй копии нет.
+    trans_in: float
+    trans_sfx_lead: float
     sfx_plan: list[dict[str, Any]]         # звуки с ГОТОВЫМИ событиями — plan["audio"]["sfx"]
     music_path: str        # выбранная/скачанная музыка, "" — нет
     censor_windows: list[Any]   # окна мьюта голоса, сек (сырые, план округляет сам)
     censor_js: str         # те же окна JS-литералом — подстановка CENSOR
+    voice_segments: list[dict[str, float]]   # куски голоса — plan["audio"]["segments"]
     audio: dict[str, Any]            # словарь plan["audio"] целиком (порядок ключей прежний)
     pop_place: str         # где ставить слой «попа» (startTime) — подстановка шаблона
     pop_tail: str          # обрезка/громкость того же слоя
@@ -284,8 +341,14 @@ def plan_audio(inp: AudioInputs) -> AudioPlan:
     # t (монтажное время, когда звук начинает играть = ev − at + in), файловые in/out.
     # JS старт не пересчитывает: берёт числа из плана.
     def _sfx_ev(ev: float, cfg: dict[str, Any]) -> dict[str, Any]:
+        # `out` — конец звука В ФАЙЛЕ, и он пишется сюда даже когда в стиле его нет:
+        # у «попа» это базовая обрезка 0.1 с (`outPoint=startTime+0.1` в шаблоне), и
+        # раньше её знало только превью (своим правилом), а рендер без AE резал событие
+        # по длине файла — поп звучал 0.43 с вместо 0.1. `None` — «до конца файла»:
+        # так ведут себя ризер и whoosh, у которых outPoint в шаблоне не ставится.
         return {"t": round(ev - cfg["at_s"] + cfg["in_s"], 3),
-                "in": cfg["in_s"], "out": cfg["out_s"]}
+                "in": cfg["in_s"],
+                "out": cfg["out_s"] if cfg["out_s"] is not None else cfg["def_out"]}
 
     _hl_events = [s / _fps0 for k, (s, e, w) in enumerate(subs) if k in hl] if hl else []
     sfx_plan = []
@@ -296,12 +359,12 @@ def plan_audio(inp: AudioInputs) -> AudioPlan:
                          "db": pop_cfg["db"], "base": pop_cfg["base"]})
     if trans_sfx:
         sfx_plan.append({"kind": "whoosh", "media": trans_sfx,
-                         "events": [_sfx_ev(c - 0.386 - 0.083, wsfx_cfg)
+                         "events": [_sfx_ev(c - TR_IN - TR_SFX_LEAD, wsfx_cfg)
                                     for c in _cam_change_sec],
                          "db": wsfx_cfg["db"], "base": wsfx_cfg["base"]})
     if trans:
         sfx_plan.append({"kind": "transition", "media": trans,
-                         "events": [_sfx_ev(c - 0.386, trans_cfg)
+                         "events": [_sfx_ev(c - TR_IN, trans_cfg)
                                     for c in _cam_change_sec],
                          "db": trans_cfg["db"], "base": trans_cfg["base"]})
     if riser:
@@ -381,15 +444,20 @@ def plan_audio(inp: AudioInputs) -> AudioPlan:
 
     # plan["audio"] собирается здесь целиком: числа звука и его данные для превью —
     # из одного места, порядок ключей прежний (побайтовое сравнение плана).
+    # `segments` добавлены заданием «звук по плану»: рендер без AE режет голос ими,
+    # и второго источника «какой кусок играет когда» не заводится.
     audio = {"voice_src": inp.voice_src,
              "voice_db": voice_db,
              "music_path": music_path, "music_db": inp.music_db,
              "censor": [[_r(a), _r(b)] for a, b in censor_windows],
+             "segments": inp.voice_segments,
              "sfx": sfx_plan}
     return AudioPlan(
         riser=riser, pop=pop, glitch_asset=glitch_asset, glitch_db=glitch_db,
         trans=trans, trans_sfx=trans_sfx, sfx_plan=sfx_plan, music_path=music_path,
+        trans_in=TR_IN, trans_sfx_lead=TR_SFX_LEAD,
         censor_windows=censor_windows, censor_js=censor_js, audio=audio,
+        voice_segments=inp.voice_segments,
         pop_place=pop_place, pop_tail=pop_tail,
         wsfx_place=wsfx_place, wsfx_tail=wsfx_tail,
         riser_place=riser_place, riser_tail=riser_tail,

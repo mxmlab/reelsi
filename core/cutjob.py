@@ -229,7 +229,7 @@ def process_pair(cams: list[str] | str, out_xml: str, opts: CutOptions,
     sub_words = mapped if (mapped and not opts.no_subs) else None
     try:
         info = xmlbuild.build(cams, segments, offsets, out_xml, assign=assign,
-                              scale=opts.scale, sub_words=sub_words, music_path=music_path)
+                              sub_words=sub_words, music_path=music_path)
     except (ReelsiError, SystemExit) as e:
         # Пустой монтаж (немой дубль, скринкаст: vad не нашёл речи) — build файл не тронул.
         # «Готовым» его помечать нечем: без этой ветки прогон печатал «-> 01_C1432.xml

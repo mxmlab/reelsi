@@ -152,7 +152,11 @@ def test_openai_finish_reason_length_with_reasoning_tokens(monkeypatch):
 
     step_returned = False
     with pytest.raises(ReelsiError) as exc_info:
-        res = llm._ask_openai(prof, "system prompt", "user prompt", schema, emit=lambda *a, **k: None)
+        # max_tokens ВЫШЕ отданного провайдером: обрезал не наш потолок, а его
+        # собственный лимит (потолок ниже completion — ветка лимита провайдера;
+        # случай «completion == нашему потолку» — в tests/test_ai_call.py).
+        res = llm._ask_openai(prof, "system prompt", "user prompt", schema,
+                              max_tokens=8192, emit=lambda *a, **k: None)
         step_returned = True  # Не должно выполниться
         assert res is not None
 
@@ -280,7 +284,9 @@ def test_anthropic_stop_reason_max_tokens_raises_output_cut(monkeypatch):
 
     step_returned = False
     with pytest.raises(ReelsiError) as exc_info:
-        res = llm._ask_anthropic(prof, "sys", "user", schema, emit=lambda *a, **k: None)
+        # max_tokens ВЫШЕ отданного: обрезал лимит модели, а не наш потолок.
+        res = llm._ask_anthropic(prof, "sys", "user", schema,
+                                 max_tokens=16384, emit=lambda *a, **k: None)
         step_returned = True
         assert res is not None
 

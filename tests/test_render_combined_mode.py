@@ -101,6 +101,7 @@ def _log_text(rjob):
 
 
 def _env(monkeypatch, tmp_path):
+    monkeypatch.setenv("REELSI_AE_BUILD_WORKERS", "1")
     monkeypatch.setenv("REELSI_RENDER_STATS", str(tmp_path / "stats.json"))
     monkeypatch.setattr(
         render_job, "find_ae",

@@ -7,8 +7,17 @@
 // Порядок важен — объявления функций поднимаются в пределах своего файла.
 
 // ================= editor (таймлайн: зум/пан, линейка, undo, возврат вырезанного) =================
+// ЕДИНСТВЕННЫЙ плеер шага 1. Играет исходник камеры 1 и пропускает вырезанное, а
+// обработанный голос (дорожка vt*) звучит в нём же: время звука — ED.cs (исходное время
+// камеры 1 под плейхедом, оно же время запечённого трека). Блока «Монтаж» со своим
+// плеером и ползунком больше нет: два плеера на одном <video> спорили за currentTime,
+// и клик по таймлайну откатывался назад началом следующего куска монтажа.
 let ED={xml:'',blocks:[],fps:60,cam:'',dur:0,peaks:[],pps:80,sel:-1,play:false,raw:false,raf:0,
-  cs:0,drag:null,v0:0,v1:0,hist:[],cuts:[],br:[],brBand:0};
+  cs:0,drag:null,v0:0,v1:0,hist:[],cuts:[],br:[],brBand:0,
+  // Поля плеера для дорожки голоса (60-preview.js:vt*): `cams` ставит openPreview —
+  // дорожка и живой хост берут файл камеры 1 через vtCam1(P); `voicePanel` — id панели
+  // «Голос» этого плеера, по ней vtFx берёт ЖИВЫЕ ручки на экране, а vtNote пишет статус.
+  cams:null,voicePanel:'pvvoice'};
 const EDRULER=18;                                   // высота линейки, css px
 async function edOpen(){const xml=PV.xml||(curEdit>=0?CLIPS[curEdit].xml:'')||ED.xml;if(!xml)return;ED.xml=xml;
   const info=$('edtime');info.textContent=t('загрузка…');
@@ -83,39 +92,57 @@ function edDraw(){const c=$('edtl');if(!c||!ED.dur)return;const g=c.getContext('
   g.strokeStyle='#f5c518';g.lineWidth=Math.max(1,1.5*dpr);g.beginPath();g.moveTo(cx,0);g.lineTo(cx,H);g.stroke();
   g.fillStyle='#f5c518';g.beginPath();g.moveTo(cx-4*dpr,0);g.lineTo(cx+4*dpr,0);g.lineTo(cx,6*dpr);g.closePath();g.fill();}
 function edUI(){const el=$('edtime');if(el)el.textContent=fmtIns(edCutTime(ED.cs))+' / '+fmtIns(edTotal());edWords();}
-// Панель слов и строка субтитра идут по МОНТАЖНОМУ времени, а редактор играет ИСХОДНИК —
-// без пересчёта они стоят мёртвыми всё время, пока играешь в редакторе: картинка едет,
-// слово под ней прежнее (жалоба 2026-08-11 «строка не проигрывается правильно»).
-// Пересчитываем по ИСХОДНОЙ раскладке (ED.orig — то, что лежит в XML): PV.words сняты
-// с неё, и несохранённая правка их не двигает.
-// Ползунок и время монтажа НЕ трогаем — это состояние монтажного плеера, а он стоит:
-// подвинуть их значило бы соврать, откуда он поедет по своей кнопке.
-function edWords(){if(PV.playing)return;                      // монтаж играет сам и ведёт панель через pvUI
+// Вырезанное место плейхеда: режим «слушать вырезанное» (галка ED.raw) отключён, а под
+// плейхедом — щель между блоками. Спрашивают про ЭТОТ плеер — редактор; у шага 3 своего
+// выреза нет, и его дорожка голоса глушиться из-за чужого плейхеда не должна.
+function edRaw(P){return (typeof P==='undefined'||P===ED)&&!!ED.raw;}
+function edInCut(P){return (typeof P==='undefined'||P===ED)&&!edRaw(P)&&ED.dur>0&&edBlockAt(ED.cs)<0;}
+// Слово под плейхедом и строка субтитра кадра. Плеер один — редактор, поэтому и панель
+// слов ведёт он (монтажного плеера, который вёл её раньше, больше нет). Считаем по
+// ИСХОДНОЙ раскладке (ED.orig — то, что лежит в XML): PV.words сняты с неё, и
+// несохранённая правка их не двигает.
+function edWords(){
   const base=(ED.orig&&ED.orig.length)?ED.orig:ED.blocks;
   const mt=edCutOf(base,ED.cs);if(mt==null)return;            // курсор в вырезанном — подсветку не дёргаем
   const el=$('pvsub');
-  if(el){let cur='';for(const w of (PV.words||[])){if(mt>=w.s&&mt<w.e){cur=w.w;break;}}el.textContent=cur;}}
+  if(el)el.textContent=pvWordAt(mt);}
+// Перемотка — ОДНА дверь для всех: клик и драг по таймлайну, хоткеи, кнопка. Кто играет —
+// тот и продолжает: состояние воспроизведения не трогаем, а плейхед и звук ставим на
+// место клика сразу, без ожидания следующего кадра.
 function edSeek(s){ED.cs=Math.max(0,Math.min(ED.dur,s));
-  if(PV.vids&&PV.vids[0]){try{PV.vids[0].currentTime=ED.cs;}catch(e){}}edDraw();edUI();}
+  pvVideoTo(ED.cs);
+  if(typeof vtOf==='function')vtTick(ED,ED.cs);   // звук — на то же место и сразу, не ждём кадра
+  edDraw();edUI();}
 function edToggle(){ED.play?edPause():edPlay();}
 function edPlay(){const v=PV.vids&&PV.vids[0];if(!v){toast(t('нет видео камеры 1'));return;}
-  pvPause();                                        // монтажный плеер стоп (общий <video>)
+  // Голос клипа в прошлый раз не посчитался — «Играть» обязан попробовать снова: причина
+  // (нет окружения RoFormer, занятый сервер) могла уйти, а vtPrep зовут только правки ручек.
+  if(typeof vtOf==='function'&&vtOf(ED).failed){vtOf(ED).failed=false;vtPrep(ED);}
   if(!ED.raw&&edBlockAt(ED.cs)<0){const nb=ED.blocks.find(b=>b.s0>=ED.cs)||ED.blocks[0];if(!nb)return;ED.cs=nb.s0;}
   ED.play=true;$('edplay').innerHTML=ico('pause');
-  spareIdle(PV);                                    // дублёр общий с монтажным плеером — начинаем с чистого листа
-  try{v.currentTime=ED.cs;}catch(e){}
-  v.muted=false;v.style.opacity='1';v.style.zIndex='2';PV.vids.forEach((o,i)=>{if(i)o.style.zIndex='1';});
-  v.play().catch(()=>{});ED.raf=requestAnimationFrame(edTick);}
-function edPause(){ED.play=false;const b=$('edplay');if(b)b.innerHTML=ico('play');
-  cancelAnimationFrame(ED.raf);if(PV.vids&&PV.vids[0])PV.vids[0].pause();spareStop(PV);}
+  spareIdle(PV);                                    // дублёр общий с показом кадра — начинаем с чистого листа
+  pvVideoTo(ED.cs);
+  v.muted=false;v.volume=MEDIA_VOL;v.style.opacity='1';v.style.zIndex='2';PV.vids.forEach((o,i)=>{if(i)o.style.zIndex='1';});
+  v.play().catch(()=>{});
+  vtLivePlay(ED);   // окно плагина открыто — команда «играть» уходит ему, с этого кадра
+  ED.raf=requestAnimationFrame(edTick);}
+function edPause(){const was=ED.play;ED.play=false;const b=$('edplay');if(b)b.innerHTML=ico('play');
+  cancelAnimationFrame(ED.raf);if(PV.vids&&PV.vids[0])PV.vids[0].pause();spareStop(PV);camIdle(PV);
+  if(was)vtPause(ED);}   // стояли и без нас — дорожку голоса дважды не дёргаем
 // Стык блока в РЕДАКТОРЕ — тот же seek, что был в монтажном плеере, и болит он тут
 // сильнее: по этому таймлайну и делают правки. Дублёр общий с монтажным плеером, цель —
 // исходное время камеры 1, поэтому годится та же машина bufArm/bufRoll/bufTake. Отличие
 // одно: живой <video> в редакторе красит не camVisual, а мы сами.
 function edTake(at){if(!bufTake(PV,spareLead(PV),at))return false;
   const v=PV.vids[0];v.muted=false;v.volume=MEDIA_VOL;v.style.opacity='1';v.style.zIndex='2';return true;}
-function edJump(v,at){if(edTake(at))return PV.vids[0];   // подмена не вышла — старый путь
-  try{v.currentTime=at;}catch(e){}return v;}
+// Прыжок через вырезанное: картинка — дублёром или seek'ом, звук — тем же местом и СРАЗУ
+// (не ждём следующего кадра): на вырезанном обработанный голос обязан молчать вместе с
+// картинкой, а не доигрывать удалённый кусок.
+function edJump(v,at){let out=v;
+  if(edTake(at))out=PV.vids[0];   // дублёр успел — подмена элементом
+  else{try{v.currentTime=at;}catch(e){}}   // не вышла — старый путь: seek на месте
+  if(typeof vtOf==='function')vtTick(ED,at);
+  return out;}
 function edArm(){if(ED.raw||!ED.play)return;const i=edBlockAt(ED.cs);if(i<0)return;
   const b=ED.blocks[i],nb=ED.blocks[i+1];
   // Стыка впереди больше нет (последний блок или правка свела блоки вплотную) — дублёра
@@ -135,6 +162,7 @@ function edTick(){if(!ED.play)return;let v=PV.vids[0];ED.cs=v.currentTime;
         const nb=ED.blocks[i+1];
         if(nb.s0>ED.cs+0.06){v=edJump(v,nb.s0);ED.cs=nb.s0;}}}}
   else if(ED.cs>=ED.dur-0.05){edPause();}
+  if(typeof vtOf==='function')vtTick(ED,ED.cs);   // дорожка обработанного голоса идёт за плейхедом
   edArm();
   edDraw();edUI();ED.raf=requestAnimationFrame(edTick);}
 // Что под курсором: БЛИЖАЙШИЙ край блока или плейхед. Раньше цикл брал первый край,
@@ -277,16 +305,17 @@ async function edSave(){const btn=$('edsave');const info=$('edtime');
   }catch(e){toast(t('НЕ сохранил правку нарезки — сервер не ответил. XML не тронут, нажми «Сохранить» ещё раз'));uiLog('editor_save: '+e);}btn.disabled=false;}
 
 // ================= markup (step 2) =================
-async function markupOne(i){if(uiBusyGuard())return;const c=CLIPS[i];progShow(t('Разметка'),'—');uiBusySet(true);
+async function markupOne(i){if(uiBusyGuard())return;const c=CLIPS[i];progOpen({title:t('Разметка')});uiBusySet(true);
   try{const ok=await markupClip(c);renderClips2();saveState();
-    if(ok)progDone(t('Готово: ')+c.name);else{$('progClose').style.display='';}}
+    if(ok)progDone(t('Готово: ')+c.name);
+    else progDone(t('Остановлено'),true);}   // список не закрываем сами: у окна есть «Закрыть»
   finally{uiBusySet(false);}
 }
 // «Разметить всё» — ПОФАЗНО (все субтитры → все жёлтые → все вставки), а не по клипу:
 // Whisper и 27b не влезают в VRAM вместе, по-клипово было 2 свопа моделей НА КЛИП,
 // пофазно — 1 своп на весь набор. UICANCEL (кнопка «Остановить») рвёт цикл между шагами.
 async function markupAll(){if(uiBusyGuard())return;const subeng=val('subengine')||'whisper';const list=selClips();if(!list.length){toast(t('Нет клипов'));return;}
-  progShow(t('Разметка'),'—');uiBusySet(true);
+  progOpen({title:t('Разметка')});uiBusySet(true);
   // «Разметить всё» молча пропускает уже готовое, как раньше: вопрос о
   // перезаписи — только у явного запуска ОДНОЙ фазы (кнопки «Субтитры/Жёлтые/Вставки»).
   try{await markupAllRun(subeng,list,['subs','yellow','inserts']);}finally{uiBusySet(false);}}
@@ -294,86 +323,165 @@ async function markupAll(){if(uiBusyGuard())return;const subeng=val('subengine')
 // сборке (selClips: пусто у всех = все), прогресс делится на число выбранных фаз.
 // Явный запуск фазы — ask=true: если фаза уже сделана, спросим о перезаписи.
 async function markupPhase(phase){if(uiBusyGuard())return;const subeng=val('subengine')||'whisper';const list=selClips();if(!list.length){toast(t('Нет клипов'));return;}
-  progShow(t('Разметка'),'—');uiBusySet(true);
+  progOpen({title:t('Разметка')});uiBusySet(true);
   try{await markupAllRun(subeng,list,[phase],true);}finally{uiBusySet(false);}}
 async function markupAllRun(subeng,list,phases,ask){
+  if(typeof AICFG==='undefined'||!AICFG){try{await loadAIProfiles();}catch(e){}}
+  const batch='mk'+Date.now().toString(36);
   const N=list.length,fail=new Set();
-  for(let i=0;i<N;i++){const c=list[i];       // свежие статусы (что пропускать)
-    try{const st=await (await fetch('/api/xml_state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml:c.xml})})).json();
-      if(st.error)throw errText(st);c.status={subs:st.subs,colored:st.colored,ncams:st.ncams};}
-    catch(e){uiLog('✗ '+c.name+': '+e);fail.add(c);}}
-  const P=phases.length;
-  const phase=async(no,title,dep,has,call)=>{
-    // Перезапись спрашивается ТОЛЬКО при явном запуске одной фазы (ask=true, кнопки
-    // «Субтитры/Жёлтые/Вставки»). «Разметить всё» (ask=false) молча пропускает готовое,
-    // как раньше — без единого вопроса: уже сделано = пропуск.
-    // «Да» (force) — фаза считается заново у ВСЕХ, пропуск по «уже есть» не действует;
-    // зависимость (нет субтитров) остаётся. «Нет» — готовые пропускаются, как обычно.
-    const already=ask?list.filter(c=>!fail.has(c)&&has(c)):[];
-    const force=ask&&already.length&&await askConfirm(t('Уже размечено у {n}: {names}.\nФаза «{title}» будет пересчитана заново. Продолжить?',{n:already.length,names:already.map(c=>c.name).join(', '),title:title}));
-    for(let i=0;i<N;i++){if(UICANCEL)return;const c=list[i];
-      if(fail.has(c)||dep(c)||(!force&&has(c)))continue;
-      // Контекст очереди — отдельно от этапа: заголовок фазы и «клип i из N · имя» держатся,
-      // пока идёт клип, а что считается прямо сейчас — говорит progStep (и хвост лога в aiPost).
-      progQueue(t('Разметка {n}/{P} — {title}',{n:no,P:P,title:title}),i+1,N,c.name);
-      progStep(title,(no-1)/P+i/N/P);
-      uiLog('▸ '+c.name+' — '+title+'…');
-      try{await call(c);}catch(e){toast(title+' · '+c.name+': '+e);uiLog(t('  ОШИБКА: ')+e);fail.add(c);}
-      renderClips2();saveState();await sleep(300);}};
-  const subLbl=engLabel(subeng);
-  if(phases.includes('subs'))await phase(phases.indexOf('subs')+1,t('субтитры (')+subLbl+')',()=>false,c=>c.status.subs>0,async c=>{
-    const d=await (await fetch('/api/gen_subs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml:c.xml,subengine:subeng})})).json();
-    if(d.error)throw errText(d);c.status.subs=d.subs;uiLog(t('  субтитры: ')+d.subs+subSkipped(d));});
-  if(phases.includes('yellow'))await phase(phases.indexOf('yellow')+1,t('жёлтые (ИИ)'),c=>!(c.status.subs>0),c=>c.status.colored>0,async c=>{
-    const d=await aiPost('/api/ai_yellow',{xml:c.xml},t('жёлтые (ИИ)'));
-    if(d.error)throw errText(d);c.status.colored=(d.colored||d.yellow||[]).length;uiLog(t('  жёлтых: ')+c.status.colored);
-    clearHl(c);if(curAE>=0&&CLIPS[curAE]===c)loadWordsFor(c.xml);});
-  if(phases.includes('inserts'))await phase(phases.indexOf('inserts')+1,t('вставки (ИИ)'),c=>!(c.status.subs>0),c=>(c.inserts||[]).length>0,async c=>{
-    const d=await aiPost('/api/ai_inserts',{xml:c.xml,rejected:c.ins_rejected||[]},t('вставки (ИИ)'));
-    if(d.error)throw errText(d);c.inserts=(d.inserts||[]).map(x=>({...x,media:''}));c.insTarget=Math.max(d.insTarget||0,c.inserts.length);insLog(d);uiLog(t('  вставок: ')+c.inserts.length);
-    uiLog(t('  файлы:')+(await insAfterAI(c)||' —'));});   // база + (по галке) генерация
-  const ok=N-fail.size;
-  renderClips2();saveState();
-  if(UICANCEL)progDone(t('Остановлено — без ошибок: {n} из {m}',{n:ok,m:N}));
-  else if(ok===N)progDone(t('Размечено клипов: ')+ok);
-  else{progDone(t('Размечено {n} из {m} — см. логи/сообщения',{n:ok,m:N}));$('progFill').className='progfill';}}
+  // Свой список роликов в окне прогресса: серверного задания у разметки нет, и до этого
+  // в списке висели строки ПРОШЛОЙ нарезки вместо того, что размечается сейчас.
+  localQStart(list.map(c=>c.name));
+  try{
+    for(let i=0;i<N;i++){const c=list[i];       // свежие статусы (что пропускать)
+      try{const st=await (await fetch('/api/xml_state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml:c.xml})})).json();
+        if(st.error)throw errText(st);c.status={subs:st.subs,colored:st.colored,ncams:st.ncams};}
+      catch(e){uiLog('✗ '+c.name+': '+e);fail.add(c);localQSet(c.name,'error',''+e);}}
+    const P=phases.length;
+    // Пул параллельной обработки используется ТОЛЬКО для ИИ-фаз (yellow, inserts): субтитры
+    // считаются на GPU строго по одному (общий лок джоба, VRAM). При step_concurrency=1
+    // пул не создаётся (pool<=1) и сохраняется прежнее последовательное поведение со sleep(300).
+    const phase=async(no,title,dep,has,call,pool)=>{
+      // Перезапись спрашивается ТОЛЬКО при явном запуске одной фазы (ask=true, кнопки
+      // «Субтитры/Жёлтые/Вставки»). «Разметить всё» (ask=false) молча пропускает готовое,
+      // как раньше — без единого вопроса: уже сделано = пропуск.
+      // «Да» (force) — фаза считается заново у ВСЕХ, пропуск по «уже есть» не действует;
+      // зависимость (нет субтитров) остаётся. «Нет» — готовые пропускаются, как обычно.
+      const already=ask?list.filter(c=>!fail.has(c)&&has(c)):[];
+      const force=ask&&already.length&&await askConfirm(t('Уже размечено у {n}: {names}.\nФаза «{title}» будет пересчитана заново. Продолжить?',{n:already.length,names:already.map(c=>c.name).join(', '),title:title}));
+      if(pool>1){
+        const todo=list.filter(c=>!fail.has(c)&&!dep(c)&&(force||!has(c)));
+        let done=0;const inWork=new Set();
+        const phaseTitle=t('Разметка {n}/{P} — {title}',{n:no,P:P,title:title});
+        await runPool(todo,pool,async c=>{
+          inWork.add(c.name);
+          // В шапку — заголовок фазы и «готово из скольких»; имена роликов в работе там
+          // не нужны, они и так в строках списка (форма — в 55-progress.js).
+          progQueue(phaseTitle,done,N);
+          uiLog('▸ '+c.name+' — '+title+'…');
+          try{await call(c);localQSet(c.name,no===P?'done':'wait',qClipSum(c));}
+          catch(e){localQSet(c.name,'error',''+e);toast(title+' · '+c.name+': '+e);uiLog(t('  ОШИБКА: ')+e);fail.add(c);}
+          inWork.delete(c.name);done++;
+          progStep(title,(no-1)/P+done/N/P);
+          renderClips2();saveState();
+        });
+        // Пропущенные («уже есть» / нет субтитров) пул не берёт вовсе — их строки остались бы
+        // «в очереди» до конца прогона. Ставим им итог сразу, без запуска фазы.
+        list.forEach(c=>{if(fail.has(c)||todo.includes(c))return;
+          if(dep(c))localQSet(c.name,'wait',t('нет субтитров'));
+          else localQSet(c.name,no===P?'done':'wait',qClipSum(c));});
+      }else{
+        for(let i=0;i<N;i++){if(UICANCEL)return;const c=list[i];
+          if(fail.has(c))continue;
+          if(dep(c)){localQSet(c.name,'wait',t('нет субтитров'));continue;}
+          // Проверка результата — из clip: c.status/inserts обновляются в call(c), поэтому
+          // итог берём из них, а не из счётчиков фазы.
+          if(!force&&has(c)){localQSet(c.name,no===P?'done':'wait',qClipSum(c));continue;}   // «уже есть» — итог без запуска
+          // Контекст очереди — отдельно от этапа: заголовок фазы и «готово из N» держатся,
+          // пока идёт клип, а что считается прямо сейчас — говорит progStep (и код события
+          // из хвоста лога в aiPost).
+          progQueue(t('Разметка {n}/{P} — {title}',{n:no,P:P,title:title}),i,N);
+          progStep(title,(no-1)/P+i/N/P);
+          uiLog('▸ '+c.name+' — '+title+'…');
+          try{await call(c);localQSet(c.name,no===P?'done':'wait',qClipSum(c));}
+          catch(e){localQSet(c.name,'error',''+e);toast(title+' · '+c.name+': '+e);uiLog(t('  ОШИБКА: ')+e);fail.add(c);}
+          renderClips2();saveState();await sleep(300);}}};
+    const subLbl=engLabel(subeng);
+    if(phases.includes('subs'))await phase(phases.indexOf('subs')+1,t('субтитры (')+subLbl+')',()=>false,c=>c.status.subs>0,async c=>{
+      localQSet(c.name,'subs','');
+      const d=await (await fetch('/api/gen_subs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml:c.xml,subengine:subeng})})).json();
+      if(d.error)throw errText(d);c.status.subs=d.subs;uiLog(t('  субтитры: ')+d.subs+subSkipped(d));});
+    if(phases.includes('yellow'))await phase(phases.indexOf('yellow')+1,t('жёлтые (ИИ)'),c=>!(c.status.subs>0),c=>c.status.colored>0,async c=>{
+      localQSet(c.name,'yellow','');
+      const d=await aiPost('/api/ai_yellow',{xml:c.xml,batch},t('жёлтые (ИИ)'));
+      if(d.error)throw errText(d);c.status.colored=(d.colored||d.yellow||[]).length;uiLog(t('  жёлтых: ')+c.status.colored);
+      clearHl(c);if(curAE>=0&&CLIPS[curAE]===c)loadWordsFor(c.xml);},aiStepConc('yellow'));
+    if(phases.includes('inserts'))await phase(phases.indexOf('inserts')+1,t('вставки (ИИ)'),c=>!(c.status.subs>0),c=>(c.inserts||[]).length>0,async c=>{
+      localQSet(c.name,'inserts','');
+      const d=await aiPost('/api/ai_inserts',{xml:c.xml,batch,rejected:c.ins_rejected||[],speaker:val('speaker')||undefined},t('вставки (ИИ)'));
+      if(d.error)throw errText(d);c.inserts=(d.inserts||[]).map(x=>({...x,media:''}));c.insTarget=Math.max(d.insTarget||0,c.inserts.length);insLog(d);uiLog(t('  вставок: ')+c.inserts.length);
+      localQSet(c.name,'files','');   // подбор файлов из базы (+ генерация по галке) — отдельный этап, не «вставки (ИИ)»
+      uiLog(t('  файлы:')+(await insAfterAI(c)||' —'));},aiStepConc('inserts'));   // база + (по галке) генерация
+    const ok=N-fail.size;
+    renderClips2();saveState();
+    if(UICANCEL)progDone(t('Остановлено — без ошибок: {n} из {m}',{n:ok,m:N}),true);
+    else if(ok===N)progDone(t('Размечено клипов: ')+ok);
+    else progDone(t('Размечено {n} из {m} — см. логи/сообщения',{n:ok,m:N}),true);
+  }finally{localQEnd();}
+}
+// Итог строки списка по клипу: что у него уже посчитано. Собирается из состояния клипа,
+// поэтому годится и для пропуска «уже есть» (итог сразу, без запуска фазы), и для конца прогона.
+function qClipSum(c){const s=c.status||{};const p=[];
+  if(s.subs>0)p.push(t('субтитры: ')+s.subs);
+  if(s.colored>0)p.push(t('жёлтых: ')+s.colored);
+  if((c.inserts||[]).length)p.push(t('вставок: ')+c.inserts.length);
+  return p.join(' · ');}
 // субтитры с нуля -> жёлтые -> вставки; статусы читаем через xml_state, вставки в clip.inserts
 async function markupClip(c){const xml=c.xml;const subeng=val('subengine')||'whisper';
-  // Разметка одного клипа — очередь из одного: своего контекста ещё нет, ставим его сами.
-  // Из пакета (markupAllRun) контекст уже выставлен снаружи — тогда его НЕ перетираем:
-  // иначе на экране вместо «клип 3 из 8 · имя» появилось бы «клип 1 из 1».
-  if(!PROGQ)progQueue(t('Разметка'),1,1,c.name);
-  uiLog('▸ '+c.name+t(' — разметка'));
-  const stop=()=>{if(UICANCEL){uiLog(t('  остановлено по кнопке'));return true;}return false;};
-  if(stop())return false;
-  let st={};try{st=await (await fetch('/api/xml_state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml})})).json();}catch(e){toast(''+e);uiLog(t('  ошибка: ')+e);return false;}
-  if(st.error){toast(errText(st));uiLog(t('  ошибка: ')+st.error);return false;}
-  c.status={subs:st.subs,colored:st.colored,ncams:st.ncams};
-  // 1. субтитры
-  const subLbl=engLabel(subeng);
-  if(!(st.subs>0)){progStep(t('субтитры с нуля (')+subLbl+')…');uiLog(t('  субтитры с нуля (')+subLbl+')…');
-    const d=await (await fetch('/api/gen_subs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml,subengine:subeng})})).json();
-    if(d.error){toast(t('субтитры: ')+errText(d));uiLog(t('  субтитры: ОШИБКА — ')+d.error);return false;}
-    c.status.subs=d.subs;uiLog(t('  субтитры: ')+d.subs+subSkipped(d));await sleep(700);}
-  else uiLog(t('  субтитры уже есть ({n}) — пропуск',{n:st.subs}));
-  if(stop())return false;
-  // 2. жёлтые — при ошибке НЕ идём дальше молча (частая причина: LM Studio не успел свапнуть модель)
-  if(!(c.status.colored>0)){progStep(t('жёлтые слова (ИИ)…'));uiLog(t('  жёлтые (ИИ)…'));
-    const d=await aiPost('/api/ai_yellow',{xml},t('жёлтые (ИИ)'));
-    if(d.error){toast(t('жёлтые: ')+errText(d));uiLog(t('  жёлтые: ОШИБКА — ')+d.error);return false;}
-    c.status.colored=(d.colored||d.yellow||[]).length;uiLog(t('  жёлтых: ')+c.status.colored);
-    clearHl(c);if(curAE>=0&&CLIPS[curAE]===c)loadWordsFor(c.xml);await sleep(700);}
-  else uiLog(t('  жёлтые уже есть ({n}) — пропуск',{n:c.status.colored}));
-  if(stop())return false;
-  // 3. вставки (если уже есть — не перегенерируем, выбранные файлы не теряем)
-  if(!(c.inserts||[]).length){progStep(t('вставки (ИИ)…'));uiLog(t('  вставки (ИИ)…'));
-    const d=await aiPost('/api/ai_inserts',{xml,rejected:c.ins_rejected||[]},t('вставки (ИИ)'));
-    if(d.error){toast(t('вставки: ')+errText(d));uiLog(t('  вставки: ОШИБКА — ')+d.error);return false;}
-    c.inserts=(d.inserts||[]).map(x=>({...x,media:''}));c.insTarget=Math.max(d.insTarget||0,c.inserts.length);insLog(d);uiLog(t('  вставок: ')+c.inserts.length);
-    uiLog(t('  файлы:')+(await insAfterAI(c)||' —'));}   // база + (по галке) генерация
-  else uiLog(t('  вставки уже есть ({n}) — пропуск',{n:c.inserts.length}));
-  return true;}
+  // Одиночная разметка — список из одного клипа. Из пакета (markupAllRun) список уже
+  // заведён, и свой начинать нельзя: он затёр бы строки остальных роликов прогона.
+  const own=!LOCALQ;if(own)localQStart([c.name]);
+  try{
+    // Разметка одного клипа — очередь из одного: своего контекста ещё нет, ставим его сами.
+    // Из пакета (markupAllRun) контекст уже выставлен снаружи — тогда его НЕ перетираем:
+    // иначе на экране вместо «клип 3 из 8 · имя» появилось бы «клип 1 из 1».
+    if(!PROGQ)progQueue(t('Разметка'),0,1);
+    uiLog('▸ '+c.name+t(' — разметка'));
+    const stop=()=>{if(UICANCEL){uiLog(t('  остановлено по кнопке'));return true;}return false;};
+    if(stop())return false;
+    let st={};try{st=await (await fetch('/api/xml_state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml})})).json();}catch(e){toast(''+e);uiLog(t('  ошибка: ')+e);localQSet(c.name,'error',''+e);return false;}
+    if(st.error){toast(errText(st));uiLog(t('  ошибка: ')+st.error);localQSet(c.name,'error',''+st.error);return false;}
+    c.status={subs:st.subs,colored:st.colored,ncams:st.ncams};
+    localQSet(c.name,'wait',qClipSum(c));       // что уже есть — видно до первого этапа
+    // 1. субтитры
+    const subLbl=engLabel(subeng);
+    if(!(st.subs>0)){localQSet(c.name,'subs','');progStep(t('субтитры с нуля (')+subLbl+')…');uiLog(t('  субтитры с нуля (')+subLbl+')…');
+      const d=await (await fetch('/api/gen_subs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml,subengine:subeng})})).json();
+      if(d.error){toast(t('субтитры: ')+errText(d));uiLog(t('  субтитры: ОШИБКА — ')+d.error);localQSet(c.name,'error',''+d.error);return false;}
+      c.status.subs=d.subs;uiLog(t('  субтитры: ')+d.subs+subSkipped(d));await sleep(700);}
+    else uiLog(t('  субтитры уже есть ({n}) — пропуск',{n:st.subs}));
+    if(stop())return false;
+    // 2. жёлтые — при ошибке НЕ идём дальше молча (частая причина: LM Studio не успел свапнуть модель)
+    if(!(c.status.colored>0)){localQSet(c.name,'yellow','');progStep(t('жёлтые слова (ИИ)…'));uiLog(t('  жёлтые (ИИ)…'));
+      const d=await aiPost('/api/ai_yellow',{xml},t('жёлтые (ИИ)'));
+      if(d.error){toast(t('жёлтые: ')+errText(d));uiLog(t('  жёлтые: ОШИБКА — ')+d.error);localQSet(c.name,'error',''+d.error);return false;}
+      c.status.colored=(d.colored||d.yellow||[]).length;uiLog(t('  жёлтых: ')+c.status.colored);
+      clearHl(c);if(curAE>=0&&CLIPS[curAE]===c)loadWordsFor(c.xml);await sleep(700);}
+    else uiLog(t('  жёлтые уже есть ({n}) — пропуск',{n:c.status.colored}));
+    if(stop())return false;
+    // 3. вставки (если уже есть — не перегенерируем, выбранные файлы не теряем)
+    if(!(c.inserts||[]).length){localQSet(c.name,'inserts','');progStep(t('вставки (ИИ)…'));uiLog(t('  вставки (ИИ)…'));
+      const d=await aiPost('/api/ai_inserts',{xml,rejected:c.ins_rejected||[],speaker:val('speaker')||undefined},t('вставки (ИИ)'));
+      if(d.error){toast(t('вставки: ')+errText(d));uiLog(t('  вставки: ОШИБКА — ')+d.error);localQSet(c.name,'error',''+d.error);return false;}
+      c.inserts=(d.inserts||[]).map(x=>({...x,media:''}));c.insTarget=Math.max(d.insTarget||0,c.inserts.length);insLog(d);uiLog(t('  вставок: ')+c.inserts.length);
+      localQSet(c.name,'files','');   // подбор файлов из базы (+ генерация по галке) — отдельный этап
+      uiLog(t('  файлы:')+(await insAfterAI(c)||' —'));}   // база + (по галке) генерация
+    else uiLog(t('  вставки уже есть ({n}) — пропуск',{n:c.inserts.length}));
+    localQSet(c.name,'done',qClipSum(c));
+    return true;
+  }finally{if(own)localQEnd();}}
 function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
+// Сколько роликов шаг гонит СРАЗУ (переопределение шага из настроек, 1..16). Уровень файла,
+// а не локальная стрелка в markupAllRun: то же число нужно пакетному ИИ-интро (aiIntroAllRun),
+// и вторая копия зажима разошлась бы с первой. AICFG может быть ещё не загружен — тогда 1.
+function aiStepConc(s){const c=(typeof AICFG!=='undefined'&&AICFG)||{};return Math.max(1,Math.min(16,(c.step_concurrency||{})[s]||1));}
+async function runPool(items,n,fn){
+  if(!items||!items.length)return;
+  const count=Math.max(1,Math.min(items.length,Math.floor(n)||1));
+  let idx=0;
+  const workers=[];
+  for(let w=0;w<count;w++){
+    workers.push((async()=>{
+      while(true){
+        if(typeof UICANCEL!=='undefined'&&UICANCEL)break;
+        const i=idx++;
+        if(i>=items.length)break;
+        await fn(items[i],i);
+      }
+    })());
+  }
+  await Promise.all(workers);
+}
 
 // ── «Стоп» для одиночных ИИ-вызовов (ИИ интро, вставки): пока запрос в полёте, рядом
 // с ИИ-кнопками появляется «⏹ Стоп», а сами ИИ-кнопки блокируются (случайный повторный
@@ -385,8 +493,11 @@ function aiBusy(stopId,on){const s=$(stopId);if(s){s.style.display=on?'':'none';
 // Живой хвост серверного лога, пока ИИ-запрос висит: ИИ-роуты синхронные (не джобы),
 // поллинга у них не было — и минутный вызов выглядел как зависший UI. Тянем
 // /api/status?since= раз в секунду и отдаём последнюю строку в setStatus.
+// `tag` (необязателен) — имя XML клипа без расширения: в пачке сервер помечает свои
+// строки префиксом «[имя] », и без фильтра хвост собирался из строк РАЗНЫХ роликов
+// (они идут параллельно, а лог общий). Со своими строками префикс срезаем — он служебный.
 // Возвращает функцию остановки.
-function logTail(setStatus){
+function logTail(setStatus,tag){
   const t0=Date.now();let stop=false;
   // Хвост показываем ТОЛЬКО из строк, пришедших ПОСЛЕ старта этого вызова. Раньше брали
   // последнюю строку всего кэша — и пока новое действие молчало (модель думает первые
@@ -398,15 +509,30 @@ function logTail(setStatus){
     try{const d=await (await fetch('/api/status?since='+LOGSINCE)).json();mergeLog(d);}catch(e){}
     if(stop)return;
     if(LOGCACHE.length<from)from=0;         // сервер начал лог заново (mergeLog->logReset)
-    if(setStatus){const mine=LOGCACHE.slice(from);
-      const last=([...mine].map(fmtLog).reverse().find(l=>l.trim())||'').trim();
+    if(setStatus){const pre=tag?'['+tag+'] ':'';
+      // Фильтруем ГОТОВЫЕ строки (fmtLog): структурная запись лога — объект {t,v},
+      // и префикс лежит в его шаблоне, а не в начале String(l).
+      let last=([...LOGCACHE.slice(from)].map(fmtLog).reverse()
+        .find(l=>l.trim()&&(!tag||l.indexOf(pre)>=0))||'').trim();
+      if(tag&&last.indexOf(pre)===0)last=last.slice(pre.length);
       setStatus(Math.round((Date.now()-t0)/1000)+t('с')+(last?' · '+last.slice(0,70):' · …'));}
     setTimeout(tick,1000);})();
   return()=>{stop=true;};}
 // ИИ-вызов внутри пакетной разметки (там свой прогресс-оверлей, не aiFetch):
-// обычный POST + хвост серверного лога в подпись прогресса.
+// обычный POST + хвост серверного лога в подпись прогресса и в строку своего клипа.
+// Тег — стем XML (то же, что сервер ставит в префикс); строку списка держим ССЫЛКОЙ
+// (progCurItem), а не поиском по имени: имя клипа и стем XML могут не совпадать.
+//
+// Строку лога в окно прогресса НЕ выводим: разбираем её в КОД события (одно место —
+// progEventFromLog) и показываем короткий словарный статус. Сама строка остаётся в
+// «Показать логи» — «думает: 560 симв. размышлений…» в строке ролика ничего не значило.
 async function aiPost(url,body,label){
-  const untail=logTail(s=>progUpdate(null,label+' · '+s));
+  const tag=(body&&body.batch&&body.xml)
+    ?String(body.xml).replace(/^.*[\\\/]/,'').replace(/\.[^.]*$/,'') : null;
+  const row=progCurItem();
+  const untail=logTail(s=>{const ev=progEventFromLog(s);
+    progUpdate(null,ev?PROGEV[ev]:label);
+    if(tag&&row&&ev)progItem(row.name,ev);},tag);
   try{return await (await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(body)})).json();}
   finally{untail();}}

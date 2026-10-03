@@ -36,8 +36,15 @@ app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024
 app.register_blueprint(bp)
 
 _TPL = os.path.join(HERE, "templates", "index.html")
+_TPL_RENDER = os.path.join(HERE, "templates", "render.html")
 _STATIC = os.path.join(HERE, "static")
+# Файлы, которых на странице рендера быть не должно: 99-boot.js — запуск ОСНОВНОГО
+# интерфейса (восстановление состояния, сканы папок, зеркало ui_state каждые 2.5 с).
+# У страницы рендера свой запуск: она не показывает панелей и не имеет права писать
+# чужое состояние интерфейса.
+RENDER_SKIP_JS = ("99-boot.js",)
 _CACHE: dict[str, Any] = {"mtime": None, "html": ""}
+_CACHE_RENDER: dict[str, Any] = {"mtime": None, "html": ""}
 _I18N = I18N_FILE
 
 
@@ -53,16 +60,20 @@ def _dict_en() -> str:
     return dict_en_json()
 
 
-def _app_scripts(v: int | str) -> str:
+def _app_scripts(v: int | str, skip: tuple[str, ...] = ()) -> str:
     """<script>-теги интерфейса в порядке загрузки.
 
     Список берётся из папки (app_meta.app_js_files), а не выписан в шаблоне: иначе
     добавленный файл легко не подключить, и часть интерфейса тихо перестала бы
     работать — без ошибки в консоли, просто «кнопка не нажимается».
+
+    `skip` — имена файлов, которых на странице быть не должно (см. RENDER_SKIP_JS):
+    файл из папки всё равно подхватывается везде, где он нужен, а тут отсекается
+    по имени, а не выписыванием списка руками.
     """
     return "\n".join(
         '<script src="/static/app/%s?v=%s"></script>' % (os.path.basename(p), v)
-        for p in app_js_files())
+        for p in app_js_files() if os.path.basename(p) not in skip)
 
 
 def _page() -> str:
@@ -86,6 +97,38 @@ def _page() -> str:
 @app.route("/")
 def index() -> str:
     return _page()
+
+
+def _page_render() -> str:
+    """templates/render.html + подстановки. Кэш по mtime — как у главной страницы.
+
+    Страница рендера грузит ТЕ ЖЕ файлы static/app/, кроме запуска основного
+    интерфейса (см. RENDER_SKIP_JS): отрисовка кадра у неё общая с предпросмотром,
+    а панели и состояние — свои, и чужие ей не нужны.
+    """
+    mt = max([os.path.getmtime(_TPL_RENDER),
+              os.path.getmtime(os.path.join(_STATIC, "app.css")),
+              os.path.getmtime(_I18N) if os.path.exists(_I18N) else 0]
+             + [os.path.getmtime(p) for p in app_js_files()])
+    if _CACHE_RENDER["mtime"] != mt:
+        html = open(_TPL_RENDER, encoding="utf-8").read()
+        html = html.replace("__BASE_JSON__", _json.dumps(DEFAULT_BASE))
+        html = html.replace("__I18N_EN__", _dict_en())
+        html = html.replace("__UI_LANG__", ui_lang())
+        html = html.replace("__APP_JS__", _app_scripts(int(mt), RENDER_SKIP_JS))
+        html = html.replace("__V__", str(int(mt)))          # cache-busting статики
+        _CACHE_RENDER.update(mtime=mt, html=html)
+    return cast(str, _CACHE_RENDER["html"])
+
+
+@app.route("/render")
+def render_page() -> str:
+    """Страница рендера без AE: сцена в натуральном размере кадра, кадр за кадром.
+
+    Параметры: `xml` — клип, `body` — id тела сборки (его кладёт POST /api/render_body),
+    `pxh` — короткая сторона прокси камер. Кадры снимает core/webrender/capture.mjs.
+    """
+    return _page_render()
 
 
 def _cleanup_on_exit() -> None:

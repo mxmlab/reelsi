@@ -180,6 +180,37 @@ def check_whisper_cpp() -> None:
         row(WARN, "whisper.cpp", t("проверка не удалась: {err}", err=type(e).__name__))
 
 
+def check_voice_sep() -> None:
+    """Шумодав RoFormer: стоит ли своё окружение и какие модели скачаны.
+
+    RoFormer ставится ОТДЕЛЬНО от проекта (`core/voicefx_sep`): venv с
+    audio-separator и две модели по ~0.9 ГБ в `~/.reelsi/voice_sep`. Поэтому
+    «нет» — это WARN с тем, что именно отключится: без него остаётся прежний
+    deep-filter. Проверяем ФАЙЛЫ, а не импорт: audio-separator тянет torch и
+    onnxruntime-gpu, и грузить это в диагностику незачем.
+    """
+    try:
+        from core import voicefx_sep
+        st = voicefx_sep.status()
+        done = [e for e in voicefx_sep.ENGINES if st["engines"][e]["installed"]]
+        left = [e for e in voicefx_sep.ENGINES if not st["engines"][e]["installed"]]
+        if not left:
+            row(OK, "RoFormer", t("окружение {env}, модели: {models}",
+                                  env=voicefx_sep.ENV_DIR, models=", ".join(done)))
+        elif not st["ready"]:
+            row(WARN, "RoFormer", t("нет окружения ({env}) — отключится шумодав "
+                                    "RoFormer, останется deep-filter. Качается кнопкой "
+                                    "«Скачать RoFormer ({size})» в панели голоса",
+                                    env=voicefx_sep.ENV_DIR, size=st["size"]))
+        else:
+            row(WARN, "RoFormer", t("нет моделей: {models} — качаются кнопкой "
+                                    "«Скачать RoFormer ({size})» в панели голоса",
+                                    models=", ".join(left), size=st["size"]))
+    except ReelsiError: raise
+    except Exception as e:
+        row(WARN, "RoFormer", t("проверка не удалась: {err}", err=type(e).__name__))
+
+
 # --------------------------------------------------------------------------- #
 # Опциональное: без чего отключается КОНКРЕТНАЯ функция
 # --------------------------------------------------------------------------- #
@@ -398,6 +429,7 @@ def main() -> int:
     check_core()
     check_compute()
     check_whisper_cpp()
+    check_voice_sep()
     check_assets()
     check_workspace()
     check_ae_tooling()

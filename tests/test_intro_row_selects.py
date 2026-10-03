@@ -143,14 +143,14 @@ def test_all_doors_list_new_fields_next_to_accent():
 
     # 1. selectAE (90-ae.js:65)
     select_ae = _func(ae_js, "selectAE")
-    # 2. aiIntroAllRun (90-ae.js:419)
-    ai_intro = _func(ae_js, "aiIntroAllRun")
+    # 2. aiIntroOne (90-ae.js:493)
+    ai_intro = _func(ae_js, "aiIntroOne")
     # 3. resolveIntroFor (90-ae.js:280)
     resolve_intro = _func(ae_js, "resolveIntroFor")
 
     doors = [
         ("90-ae.js: selectAE", select_ae),
-        ("90-ae.js: aiIntroAllRun", ai_intro),
+        ("90-ae.js: aiIntroOne", ai_intro),
         ("90-ae.js: resolveIntroFor", resolve_intro),
     ]
 
@@ -209,20 +209,24 @@ def test_golden_intro_without_new_fields_gives_same_jsx(xml_subs, tmp_path):
 
 
 def test_scene_plan_carries_anim_fx_dec(xml_subs):
-    """Новые поля anim, fx, dec доезжают до плана сцены."""
+    """Новые поля anim, fx, dec доезжают до плана сцены (fx строки — только у accent)."""
     intro = [
         dict(words=["ПЕРВОЕ"], color="custom", fill=[0.1, 0.2, 0.3], anim="count", fx="glow", dec=2, times=[T_CAM1]),
         dict(words=["СДО*НУТЬ"], color="accent", anim="up", times=[T_CAM2]),
     ]
-    plan = xml2ae.scene_plan(xml_subs, disclaimer="", intro=intro, intro_splits=[1])
+    # Свечение — ЕДИНАЯ галка стиля intro_accent_glow, решает её план: поле fx строки
+    # не читается вовсе (решение владельца 02.10.2026). Поэтому custom-строка со старым
+    # fx="glow" свечения не получает, а accent-строка получает его по включённой галке.
+    plan = xml2ae.scene_plan(xml_subs, disclaimer="", intro=intro, intro_splits=[1],
+                             style={"intro_accent_glow": True})
     lines1 = plan["intro"][0]["lines"]
     assert lines1[0]["color"] == "custom"
     assert lines1[0]["fill"] == [0.1, 0.2, 0.3]
     assert lines1[0]["anim"] == "count"
-    assert lines1[0]["fx"] == "glow"
+    assert "fx" not in lines1[0], "поле fx строки снова читается планом"
     assert lines1[0]["dec"] == 2
 
     lines2 = plan["intro"][1]["lines"]
     assert lines2[0]["color"] == "accent"
     assert lines2[0]["anim"] == "up"
-    assert "fx" not in lines2[0]
+    assert lines2[0]["fx"] == "glow"

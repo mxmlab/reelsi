@@ -9,15 +9,26 @@
 from __future__ import annotations
 import json
 import socket
+import threading
 import time
 import urllib.request, urllib.error
 from typing import Any, Callable
 
 from .config import APP_NAME, APP_REFERER, _profile_dict, apply_profile_headers, load_ai_config
 from .llm import ai_log_append, cancel_reason, cancelled
+from core.applog import get_logger
 from core.umsg import ReelsiError, umsg
 from core.app_meta import console_emit, http_req
 
+log = get_logger(__name__)
+
+# ---- Unsloth Studio (локальная генерация картинок) --------------------------
+_UNSLOTH_LOCK = threading.Lock()
+_UNSLOTH_OURS: tuple[str, str] | None = None
+_UNSLOTH_TIMER: threading.Timer | None = None
+UNSLOTH_IDLE_SEC: float = 90
+UNSLOTH_POLL_SEC: float = 2.0
+UNSLOTH_LOAD_TIMEOUT_SEC: float = 900
 
 
 # ---- Генерация картинок-вставок (Nano Banana и т.п.) ------------------------
@@ -161,17 +172,20 @@ def gen_image(prompt: str, prof: dict[str, Any] | None = None, emit: Callable[..
                               provider=prof["provider"]))
     t0 = time.time()
     try:
-        try:
-            res = _gen_image_openrouter(prompt, prof, emit=emit, retries=retries)
-        except _ImageTimeoutError:
-            # Сбой провайдера: OpenRouter /images у gemini-3.1-flash-lite-image на части промптов
-            # («large water bottles row») виснет наглухо (150 с и повторно 60 с — TimeoutError),
-            # а тот же промпт через /chat/completions даёт картинку за 4.8 с («a red apple on
-            # white background» через /images — 4.5 с). Откатываемся на чат.
-            emit("! Image API не ответил за {s} с — пробую через чат", s=IMAGES_API_TIMEOUT_S)
-            res = _gen_image_chat(prompt, prof, emit=emit, retries=retries)
-        except _Image404Error:
-            res = _gen_image_chat(prompt, prof, emit=emit, retries=retries)
+        if prof["provider"] == "unsloth":
+            res = _gen_image_unsloth(prompt, prof, emit=emit)
+        else:
+            try:
+                res = _gen_image_openrouter(prompt, prof, emit=emit, retries=retries)
+            except _ImageTimeoutError:
+                # Сбой провайдера: OpenRouter /images у gemini-3.1-flash-lite-image на части промптов
+                # («large water bottles row») виснет наглухо (150 с и повторно 60 с — TimeoutError),
+                # а тот же промпт через /chat/completions даёт картинку за 4.8 с («a red apple on
+                # white background» через /images — 4.5 с). Откатываемся на чат.
+                emit("! Image API не ответил за {s} с — пробую через чат", s=IMAGES_API_TIMEOUT_S)
+                res = _gen_image_chat(prompt, prof, emit=emit, retries=retries)
+            except _Image404Error:
+                res = _gen_image_chat(prompt, prof, emit=emit, retries=retries)
         ai_log_append("image", prof, ok=True, ms=(time.time() - t0) * 1000, err=None)
         return res
     except (ReelsiError, Exception, SystemExit) as e:
@@ -284,3 +298,278 @@ def _gen_image_chat(prompt: str, prof: dict[str, Any], emit: Callable[..., Any] 
         emit("! генерация не удалась ({err}) — повтор {attempt}/{retries}",
              err=last, attempt=attempt + 1, retries=retries)
     raise ReelsiError(umsg("gen_failed", f"генерация картинки упала после {retries + 1} попыток: {last}", tries=retries + 1, last=last))
+
+
+def _parse_unsloth_model(model_str: str) -> tuple[str, str]:
+    """Формат поля «модель» профиля: <владелец>/<репо> или <владелец>/<репо>/<файл>.gguf.
+    Последний сегмент на .gguf = gguf_filename, остальное = model_path."""
+    m = (model_str or "").strip()
+    if "/" in m and m.lower().endswith(".gguf"):
+        model_path, _, gguf = m.rpartition("/")
+        return model_path.strip(), gguf.strip()
+    return m, ""
+
+
+def _unsloth_root(prof: dict[str, Any]) -> str:
+    base = (prof.get("base_url") or "http://127.0.0.1:8888").strip().rstrip("/")
+    if base.lower().endswith("/v1"):
+        base = base[:-3].rstrip("/")
+    return base or "http://127.0.0.1:8888"
+
+
+def _unsloth_ensure_loaded(root: str, model_path: str, gguf: str, emit: Callable[..., Any] = console_emit) -> None:
+    global _UNSLOTH_OURS
+    req = http_req(f"{root}/api/inference/images/status")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            st = json.load(r)
+    except (urllib.error.URLError, ConnectionError, OSError) as e:
+        if isinstance(e, urllib.error.HTTPError):
+            raise  # HTTP-ответы пробрасываем как есть
+        raise ReelsiError(umsg("unsloth_unreachable",
+                               "Unsloth Studio не отвечает на {root} — запусти приложение Unsloth Studio",
+                               root=root)) from e
+
+    is_loaded = bool(st.get("loaded"))
+    repo_id = st.get("repo_id") or ""
+    gguf_fn = st.get("gguf_filename") or ""
+    mem_mode = st.get("memory_mode") or ""
+
+    if is_loaded:
+        if repo_id == model_path and (not gguf or gguf_fn == gguf) and mem_mode == "low_vram":
+            return
+        loaded_model = f"{repo_id}/{gguf_fn}" if (repo_id and gguf_fn) else (repo_id or gguf_fn or "unknown")
+        raise ReelsiError(umsg("unsloth_foreign_model",
+                               "В Unsloth Studio загружена «{model}» (режим {mode}) — "
+                               "выгрузи её в Studio: Reelsi грузит свою модель сам, только в low_vram",
+                               model=loaded_model, mode=mem_mode or "unknown"))
+
+    from .llm import unload_ours
+    unload_ours(emit=emit)
+
+    model_label = f"{model_path}/{gguf}" if gguf else model_path
+    emit("  Unsloth Studio: загружаю {model} (low_vram)…", model=model_label)
+
+    load_body: dict[str, Any] = {
+        "model_path": model_path,
+    }
+    if gguf:
+        load_body["gguf_filename"] = gguf
+    load_body["memory_mode"] = "low_vram"
+
+    req_load = http_req(f"{root}/api/inference/images/load",
+                        data=json.dumps(load_body).encode("utf-8"),
+                        headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req_load, timeout=900) as _:
+            pass
+    except (urllib.error.URLError, ConnectionError, OSError) as e:
+        if isinstance(e, urllib.error.HTTPError):
+            err_detail = ""
+            try:
+                err_detail = e.read().decode("utf-8", "replace")[:300]
+            except Exception:
+                err_detail = str(e)
+            raise ReelsiError(umsg("unsloth_load_failed",
+                                   "Unsloth Studio не загрузил {model}: {err}",
+                                   model=model_path, err=err_detail)) from e
+        raise ReelsiError(umsg("unsloth_unreachable",
+                               "Unsloth Studio не отвечает на {root} — запусти приложение Unsloth Studio",
+                               root=root)) from e
+
+    key = f"{model_path}|{gguf}"
+    _UNSLOTH_OURS = (root, key)
+
+    # Ждём реальной готовности модели: POST load возвращается сразу,
+    # модель грузится в фоне ~40–60 с.
+    t0_wait = time.time()
+    last_emit = 0.0
+    while True:
+        if cancelled():
+            raise ReelsiError(cancel_reason())
+
+        elapsed = time.time() - t0_wait
+        if elapsed > UNSLOTH_LOAD_TIMEOUT_SEC:
+            raise ReelsiError(umsg("unsloth_load_timeout",
+                                   "Unsloth Studio не загрузил {model} за {sec} с",
+                                   model=model_label, sec=int(elapsed)))
+
+        time.sleep(UNSLOTH_POLL_SEC)
+
+        # Проверяем прогресс загрузки (error поле)
+        try:
+            req_prog = http_req(f"{root}/api/inference/images/load-progress")
+            with urllib.request.urlopen(req_prog, timeout=30) as r_prog:
+                prog = json.load(r_prog)
+            prog_err = prog.get("error")
+            if prog_err:
+                raise ReelsiError(umsg("unsloth_load_failed",
+                                       "Unsloth Studio не загрузил {model}: {err}",
+                                       model=model_label, err=str(prog_err)))
+        except ReelsiError:
+            raise
+        except (urllib.error.URLError, ConnectionError, OSError) as e:
+            if isinstance(e, urllib.error.HTTPError):
+                raise
+            raise ReelsiError(umsg("unsloth_unreachable",
+                                   "Unsloth Studio не отвечает на {root} — запусти приложение Unsloth Studio",
+                                   root=root)) from e
+
+        # Проверяем статус модели
+        try:
+            req_st = http_req(f"{root}/api/inference/images/status")
+            with urllib.request.urlopen(req_st, timeout=30) as r_st:
+                st2 = json.load(r_st)
+        except ReelsiError:
+            raise
+        except (urllib.error.URLError, ConnectionError, OSError) as e:
+            if isinstance(e, urllib.error.HTTPError):
+                raise
+            raise ReelsiError(umsg("unsloth_unreachable",
+                                   "Unsloth Studio не отвечает на {root} — запусти приложение Unsloth Studio",
+                                   root=root)) from e
+
+        if (st2.get("loaded")
+                and st2.get("repo_id") == model_path
+                and (not gguf or st2.get("gguf_filename") == gguf)):
+            return  # модель загружена и совпадает — готово
+
+        elapsed = time.time() - t0_wait
+        if elapsed - last_emit >= 10.0:
+            emit("  Unsloth Studio: модель грузится… {sec:.0f} с", sec=elapsed)
+            last_emit = elapsed
+
+
+def _gen_image_unsloth(prompt: str, prof: dict[str, Any], emit: Callable[..., Any] = console_emit) -> bytes:
+    global _UNSLOTH_TIMER
+    import base64
+    root = _unsloth_root(prof)
+    model_path, gguf = _parse_unsloth_model(prof.get("model") or "")
+    t0 = time.time()
+    with _UNSLOTH_LOCK:
+        if _UNSLOTH_TIMER is not None:
+            _UNSLOTH_TIMER.cancel()
+            _UNSLOTH_TIMER = None
+
+        try:
+            _unsloth_ensure_loaded(root, model_path, gguf, emit=emit)
+
+            if cancelled():
+                raise ReelsiError(cancel_reason())
+
+            gen_url = f"{root}/v1/images/generations"
+            payload = {
+                "prompt": prompt,
+                "n": 1,
+                "size": "1024x1024",
+                "response_format": "b64_json",
+            }
+            headers = {"Content-Type": "application/json"}
+            if prof.get("api_key"):
+                headers["Authorization"] = f"Bearer {prof['api_key']}"
+            headers = apply_profile_headers(headers, prof)
+
+            req = http_req(gen_url, data=json.dumps(payload).encode("utf-8"), headers=headers)
+            try:
+                with urllib.request.urlopen(req, timeout=600) as r:
+                    resp = json.load(r)
+            except urllib.error.HTTPError as e:
+                last = _img_http_error(e, prof)
+                raise ReelsiError(umsg("gen_failed", f"генерация картинки упала после 1 попыток: {last}", tries=1, last=last))
+            except (TimeoutError, socket.timeout) as e:
+                _check_img_timeout(e)
+                last = str(e)
+                raise ReelsiError(umsg("gen_failed", f"генерация картинки упала после 1 попыток: {last}", tries=1, last=last))
+            except urllib.error.URLError as e:
+                _check_img_timeout(e)
+                last = str(e)
+                raise ReelsiError(umsg("gen_failed", f"генерация картинки упала после 1 попыток: {last}", tries=1, last=last))
+
+            item = ((resp.get("data") or [{}])[0]) or {}
+            b64 = item.get("b64_json")
+            if b64:
+                img_bytes = base64.b64decode(b64)
+            elif item.get("url"):
+                img_url = item["url"]
+                if img_url.startswith("http://") or img_url.startswith("https://"):
+                    full_url = img_url
+                else:
+                    full_url = f"{root.rstrip('/')}/{img_url.lstrip('/')}"
+                req_dl = http_req(full_url)
+                with urllib.request.urlopen(req_dl, timeout=60) as r_dl:
+                    img_bytes = r_dl.read()
+            else:
+                last = "Unsloth Studio не вернул картинку, ответ: " + json.dumps(resp, ensure_ascii=False)[:200]
+                raise ReelsiError(umsg("gen_failed", f"генерация картинки упала после 1 попыток: {last}", tries=1, last=last))
+
+            dt = time.time() - t0
+            kb = max(1, len(img_bytes) // 1024)
+            model_label = prof.get("model") or model_path
+            emit("  картинка: {model} ({kb}КБ, локально, {sec:.0f} с)",
+                 model=model_label, kb=kb, sec=dt)
+
+            return img_bytes
+        finally:
+            if _UNSLOTH_OURS is not None:
+                if _UNSLOTH_TIMER is not None:
+                    _UNSLOTH_TIMER.cancel()
+                _UNSLOTH_TIMER = threading.Timer(UNSLOTH_IDLE_SEC, unsloth_unload_ours)
+                _UNSLOTH_TIMER.daemon = True
+                _UNSLOTH_TIMER.start()
+
+
+def unsloth_unload_ours(emit: Callable[..., Any] = console_emit) -> None:
+    """Выгрузить модель из Unsloth Studio, если она была загружена Reelsi."""
+    global _UNSLOTH_OURS, _UNSLOTH_TIMER
+    if _UNSLOTH_OURS is None:
+        return
+    with _UNSLOTH_LOCK:
+        if _UNSLOTH_OURS is None:
+            return
+        root, key = _UNSLOTH_OURS
+        try:
+            if _UNSLOTH_TIMER is not None:
+                _UNSLOTH_TIMER.cancel()
+                _UNSLOTH_TIMER = None
+            model_path, _, gguf = key.partition("|")
+            try:
+                req = http_req(f"{root}/api/inference/images/status")
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    st = json.load(r)
+                if (st.get("loaded") and
+                    st.get("repo_id") == model_path and
+                    (not gguf or st.get("gguf_filename") == gguf)):
+                    req_unload = http_req(f"{root}/api/inference/images/unload",
+                                          data=b"{}",
+                                          headers={"Content-Type": "application/json"})
+                    with urllib.request.urlopen(req_unload, timeout=60) as _:
+                        pass
+                    model_label = f"{model_path}/{gguf}" if gguf else model_path
+                    emit("  Unsloth Studio: выгрузил {model}", model=model_label)
+            except ReelsiError:
+                raise
+            except Exception as e:
+                log.warning("Unsloth Studio: сбой выгрузки модели: %s", e)
+        finally:
+            _UNSLOTH_OURS = None
+            if _UNSLOTH_TIMER is not None:
+                _UNSLOTH_TIMER.cancel()
+                _UNSLOTH_TIMER = None
+
+
+def unsloth_cancel_ours() -> None:
+    """Отменить текущую генерацию в Unsloth Studio, если есть _UNSLOTH_OURS."""
+    ours = _UNSLOTH_OURS
+    if not ours:
+        return
+    root, _ = ours
+    try:
+        req = http_req(f"{root}/api/inference/images/generate/cancel",
+                       data=b"{}",
+                       headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as _:
+            pass
+    except ReelsiError:
+        raise
+    except Exception as e:
+        log.warning("Unsloth Studio: сбой отмены генерации: %s", e)

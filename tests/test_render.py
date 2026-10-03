@@ -364,8 +364,12 @@ def test_run_proc_batch_identifies_comp_from_output_to_and_header():
 
     comps = [("01_C0233", "C0233", 100)]  # 100 — запасное число кадров из .jsx
 
+    captured_cmd = []
+
     class FakePopen:
         def __init__(self, *args, **kwargs):
+            if args:
+                captured_cmd.append(args[0])
             self.stdout = iter(raw_lines)
             self.pid = 12345
 
@@ -388,6 +392,100 @@ def test_run_proc_batch_identifies_comp_from_output_to_and_header():
         item = render.RJOB["items"][0]
         assert item["pct"] == 1.0
         assert item["stage"] == "done"
+        assert captured_cmd, "FakePopen не получил аргументы"
+        cmd = captured_cmd[0]
+        assert "-mem_usage" in cmd
+        idx = cmd.index("-mem_usage")
+        assert cmd[idx:idx + 3] == ["-mem_usage", "40", "60"]
     finally:
         render_job.subprocess.Popen = orig_popen
+
+
+def test_aerender_command_includes_mem_usage_single_and_batch(tmp_path, monkeypatch):
+    """Оба пути вызова aerender (одиночный и набор) содержат -mem_usage 40 60."""
+    from core.aerender import AERENDER_MEM_USAGE
+    assert AERENDER_MEM_USAGE == (40, 60)
+    assert render_job.AERENDER_MEM_USAGE == (40, 60)
+
+    # 1. run_proc_batch
+    batch_cmds = []
+
+    class FakeBatchPopen:
+        def __init__(self, cmd, *args, **kwargs):
+            batch_cmds.append(cmd)
+            self.stdout = iter([])
+            self.pid = 1001
+
+        def poll(self):
+            return 0
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(render_job.subprocess, "Popen", FakeBatchPopen)
+    render.RJOB.update(running=True, done=False, log=[], pct=None, cur="", ae="",
+                       out_dir=str(tmp_path), result=[], failed=[], cancel=False,
+                       items=[{"name": "c1", "stage": "render", "pct": None, "path": "", "reason": ""}])
+    comps = [("c1", "comp1", 10)]
+    render_job.run_proc_batch(render.RJOB, "aerender.exe", "proj.aep", comps, str(tmp_path))
+    assert batch_cmds, "run_proc_batch не вызвал Popen"
+    b_cmd = batch_cmds[0]
+    assert "-mem_usage" in b_cmd
+    b_idx = b_cmd.index("-mem_usage")
+    assert b_cmd[b_idx:b_idx + 3] == ["-mem_usage", "40", "60"]
+
+    # 2. run_render_single
+    single_aerender_cmds = []
+    outdir = str(tmp_path / "single_jsx")
+    os.makedirs(outdir, exist_ok=True)
+    stem = "fake"
+    aep = os.path.join(outdir, f"{stem}.aep")
+    aelog = os.path.join(outdir, f"{stem}.aelog.txt")
+
+    class FakeSinglePopen:
+        def __init__(self, cmd, *args, **kwargs):
+            exe = str(cmd[0]).lower()
+            if "afterfx" in exe:
+                with open(aep, "wb") as f:
+                    f.write(b"aep")
+                with open(aelog, "w", encoding="utf-8") as f:
+                    f.write("REELSI: ок\n")
+            elif "aerender" in exe:
+                single_aerender_cmds.append(cmd)
+            self.stdout = iter([])
+            self.pid = 1002
+
+        def poll(self):
+            return 0
+
+        def wait(self):
+            return 0
+
+    def fake_to_ae(xml_path, jp, **kw):
+        with open(jp, "w", encoding="utf-8") as f:
+            f.write("// var FPS=60;\n")
+
+    import core.xml2ae as xml2ae
+    import core.verify_jsx as verify_jsx
+
+    monkeypatch.setattr(render_job.subprocess, "Popen", FakeSinglePopen)
+    monkeypatch.setattr(xml2ae, "to_ae_full", fake_to_ae)
+    monkeypatch.setattr(verify_jsx, "verify", lambda p: type("Rep", (), {"errors": []})())
+    monkeypatch.setattr(render_job, "find_ae",
+                        lambda: ("fake_AfterFX.exe", "fake_aerender.exe", "Adobe After Effects 2026"))
+    monkeypatch.setattr(render_job, "ae_running", lambda: False)
+    monkeypatch.setattr(render_job, "aep_call_path", lambda p: (p, None))
+    monkeypatch.setattr(render_job, "rendered_ok", lambda p: True)
+
+    jobs = [{"xml_path": f"{stem}.xml", "outdir": outdir, "roto": False}]
+    render.RJOB.update(running=True, done=False, log=[], pct=None, cur="", ae="",
+                       out_dir=str(tmp_path), result=[], failed=[], cancel=False,
+                       items=[{"name": stem, "stage": "wait", "pct": None, "path": "", "reason": ""}])
+    render_job.run_render_single(render.RJOB, jobs, outdir, str(tmp_path))
+    assert single_aerender_cmds, "run_render_single не запустил aerender"
+    s_cmd = single_aerender_cmds[0]
+    assert "-mem_usage" in s_cmd
+    s_idx = s_cmd.index("-mem_usage")
+    assert s_cmd[s_idx:s_idx + 3] == ["-mem_usage", "40", "60"]
+
 

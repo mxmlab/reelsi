@@ -1198,6 +1198,51 @@ def strip_bg_file(path: str, dest_dir: str | None = None, emit: Any = None) -> s
     return os.path.abspath(dst)
 
 
+def add_file(path: str, desc: str, kind: str, src: str = "stock", emit: Any = console_emit,
+             ru: str = "", look: str = "", embed: bool = True) -> str:
+    """Дописать ГОТОВЫЙ файл в индекс базы БЕЗ полного рескана: эмбеддинг описания
+    и запись под локом. Общая часть генерации (add_generated) и стока
+    (core/stock.py): файл уже лежит в папке базы, нужен вектор по описанию — и
+    следующие ролики найдут его автоподбором бесплатно. `src` уезжает в desc_src
+    (generated/stock): по нему видно, откуда файл взялся. embed=False — эмбеддинг
+    сейчас не считаем (пакетная генерация делает его одним вызовом через
+    embed_items после того, как сгенерятся все картинки).
+    Возвращает путь записи (тот же, что приняли)."""
+    emit = wrap_emit(emit)
+    path = os.path.abspath(path)
+    desc = desc or os.path.splitext(os.path.basename(path))[0]
+    ru = (ru or "").strip()
+    doc_t = _subject_text(_doc_text(desc, ru))
+    vec = None
+    if embed:                                               # эмбеддинг — вне лока
+        with _LOCK:                                         # короткое чтение модели под локом
+            d0 = _load()
+            model = (d0.get("emb_model") or "") if d0 else ""
+        if model:
+            vs = _emb_docs([doc_t], model)                   # сетевой вызов может висеть до 120 с
+            if vs:
+                vec = vs[0]
+    with _LOCK:                                             # атомарно load+modify+save под локом
+        data = _load()
+        if data:
+            items = data.setdefault("items", [])
+            if not any(it["path"] == path for it in items):
+                it = {"path": path, "name": os.path.basename(path), "type": kind,
+                      "used": 0, "desc": desc, "desc_src": src, "emb": vec,
+                      "added": time.time()}   # свежесть: при равном score побеждает новый
+                if ru:
+                    it["ru"] = ru
+                lk = _norm_look(look)
+                if lk:
+                    it["look"] = lk
+                items.append(it)
+                _save(data)
+                emit("база: +{name} ({src})", name=os.path.basename(path), src=src)
+        else:
+            emit("база не построена — файл сохранён, в индекс попадёт при скане")
+    return path
+
+
 def add_generated(img_bytes: bytes, query: str, dest_dir: str, emit: Any = None, embed: bool = True, ru: str = "", look: str = "") -> str:
     """Сгенерённая картинка-вставка: сохранить в <dest_dir>/generated/ и дописать
     в индекс БЕЗ полного рескана (desc = query, ru = русская подпись, эмбеддинг сразу если эмбеддер жив) —
@@ -1223,37 +1268,9 @@ def add_generated(img_bytes: bytes, query: str, dest_dir: str, emit: Any = None,
     h8 = hashlib.sha1(img_bytes).hexdigest()[:8]
     path = os.path.abspath(os.path.join(gen, f"{slug}-{h8}.png"))
     open(path, "wb").write(img_bytes)
-    desc = query or slug
-    ru = (ru or "").strip()
-    doc_t = _subject_text(_doc_text(desc, ru))
-    vec = None
-    if embed:                                               # эмбеддинг — вне лока
-        with _LOCK:                                         # короткое чтение модели под локом
-            d0 = _load()
-            model = (d0.get("emb_model") or "") if d0 else ""
-        if model:
-            vs = _emb_docs([doc_t], model)                   # сетевой вызов может висеть до 120 с
-            if vs:
-                vec = vs[0]
-    with _LOCK:                                             # атомарно load+modify+save под локом
-        data = _load()
-        if data:
-            items = data.setdefault("items", [])
-            if not any(it["path"] == path for it in items):
-                it = {"path": path, "name": os.path.basename(path), "type": "photo",
-                      "used": 0, "desc": desc, "desc_src": "generated", "emb": vec,
-                      "added": time.time()}   # свежесть: при равном score побеждает новый
-                if ru:
-                    it["ru"] = ru
-                lk = _norm_look(look)
-                if lk:
-                    it["look"] = lk
-                items.append(it)
-                _save(data)
-                emit("база: +{name} (generated)", name=os.path.basename(path))
-        else:
-            emit("база не построена — файл сохранён, в индекс попадёт при скане")
-    return path
+    # «эмбеддинг + запись в индекс» — общая часть со стоком, живёт в add_file
+    return add_file(path, query or slug, "photo", src="generated", emit=emit,
+                    ru=ru, look=look, embed=embed)
 
 
 def embed_items(items: Sequence[Sequence[str]], emit: Any = None) -> int:

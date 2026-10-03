@@ -61,6 +61,24 @@ def _slice(src, start, end):
     return src[a:b]
 
 
+def _func_body(src, decl):
+    """Тело функции от объявления `decl` до её закрывающей скобки.
+
+    Функция может занимать несколько строк (openEditClip — ровно такая): срез «до конца
+    строки» ломался бы на первой же правке внутри неё, хотя поведение не менялось.
+    """
+    a = src.index(decl)
+    depth = 0
+    for i in range(a, len(src)):
+        if src[i] == "{":
+            depth += 1
+        elif src[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[a:i + 1]
+    raise AssertionError(f"не нашлась закрывающая скобка: {decl}")
+
+
 def _run_node(tmp_path, name, script):
     js_file = tmp_path / name
     js_file.write_text(script, encoding="utf-8")
@@ -298,14 +316,28 @@ def test_style_panel_scrolls_inside_preview_tab():
 # 4. Шаг 1: заголовок — имя файла, у подписей нет хвостов
 # --------------------------------------------------------------------------- #
 def test_step1_markup_has_no_label_tails():
-    """В шапке шага 1 — имя открытого файла, а не название окна; подписи — «Монтаж» и
-    «Редактор» (тултип «i» у редактора остался)."""
+    """В шапке шага 1 — имя открытого файла, а не название окна; подпись — «Редактор»
+    (тултип «i» у неё остался), а блока «Монтаж» со своим плеером больше нет.
+
+    Решение владельца 02.10.2026: «сверху есть блок "монтаж", который по сути повторяет
+    все остальные функции и кнопки — убрать, звук только переместить». Плеер на шаге 1
+    один — редактор: кнопки «играть», время, громкость превью и строка «камера — склеек —
+    длина» стоят его строкой управления.
+    """
     html = _read(HTML)
     assert " — как будет в ролике" not in html, "у подписи «Монтаж» остался хвост"
     assert " — исходник камеры 1" not in html, "у подписи «Редактор» остался хвост"
-    assert 'class="edlbl">Монтаж</div>' in html, "подпись монтажа не «Монтаж»"
-    assert '<div class="edlbl">Редактор <span class="i" data-t="Клик — курсор' in html, (
+    # Блок «Монтаж» убран целиком: ни подписи, ни плеера, ни ползунка, ни строки камер
+    for gone in ('class="edlbl">Монтаж</div>', 'id="pvplay"', 'id="pvseek"',
+                 'id="pvtime"', 'id="pvcam"'):
+        assert gone not in html, f"в разметке шага 1 остался блок «Монтаж»: {gone}"
+    assert re.search(r'class="edlbl">Редактор <span class="i" data-t="[^"]+">!</span></div>', html), (
         "подпись редактора потеряла тултип «i» или текст")
+    # Громкость и строка «камера — склеек — длина» переехали в строку управления редактора
+    assert 'id="edcam"' in html, "строка «камера — склеек — длина» пропала вместе с блоком"
+    ed_play = html.index('id="edplay"')
+    assert html.index('data-vol', ed_play) < html.index('id="edcam"'), (
+        "громкость превью не переехала в строку управления редактора")
     assert re.search(r'class="t" id="mbPvTitle"', html), (
         "в шапке шага 1 нет элемента под имя открытого файла")
     assert "Предпросмотр и правка нарезки</span>" not in html, (
@@ -318,8 +350,9 @@ def test_node_step1_title_is_the_open_clip_name(tmp_path):
     боевыми pvTitle/openEditClip и боевым clipLabel (своего разбора имени нет)."""
     prev = _read(PREV_JS)
     clip = next(l for l in _read(QUEUE_JS).splitlines() if l.startswith("function clipLabel("))
-    idx = prev.index("async function openEditClip(")
-    open_edit = prev[idx:prev.index("\n", prev.index("edOpen();}", idx))]
+    # Панель «Голос» зовётся из openEditClip ПОСЛЕ редактора — здесь она не предмет
+    # проверки (её сторону сторожит tests/test_editor_voice_open.py), важен заголовок.
+    open_edit = _func_body(prev, "async function openEditClip(")
     script = r"""
 const assert = require('assert');
 function El(tag){this.tagName=String(tag).toUpperCase();this._text='';
@@ -332,10 +365,16 @@ const ttl=new El('span');
 ttl.closest=sel=>(sel==='.modal'?dlg:null);
 global.$=id=>(id==='mbPvTitle'?ttl:null);
 global.CLIPS=[{xml:'C:\\reels\\clip7.xml',name:'clip7.xml'},{xml:'C:\\reels\\clip8.xml',name:''}];
+global.CLIPS[7]={xml:'C:\\reels\\clip7.xml',name:'clip7.xml'};
+var curAE=-1;
+var AEXML='';
+var aeCalls=[];
+function selectAE(i){aeCalls.push(i);curAE=i;AEXML=CLIPS[i].xml;}
 var opened='';
 global.openModal=id=>{opened=id;};
 global.openPreview=async()=>{};
 global.edOpen=()=>{};
+global.pvVoicePanel=async()=>{};
 var curEdit=-1;
 """ + clip + "\n" + _slice(prev, "function pvTitle(", "async function openEditClip(") + "\n" + open_edit + r"""
 
@@ -344,8 +383,17 @@ pvTitle(clipLabel(CLIPS[0]));
 assert.strictEqual(ttl.textContent,'clip7.xml','заголовок не имя файла: '+ttl.textContent);
 assert.strictEqual(dlg.attrs['aria-label'],'clip7.xml','aria-label не имя файла');
 
-// 2. Боевой вход шага 1 ставит то же имя (имя клипа без name берётся из пути XML).
-openEditClip(1).then(()=>{
+// 2. Боевой вход шага 1: вызов selectAE(7), повторный при том же клипе не зовёт
+openEditClip(7).then(async ()=>{
+  assert.strictEqual(aeCalls.length,1,'openEditClip(7) не вызвал selectAE: '+JSON.stringify(aeCalls));
+  assert.strictEqual(aeCalls[0],7,'selectAE вызван с неверным индексом');
+  curAE=7;
+  AEXML=CLIPS[7].xml;
+  await openEditClip(7);
+  assert.strictEqual(aeCalls.length,1,'повторный openEditClip(7) вызвал selectAE: '+JSON.stringify(aeCalls));
+
+  // 3. Боевой вход шага 1 ставит то же имя (имя клипа без name берётся из пути XML).
+  await openEditClip(1);
   assert.strictEqual(ttl.textContent,'clip8.xml',
     'openEditClip не заполнил заголовок именем файла: '+ttl.textContent);
   assert.strictEqual(dlg.attrs['aria-label'],'clip8.xml','aria-label не обновился');
@@ -394,7 +442,8 @@ def test_preview_proxy_status_returns_pct(monkeypatch, tmp_path):
     xml = tmp_path / "clip.xml"
     xml.write_text("<xmeml/>", encoding="utf-8")
     monkeypatch.setattr(previewproxy, "_preview_proxy_plan",
-                        lambda p, h: ([("/path/cam1.mp4", "/path/pv.mp4", False)], str(tmp_path)))
+                        lambda p, h, allintra=False: ([("/path/cam1.mp4", "/path/pv.mp4", False)],
+                                                      str(tmp_path)))
 
     seen = []
     during = {}
@@ -427,19 +476,22 @@ def test_preview_proxy_status_returns_pct(monkeypatch, tmp_path):
 
 
 def test_proxy_progress_block_over_the_player():
-    """Блок прогресса поверх плеера: полоса, «Готовлю прокси камеры {i}/{n}: {файл} — {pct} %»
-    и подсказка «один раз на файл, дальше из кэша»; блок показывают все три плеера, которые
-    ждут прокси, а прежний хвост в подписи камер убран."""
+    """Блок прогресса поверх плеера: полоса, текст статуса из ОБЩЕГО словаря прогресса
+    (`progStatusFor('proxy', …)` — «собираю прокси» из static/app/55-progress.js, своей
+    формулировки у блока нет) и подсказка «один раз на файл, дальше из кэша»; блок
+    показывают все три плеера, которые ждут прокси, а прежний хвост в подписи камер убран."""
     prev = _read(PREV_JS)
     block = _slice(prev, "function pvProxyBlock(", "function pvProxyWatch(")
     assert "pvpx_fill" in block and "width=pct+'%'" in block, (
         "в блоке нет полосы прогресса от pct")
-    assert "Готовлю прокси камеры {i}/{n}: {file} — {pct} %" in block, "нет строки прогресса"
+    assert "progStatusFor('proxy',{i:st.i||0,n:st.n||0,pct:pct})" in block, (
+        "текст статуса берётся не из общего словаря прогресса")
+    assert "t('готовлю прокси" not in block, "у блока снова своя формулировка статуса"
     assert "один раз на файл, дальше из кэша" in block, "нет подсказки про кэш"
     assert "pvpx" in _read(CSS), "в app.css нет стилей блока .pvpx"
     assert "pvProxyNote" not in prev, "хвост «— прокси камер: n/m» в подписи камер остался"
-    assert "pointer-events:none" in _slice(_read(CSS), ".pvpx{", "}"), (
-        "блок перехватывает клики по кадру")
+    assert "pointer-events:none" in _slice(_read(CSS), ".pvprog{", "}"), (
+        "контейнер прогресса перехватывает клики по кадру")
 
     watch = _slice(prev, "function pvProxyWatch(", "async function pvProxyPoll(")
     assert "pvProxyPoll()" in watch, "статус не опрашивается сразу — блок появится с задержкой"

@@ -19,7 +19,9 @@
      Glo2+Tritone на слове, прекомп без Glo2; соседняя группа из белых строк ->
      прекомп Glo2 радиус 42;
   7. случай 1 в режиме intro_mode="line" -> то же на слое строки;
-  8. группа [accent без anim/fx] -> у слова эффектов нет, прекомп Glo2 радиус 42;
+  8. группа [accent без anim] при СНЯТОЙ галке intro_accent_glow -> у слова эффектов
+     нет, прекомп Glo2 радиус 42: свечение accent-строк — единая галка стиля, и при
+     снятой не светится ни одна строка (tests/test_intro_accent_glow.py).
   9. стиль с intro_hl_fill -> Midtones тритона = INTRO_HL_FILL;
   10. сборка без жёлтых строк интро -> в .jsx нет introHlGlow и нет grpYellow.
 
@@ -458,11 +460,16 @@ def test_case_7_line_mode_case_1(xml_subs, tmp_path):
 
 @node
 def test_case_8_accent_without_anim_fx(xml_subs, tmp_path):
-    """Случай 8: группа [accent без anim/fx] -> у слова эффектов нет, прекомп Glo2 радиус 42."""
+    """Случай 8: группа [accent без anim] при снятой галке -> у слова эффектов нет, прекомп Glo2 радиус 42.
+
+    Свечение accent-строк — единая галка стиля intro_accent_glow: снята — не светится
+    ни одна accent-строка (plan_intro.py). Включённую галку и accent-акценты стережёт
+    tests/test_intro_accent_glow.py."""
     intro = [
         dict(words=["АКЦЕНТ"], color="accent", times=[1.0]),
     ]
-    jsx, _ = _build(xml_subs, tmp_path, intro, splits=[1], name="case8.jsx")
+    jsx, _ = _build(xml_subs, tmp_path, intro, splits=[1],
+                    style={"intro_accent_glow": False}, name="case8.jsx")
     data = _probe_intro(jsx, tmp_path)
 
     w = next(w for w in data["layers"] if w["text"] == "АКЦЕНТ")

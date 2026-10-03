@@ -39,10 +39,10 @@ from dataclasses import dataclass
 from typing import Any, Callable, cast
 
 from .jsutil import _jd, _r
-from .layout import (INS_C2_BASE, INS_C2_PEAK, INS_C1_HIGH, INS_EXIT, INS_RISE_DY,
-                     INS_RISE_ENTER, INS_RISE_S0, _anim_keys, _blur_keys,
+from .layout import (INS_C2_BASE, INS_C2_PEAK, INS_C1_HIGH, INS_EXIT, INS_MASK_R,
+                     INS_RISE_DY, INS_RISE_ENTER, INS_RISE_S0, _anim_keys, _blur_keys,
                      _cam1_pos_keys, _fill_slack, _fit_scale, _ins_card,
-                     _ins_enter_exit, _ins_plate, _ins_scale)
+                     _ins_enter_exit, _ins_plate, _ins_scale, _px_k)
 from .parse import _is_image
 from .plan_style import StyleValues
 
@@ -69,6 +69,15 @@ class InsertTimingInputs:
     style: StyleValues
     # Лог: сюда уходит сообщение о переносе вставки, срезанной катом.
     emit: Callable[..., Any]
+    # Ширина кадра плана (meta["w"]): по ней считается масштаб фотовставки
+    # (_ins_scale — фото в прекомпе тянется под ширину КОМПОЗА, а не под 1080).
+    # Дефолт 1080 — для прямых вызовов в тестах; сборка всегда передаёт ширину
+    # формата ролика (в 16:9 прекомп 1920 — на 1080-й ширине карточка была бы мельче).
+    comp_w: float = 1080.0
+    # Высота кадра плана (meta["h"]): вместе с шириной задаёт множитель пиксельных
+    # констант раскладки — карточка задана в кадре 1080 по КОРОТКОЙ стороне
+    # (layout._px_k, то же правило, что у вида «size» стиля). Дефолт 1920 — 9:16.
+    comp_h: float = 1920.0
 
 
 @dataclass(frozen=True)
@@ -238,9 +247,11 @@ def plan_insert_timings(inp: InsertTimingInputs) -> InsertTimings:
         # на отдельный нул (без зума Камеры 1, которой в кадре нет) и сдвигается общими INS_C1_ON2_X/Y
         x["oncam2"] = bool(sstyle == "cam1" and _act != 0)
         # масштаб считаем по пропорциям картинки (см. _ins_scale), но РУЧНОЙ уже проставленный
-        # scale не затираем — иначе правка из webui умирала на каждой пересборке
+        # scale не затираем — иначе правка из webui умирала на каждой пересборке.
+        # Коробка карточки — пиксели кадра 1080: под кадр ролика их множит _px_k.
         if not x.get("scale_manual"):
-            x["scale"] = _ins_scale(x.get("media"), sstyle)
+            x["scale"] = _ins_scale(x.get("media"), sstyle, inp.comp_w,
+                                    _px_k(inp.comp_w, inp.comp_h))
     return InsertTimings(inserts=inserts, clip_end=_clip_end)
 
 
@@ -264,6 +275,10 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
     ins_c2x, ins_c2y = style.insert_c2_x, style.insert_c2_y
     emit = inp.emit
     _fps = meta["fps"]
+    # Множитель пиксельных констант раскладки под кадр ролика (layout._px_k): коробка
+    # карточки, блюр и вылет вставки заданы в пикселях кадра 1080. Считается ОДИН раз —
+    # второй копии правила нет.
+    _px = _px_k(meta["w"], meta["h"])
 
     def _isec(x: dict[str, Any], k: str) -> float:                                   # поле «сек+кадры» -> секунды
         s, f = x.get(k + "_s"), x.get(k + "_f")
@@ -341,7 +356,7 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
             # прежним путём (карточка, маска) даже при заданном в стиле файле подложки.
             _plate = _ins_plate(media, _plate_path, out["style"], out.get("sc"),
                                 out.get("x"), out.get("y"), meta["w"], meta["h"],
-                                _plate_scale) if (x.get("plate") and _plate_path) else None
+                                _plate_scale, _px) if (x.get("plate") and _plate_path) else None
             if _plate:
                 # Подложка: масштаб слоя прекомпа — плашка под карточку, фото
                 # вписано в неё, ручные сдвиг/масштаб уехали в px/py/ps ВНУТРЬ прекомпа.
@@ -360,9 +375,17 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
                 out["sc"] = 100
             else:
                 _card = _ins_card(media, out["style"], out.get("mw"), out.get("mh"),
-                                  out.get("sc"), meta["w"], meta["h"])
+                                  out.get("sc"), meta["w"], meta["h"], _px)
                 if _card:
                     out["card"] = _card
+                # Скругление маски-карточки: радиус в px ПРЕКОМПА фото — то же число,
+                # что подставлено в .jsx (INS_MASK_R). Рисует его превью
+                # (border-radius окна маски), поэтому правило «у кого маска есть» живёт
+                # здесь — ровно как в шаблоне: у подложки маски нет, у вида
+                # «white»/«none» её тоже нет. Раньше радиус был только в .jsx, и
+                # фотовставки в превью и в рендере без AE выходили с прямыми углами.
+                if style.insert_fx not in ("none", "white"):
+                    out["mask_r"] = INS_MASK_R
             # анимации вставок: готовые ключи вместо досчёта в ExtendScript (остаток).
             # Те же округлённые t0/t1 и en/ex, что ушли в JSX, — предпросмотр интерполирует их же.
             t0r, t1r = _r(t0), _r(t1)
@@ -380,7 +403,7 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
                     ix, iy = float(out["x"] or 0), float(out["y"] or 0)
                     rest_x = round(meta["w"] * ins_c2x) + ix
                     rest_y = round(meta["h"] * ins_c2y) + iy
-                    pos_start = [_r(rest_x), _r(rest_y + INS_RISE_DY)]
+                    pos_start = [_r(rest_x), _r(rest_y + INS_RISE_DY * _px)]
                     pos_end = [_r(rest_x), _r(rest_y)]
                     if win < 1 / float(_fps0):
                         pos_keys = [[t0r, pos_end]]
@@ -402,7 +425,7 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
                     pk = S * INS_C2_PEAK / INS_C2_BASE
                     out["anim"] = {"scale": _anim_keys(t0r, t1r, pk, S, noexit, enr, exr, _fps0),
                                    "opacity": _anim_keys(t0r, t1r, 0.0, 100.0, noexit, enr, exr, _fps0),
-                                   "blur": _blur_keys(t0r, t1r, noexit)}
+                                   "blur": _blur_keys(t0r, t1r, noexit, _px)}
             else:                                    # cam1: вылет из-за спины (локально к нулу)
                 en, ex = _ins_enter_exit(t0r, t1r, noexit, _fps0)
                 out["en"], out["ex"] = _r(en), _r(ex)
@@ -414,13 +437,13 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
                     # up — точка ПОКОЯ из _cam1_pos_keys (layout.py), нижняя точка dn
                     # (за спиной) не строится вовсе: слой просто стоит на месте
                     out["anim"] = {"position": [[t0r, [_r(ins_c1x + ix),
-                                                       _r(ins_c1y - INS_C1_HIGH + iy)]]]}
+                                                       _r(ins_c1y - INS_C1_HIGH * _px + iy)]]]}
                 else:                                # обычный вылет: подъём dn→up и спуск
                     # общий сдвиг точки покоя вставок кам1: парный к insert_c2_x/y,
                     # cx/cy _cam1_pos_keys и есть точка покоя — сдвиг считается здесь, в плане,
                     # и превью рисует готовое (правило одного источника)
                     out["anim"] = {"position": _cam1_pos_keys(t0r, t1r, noexit, ix, iy, _fps0,
-                                                              cx=ins_c1x, cy=ins_c1y)}
+                                                              cx=ins_c1x, cy=ins_c1y, px_k=_px)}
         return out
 
     inserts_plan = [_ins_js(x) for x in inserts]

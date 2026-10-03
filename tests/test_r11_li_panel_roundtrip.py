@@ -210,7 +210,8 @@ def test_full_roundtrip_through_panel_interface(tmp_path):
     )
     res = _run_node_script(tmp_path, "test_roundtrip.js", full_js)
 
-    assert res["totalEntries"] >= len(styles.BASE) - 2
+    non_schema = set(style_schema.EXTERNAL)
+    assert res["totalEntries"] >= len(styles.BASE) - len(non_schema)
     assert not res["base"]["bad"], "Расхождения на BASE:\n" + "\n".join(res["base"]["bad"])
     assert not res["geo"]["bad"], "Расхождения на GEOLOGICA:\n" + "\n".join(res["geo"]["bad"])
     assert not res["custom"]["bad"], "Расхождения на CUSTOM:\n" + "\n".join(res["custom"]["bad"])

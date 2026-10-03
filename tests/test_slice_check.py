@@ -542,3 +542,13 @@ def test_remove_tree_не_снимает_чтение_и_вход_у_катал�
     slice_check.remove_tree(str(toy))
     assert len(rmtree_called) == 1
 
+
+def test_slice_check_help_contains_temp():
+    """--help не падает из-за %-форматирования argparse и выводит %TEMP%."""
+    script = os.path.join(ROOT, "tools", "slice_check.py")
+    res = subprocess.run([sys.executable, script, "--help"],
+                         capture_output=True, text=True, encoding="utf-8", errors="replace")
+    assert res.returncode == 0, f"--help завершился с ошибкой:\n{res.stderr}"
+    assert "%TEMP%" in res.stdout
+
+

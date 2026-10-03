@@ -99,7 +99,7 @@ def _plan_row_words(plan):
 def _preview_plan(plan):
     """Из плана — только то, что читает ipvSubs (числа превью берёт из плана)."""
     keys = ("w", "h", "posy", "fsize", "sub_step", "hl_step", "hl_rise", "hl_dur",
-            "hl_row_anim", "hl_blur", "hl_blur_amt", "subs")
+            "hl_row_anim", "hl_blur", "hl_blur_amt", "hl_blur_css", "subs")
     return {k: plan[k] for k in keys if k in plan}
 
 
@@ -262,7 +262,7 @@ let ys=words().filter(w=>w.dataset.hl0!==undefined);
 assert.strictEqual(ys.length,1,'в строках ожидался один жёлтый с t0: '+ys.length);
 const t0=parseFloat(ys[0].dataset.hl0);
 assert.strictEqual(t0,@T0@,'превью взяло не плановое t0: '+t0+' vs '+@T0@);
-const rise=plan.hl_rise, dur=plan.hl_dur, k=540/plan.w, amt=plan.hl_blur_amt;
+const rise=plan.hl_rise, dur=plan.hl_dur, k=540/plan.w, amt=plan.hl_blur_css;
 assert(rise>0&&dur>0,'в плане нет подъёма/длительности');
 
 // До момента появления — невидимо и поднято на весь подъём.

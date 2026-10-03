@@ -93,6 +93,50 @@ def test_tools_live_in_ai_settings_tab(html, js, css):
     assert '.toptools{' not in css and '.toolmenu{' not in css
 
 
+def test_insert_library_has_a_door_in_the_tools_tab(html, js):
+    """У окна «База вставок» есть дверь — кнопка в ⚙ → «Инструменты».
+
+    Кнопку «База» из панели вставок убрали (её действия дублировали соседние, см.
+    tests/test_gen_btn.py), а вместе с ней ушла и `openInsLib` — единственный вызов
+    `openModal('mbInsLib')`. Окно с папками скана, импортом, описаниями и списком
+    файлов осталось без входа: кнопка «Обновить базу вставок» пересканирует уже
+    настроенную базу, но папки задать не даёт, а её тост отправлял в никуда.
+
+    Ловится именно разрыв «разметка → функция»: inline-обработчики (`onclick="…"`)
+    tests/test_ui_js_calls.py не сканирует вовсе — он читает только static/app/*.js,
+    поэтому и удаление кнопки, и переименование функции проходят мимо него, а в
+    браузере это ReferenceError по клику.
+    """
+    tools = html[html.index('id="aistab_tools"'):html.index('id="aistab_cut"')]
+    assert 'id="mbInsLib"' in html, "окно базы вставок (#mbInsLib) пропало из разметки"
+    assert "function openInsLib(" in js, (
+        "openInsLib удалена — кнопка в «Инструментах» мертва (ReferenceError по клику)")
+    assert 'id="illopen"' in tools and 'openInsLib()' in tools, (
+        "в «Инструментах» пропала кнопка «Открыть базу вставок…»")
+    # Вход — рядом с «Обновить базу вставок», в том же ряду .setrow: иначе он спрятан
+    # в другом углу вкладки, а «Обновить» остаётся единственной кнопкой базы.
+    row = tools[tools.index('id="illhdr"'):]
+    row = row[:row.index('</div>')]
+    assert 'id="illopen"' in row, "кнопка открытия базы стоит не в ряду «База вставок»"
+    assert "closeModal('mbAISettings');openInsLib()" in row, (
+        "кнопка не закрывает настройки перед открытием базы: у всех .backdrop один "
+        "z-index, и окно базы уходит ПОД настройки (решает порядок в DOM)")
+    assert 'Открыть базу вставок…' in row, "у кнопки нет подписи «Открыть базу вставок…»"
+    assert 'data-t="Что в окне базы вставок' in row, (
+        "у кнопки нет справки о том, что в окне: папки скана, импорт, описания, список файлов")
+    # Тексты больше не отсылают к убранной кнопке панели вставок, а называют новую дверь.
+    # Комментарии не считаем: в них то же имя стоит по делу — как объяснение, откуда ушла
+    # кнопка, — а на экран они не попадают (поэтому и `//` в строках-ссылках не мешает:
+    # режем хвост строки, а текст тоста стоит до него).
+    code = re.sub(r"//[^\n]*", "", js)
+    markup = re.sub(r"<!--.*?-->", "", html, flags=re.S)
+    assert "«База»" not in code and "«База»" not in markup, (
+        "текст снова отправляет к кнопке «База» в панели вставок — её там нет")
+    assert code.count("⚙ → Инструменты → База вставок") >= 2, (
+        "тосты базы вставок не подсказывают, где она теперь открывается (папки задать "
+        "можно только в самом окне)")
+
+
 def test_ai_settings_has_six_semantic_tabs_and_no_common(html, js):
     """Настройки имеют один стабильный набор вкладок; старое «Общее» не
     остаётся отдельной панелью, но legacy-аргумент common не ломает переход."""
@@ -873,17 +917,25 @@ def test_preview_swaps_video_instead_of_seeking_at_the_cut(js):
     звуком (он с того же элемента). Именно «в разрезе», потому что на смежных кусках
     seek не делается вовсе. Лечится дублёром с разбегом; seek на месте остался только
     запасным путём, когда дублёр не успел.
+
+    Плеер шага 1 (нарезка) с 02.10.2026 — один: редактор (ED). Монтажный pvTick убран
+    вместе с блоком «Монтаж», и стык исходника в шаге 1 ведёт edTick; общий шаг pvStep
+    по-прежнему один на шаг 3 (IPV) и раскладку камер (CPV).
     """
-    step = js[js.index("function pvStep(P)"):js.index("function pvNow()")]
+    step = js[js.index("function pvStep(P)"):js.index("// Своих часов воспроизведения")]
     assert "const done=spareSwap(P);" in step, "pvStep не пробует подмену дублёром"
     assert "if(Math.abs(live.currentTime-a.src)>0.06)" in step, (
         "seek на месте должен остаться ЗАПАСНЫМ путём (короткий сегмент, дублёр не успел)")
     assert "if(av.seeking){tm=a.ts;}" in step, (
         "во время seek время из currentTime не считается — иначе блоки проскакивают пачкой")
-    # все три плеера идут через один общий шаг (было три копии, и гонка правилась трижды)
-    for player, head in (("PV", "function pvTick()"), ("IPV", "function ipvStep()"), ("CPV", "function cpvStep()")):
+    # шаг 1 — редактор: стык блока идёт через тот же pvStep (edTick -> edJump)
+    tick = js[js.index("function edTick()"):js.index("function edBreathAt(")]
+    assert "edJump(v,nb.s0)" in tick, "редактор снова сеcит живой <video> прямо на стыке блока"
+    # шаг 3 и раскладка камер идут через один общий шаг (было три копии, и гонка правилась трижды)
+    for player, head in (("IPV", "function ipvStep()"), ("CPV", "function cpvStep()")):
         body = js[js.index(head):js.index(head) + 300]
         assert f"pvStep({player})" in body, f"{player}: стык не идёт через общий pvStep"
+    assert "function pvTick(" not in js, "вернулся второй плеер шага 1 (pvTick)"
     # дублёр обязан жить ВНЕ P.vids: иначе pvVisual покажет его как отдельную камеру
     take = js[js.index("function bufTake(P,b,at)"):js.index("function spareLead(P)")]
     assert "P.vids[b.slot]=b.el;b.el=old" in take, "подмена больше не меняет элементы местами"
@@ -892,21 +944,21 @@ def test_preview_swaps_video_instead_of_seeking_at_the_cut(js):
 
 
 @pytest.mark.parametrize("player,step,seek,pause,scrub", [
-    ("PV", "function pvTick()", "function pvSeekTo(tm)", "function pvPause()", "function pvScrub(v)"),
     ("IPV", "function ipvStep()", "function ipvSeekTo(tm)", "function ipvPause()", "function ipvScrub(x)"),
     ("CPV", "function cpvStep()", "function cpvSeekTo(tm)", "function cpvPause()", "function cpvScrub(x)"),
 ])
 def test_every_preview_player_uses_the_double_buffer(js, player, step, seek, pause, scrub):
-    """Дублёр подключён во ВСЕХ трёх плеерах, а не только на главной странице.
+    """Дублёр подключён во ВСЕХ плеерах, а не только на главной странице.
 
-    Монтаж (PV), вставки/AE (IPV) и раскладка камер (CPV) — один и тот же контракт
+    Вставки/AE (IPV) и раскладка камер (CPV) — один и тот же контракт
     {audio:[{ts,te,src}], aidx} и один и тот же стык с seek'ом. Подмена на стыке и разбег
     к нему — в общей pvStep (одна копия, а не три расходящиеся); сами step-функции пускают
-    дублёра вживую до стыка (spareRollAt).
+    дублёра вживую до стыка (spareRollAt). Шаг 1 (нарезка) в этом списке больше нет: там
+    один плеер — редактор, и его стык идёт через edTick/edJump (см. тест выше).
     """
     def body(head, n=1400):
         return js[js.index(head):js.index(head) + n]
-    pvs = js[js.index("function pvStep(P)"):js.index("function pvTick()")]
+    pvs = js[js.index("function pvStep(P)"):js.index("// Своих часов воспроизведения")]
     assert "spareSwap(P)" in pvs, "pvStep: стык не идёт через подмену дублёром"
     assert "sparePrime(P)" in pvs, "pvStep: разбег к следующему стыку не готовится"
     assert f"pvStep({player})" in body(step, 300), f"{player}: шаг не идёт через общий pvStep"
@@ -918,7 +970,7 @@ def test_every_preview_player_uses_the_double_buffer(js, player, step, seek, pau
 
 
 @pytest.mark.parametrize("player,apply_fn,seek,pause,opener,before", [
-    ("PV", "function pvApplyVisual(tm,play)", "function pvSeekTo(tm)", "function pvPause()",
+    ("PV", "function pvVideoTo(src)", "function edSeek(s)", "function edPause()",
      "async function openPreview(xml)", "$('pvsub')"),
     ("IPV", "function ipvApplyVisual(tm,play)", "function ipvSeekTo(tm)", "function ipvPause()",
      "async function ipvOpen(xml)", "io"),
@@ -931,16 +983,27 @@ def test_every_preview_switches_cameras_through_one_machine(js, player, apply_fn
     Копий было три, и правки моргания расходились между ними. Каждая камера при открытии
     получает свой оффсет (camDeltas) и свой дублёр (camBufs) — без этого она не была бы
     непрерывной дорожкой и на стыке её опять пришлось бы будить seek'ом.
+
+    У шага 1 плеер один — редактор: ракурс ставит pvVideoTo (дверь edSeek), а на паузе
+    скорости камер приводит edPause. Второй двери «показать кадр» (pvSeekTo/pvApplyVisual)
+    больше нет — она и была вторым плеером.
     """
     def body(head, n=900):
         return js[js.index(head):js.index(head) + n]
-    assert f"camApply({player},tm,play)" in body(apply_fn, 200), (
+    assert f"camApply({player},src,false)" in body(apply_fn, 400) or \
+           f"camApply({player},tm,play)" in body(apply_fn, 400), (
         f"{player}: переключение ракурса снова живёт своей копией алгоритма"
     )
     open_body = js[js.index(opener):js.index(opener) + 2600]
     assert f"{player}.delta=camDeltas({player})" in open_body, f"{player}: камеры без оффсетов от ведущей"
     assert f"camBufs({player},stage,{before})" in open_body, f"{player}: камеры без дублёров — стык снова через seek"
-    assert f"camIdle({player})" in body(seek), f"{player}: перемотка не приводит скорости камер в норму"
+    # camIdle у шага 1 зовёт ЕГО дверь показа кадра (pvVideoTo): отдельного pvSeekTo,
+    # который это делал, больше нет — но правило одно: перемотка/пауза гасят скорости камер.
+    door = _fn_body(js, "function pvVideoTo(")
+    if player == "PV":
+        assert f"camIdle({player})" in door, f"{player}: перемотка не приводит скорости камер в норму"
+    else:
+        assert f"camIdle({player})" in body(seek), f"{player}: перемотка не приводит скорости камер в норму"
     assert f"camIdle({player})" in body(pause), f"{player}: на паузе камеры остаются с правленой скоростью"
 
 
@@ -990,10 +1053,13 @@ def test_camera_choice_never_walks_back_while_playing(js):
     P.vidx в -1 — на этом и держится запрет.
     """
     body = js[js.index("function camApply(P,tm,play)"):js.index("function camIdle(P)")]
-    assert "if(P.playing&&P.vidx>=0&&vi<P.vidx)" in body, (
+    assert "if(vtPlaying(P)&&P.vidx>=0&&vi<P.vidx)" in body, (
         "показ снова может уехать на предыдущий кусок — вернётся мелькание прежней камеры")
 
-    for fn in ("function pvSeekTo(tm)", "function ipvSeekTo(tm)", "function cpvSeekTo(tm)"):
+    # Шаг 1 — редактор: его дверь перемотки pvVideoTo сбрасывает кусок сама.
+    door = js[js.index("function pvVideoTo(src)"):js.index("function bufMake(P")]
+    assert "PV.vidx=-1" in door, "pvVideoTo: перемотка не сбрасывает кусок"
+    for fn in ("function ipvSeekTo(tm)", "function cpvSeekTo(tm)"):
         seek = js[js.index(fn):js.index(fn) + 400]
         assert ".vidx=-1" in seek, (
             f"{fn}: перемотка не сбрасывает кусок — запрет на ход назад запрёт и её саму")
@@ -1110,19 +1176,24 @@ def test_editor_playback_uses_the_same_double_buffer(js):
 def test_scrubbing_does_not_starve_the_preview_double_buffer(js):
     """Протяжка ползунка не заваливает дублёра сеcками.
 
-    oninput сыплется на каждый пиксель, а pvScrub зовёт pvPause+pvSeekTo+pvPlay. Пока
-    разбег готовился на каждом таком вызове, дублёр оставался вечно «seeking»: на
-    ближайшем стыке pvSwap срывался в запасной путь, и стык снова замирал — при том
-    что обычное проигрывание шло гладко. Разбег готовим один раз, когда протяжка улеглась.
+    oninput сыплется на каждый пиксель, а ползунок шага 3 (ipvScrub) зовёт
+    ipvPause+ipvSeekTo+ipvPlay. Пока разбег готовился на каждом таком вызове, дублёр
+    оставался вечно «seeking»: на ближайшем стыке подмена срывалась в запасной путь, и
+    стык снова замирал — при том что обычное проигрывание шло гладко. Разбег готовим один
+    раз, когда протяжка улеглась.
+
+    У шага 1 ползунка перемотки больше нет вовсе (его заменил клик по таймлайну), поэтому
+    здесь остаётся механика шага 3 и общий bufArm: в редакторе разбег гасит edPause.
     """
-    body = js[js.index("function pvScrub(v)"):js.index("// ===== панель слов")]
-    assert "PV.scrubbing=true" in body and "clearTimeout(PV.scrubT)" in body, (
-        "pvScrub снова готовит разбег на каждое событие ползунка")
-    # гвардия стоит в ОБЩЕМ bufArm, а не у конкретного плеера: разбег готовят все трое
+    body = js[js.index("function ipvScrub(x)"):js.index("function ipvJump(")]
+    assert "IPV.scrubbing=true" in body and "clearTimeout(IPV.scrubT)" in body, (
+        "ipvScrub снова готовит разбег на каждое событие ползунка")
+    # гвардия стоит в ОБЩЕМ bufArm, а не у конкретного плеера: разбег готовят все, кто играет
     arm = js[js.index("function bufArm(P,b,at)"):js.index("function bufRoll(b,left)")]
     assert "P.scrubbing" in arm, "bufArm не знает про протяжку — seek на каждый пиксель вернулся"
-    seek = js[js.index("function pvSeekTo(tm)"):js.index("// --- дублёр камеры 1")]
-    assert "sparePrime(" not in seek, "pvSeekTo снова сеcит дублёра — он зовётся из протяжки"
+    assert "function pvScrub(" not in js, "вернулся ползунок монтажа — это второй плеер шага 1"
+    door = js[js.index("function pvVideoTo(src)"):js.index("function bufMake(P")]
+    assert "sparePrime(" not in door, "pvVideoTo снова сеcит дублёра — его зовёт и клик, и кадр игры"
 
 
 def test_style_template_is_editable_without_retyping_its_name(js, html):
@@ -1421,12 +1492,12 @@ def test_preview_ducks_voice_on_censor_windows_from_the_plan(js):
     assert "dbToGain(" in duck and "voice_db" in duck, (
         "вне окна voiceGain не возвращается к voice_db — заглушка останется навсегда")
 
-    # У монтажного плеера (pvUI) плана нет вовсе: /api/aicut_preview отдаёт EDL, а не
-    # план сцены. Пока панель слов предпросмотра нарезки существовала, вызов брал
-    # PVW.plan — он всегда был null, и вызвать vgDuck было не с чем. Теперь вызова
-    # нет: глушение голоса живёт в плеере вставок, у которого план есть.
-    pv = _fn_body(js, "function pvUI(")
-    assert "vgDuck(" not in pv, "монтажный плеер снова глушит голос по несуществующему плану"
+    # Шаг 1 плана сцены не знает вовсе: /api/aicut_preview отдаёт EDL, а не план сцены.
+    # Пока панель слов предпросмотра нарезки существовала, вызов брал PVW.plan — он всегда
+    # был null, и вызвать vgDuck было не с чем. Теперь вызова нет ни у одного плеера шага 1
+    # (осталась одна дверь показа — pvVideoTo), глушение голоса живёт в плеере вставок.
+    door = _fn_body(js, "function pvVideoTo(")
+    assert "vgDuck(" not in door, "показ кадра шага 1 снова глушит голос по несуществующему плану"
     ipv = _fn_body(js, "function ipvUI(")
     assert "vgDuck(tm,IPV.plan)" in ipv, "плеер вставок не глушит голос по плану"
     # без плана (запрос не прошёл) duck обязан вернуть обычную громкость, не сломать плеер
@@ -1443,12 +1514,16 @@ def test_editor_words_panel_shows_the_word_under_the_playhead(js):
     Панель слов предпросмотра нарезки (#pvwords) и её подсветка чипов удалены — в
     разметке этих контейнеров нет, и pvwHighlight не находил ни одного чипа. Здесь
     остаётся то, что реально видно: текст #pvsub.
+
+    Слово под плейхедом ищет ОДНА функция (pvWordAt, 60-preview.js): строку субтитра
+    кадра ведёт edWords, и второй копии «какое слово на экране» в интерфейсе нет.
     """
     body = _fn_body(js, "function edWords(")
     assert "ED.orig" in body, "слова считаются по правленой раскладке, а не по той, что в XML"
-    assert "pvsub" in body and "textContent=cur" in body, (
+    assert "pvsub" in body and "pvWordAt(" in body, (
         "строка субтитра не получает слово под плейхедом")
-    assert "if(PV.playing)return" in body, "монтаж ведёт панель сам — второй раз не считаем"
+    # монтажного плеера, который вёл панель сам, больше нет — и гвардии его игры тоже
+    assert "PV.playing" not in body, "edWords снова ждёт монтажный плеер, которого нет"
     assert "pvwHighlight(" not in body, "вернулась подсветка чипов удалённой панели"
     ui = _fn_body(js, "function edUI(")
     assert "edWords()" in ui, "edUI — единственная точка, куда стекаются сдвиги плейхеда"
@@ -2033,6 +2108,8 @@ def test_video_poll_retries_transport_and_delivers_result(js):
         "function t(v){return v;}"
         "function mergeLog(){}function fmtLog(){return '';}"
         "function progUpdate(a,b,c,d){prog.push([a,b,c,d]);}"
+        # stage/хвост лога разбирает общая форма прогресса (static/app/55-progress.js)
+        "function progEventFromLog(){return '';}const PROGEV={};"
         "function progDone(){}function vidBusy(){}function vidHistLoad(){}function uiLog(){}"
         "function videoContextForStatus(d){return null;}"
         "function errText(d){return d&&d.error||'';}"
@@ -2082,6 +2159,8 @@ def test_video_poll_lost_state_is_server_not_network(js):
         "function t(v){return v;}"
         "function mergeLog(){}function fmtLog(){return '';}"
         "function progUpdate(a,b,c,d){prog.push([a,b,c,d]);}"
+        # stage/хвост лога разбирает общая форма прогресса (static/app/55-progress.js)
+        "function progEventFromLog(){return '';}const PROGEV={};"
         "function progDone(){}function vidBusy(){}function vidHistLoad(){}function uiLog(){}"
         "function videoContextForStatus(d){return null;}"
         "function errText(d){return d&&d.error||'';}"
@@ -2143,7 +2222,7 @@ def test_style_panel_cp2_sldnum_and_pairs(html, css, js):
     который рисует ползунок КАЖДОМУ числовому полю, а не выписанному списку.
     """
     panel = _panel_js()
-    quantity = ("num", "int", "angle")
+    quantity = ("num", "int", "angle", "range")
     for key in ("cam1_fit", "cam1_drift_lo", "cam1_drift_hi", "start_blur", "start_blur_dur",
                 "sub_y", "sub_words_per_row", "sub_rows_max", "intro_scale", "intro_glow",
                 "intro_y", "intro_y2", "insert_c2_y", "insert_c1_y", "insert_c1_x",
@@ -2292,8 +2371,9 @@ def test_style_element_ids_exist_in_html_dm(html):
     Поля стиля больше не выписаны в index.html — их строит панель из схемы, — поэтому
     id бывает двух родов: постоянные (в разметке: st_name, st_saved, st_pickzoom,
     st_layer_order_list, st_disc_text) и выведенные из ключа схемы (st_<key> и его части
-    _val/_input/_slider/_hex/_color). Обращение к id, которого не будет ни там, ни там, —
-    это null-deref, ради которого тест и заведён.
+    _val/_input/_slider/_hex/_color, st_<toggle> у галки и st_<link> у кнопки-цепочки).
+    Обращение к id, которого не будет ни там, ни там, — это null-deref, ради которого
+    тест и заведён.
     """
     html_ids = set(re.findall(r"""\bid=["']([^"']+)["']""", html))
     derived = set()
@@ -2301,6 +2381,8 @@ def test_style_element_ids_exist_in_html_dm(html):
         derived |= {"st_" + key, "st_" + key + "_val", "st_" + key + "_input",
                     "st_" + key + "_slider", "st_" + key + "_hex", "st_" + key + "_color"}
     for key in (it.get("toggle") for _kind, it in watcher.schema_items() if it.get("toggle")):
+        derived.add("st_" + key)
+    for key in (it.get("link") for _kind, it in watcher.schema_items() if it.get("link")):
         derived.add("st_" + key)
     # постоянные id панели и предпросмотра (см. JB п. 3, список оставшихся обращений)
     known = {"stpanel", "st_name", "st_saved", "st_pickzoom", "st_layer_order_list",
@@ -2761,6 +2843,11 @@ def test_step2_rewrite_question_behavior_in_node_fd(js):
         "function engLabel(){return 'whisper';}function askConfirm(){calls.ask++;return true;}"
         "function t(s){return s;}function errText(e){return String(e);}"
         "function subSkipped(){return '';}function aiPost(){return Promise.resolve({});}"
+        "function aiStepConc(){return 1;}"
+        # список клиентского прогона: markupAllRun заводит его сам, тело
+        # функции в стенде не проверяется — заглушки достаточно, как у aiStepConc
+        "function localQStart(){}function localQSet(){}function localQEnd(){}"
+        "function qClipSum(){return '';}"
         "function insLog(){}function insAfterAI(){return Promise.resolve(null);}"
         "async function fetch(){return {json:async()=>({subs:10,colored:5,ncams:2})};}"
         + fn + ";"
@@ -2890,5 +2977,122 @@ def test_style_panel_layer_order_and_slider_contracts(css, js):
         f"у .stslider ширина зафиксирована в px: {slider_rules}"
     )
     assert "min-width:240px" in slider_rules.replace(" ", "") or "min-width: 240px" in slider_rules
+
+
+def test_preview_modal_style_column_geometry_no_overlap(css, tmp_path):
+    """Узкое окно 1000x640: колонка панели стиля не налезает на таймлайн (п. 9)."""
+    # 1. CSS-правила: inscols и блоки стиля замкнуты по высоте и скроллу
+    assert ".modal.aemode .inscols{flex:1;min-height:0;overflow:hidden}" in css.replace(" ", "") or (
+        "overflow:hidden" in css and ".modal.aemode .inscols" in css
+    ), "у .modal.aemode .inscols нет overflow:hidden"
+
+    assert "#aewstyle #stylebox" in css, "нет правила #aewstyle #stylebox"
+    assert "#aewstyle #stylecustom" in css, "нет правила #aewstyle #stylecustom"
+    assert "#aewstyle #stpanel" in css, "нет правила #aewstyle #stpanel"
+
+    # 2. Геометрия на 1000x640 под Chrome (если установлен)
+    import pathlib
+    import shutil
+    chrome = shutil.which("chrome") or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+    if not os.path.exists(chrome):
+        return
+
+    html_path = tmp_path / "geom_test.html"
+    css_url = pathlib.Path(CSS).resolve().as_uri()
+    rows = "\n".join(f"<div class='strow'>Row {i}</div>" for i in range(50))
+    html_src = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset='utf-8'>
+<link rel='stylesheet' href='{css_url}'>
+<style>
+body {{ margin: 0; padding: 0; width: 1000px; height: 640px; overflow: hidden; }}
+</style>
+</head>
+<body>
+<div class='backdrop' id='mbInserts' style='display:flex'>
+  <div class='modal wide aemode' role='dialog'>
+    <div class='mhead'><h2>Preview</h2></div>
+    <div class='mbody'>
+      <div class='inscols'>
+        <div class='inspv'>
+          <div class='pvstage' id='ipvstage'></div>
+          <div class='row' style='align-items:center;margin-top:10px'>
+            <button class='sm' style='min-width:44px'>Play</button>
+            <input type='range' class='grow'>
+            <span class='muted mono'>0:00 / 0:00</span>
+          </div>
+          <div class='row' style='margin-top:6px;align-items:center'>
+            <label class='dbctl'>Music <input type='range'></label>
+            <label class='dbctl'>Voice <input type='range'></label>
+          </div>
+          <div style='margin-top:8px'><span class='i'>!</span></div>
+        </div>
+        <div id='aewpanel' class='aewpanel' style='display:flex'>
+          <div class='row' style='align-items:center;gap:10px'>
+            <span class='seg' id='aewmode'><label class='on'>Слова</label><label>Стиль</label></span>
+          </div>
+          <div id='aewstyle' style='display:flex'>
+            <div id='stylebox'>
+              <div class='sect' style='margin-top:0'>Стиль</div>
+              <div class='row' style='align-items:center'><select><option>default</option></select></div>
+              <div id='stylecustom' style='margin-top:12px'>
+                <div id='stpanel' class='stpanel' role='tree'>
+{rows}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class='itlbar'><button>Zoom</button></div>
+      <div id='itl' class='itl'><div id='itlin'>Timeline</div></div>
+    </div>
+  </div>
+</div>
+<script>
+window.addEventListener('load', () => {{
+  const styleBox = document.getElementById('stylebox').getBoundingClientRect();
+  const aewStyle = document.getElementById('aewstyle').getBoundingClientRect();
+  const stpanel = document.getElementById('stpanel').getBoundingClientRect();
+  const itl = document.getElementById('itl').getBoundingClientRect();
+  const res = {{
+    aewStyle: aewStyle,
+    styleBox: styleBox,
+    stpanel: stpanel,
+    itl: itl
+  }};
+  const d = document.createElement('pre');
+  d.id = 'result';
+  d.textContent = JSON.stringify(res);
+  document.body.appendChild(d);
+}});
+</script>
+</body>
+</html>"""
+    html_path.write_text(html_src, encoding="utf-8")
+    cmd = [
+        chrome,
+        "--headless=new",
+        "--disable-gpu",
+        "--window-size=1000,640",
+        "--virtual-time-budget=2000",
+        "--dump-dom",
+        html_path.resolve().as_uri(),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+    assert proc.returncode == 0, f"Chrome failed: {proc.stderr}"
+    m = re.search(r'<pre id="result">(.*?)</pre>', proc.stdout, re.DOTALL)
+    assert m, f"нет результата измерений в выводе Chrome: {proc.stdout[:500]}"
+    data = json.loads(m.group(1))
+
+    style_bottom = max(data["aewStyle"]["bottom"], data["styleBox"]["bottom"], data["stpanel"]["bottom"])
+    itl_top = data["itl"]["top"]
+
+    # Прямоугольники колонки стиля и таймлайна не пересекаются
+    assert style_bottom <= itl_top, (
+        f"Колонка стиля наезжает на таймлайн: style_bottom={style_bottom} > itl_top={itl_top}"
+    )
+
 
 

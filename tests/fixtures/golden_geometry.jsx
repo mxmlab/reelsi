@@ -39,13 +39,13 @@
                                     // Опускание под INTRO_SAFE_TOP считает Python — здесь только поправка Scale.
     var INTRO_ON2=[0];    // [0|1 на группу] — группа появляется на перебивке (Камера 2): свой нул
     var INTRO_IDY=[0.0];    // [px на группу] — опускание блока под INTRO_SAFE_TOP, считает Python
-    var INTRO_Y2=0;      // сдвиг по вертикали (px) нула «интро на кам2» ПОВЕРХ INTRO_Y:
-                                    // на перебивке кадр другой, и текст за спиной просится ниже
+    var INTRO_Y2=0;      // положение по вертикали (px) нула «интро на кам2» — САМО по себе, не поверх
+                                    // INTRO_Y: на перебивке кадр другой, и текст за спиной просится ниже
     var INTRO_WIDE=3;               // ширина интро-прекомпа в долях кадра: прекомп шире кадра, чтобы
                                     // размер текста поджимался СКАЛОЙ СЛОЯ в мастере, не заходя в композ.
                                     // Текст внутри всегда раскладывается в полный кегль — ужимание
                                     // длинных строк (автофит) считает Python в плане
-    var INSERTS=[{"t":"photo","style":"cam1","media":"C:/x/a.png","start":1,"end":3,"scale":50,"mosaic":false,"x":0,"y":0,"sc":100,"mw":100,"mh":100,"sin":0,"noexit":false,"front":true,"oncam2":false,"en":0.38,"ex":0.47,"anim":{"position":[[1,[0,464.7]],[1.5,[0,-567]],[2.5,[0,-567]],[3,[0,464.7]]]}},{"t":"photo","style":"cam2","media":"C:/x/cam2.png","start":8,"end":9.5,"scale":44,"mosaic":false,"x":0,"y":0,"sc":100,"mw":100,"mh":100,"sin":0,"noexit":false,"front":true,"oncam2":false,"en":0.38,"ex":0.47,"anim":{"scale":[[8,100],[8.38,44],[9.03,44],[9.5,100]],"opacity":[[8,0],[8.38,100],[9.03,100],[9.5,0]],"blur":[[8,41.0],[8.38,0.0],[9.03,0.0],[9.5,41.0]]}},{"t":"photo","style":"cam1","media":"C:/x/b.png","start":5,"end":7.3833,"scale":50,"mosaic":false,"x":0,"y":0,"sc":100,"mw":100,"mh":100,"sin":0,"noexit":true,"front":true,"oncam2":false,"en":0.38,"ex":0.47,"anim":{"position":[[5,[0,464.7]],[5.5,[0,-567]],[7.3833,[0,-567]]]}}]; // [{t:"photo"|"video",style:"cam2"|"cam1",media,start,end,scale,sc,mw,mh,x,y,front,oncam2}, ...] x/y = сдвиг точки покоя, px; sc = ручной масштаб в % от авто (mw/mh — форма маски); front=видео перед человеком; oncam2=стиль кам1, но в кадре перебивка
+    var INSERTS=[{"t":"photo","style":"cam1","media":"C:/x/a.png","start":1,"end":3,"scale":50,"mosaic":false,"x":0,"y":0,"sc":100,"mw":100,"mh":100,"sin":0,"noexit":false,"front":true,"oncam2":false,"mask_r":60.0,"en":0.38,"ex":0.47,"anim":{"position":[[1,[0,464.7]],[1.5,[0,-567]],[2.5,[0,-567]],[3,[0,464.7]]]}},{"t":"photo","style":"cam2","media":"C:/x/cam2.png","start":8,"end":9.5,"scale":44,"mosaic":false,"x":0,"y":0,"sc":100,"mw":100,"mh":100,"sin":0,"noexit":false,"front":true,"oncam2":false,"mask_r":60.0,"en":0.38,"ex":0.47,"anim":{"scale":[[8,100],[8.38,44],[9.03,44],[9.5,100]],"opacity":[[8,0],[8.38,100],[9.03,100],[9.5,0]],"blur":[[8,41.0],[8.38,0.0],[9.03,0.0],[9.5,41.0]]}},{"t":"photo","style":"cam1","media":"C:/x/b.png","start":5,"end":7.3833,"scale":50,"mosaic":false,"x":0,"y":0,"sc":100,"mw":100,"mh":100,"sin":0,"noexit":true,"front":true,"oncam2":false,"mask_r":60.0,"en":0.38,"ex":0.47,"anim":{"position":[[5,[0,464.7]],[5.5,[0,-567]],[7.3833,[0,-567]]]}}]; // [{t:"photo"|"video",style:"cam2"|"cam1",media,start,end,scale,sc,mw,mh,x,y,front,oncam2}, ...] x/y = сдвиг точки покоя, px; sc = ручной масштаб в % от авто (mw/mh — форма маски); front=видео перед человеком; oncam2=стиль кам1, но в кадре перебивка
     var SUB_HIDE=[];  // [[t, opacity], ...] — уход субтитров на rise-вставках
     var TRANS="", TRANS_SFX="";  // Quick 2.mov + whoosh для видеовставок
     var CAM1_SCALE=[[0,182],[62,100],[856,136.9],[918,100],[1645,126.7],[1707,100],[2341,136.6],[2403,100],[2921,125.3],[2983,100],[3691,133.7],[3753,100],[3989,115.9],[4051,100],[4860,128.7],[4922,100],[5326,115.2],[5388,100],[5877,138.9],[5939,100]];  // [[frame, percent], ...] зум Null камеры 1 — правь/очисти под видео
@@ -159,7 +159,7 @@
         dsp.setValue(dd);
         dl.property("ADBE Transform Group").property("ADBE Position").setValue([W/2, DISC_Y]);
         var dop=dl.property("ADBE Transform Group").property("ADBE Opacity");
-        dop.setValueAtTime(Math.max(0,DISC_END-0.35), 100); dop.setValueAtTime(DISC_END, 0);
+        dop.setValueAtTime(Math.max(0,DISC_END-0.35), 100); dop.setValueAtTime(DISC_END, 0); easePair(dop);
         dl.outPoint=DISC_END;
         try{ var g=dl.property("ADBE Effect Parade").addProperty("ADBE Glo2");
              try{g.property("Glow Radius").setValue(42);}catch(e){} }catch(e){}
@@ -230,8 +230,8 @@
             lay.outPoint  = c[1]/FPS;
             lay.enabled   = c[4];
             if (isSecond){ try{ lay.audioEnabled = false; }catch(e){} }  // звук 2-й камеры выкл
-            // Камера 1 — от заполнения кадра (CAM1_FIT), перебивки — как было в Премьере
-            var csc = isSecond ? c[5] : fitS*CAM1_FIT/100;
+            // Одна формула на все камеры: заполнение кадра (fitS) × рамка камеры; Камера 1 ещё × CAM1_FIT
+            var csc = fitS*(track.frame?track.frame.zoom:100)/100*(isSecond?1:CAM1_FIT/100);
             try{ lay.property("ADBE Transform Group").property("ADBE Scale").setValue([csc,csc]); }catch(e){}
             lay.parent = nul;
             if (EXPOSURE!=0){ try{ var lc=lay.property("ADBE Effect Parade").addProperty("ADBE Lumetri");  // яркость на все камеры
@@ -297,21 +297,22 @@
     // в пикселях, а автофит длинных строк (INTRO_FIT_W) должен остаться своим у каждого прекомпа
     if (INTRO_SCALE!=100)
         try{ introNull.property("ADBE Transform Group").property("ADBE Scale").setValue([INTRO_SCALE,INTRO_SCALE]); }catch(e){}
-    // «интро на кам2» — ВТОРОЙ такой же нул для групп, выпавших на перебивку (INTRO_ON2).
-    // Устроен один в один как «интро» (родитель — Null Камеры 1, тот же масштаб), отличается
-    // только своим сдвигом INTRO_Y2: на кам2 кадр другой и текст за спиной ставят ниже.
+    // «интро на кам2» — ВТОРОЙ такой же нул для групп, выпавших на перебивку (INTRO_ON2), тот же масштаб.
+    // Положение у него СВОЁ (INTRO_Y2, не INTRO_Y + INTRO_Y2): на кам2 кадр другой и текст за спиной
+    // ставят ниже, а двигать интро камеры 1 не должно двигать вторую камеру.
+    // Родителем НЕ Null Камеры 1: на перебивке она спрятана, но её зум множил бы и позицию, и размер
+    // текста вокруг чужой точки наезда — сдвиг уезжал «совсем не так». По умолчанию нул стоит в
+    // координатах кадра; при зуме Камеры 2 его подвязывает к нулу камеры 2 подстановка после её ключей.
     // Двигая этот нул, правишь разом все интро-прекомпы, попавшие на перебивку.
     var introNull2 = main.layers.addNull(Math.max(DUR,1)); introNull2.name="интро на кам2"; introNull2.enabled=false;
-    if(cam1null){ introNull2.parent=cam1null;
-        introNull2.property("ADBE Transform Group").property("ADBE Position").setValue([0,INTRO_Y+INTRO_Y2]); }
-    else introNull2.property("ADBE Transform Group").property("ADBE Position").setValue([W/2,H/2+INTRO_Y+INTRO_Y2]);
+    introNull2.property("ADBE Transform Group").property("ADBE Position").setValue([W/2,H/2+INTRO_Y2]);
     if (INTRO_SCALE!=100)
         try{ introNull2.property("ADBE Transform Group").property("ADBE Scale").setValue([INTRO_SCALE,INTRO_SCALE]); }catch(e){}
 
     // optional zoom animation on Camera-1 Null
     if (cam1null && CAM1_SCALE.length){
         var sc = cam1null.property("ADBE Transform Group").property("ADBE Scale");
-        var CAM1_EASE=[[33.3333,35],[90,33.3333],[33.3333,35],[90,33.3333],[33.3333,35],[90,33.3333],[33.3333,35],[90,33.3333],[33.3333,35],[90,33.3333],[33.3333,35],[90,33.3333],[33.3333,35],[90,33.3333],[33.3333,35],[90,33.3333],[33.3333,35],[90,33.3333],[33.3333,35],[90,33.3333]];  // [[in,out], ...] влияние ease на КАЖДЫЙ ключ — посчитано в Python
+        var CAM1_EASE=[[90,35],[90,35],[90,35],[90,35],[90,35],[90,35],[90,35],[90,35],[90,35],[90,35],[90,35],[90,35],[90,35],[90,35],[90,35],[90,35],[90,35],[90,35],[90,35],[90,35]];  // [[in,out], ...] влияние ease на КАЖДЫЙ ключ — посчитано в Python
         // 1) setValueAtTime всех ключей
         for (var z=0; z<CAM1_SCALE.length; z++)
             sc.setValueAtTime(CAM1_SCALE[z][0]/FPS, [CAM1_SCALE[z][1], CAM1_SCALE[z][1]]);
@@ -603,7 +604,7 @@
             var iLop=iL.property("ADBE Transform Group").property("ADBE Opacity");
             if(gI==0&&inAt==0){ iLop.setValueAtTime(0,100); }
             else { iLop.setValueAtTime(inAt,0); iLop.setValueAtTime(inAt+F_DUR,100); easePair(iLop); }
-            iLop.setValueAtTime(Math.max(outStart,outEnd-F_FADE),100); iLop.setValueAtTime(outEnd,0);
+            iLop.setValueAtTime(Math.max(outStart,outEnd-F_FADE),100); iLop.setValueAtTime(outEnd,0); easePair(iLop);
             try{ var igl=iL.property("ADBE Effect Parade").addProperty("ADBE Glo2");
                  try{ igl.property("Glow Radius").setValue(42); }catch(e){}
                  try{ igl.property("Glow Intensity").setValue(INTRO_GLOW); }catch(e){} }catch(e){}

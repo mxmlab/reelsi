@@ -5,7 +5,7 @@
 import os, threading
 from typing import Any
 from flask import Response, jsonify, request
-from ._core import bp, umsg_err, jstr, sysexit_text
+from ._core import bp, emit, umsg_err, jstr, sysexit_text
 from core import paths
 from core.umsg import ReelsiError, umsg
 
@@ -302,6 +302,77 @@ def api_insertlib_items() -> Response:
         except ReelsiError: raise
         except Exception as e:
             raise ReelsiError(umsg("insertlib_items_failed", f"{type(e).__name__}: {e}",
+                                  err=f"{type(e).__name__}: {e}"))
+    except (ReelsiError, SystemExit) as e:
+        return jsonify(**umsg_err(e))
+
+
+# ---- стоки (Pexels/Pixabay) как источник вставок ---------------------------
+# Поиск и скачивание живут в core/stock.py: здесь только HTTP и проверка тела
+# запроса. Скачанный файл ложится В БАЗУ (<dest>/stock/<провайдер>/) и в индекс —
+# дальше это обычная вставка базы, автоподбор находит её сам.
+@bp.route("/api/stock_search", methods=["POST"])
+def api_stock_search() -> Response:
+    """Кандидаты со стоков по запросу карточки: {query, type} -> {ok, results}.
+
+    Порядок провайдеров — приоритет (Pexels, затем Pixabay). Кеш ответов — 24 ч
+    (условие обоих стоков), поэтому повторный поиск по тому же запросу сети не
+    касается. Скачивания тут нет: сначала юзер смотрит превью глазами.
+    """
+    d = request.get_json() or {}
+    query, kind = jstr(d, "query").strip(), (jstr(d, "type").strip() or "photo")
+    try:
+        try:
+            from core import stock
+            if not query:
+                raise ReelsiError(umsg("empty_query", "Пустой запрос — у вставки нет query"))
+            if kind not in stock.KINDS:
+                raise ReelsiError(umsg("stock_bad_kind", f"Неизвестный тип стока «{kind}»",
+                                      kind=kind))
+            # Ключей нет ни у одного стока — отказ ДО запроса в сеть и с подсказкой,
+            # куда ключ вписать. Код и текст те же, что в core.stock (тот проверяет
+            # ключи и сам): интерфейс переводит ошибку по коду ERR_stock_no_keys, а
+            # сторож переводов (tests/test_i18n.py) видит umsg-коды только в api/,
+            # core/aicut/ и core/xml2ae/ — без этой ветки перевод остался бы без кода,
+            # которым он объявлен, и тест словаря упал бы на «сироте».
+            if not stock.has_keys():
+                raise ReelsiError(umsg("stock_no_keys", stock.NO_KEYS_TEXT))
+            # Формат кадра ролика: от него ориентация поиска и целевой размер файла
+            # (core/frame.py). Поля в теле нет — 9:16, как было: выбор формата в
+            # интерфейсе — отдельный шаг, роут обязан работать и без него.
+            fmt = jstr(d, "format").strip() or None
+            return jsonify(ok=True, results=stock.search(query, kind, fmt=fmt))
+        except ReelsiError: raise
+        except Exception as e:
+            raise ReelsiError(umsg("stock_search_failed", f"{type(e).__name__}: {e}",
+                                  err=f"{type(e).__name__}: {e}"))
+    except (ReelsiError, SystemExit) as e:
+        return jsonify(**umsg_err(e))
+
+
+@bp.route("/api/stock_pick", methods=["POST"])
+def api_stock_pick() -> Response:
+    """Скачать выбранного кандидата в базу: {candidate, dest?} -> {ok, path, thumb}.
+
+    `dest` — папка базы (как у генерации вставок), по умолчанию insert_library рядом
+    с репозиторием. Файл уезжает в <dest>/stock/<провайдер>/ с файлом лицензии и
+    попадает в индекс базы, поэтому в следующих роликах находится автоподбором без
+    единого запроса к стоку.
+    """
+    d = request.get_json() or {}
+    cand = d.get("candidate")
+    dest = _insert_dest(d)
+    try:
+        try:
+            from core import insertlib, stock
+            if not isinstance(cand, dict) or not cand:
+                raise ReelsiError(umsg("stock_bad_candidate", stock.BAD_CANDIDATE_TEXT,
+                                      provider=""))
+            path = stock.download(cand, dest, emit=emit)
+            return jsonify(ok=True, path=path, thumb=insertlib._thumb_b64(path))
+        except ReelsiError: raise
+        except Exception as e:
+            raise ReelsiError(umsg("stock_pick_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
     except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))

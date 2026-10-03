@@ -47,6 +47,8 @@ _own("REELSI_MODELS_DEV", "models_dev.test.json")
 _own("REELSI_INSERTLIB", "insertlib.test.json", paths.root("insertlib.json"))
 _own("REELSI_TERMS", "terms.test.json", paths.root("terms.json"))
 _own("REELSI_RENDER_STATS", "render_stats.test.json", paths.root("render_stats.json"))
+# кеш ответов стоков — у профиля свой, иначе он пишет в боевой
+_own("REELSI_STOCK_CACHE", "stock_cache.test.json")
 # списки цензуры: свои только если юзер их правил (иначе профиль работает по общим
 # badwords.txt/okwords.txt из поставки — им ничего не грозит, их правка сюда не пишет)
 _own("REELSI_BADWORDS", "badwords.test.txt", paths.root("badwords.user.txt"))
@@ -54,6 +56,16 @@ _own("REELSI_OKWORDS", "okwords.test.txt", paths.root("okwords.user.txt"))
 # своя папка генерации видео (в ней же лежит история задач): иначе профиль показывал
 # бы боевые ролики, а кнопка «Убрать» удаляла бы их файлы
 os.environ["REELSI_VIDEO_DIR"] = paths.root("_videogen.test")
+# своя папка обработки голоса (запечённые треки и превью «было/стало»): слушали бы
+# и чистили чужой кеш, а он на час звука весит десятки мегабайт
+os.environ["REELSI_VOICEFX_DIR"] = paths.root("_voicefx.test")
+# кеш имён VST3 (путь + mtime + размер каждого плагина): свой, иначе профиль
+# досканировал бы список в боевой файл — а его читает рабочий сервер
+_own("REELSI_VST3_SCAN", "vst3_scan.test.json")
+# окружение шумодава RoFormer (venv с audio-separator и модели по ~0.9 ГБ каждая):
+# своё, иначе кнопка «Установить RoFormer» в тестовом профиле ставила бы окружение
+# в боевой каталог ~/.reelsi/voice_sep, а он рабочий
+os.environ["REELSI_VOICE_SEP"] = paths.root("_voice_sep.test")
 os.environ.setdefault("PORT", "5098")
 os.environ.setdefault("REELSI_NO_BROWSER", "1")
 

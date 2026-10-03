@@ -18,7 +18,6 @@
 `/api/render_status`, журнал заданий и `tests/conftest.py`. Роуты передают держатель
 в оркестрацию параметром, а не через глобальные имена чужого модуля.
 """
-import os
 import threading
 from typing import Any
 from flask import Response, jsonify, request
@@ -88,22 +87,25 @@ def render_kill() -> None:
 
 @bp.route("/api/render_run", methods=["POST"])
 def api_render_run() -> Response:
-    """Запустить безголовый рендер. body: {jobs, outdir?, render_dir}.
+    """Запустить безголовый рендер. body: {jobs, outdir?, render_dir, engine?}.
     Свой RJOB, но ОБЩИЙ лок задач с нарезкой и сборкой .jsx:
-    две тяжёлые задачи на одной видеокарте одновременно не идут."""
+    две тяжёлые задачи на одной видеокарте одновременно не идут.
+
+    `engine` — «ae» (по умолчанию, прежний путь: AfterFX + aerender) или «builtin»
+    (рендер без After Effects, кадры снимает наш же предпросмотр). Встроенному нужен
+    ЗАПУЩЕННЫЙ сервер: адрес берётся из самого запроса (`request.host`), а не
+    зашивается — он и так запущен, а порт у изолированного профиля свой.
+    """
     d = request.get_json() or {}
     try:
         from .build import _norm_or_error
         norm = _norm_or_error(d.get("jobs") or [], "render_set_invalid")
         if not norm:
             raise ReelsiError(umsg("set_empty", "Набор пуст"))
-        render_dir = jstr(d, "render_dir").strip().strip('"') or default_render_dir()
-        try:
-            os.makedirs(render_dir, exist_ok=True)
-        except OSError as e:
-            raise ReelsiError(umsg("render_outdir",
-                                  f"не создать папку вывода: {render_dir} — {e}",
-                                  dir=render_dir, err=str(e)))
+        # Выбор движка и подготовка задания (папка вывода, адрес сервера, заголовок в
+        # журнале) — в core/render_job.py: роут только вынимает строки из тела запроса.
+        task = render_job.prepare_render_task(jstr(d, "engine"), jstr(d, "render_dir"),
+                                              jstr(d, "outdir"), request.host)
         with RLOCK:
             if RJOB["running"]:
                 raise ReelsiError(umsg("render_busy",
@@ -120,16 +122,16 @@ def api_render_run() -> Response:
         try:
             with RLOCK:
                 RJOB.update(running=True, done=False, log=[], pct=None, cur="", ae="",
-                            out_dir=render_dir, result=[], failed=[], cancel=False,
+                            out_dir=task.render_dir, result=[], failed=[], cancel=False,
                             items=[], eta=None, eta_phase=None, eta_total=None,
                             eta_preliminary=False, stage_label=None, stage_done=0,
-                            stage_total=0)
+                            stage_total=0, engine=task.engine)
             # Журнал заданий: после перезапуска сервера /api/render_status
             # отдаёт рендер как interrupted — с клипом, на котором он оборвался.
-            journal_bind(RJOB, "render", "Рендер AE", "pct")
+            journal_bind(RJOB, "render", task.title, "pct")
             threading.Thread(target=render_job.run_render_job,
-                             args=(RJOB, norm, jstr(d, "outdir").strip().strip('"'),
-                                   render_dir),
+                             args=(RJOB, norm, task.outdir, task.render_dir,
+                                   task.engine, task.host),
                              daemon=True).start()
         except ReelsiError: raise
         except Exception:
@@ -149,6 +151,9 @@ def api_render_status() -> Response:
     with RLOCK:
         return jsonify(ok=True, running=RJOB["running"], done=RJOB["done"],
                        pct=RJOB["pct"], cur=RJOB["cur"], ae=RJOB["ae"],
+                       # Движок — тот, которым шёл (идёт) этот рендер: по нему фронт
+                       # подписывает окно прогресса, если статус читают после F5.
+                       engine=RJOB.get("engine") or "ae",
                        out_dir=RJOB["out_dir"], result=RJOB["result"],
                        failed=list(RJOB["failed"]), items=RJOB.get("items") or [],
                        eta=RJOB.get("eta"), eta_phase=RJOB.get("eta_phase"),

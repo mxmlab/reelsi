@@ -9,7 +9,7 @@
 3. back_step=0.75 больше не подменяется на 0.45.
 4. Превью (node): разные ys (от разного back_step) -> разные экранные позиции строки
    заднего плана в превью.
-5. Схема: intro_scale/intro_line_step/intro_x/intro_cam в группе «Transform», вне
+5. Схема: intro_scale/intro_line_step/intro_x в группе «Transform», intro_cam — в «Камера 1»; вне
    групп камер «Камера 1» и «Камера 2».
 """
 import gzip
@@ -209,7 +209,7 @@ def _intro_groups_by_id(items):
 
 
 def test_schema_intro_transform_and_camera_groups():
-    """5. Схема стиля: intro_scale/intro_line_step/intro_x/intro_cam в группе «Transform»,
+    """5. Схема стиля: intro_scale/intro_line_step/intro_x в группе «Transform» (intro_cam — у «Камера 1»),
     вне групп камер («Камера 1» и «Камера 2»)."""
     intro_layer = None
     for layer in style_schema.LAYERS:
@@ -246,9 +246,9 @@ def test_schema_intro_transform_and_camera_groups():
     cam1_keys = get_field_keys(cam1_group)
     cam2_keys = get_field_keys(cam2_group)
 
-    expected_tr = {"intro_scale", "intro_line_step", "intro_x", "intro_cam"}
-    expected_cam1 = {"intro_y", "intro_anchor"}
-    expected_cam2 = {"intro_y2", "intro_anchor2"}
+    expected_tr = {"intro_scale", "intro_line_step", "intro_x"}
+    expected_cam1 = {"intro_y", "intro_anchor", "intro_cam"}
+    expected_cam2 = {"intro_y2", "intro_anchor2", "intro_cam2"}
 
     assert expected_tr.issubset(tr_keys), f"В Transform должны быть {expected_tr}, найдено {tr_keys}"
     assert expected_cam1.issubset(cam1_keys), f"В Камера 1 должны быть {expected_cam1}, найдено {cam1_keys}"

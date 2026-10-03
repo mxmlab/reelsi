@@ -168,7 +168,7 @@
       <span class="grow"></span><span id="wordsinfo" class="hint"></span></h2>
 
     <!-- Весь блок стиля живёт в #stylebox и ПЕРЕЕЗЖАЕТ целиком во вкладку «Стиль»
-         предпросмотра (styleToModal/styleHome в app/95-styles.js). Один DOM — одни id, никакой
+         предпросмотра (styleToModal/styleHome в app/80-inserts.js). Один DOM — одни id, никакой
          синхронизации двух копий полей. -->
     <div id="styleslot"><div id="stylebox">
     <div class="sect" style="margin-top:0">Стиль</div>
@@ -210,9 +210,12 @@
       <button class="sm" onclick="pickdir('aeoutdir3')">Выбрать…</button>
     </div>
     <div class="row" style="margin-top:8px;align-items:center">
-      <div class="grow"><label for="aerenderdir">Папка вывода рендера <span class="i" data-t="Куда уедет готовый .mov. Дефолт — папка exp рядом с репозиторием. Рендер — безголовый прогон After Effects (сборка .aep + aerender), со своей кнопкой и логом.">!</span></label><input id="aerenderdir" style="width:100%" oninput="renderDirSync(this)" onchange="renderDirCommit(this)"><span class="hint" id="aerenderdirnote" style="display:block;margin-top:4px"></span></div>
+      <div class="grow"><label for="aerenderdir">Папка вывода рендера <span class="i" data-t="Куда уедет готовый ролик. Дефолт — папка exp рядом с репозиторием. Движок выбирается ниже: безголовый прогон After Effects или встроенный рендер, которому After Effects не нужен вовсе.">!</span></label><input id="aerenderdir" style="width:100%" oninput="renderDirSync(this)" onchange="renderDirCommit(this)"><span class="hint" id="aerenderdirnote" style="display:block;margin-top:4px"></span></div>
       <button class="sm" onclick="pickdir('aerenderdir')">Выбрать…</button>
       <span id="aeresrend" class="muted"></span>
+    </div>
+    <div class="row" style="margin-top:8px;align-items:center">
+      <div class="seg" id="rendengine"><label class="on" data-t="Прежний путь рендера: безголовый прогон After Effects (сборка .aep + aerender). Нужен установленный After Effects; именно он даёт кадр в кадр с проектом AE."><input type="radio" name="rendengine" value="ae" checked onchange="rendEngineUI()"> After Effects</label><label data-t="Рендер без After Effects: кадры рисует наш же предпросмотр, звук сводится по плану сцены. Превью повторяется приблизительно — Glow, Lumetri и мозаика цензуры близко, motion blur нет. After Effects не нужен; на время съёмки поднимается несколько экземпляров Chrome."><input type="radio" name="rendengine" value="builtin" onchange="rendEngineUI()"> Встроенный</label></div>
     </div>
     <details><summary>Дополнительно — яркость, музыка, цензура, папки</summary>
       <div class="row" style="margin-top:12px">
@@ -311,23 +314,24 @@
       <div class="edcols">
         <div class="pvstage" id="pvstage"><div id="pvsub" class="pvsub" data-noi18n></div></div>
         <div class="edside">
+          <!-- Панель «Голос»: сюда переехали все ручки обработки (шумодав, цепочка
+               плагинов, галки назначения) — настраивается там, где слышно, на звуке
+               этого клипа. Разметку строит ОДНА функция (voiceFxRender), в профиле
+               спикера та же функция рисует сводку значений. -->
           <div class="edgrp">
-            <div class="edlbl">Монтаж</div>
-            <div class="row" style="align-items:center">
-              <button class="sm" id="pvplay" onclick="pvToggle()" style="min-width:44px" aria-label="Воспроизвести / пауза" data-t="Воспроизвести / пауза"><span data-ic="play"></span></button>
-              <input type="range" id="pvseek" aria-label="Перемотка монтажа" min="0" max="1000" value="0" step="1" class="grow" oninput="pvScrub(this.value)" onpointerup="this.blur()" onchange="this.blur()">
-              <span id="pvtime" class="muted mono" style="min-width:96px;text-align:right">0:00 / 0:00</span>
-              <span class="volctl" data-t="Громкость превью — общая для всех плееров"><span data-ic="sound"></span><input type="range" data-vol aria-label="Громкость превью" min="0" max="100" value="100" step="1" oninput="setMediaVol(this.value)" onpointerup="this.blur()"></span>
-            </div>
-            <div id="pvcam" class="muted" style="margin-top:6px;font-size:12px"></div>
+            <div class="edlbl">Голос <span id="pvvoicespk" class="muted" data-noi18n></span>
+              <span class="i" data-t="Обработка голоса спикера этого клипа: шумодав и цепочка плагинов. Значения уедут в профиль спикера по кнопке «Сохранить у спикера», а до неё действуют только здесь. Спикера у клипа нет — панели нет: обработка — настройка профиля.">!</span></div>
+            <div id="pvvoice"></div>
           </div>
           <div class="edgrp grow2">
-            <div class="edlbl">Редактор <span class="i" data-t="Клик — курсор · тяни края блоков · двойной клик по серому — вернуть вырезанное · колесо — зум · Shift+колесо или линейка — прокрутка · пробел — играть · ←/→ — покадрово">!</span></div>
+            <div class="edlbl">Редактор <span class="i" data-t="Клик по таймлайну — курсор · играет один плеер: пробел, «играть», клик — одно состояние · тяни края блоков · двойной клик по серому — вернуть вырезанное · колесо — зум · Shift+колесо или линейка — прокрутка · ←/→ — покадрово">!</span></div>
             <div class="row" style="align-items:center">
               <button class="sm" id="edplay" onclick="edToggle()" style="min-width:44px" aria-label="Воспроизвести / пауза" data-t="Воспроизвести / пауза"><span data-ic="play"></span></button>
               <span id="edtime" class="muted mono">0:00 / 0:00</span>
+              <span class="volctl" data-t="Громкость превью — общая для всех плееров"><span data-ic="sound"></span><input type="range" data-vol aria-label="Громкость превью" min="0" max="100" value="100" step="1" oninput="setMediaVol(this.value)" onpointerup="this.blur()"></span>
               <label class="hint" style="display:flex;gap:6px;align-items:center;margin:0;cursor:pointer"><input type="checkbox" onchange="ED.raw=this.checked"> слушать вырезанное</label>
             </div>
+            <div id="edcam" class="muted" style="margin-top:6px;font-size:12px"></div>
             <div class="row" style="margin-top:10px">
               <button class="sm" onclick="edSplit()" data-t="Разрезать блок по курсору"><span data-ic="cut"></span> Резать<span class="kbd">C</span></button>
               <button class="sm" onclick="edDelSel()" data-t="Удалить выбранный блок"><span data-ic="trash"></span> Удалить<span class="kbd">D</span></button>
@@ -369,7 +373,7 @@
           </div>
           <div class="row" style="align-items:center;margin-top:10px">
             <button class="sm" id="ipvplay" onclick="ipvToggle()" style="min-width:44px" aria-label="Воспроизвести / пауза" data-t="Воспроизвести / пауза"><span data-ic="play"></span></button>
-            <input type="range" id="ipvseek" aria-label="Перемотка предпросмотра" min="0" max="1000" value="0" step="1" class="grow" style="min-width:0" oninput="ipvScrub(this.value)" onpointerup="this.blur()" onchange="this.blur()">
+            <input type="range" id="ipvseek" aria-label="Перемотка предпросмотра" min="0" max="1000" value="0" step="1" class="grow" oninput="ipvScrub(this.value)" onpointerup="this.blur()" onchange="this.blur()">
             <span id="ipvtime" class="muted mono" style="font-size:11px;white-space:nowrap">0:00 / 0:00</span>
             <span class="volctl" data-t="Громкость превью — общая для всех плееров"><span data-ic="sound"></span><input type="range" data-vol aria-label="Громкость превью" min="0" max="100" value="100" step="1" oninput="setMediaVol(this.value)" onpointerup="this.blur()"></span>
           </div>
@@ -388,15 +392,12 @@
           </div>
           <div id="inspart_inserts">
             <div class="row" style="margin-bottom:4px">
-              <button class="sm" data-aigrp="insStop" onclick="aiInsertsRun()" data-t="Вся разметка вставок с нуля: старые карточки заменяются новым подбором ИИ."><span data-ic="ai" data-cls="gold"></span> Подобрать заново (все)</button>
-              <button class="sm" data-aigrp="insStop" onclick="aiInsertsMore()" data-t="Удали ненужные карточки, потом добери: ИИ сделает столько новых, сколько не хватает до исходного числа, не трогая оставленные."><span data-ic="ai" data-cls="gold"></span> Добрать недостающие</button>
-              <button class="sm" id="insStop" onclick="aiStop('insStop')" style="display:none;color:var(--dng)"><span data-ic="stop"></span> Стоп</button>
+              <button class="sm key" id="insGenBtn" style="display:none" onclick="insGenMissing()" aria-label="Сгенерировать картинки для карточек без файла" data-t="Сгенерировать картинки для карточек без файла ({n})"><span data-ic="ai" data-cls="gold"></span><span id="insGenCnt"></span></button>
               <button class="sm" onclick="insAdd('photo')" data-t="Фото-вставка вручную — встанет на месте плейхеда предпросмотра."><span data-ic="plus"></span> фото</button>
               <button class="sm" onclick="insAdd('video')" data-t="Видео-вставка вручную — встанет на месте плейхеда предпросмотра (на весь кадр, играет весь свой хрон)."><span data-ic="plus"></span> видео</button>
-              <button class="sm" id="insGenBtn" style="display:none" onclick="insGenMissing()" data-t="Сгенерить картинки для всех фото-вставок без файла (Nano Banana). Цена и счёт покажутся ДО запуска."><span data-ic="ai" data-cls="gold"></span> Недостающие</button>
-              <button class="sm" onclick="openInsLib()" data-t="База использованных вставок: скан прошлых проектов + автоподбор файла под ИИ-запрос."><span data-ic="book"></span> База</button>
-              <button class="sm" id="insUndoBtn" onclick="insUndo()" disabled aria-label="Вернуть удалённую вставку" data-t="Вернуть последнюю удалённую вставку целиком — файл и настройки карточки восстановятся как были. Одно действие, до перезагрузки страницы."><span data-ic="undo"></span></button>
               <span id="insres" class="ok"></span>
+              <span class="grow"></span>
+              <button class="sm" id="insUndoBtn" onclick="insUndo()" disabled aria-label="Вернуть удалённую вставку" data-t="Вернуть последнюю удалённую вставку"><span data-ic="undo"></span></button>
             </div>
             <div id="insHost" class="inshostscroll"></div>
           </div>
@@ -428,6 +429,11 @@
             <span id="aewcaptionres" class="ok" style="font-size:12px"></span>
           </div>
           <div class="row" id="aewintrobar" style="display:none;align-items:center;gap:8px;margin-top:8px">
+            <!-- Кнопка расчёта рото и трекинга для превью: показывается, только если в стиле
+                 клипа включены рото или слежение за головой (ipvCalcUI в static/app/87-roto-preview.js).
+                 Считает тем же кодом, что сборка, и кладёт в те же кэши. -->
+            <button class="sm" id="rotoCalcBtn" style="display:none" onclick="ipvCalcRun()" data-t="Считает рото-маски и трекинг головы тем же расчётом, что сборка, и кладёт их в общий кэш. Посчитанное здесь сборка берёт готовым, поэтому кнопки «пересчитать» нет — кэш сам протухает по исходнику."><span data-ic="ai" data-cls="gold"></span> Рассчитать рото и трекинг</button>
+            <span class="hint" id="rotoCalcRes" style="display:none;color:var(--ok)">посчитано</span>
             <select id="intromode" onchange="captureAE()" aria-label="Режим появления интро" data-t="Как первые слова уходят за спину: по одному слову или сразу строкой"><option value="word">пословно</option><option value="line">построчно</option></select>
             <button class="sm" data-aigrp="introStop" onclick="aiIntroRun()" data-t="ИИ размечает интро по строкам + 2–3 акцента в середине. Только этот файл."><span data-ic="ai" data-cls="gold"></span> ИИ интро</button>
             <button class="sm" data-aigrp="introStop" onclick="aiIntroAll()" data-t="То же самое, но сразу во всех файлах, отмеченных галочками на шаге «After Effects» (не отмечено ни одного = во всех). Уже размеченное интро будет заменено — спросим перед стартом."><span data-ic="ai" data-cls="gold"></span> все (<span data-introcnt></span>)</button>
@@ -588,14 +594,34 @@
       <div id="spk_camdirs"></div>
       <div class="setrow"><label for="spk_style">Стиль AE <span class="i" data-t="Стиль сборки в After Effects, который включается вместе со спикером. Это значение ПО УМОЛЧАНИЮ: на шаге сборки стиль всегда можно поменять на любой другой, профиль спикера от этого не изменится.">!</span></label>
         <select id="spk_style"></select></div>
+      <div class="setrow"><label for="spk_format">Формат <span class="i" data-t="Формат кадра ролика этого спикера: 9:16, 1:1, 4:5 или 16:9. Действует на новые нарезки и сборки; стиль один на все форматы — его числа задуманы в кадре 1080×1920 и при сборке пересчитываются под кадр формата сами. Сменил формат у уже нарезанного клипа — XML и .jsx пересоберутся в новый кадр при следующем открытии превью или сборке. Пусто — 9:16, как снималось до сих пор.">!</span></label>
+        <select id="spk_format"></select></div>
       <div class="setrow" style="align-items:flex-start"><label style="margin-top:9px" for="spk_hint">Подсказка ИИ <span class="i" data-t="Добавка к промпту модели, которая решает, что вырезать: «этот разговаривает с оператором — выкидывай реплики про съёмку». Лечит то, что порогами не лечится.">!</span></label>
         <textarea id="spk_hint" rows="3" style="flex:1;min-width:0;resize:vertical" placeholder="пусто — общий промпт"></textarea></div>
 
       <div class="sethdr">Заметка <span class="i" data-t="Для себя: почему у этого спикера стоят такие цифры. В работе не участвует.">!</span></div>
       <textarea id="spk_note" rows="3" style="resize:vertical" placeholder="чем мерил, что подтвердилось"></textarea>
 
+      <details class="spkcalib"><summary>Голос: обработка <span class="i" data-t="Шумодав и плагины на голос камеры 1 — запекаются до After Effects, по ним же режет нарезка. Здесь видно, что у спикера стоит; настраивается это в превью нарезки, на звуке клипа.">!</span></summary>
+        <!-- Только сводка значений: ручек и «Прослушать» тут нет — их крутят в превью
+             нарезки, где слышно результат (одна разметка на два места, voiceFxRender). -->
+        <div id="spkVoice" style="margin-top:11px"></div>
+      </details>
+
+      <details class="spkcalib"><summary>Цвет: LUT <span class="i" data-t="LUT на видео этой камеры. В превью накладывается на лету, в проект After Effects уходит прожжённым в видео (AE плохо работает с цветом). Порядок: LUT, потом Lumetri из стиля">!</span></summary>
+        <div style="display:flex;flex-direction:column;gap:9px;margin-top:11px">
+          <div id="spk_luts"></div>
+        </div>
+      </details>
+
       <details class="spkcalib"><summary>Картинки-вставки <span class="i" data-t="Стилевые приписки к промпту генерации картинок лично для этого спикера (слоты 1 и 2). Пусто — генерим предмет как есть.">!</span></summary>
         <div style="display:flex;flex-direction:column;gap:9px;margin-top:11px">
+          <div class="setrow"><label for="spk_ins_photo">Вставок-фото <span class="i" data-t="Сколько вставок ИИ предлагает на шаге 2. Пусто — 10 фото и 3 видео">!</span></label>
+            <span style="display:flex;gap:12px;align-items:center;flex:1;min-width:0">
+              <input type="number" id="spk_ins_photo" min="0" max="30" step="1" placeholder="10" style="flex:1;min-width:0">
+              <label for="spk_ins_video" style="margin:0;font-size:12px;white-space:nowrap">Вставок-видео</label>
+              <input type="number" id="spk_ins_video" min="0" max="30" step="1" placeholder="3" style="flex:1;min-width:0">
+            </span></div>
           <div class="setrow"><label for="spk_pos_a">Приписка к промпту 1 <span class="i" data-t="Что дописывать к предмету при генерации картинки кнопкой 1 (Nano Banana): «3d icon», «photorealistic» и т.п. Клеится пробелом. Пусто — генерим предмет как есть.">!</span></label>
             <span style="display:flex;gap:8px;flex:1;min-width:0">
               <input id="spk_extra_a" placeholder="пусто — без приписки" style="flex:1;min-width:0">
@@ -773,15 +799,20 @@
         <div class="setrow"><label>Видео <span class="i" data-t="Открывает отдельный инструмент генерации видео из текста.">!</span></label>
           <button class="sm" id="navvideo" type="button" onclick="closeModal('mbAISettings');openVideo()" aria-label="Генерация видео" data-t="Генерация видео из текста (Seedance 2 на OpenRouter): длина, размер, референсы фото/видео с подписью. Отдельный инструмент, не связан с нарезкой."><span data-ic="film" data-cls="gold"></span>Открыть</button></div>
         <div class="setrow"><label>База вставок <span class="i" data-t="Пересканирует папки базы вставок, подхватывает новые картинки и видео и описывает новые файлы через ИИ.">!</span></label>
-          <button class="sm" id="illhdr" type="button" onclick="illRefresh()" aria-label="Обновить базу вставок"><span data-ic="book" data-cls="gold"></span>Обновить <span id="illhdrtxt"></span></button></div>
+          <button class="sm" id="illhdr" type="button" onclick="illRefresh()" aria-label="Обновить базу вставок"><span data-ic="book" data-cls="gold"></span>Обновить <span id="illhdrtxt"></span></button>
+          <button class="sm" id="illopen" type="button" onclick="closeModal('mbAISettings');openInsLib()" aria-label="Открыть базу вставок" data-t="Что в окне базы вставок: папки для скана, импорт новых файлов в папку базы, описания через ИИ и список файлов — описания правятся прямо в списке."><span data-ic="book"></span>Открыть базу вставок…</button></div>
         <div class="setrow"><label>Временные файлы <span class="i" data-t="Удаляет временные файлы в папке результата; прокси спросит отдельно, рото не трогается.">!</span></label>
           <button class="sm" id="navclean" type="button" onclick="cleanTmp()" aria-label="Очистить временные файлы"><span data-ic="broom"></span>Очистить</button></div>
         <div class="sethdr">Экспорт</div>
         <div class="setrow"><label for="dlfmt">Формат скачивания <span class="i" data-t="В чём скачивать таймлайн кнопкой «Скачать» у клипа на шаге 2: XML — откроется и в Premiere, и в DaVinci Resolve; .drp — родной проект Resolve со вставками и субтитрами (переживает перенос).">!</span></label>
           <select id="dlfmt" class="dlfmt" aria-label="Формат скачивания" onchange="dlFmtSet(this.value)"><option value="xml">XML</option><option value="drp">.drp</option></select></div>
+        <div class="setrow"><label for="vencoder">Видеокодек <span class="i" data-t="Чем кодировать видео, которое Reelsi пишет сам: черновой рендер и видео камер с прожжённым LUT. Авто выбирает самое быстрое из того, что реально работает на этой машине.">!</span></label>
+          <select id="vencoder" aria-label="Видеокодек" onchange="setVideoEncoder(this.value)"><option value="auto">Авто</option></select></div>
         <div class="sethdr">After Effects</div>
         <div class="setrow"><label for="glitchglow">Свечение глитча <span class="i" data-t="Чем светятся жёлтые слова с анимацией «глитч» в собранном проекте After Effects. Встроенные — Gaussian Blur и Glow, есть в любом AE. Deep Glow 2 — сторонний плагин, он должен быть установлен: если его нет, After Effects сообщит об этом после сборки, а эти слова останутся без свечения. Действует на следующую сборку.">!</span></label>
           <select id="glitchglow" aria-label="Свечение глитча" onchange="setGlitchGlow(this.value)"><option value="builtin">Встроенные (Blur + Glow)</option><option value="deepglow2">Deep Glow 2 (плагин)</option></select></div>
+        <div class="setrow"><label for="aebuildworkers">Параллельная сборка <span class="i" data-t="Сколько копий After Effects собирают проект одновременно. Авто выбирает до 3 процессов с учётом свободной памяти (10 ГБ на процесс). 1 — последовательная сборка в один процесс.">!</span></label>
+          <select id="aebuildworkers" aria-label="Параллельная сборка" onchange="setAeBuildWorkers(this.value)"><option value="auto">Авто (до 3 процессов)</option><option value="1">1 (последовательно)</option><option value="2">2 процесса</option><option value="3">3 процесса</option><option value="4">4 процесса</option></select></div>
       </div>
     </div>
 
@@ -794,6 +825,8 @@
         <div class="setrow"><label>Ум нарезки <span class="i" data-t="Сколько модель ДУМАЕТ перед ответом на этом шаге. Off — отвечает сразу (быстро и дёшево). Уровни (Low/Medium/High/Max…) — сначала рассуждает, потом отвечает: дольше и дороже, но точнее. Список уровней — из каталога models.dev: показываются только те, что модель реально умеет. Нарезке думать НАДО: без размышлений модель путает, какой из повторов чистовой, и вырезает нужный заход вместо брошенного (замер на C1353). Работает только у моделей с поддержкой reasoning (OpenRouter/Claude); у остальных параметр не шлётся.">!</span></label>
           <select data-reas="cut" aria-label="Ум нарезки" onchange="setStepReasoning(this)"></select>
           <span class="hint" id="reas_hint_cut" style="display:none"></span></div>
+        <div class="setrow"><label for="conc_cut">Роликов одновременно <span class="i" data-t="Сколько роликов ИИ-нарезка режет сразу. Пусто — как в профиле модели (облако 4). Распознавание на видеокарте всё равно идёт по одному. С локальной моделью (LM Studio) — всегда по одному: она делит видеокарту с распознаванием.">!</span></label>
+          <input type="number" id="conc_cut" min="1" max="16" step="1" placeholder="…" onchange="setStepConcurrency(this)"></div>
         <div class="setrow"><label for="omniprofile">Движок Omni (слух) <span class="i" data-t="Кто СЛУШАЕТ звук и расшифровывает дословно для Omni-транскрипции (шаг 2 / облако): «Qwen2.5-Omni» = локально; «GigaAM-v3 (RU)» = локальная CTC-модель; облачный профиль = аудио-чанки уходят провайдеру (Gemini/OpenRouter/свой vLLM). На нарезку не влияет — движок нарезки выбирается ниже.">!</span></label>
           <select id="omniprofile" onchange="setOmniProfile(this.value)"></select></div>
         <div class="setrow"><label for="cut_asr">Движок нарезки (тайминги) <span class="i" data-t="Кто делает пословные тайминги для нарезки: чистый CTC-акустический движок с родными таймингами слов. GigaAM-v3 (RU, CTC) — русский; GigaAM multilingual — 70+ языков; пользовательские CTC-модели из data/asr_engines.json.">!</span></label>
@@ -822,6 +855,8 @@
           <div class="ais-matrix-row" role="row"><span role="rowheader">Вставки</span><select data-prof="inserts" aria-label="Модель: Вставки" onchange="setStepProfile(this)"></select><select data-reas="inserts" aria-label="Ум: Вставки" onchange="setStepReasoning(this)"></select><span class="hint" id="reas_hint_inserts" style="display:none"></span></div>
           <div class="ais-matrix-row" role="row"><span role="rowheader">Интро</span><select data-prof="intro" aria-label="Модель: Интро" onchange="setStepProfile(this)"></select><select data-reas="intro" aria-label="Ум: Интро" onchange="setStepReasoning(this)"></select><span class="hint" id="reas_hint_intro" style="display:none"></span></div>
         </div>
+        <div class="setrow"><label for="conc_markup">Роликов одновременно <span class="i" data-t="Сколько роликов «Разметить всё» гонит сразу (жёлтые, вставки и ИИ-интро). Пусто — как в профиле модели (облако 4).">!</span></label>
+          <input type="number" id="conc_markup" min="1" max="16" step="1" placeholder="…" onchange="setStepConcurrency(this)"></div>
         <div class="setrow"><label for="subengine">Движок субтитров <span class="i" data-t="Кто делает субтитры. Whisper large-v3 — универсально, любой язык. GigaAM-v3 CTC — чистая акустика, быстро, но пишет как слышит. GigaAM-v3 RNN-T — внутренняя языковая модель ПРАВИТ слова (точнее текст). GigaAM-v3 e2e RNN-T — то же плюс пунктуация, заглавные и «ё»: самые аккуратные слова для субтитров. GigaAM multilingual — 70+ языков. Тайминги у всех GigaAM родные, форс-алайн не нужен.">!</span></label>
           <select id="subengine" onchange="saveState();markupSummary()"></select></div>
       </div>
@@ -836,6 +871,14 @@
           <select id="ais_image" aria-label="Профиль генерации картинок" onchange="setImageProfile(this.value)"></select></div>
         <div class="setrow" id="ais_rembgRow" style="display:none"><label>Убирать фон <span class="i" data-t="Как «Remove Background» в фотошопе: после генерации локальная модель rembg (u2net) вырезает предмет и сохраняет PNG с прозрачностью, пустые поля обрезаются. Так сгенерированное ложится в базу таким же, как стоковые вставки. Считается на CPU ~1–2 с на картинку; при первом запуске модель (~176 МБ) скачается сама.">!</span></label>
           <label class="chk" style="gap:7px;align-items:center;margin:0"><input type="checkbox" id="ais_rembg" aria-label="Убирать фон" onchange="setImageRembg(this.checked)"> прозрачный PNG вместо белого фона</label></div>
+        <div class="sethdr">Стоки</div>
+        <div class="setrow"><label for="stk_pexels">Ключ Pexels <span class="i" data-t="Бесплатный ключ: pexels.com/api, pixabay.com/api/docs. Хранится только в ai_config.json. Скачанное со стока ложится в базу вставок с файлом лицензии">!</span></label>
+          <input type="password" id="stk_pexels" aria-label="Ключ Pexels" onchange="saveStockKeys()"></div>
+        <div class="setrow"><label for="stk_pixabay">Ключ Pixabay</label>
+          <input type="password" id="stk_pixabay" aria-label="Ключ Pixabay" onchange="saveStockKeys()"></div>
+        <div class="setrow"><label></label>
+          <button class="sm" onclick="saveStockKeys()">Сохранить ключи</button>
+          <span class="muted" id="stk_res" style="font-size:12px"></span></div>
         <div class="sethdr">Видео</div>
         <div class="setrow"><label for="ais_video">Профиль (видео) <span class="i" data-t="OpenRouter-профиль: провайдер и ключ. «Выкл» = генерация недоступна и кнопок видео в карточках нет.">!</span></label>
           <select id="ais_video" aria-label="Профиль генерации видео" onchange="setVideoProfile(this.value)"></select></div>
@@ -887,52 +930,91 @@
     </div>
 
     <!-- ============ вкладка: модели и подключения ============ -->
+    <!-- Список профилей — колонкой слева, форма профиля — справа. Прокручивается
+         ТОЛЬКО тело формы (.conn-body), а подвал с «Сохранить» закреплён внизу
+         колонки: у окна настроек фиксированная высота, и длинная колонка уходила
+         за нижний край — к «Сохранить» приходилось долистывать всё окно.
+         Кнопки одной формы, прямоугольные: «Сохранить» отличается только заливкой. -->
     <div class="aistab" id="aistab_models" role="tabpanel" aria-labelledby="aistabbtn_models" aria-hidden="false">
-    <div class="mbody ais-profile-body" style="display:flex;flex-direction:column;gap:11px">
-    <div class="ais-profile-row" style="display:flex;gap:16px;align-items:flex-start;min-width:0">
-      <div id="aisList" style="min-width:190px;max-width:230px"></div>
-      <div class="grow" style="display:flex;flex-direction:column;gap:9px">
-        <div><label for="ais_name">Название профиля</label><input id="ais_name" style="width:100%" placeholder="Например: Claude Sonnet"></div>
-        <div><label for="ais_provider">Провайдер</label>
-          <select id="ais_provider" onchange="aiSetProv()" style="width:100%">
-            <option value="lmstudio">LM Studio (локально)</option>
-            <option value="commandcode">CommandCode</option>
-            <option value="anthropic">Anthropic (Claude)</option>
-            <option value="openrouter">OpenRouter</option>
-            <option value="deepseek">DeepSeek</option>
-            <option value="groq">Groq</option>
-            <option value="ollama">Ollama (локально)</option>
-            <option value="openai">OpenAI-совместимый (свой URL)</option>
-          </select></div>
-        <div><label for="ais_url">Base URL</label><input id="ais_url" style="width:100%" placeholder="http://localhost:1234/v1" autocomplete="off"></div>
-        <div><label for="ais_key">API-ключ <span class="i" data-t="Хранится ТОЛЬКО на сервере в reelsi/ai_config.json (файл в .gitignore, в гит не попадает). В браузер отдаётся маской •••…, не трогаешь поле — ключ не меняется. Вместо ключа можно написать env:ИМЯ_ПЕРЕМЕННОЙ — тогда ключ берётся из окружения и в ai_config.json не попадает.">!</span></label>
-          <input id="ais_key" type="password" style="width:100%" autocomplete="new-password" placeholder="для LM Studio не нужен" oninput="aiSyncKeyType(this.value)">
-          <div id="ais_key_warn" class="err" style="font-size:12px;margin-top:3px;display:none"></div></div>
-        <div><label for="ais_headers">Доп. заголовки <span class="i" data-t="По одному заголовку в строке, формат Имя: значение. Нужны провайдерам вроде Azure OpenAI (api-key) и корпоративным шлюзам. Значение можно задать как env:ИМЯ_ПЕРЕМЕННОЙ — тогда оно берётся из окружения и в ai_config.json не попадает.">!</span></label>
-          <textarea id="ais_headers" rows="2" style="width:100%;resize:vertical;font-family:monospace;font-size:12px"></textarea></div>
-        <div><label>Модель</label>
-          <div style="display:flex;gap:6px">
-            <input id="ais_model" list="ais_models" style="flex:1" placeholder="id модели (открой список стрелкой ↓)" autocomplete="off" oninput="aiSetModelInput()">
-            <button class="sm" onclick="aiSetModels()" data-t="Запросить у провайдера список доступных моделей (для Base URL/ключа из формы)">Обновить список</button>
+    <div class="mbody conn">
+      <div class="conn-list">
+        <div id="aisList"></div>
+      </div>
+      <div class="grow" style="display:flex;flex-direction:column;gap:10px;min-height:0">
+        <div class="conn-body" id="connBody">
+          <div class="conn-name">
+            <input id="ais_name" aria-label="Название профиля" placeholder="Например: Claude Sonnet" autocomplete="off">
+            <button class="sm" id="aisActive" onclick="aiSetMakeActive()" aria-label="Сделать активным" data-t="Сделать этот профиль активным: он подставляется по умолчанию там, где шаг не выбрал модель отдельно."><span data-ic="target"></span></button>
+            <button class="sm" id="aisClone" onclick="aiSetClone()" aria-label="Дублировать профиль" data-t="Дублировать профиль: копия с тем же провайдером, адресом, ключом и моделью — так заводят вторую модель того же провайдера."><span data-ic="copy"></span></button>
+            <button class="sm" id="aisDel" onclick="aiSetDelete()" aria-label="Удалить профиль" data-t="Удалить профиль. Шаги, которые смотрели на него, переключатся на активный — проверь вкладки «Нарезка» и «Разметка»."><span data-ic="trash"></span></button>
+          </div>
+          <div class="conn-row">
+            <label for="ais_provider">Провайдер</label>
+            <select id="ais_provider" onchange="aiSetProv()">
+              <option value="lmstudio">LM Studio (локально)</option>
+              <option value="commandcode">CommandCode</option>
+              <option value="anthropic">Anthropic (Claude)</option>
+              <option value="openrouter">OpenRouter</option>
+              <option value="deepseek">DeepSeek</option>
+              <option value="groq">Groq</option>
+              <option value="ollama">Ollama (локально)</option>
+              <option value="unsloth">Unsloth Studio (локально)</option>
+              <option value="openai">OpenAI-совместимый (свой URL)</option>
+            </select>
+          </div>
+          <!-- Адрес спрашиваем только у «своего URL»: у остальных провайдеров он
+               известен и подставляется сам — поле только сбивало с толку. -->
+          <div class="conn-row" id="conn_url_row" style="display:none">
+            <label for="ais_url">Адрес <span class="i" data-t="Адрес API провайдера. Нужен только «OpenAI-совместимому (свой URL)»: у остальных провайдеров адрес известен и подставляется сам.">!</span></label>
+            <input id="ais_url" placeholder="http://localhost:1234/v1" autocomplete="off">
+          </div>
+          <div class="conn-row">
+            <label for="ais_key">Ключ <span class="i" data-t="Хранится ТОЛЬКО на сервере в reelsi/ai_config.json (файл в .gitignore, в гит не попадает). В браузер отдаётся маской •••…, не трогаешь поле — ключ не меняется. Вместо ключа можно написать env:ИМЯ_ПЕРЕМЕННОЙ — тогда ключ берётся из окружения и в ai_config.json не попадает.">!</span></label>
+            <span class="conn-ctl">
+              <input id="ais_key" type="password" autocomplete="new-password" placeholder="для LM Studio не нужен" oninput="aiSyncKeyType(this.value)">
+              <button class="sm" id="connTest" onclick="aiSetTest()" data-t="Мини-запрос через данные формы: провайдер отвечает — значит адрес, ключ и модель рабочие.">Проверить</button>
+              <span id="connTestRes" class="muted"></span>
+            </span>
+          </div>
+          <div id="ais_key_warn" class="err" style="display:none"></div>
+          <div class="conn-row">
+            <label for="ais_model">Модель</label>
+            <span class="conn-ctl">
+              <input id="ais_model" list="ais_models" placeholder="id модели (открой список стрелкой ↓)" autocomplete="off" oninput="aiSetModelInput()">
+              <button class="sm" onclick="aiSetModels()" aria-label="Обновить список моделей" data-t="Запросить у провайдера список доступных моделей (по адресу и ключу из формы)."><span data-ic="refresh"></span></button>
+            </span>
           </div>
           <datalist id="ais_models"></datalist>
-          <div id="ais_reas" class="muted" style="font-size:12px;margin-top:3px"></div></div>
-        <!-- «Ум» (reasoning) переехал отсюда на страницы: уровень задаётся ОТДЕЛЬНО
-             на каждый шаг (нарезка/жёлтые/вставки/интро) — шагам нужно разное,
-             см. STEP_REASONING_DEFAULT в aicut.py -->
-        <div class="actbar" style="display:flex;gap:8px;align-items:center;margin-top:5px">
-          <button class="sm" onclick="aiSetTest()" data-t="Мини-запрос через данные формы: провайдер отвечает — значит URL/ключ/модель рабочие">Проверить</button>
-          <button class="primary sm" onclick="aiSetSave()">Сохранить</button>
-          <button class="sm" id="aisActive" onclick="aiSetMakeActive()" data-t="Сделать этот профиль активным (используется по умолчанию)">Сделать активным</button>
-          <button class="sm" id="aisClone" onclick="aiSetClone()">Дублировать</button>
-          <button class="sm" id="aisDel" onclick="aiSetDelete()">Удалить</button>
-          <span id="aisStatus" class="muted" style="font-size:12.5px"></span></div>
+          <div id="ais_reas" class="muted"></div>
+          <!-- Редкие ручки убраны под «Дополнительно»: на виду они превращали форму
+               в простыню, а нужны разве что корпоративному шлюзу. -->
+          <details class="conn-adv">
+            <summary>Дополнительно — заголовки, одновременные запросы</summary>
+            <div class="conn-row" style="align-items:flex-start">
+              <label for="ais_headers">Доп. заголовки <span class="i" data-t="По одному заголовку в строке, формат Имя: значение. Нужны провайдерам вроде Azure OpenAI (api-key) и корпоративным шлюзам. Значение можно задать как env:ИМЯ_ПЕРЕМЕННОЙ — тогда оно берётся из окружения и в ai_config.json не попадает.">!</span></label>
+              <textarea id="ais_headers" rows="2" style="resize:vertical;font-family:monospace;font-size:12px"></textarea>
+            </div>
+            <div class="conn-row">
+              <label for="ais_concurrency">Одновременных запросов <span class="i" data-t="Сколько запросов этот профиль шлёт этой модели сразу — умолчание для нарезки и разметки; на вкладках «Нарезка» и «Разметка» можно задать своё. Пусто — авто: облако 4, LM Studio 1, локальный сервер — по числу его слотов.">!</span></label>
+              <input type="number" id="ais_concurrency" min="1" max="16" step="1" placeholder="авто">
+            </div>
+          </details>
+          <!-- «Ум» (reasoning) переехал отсюда на страницы: уровень задаётся ОТДЕЛЬНО
+               на каждый шаг (нарезка/жёлтые/вставки/интро) — шагам нужно разное,
+               см. STEP_REASONING_DEFAULT в aicut.py -->
+          <details class="ais-diagnostics">
+            <summary>Диагностика вызовов ИИ</summary>
+            <div id="aistats_host"></div>
+          </details>
+        </div>
+        <div class="conn-foot">
+          <span id="connDirty" class="muted"></span>
+          <span id="aisStatus" class="muted"></span>
+          <span class="grow"></span>
+          <button class="sm" id="connCancel" onclick="aiSetCancel()" data-t="Вернуть поля к сохранённому профилю: несохранённые правки формы отменяются.">Отмена</button>
+          <button class="primary sm" id="connSave" onclick="aiSetSave()" data-t="Записать профиль в ai_config.json. Пустое имя — отказ: профилю нужно имя, по нему его выбирают шаги.">Сохранить</button>
+        </div>
       </div>
-      </div><!-- /ais-profile-row -->
-      <details class="ais-diagnostics">
-        <summary>Диагностика вызовов ИИ</summary>
-        <div id="aistats_host"></div>
-      </details>
     </div>
     </div><!-- /aistab_models -->
     </div><!-- /aispanes -->

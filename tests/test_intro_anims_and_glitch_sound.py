@@ -12,6 +12,7 @@
   * смещения звука заданы в секундах (GLITCH_SFX_PRE_S), а не в кадрах.
 """
 import gzip
+import json
 import os
 import shutil
 import subprocess
@@ -26,6 +27,7 @@ sys.path.insert(0, ROOT)
 from core import xml2ae  # noqa: E402
 from core.xml2ae.build import (GLITCH_SFX_ATTACK_S, GLITCH_SFX_HOLD_S, GLITCH_SFX_PRE_S,  # noqa: E402
                           GLITCH_SFX_QUIET_DB, GLITCH_SFX_RELEASE_S, INTRO_ANIMS)
+from core.xml2ae.layout import css_blur_px  # noqa: E402
 
 node = pytest.mark.skipif(not shutil.which("node"), reason="требуется node в PATH")
 
@@ -40,10 +42,19 @@ def xml_subs(tmp_path):
 
 
 def test_scene_plan_intro_anims_matches_jsx(xml_subs, tmp_path):
-    """План сцены несёт intro_anims, и значения совпадают с уезжающими в .jsx."""
+    """План сцены несёт intro_anims, и значения совпадают с уезжающими в .jsx.
+
+    Одно поле в плане лишнее и в шаблон не уезжает — ``reveal.blur_css``: те же пиксели
+    раскрытия, переведённые для фильтра браузера («Blurriness» AE -> сигма CSS,
+    layout.css_blur_px; превью рисует блюр CSS-ом, а не эффектом AE). Числа шаблона
+    обязаны совпадать с INTRO_ANIMS до последнего, а blur_css — быть ровно переводом
+    reveal.blur: иначе превью и .jsx разъедутся по силе размытия.
+    """
     plan = xml2ae.scene_plan(xml_subs)
     assert "intro_anims" in plan
-    assert plan["intro_anims"] == INTRO_ANIMS
+    for_jsx = json.loads(json.dumps(plan["intro_anims"]))
+    assert for_jsx["reveal"].pop("blur_css") == css_blur_px(INTRO_ANIMS["reveal"]["blur"])
+    assert for_jsx == INTRO_ANIMS
     anims = plan["intro_anims"]
 
     # Глитч

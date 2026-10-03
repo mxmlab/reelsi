@@ -14,8 +14,23 @@
   hl_row_stack   жёлтые подряд — стопкой (при нескольких словах в строке ≥2 жёлтых подряд складываются стопкой): True/False
   hl_blur        блюр появления жёлтых (Gaussian Blur на тех же ключах, что подъём): True/False
   hl_blur_amt    сила блюра появления, px (дефолт 70.4; повтор краёв выключен)
+  hl_size_k      кегль жёлтого слова относительно базового (дефолт 1.0 = как сегодня)
+  sub_anim_font  тонкое начертание пресета появления weight; None = пресет только прозрачностью
   sub_fill       цвет базовых субтитров [r,g,b] 0..1 (дефолт [1,1,1] — белый)
   sub_case       регистр субтитров: upper (КАПСОМ, дефолт) | lower (строчными) | sentence (Как в предложении)
+  sub_wbg_on     подложка слова включена (фигура под текущим произносимым словом)
+  sub_wbg_kind   highlight (маркер раскрывается при появлении слова) | pill (таблетка прыгает по словам)
+  sub_wbg_fill   цвет подложки [r,g,b] 0..1; sub_wbg_op — прозрачность, %
+  sub_wbg_h      высота подложки, px; sub_wbg_round — скругление, px; sub_wbg_pad — поле по бокам, px
+  sub_wbg_dy     доводка подложки по вертикали, px (+ вниз)
+  sub_wbg_sweep  за сколько секунд маркер раскрывается (только highlight), с
+  sub_fill_mode  solid (цвет субтитров) | gradient (градиент по буквам)
+  sub_grad_from  цвет начала градиента [r,g,b]; sub_grad_to — конца
+  sub_grad_angle угол градиента, градусы (как CSS: 0 — вверх, 90 — вправо)
+  sub_glow_on    свечение текста (Glo2 на слоях слов) включено
+  sub_glow_yellow свечение только на жёлтых словах
+  sub_glow_amt   интенсивность свечения (Glow Intensity); sub_glow_rad — радиус, px
+  sub_glow_fill  цвет свечения [r,g,b] (Color A и Color B эффекта Glo2)
   transition     видео-переход для видеовставок: ключ assets.json | путь | None(=Quick 2.mov)
   transition_sfx звук перехода: ключ | путь | None(=whoosh)
   pop            звук на жёлтое слово: ключ | путь | None(=highlight_pop)
@@ -35,7 +50,10 @@
   intro_scale    общий масштаб интро, % (на нуле «интро»)
   intro_line_step межстрочный интервал интро, % от обычного шага 160 px (дефолт 100)
   intro_y        общий сдвиг интро по вертикали, px
-  intro_y2       добавка к сдвигу для интро на перебивке, px (нул «интро на кам2»)
+  intro_y2       САМОСТОЯТЕЛЬНОЕ положение интро на перебивке (камера 2) по вертикали, px — как intro_y
+                 у камеры 1, а не добавка к нему (нул «интро на кам2»)
+  intro_pos2_v   версия смысла intro_y2: 2 = положение; нет ключа = старый стиль, где это была
+                 добавка к intro_y (см. migrate_intro_pos2)
   accent_font    акцентный шрифт отдельных слов интро (PostScript-имя); пусто = выключено
   accent_case    регистр акцентных слов: title (Заглавная первая) | as-is | upper
   back_font      шрифт строк «на заднем плане» (PostScript-имя); пусто = выключено
@@ -56,7 +74,14 @@
   intro_scale_anchor точка, от которой интро уменьшается и увеличивается: comp (центр
                  композиции прекомпа, как раньше) | first (первая строка блока) |
                  block (середина между первой и последней строкой)
+  intro_scale_anchor2 то же для интро, попавшего на перебивку (камера 2, свой прекомп);
+                 нет ключа — наследуется intro_scale_anchor (см. migrate_intro_cam2)
+  intro_cam2     галка «интро едет с камерой» для камеры 2: нул «интро на кам2» — ребёнок
+                 нула Камеры 2 (зум, сдвиг, поворот) либо стоит в координатах кадра;
+                 нет ключа — наследуется intro_cam (см. migrate_intro_cam2)
   intro_roto_by_pos галка: группа интро камеры 1 из НИЖНЕЙ половины кадра встаёт над рото (дефолт False)
+  intro_roto_by_pos2 то же для групп, попавших на перебивку (камера 2); дефолт False =
+                 под рото, как было
   intro_dg_with_glow галка: ставить ли Deep Glow (режим «Deep Glow 2») на жёлтое слово глитча,
                  у которого есть свечение строки (fx=="glow"); False — не ставить, вместо
                  плагина встроенный Blur + Glo2, как в режиме «Встроенные» (дефолт False)
@@ -82,6 +107,11 @@
   intro_back_shadow   галка: тень на строках заднего плана (back)
   intro_glitch_glow   галка: свечение Glo2 на словах с анимацией glitch
   intro_fx_glow       галка: свечение Glo2 на словах строки с fx == "glow"
+  intro_accent_glow   галка: accent-строка получает fx="glow" в момент, когда ответ ИИ
+                  размечающий интро превращается в строки (интерфейс), — ей и светит
+                  Glo2 по галке intro_fx_glow; строка с явным fx (ручная правка)
+                  остаётся как задана, уже размеченные клипы ключ не меняет.
+                  Дефолт True: разметка ИИ до 02.10.2026 приносила fx="glow" в строках
   intro_hl_glow       галка: свечение Glo2 на жёлтых словах хайлайта (introHlGlow)
   intro_comp_glow     галка: свечение Glo2 на слое прекомпа группы (весь блок)
   intro_word_glow_thr/rad/int  числа Glo2 на словах и на жёлтом хайлайте:
@@ -106,6 +136,31 @@
   cam1_zoom_start наезд в первом кадре ролика: True (дефолт) | False
   cam1_zoom_cx   точка наезда Камеры 1 по X, доля кадра (0.5 = центр)
   cam1_zoom_cy   точка наезда Камеры 1 по Y, доля кадра (0.5 = центр)
+  cam2_zoom      режим зума Камеры 2: 'none' (дефолт) | 'pulse' | 'jump' | 'drift'
+  cam2_zoom_start наезд при первом входе на Камеру 2: True (дефолт) | False
+  cam2_zoom_big  первый наезд Камеры 2, %
+  cam2_zoom_lo   срезы кам1→кам2: нижняя граница случайного пика, % (pulse и jump)
+  cam2_zoom_hi   …верхняя граница %
+  cam2_drift_lo  режим «drift»: нижняя граница случайного скейла Камеры 2, %
+  cam2_drift_hi  …верхняя граница %
+  cam2_take_zoom наезды в длинных тейках Камеры 2 при jump: True | False (дефолт False)
+  cam2_take_min  минимальная длина тейка для наезда, с (3–60, дефолт 8.0)
+  cam2_take_lo   нижняя граница наезда в тейке, % (5–100, дефолт 25)
+  cam2_take_hi   верхняя граница наезда в тейке, % (5–100, дефолт 40)
+  cam2_take_hold время удержания наезда, с (0.5–10, дефолт 2.0)
+  cam2_take_out  длительность отъезда, с (0.5–6, дефолт 2.4)
+  cam2_yellow_zoom наезд на жёлтых словах на Камере 2: True | False (дефолт False)
+  cam2_take_yellow наезд на жёлтых словах на Камере 2 (старый)
+  cam2_zoom_cx   точка наезда Камеры 2 по X, доля кадра (0.5 = центр)
+  cam2_zoom_cy   точка наезда Камеры 2 по Y, доля кадра (0.5 = центр)
+  cam2_fit       масштаб кадра Камеры 2, % заполнения композиции (100 = кадр заполнен ровно)
+  cam2_pan_x     сдвиг кадра Камеры 2 по X, px (дефолт 0)
+  cam2_pan_y     сдвиг кадра Камеры 2 по Y, px (дефолт 0)
+  cam2_rot       поворот кадра Камеры 2 (горизонт), градусы (дефолт 0.0)
+  cam2_head_follow следить за головой по X: True | False (дефолт False)
+  cam2_head_x    желаемое положение головы по X, доля кадра (0.5 = центр)
+  cam2_head_smooth плавность слежения за головой, с (0.1–3.0, дефолт 0.6)
+  cam2_head_min  следить от зума, % (0 = всегда)
   cam1_pan_x     сдвиг кадра Камеры 1 по X, px (дефолт 0)
   cam1_pan_y     сдвиг кадра Камеры 1 по Y, px (дефолт 0)
   cam1_rot       поворот кадра Камеры 1 (горизонт), градусы (дефолт 0.0)
@@ -120,6 +175,8 @@
   cam1_take_lo   нижняя граница наезда в тейке, % (5–100, дефолт 25)
   cam1_take_hi   верхняя граница наезда в тейке, % (5–100, дефолт 40)
   cam1_take_hold время удержания наезда, с (0.5–10, дефолт 2.0)
+  cam1_take_out  длительность отъезда, с (0.5–6, дефолт 2.4)
+  cam1_yellow_zoom наезд на жёлтых словах на Камере 1: True | False (дефолт False)
   insert_c2_x    точка покоя вставок Кам2 по X, доля кадра (0.5 = центр)
   insert_c2_y    точка покоя вставок Кам2 по Y, доля кадра (0.172 = сегодняшняя константа)
   insert_c1_x    общий сдвиг точки покоя вставок Кам1 по X, px (0 = как сегодня)
@@ -168,6 +225,11 @@ BASE: dict[str, Any] = {
     "hl_row_stack": False,                 # жёлтые подряд — стопкой (при строках ≥2 жёлтых подряд стопкой)
     "hl_blur": False,                      # блюр появления жёлтых (Gaussian Blur на ключах подъёма)
     "hl_blur_amt": 70.4,                   # сила блюра появления, px (0–200)
+    "hl_size_k": 1.0,                      # кегль жёлтого слова относительно базового: 1.0 = как
+                                           # сегодня (общий FONT_SIZE). Ручка контраста размера
+                                           # «editorial-emphasis»: 1.4 — жёлтое крупнее белых слов.
+                                           # Множитель, а не пиксели: кегль субтитров зависит от
+                                           # кадра и от автофита строк, второй копии числа нет
     "intro_font": None,                    # шрифт текста интро; None = как font (субтитры)
     "intro_hl_font": None,                 # шрифт выделения интро; None = как hl_font (субтитры)
     "hl_fill": [1, 0.9176, 0],             # жёлтый
@@ -208,12 +270,30 @@ BASE: dict[str, Any] = {
     "cam1_zoom_big": 182.0,                # ПЕРВЫЙ зум кам1 (наезд в начале), %
     "cam1_zoom_lo": 112.0,                 # последующие возвраты кам2→кам1: случайный пик, нижняя граница %
     "cam1_zoom_hi": 140.0,                 # …верхняя граница % (возврат всегда в 100)
-    "cam1_take_zoom": False,               # наезды в длинных тейках Камеры 1 при jump
+    "cam1_take_zoom": False,               # наезды в длинных тейках Камеры 1
     "cam1_take_min": 8.0,                  # тейк длиннее, с (порог для наезда)
     "cam1_take_lo": 25.0,                  # наезд от, %
     "cam1_take_hi": 40.0,                  # наезд до, %
     "cam1_take_hold": 2.0,                 # держать наезд, с
-    "cam1_take_yellow": False,             # наезд на жёлтых словах (второй шаг ZA)
+    "cam1_take_out": 2.4,                  # длительность отъезда, с (0.5–6, дефолт 2.4)
+    "cam1_yellow_zoom": False,             # наезд на жёлтых словах (True | False, дефолт False)
+    "cam1_yellow_zoom_strong": True,       # наезд только на САМЫЕ СИЛЬНЫЕ жёлтые: сила слова —
+                                           # эмоция фразы (GigaAM-Emo) + ударение по звуку;
+                                           # сила ниже порога жёлтых клипа не наезжает вовсе
+    # Ручки правила «наезд только на сильные жёлтые» (общие для обеих камер; дефолты —
+    # правила WX: порог силы p70 жёлтых клипа, два наезда на кусок, второй — в куске от 8 с).
+    "hl_zoom_strength": "emotion",         # способ оценки силы: emotion (только GigaAM-Emo) |
+                                           # voice (только ударение: громкость/тон/длительность)
+    "hl_zoom_min_pct": 70.0,               # порог силы, % процентиля жёлтых клипа: кусок без
+                                           # наезда, если лучшее жёлтое ниже порога; 50 = медиана
+                                           # жёлтых ролика, 0 = наезд в каждом куске.
+                                           # замер 02.10.2026 на 5 клипах (8.3 мин): все жёлтые —
+                                           # 3.6 наезда/мин, по эмоциям p50 — 2.5, p70 — 1.8,
+                                           # p85 — 0.7; голос p70 — 2.6
+    "hl_zoom_max_per_piece": 2,            # наездов на кусок, максимум (1..3)
+    "hl_zoom_second_min_s": 8.0,           # кусок короче — второго наезда нет, с
+    "cam1_take_yellow_mode": "off",        # жёлтые слова (off | snap | only)
+    "cam1_take_yellow": False,             # старый булев ключ (миграция в cam1_take_yellow_mode)
     "cam1_drift_lo": 100.0,                # режим «drift»: нижняя граница случайного скейла %
     "cam1_drift_hi": 160.0,                # …верхняя граница % (между катами плавный дрейф)
     "cam1_fit": 100.0,                     # масштаб кадра камеры 1 в % ЗАПОЛНЕНИЯ композиции при зуме
@@ -234,8 +314,12 @@ BASE: dict[str, Any] = {
                                            # 100 = как было. Множитель ОДИН: шаги строк и опускание
                                            # блока (xml2ae/layout) и var LINE_STEP в шаблоне
     "intro_y": 0.0,                        # общий сдвиг всего интро по вертикали, px при зуме 100% (+ вниз)
-    "intro_y2": 0.0,                       # ДОБАВКА к сдвигу для интро, попавшего на перебивку (нул «интро
-                                           # на кам2»): на кам2 кадр другой и текст за спиной ставят ниже
+    "intro_y2": 0.0,                       # ПОЛОЖЕНИЕ интро, попавшего на перебивку (нул «интро на кам2»),
+                                           # px по вертикали — независимо от intro_y камеры 1: на кам2 кадр
+                                           # другой и текст за спиной ставят ниже
+    "intro_pos2_v": 2,                     # версия смысла intro_y2 (2 = положение). Служебный ключ: нет его
+                                           # в стиле — стиль старый, intro_y2 в нём была добавкой к intro_y
+    "cam_zoom_v": 3,                       # версия раскладки анимации зума (3 = независимые длинный кусок и жёлтые слова)
     "intro_mode": "word",
     "intro_glow": 1.0,                     # Glow Intensity на интро-тексте (AE-дефолт 1.0)
     "intro_dg_with_glow": False,           # галка «Deep Glow вместе со свечением строки»:
@@ -281,10 +365,19 @@ BASE: dict[str, Any] = {
                                            # Python, Position компенсируется так, чтобы картинка
                                            # не сдвинулась; при "comp" подстановок нет вовсе —
                                            # .jsx прежний байт в байт (golden)
+    "intro_scale_anchor2": "comp",         # то же для интро, попавшего на перебивку (свой прекомп
+                                           # на нуле «интро на кам2»): у кадра камеры 2 своя
+                                           # раскладка, и точку масштабирования держат иначе.
+                                           # Дефолт «как у камеры 1» даёт миграция при чтении
+                                           # (migrate_intro_cam2): у старых стилей ключа нет,
+                                           # а вид их меняться не должен
     "intro_roto_by_pos": False,            # галка «Интро над рото в нижней половине (камера 1)»:
                                            # группа, чей блок от центра кадра ниже центра (зона
                                            # субтитров), встаёт над рото; в верхней — под рото.
                                            # Группы на перебивке и на видеовставке не трогаются
+    "intro_roto_by_pos2": False,           # то же для групп, попавших на перебивку (камера 2).
+                                           # Дефолт False — как было: группы интро на кам2 стоят
+                                           # ПОД рото, независимо от их положения в кадре
     "intro_fade": 0.35,                    # фейд-аут прекомпа интро, с (обычного и с глитчем)
     "intro_sub_cut": True,                 # интро гаснет к появлению следующего субтитра, если
                                            # блок стоит на полосе субтитров; блок,
@@ -320,6 +413,12 @@ BASE: dict[str, Any] = {
     "intro_back_shadow": True,             # тень на строках заднего плана (back)
     "intro_glitch_glow": True,             # свечение Glo2 на словах с анимацией glitch
     "intro_fx_glow": True,                 # свечение Glo2 на словах строки с fx == "glow"
+    # Свечение accent-строк живёт в СТИЛЕ, но ставится ОДИН раз — когда ответ ИИ
+    # размечающий интро превращается в строки интерфейса (static/app/90-ae.js,
+    # introRowsFromAI). Дальше строка хранит явное fx, и владелец снимает свечение
+    # вручную, как раньше. Дефолт True: разметка ИИ до 02.10.2026 приносила fx="glow"
+    # прямо в строках, и результат прежний; уже размеченные клипы ключ не меняет.
+    "intro_accent_glow": True,             # свечение accent-строк в момент разметки ИИ
     # Ещё две двери свечения интро: жёлтое слово хайлайта (introHlGlow) и слой ПРЕКОМПА
     # группы. Раньше галок у них не было вовсе — свечение ставилось мимо стиля, и снять
     # его пересборкой было нельзя: в AE владелец гасил Glo2 на слое СЛОВА, а светился
@@ -362,6 +461,35 @@ BASE: dict[str, Any] = {
                                            # В AE якорь/позиция нула считаются от неё:
                                            # при наезде неподвижна эта точка, а не центр кадра
     "cam1_zoom_cy": 0.5,                   # …и по Y
+    # Зум Камеры 2: свой независимый набор зума и своя точка наезда.
+    # none — .jsx, план и превью прежние байт в байт.
+    "cam2_zoom": "none",                   # режим зума Камеры 2 (none | pulse | jump | drift)
+    "cam2_zoom_start": False,              # наезд при первом показе Камеры 2 (выключен при cam2_zoom='none')
+    "cam2_zoom_big": 182.0,                # первый зум кам2 (наезд в начале), %
+    "cam2_zoom_lo": 112.0,                 # срезы кам1→кам2: случайный пик, нижняя граница %
+    "cam2_zoom_hi": 140.0,                 # …верхняя граница %
+    "cam2_drift_lo": 100.0,                # режим «drift»: нижняя граница скейла %
+    "cam2_drift_hi": 160.0,                # …верхняя граница %
+    "cam2_take_zoom": False,               # наезды в длинных тейках Камеры 2
+    "cam2_take_min": 8.0,                  # тейк длиннее, с (порог для наезда)
+    "cam2_take_lo": 25.0,                  # наезд от, %
+    "cam2_take_hi": 40.0,                  # наезд до, %
+    "cam2_take_hold": 2.0,                 # держать наезд, с
+    "cam2_take_out": 2.4,                  # длительность отъезда, с (0.5–6, дефолт 2.4)
+    "cam2_yellow_zoom": False,             # наезд на жёлтых словах (True | False, дефолт False)
+    "cam2_yellow_zoom_strong": True,       # наезд только на самые сильные жёлтые (см. cam1_yellow_zoom_strong)
+    "cam2_take_yellow_mode": "off",        # жёлтые слова (off | snap | only)
+    "cam2_take_yellow": False,             # старый булев ключ (миграция в cam2_take_yellow_mode)
+    "cam2_zoom_cx": 0.5,                   # точка наезда Камеры 2 по X, доли кадра; 0.5 = центр
+    "cam2_zoom_cy": 0.5,                   # …и по Y
+    "cam2_fit": 100.0,                     # масштаб кадра Камеры 2 в % заполнения композиции (100 = кадр заполнен ровно)
+    "cam2_pan_x": 0,                       # сдвиг всего кадра Камеры 2 по X, px (0 = без сдвига)
+    "cam2_pan_y": 0,                       # сдвиг всего кадра Камеры 2 по Y, px (0 = без сдвига)
+    "cam2_rot": 0.0,                       # поворот кадра Камеры 2 (горизонт), градусы (0.0 = без поворота)
+    "cam2_head_follow": False,             # следить за головой по X (RVM-трекинг силуэта)
+    "cam2_head_x": 0.5,                    # желаемое положение головы по X, доля кадра (0.0..1.0)
+    "cam2_head_smooth": 0.6,               # плавность слежения за головой, с (0.1..3.0)
+    "cam2_head_min": 0,                    # следить от зума, % (0 = всегда)
     "cam1_pan_x": 0,                       # сдвиг всего кадра Камеры 1 по X, px (0 = без сдвига)
     "cam1_pan_y": 0,                       # сдвиг всего кадра Камеры 1 по Y, px (0 = без сдвига)
     "cam1_rot": 0.0,                       # поворот кадра Камеры 1 (горизонт), градусы (0.0 = без поворота)
@@ -383,13 +511,31 @@ BASE: dict[str, Any] = {
     "lm_temp": 0.0,                        # температура, −100…100
     "lm_tint": 0.0,                        # оттенок (Tint), −100…100
     "lm_sat": 100.0,                       # насыщенность, 0…200 (100 = как в AE)
+    # Цвет Камеры 2 через Lumetri: отдельный блок со связью с Камерой 1.
+    "lm2_link": True,                      # цепочка связи цвета Камеры 2 с Камерой 1 (True = берёт цвет Кам1)
+    "lm2_on": False,                       # галка группы «Цвет (Lumetri)» Камеры 2
+    "lm2_exposure": 0.0,                   # экспозиция Камеры 2, −5…5
+    "lm2_contrast": 0.0,                   # контраст Камеры 2, −100…100
+    "lm2_highlights": 0.0,                 # светлые Камеры 2, −100…100
+    "lm2_shadows": 0.0,                    # тени Камеры 2, −100…100
+    "lm2_whites": 0.0,                     # белые Камеры 2, −100…100
+    "lm2_blacks": 0.0,                     # тёмные Камеры 2, −100…100
+    "lm2_temp": 0.0,                       # температура Камеры 2, −100…100
+    "lm2_tint": 0.0,                       # оттенок Камеры 2, −100…100
+    "lm2_sat": 100.0,                      # насыщенность Камеры 2, 0…200
     "insert_c2_x": 0.5,                    # точка покоя вставок Кам2 по X, доли кадра (0.5 = центр)
     "insert_c2_y": 0.172,                  # …по Y (бывшая константа INS_C2_Y_FR; 0.172 ≈ 330px на 1920)
     "intro_x": 0.0,                        # сдвиг всего интро по горизонтали, px (пара к intro_y)
-    "intro_cam": True,                     # интро едет с камерой: True — нулы «интро» и «интро на кам2»
-                                           # (и затемнение под интро) привязаны к нулу Камеры 1, то есть
-                                           # наследуют её зум, сдвиг и слежение; False — стоят на месте
-                                           # в кадре (координаты кадра, как у свободных вставок кам2)
+    "intro_cam": True,                     # интро едет с камерой: True — нул «интро» и затемнение
+                                           # под интро привязаны к нулу Камеры 1, то есть
+                                           # наследуют её зум, сдвиг и слежение; False — стоят
+                                           # на месте в кадре (координаты кадра, как у свободных
+                                           # вставок кам2)
+    "intro_cam2": True,                    # то же для нула «интро на кам2» (группы, попавшие на
+                                           # перебивку): True — ребёнок нула Камеры 2, False —
+                                           # стоит в координатах кадра без её зума/сдвига/поворота.
+                                           # Дефолт «как у камеры 1» даёт миграция при чтении
+                                           # (migrate_intro_cam2) — вид старых стилей тот же
     "sub_y": 0.5964,                       # позиция субтитров: доля высоты кадра от ВЕРХА (0.5964 ≈ 40% снизу)
     "sub_scale": 100.0,                    # масштаб СЛОЯ прекомпа субтитров, % (100 = как сегодня);
                                            # раскладка внутри прекомпа не меняется, якорь/позиция
@@ -398,6 +544,33 @@ BASE: dict[str, Any] = {
     "sub_rows_max": 1,                     # максимум строк субтитров при переносе: 1 (ужать кегль) или 2 (разбить на 2 строки)
     "sub_fill": [1.0, 1.0, 1.0],           # цвет базовых субтитров [r,g,b] 0..1 (белый, как сегодня)
     "sub_case": "upper",                   # регистр субтитров: upper (КАПСОМ, как сегодня) | lower | sentence
+    "sub_anim": "none",                    # появление БАЗОВЫХ (белых) слов: none (как сегодня) |
+                                           # rise (въезд снизу: dy amt -> 0, opacity 0 -> 100) |
+                                           # pop (рост: scale 60 -> 108 -> 100, opacity 0 -> 100) |
+                                           # wipe (открывается слева направо: доля открытия 0 -> 100 %) |
+                                           # weight (тонкое начертание -> основное в середине dur,
+                                           # лёгкое проявление). Ключи считает Python
+                                           # (core/xml2ae/layout.py), .jsx и превью их только ставят.
+                                           # Жёлтых пресет не трогает: у них своя анимация появления,
+                                           # две сложились бы дважды. none — дефолт: эталоны .jsx
+                                           # не меняются ни на байт
+    "sub_anim_dur": 0.0,                   # длительность появления, с; 0 = как задумано пресетом
+                                           # (у rise 0.18 с, у pop 0.2 с, у wipe 0.25 с,
+                                           # у weight 0.3 с). Дефолт 0, а не 0.18: длительность —
+                                           # ЧАСТЬ пресета, и общее число стиля перебивало бы
+                                           # задумку соседнего пресета
+    "sub_anim_amt": None,                  # сила появления; None = как задумано пресетом
+                                           # (у rise 120 px подъёма, у pop старт 50 %).
+                                           # Задано — перебивает и значит: у rise подъём снизу
+                                           # в px кадра, у pop стартовый размер в процентах
+                                           # (меньше — заметнее: слово приходит из меньшего).
+                                           # У wipe и weight ручки нет: открытие всегда полное,
+                                           # а ступенька начертания амплитуды не имеет
+    "sub_anim_font": None,                 # тонкое начертание пресета weight (PostScript-имя);
+                                           # None/пусто — пресет работает только прозрачностью.
+                                           # Оси вариативного шрифта AE не анимирует, поэтому
+                                           # начертание сменяется СТУПЕНЬКОЙ в середине dur:
+                                           # тонкое -> основное. Пресет не weight ручку не читает
     "sub_bg": False,                       # плашка под субтитрами
     "sub_bg_fill": [1.0, 1.0, 1.0],        # цвет плашки
     "sub_bg_op": 72.0,                     # прозрачность плашки, %
@@ -407,6 +580,34 @@ BASE: dict[str, Any] = {
     "sub_bg_padmin": 70.0,                 # минимальное поле, px
     "sub_bg_dy": 0.0,                      # доводка по вертикали, px (+ вниз)
     "sub_bg_anim": 0.22,                   # за сколько секунд плашка переезжает на новую ширину
+    # Подложка слова — фигура ПОД ТЕКУЩИМ (произносимым) словом: маркер-прямоугольник,
+    # раскрывающийся при появлении слова (highlight), или «таблетка» со скруглением,
+    # прыгающая от слова к слову (pill). Это НЕ плашка под строкой (sub_bg_*): у той
+    # ширина считается выражением от всей строки и она стоит на месте, а подложка слова
+    # живёт ключами по таймингам слов — поэтому у неё своя группа, а не режим плашки.
+    # Фигура одна на весь ролик: у pill и highlight слой ОДИН, ключи на нём (сотни слов —
+    # сотни ключей, а не сотни слоёв).
+    "sub_wbg_on": False,                   # галка группы «Подложка слова»
+    "sub_wbg_kind": "highlight",           # highlight (маркер раскрывается при слове) | pill (таблетка)
+    "sub_wbg_fill": [1.0, 0.9176, 0.0],    # цвет подложки (жёлтый выделения)
+    "sub_wbg_op": 100.0,                   # прозрачность подложки, %
+    "sub_wbg_h": 150.0,                    # высота подложки, px
+    "sub_wbg_round": 24.0,                 # скругление углов, px (у таблетки — половина высоты)
+    "sub_wbg_pad": 16.0,                   # поле по бокам слова, px
+    "sub_wbg_dy": 0.0,                     # доводка по вертикали, px (+ вниз)
+    "sub_wbg_sweep": 0.25,                 # за сколько секунд маркер раскрывается (highlight), с
+    # Заливка текста: сплошной цвет (как сегодня) или градиент по буквам.
+    # Градиент ставится эффектом Gradient Ramp на слой слова, превью — background-clip:text.
+    "sub_fill_mode": "solid",              # solid (цвет субтитров) | gradient (два цвета и угол)
+    "sub_grad_from": [1.0, 0.9176, 0.0],   # цвет начала градиента
+    "sub_grad_to": [1.0, 0.2314, 0.9412],  # цвет конца градиента
+    "sub_grad_angle": 90.0,                # угол градиента, градусы (как в CSS: 0 — вверх, 90 — вправо)
+    # Свечение текста: Glo2 на слоях слов, как у интро (числа — сила, радиус, цвет).
+    "sub_glow_on": False,                  # галка группы «Свечение текста»
+    "sub_glow_yellow": False,              # только жёлтые: свечение лишь на выделенных словах
+    "sub_glow_amt": 1.0,                   # интенсивность свечения (Glow Intensity)
+    "sub_glow_rad": 40.0,                  # радиус свечения, px (Glow Radius)
+    "sub_glow_fill": [0.0, 0.9176, 1.0],   # цвет свечения (Color A и B эффекта Glo2)
     "top_line": False,                     # верхняя строка-прогресс
     "top_line_y": 162.0,                   # высота линии в кадре, px от верха
     "top_line_w": 969.0,                   # длина линии, px
@@ -540,6 +741,182 @@ def migrate_style_dict(data: Any) -> tuple[Any, bool]:
     return data, changed
 
 
+INTRO_POS2_V = 2
+
+
+def migrate_intro_pos2(data: Any) -> Any:
+    """Старый смысл intro_y2 («добавка к intro_y») -> новый («положение интро на кам2»).
+
+    Раньше нул «интро на кам2» стоял на intro_y + intro_y2: двигая интро камеры 1, человек
+    незаметно двигал и камеру 2, а скомпенсировать это отрицательным intro_y2 не получалось
+    (панель упиралась в минимум, текст уезжал за верх кадра). Теперь intro_y2 — само положение,
+    и старый стиль (intro_y=a, intro_y2=b) переводится в intro_y2 = a + b: вид на кам2 тот же.
+
+    Метка `intro_pos2_v` нужна, чтобы новый стиль не пересчитался второй раз: без неё
+    нельзя отличить старый (intro_y=100, intro_y2=0 -> ждём 100) от нового с теми же числами
+    (кам2 нарочно стоит на 0). Мигрируем ТОЛЬКО стиль без метки и метку ставим сразу.
+    Меняется словарь в памяти: файлы стилей молча не переписываются — на диске они
+    остаются старыми до первого сохранения из панели, а при чтении переводятся каждый раз.
+    """
+    if not isinstance(data, dict) or data.get("intro_pos2_v") is not None:
+        return data
+    try:
+        y = float(data.get("intro_y") or 0)
+        y2 = float(data.get("intro_y2") or 0)
+    except (TypeError, ValueError):
+        y = y2 = 0.0
+    if y or y2:
+        s = y + y2
+        data["intro_y2"] = int(s) if s == int(s) else s
+    data["intro_pos2_v"] = INTRO_POS2_V
+    return data
+def migrate_intro_cam2(data: Any) -> Any:
+    """Интро камеры 2 получило свои ручки: `intro_cam2` и `intro_scale_anchor2`.
+
+    Раньше и нулом «интро на кам2», и точкой масштабирования его прекомпов правила
+    галка/ручка камеры 1 — одна на обе камеры. Ключей `intro_cam2`/`intro_scale_anchor2`
+    в старом стиле нет вовсе, и брать для них дефолт BASE значило бы поменять вид уже
+    собранных стилей: у стиля с `intro_cam=False` интро на перебивке вдруг поехало бы
+    за камерой 2, а точка масштабирования вернулась бы к центру композиции.
+
+    Поэтому при чтении ключи наследуются от камеры 1 (`intro_cam`, `intro_scale_anchor`) —
+    ровно то поведение, что было. Меняется словарь в памяти: файлы стилей молча не
+    переписываются. `intro_roto_by_pos2` миграции не требует: его дефолт False и есть
+    прежнее поведение (группы на перебивке стоят под рото).
+    """
+    if not isinstance(data, dict):
+        return data
+    if "intro_cam2" not in data:
+        cam = data.get("intro_cam")
+        if cam is None:
+            cam = BASE["intro_cam"]
+        data["intro_cam2"] = bool(cam)
+    if "intro_scale_anchor2" not in data:
+        anchor = data.get("intro_scale_anchor")
+        if anchor is None:
+            anchor = BASE["intro_scale_anchor"]
+        data["intro_scale_anchor2"] = anchor
+    return data
+CAM1_TO_CAM2_ZOOM_KEYS: tuple[tuple[str, str], ...] = (
+    ("cam1_zoom_start", "cam2_zoom_start"),
+    ("cam1_zoom_big", "cam2_zoom_big"),
+    ("cam1_zoom_lo", "cam2_zoom_lo"),
+    ("cam1_zoom_hi", "cam2_zoom_hi"),
+    ("cam1_drift_lo", "cam2_drift_lo"),
+    ("cam1_drift_hi", "cam2_drift_hi"),
+    ("cam1_take_zoom", "cam2_take_zoom"),
+    ("cam1_take_min", "cam2_take_min"),
+    ("cam1_take_lo", "cam2_take_lo"),
+    ("cam1_take_hi", "cam2_take_hi"),
+    ("cam1_take_hold", "cam2_take_hold"),
+    ("cam1_take_out", "cam2_take_out"),
+    ("cam1_yellow_zoom", "cam2_yellow_zoom"),
+    ("cam1_yellow_zoom_strong", "cam2_yellow_zoom_strong"),
+    # Ручки правила силы жёлтых: сами по себе они не «зум Камеры 2», но при переносе
+    # старого `cam2_zoom_on` вид Камеры 2 должен повторять вид Камеры 1 целиком —
+    # иначе у неё остались бы дефолты и наезды поехали бы иначе, чем на Камере 1.
+    ("hl_zoom_min_pct", "hl_zoom_min_pct"),
+    ("hl_zoom_max_per_piece", "hl_zoom_max_per_piece"),
+    ("hl_zoom_second_min_s", "hl_zoom_second_min_s"),
+    ("cam1_take_yellow_mode", "cam2_take_yellow_mode"),
+    ("cam1_take_yellow", "cam2_take_yellow"),
+)
+
+
+def migrate_cam2_zoom(data: Any) -> Any:
+    """Миграция старого cam2_zoom_on в свой набор настроек зума Камеры 2.
+
+    Если в стиле есть cam2_zoom_on=True и нет cam2_zoom -> cam2_zoom и все проценты/галки
+    cam2 берут значения cam1 этого стиля. cam2_zoom_on=False или отсутствует -> cam2_zoom='none'.
+    cam2_zoom_on удаляется из словаря.
+    """
+    if not isinstance(data, dict):
+        return data
+    if "cam2_zoom" not in data:
+        if data.get("cam2_zoom_on") is True:
+            data["cam2_zoom"] = data.get("cam1_zoom", BASE["cam1_zoom"])
+            for k1, k2 in CAM1_TO_CAM2_ZOOM_KEYS:
+                if k1 in data:
+                    data[k2] = data[k1]
+                elif k1 in BASE:
+                    data[k2] = BASE[k1]
+        else:
+            data["cam2_zoom"] = "none"
+    data.pop("cam2_zoom_on", None)
+    return data
+
+
+CAM_ZOOM_V = 3
+
+
+def migrate_cam_zoom(data: Any) -> Any:
+    """Миграция настроек зума под версию 3 (cam_zoom_v=3).
+
+    1) v < 2:
+       camN_take_yellow -> camN_take_yellow_mode:
+       - True -> "snap"
+       - False -> "off"
+       Старый ключ camN_take_yellow не удаляем (дубликат для совместимости).
+       Если camN_zoom == "none":
+       camN_zoom_start = False (сохраняем вид старых стилей, где зум был none,
+       а галка start стояла True по дефолту).
+       Если camN_take_zoom is True и camN_zoom != "jump":
+       camN_take_zoom = False (раньше наезды работали только при jump).
+    2) v < 3:
+       yellow_mode:
+       - off -> yellow_zoom=False
+       - snap -> yellow_zoom=take_zoom
+       - only -> yellow_zoom=take_zoom, take_zoom=False
+       take_out = 2.4 (если отсутствует).
+    3) Поставить cam_zoom_v = 3.
+    """
+    if not isinstance(data, dict):
+        return data
+    if data.get("cam_zoom_v", 0) >= CAM_ZOOM_V:
+        return data
+
+    v = data.get("cam_zoom_v", 0)
+    if v < 2:
+        for prefix in ("cam1", "cam2"):
+            # 1) take_yellow -> take_yellow_mode
+            if f"{prefix}_take_yellow_mode" not in data:
+                old_y = data.get(f"{prefix}_take_yellow")
+                data[f"{prefix}_take_yellow_mode"] = "snap" if old_y is True else "off"
+            # синхронизируем старый ключ
+            data[f"{prefix}_take_yellow"] = data[f"{prefix}_take_yellow_mode"] in ("snap", "only")
+
+            # 2) zoom == "none" -> zoom_start = False
+            z_mode = data.get(f"{prefix}_zoom")
+            if z_mode == "none":
+                data[f"{prefix}_zoom_start"] = False
+
+            # 3) take_zoom == True but zoom != "jump" -> take_zoom = False
+            if data.get(f"{prefix}_take_zoom") is True and z_mode is not None and z_mode != "jump":
+                data[f"{prefix}_take_zoom"] = False
+
+    for prefix in ("cam1", "cam2"):
+        if f"{prefix}_yellow_zoom" not in data:
+            take_z = bool(data.get(f"{prefix}_take_zoom"))
+            ym = data.get(f"{prefix}_take_yellow_mode")
+            if ym == "snap":
+                data[f"{prefix}_yellow_zoom"] = take_z
+            elif ym == "only":
+                data[f"{prefix}_yellow_zoom"] = take_z
+                data[f"{prefix}_take_zoom"] = False
+            elif ym == "off":
+                data[f"{prefix}_yellow_zoom"] = False
+            elif f"{prefix}_take_yellow" in data:
+                data[f"{prefix}_yellow_zoom"] = bool(data[f"{prefix}_take_yellow"]) and take_z
+            else:
+                data[f"{prefix}_yellow_zoom"] = False
+
+        if f"{prefix}_take_out" not in data:
+            data[f"{prefix}_take_out"] = 2.4
+
+    data["cam_zoom_v"] = CAM_ZOOM_V
+    return data
+
+
 def resolve(style: Any) -> Any:
     """style: имя пресета (str) | dict | None -> полный dict с дефолтами базового."""
     base = copy.deepcopy(BASE)
@@ -547,11 +924,30 @@ def resolve(style: Any) -> Any:
         return base
     data = get(style) if isinstance(style, str) else copy.deepcopy(dict(style))
     data, _ = migrate_style_dict(data)
+    data = migrate_cam2_zoom(data)
+    data = migrate_cam_zoom(data)
+    # Старый intro_y2 (добавка) -> положение; метка в BASE уже стоит, поэтому решаем ДО слияния.
+    data = migrate_intro_pos2(data)
+    # Ручки интро камеры 2 (intro_cam2/intro_scale_anchor2) у старых стилей наследуются
+    # от камеры 1 — тоже ДО слияния: иначе дефолт BASE перекрыл бы прежнее поведение.
+    data = migrate_intro_cam2(data)
     base.update({k: v for k, v in (data or {}).items() if v is not None or k in ("hl_font",)})
+    # Гарантировать lo <= hi для диапазонов обеих камер
+    for prefix in ("cam1", "cam2"):
+        for pair in ("zoom", "drift", "take"):
+            lo_k = f"{prefix}_{pair}_lo"
+            hi_k = f"{prefix}_{pair}_hi"
+            if lo_k in base and hi_k in base:
+                try:
+                    if float(base[lo_k]) > float(base[hi_k]):
+                        base[lo_k], base[hi_k] = base[hi_k], base[lo_k]
+                except (TypeError, ValueError):
+                    # некорректные типы не сортируем, валидация поймает позже
+                    pass
     # hl_font=None означает «как font» — оставляем None осознанно
     if data and "hl_font" in data:
         base["hl_font"] = data["hl_font"]
-    if "layer_order" in data and isinstance(data["layer_order"], list):
+    if data and "layer_order" in data and isinstance(data["layer_order"], list):
         base["layer_order"] = list(data["layer_order"])
     return base
 
@@ -581,7 +977,9 @@ def _files() -> dict[str, Any]:
                         except ReelsiError: raise
                         except Exception as ex:
                             log.warning("пресет %s не переписан под новый формат: %s", p, ex)
-                    out[os.path.splitext(f)[0]] = data
+                    # Только в памяти (после возможной переписи выше): старый файл на диске не трогаем.
+                    out[os.path.splitext(f)[0]] = migrate_intro_cam2(
+                        migrate_intro_pos2(migrate_cam_zoom(migrate_cam2_zoom(data))))
             except ReelsiError: raise
             except Exception as ex:
                 log.warning("пресет %s не прочитан: %s — стиль пропущен", p, ex)
@@ -608,6 +1006,10 @@ def save(name: str, data: Any) -> tuple[str, str]:
     data = dict(data or {})
     data["label"] = name
     data, _ = migrate_style_dict(data)
+    data = migrate_cam2_zoom(data)
+    data = migrate_cam_zoom(data)
+    data = migrate_intro_pos2(data)      # стиль без метки — старый: пишем уже в новом смысле
+    data = migrate_intro_cam2(data)      # ручки интро камеры 2 — наследуем от камеры 1
     safe = "".join(c for c in (name or "custom") if c.isalnum() or c in "-_ ").strip() or "custom"
     fname = safe + ".json"
     atomic_json_dump(os.path.join(STYLE_DIR, fname), data, indent=1)
@@ -645,8 +1047,15 @@ def patch(name: str, patch_dict: Any) -> tuple[Any, Any]:
         data = json.load(f)
     if not isinstance(data, dict):
         data = {}
+    # Старый файл переводим ДО правки: patch несёт intro_y2 уже в новом смысле, а лежащие рядом
+    # intro_y/intro_y2 без метки прочитаются как старые и сложатся второй раз.
+    data = migrate_cam2_zoom(data)
+    data = migrate_cam_zoom(data)
+    data = migrate_intro_pos2(data)
+    data = migrate_intro_cam2(data)
     data.update(patch_dict)
     data, _ = migrate_style_dict(data)
     atomic_json_dump(target, data, indent=1)
     return target_name, target
+
 

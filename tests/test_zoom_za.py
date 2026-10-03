@@ -28,7 +28,7 @@ sys.path.insert(0, HERE)
 
 from core.xml2ae.layout import (  # noqa: E402
     ZOOM_BIG, ZOOM_PUNCH, TAKE_TAIL_S,
-    _cam1_jump_keys, _zoom_cut_frames, _zoom_max,
+    _cam1_jump_keys, _zoom_cut_frames, _zoom_max, _zoom_key_eases,
 )
 from test_cam1_zoom_start import _build_jsx, _cam1_scale_from_jsx  # noqa: E402
 
@@ -144,11 +144,15 @@ def test_cam1_jump_keys_synthetic():
     assert v == 100.0
     vm = k_b[1]
 
-    # порядок (a,v,1,0), (b,vm,2,1), (c,vm,1,0), (d,v,2,1)
+    # порядок (a,v,1,0), (b,vm,2,1), (c,vm,3,0), (d,v,3,1)
     assert k_a[1] == v and k_a[2] == 1 and k_a[3] == 0
     assert k_b[1] == vm and k_b[2] == 2 and k_b[3] == 1
-    assert k_c[1] == vm and k_c[2] == 1 and k_c[3] == 0
-    assert k_d[1] == v and k_d[2] == 2 and k_d[3] == 1
+    assert k_c[1] == vm and k_c[2] == 3 and k_c[3] == 0
+    assert k_d[1] == v and k_d[2] == 3 and k_d[3] == 1
+
+    eases = _zoom_key_eases(keys_take)
+    assert eases[keys_take.index(k_c)] == [90, 35]
+    assert eases[keys_take.index(k_d)] == [90, 35]
 
     ratio = vm / v
     assert 1.25 - 1e-2 <= ratio <= 1.40 + 1e-2
@@ -161,12 +165,14 @@ def test_cam1_jump_keys_synthetic():
     cams_no_tail = [
         {"clips": [[0, 450, 0, "cam1.mov", True]]},
     ]
+    # start=False -> ключ 0: (0, 100, 0, 1). По новым правилам наезд ВСЕГДА с отъездом (сжатие до min) -> 4 ключа
     keys_no_tail = _cam1_jump_keys(cams_no_tail, fps=fps, start=False, take={"min_s": 6.0, "lo": 25.0, "hi": 40.0, "hold_s": 2.0})
-    # start=False -> ключ 0: (0, 100, 0, 1). Доп. ключей должно быть ровно 2: (a, v, 1, 0), (b, vm, 2, 1)
     extra_no_tail = [k for k in keys_no_tail if k[0] > 0]
-    assert len(extra_no_tail) == 2
+    assert len(extra_no_tail) == 4
     assert extra_no_tail[0][3] == 0
     assert extra_no_tail[1][3] == 1
+    assert extra_no_tail[2][3] == 0
+    assert extra_no_tail[3][3] == 1
 
 
 def _cams_from_cuts(cuts):

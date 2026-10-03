@@ -116,7 +116,8 @@ def test_default_style_builds_the_same_jsx(xml_subs, tmp_path):
     assert "INTRO_CAM" not in default_jsx
     assert "if(cam1null){ introNull.parent=cam1null;" in default_jsx, \
         "по умолчанию нул «интро» обязан висеть на нуле Камеры 1"
-    assert "if(cam1null){ introNull2.parent=cam1null;" in default_jsx
+    # нул «интро на кам2» Камере 1 не ребёнок никогда: её зум на перебивке спрятан
+    assert "introNull2.parent=cam1null" not in default_jsx
 
 
 # ==================================================== 2. открепление в .jsx
@@ -124,18 +125,18 @@ def test_default_style_builds_the_same_jsx(xml_subs, tmp_path):
 def test_jsx_with_intro_cam_off_unparents_the_intro_nulls(xml_subs, tmp_path):
     """2. `intro_cam=False` — условие привязки несёт INTRO_CAM, и он объявлен false.
 
-    Нулов «интро» два (кам1 и кам2) — обоих касается одно условие; затемнение под
-    интро открепляется тем же условием (одна галка — одно поведение).
+    Условие привязки к нулу Камеры 1 теперь только у «интро»: нул «интро на кам2» к ней
+    не привязан вовсе (см. test_intro_cam2_position). Затемнение под интро открепляется
+    тем же условием (одна галка — одно поведение).
     """
     off = _build(xml_subs, tmp_path, style=OFF, name="off.jsx")[0]
     assert "var INTRO_CAM=false;" in off, "в .jsx нет объявления INTRO_CAM=false"
-    assert off.count("if(cam1null && INTRO_CAM){") == 2, \
-        "условие INTRO_CAM стоит не у обоих нулов интро"
+    assert off.count("if(cam1null && INTRO_CAM){") == 1, \
+        "условие INTRO_CAM стоит не у нула «интро»"
     assert "if(cam1null && INTRO_CAM){ introNull.parent=cam1null;" in off
-    assert "if(cam1null && INTRO_CAM){ introNull2.parent=cam1null;" in off
+    assert "introNull2.parent=cam1null" not in off
     # условие привязки без галки в сборке остаться не должно ни у одного нула
     assert "if(cam1null){ introNull.parent=cam1null;" not in off
-    assert "if(cam1null){ introNull2.parent=cam1null;" not in off
     assert "if (cam1null && INTRO_CAM){ shadeLayer.parent=cam1null;" in off, \
         "затемнение под интро осталось на нуле Камеры 1"
     assert "if (cam1null){ shadeLayer.parent=cam1null;" not in off
@@ -143,7 +144,7 @@ def test_jsx_with_intro_cam_off_unparents_the_intro_nulls(xml_subs, tmp_path):
     on = _build(xml_subs, tmp_path, style=ON, name="on.jsx")[0]
     assert "INTRO_CAM" not in on, "при intro_cam=True в .jsx попал INTRO_CAM"
     assert "if(cam1null){ introNull.parent=cam1null;" in on
-    assert "if(cam1null){ introNull2.parent=cam1null;" in on
+    assert "introNull2.parent=cam1null" not in on
     assert "if (cam1null){ shadeLayer.parent=cam1null;" in on
 
 
@@ -154,20 +155,24 @@ JSX_LAYERS_JS = r'''
 const fs = require('fs');
 let mainComp = null;
 function mockProp(owner, path) {
-  return {
+  if (owner && owner._props && owner._props[path]) return owner._props[path];
+  const keys = new Set();
+  const p = {
     value: { resetCharStyle: ()=>{}, resetParagraphStyle: ()=>{} },
-    numKeys: 0,
+    get numKeys() { return keys.size; },
     setValue: (v)=>{ if (owner && path) owner._set[path] = v; },
-    setValueAtTime: ()=>{},
+    setValueAtTime: (t, v)=>{ keys.add(t); },
     addProperty: (n)=>mockProp(owner, path+'/'+n),
     property: (n)=>mockProp(owner, path ? path+'/'+n : n),
     setInterpolationTypeAtKey: ()=>{}
   };
+  if (owner && owner._props && path) owner._props[path] = p;
+  return p;
 }
 class MockLayer {
   constructor(name, type, comp) {
     this.name = name || 'Layer'; this.type = type || 'layer'; this._comp = comp;
-    this.parent = null; this._set = {};
+    this.parent = null; this._set = {}; this._props = {};
   }
   property(n) { return mockProp(this, n); }
   remove() { const s = this._comp._stack; const i = s.indexOf(this); if (i >= 0) s.splice(i, 1); }
@@ -217,6 +222,7 @@ const BlendingMode = { ADD: 1 };
 const KeyframeInterpolationType = { BEZIER: 1, HOLD: 2, LINEAR: 3 };
 const Shape = function() {};
 const alert = () => {};
+const $ = { writeln: ()=>{}, fileName: 'x.jsx', global: {} };
 let jsx = fs.readFileSync(process.argv[1], 'utf8');
 if (jsx.charCodeAt(0) === 0xFEFF) jsx = jsx.slice(1);
 eval(jsx);
@@ -255,10 +261,13 @@ def test_executed_jsx_keeps_the_detached_nulls_in_frame_coordinates(xml_subs, tm
 
     _, on_path = _build(xml_subs, tmp_path, style=ON, name="exec_on.jsx")
     on = _jsx_layers(on_path)
-    for name in ("интро", "интро на кам2", "Затемнение интро"):
+    for name in ("интро", "Затемнение интро"):
         assert on[name]["parent"] == "Камера 1", f"{name}: родитель не нул Камеры 1"
+    # нул кам2 — в координатах кадра и без родителя, хотя интро едет с камерой: зум спрятанной
+    # Камеры 1 его не касается. Старый стиль (100 + 40) переведён при чтении в положение 140.
+    assert on["интро на кам2"]["parent"] is None
+    assert on["интро на кам2"]["pos"] == [1080 / 2 + 60, 1920 / 2 + 140]
     assert on["интро"]["pos"] == [60, 100]
-    assert on["интро на кам2"]["pos"] == [60, 140]
     assert on["Затемнение интро"]["pos"] == [shade["x"], shade["y"]]
 
 
@@ -324,7 +333,10 @@ global.ipvNow = () => 2.0;
 // (test_zoom_z*). Здесь проверяется ровно одно — берут ли её числа интро и затемнение.
 const CAM = { s: 2.0, shift: [300, -200] };
 global.ipvZoomAt = () => CAM.s;
-global.ipvCamShift = () => CAM.shift;
+// Сдвиг камеры 2 (pan + слежение) берётся той же дверью с целью 'cam2': заглушка отдаёт
+// сдвиг из плана камеры 2, а не камеры 1 — иначе группа на перебивке поехала бы за кам1.
+global.ipvCamShift = (tm, target) => (target === 'cam2' || target === 1)
+  ? ((((IPV.plan || {}).zoom || {}).cam2 || {}).pan || [0, 0]) : CAM.shift;
 global.IPV = { fps: 60, plan: @PLAN@ };
 """
 

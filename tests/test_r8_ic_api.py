@@ -55,8 +55,15 @@ def _reset_jobs(tmp_path, monkeypatch):
     файлы. `terms.json` и папка камер — данные пользователя, и сторож-тест ниже
     обходит ВСЕ POST-роуты: без подмены он записал бы пустой словарь терминов и
     создал «камера1» в рабочей папке пользователя.
+
+    Состояние установщика RoFormer сбрасывается по той же причине: его роут ставит
+    `JOB["running"] = True`, а поток установки в сторож-тесте не стартует
+    (`Thread.start` подменён) — снять флаг некому, и он остаётся в памяти до конца
+    сессии. Приезжал он в tests/test_voicefx_roformer.py: `start_install()` отвечал
+    False, а панель голоса показывала чужую «установку» идущей.
     """
     from core import terms as _terms
+    from core import voicefx_sep as _voicefx_sep
     from api import files as _files, inserts as _inserts
     monkeypatch.setattr(_terms, "TERMS_PATH", str(tmp_path / "terms.json"))
     monkeypatch.setattr(_files, "DEFAULT_BASE", str(tmp_path / "медиа"))
@@ -69,6 +76,9 @@ def _reset_jobs(tmp_path, monkeypatch):
                            out_dir="", result=[], failed=[], cancel=False, items=[])
     with _inserts.ILL_LOCK:
         _inserts.ILL_JOB.update(running=False, done=0, total=0, log=[], error="")
+    with _voicefx_sep.LOCK:
+        _voicefx_sep.JOB.update(running=False, done=False, i=0, n=0, step="",
+                               cur="", pct=0, error="", log=[])
 
 
 # --------------------------------------------------------------------------- #
@@ -539,11 +549,20 @@ def test_kill_tree_kills_and_survives_errors(monkeypatch):
         def kill(self):
             killed.append(self)
 
-    # Записывающие заглушки POSIX-функций: тест никогда не должен слать настоящий сигнал (на CI pid=1 убивал init)
+    # Записывающие заглушки POSIX-функций: тест никогда не должен слать настоящий сигнал
+    # (на CI pid=1 убивал init). Обёртку контеста сторож сигналов ставит на `os.kill` в
+    # ветке POSIX, поэтому запрет проверяем записью, а сам сигнал не шлём ни на одной ОС:
+    # `kill_tree` на Windows до этой ветки не доходит и уходит в `taskkill` (его запуск
+    # здесь настоящий — PID 1 на Windows не существует).
     killpg_calls = []
+
+    def _no_signal(pid, sig):
+        raise OSError("сигнал не шлём")
+
     monkeypatch.setattr(jobstate.os, "getpgid", lambda pid: 1, raising=False)
     monkeypatch.setattr(jobstate.os, "getpgrp", lambda: 9999, raising=False)
     monkeypatch.setattr(jobstate.os, "killpg", lambda pgid, sig: killpg_calls.append((pgid, sig)), raising=False)
+    monkeypatch.setattr(jobstate.os, "kill", _no_signal, raising=False)
     monkeypatch.setattr(jobstate.signal, "SIGKILL", 9, raising=False)
     monkeypatch.setattr(jobstate.subprocess, "run",
                         lambda *a, **k: (_ for _ in ()).throw(OSError("нет taskkill")))

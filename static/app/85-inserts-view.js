@@ -13,7 +13,7 @@
 //   'clips' — вставки шага 2 (CLIPS[curIns].inserts, поля start_sec/duration_sec);
 //   'ae'    — AE-вставки шага 3 (INS, поля start_s+start_f/dur_s+dur_f) + оверлей ИНТРО.
 let IPV={vids:[],bufs:[],scrubbing:false,scrubT:0,
-  segs:[],audio:[],words:[],dur:0,fps:60,aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,playing:false,raf:0,xml:'',cur:-1,intro:[],introCur:-1,plan:null,insShift:null,insVids:new Map(),dims:new Map()};
+  segs:[],audio:[],words:[],dur:0,fps:60,aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,playing:false,raf:0,xml:'',cur:-1,intro:[],introCur:-1,plan:null,insShift:null,insVids:new Map(),dims:new Map(),roto:[]};
 let IPVMODE='clips';
 // нормализация пути вставки (Windows: слеши и регистр) — ОДИН источник для ensureJobs,
 // applyInsMoved, сопоставления плана и драга в предпросмотре
@@ -52,7 +52,19 @@ function cardToIns(x,was){
 // ---- план сцены: предпросмотр РИСУЕТ то, что прислал /api/scene ----
 // Никаких вторых расчётов: окна групп интро, анимации вставок, зум, стопку субтитров и
 // полосы рото берём из плана. Ошибка плана предпросмотр не ломает — без него играет как раньше.
+// Формат кадра клипа (w, h): его спрашивают там, где плана ещё нет (первый кадр,
+// ошибка /api/scene, стенды node). Есть план — он и главнее: числа в нём уже посчитаны
+// по кадру ролика. Кадр ролика — формат спикера ЭТОГО клипа (camFrameWH, core/frame.py);
+// профиля нет или функции нет (стенд node гоняет функции по одной) — 9:16, как раньше.
+function ipvPlanWH(){
+  const p=(typeof IPV!=='undefined'&&IPV.plan)||null;
+  const wh=(typeof camFrameWH==='function')?camFrameWH():null;
+  return {w:(p&&p.w)||(wh&&wh[0])||1080,h:(p&&p.h)||(wh&&wh[1])||1920};}
 function ipvPlanBody(){
+  // Страница рендера без AE присылает тело сборки ГОТОВЫМ: своего интерфейса у неё нет,
+  // а второй сборки тех же полей (уже в Python) быть не должно — план обязан считаться
+  // из одного места. Дверь читает только эта страница, у остальных IPV_BODY нет.
+  if(typeof IPV_BODY!=='undefined'&&IPV_BODY)return IPV_BODY;
   const c=(curAE>=0&&CLIPS[curAE])?CLIPS[curAE]:(curIns>=0&&CLIPS[curIns]?CLIPS[curIns]:null);
   const j=c&&c.job;const xml=IPV.xml;
   let ir;try{ir=introResolve();}catch(e){ir={lines:[],remove:[],splits:[]};}
@@ -71,6 +83,22 @@ function ipvPlanBody(){
     roto: (CURSTYLE && CURSTYLE.roto != null) ? !!CURSTYLE.roto : (typeof STSCHEMA !== 'undefined' && STSCHEMA && STSCHEMA.base ? !!STSCHEMA.base.roto : false),
     roto_bottom: (CURSTYLE && CURSTYLE.roto_bottom != null) ? CURSTYLE.roto_bottom : (typeof STSCHEMA !== 'undefined' && STSCHEMA && STSCHEMA.base ? STSCHEMA.base.roto_bottom : 0),
     style:CURSTYLE};}
+function pvApplyStageAspect(plan, stageOrId){
+  const el = (typeof stageOrId === 'string' ? $(stageOrId) : stageOrId) || $('ipvstage') || $('pvstage');
+  const w = (plan && plan.w) ? Number(plan.w) : 1080;
+  const h = (plan && plan.h) ? Number(plan.h) : 1920;
+  const ar = (w > 0 && h > 0) ? (w / h) : (9 / 16);
+  const arStr = (w > 0 && h > 0) ? `${w} / ${h}` : '9 / 16';
+  if (el) {
+    el.style.setProperty('--stage-ar', arStr);
+    el.style.aspectRatio = arStr;
+  }
+  const root = (el && el.closest) ? el.closest('.inspv') : null;
+  if (root) {
+    root.style.setProperty('--stage-ar', `${ar}`);
+  }
+  return { w, h, ar, arStr };
+}
 let IPVPLAN_T=0;
 function ipvPlanSoon(){clearTimeout(IPVPLAN_T);IPVPLAN_T=setTimeout(ipvPlanFetch,300);}   // правки идут пачкой — рефетчим по затишью
 async function ipvPlanFetch(){
@@ -80,12 +108,21 @@ async function ipvPlanFetch(){
   catch(e){return;}                       // план не критичен: плеер играет как раньше
   if(IPV.xml!==xml)return;                // модалку успели переоткрыть на другом клипе
   if(d.ok&&d.plan){IPV.plan=d.plan;IPV.insShift=null;   // свежий план сам несёт сдвиги — временный сброс не нужен
+    if(typeof pvApplyStageAspect==='function')pvApplyStageAspect(d.plan, $('ipvstage'));
     ipvSubsInvalidate();        // новый шрифт/положение — показать субтитры заново даже на паузе
     IPV.intro=ipvIntroGroups();
     sfxEnsure(d.plan);          // SFX: элементы под план
+    // Переходу видеовставок нужен прокси (ProRes браузер не играет). Проверка typeof —
+    // как у соседних дверей: стенды node вырезают ipvPlanFetch по одной функции, и
+    // вызов без неё ронял бы стенд, а не боевую отрисовку.
+    if(typeof ipvTransAsk==='function')ipvTransAsk(d.plan);
     IPV.cur=-2;IPV.introCur=-2;
     if(typeof renderSubRowsList==='function')renderSubRowsList();
     if(typeof aewUpdateCaptionUI==='function')aewUpdateCaptionUI();
+    // Рото в кадре: масок у плана нет (их считает кнопка «Рассчитать рото и трекинг»),
+    // берём готовые из кэша — быстрая дверь без GPU. Ждём её ДО первого кадра, иначе
+    // на паузе слой появился бы только после перемотки.
+    if(typeof ipvCalcApply==='function')await ipvCalcApply();
     if(IPV.vids.length){itlDraw();ipvUI(ipvNow());}}
   else if(d.error){uiLog(t('план сцены: ')+(d.error||''));}}
 // ---- SFX в предпросмотре: те же числа, что в AE ----
@@ -96,7 +133,7 @@ async function ipvPlanFetch(){
 let SFX_ELS={};
 function sfxEnsure(plan){
   const sfx=(plan&&plan.audio&&plan.audio.sfx)||[];
-  for(const k in SFX_ELS){if(!sfx.find(s=>s.kind===k)){SFX_ELS[k].el.remove();delete SFX_ELS[k];}}
+  for(const k in SFX_ELS){if(!sfx.find(s=>s.kind===k)){mediaFree(SFX_ELS[k].el);delete SFX_ELS[k];}}
   sfx.forEach(s=>{
     if(s.kind==='transition'||!s.media||!s.events||!s.events.length)return;
     let st=SFX_ELS[s.kind];
@@ -125,7 +162,13 @@ function sfxSync(tm){
 // ---- один интерполятор ключей на весь предпросмотр ----
 // AE-ease задаётся парой влияний (speed всегда 0), перевод в CSS-кривую точный:
 // cubic-bezier(out/100, 0, 1-in/100, 1). Проверка: 35/90 -> (0.35, 0, 0.10, 1).
-function aeEase(out,inp){return [out/100,0,1-inp/100,1];}
+// Числа ЭТАЛОННОЙ кривой живут ТОЛЬКО здесь (умолчания параметров): keysAt без готового
+// ease и ipvEase берут их отсюда, своей пары 35/90 у превью нет. В .jsx те же два числа
+// приезжают подстановкой HL_EASE_OUT/HL_EASE_IN (core/xml2ae/layout.py) — одна кривая
+// на сборку и на предпросмотр.
+function aeEase(out,inp){
+  if(out==null)out=35;if(inp==null)inp=90;
+  return [out/100,0,1-inp/100,1];}
 function bezierY(p1x,p2x,q){const u=1-q;return 3*u*q*q+q*q*q;}
 // параметр кривой при заданном x (Ньютон); x(q)=3(1-q)^2 q p1x + 3(1-q) q^2 p2x + q^3
 function bezierT(p1x,p2x,x){let q=x;
@@ -150,8 +193,10 @@ function keysAt(keys,ease,tm,hold){
       if(isArr&&hold[i])return a[1];
       const span=b[0]-a[0];if(span<=0)return b[1];
       const u=(tm-a[0])/span;
-      const o=ease&&ease[i]?ease[i][1]:35;        // out уходящего ключа
-      const inn=ease&&ease[i+1]?ease[i+1][0]:90;  // in приходящего
+      if(ease==='linear'||ease===false){
+        return Array.isArray(a[1])?a[1].map((cv,j)=>cv+(b[1][j]-cv)*u):a[1]+(b[1]-a[1])*u;}
+      const o=ease&&ease[i]?ease[i][1]:null;        // out уходящего ключа (нет ease — эталон aeEase)
+      const inn=ease&&ease[i+1]?ease[i+1][0]:null;  // in приходящего
       const be=aeEase(o,inn);
       const p=bezierT(be[0],be[2],u);
       const q=bezierY(be[0],be[2],p);
@@ -163,16 +208,45 @@ function insSD(x){if(IPVMODE==='ae'){const f=IPV.fps||60;
     const d0=(+x.dur_s||0)+(+x.dur_f||0)/f;
     return {s:(+x.start_s||0)+(+x.start_f||0)/f,d:d0>0?d0:2};}
   return {s:+x.start_sec||0,d:+x.duration_sec||2};}
+// Допуск перемотки <video>: в игре он грубый (0.4 с — иначе декодер дёргался бы на
+// каждом кадре), в рендере — половина кадра: снимок обязан быть ровно тем кадром, который
+// просит номер. Одно правило на ВСЕ места постановки времени — видеовставки
+// (ipvOverlay/ipvOverlayPlan) и камеру кадра (vFrameAt).
+function vidSeekTol(){return ipvRenderMode()?(0.5/(IPV.fps||60)):0.4;}
 function insSetSD(x,s,d){if(IPVMODE==='ae'){x.start_s=s;x.start_f=0;x.dur_s=d;x.dur_f=0;}
   else{x.start_sec=s;x.duration_sec=d;}}
+// Карточка шага 2, из которой собрана вставка шага 3. Ищем ТЕМ ЖЕ norm-сравнением пути,
+// что ensureJobs и запись x/y в драге: «та же вставка» во всех трёх местах — одно правило.
+// null = вставка добавлена руками на шаге 3 (карточки у неё нет, пересборка её не тронет).
+function insCardFor(x){const cl=CLIPS[curAE];
+  if(!cl||!Array.isArray(cl.inserts))return null;
+  const nm=normInsPath(x&&x.media);
+  if(!nm)return null;
+  const ic=cl.inserts.findIndex(z=>nm===normInsPath(z.media));
+  return ic<0?null:cl.inserts[ic];}
+// Тайминг/длительность правки на шаге 3 (драг блока, ручки краёв на таймлайне) пишем И в
+// карточку шага 2: она — источник истины для ensureJobs, и без этой записи правка молча
+// пропадала при следующем открытии превью (INS пересобирался из карточки со старым стартом).
+// У вставки на подложке карточки тоже бывают — ищем по исходному пути, как драг x/y.
+function insSetSDCard(x,s,d){const c=insCardFor(x);if(!c)return;
+  c.start_sec=s;c.duration_sec=d;}
 function insLbl(x){return IPVMODE==='ae'?(((x.media||'').replace(/^.*[\\\/]/,''))||t('файл не выбран')):(x.query||'');}
 function ipvAfterEdit(){if(IPVMODE==='ae'){renderIns();captureAE();itlDraw();ipvRefresh();}
   else{saveState();renderInsHost();syncClipLists();}}   // renderInsHost сам дёргает itlDraw+ipvRefresh
+// Страница рендера без AE (templates/render.html) грузит эти же файлы и открывает
+// предпросмотр той же дверью (ipvOpen): своей она объявляет тело сборки (IPV_BODY).
+// Дорожка обработанного голоса ей не нужна — звук рендер собирает сам
+// (core/webrender_audio), а заказ запекания на каждый кусок дрался бы за GPU со съёмкой.
+function ipvRenderPage(){return typeof IPV_BODY!=='undefined'&&!!IPV_BODY;}
 async function ipvOpen(xml){
+  const tra=IPV.vt;vtStop(IPV);
   ipvPause();insVidFreeAll();
   IPV={vids:[],bufs:[],scrubbing:false,scrubT:0,
     segs:[],audio:[],words:[],dur:0,fps:60,aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,defAt:0,stats:{styk:0,swap:0,seek:0,cam:0,stale:0,back:0},playing:false,raf:0,xml:xml||'',cur:-1,intro:[],introCur:-1,plan:null,insShift:null};
-  const stage=$('ipvstage');[...stage.querySelectorAll('video')].forEach(v=>v.remove());
+  IPV.vt=tra;
+  const stage=$('ipvstage');
+  pvApplyStageAspect(null, stage);
+  [...stage.querySelectorAll('video')].forEach(v=>mediaFree(v));
   const oldCv=$('ipvcam');if(oldCv)oldCv.remove();   // старый canvas кадра мог остаться от прошлого клипа
   const oldSh=$('ipvshade');if(oldSh)oldSh.remove(); // затемнение под интро — тоже от прошлого клипа
   const ov=$('ipvins');ov.className='ipvins';ov.innerHTML='';
@@ -199,6 +273,15 @@ async function ipvOpen(xml){
   // каждая камера — непрерывная дорожка со своим оффсетом и дублёром на склейки (camApply)
   IPV.bufs=[];bufMake(IPV,stage,io,0,0);
   IPV.delta=camDeltas(IPV);camBufs(IPV,stage,io);
+  // Рото — как слои перехода: чужой кэш масок сбрасываем, холст и элементы прошлого
+  // клипа отпускаем (новый клип начинает с чистого листа).
+  const oldRc=$('ipvroto');if(oldRc)oldRc.remove();
+  IPV_ROTOSEQ.forEach(el=>{try{el.pause();}catch(e){}});
+  IPV_ROTOSEQ.length=0;IPV_ROTO='';IPV_ROTOACC=-1;IPV_ROTODRAWN=-1;
+  // Слои перехода — от прошлого клипа (их заводят по плану): коробку убираем, заказ
+  // прокси перехода сбрасываем. Новый клип начинает с чистого листа.
+  const oldTr=$('ipvtrans');if(oldTr){oldTr.querySelectorAll('video').forEach(mediaFree);oldTr.remove();}
+  IPV.transSig='';IPV.transAsked='';
   // кадр Камеры рисует canvas поверх видео (см. ipvCamPaint): CSS-зум видео дрожал, канвас нет
   const cv=document.createElement('canvas');cv.id='ipvcam';
   cv.style.position='absolute';cv.style.inset='0';cv.style.width='100%';cv.style.height='100%';
@@ -217,15 +300,57 @@ async function ipvOpen(xml){
   if(typeof zoomPickMark==='function')zoomPickMark();   // маркер точки наезда
   ipvPlanFetch();
   if(px&&px.building){PVPX.xml=xml;pvProxyWatch('ipvstage');}   // прокси готовятся — догнать их на переезде
+  // Обработанный голос клипа — ТОЙ ЖЕ дорожкой и той же дверью, что шаг 1 (vtPrep):
+  // панели «Голос» у этого превью нет, поэтому настройки берутся из профиля спикера
+  // клипа (vtFx) — ровно те, по которым соберётся проект. Страница рендера без AE сюда
+  // не ходит: см. ipvRenderPage. Элемент дорожки переживает переоткрытие клипа
+  // (`tra` выше): он не в DOM, а второй createMediaElementSource на тот же звук завёл
+  // бы вторую дорожку мимо регулятора громкости.
+  if(!ipvRenderPage()&&typeof vtPrep==='function')vtPrep(IPV);
 }
+// Закрытие превью шага 3: освободить видео камер, буферов, переходов и вставок
+function ipvClose(){
+  ipvPause();insVidFreeAll();
+  const stage=$('ipvstage');
+  if(stage)[...stage.querySelectorAll('video')].forEach(mediaFree);
+  const oldTr=$('ipvtrans');if(oldTr){oldTr.querySelectorAll('video').forEach(mediaFree);oldTr.remove();}
+  IPV.transSig='';IPV.vids=[];IPV.bufs=[];}
 // картинка активного ракурса — общая машина всех плееров (camApply в 60-preview.js):
 // разбег входящей камеры перед стыком, показ по готовности, дрейф гасится скоростью.
 function ipvApplyVisual(tm,play){camApply(IPV,tm,play);}
+// Время монтажа. В рендере без AE часы — НОМЕР КАДРА (IPV.renderT), а не currentTime
+// <video>: seek округляет время к кадру исходника, и одна и та же t давала бы разные
+// кадры. Живое превью (renderT пуст) считает как раньше — от ведущей камеры.
+function ipvNow(){return ipvNowFrame(IPV);}
+function ipvNowFrame(P){if(P.renderT!=null)return P.renderT;
+  const a=P.audio[P.aidx];return (a&&P.vids.length)?a.ts+(P.vids[0].currentTime-a.src):0;}
+// Выставить сцену на момент tm и — в живом превью — перемотать ведущую камеру.
+// Дверь ОДНА на оба пути, и это не экономия строк: дверей было две, и вторая
+// (ipvSeekSet, «сцена без перемотки») оказалась копией первой — правку одной из них
+// вторая не видела. Здесь один код сцены и одно решение о перемотке:
+//   * живое превью (протяжка, клик по таймлайну, пауза) ставит сцену и время <video>;
+//   * рендер кадров (ipvRenderAt) в режиме рендера перемотку НЕ делает: её ведёт
+//     vFrameAt по НОМЕРУ кадра — у активной камеры своё исходное время (ipvCamTimeAt),
+//     и лишний `currentTime=` на ведущей дёргал бы декодер за камеру, которой в кадре
+//     может и не быть.
+// Сцена выставляется на КАЖДОМ кадре: субтитры, вставки и наезд считаются на tm —
+// «кадр уже на месте» не должно значить «кадр не считается».
 function ipvSeekTo(tm){if(!IPV.vids.length||!IPV.audio.length)return;tm=Math.max(0,Math.min(tm,IPV.dur));
-  IPV.aidx=pvSegAt(IPV.audio,tm);IPV.vidx=-1;IPV.primed=-1;const a=IPV.audio[IPV.aidx];
-  try{IPV.vids[0].currentTime=a.src+Math.max(0,tm-a.ts);}catch(e){}
-  spareIdle(IPV);camIdle(IPV);ipvApplyVisual(tm,false);ipvUI(tm);itlEnsure(tm);musicSync();}
-function ipvNow(){const a=IPV.audio[IPV.aidx];return (a&&IPV.vids.length)?a.ts+(IPV.vids[0].currentTime-a.src):0;}
+  IPV.aidx=pvSegAt(IPV.audio,tm);IPV.vidx=-1;IPV.primed=-1;
+  spareIdle(IPV);camIdle(IPV);ipvApplyVisual(tm,false);ipvUI(tm);itlEnsure(tm);musicSync();
+  if(typeof vtTick==='function')vtTick(IPV,tm);   // дорожка обработанного голоса стоит на паузе — подводим к новому месту
+  if(!ipvRenderMode())ipvVideoTo(IPV.vids[0],ipvLeadTime(tm));}
+// Исходное время ведущей камеры на момент tm — то, куда её ставить. Одна формула на
+// живую протяжку и на рендер: второй копии «что играет» быть не должно.
+function ipvLeadTime(tm){const a=IPV.audio[IPV.aidx];return a?a.src+Math.max(0,tm-a.ts):null;}
+// Поставить <video> на время, если оно уже не стоит. Порог — одна миллисекунда с
+// хвостиком: у играющего <video> время меняется каждый кадр, и «ставить всегда» значило
+// бы сбрасывать декодер 60 раз в секунду. Дробное сравнение тут НЕ про кадр исходника:
+// «кадр уже на месте» решает вызывающий (см. vFrameAt), а здесь только «не дёргать
+// декодер зря».
+function ipvVideoTo(v,want){if(!v||want==null)return;
+  if(Math.abs((+v.currentTime||0)-want)<=1e-4)return;
+  try{v.currentTime=want;}catch(e){}}
 function ipvStep(){if(!IPV.playing)return;
   const st=pvStep(IPV);if(!st)return;
   if(st.end){ipvPause();ipvSeekTo(0);return;}
@@ -234,16 +359,316 @@ function ipvStep(){if(!IPV.playing)return;
   if(st.seeked)IPV.stats.seek++;
   ipvApplyVisual(st.tm,true);
   spareRollAt(IPV,st.tm);
+  if(typeof vtTick==='function')vtTick(IPV,st.tm);   // дорожка обработанного голоса идёт за монтажом (и глушит звук камеры)
   ipvUI(st.tm);}
 function ipvTick(){if(!IPV.playing)return;ipvStep();IPV.raf=requestAnimationFrame(ipvTick);}
 function ipvPlay(){if(!IPV.vids.length)return;IPV.playing=true;$('ipvplay').innerHTML=ico('pause');
-  IPV.vids[0].muted=false;IPV.vids[0].play().catch(()=>{});sparePrime(IPV);ipvApplyVisual(ipvNow(),true);
+  // Звук камеры глушим, если играет обработанный голос (IPV.voiceMute): ту же галку
+  // ставит и снимает vtTick — здесь она важна в первый кадр, до тика.
+  IPV.vids[0].muted=!!IPV.voiceMute;IPV.vids[0].play().catch(()=>{});sparePrime(IPV);ipvApplyVisual(ipvNow(),true);
+  if(typeof vtTick==='function')vtTick(IPV,ipvNow());
   IPV.raf=requestAnimationFrame(ipvTick);
   clearInterval(IPV.itv);IPV.itv=setInterval(ipvStep,120);musicSync();}   // страховка: rAF молчит в фоновой вкладке
 function ipvPause(){IPV.playing=false;const b=$('ipvplay');if(b)b.innerHTML=ico('play');
   cancelAnimationFrame(IPV.raf);clearInterval(IPV.itv);IPV.vids.forEach(v=>v.pause());spareStop(IPV);camIdle(IPV);
-  const ov=$('ipvins');if(ov){const iv=ov.querySelector('video');if(iv)iv.pause();}musicSync();sfxPause();}
+  const ov=$('ipvins');if(ov){const iv=ov.querySelector('video');if(iv)iv.pause();}musicSync();sfxPause();vtPause(IPV);}
 function ipvToggle(){IPV.playing?ipvPause():ipvPlay();}
+
+// ---- рендер без After Effects: кадр по НОМЕРУ, а не по реальному времени ----
+// Зовёт страница /render: она грузит ЭТИ ЖЕ файлы интерфейса и просит кадр за кадром.
+// Второй копии отрисовки здесь нет и быть не должно — рендер идёт через ipvSeekTo и
+// ipvUI, то есть через тот же код, что играет и что тянется ползунком. Отличий ровно
+// пять, и все пять — здесь:
+//   1) время берётся из IPV.renderT, а не из currentTime <video> (см. ipvNow);
+//   2) на корне висит класс render-mode — CSS-переходы и анимации выключены (app.css);
+//   3) величины, которые в живом превью везёт переход (ширина плашки субтитров),
+//      считаются на t — ipvSubsBgAt;
+//   4) кадр сдаётся в два приёма: ipvRenderAt выставляет сцену, ipvRenderPaint сводит
+//      её к снимку. Так съёмщик мерит seek и paint по отдельности (у владельца на кадр
+//      уходило 1.3 с, и без разбивки не видно, на что именно);
+//   5) «показанный» кадр <video> (requestVideoFrameCallback) НЕ ждётся, а перемотка не
+//      повторяется там, где кадр уже стоит на месте (см. vFrameShown и vFrameAt).
+const VFRAME_MS=1500;      // потолок ожидания кадра <video>: не открывшийся файл не вешает рендер
+// Разбивка времени съёмки кадра: СЕКУНДЫ (съёмщик переводит их в миллисекунды, см.
+// readPaint в core/webrender/capture.mjs). Живой прогон показал 1.3 с на кадр — по этим
+// числам видно, на что именно уходит время: ждать кадр <video> (seek), рисовать (paint)
+// или снимать протоколом. Обнуляет их съёмщик, прочитав: кадр мерится по отдельности.
+const IPV_RT={seek:0,paint:0,frames:0};
+function ipvRenderMode(){return IPV.renderT!=null;}
+function ipvRenderModeOn(){
+  const r=(typeof document!=='undefined')?(document.documentElement||document.body):null;
+  if(r&&r.classList&&!r.classList.contains('render-mode'))r.classList.add('render-mode');}
+// Исходное время камеры ci на момент tm: её кусок EDL, в который попал tm. Кусок —
+// тот же IPV.segs, по которому camApply выбирает ракурс: второй копии «что играет» нет.
+function ipvCamTimeAt(ci,tm){
+  const segs=(IPV.segs||[]).filter(s=>+s.ci===+ci);
+  let s=null;for(const g of segs){if(tm>=g.ts&&tm<g.te){s=g;break;}}
+  if(!s)s=segs.length?segs[segs.length-1]:null;
+  return s?s.src+Math.max(0,tm-s.ts):null;}
+// Ждём, что элемент отыграл seek: кадр после currentTime= приходит не сразу.
+function vSeekDone(v){return new Promise(res=>{
+  if(!v||(!v.seeking&&v.readyState>=2))return res();
+  let done=false;
+  const fin=()=>{if(done)return;done=true;clearTimeout(T);
+    v.removeEventListener('seeked',fin);v.removeEventListener('loadeddata',fin);
+    v.removeEventListener('error',fin);res();};
+  const T=setTimeout(fin,VFRAME_MS);
+  v.addEventListener('seeked',fin);v.addEventListener('loadeddata',fin);v.addEventListener('error',fin);});}
+// ...и что кадр уже отдан на отрисовку: requestVideoFrameCallback (Chrome). Нет его —
+// не ждём вовсе, не пришёл за таймаут — снимаем то, что успело показаться.
+// В РЕНДЕРЕ этого ожидания НЕТ (ms=0) — и это не «оптимизация на глаз»: у <video> на
+// паузе в Chrome без окна колбэк не приходит НИКОГДА, поэтому каждый кадр упирался в
+// полный таймаут (живой замер владельца: seek 1.5–2.2 с на кадр при VFRAME_MS=1500).
+// Ждать и нечего: после `seeked` кадр уже отдан декодером и годится для drawImage, а
+// камеру рисует холст (ipvCamPaint), а не сам <video>: «показанный» кадр нужен показу на
+// экране, а не снимку. Ожидание оставлено на случай, если дверь позовут вне рендера —
+// там <video> виден сам, и показанный кадр как раз то, чего ждут.
+function vFrameShown(v){return new Promise(res=>{
+  const ms=ipvRenderMode()?0:VFRAME_MS;
+  if(!v||ms<=0||typeof v.requestVideoFrameCallback!=='function')return res();
+  let done=false;
+  const fin=()=>{if(done)return;done=true;clearTimeout(T);res();};
+  const T=setTimeout(fin,ms);
+  try{v.requestVideoFrameCallback(fin);}catch(e){clearTimeout(T);res();}});}
+// Поставить <video> на нужное исходное время и дождаться кадра. want=null — время уже
+// поставлено (видеовставка ставит его себе сама, по своему sin): ждём только кадр.
+async function vFrameAt(v,want){
+  if(!v)return;
+  // Кадр уже СТОИТ на просимом времени (разница меньше половины кадра, vidSeekTol): это
+  // ровно тот кадр исходника, который просит номер, — ни `currentTime=`, ни ожидания.
+  // Перемотка стоит прогона от ближайшего ключевого, а ждать нечего: кадр на месте.
+  // «Стоит» — значит и не едет (seeking): начатая перемотка означает, что кадра ещё нет.
+  if(want!=null&&!v.seeking&&Math.abs((+v.currentTime||0)-want)<=vidSeekTol())return;
+  ipvVideoTo(v,want);        // 1e-4: стоим на этом времени — декодер не дёргаем зря
+  await vSeekDone(v);
+  await vFrameShown(v);}
+// Шрифты и картинки — ДО первого кадра: иначе он снимется подменённым шрифтом или
+// пустым местом фото. fonts.ready сам по себе ничего не грузит (он про уже запрошенные),
+// поэтому сначала просим браузер загрузить семейства, которые реально стоят в кадре.
+async function ipvRenderAssets(){
+  try{
+    if(document.fonts){
+      const fams=new Set(),root=$('ipvstage');
+      const els=(root&&root.querySelectorAll)?root.querySelectorAll('*'):[];
+      for(const el of els){const fm=el.style&&el.style.fontFamily;if(fm)fams.add(fm);}
+      await Promise.all([...fams].map(f=>{try{return document.fonts.load('16px '+f);}catch(e){return null;}}));
+      await document.fonts.ready;}
+  }catch(e){}
+  const root=$('ipvstage');if(!root||!root.querySelectorAll)return;
+  await Promise.all([...root.querySelectorAll('img')].map(im=>{
+    if(im.decode)return im.decode().catch(()=>{});
+    return new Promise(res=>{if(im.complete)return res();
+      im.addEventListener('load',res,{once:true});im.addEventListener('error',res,{once:true});});}));}
+// Кадр отдан браузеру: два rAF. Снимок снимает сведённый слой, а не дерево DOM.
+function ipvRenderPaintFrame(){return new Promise(res=>{
+  if(typeof requestAnimationFrame!=='function')return res();
+  requestAnimationFrame(()=>requestAnimationFrame(()=>res()));});}
+// ---- рендер без AE: кадры камер ГОТОВЫМИ КАРТИНКАМИ ----
+// Замер владельца: перемотка <video> — 90 мс из 225 на кадр, самая большая доля. Поэтому
+// ПЕРЕД съёмкой куска core/webrender.py вынимает ffmpeg'ом ровно те исходные кадры, что
+// видны в кадрах куска, и кладёт их в папку куска (её отдаёт страница /render дверью
+// IPV_FRAMES). Камеру рисует ТА ЖЕ ipvCamPaint: меняется только источник пикселей
+// (ipvCamSrc) — рамка спикера, LUT, зум и наезд остаются как были.
+// Картинки нет (не вынулась, папка не приехала, живое превью) — кадр идёт перемоткой
+// <video>, как раньше: выемка это ускорение, а не условие рендера.
+let IPV_FRAMES='';          // папка картинок куска; '' — кадры идут перемоткой
+let IPV_FEXT='jpg';         // расширение картинок куска: его назвал сборщик (fext в адресе)
+let IPV_FRANGE=null;        // [первый кадр куска, сколько их]: границы примерки кадра
+let IPV_FRAME=null;         // {ci,f,img} — источник пикселей ТЕКУЩЕГО кадра рендера
+const IPV_FIMGS=new Map();  // 'ci:f' -> <img>: окно загруженных картинок
+const IPV_FDEAD=new Set();  // камеры, картинок которых нет ВООБЩЕ: их кадры идут перемоткой
+const IPV_FMISSN=new Map(); // ci -> сколько картинок камеры не пришло ПОДРЯД (успех обнуляет)
+const IPV_FLOG=new Set();   // про пропажу уже сказано (строка на камеру, а не на кадр)
+const IPV_FMAX=6;           // сколько картинок держим: 1080x1920 в памяти — 8 МБ на кадр
+// Размер блока мозаики в px КАДРА ролика — как у эффекта Mosaic в AE: шаблон
+// (core/xml2ae/template.py, addMosaic) ставит 64x64 и включает «sharp colors». Второй
+// копии числа не заводить: разойдись они — мозаика превью и рендера будет разной
+// крупности на одном и том же кадре.
+const MOSAIC_BLOCK=64;
+// С какой пропажи ПОДРЯД камера уходит на перемотку до конца куска. Единица тут стоила
+// куска целиком: на живом прогоне ПЕРВАЯ же картинка камеры, сменившейся на 150-м кадре
+// пятисекундного куска, не доехала — и 149 кадров (весь остаток куска) пошли перемоткой
+// `<video>` по 94 мс вместо 22. Порог в три кадра оставляет одиночному сбою цену одного
+// кадра, а пропавшей папке — три запроса вместо трёхсот.
+const IPV_FMISS_MAX=3;
+// Какая камера видна в кадре ролика tm и какой ИСХОДНЫЙ кадр ей нужен. ОДНО правило с
+// выемкой (core.webrender.src_frame_at): время источника округляется к кадру ролика.
+// Расхождение на кадр — это ДРУГАЯ картинка, поэтому формула одна на обе стороны, а не
+// «похожие» вычисления. Камеру берём у того же куска EDL, по которому показывает
+// camApply, а время — тем же ipvCamTimeAt: второй копии «что играет» здесь нет.
+function ipvSrcFrameAt(tm){
+  const segs=IPV.segs||[];if(!segs.length)return null;
+  const s=segs[pvSegAt(segs,tm)];if(!s)return null;
+  // Имя tsrc, а не t: `t` в проекте — функция перевода (tests/test_ui_static.py).
+  const tsrc=ipvCamTimeAt(s.ci,tm);if(tsrc==null)return null;
+  // floor(x+0.5), а не Math.round: у Python round(2.5) округляет к чётному, у JS — вверх,
+  // и ровно на половине кадра стороны разъехались бы на кадр (core.webrender.src_frame_at).
+  return {ci:(+s.ci||0),f:Math.floor(tsrc*(IPV.fps||60)+0.5)};}
+// Картинка исходного кадра: файл c<камера>_<кадр>.<расширение> в папке куска. Имя —
+// номер ИСХОДНОГО кадра (тот же, что считает ipvSrcFrameAt), а не «пятый с начала
+// куска»: второй нумерации, которая могла бы разойтись с выемкой, тут не заводится.
+// РАСШИРЕНИЕ приходит в адресе страницы (IPV_FEXT) и совпадает с тем, чем вынимал
+// ffmpeg: своей копии «.jpg» у страницы нет — формат выемки меняется в core/webrender.py,
+// и разойдись они, камера просила бы несуществующие файлы (404 → перемотка `<video>`).
+function ipvFrameURL(ci,f){
+  return '/api/media?path='+encodeURIComponent(IPV_FRAMES+'/c'+ci+'_'+f+'.'+IPV_FEXT);}
+// Картинка кадра: из окна или новая (начинает грузиться сразу). Не загрузилась — кадр
+// уйдёт перемоткой, и об этом ОДНА строка в лог (по строке на кадр лог бы затопило).
+function ipvFrameImg(ci,f){
+  if(!IPV_FRAMES||IPV_FDEAD.has(ci))return null;
+  const k=ci+':'+f,hit=IPV_FIMGS.get(k);
+  if(hit)return hit._bad?null:hit;
+  const im=document.createElement('img');
+  im._bad=false;
+  // Адрес запоминаем: у события `error` статуса нет, а причину пропажи надо назвать
+  // (ipvFrameWhy спрашивает её у сервера по этому же адресу).
+  const url=ipvFrameURL(ci,f);
+  im.addEventListener('error',()=>{im._bad=true;ipvFrameFail(im,ci,url);});
+  im.src=url;
+  IPV_FIMGS.set(k,im);
+  ipvFrameTrim();
+  return im;}
+// Картинка не пришла — ЭТОТ кадр уходит перемоткой. Считается пропажа ОДИН раз на
+// картинку (`_counted`): в браузере на 404 приходят и событие `error`, и отказ `decode()`,
+// а это одна пропажа, а не две. Камера уходит на перемотку до конца куска только после
+// IPV_FMISS_MAX пропаж ПОДРЯД (см. IPV_FMISS_MAX): одиночный сбой не должен стоить куска.
+function ipvFrameFail(im,ci,url){
+  if(im._counted)return;
+  im._counted=true;
+  IPV_FMISSN.set(ci,(IPV_FMISSN.get(ci)||0)+1);
+  if((IPV_FMISSN.get(ci)||0)>=IPV_FMISS_MAX)IPV_FDEAD.add(ci);
+  if(IPV_FLOG.has(ci))return;      // про эту камеру уже сказано — причину не спрашиваем
+  IPV_FLOG.add(ci);
+  ipvFrameWhy(url,(why)=>ipvFrameMiss(ci,why));}
+// Почему картинка не приехала. У <img> причину не спросить: событие `error` статуса не
+// несёт, а без причины строка «картинками не пришли» не отвечает на вопрос, ради которого
+// её читают, — это папка не та, файла нет или сервер не отдал. Поэтому ОДИН раз на камеру
+// спрашиваем сервер (HEAD по тому же адресу): 404 — файла нет, 200 — файл есть, а до
+// браузера не доехал.
+function ipvFrameWhy(url,done){
+  if(typeof fetch!=='function')return done('картинка не загрузилась');
+  fetch(url,{method:'HEAD'}).then((r)=>done(r.status===200
+    ?'файл сервер отдаёт (200), а браузер его не получил':'сервер ответил '+r.status))
+    .catch((e)=>done('запрос не прошёл: '+(e&&e.message?e.message:e)));}
+function ipvFrameMiss(ci,why){
+  // В консоль, а не в uiLog: у страницы рендера нет ни панелей, ни лога, зато её
+  // console.error забирает съёмщик и печатает строкой `#консоль` в лог рендера
+  // (core/webrender/capture.mjs) — там её и увидит человек. ПРИЧИНА в строке обязательна:
+  // без неё «картинками не пришли» не отличить от «папки нет» и разбирать нечем.
+  if(typeof console!=='undefined'&&console.error)
+    console.error('рендер: кадры камеры '+(ci+1)+' картинками не пришли ('+why+
+      ') — эти кадры идут перемоткой <video>');}
+// Окно загруженных картинок: 1080x1920 в памяти — это 8 МБ на кадр, и весь кусок
+// (десятки кадров) держать нельзя. Лишние отпускаем: src снимаем атрибутом (пустая
+// строка — это запрос на саму страницу), элемент уходит из окна.
+function ipvFrameTrim(){
+  while(IPV_FIMGS.size>IPV_FMAX){
+    const k=IPV_FIMGS.keys().next().value,im=IPV_FIMGS.get(k);
+    if(IPV_FRAME&&IPV_FRAME.img===im)break;          // текущий кадр не отпускаем
+    IPV_FIMGS.delete(k);
+    try{im.removeAttribute('src');}catch(e){}}}
+// Картинка готова к рисованию: загружена и раскодирована (drawImage до готовности
+// рисует пустоту). Нет картинки — null: кадр рисуется перемоткой.
+async function ipvFrameReady(ci,f){
+  const im=ipvFrameImg(ci,f);if(!im)return null;
+  try{await im.decode();}catch(e){im._bad=true;ipvFrameFail(im,ci,ipvFrameURL(ci,f));return null;}
+  if(im._bad)return null;
+  IPV_FMISSN.delete(ci);        // картинка доехала — счёт пропаж подряд с нуля
+  return im;}
+// Источник пикселей кадра: поставить готовую картинку исходного кадра (её читает
+// ipvCamSrc). Возвращает картинку или null — «этот кадр рисуй перемоткой».
+async function ipvFrameAt(sf){
+  IPV_FRAME=null;
+  if(!sf)return null;
+  const im=await ipvFrameReady(sf.ci,sf.f);
+  if(im)IPV_FRAME={ci:sf.ci,f:sf.f,img:im};
+  return im;}
+// Источник пикселей камеры ci: картинка вынутого кадра или <video>. ОДНА дверь на всю
+// отрисовку кадра — второго решения «откуда пиксели» в файле нет.
+function ipvCamSrc(ci){
+  const fr=IPV_FRAME;
+  if(fr&&fr.ci===ci&&fr.img)return fr.img;
+  return (IPV.vids&&IPV.vids[ci])||null;}
+// Следующий кадр грузим заранее: пока браузер сводит и снимает текущий, картинка
+// следующего уже едет. Ошибка тут та же, что у кадра: камера пометится, и её кадры
+// пойдут перемоткой (ipvFrameFail считает пропажи подряд).
+// ГРАНИЦЫ КУСКА: за его последним кадром примерка не идёт — там кадр СОСЕДНЕГО куска, и
+// картинки для него в этой папке нет вовсе (ipvFrameInChunk). Просьба о ней — 404 на
+// каждом последнем кадре куска, а пропажа картинки уводила камеру на перемотку до конца
+// куска: на куске в 300 кадров это стоило 149 кадров.
+function ipvFramePrime(tm){
+  if(!IPV_FRAMES||!ipvRenderMode())return;
+  if(!ipvFrameInChunk(Math.round(tm*(IPV.fps||60))))return;
+  const sf=ipvSrcFrameAt(tm);if(!sf)return;
+  ipvFrameImg(sf.ci,sf.f);}
+// Кадр ролика внутри куска? Границы приезжают в адресе страницы (fstart/fcount,
+// core/webrender._chunk_url). Не пришли — границ нет: страница рендерит ролик целиком
+// (живое превью), и примерка ничем не ограничена.
+function ipvFrameInChunk(k){
+  return !IPV_FRANGE||(k>=IPV_FRANGE[0]&&k<IPV_FRANGE[0]+IPV_FRANGE[1]);}
+// Отрисовать кадр на момент tm и дождаться, что он готов к съёмке. Возвращает время
+// кадра. Одна и та же tm дважды подряд даёт одинаковую картинку: ни текущего времени
+// <video>, ни CSS-переходов, ни анимаций в расчёте не участвует.
+// Параметр — tm, а не t: имя t занято функцией перевода (tests/test_ui_static.py).
+async function ipvRenderAt(tm){
+  if(!IPV.vids.length)return null;
+  const tq=Math.max(0,Math.min(+tm||0,IPV.dur||(+tm||0)));
+  IPV_RT.seek=0;IPV_RT.paint=0;IPV_RT.frames=0;
+  const t0=performance.now();
+  // Камера кадра и ЕЁ исходный кадр — по тому же правилу, что и выемка картинок: иначе
+  // на страницу приехала бы чужая картинка (ipvSrcFrameAt, core.webrender.src_frame_at).
+  const sf=ipvSrcFrameAt(tq);
+  const ci=sf?sf.ci:((IPV.curCi>=0)?IPV.curCi:0);
+  IPV.renderT=tq;                       // с этого места режим рендера включён (ipvRenderMode)
+  ipvRenderModeOn();                    // переходы и анимации выключены классом на корне
+  // Сцена выставляется на КАЖДОМ кадре: субтитры, вставки и наезд считаются на tm, и
+  // «кадр уже на месте» не должно значить «кадр не считается». Перемотка ведущей камеры
+  // здесь при этом НЕ делается — ipvSeekTo в режиме рендера её пропускает.
+  ipvSeekTo(tq);                        // тот же «выставить всё на момент», что у протяжки ползунка
+  // Кадр камеры — готовой картинкой, если её вынули до съёмки (ipvFrameAt): тогда
+  // перематывать нечего вовсе. Нет картинки — кадр идёт перемоткой <video>, как раньше
+  // (vFrameAt ставит камере её исходное время и ждёт кадр).
+  const shot=await ipvFrameAt(sf);
+  // Кадры всех <video> ждутся РАЗОМ: активная камера и видеовставки — разные декодеры, и
+  // по очереди это была бы их СУММА (у владельца кадр ждал камеру, потом каждую вставку).
+  // Перематывать больше нечего: время вставкам поставил ipvOverlayPlan внутри ipvSeekTo.
+  // Ждать нечего, когда таких <video> нет: пустой querySelectorAll — это и есть «в кадре
+  // их не видно». Видеовставки картинками не вынимаются: их время считает своя анимация.
+  const ov=$('ipvins');
+  const ivs=(ov&&ov.querySelectorAll)?[...ov.querySelectorAll('video')]:[];
+  // Слои перехода — свои <video> в отдельной коробке (не в оверлее вставок: тот
+  // перестраивается целиком): их кадры ждутся наравне с вставками, иначе снимок снял бы
+  // переход с прошлого кадра или вовсе до метаданных.
+  const tb=$('ipvtrans');
+  const tv=(tb&&tb.querySelectorAll)?[...tb.querySelectorAll('video')].filter(v=>!v._dead):[];
+  await Promise.all([shot?null:vFrameAt(IPV.vids[ci],sf?ipvCamTimeAt(ci,tq):null),
+    ...ivs.map(v=>vFrameAt(v,null)), ...tv.map(v=>vFrameAt(v,null))]);
+  // Мозаика вставок — ПОСЛЕ ожидания их кадров и с перерисовкой (`force`): время вставке
+  // ставит ipvOverlayPlan ещё до ожидания, и по кэшу холст остался бы с прошлым кадром.
+  ipvInsMosaics(true);
+  ipvCamPaint(ipvZoomAt(tq));           // холст — ПОСЛЕ кадров: пока декодер молчит, рисовать нечего
+  IPV_RT.seek+=(performance.now()-t0)/1000;
+  IPV_RT.frames++;
+  ipvFramePrime(tq+1/(IPV.fps||60));    // следующий кадр — заранее, пока снимают этот
+  return tq;}
+// Кадр отдан браузеру — снимать можно. Отдельной дверью, а не внутри ipvRenderAt:
+// съёмщик зовёт её сам и мерит ею время рисования (paint), а seek считает ipvRenderAt.
+async function ipvRenderPaint(){
+  const t0=performance.now();
+  await ipvRenderAssets();
+  await ipvRenderPaintFrame();
+  IPV_RT.paint+=(performance.now()-t0)/1000;
+  return {seek:IPV_RT.seek,paint:IPV_RT.paint,frames:IPV_RT.frames};}
+// Съёмщик зовёт ЭТУ дверь сам (capture.mjs), поэтому под именем обязана лежать ФУНКЦИЯ
+// отрисовки. Объект статистики здесь уже стоял — и живой прогон падал на первом кадре:
+// «TypeError: window.reelsiRenderPaint is not a function». Саму разбивку съёмщик берёт
+// возвратом вызова, отдельным именем её выставлять не надо.
+// Проверка `typeof window!=='undefined'`: этот же файл грузят node-стенды предпросмотра
+// (tests/test_intro_*.py и соседние) — браузера там нет, и обращение к window роняло их
+// на загрузке файла («ReferenceError: window is not defined»), хотя проверяют они
+// отрисовку интро, а не двери рендера.
+if(typeof window!=='undefined')window.reelsiRenderPaint=ipvRenderPaint;
+
 // ---- музыка превью: как в рендере (уровень MUSIC_DB), синхронно с плеером ----
 // Отдельный <audio> на весь предпросмотр: старт/пауза/перемотка по IPV, позиция = позиция
 // монтажа (в AE музыка — слой под всем роликом, так и звучит). Источник — по режиму:
@@ -291,12 +716,21 @@ function ipvJump(i){const x=ipvIns()[i];if(!x||!IPV.vids.length)return;
 // дублёр должен нести тот же зум, иначе кадр «прыгает» в масштабе.
 // Масштаб в момент tm — ОДИН на всех (кадр и вставки кам1): второй интерполятор
 // разъехался бы с первым, и превью снова разошлось бы с AE.
-function ipvZoomAt(tm){const z=IPV.plan&&IPV.plan.zoom;if(!z||!z.keys||!z.keys.length)return 1;
+function ipvZoomAt(tm,target){
+  let z=IPV.plan&&IPV.plan.zoom;
+  if(target==='cam2'||target===1)z=z&&z.cam2;
+  else if(target&&typeof target==='object')z=target;
+  if(!z||!z.keys||!z.keys.length)return 1;
   const fps=IPV.fps||60;
   // квантование времени к кадру композиции убирает дрожание рендера между кадрами
   const tq=Math.round(tm*fps)/fps;
   const pct=keysAt((z.keys||[]).map(k=>[k[0]/fps,k[1]]),z.ease,tq,z.holds!=null?z.holds:z.hold);
   return ((z.fit==null?100:z.fit)/100)*(pct/100);}
+// Точка наезда Камеры 2 из плана ([cx,cy] в долях кадра) или null, когда Камера 2
+// неактивна: план несёт `zoom.cam2` только при активности (зум, fit, pan, rot, cx/cy).
+function ipvCam2Point(){const z=IPV.plan&&IPV.plan.zoom;const c=z&&z.cam2;
+  if(!c)return null;
+  return [c.cx!=null?c.cx:0.5,c.cy!=null?c.cy:0.5];}
 function ipvZoom(tm){const s=ipvZoomAt(tm);
   const pl=IPV.plan;
   // точка наезда камеры: масштабируем кадр от неё, а не от центра — в AE
@@ -305,84 +739,135 @@ function ipvZoom(tm){const s=ipvZoomAt(tm);
   const cy=((pl&&pl.zoom&&pl.zoom.cy)!=null)?pl.zoom.cy:0.5;
   ipvRotoMaskZoom(s,cx,cy);      // подсказка «низ маски рото» едет вместе с кадром
   ipvCamPaint(s);}               // кадр рисует canvas: CSS-масштаб видео дрожал, вырезка — нет
-function ipvCamShift(tm){
+function ipvCamShift(tm, target){
   const pl=IPV.plan;
-  const pan=(pl&&pl.zoom&&pl.zoom.pan)||[0,0];
+  const isCam2=(target==='cam2'||target===1);
+  const z=isCam2?(pl&&pl.zoom&&pl.zoom.cam2):(pl&&pl.zoom);
+  const pan=(z&&z.pan)||[0,0];
   let off=0;
-  const fol=pl&&pl.zoom&&pl.zoom.follow;
+  const fol=z&&z.follow;
   if(fol&&fol.keys&&fol.keys.length){
     const fps=IPV.fps||60;
     const tt=(tm!=null)?tm:((typeof ipvNow==='function')?ipvNow():0);
     const tq=Math.round(tt*fps)/fps;
     const keys=fol.keys.map(k=>[k[0]/fps,k[1]]);
-    off=keysAt(keys,fol.ease,tq,false)||0;
+    off=keysAt(keys,(fol.ease&&!fol.linear)?fol.ease:'linear',tq,false)||0;
   }
   return [(pan[0]||0)+off, pan[1]||0];
 }
-// ---- одна матрица кадра Камеры 1 ----
+// ---- одна матрица кадра Камеры 1 / Камеры 2 ----
 // Точка ИСХОДНИКА (px композиции от его центра при заполнении кадра) -> экран (px композиции
 // от левого верхнего угла), матрица 2D (a,b,c,d,e,f). Модель как в AE после ZE:
 //   экран = C + S·(R·p − C_c) + T,
 // где C — точка наезда (cx*W, cy*H от левого верхнего угла), C_c — она же от центра кадра,
-// S = ipvZoomAt(tm) (заполнение уже внутри ключей), R — горизонт `rot` вокруг центра
-// ИСХОДНИКА, T = ipvCamShift(tm) = pan + слежение.
+// S = ipvZoomAt(tm, target) (заполнение уже внутри ключей), R — горизонт `rot` вокруг центра
+// ИСХОДНИКА, T = ipvCamShift(tm, target) = pan + слежение.
 // Проверка модели: при S=1, rot=0, T=0 центр исходника встаёт в центр кадра, а точка наезда
 // неподвижна при любом S. −C_c стоит ПОСЛЕ R, поэтому поворот центра исходника не двигает
 // (в AE поворачивается слой камеры вокруг своего якоря, а не нул). Второй копии правила не
 // заводить: кадр и подсказка рото обязаны считать одно и то же.
-function ipvCamMatrix(tm){
+function ipvCamMatrix(tm, target){
   const pl=IPV.plan,W=pl?pl.w:1080,H=pl?pl.h:1920;
-  const s=ipvZoomAt(tm);
-  const cx=((pl&&pl.zoom&&pl.zoom.cx)!=null)?pl.zoom.cx:0.5;
-  const cy=((pl&&pl.zoom&&pl.zoom.cy)!=null)?pl.zoom.cy:0.5;
-  const rad=((pl&&pl.zoom&&pl.zoom.rot)||0)*Math.PI/180;
+  const isCam2=(target==='cam2'||target===1);
+  const z=isCam2?(pl&&pl.zoom&&pl.zoom.cam2):(pl&&pl.zoom);
+  const s=isCam2?ipvZoomAt(tm,'cam2'):ipvZoomAt(tm);
+  const cx=((z&&z.cx)!=null)?z.cx:0.5;
+  const cy=((z&&z.cy)!=null)?z.cy:0.5;
+  const rad=((z&&z.rot)||0)*Math.PI/180;
   const co=Math.cos(rad),si=Math.sin(rad);
-  const shift=(typeof ipvCamShift==='function')?ipvCamShift(tm):((pl&&pl.zoom&&pl.zoom.pan)||[0,0]);
+  const shift=(typeof ipvCamShift==='function')?ipvCamShift(tm, target):((z&&z.pan)||[0,0]);
   const dx=(cx-0.5)*W,dy=(cy-0.5)*H;                          // точка наезда от центра кадра (C_c)
   return [s*co, s*si, -s*si, s*co,
           cx*W+(shift[0]||0)-s*dx,
           cy*H+(shift[1]||0)-s*dy];}
 // ---- Lumetri в превью ----
-// ПРИБЛИЖЕНИЕ: настоящие формулы Lumetri закрыты (плагин), здесь те же шаги в том же
-// порядке, что в панели AE: экспозиция -> контраст -> тона -> баланс -> насыщенность.
+// ПРИБЛИЖЕНИЕ: настоящие формулы Lumetri закрыты (плагин), поэтому модель снята
+// ЗАМЕРОМ эталона AE: кадр нашего рендера без цвета (lm_on=false) и тот же кадр из
+// exp/C1476.mov, пары пиксель-в-пиксель, медиана по корзинам яркости. Что показал замер:
+//   * экспозиция — СТОПЫ в линейном свете (как было): 2^ex множит линейную яркость.
+//     Здесь стояло `x * 2^ex` прямо по гамме, и превью выходило на 19-22 % светлее AE;
+//   * тона (светлые/тени/белые/тёмные) у AE — МНОЖИТЕЛЬ к линейной яркости, а не
+//     добавка к гамма-значению: добавка темнила тени и не поднимала середину — отсюда
+//     «наш кадр темнее AE» и средняя яркость на 5.5 % ниже эталона;
+//   * перекрёстной зависимости каналов нет (при одном входе канала выход один и тот же
+//     при любой яркости соседей), но каналы идут РАЗНЫМИ кривыми: наш вход против
+//     импорта AE даёт R ниже, B выше. Отсюда поканальная поправка входа;
+//   * в глубоких тенях наш кадр и импорт AE сходятся, расхождение каналов растёт к свету.
 // Все константы приближения собраны ЗДЕСЬ, чтобы правка была в одном месте.
-const IPV_LM_HL=0.25, IPV_LM_SH=0.25, IPV_LM_WH=0.15, IPV_LM_BL=0.15;  // вес тонов
+const IPV_LM_HL=0.48, IPV_LM_SH=1.05, IPV_LM_WH=0.15, IPV_LM_BL=0.15;  // амплитуды тонов
+const IPV_LM_HL_LO=0.004, IPV_LM_HL_HI=0.256, IPV_LM_HL_TOP=0.85;      // полоса светлых
+const IPV_LM_SH_LO=0.035, IPV_LM_SH_HI=0.09, IPV_LM_SH_TOP=0.455;      // полоса теней
+const IPV_LM_GAIN_R=1.04, IPV_LM_GAIN_G=1, IPV_LM_GAIN_B=0.94;         // поправка входа
+const IPV_LM_GAIN_LO=0.027, IPV_LM_GAIN_HI=0.055;                      // она растёт от чёрного
+const IPV_LM_GAIN_FADE=0.6, IPV_LM_GAIN_END=0.9;                       // и сходит у белого
 const IPV_LM_BAL=0.2;              // баланс: ±20% каналу при ±100 (температура/оттенок)
-const IPV_LM_N=64;                 // точек в таблице кривой (feComponentTransfer)
+const IPV_LM_N=256;                // точек в таблице кривой (feComponentTransfer)
+// Перевод sRGB <-> линейный свет: экспозиция Lumetri — это СТОПЫ, то есть множитель
+// 2^ex к линейной яркости, а не к гамма-значению.
+function ipvLmToLin(c){return (c<=0.04045)?(c/12.92):Math.pow((c+0.055)/1.055,2.4);}
+function ipvLmToSrgb(c){return (c<=0.0031308)?(c*12.92):(1.055*Math.pow(c,1/2.4)-0.055);}
 function ipvLmSmooth(a,b,x){       // smoothstep: 0 ниже a, 1 выше b, между — плавно
   if(b<=a)return x>=b?1:0;
   const u=Math.max(0,Math.min(1,(x-a)/(b-a)));
   return u*u*(3-2*u);}
+// Вес ручки по уровню: 0 слева и справа, 1 в середине (полоса).
+function ipvLmBand(lo,mid,hi,p){return ipvLmSmooth(lo,mid,p)*(1-ipvLmSmooth(mid,hi,p));}
 // Кривая тона: яркость x (0…1) -> яркость y (0…1); значения — из plan.lumetri.
-function ipvLumetriTone(x,lm){
+// ch (0/1/2) — номер канала: включает поканальную поправку входа. Её видят только
+// таблицы фильтра; сама кривая при ch=undefined остаётся чистым Lumetri, поэтому
+// при нулевых ручках она тождество, а экспозиция — ровно стопы.
+function ipvLumetriTone(x,lm,ch){
   const l=lm||{};
   const ex=+l.exposure||0,ct=+l.contrast||0,hl=+l.highlights||0,
         sh=+l.shadows||0,wh=+l.whites||0,bl=+l.blacks||0;
-  let y=x*Math.pow(2,ex);                                   // экспозиция
-  y=0.5+(y-0.5)*(1+ct/100);                                 // контраст вокруг середины
-  y+=IPV_LM_HL*(hl/100)*ipvLmSmooth(0.5,1,y);               // светлые
-  y+=IPV_LM_SH*(sh/100)*(1-ipvLmSmooth(0,0.5,y));           // тени
-  y+=IPV_LM_WH*(wh/100)*ipvLmSmooth(0.75,1,y);              // белые
-  y+=IPV_LM_BL*(bl/100)*(1-ipvLmSmooth(0,0.25,y));          // тёмные
+  const gain=(ch==null)?1:(ch===0?IPV_LM_GAIN_R:(ch===2?IPV_LM_GAIN_B:IPV_LM_GAIN_G));
+  // Поправка входа включается от уровня: в глубоких тенях каналы нашего кадра и
+  // импорта AE совпадают, к свету расходятся, у белого снова сходятся.
+  const w=(ch==null)?0:ipvLmSmooth(IPV_LM_GAIN_LO,IPV_LM_GAIN_HI,x)
+    *(1-ipvLmSmooth(IPV_LM_GAIN_FADE,IPV_LM_GAIN_END,x));
+  let u,y;
+  if(ex!==0||w>0){                  // шаг есть — считаем в линейном свете
+    u=ipvLmToLin(x)*(1+(gain-1)*w);
+    if(ex!==0)u*=Math.pow(2,ex);
+    y=ipvLmToSrgb(u);
+  }else{y=x;}                       // ни шага, ни поправки — числа кадра не меняются
+  // Тона — множитель к ЛИНЕЙНОЙ яркости (по замеру AE), а не добавка к гамма-значению.
+  const k=1+(hl/100)*IPV_LM_HL*ipvLmBand(IPV_LM_HL_LO,IPV_LM_HL_HI,IPV_LM_HL_TOP,y)
+          +(sh/100)*IPV_LM_SH*ipvLmBand(IPV_LM_SH_LO,IPV_LM_SH_HI,IPV_LM_SH_TOP,y)
+          +(wh/100)*IPV_LM_WH*ipvLmSmooth(0.75,1,y)
+          +(bl/100)*IPV_LM_BL*(1-ipvLmSmooth(0,0.25,y));
+  if(k!==1)y=ipvLmToSrgb(ipvLmToLin(y)*k);
+  if(ct!==0)y=0.5+(y-0.5)*(1+ct/100);                       // контраст вокруг середины
   return Math.max(0,Math.min(1,y));}
-// Таблица IPV_LM_N точек — одна кривая на все три канала (feFuncR/G/B).
-function ipvLumetriTable(lm){
+// Таблица IPV_LM_N точек — своя кривая на каждый канал (feFuncR/G/B): у каналов
+// разные поканальные поправки входа.
+function ipvLumetriTable(lm,ch){
   const out=[];
-  for(let i=0;i<IPV_LM_N;i++)out.push(ipvLumetriTone(i/(IPV_LM_N-1),lm).toFixed(5));
+  for(let i=0;i<IPV_LM_N;i++)out.push(ipvLumetriTone(i/(IPV_LM_N-1),lm,ch).toFixed(5));
   return out.join(' ');}
-// Фильтр превью: скрытый <svg> с фильтром id="ipvLumetri". Пересобирается ТОЛЬКО при
-// смене plan.lumetri (подпись): иначе строка таблицы собиралась бы на каждом кадре.
+// Фильтр превью: скрытый <svg> с фильтром id="ipvLumetri" (или "ipvLumetri2"). Пересобирается ТОЛЬКО при
+// смене plan.lumetri / plan.lumetri2 (подпись): иначе строка таблицы собиралась бы на каждом кадре.
 let IPV_LM_SIG=null;
-function ipvLumetriFilter(){
-  const lm=(typeof IPV!=='undefined'&&IPV.plan)?IPV.plan.lumetri:null;
-  if(!lm){IPV_LM_SIG=null;return 'none';}          // галка стиля снята — цвет как был
+let IPV_LM2_SIG=null;
+function ipvLumetriFilter(ci){
+  const pl=(typeof IPV!=='undefined'&&IPV.plan)?IPV.plan:null;
+  const isCam2=(ci===1);
+  const hasCam2Color=(isCam2 && pl && ('lumetri2' in pl));
+  const lm=hasCam2Color ? pl.lumetri2 : (pl ? pl.lumetri : null);
+  const fid=hasCam2Color ? 'ipvLumetri2' : 'ipvLumetri';
+  const svgId=hasCam2Color ? 'ipvLumetri2Svg' : 'ipvLumetriSvg';
+  if(!lm){
+    if(hasCam2Color)IPV_LM2_SIG=null; else IPV_LM_SIG=null;
+    return 'none';
+  }
   const sig=JSON.stringify(lm);
-  if(sig===IPV_LM_SIG&&$('ipvLumetriSvg'))return 'url(#ipvLumetri)';
-  let svg=$('ipvLumetriSvg');
+  const curSig=hasCam2Color ? IPV_LM2_SIG : IPV_LM_SIG;
+  if(sig===curSig&&$(svgId))return 'url(#'+fid+')';
+  let svg=$(svgId);
   if(!svg){
     const host=$('ipvstage')||document.body;
     svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
-    svg.setAttribute('id','ipvLumetriSvg');svg.setAttribute('aria-hidden','true');
+    svg.setAttribute('id',svgId);svg.setAttribute('aria-hidden','true');
     // именно нулевой размер, а не display:none: у скрытого фильтра браузер не считает
     // результат, и canvas нарисовал бы кадр без цвета
     svg.style.position='absolute';svg.style.width='0';svg.style.height='0';
@@ -392,26 +877,39 @@ function ipvLumetriFilter(){
   const kr=1+IPV_LM_BAL*temp/100, kb=1-IPV_LM_BAL*temp/100, kg=1-IPV_LM_BAL*tint/100;
   // color-interpolation-filters=sRGB: иначе браузер считает кривую в linearRGB и
   // приближение уезжает от картинки AE
-  svg.innerHTML='<filter id="ipvLumetri" x="0" y="0" width="100%" height="100%" '
+  svg.innerHTML='<filter id="'+fid+'" x="0" y="0" width="100%" height="100%" '
     +'color-interpolation-filters="sRGB">'
     +'<feComponentTransfer>'
-    +'<feFuncR type="table" tableValues="'+ipvLumetriTable(lm)+'"/>'
-    +'<feFuncG type="table" tableValues="'+ipvLumetriTable(lm)+'"/>'
-    +'<feFuncB type="table" tableValues="'+ipvLumetriTable(lm)+'"/>'
+    +'<feFuncR type="table" tableValues="'+ipvLumetriTable(lm,0)+'"/>'
+    +'<feFuncG type="table" tableValues="'+ipvLumetriTable(lm,1)+'"/>'
+    +'<feFuncB type="table" tableValues="'+ipvLumetriTable(lm,2)+'"/>'
     +'</feComponentTransfer>'
     +'<feColorMatrix type="matrix" values="'
     +[kr,0,0,0,0, 0,kg,0,0,0, 0,0,kb,0,0, 0,0,0,1,0].join(' ')+'"/>'
     +'<feColorMatrix type="saturate" values="'+(sat/100)+'"/>'
     +'</filter>';
-  IPV_LM_SIG=sig;
-  return 'url(#ipvLumetri)';}
+  if(hasCam2Color)IPV_LM2_SIG=sig; else IPV_LM_SIG=sig;
+  return 'url(#'+fid+')';}
+// Во сколько раз холст сжимает картинку кадра (доля единицы) — по ней видно, платит ли
+// кадр за масштабирование деталью. Правило зума (core.webrender.frame_size) держит эту
+// долю не ниже 1/зум: при 100 % картинка ровно во столько раз крупнее холста, во сколько
+// максимальный зум больше единицы, а на самом зуме ложится пиксель в пиксель. Отдельной
+// дверью, а не «на глаз»: этой же формулой проверка сверяет размер, который просит выемка.
+function ipvCamDrawScale(imgShort,outShort){
+  if(!imgShort||!outShort)return 0;
+  return outShort/imgShort;}
 // Кадр камеры рисуется НА canvas (выбор стенда): субпиксельные координаты стабильны, а
 // CSS-трансформ на <video> дрожал по горизонтали при зуме. Видео спрятаны видимостью
 // (см. ipvOpen), поэтому canvas рисуется КАЖДЫЙ кадр — и при s==1 тоже.
 function ipvCamPaint(s){const cv=$('ipvcam');if(!cv)return;   // canvas нет — рисовать нечем
   const ci=(IPV.curCi>=0)?IPV.curCi:0;                        // активная камера (не выбрана — камера 0)
-  const v=IPV.vids[ci];
-  if(!v||v.readyState<2||!v.videoWidth){                      // кадр ещё не декодирован — чистим холст
+  // Пиксели кадра — картинка вынутого исходного кадра (режим рендера) или <video>:
+  // решает ipvCamSrc, и это единственное место, где источник выбирается. Проверка
+  // `typeof`: файл грузят и node-стенды предпросмотра, где этой двери нет.
+  const v=(typeof ipvCamSrc==='function')?ipvCamSrc(ci):IPV.vids[ci];
+  // Размер кадра у источника разный: у <video> это videoWidth, у картинки — naturalWidth.
+  const vw=(v&&(v.videoWidth||v.naturalWidth))||0,vh=(v&&(v.videoHeight||v.naturalHeight))||0;
+  if(!v||!vw||!vh||(v.readyState!=null&&v.readyState<2)){     // кадр ещё не готов — чистим холст
     const c0=cv._c||(cv.getContext&&cv.getContext('2d'));
     if(c0){c0.setTransform(1,0,0,1,0,0);c0.clearRect(0,0,cv.width,cv.height);}return;}
   const st=$('ipvstage');if(!st)return;
@@ -429,34 +927,61 @@ function ipvCamPaint(s){const cv=$('ipvcam');if(!cv)return;   // canvas нет �
   // Чистим ПРИ ЕДИНИЧНОЙ матрице: в контексте осталась матрица прошлого кадра, и clearRect
   // в ней вычистил бы только угол — оттуда мазня по краям кадра.
   c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,cv.width,cv.height);
-  const vw=v.videoWidth,vh=v.videoHeight;
-  if(ci!==0){                                                 // перебивка: как было — вырезка без зума, сдвига и поворота
-    s=1;                                                      // зум — только Камера 1 (как был на видео)
-    const pl=IPV.plan;
+  // LUT камеры из профиля спикера накладывается на лету (lutApply, 86-lut.js).
+  // Его canvas меньше кадра (не больше 1920 по большей стороне), поэтому координаты
+  // вырезки пересчитываем в его пиксели: иначе зум и сдвиг поехали бы по картинке.
+  const ks=lutKS(ci,v),skx=ks[0],sky=ks[1];
+  ipvDrawFrame(c,ci,v,vw,vh,skx,sky,W,H,dpr);
+  // Маркер точки наезда едет вместе с кадром: перекрестие рисуется по ТОЙ ЖЕ матрице,
+  // что сейчас на холсте (см. zoomPickMark в 95-styles.js), а кадр перерисовывается
+  // каждый тик проигрывания и каждую перемотку. Зовём здесь, а не в таймере: второго
+  // места, где кадр меняется, нет; вне правки точки функция выходит по display.
+  if(typeof zoomPickMark==='function')zoomPickMark();}
+// ОДНА отрисовка кадра камеры: вырезка, матрица, цвет. Зовётся из ipvCamPaint (кадр
+// превью) и из ipvRotoPaint (копия кадра ПОД маской рото). Второй копии правил
+// «заполнение, матрица, LUT» быть не должно: рото-фигура обязана лежать на кадре
+// пиксель-в-пиксель, и разойдись эти две двери — человек разъехался бы со своим кадром.
+// `vw/vh` уже посчитаны вызывающим (у <video> это videoWidth, у картинки — naturalWidth).
+// Геометрия одного кадра камеры: матрица холста, доля исходника (uv) и прямоугольник
+// назначения (dst). Возвращается наружу, потому что ею же кладётся маска рото: она в mf
+// раз мельче исходника, и её полный кадр обязан лечь ровно на тот же прямоугольник.
+// Доли (uv), а не пиксели: у источника может быть свой размер (LUT-canvas, маска).
+function ipvFrameGeom(ci,vw,vh,W,H,dpr){
+  const pl=IPV.plan;
+  if(ci>1){                                                   // перебивка 3+ камер: вырезка без сдвига и поворота
     const cx=((pl&&pl.zoom&&pl.zoom.cx)!=null)?pl.zoom.cx:0.5;  // точка наезда из плана
     const cy=((pl&&pl.zoom&&pl.zoom.cy)!=null)?pl.zoom.cy:0.5;
-    const f=Math.max(W/vw,H/vh)*s;                            // заполнение кадра
+    const f=Math.max(W/vw,H/vh);                              // заполнение кадра
     const sw=W/f,sh=H/f;
-    // Lumetri из стиля висит на ВСЕХ клипах камер (в AE — на клипах и их рото-копиях),
-    // поэтому фильтр превью надевается и на перебивку
-    c.filter=ipvLumetriFilter();
-    c.drawImage(v,cx*(vw-sw),cy*(vh-sh),sw,sh,0,0,W,H);       // вырезка от точки наезда, без округления
-    c.filter='none';                                          // холст один на кадр — состояние не копим
-    return;}
-  // Камера 1: рисуем ВЕСЬ исходник через матрицу. Раньше из видео вырезался ровно кадр
-  // экрана и сдвигался уже вырезанным куском — по краям открывались полосы и мазня,
-  // которых в AE нет: там двигается весь исходник. Матрица живёт в px
-  // КОМПОЗИЦИИ, поэтому и заполнение f считается по кадру композиции, а не по стойке:
-  // k переводит px композиции в px сцены (в перебивке вырезка рисуется прямо в px сцены).
-  const pl=IPV.plan;
+    const _fr=(typeof camFrameOf==='function')?camFrameOf(ci):null;
+    const _on=!!(_fr&&typeof camFrameDefault==='function'&&!camFrameDefault(_fr));
+    const _d=_on?camFrameDim():{W:W,H:H};
+    const _c=_on?camFrameCrop(vw,vh,_d.W,_d.H,_fr):[cx*(vw-sw),cy*(vh-sh),sw,sh];
+    return {m:[1,0,0,1,0,0],uv:[_c[0]/vw,_c[1]/vh,_c[2]/vw,_c[3]/vh],dst:[0,0,W,H]};}
+  // Камеры 1 и 2: рисуем ВЕСЬ исходник через единую матрицу кадра (ipvCamMatrix с ci).
+  // Матрица живёт в px КОМПОЗИЦИИ, заполнение f считается по кадру композиции,
+  // k переводит px композиции в px сцены.
   const Wc=(pl&&pl.w)||1080, Hc=(pl&&pl.h)||1920;
   const k=W/Wc;                                               // px сцены на px композиции
   const f=Math.max(Wc/vw,Hc/vh);                              // заполнение кадра в px композиции
-  const m=ipvCamMatrix((typeof ipvNow==='function')?ipvNow():0);
-  c.setTransform(dpr*k*m[0],dpr*k*m[1],dpr*k*m[2],dpr*k*m[3],dpr*k*m[4],dpr*k*m[5]);
-  c.filter=ipvLumetriFilter();                                // цвет камер из плана
-  c.drawImage(v,0,0,vw,vh,-vw*f/2,-vh*f/2,vw*f,vh*f);
-  c.filter='none';}                                           // состояние холста не копим
+  const _fr=(typeof camFrameOf==='function')?camFrameOf(ci):null;
+  const _fz=(typeof camFrameZoom==='function')?camFrameZoom(_fr):1;
+  const _sh=(typeof camFrameShift==='function')?camFrameShift(vw,vh,Wc,Hc,_fr):[0,0];
+  const m=ipvCamMatrix((typeof ipvNow==='function')?ipvNow():0, ci);
+  return {m:[dpr*k*m[0],dpr*k*m[1],dpr*k*m[2],dpr*k*m[3],dpr*k*m[4],dpr*k*m[5]],
+          uv:[0,0,1,1],dst:[-vw*f*_fz/2+_sh[0],-vh*f*_fz/2+_sh[1],vw*f*_fz,vh*f*_fz]};}
+function ipvDrawFrame(c,ci,v,vw,vh,skx,sky,W,H,dpr){
+  const g=ipvFrameGeom(ci,vw,vh,W,H,dpr);
+  const img=lutApply(ci,v);
+  // Размер картинки — её собственный (LUT-canvas округляет пиксели): по нему считается
+  // доля вырезки. Источника нет в пикселях (кадр не декодирован) — исходные размеры.
+  const iw=(img&&img.width)||vw*skx, ih=(img&&img.height)||vh*sky;
+  c.setTransform(g.m[0],g.m[1],g.m[2],g.m[3],g.m[4],g.m[5]);
+  c.filter=ipvLumetriFilter(ci);                                // цвет камер из плана
+  c.drawImage(img,g.uv[0]*iw,g.uv[1]*ih,g.uv[2]*iw,g.uv[3]*ih,
+    g.dst[0],g.dst[1],g.dst[2],g.dst[3]);
+  c.filter='none';                                              // состояние холста не копим
+  return g;}
 // Полоса «Низ маски %» (подсказка ротоскопа, rotoMask в 95-styles.js) обязана ехать
 // ВМЕСТЕ с кадром: RVM заливает низ ИСХОДНИКА камеры, в AE рото-слой висит на нуле
 // Камеры 1 и едет с её наездом, а подсказка была прибита к низу стойки — при зуме 160%
@@ -476,7 +1001,29 @@ function ipvRotoMaskZoom(s,cx,cy){const st=$('ipvstage');const m=st&&st.querySel
   const W=r.width||(pl&&pl.w)||1080;
   const k=W/((pl&&pl.w)||1080);
   const shift=(typeof ipvCamShift==='function')?ipvCamShift():((pl&&pl.zoom&&pl.zoom.pan)||[0,0]);
-  const panX=shift[0]*k, panY=shift[1]*k;
+  // Рамка кадра Камеры 1 (core/frame.py): слой увеличен и смещён. Смещение входит в тот
+  // же transform ДО масштаба нула (в AE оно внутри слоя, то есть множится на зум), а
+  // полоса «низ маски» встаёт по низу ИСХОДНИКА, а не стойки — иначе она врёт тем
+  // сильнее, чем крупнее рамка.
+  const v1=IPV.vids[0];
+  const fr1=(typeof camFrameOf==='function')?camFrameOf(0):null;
+  const frOn=!!(v1&&v1.videoWidth&&fr1&&typeof camFrameDefault==='function'&&!camFrameDefault(fr1));
+  const frSh=frOn?camFrameShift(v1.videoWidth,v1.videoHeight,(pl&&pl.w)||1080,(pl&&pl.h)||1920,fr1):[0,0];
+  const panX=(shift[0]+(frOn?frSh[0]*s:0))*k, panY=(shift[1]+(frOn?frSh[1]*s:0))*k;
+  const band=m.querySelector('.rmband');
+  if(band){
+    const pct=+(m._pct!=null?m._pct:0);
+    if(frOn){
+      const Wc=(pl&&pl.w)||1080, Hc=(pl&&pl.h)||1920, kk=W/Wc;
+      const f1=Math.max(Wc/v1.videoWidth,Hc/v1.videoHeight)*camFrameZoom(fr1);
+      const srcH=v1.videoHeight*f1*kk;                   // высота исходника на стойке, px
+      band.style.height=(pct/100*srcH)+'px';
+      band.style.bottom=(r.height/2-frSh[1]*kk-srcH/2)+'px';
+    }else{
+      band.style.height=pct+'%';                         // рамки нет — полоса как была
+      band.style.bottom='';
+    }
+  }
   if(!rot&&!panX&&!panY){
     m.style.transform='scale3d('+s+','+s+',1)';
     m.style.transformOrigin=(cx*100)+'% '+(cy*100)+'%';
@@ -492,13 +1039,228 @@ function ipvRotoMaskZoom(s,cx,cy){const st=$('ipvstage');const m=st&&st.querySel
 // Экран = C + s*(p − C): положение ребёнка нула Камеры 1 (вставки кам1, интро)
 // при зуме s. C — точка наезда, p — положение без зума; всё от ЦЕНТРА кадра в px композиции.
 // ЕДИНСТВЕННАЯ функция на это правило — зовётся из вставок кам1 и из интро, второй копии нет.
-function ipvCamChild(px, py, s, tm){
+function ipvCamChild(px, py, s, tm, which){
   const pl=IPV.plan,W=pl?pl.w:1080,H=pl?pl.h:1920;
-  const cx=((pl&&pl.zoom&&pl.zoom.cx)!=null)?pl.zoom.cx:0.5;
-  const cy=((pl&&pl.zoom&&pl.zoom.cy)!=null)?pl.zoom.cy:0.5;
-  const shift=(typeof ipvCamShift==='function')?ipvCamShift(tm):((pl&&pl.zoom&&pl.zoom.pan)||[0,0]);
+  const isCam2=(which==='cam2'||which===1);
+  const z=isCam2?(pl&&pl.zoom&&pl.zoom.cam2):(pl&&pl.zoom);
+  const cx=((z&&z.cx)!=null)?z.cx:0.5;
+  const cy=((z&&z.cy)!=null)?z.cy:0.5;
+  const shift=(typeof ipvCamShift==='function')?ipvCamShift(tm, which):((z&&z.pan)||[0,0]);
   const dx=(cx-0.5)*W, dy=(cy-0.5)*H;   // точка наезда от центра кадра
-  return [s*px+(1-s)*dx+shift[0], s*py+(1-s)*dy+shift[1]];}
+  return [s*px+(1-s)*dx+(shift[0]||0), s*py+(1-s)*dy+(shift[1]||0)];}
+
+// ---- РОТО в превью: вырезанная фигура спикера поверх слоя по layer_order ----
+// До этой правки рото было видно только в финальном рендере: на таймлайне стояла полоса
+// «здесь рото», а в кадре — ничего. Считает маски кнопка «Рассчитать рото и трекинг»
+// (её дверь кладёт готовые .mp4 в тот же кэш, что сборка), превью только ПОКАЗЫВАЕТ.
+//
+// Композит: кадр СВОЕЙ камеры куска × luma-маска = фигура с альфой. Ровно то же делает
+// .jsx: слой-копия камеры с Track Matte LUMA (template.py, addRoto). Кадр маски берётся
+// по времени ВНУТРИ куска (t − ts): файл маски начинается с начала куска, и в AE у слоя
+// маски startTime=ts (template.py, `mk.startTime=rr.ts`) — превью обязано брать тот же
+// кадр. А камера — общим ipvDrawFrame (та же матрица, заполнение, LUT и рамка кадра),
+// иначе фигура разъехалась бы со своим кадром.
+//
+// Холст ТРОЙНОЙ: на ДАННЫЙ холст кладётся готовый композит, РАБОЧИЙ держит кадр камеры,
+// АЛЬФА — маску с яркостью в альфе (SVG-фильтр ipvLumaAlphaFilter: canvas 2D сам так не
+// умеет, а multiply дал бы непрозрачный чёрный фон вместо выреза). Кадр камеры остаётся
+// там, где маска светлая, — `destination-in` по альфе маски.
+let IPV_ROTO='';      // xml, для которого посчитан кэш масок (открыт другой клип — сброс)
+const IPV_ROTOSEQ=[]; // <video> масок по кускам: элемент на кусок, src не переставляем
+let IPV_ROTOACC=-1;   // время, на котором холст уже сведён (работает и на паузе)
+let IPV_ROTODRAWN=-1; // тот же сброс для слоя (кадр мог не смениться, а куски — да)
+// Путь куска в момент tm или null: куски не пересекаются, но ищем ПЕРВЫЙ подходящий —
+// так же, как camApply выбирает ракурс по IPV.segs.
+function ipvRotoAt(tm){
+  const arr=IPV.roto||[];
+  for(const p of arr)if(tm>=p.ts&&tm<+p.te)return p;
+  return null;}
+// Кадр маски куска: t − ts — время ВНУТРИ куска. Файл маски начинается с его начала
+// (проверено ffprobe: кусок ts=0..te=4.567 → маска 4.571 с), и в AE у слоя маски
+// startTime=ts — значит время кадра в исходнике маски и есть t − ts. Прибавка src_start
+// (как было) уводила время в конец файла: всё время показывался последний кадр маски.
+// Секунды округляются к номеру кадра (как ipvNowFrame), иначе на паузе дрожал бы выбор
+// кадра.
+function ipvRotoMaskTime(p,tm,fps){
+  const f=Math.max(1,fps||60);
+  return Math.max(0,Math.round((tm-(+p.ts||0))*f)/f);}
+// «Уже на кадре?» — тот же допуск, что у всех перемоток превью (vidSeekTol): половина
+// кадра в рендере, 0.4 с в игре. Второй копии допуска быть не должно.
+function ipvRotoFrameStands(v,p,tm,fps){
+  if(!v||v.seeking)return false;
+  return Math.abs((+v.currentTime||0)-ipvRotoMaskTime(p,tm,fps))<=vidSeekTol();}
+// Достать <video> маски куска (или null, если ссылки на файл нет): элементы живут по
+// номеру куска, `src` ставится один раз. `muted`/`playsInline` — чтобы браузер не
+// открывал звуковую дорожку и не просил жест на воспроизведение.
+function ipvRotoVideo(ri,p){
+  const arr=IPV.roto||[];
+  const old=IPV_ROTOSEQ[ri];
+  if(old&&old.dataset&&old.dataset.mask===p.mask)return old;
+  if(old){try{old.pause();}catch(e){}}
+  const el=document.createElement('video');
+  el.className='ipvroto';
+  el.muted=true;el.playsInline=true;el.preload='auto';
+  el.dataset.mask=p.mask||'';
+  el.src='/api/media?path='+encodeURIComponent(p.mask);
+  // Кадр маски приехал (`loadeddata`) или перемотка доехала (`seeked`) — сводим слой
+  // САМИ. Без этих подписок холст оставался пустым до следующего внешнего вызова
+  // (пауза: сцена не пересчитывается, и подписок на кадре больше неоткуда взять).
+  // Подписка одна на элемент: он живёт по номеру куска, `src` не переставляется.
+  const again=()=>{IPV_ROTOACC=-1;IPV_ROTODRAWN=-1;ipvRoto(ipvNow());};
+  el.addEventListener('loadeddata',again);
+  el.addEventListener('seeked',again);
+  IPV_ROTOSEQ[ri]=el;
+  return el;}
+// Холст слоя: создаётся ОДИН раз, поверх видео камер и под интро/вставками (z-index —
+// по layer_order, как у всех слоёв превью).
+function ipvRotoCanvas(){
+  const cv=$('ipvroto');if(cv)return cv;
+  const st=$('ipvstage');if(!st||!st.insertBefore)return null;
+  const io=$('ipvintro');
+  const box=document.createElement('canvas');
+  box.id='ipvroto';box.className='ipvroto';
+  box.style.position='absolute';box.style.inset='0';
+  box.style.width='100%';box.style.height='100%';
+  box.style.pointerEvents='none';
+  if(io)st.insertBefore(box,io);else st.appendChild(box);
+  return box;}
+// Показать слой: z-index из плана. Слой рото — ОБЫЧНЫЙ слой layer_order (дефолт
+// ['subs','video','roto','photo','intro']: рото над кадром и фото, под видео и интро).
+// Группа интро на видеовставке поднимается на 11 (ipvIntro) и уходит выше рото — как
+// moveToBeginning в AE.
+function ipvRotoShow(cv){
+  const pl=IPV.plan;
+  const order=(pl&&pl.layer_order)||['subs','video','roto','photo','intro'];
+  const i=order.indexOf('roto');
+  // display именно 'block': у canvas.ipvroto в CSS стоит display:none, и пустая строка
+  // вернула бы это правило — холст остался бы невидимым.
+  cv.style.display='block';cv.style.zIndex=String(i>=0?(10-i):8);}
+function ipvRotoClear(){
+  const cv=$('ipvroto');
+  if(cv){const c=cv._c||(cv.getContext&&cv.getContext('2d'));
+    if(c)c.clearRect(0,0,cv.width,cv.height);cv.style.display='none';}
+  IPV_ROTOACC=-1;IPV_ROTODRAWN=-1;}
+// Кадр камеры куска ещё не декодирован — вырезать нечего: сведение вернуло бы ПУСТОЙ
+// холст, а время уже было бы помечено сведённым (держали 0 непрозрачных пикселей до
+// следующей перемотки). Ждём кадр камеры её же событиями — подписка одна на элемент.
+function ipvRotoWaitCam(v){
+  if(!v||!v.addEventListener||v._rotoCamBind)return;
+  v._rotoCamBind=true;
+  const again=()=>ipvRoto(ipvNow());
+  v.addEventListener('loadeddata',again);
+  v.addEventListener('seeked',again);}
+// Слой рото на момент tm: без масок — слой снят; куска нет — холст очищен (в кадре не
+// должно остаться фигуры прошлого куска). Тяжёлое сведение холста не гоняем, пока звучит
+// то же время (пауза, повторный ipvUI на том же кадре).
+function ipvRoto(tm){
+  tm=+tm||0;
+  if(IPV_ROTO&&IPV.xml&&IPV_ROTO!==IPV.xml){IPV_ROTO='';IPV.roto=[];IPV_ROTOSEQ.length=0;}
+  const arr=IPV.roto||[];
+  if(!arr.length){ipvRotoClear();return;}
+  const p=ipvRotoAt(tm);
+  if(!p){ipvRotoClear();return;}
+  const cv=ipvRotoCanvas();if(!cv)return;
+  ipvRotoShow(cv);
+  const ri=arr.indexOf(p);
+  const el=ipvRotoVideo(ri,p);          // подписки на loadeddata/seeked — там же
+  const fps=IPV.fps||60;
+  const key=Math.round(tm*fps)/fps;     // кадр композиции: тот же квант, что у зума
+  // Метаданных маски ещё нет («сведённым» этот кадр не помечаем — сведёт `loadeddata`).
+  if(!el||!el.videoWidth){
+    const c0=cv._c||(cv.getContext&&cv.getContext('2d'));
+    if(c0)c0.clearRect(0,0,cv.width,cv.height);
+    return;}
+  if(key===IPV_ROTOACC&&key===IPV_ROTODRAWN)return;
+  // Кадр маски — по времени куска; не стоит — перематываем (кадр доедет и сведётся сам,
+  // см. `seeked` в ipvRotoVideo), а сейчас сводим тем, что есть: пустой слой хуже кадра
+  // прошлого места, который через мгновение сменится.
+  if(!ipvRotoFrameStands(el,p,tm,fps)){
+    try{el.currentTime=ipvRotoMaskTime(p,tm,fps);}catch(e){}}
+  if(ipvRotoPaint(cv,el,p)){IPV_ROTOACC=key;IPV_ROTODRAWN=key;}
+  else{IPV_ROTOACC=-1;IPV_ROTODRAWN=-1;}}   // не свелось — кадр НЕ помечаем сведённым
+// Фильтр «яркость маски -> альфа» для слоя рото. Canvas 2D не умеет брать альфу из
+// яркости: multiply дал бы НЕПРОЗРАЧНЫЙ чёрный фон вместо выреза, а у grayscale-маски
+// альфа непрозрачна везде. Матрица кладёт яркость в альфу (RGB — в белый, чтобы
+// последующее умножение на кадр не темнило). Цвет считаем в sRGB: RVM кладёт яркость
+// маски как есть, и luma-матте в AE берёт её из того же grayscale-кадра.
+const IPV_LUMA_A='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0.2126 0.7152 0.0722 0 0';
+function ipvLumaAlphaFilter(){
+  const id='ipvLumaAlpha';
+  if(!$('ipvLumaAlphaSvg')){
+    const host=$('ipvstage')||document.body;
+    const svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+    svg.setAttribute('id','ipvLumaAlphaSvg');svg.setAttribute('aria-hidden','true');
+    // нулевой размер, а не display:none: у скрытого фильтра браузер не считает результат
+    svg.style.position='absolute';svg.style.width='0';svg.style.height='0';
+    svg.style.overflow='hidden';svg.style.pointerEvents='none';
+    svg.innerHTML='<filter id="'+id+'" x="0" y="0" width="100%" height="100%" '
+      +'color-interpolation-filters="sRGB"><feColorMatrix type="matrix" values="'
+      +IPV_LUMA_A+'"/></filter>';
+    host.appendChild(svg);}
+  return 'url(#'+id+')';}
+// Свести кадр: кадр камеры куска на РАБОЧИЙ холст (той же ipvDrawFrame), затем вырезать
+// его маской (яркость -> альфа) и положить готовое на холст слоя. Ровно то же делает
+// .jsx: копия кадра камеры с Track Matte LUMA.
+// Возвращает true, только если фигура действительно сведена: вызывающий (ipvRoto) по
+// этому помечает кадр сведённым, а несведённый обязан пересвестись сам.
+function ipvRotoPaint(cv,el,p){
+  const st=$('ipvstage');if(!st)return false;
+  const r=st.getBoundingClientRect();
+  const W=Math.round(r.width),H=Math.round(r.height);
+  if(W<1||H<1)return false;
+  const dpr=window.devicePixelRatio||1;
+  const pw=Math.round(W*dpr),ph=Math.round(H*dpr);
+  let c=cv._c;
+  if(!c||cv.width!==pw||cv.height!==ph){
+    cv.width=pw;cv.height=ph;cv.style.width=W+'px';cv.style.height=H+'px';
+    c=cv.getContext('2d');
+    c.imageSmoothingEnabled=true;c.imageSmoothingQuality='high';
+    cv._c=c;}
+  if(!cv._work){
+    const wc=document.createElement('canvas');
+    wc.width=pw;wc.height=ph;
+    cv._work=wc;cv._wc=wc.getContext('2d');}
+  if(!cv._alpha){
+    const ac=document.createElement('canvas');
+    ac.width=pw;ac.height=ph;
+    cv._alpha=ac;cv._ac=ac.getContext('2d');}
+  const wc=cv._work,w=cv._wc,ac=cv._alpha,a=cv._ac;
+  if(wc.width!==pw||wc.height!==ph){wc.width=pw;wc.height=ph;}
+  if(ac.width!==pw||ac.height!==ph){ac.width=pw;ac.height=ph;}
+  c.setTransform(1,0,0,1,0,0);c.clearRect(0,0,cv.width,cv.height);
+  w.setTransform(1,0,0,1,0,0);w.clearRect(0,0,wc.width,wc.height);
+  const ci=(p.ci!=null)?p.ci:0;
+  const v=(typeof ipvCamSrc==='function')?ipvCamSrc(ci):(IPV.vids&&IPV.vids[ci]);
+  const vw=(v&&(v.videoWidth||v.naturalWidth))||0,vh=(v&&(v.videoHeight||v.naturalHeight))||0;
+  // Кадра камеры нет — вырезать нечего. Возврат false: кадр НЕ помечается сведённым, и
+  // слой дорисуется сам, когда камера отдаст кадр (подписка в ipvRotoWaitCam).
+  if(!v||!vw||!vh||(v.readyState!=null&&v.readyState<2)){ipvRotoWaitCam(v);return false;}
+  const ks=(typeof lutKS==='function')?lutKS(ci,v):[1,1];
+  // Кадр камеры — в РАБОЧИЙ холст, той же вырезкой и матрицей, что показаны на экране
+  // (ipvDrawFrame — ОДНА на оба места): фигура обязана лежать на кадре пиксель-в-пиксель.
+  // `g` — геометрия кадра: ею же кладётся маска, иначе зум/сдвиг/слежение разъехались бы.
+  const g=ipvDrawFrame(w,ci,v,vw,vh,ks[0],ks[1],W,H,dpr);
+  const mw=el.videoWidth||0,mh=el.videoHeight||0;
+  let drawn=false;
+  if(mw&&mh&&g){
+    // Маска мельче исходника (mf), но её ПОЛНЫЙ кадр — это тот же кадр камеры: кладём
+    // её на тот же прямоугольник (g.uv — доля исходника, g.dst — куда), яркость уходит
+    // в альфу SVG-фильтром. Кадр маски берётся по времени куска (ipvRotoMaskTime).
+    a.setTransform(1,0,0,1,0,0);a.clearRect(0,0,ac.width,ac.height);
+    a.filter=ipvLumaAlphaFilter();
+    a.setTransform(g.m[0],g.m[1],g.m[2],g.m[3],g.m[4],g.m[5]);
+    a.drawImage(el,g.uv[0]*mw,g.uv[1]*mh,g.uv[2]*mw,g.uv[3]*mh,
+      g.dst[0],g.dst[1],g.dst[2],g.dst[3]);
+    a.filter='none';a.setTransform(1,0,0,1,0,0);
+    // destination-in: остаётся кадр камеры ровно там, где маска светлая (альфа готового
+    // слоя = яркость маски) — это и есть вырезанная фигура спикера.
+    w.setTransform(1,0,0,1,0,0);
+    w.globalCompositeOperation='destination-in';
+    w.drawImage(ac,0,0);
+    w.globalCompositeOperation='source-over';
+    drawn=true;}
+  c.drawImage(wc,0,0);
+  return drawn;}
 // Размытие на старте: в AE — Adjustment Layer с Gaussian Blur start_blur->0
 // за start_blur_dur от начала ролика. Здесь тот же фильтр CSS-ом на кадре: linear интерполяция
 // от start_blur до 0 (в AE ключи линейные, ease не ставится). Выключено — план несёт ноль.
@@ -669,15 +1431,31 @@ function ipvShade(){
   el.style.opacity=String((sh.op!=null?sh.op:100)/100);
 }
 // ---- координаты интро и затемнения: одна функция-выбор ----
-// Пока галка «интро едет с камерой» включена (plan.intro_cam !== false), нулы «интро»,
-// «интро на кам2» и слой затемнения висят на нуле Камеры 1 — точка считается общей
-// машиной ipvCamChild, как у вставок кам1. Галку сняли (intro_cam=false):
-// в .jsx эти нулы идут по ветке else — координаты кадра, — значит ни зума, ни сдвига
-// `pan`, ни слежения за головой: точка как есть, зум 1, как у свободных вставок кам2.
+// Пока галка «интро едет с камерой» включена (plan.intro_cam !== false), нул «интро»
+// и слой затемнения висят на нуле Камеры 1 — точка считается общей машиной ipvCamChild,
+// как у вставок кам1. Галку сняли (intro_cam=false): в .jsx эти нулы идут по ветке
+// else — координаты кадра, — значит ни зума, ни сдвига `pan`, ни слежения за головой:
+// точка как есть, зум 1, как у свободных вставок кам2.
 // Второй копии выбора нет: обе точки входа (ipvShade и ipvIntroPos) берут тут и точку,
 // и зум — иначе затемнение и текст разъехались бы на откреплённом интро.
-function ipvIntroChild(px,py,tm){
-  const pl=IPV.plan,free=!!(pl&&pl.intro_cam===false);
+// Группа на перебивке (on2) едет НЕ за Камерой 1: в .jsx нул «интро на кам2» — ребёнок нула
+// КАМЕРЫ 2, если её зум включён И включена СВОЯ галка камеры 2 (plan.intro_cam2), и стоит в
+// координатах кадра, если зума камеры 2 нет или галка снята. Зум спрятанной Камеры 1 на неё
+// не влияет, и галка камеры 1 (intro_cam) её больше не трогает.
+function ipvIntroChild(px,py,tm,on2){
+  const pl=IPV.plan;
+  if(on2){
+    const free=!!(pl&&pl.intro_cam2===false);
+    const p2=free?null:ipvCam2Point();
+    if(!p2)return [px,py,1];
+    const s2=ipvZoomAt(tm,'cam2'),W=pl?pl.w:1080,H=pl?pl.h:1920;
+    // Сдвиг нула камеры 2 — та же дверь, что у кадра (ipvCamShift): pan + слежение за
+    // головой. Своя сборка из pan здесь теряла слежение — в AE интро на нуле камеры 2
+    // едет за головой, а в превью стояло бы на месте.
+    const pan=(typeof ipvCamShift==='function')?ipvCamShift(tm,'cam2'):((pl&&pl.zoom&&pl.zoom.cam2&&pl.zoom.cam2.pan)||[0,0]);
+    return [s2*px+(1-s2)*(p2[0]-0.5)*W+(pan[0]||0), s2*py+(1-s2)*(p2[1]-0.5)*H+(pan[1]||0), s2];
+  }
+  const free=!!(pl&&pl.intro_cam===false);
   const s=free?1:ipvZoomAt(tm);
   const cc=free?[px,py]:ipvCamChild(px,py,s);
   return [cc[0],cc[1],s];
@@ -690,8 +1468,270 @@ function ipvIntroChild(px,py,tm){
 // остались бы на экране. Так следующая отрисовка перестраивает строки всегда —
 // ipvPlanFetch сам зовёт ipvUI, поэтому работает и на паузе.
 function ipvSubsInvalidate(){const el=$('ipvsub');const host=el&&el.querySelector('.pvsubs_host');
-  if(host)delete host.dataset.visKey;}
+  if(host)delete host.dataset.visKey;
+  SUBW_CACHE.clear();}   // новый план — другие шрифты и кегли: мереные ширины больше не годятся
+// ---- плашка субтитров: ширина на момент tm ----
+// В живом превью ширину везёт CSS-переход (transition ставит ipvSubs), в рендере перехода
+// нет — величину считает ipvSubsBgAt ТОЙ ЖЕ кривой, что выражение в .jsx
+// (data/refs/sub_bg_size.js: ease out quart за anim от последней смены сырой ширины).
+// Сырая ширина строки — то, что в AE даёт sourceRectAtTime: меряем ЖИВОЙ DOM, вторых
+// формул «сколько занимает строка» нет. Ключ показа (какие слова видны) и саму ширину
+// кладёт в кэш ipvSubs — правило «что видно на tm» живёт ТОЛЬКО там, второй копии нет.
+const SUBW_CACHE=new Map();   // ключ показа -> сырая ширина строки, px кадра
+let SUBW_MEASURE=false;       // идёт замер: ipvSubs рисует строки, ширину плашки не считает
+let SUBW_TOUCHED=false;       // замер уводил строки в прошлое — кадр надо вернуть на tm
+// Сырая ширина строки в px КАДРА по уже нарисованному DOM: максимум строки стопки,
+// как getRawWidth в выражении AE (там — sourceRectAtTime по видимым слоям).
+function ipvSubRawWidth(host,el,frameW){
+  let maxW_px=0;
+  const textSpans=host.querySelectorAll('.pvsubw');
+  textSpans.forEach(sp=>{
+    let lineW=0;
+    const wds=sp.querySelectorAll('.pvsubw_wd');
+    if(wds&&wds.length>0){
+      let minX=Infinity,maxX=-Infinity;
+      wds.forEach(wsp=>{
+        const r=wsp.getBoundingClientRect();
+        if(r.width>0){
+          minX=Math.min(minX,r.left);
+          maxX=Math.max(maxX,r.right);
+        }
+      });
+      if(minX<Infinity)lineW=maxX-minX;
+    }
+    if(!lineW){
+      const range=document.createRange();
+      range.selectNodeContents(sp);
+      lineW=range.getBoundingClientRect().width;
+    }
+    maxW_px=Math.max(maxW_px,lineW);
+  });
+  if(!maxW_px)return 0;
+  // Перевод в px кадра — ровно тот же, что был тут до выноса: стойка превью шириной
+  // `clientWidth` показывает кадр шириной plan.w, ширина меряется в её пикселях.
+  const stageW=el.clientWidth||1080;
+  return maxW_px*((frameW||1080)/stageW);}
+// Полная ширина плашки (то, что уезжает в «Размер прямоугольника»): поля по бокам —
+// проценты от строки, но не меньше padmin. Числа — из плана, копии правила нет.
+function ipvSubFullW(rawW,sbg){
+  if(!(rawW>0))return 0;
+  const pad=(sbg&&sbg.pad!=null)?sbg.pad:18.0;
+  const padmin=(sbg&&sbg.padmin!=null)?sbg.padmin:70.0;
+  return rawW+Math.max(2*padmin,rawW*2*pad/100);}
+// Сырая ширина на ПРОИЗВОЛЬНЫЙ момент: строки этого момента рисует тот же ipvSubs
+// (он же кладёт в кэш ключ показа и ширину), дальше читаем кэш. Своего правила «что
+// видно на tm» здесь нет — иначе оно разошлось бы с отрисовкой.
+function ipvSubRawWAt(tm){
+  if(SUBW_MEASURE)return null;      // уже меряем: второй заход был бы рекурсией
+  SUBW_MEASURE=true;
+  try{ipvSubs(tm);}finally{SUBW_MEASURE=false;}
+  SUBW_TOUCHED=true;
+  const el=$('ipvsub');
+  const host=el&&el.querySelector('.pvsubs_host');
+  const key=(host&&host.dataset.visKey)||'';
+  return (key&&SUBW_CACHE.has(key))?SUBW_CACHE.get(key):null;}
+// Ширина плашки на момент tm (px кадра): назад ищем последнюю смену сырой ширины
+// (порог 2 px — как в выражении AE) и доезжаем до неё кривой за anim.
+function ipvSubsBgAt(tm,curRaw,sbg){
+  const anim=(sbg&&sbg.anim!=null)?+sbg.anim:0.22;
+  let full=ipvSubFullW(curRaw,sbg);
+  if(anim>0&&curRaw>0){
+    const fps=IPV.fps||60,dt=1/fps,maxFrames=Math.ceil(anim/dt)+1;
+    let prev=curRaw,change=tm;
+    for(let f=1;f<=maxFrames;f++){
+      const tc=tm-f*dt;if(tc<0)break;
+      const wPrev=ipvSubRawWAt(tc);
+      if(wPrev==null)break;
+      if(Math.abs(wPrev-curRaw)>2){prev=wPrev;change=tc+dt;break;}}
+    const u=Math.max(0,Math.min(1,(tm-change)/anim));
+    const e=1-Math.pow(1-u,4);      // ease out quart — ровно easeVal из sub_bg_size.js
+    full=ipvSubFullW(prev+(curRaw-prev)*e,sbg);}
+  // Замеры прошлых моментов РИСОВАЛИ строки того момента: без возврата в кадр попал бы
+  // чужой текст (ширина верная, слова — прошлые).
+  if(SUBW_TOUCHED){SUBW_TOUCHED=false;SUBW_MEASURE=true;
+    try{ipvSubs(tm);}finally{SUBW_MEASURE=false;}}
+  return full;}
+// ---- появление базового слова: те же ключи, что у слоя в AE --------------------
+// Ключи приходят В ПЛАНЕ полем слова `anim` (подъём dy, прозрачность op, масштаб sc,
+// блюр bl, доля открытия wp, ступенька начертания ft) — их посчитал Python, второй
+// копии кривых нет ни здесь, ни в .jsx.
+// Значение на момент tm — интерполяция keysAt (кривая easePair из AE: 35/90).
+// До первого ключа слова ещё нет и в кадре: в AE слой в этот момент до inPoint, то есть
+// не виден вовсе, поэтому спан скрыт, а не растянут по краям строки.
+// Масштаб — от центра по горизонтали и от БАЗОВОЙ ЛИНИИ по вертикали: там же, где
+// стоит слово, — рост «из-под себя», как у слоя с якорем под текстом.
+function ipvSubWordAnim(wsp,tm){
+  let a=null;
+  // Ключи едут в атрибуте закодированными (encodeURIComponent): сам JSON полон
+  // кавычек, и в HTML-атрибуте он обрывал бы разметку на первой же из них.
+  try{a=JSON.parse(decodeURIComponent(wsp.dataset.wa||''));}catch(e){a=null;}
+  if(!a||!a.op||!a.op.length)return;
+  const t0=a.op[0][0], t1=a.op[a.op.length-1][0];
+  if(!(t0>=0))return;
+  const hidden=(tm<t0);                             // ключей ещё нет — слово не показывалось
+  wsp.style.visibility=hidden?'hidden':'';
+  // Глитч — своя ветка: мерцание играет по ЛИНЕЙНЫМ ключам плана (теми же, что ставит
+  // introAnimFX в .jsx), а не по кривой easePair, как остальные пресеты.
+  if(a.name==='glitch'){ ipvSubGlitch(wsp,a,tm,t1,hidden); return; }
+  const op=keysAt(a.op,null,tm)/100;
+  const dy=a.dy?keysAt(a.dy,null,tm):0;
+  const sc=a.sc?keysAt(a.sc,null,tm)/100:1;
+  const bl=a.bl?keysAt(a.bl,null,tm):0;
+  // Открытие слова: доля открытия из ключей плана (0 — закрыто, 100 — открыто целиком).
+  // clip-path режет слово по правому краю — ровно то, что в AE делает маска-прямоугольник,
+  // правый край которой едет от левого края текста к правому.
+  const wp=a.wp?keysAt(a.wp,null,tm):100;
+  const on=(tm<t1+0.001);                           // анимация идёт или ещё не началась
+  wsp.style.position=(dy!==0)?'relative':'';
+  wsp.style.top=(dy!==0)?dy.toFixed(2)+'px':'';
+  wsp.style.opacity=op.toFixed(4);
+  wsp.style.filter=(bl>0)?('blur('+bl.toFixed(2)+'px)'):'';
+  wsp.style.transform=(sc!==1)?('scale('+sc.toFixed(4)+')'):'';
+  wsp.style.transformOrigin=(sc!==1)?'50% 100%':'';
+  wsp.style.clipPath=(wp<100)?('inset(0 '+(100-wp).toFixed(4)+'% 0 0)'):'';
+  // Начертание — СТУПЕНЬКОЙ (1 -> тонкое, 0 -> основное), как держащие ключи Source Text
+  // в AE: оси вариативного шрифта After Effects не анимирует.
+  ipvSubWordFont(wsp, a.ft?(keysAt(a.ft,null,tm,true)>=0.5):false);
+  if(!on&&!hidden){                                 // анимация отыграна — следов не остаётся
+    wsp.style.position='';
+    wsp.style.top='';
+    wsp.style.opacity='';
+    wsp.style.filter='';
+    wsp.style.transform='';
+    wsp.style.transformOrigin='';
+    wsp.style.clipPath='';
+    ipvSubWordFont(wsp,false);
+  }
+}
+// ---- глитч появления: тот же механизм, что у строк интро ------------------------
+// Прозрачность — по ключам плана ТЕМ ЖЕ ipvGlitchOp (линейно), буквы проступают
+// случайно — тем же ipvRenderChars. Своего глитча превью не заводит: в .jsx это ровно
+// та же introAnimFX, что играет строки интро.
+function ipvSubGlitch(wsp,a,tm,t1,hidden){
+  if(hidden)return;                                 // до появления слова его нет и в кадре
+  if(tm>t1+0.001){                                  // глитч отыгран — следов не остаётся
+    if(wsp._chText!=null){ wsp.textContent=wsp.textContent; wsp._chText=null; }
+    wsp.style.opacity='';
+    return;
+  }
+  const t0=a.op[0][0], dt=tm-t0;
+  // Ключи плана — в АБСОЛЮТНОМ времени слова: ipvGlitchOp сравнивает время с ключами
+  // как есть (он не предполагает, что первый ключ на нуле), поэтому ему идёт tm, а не dt.
+  wsp.style.opacity=ipvGlitchOp(tm,a.op).toFixed(3);
+  const dur=(a.dur>0)?a.dur:(t1-t0||1);
+  const tick=Math.floor(dt*30);
+  const pVis=Math.min(1,Math.max(0.2,dt/dur));
+  ipvRenderChars(wsp,wsp.textContent,(ch,ci)=>{
+    const hash=Math.abs(Math.sin(tick*12.9898+ci*78.233+10)*43758.5453)%1;
+    ch.style.opacity=(hash<pVis)?'1':'0';
+  },'inline');
+}
+// ---- подложка слова: ОДИН элемент за ТЕКУЩИМ словом ------------------------------
+// Момент, с которого слово считается текущим, лежит в плане у каждого слова
+// (data-wbg); фигура встаёт за словом с САМЫМ ПОЗДНИМ моментом среди видимых — это и
+// есть произносимое сейчас слово. В строке из четырёх слов фигура перескакивает
+// четыре раза, а слой в .jsx для этого один: сотни слов — не сотни слоёв.
+// Геометрия — по прямоугольнику выбранного слова (в AE то же даёт sourceRectAtTime),
+// числа (высота, скругление, поле, цвета, раскрытие) — из плана: своих у превью нет.
+function ipvSubWbg(tm){
+  const el=$('ipvsub');if(!el)return;
+  const pl=IPV.plan||{},wb=pl.sub_wbg;
+  const host=el.querySelector('.pvsubs_host');if(!host)return;
+  let mk=host.querySelector('.pvsub_wbg');
+  const drop=()=>{if(mk){mk.remove();mk=null;}};
+  if(!wb){drop();return;}
+  let cur=null,curT=-1;
+  host.querySelectorAll('.pvsubw_wd').forEach(sp=>{
+    // Имя wt, а не t: t — переводчик интерфейса, и локальная переменная с таким именем
+    // роняет панель («t is not a function») — на этом уже обжигались в ipvUI.
+    const wt=parseFloat(sp.dataset&&sp.dataset.wbg);
+    if(!(wt>=0))return;
+    if(wt>curT){curT=wt;cur=sp;}
+  });
+  if(!cur||!(tm>=curT)){drop();return;}             // слово ещё не звучало — подложки нет
+  const w=pl.w||1080,hh=pl.h||1920;
+  const stageW=el.clientWidth||w;
+  const k=w/stageW;                                 // экранные px -> px кадра
+  const box=cur.getBoundingClientRect(),hb=host.getBoundingClientRect();
+  const pad=(wb.pad!=null)?+wb.pad:0, mh=(wb.h!=null)?+wb.h:0;
+  const full=box.width*k+2*pad;                     // слово плюс поле по бокам
+  // Раскрытие маркера — по ключам плана (0 -> 100 % за sweep) и от ЦЕНТРА слова:
+  // ровно так же растёт ширина фигуры у слоя в .jsx.
+  const frac=(wb.kind==='highlight'&&wb.sweep>0)
+    ?(keysAt([[curT,0],[curT+wb.sweep,100]],null,tm)/100):1;
+  const wpx=full*frac;
+  const leftPx=(box.left-hb.left)*k+(full-wpx)/2;
+  const cyPx=((box.top+box.height/2)-hb.top)*k+((wb.dy!=null)?+wb.dy:0);
+  const cqw=v=>((v/w*100).toFixed(3)+'cqw');
+  if(!mk){mk=document.createElement('div');mk.className='pvsub_wbg';host.appendChild(mk);}
+  mk.style.left=cqw(leftPx);
+  mk.style.width=cqw(wpx);
+  mk.style.height=cqw(mh);
+  mk.style.borderRadius=cqw((wb.round!=null)?+wb.round:0);
+  mk.style.bottom=(((hh-(cyPx+mh/2))/hh*100).toFixed(3)+'%');
+  mk.style.background=rgb2hex(wb.fill||[1,1,1]);
+  mk.style.opacity=String(((wb.op!=null)?+wb.op:100)/100);
+  // За каким словом стоит фигура — в разметку: по этому стенд и проверяет, что
+  // подложка идёт за ТЕКУЩИМ словом, а не за предыдущим.
+  mk.dataset.w=cur.textContent||'';
+  mk.dataset.t=String(curT);
+}
+// Смена начертания слова: у пресета «начертание» слово приходит тонким шрифтом и в
+// середине появления становится основным. Имена обоих шрифтов лежат в разметке слова
+// (data-wf — тонкое, data-wb — основное), а объявления из них делает та же дверь,
+// что и у остальных шрифтов превью (ipvFontDecls): второй копии правила нет.
+// Тонкого шрифта в системе нет — шага тоже нет, как в AE («шрифт не найден -> база»).
+function ipvSubWordFont(wsp,thin){
+  if(wsp.dataset.wf===undefined)return;
+  const d=ipvFontDecls(ipvFontFor(thin?wsp.dataset.wf:(wsp.dataset.wb||'')));
+  wsp.style.fontFamily=d.family;
+  wsp.style.fontVariationSettings=d.vars;
+}
+// Объявления шрифта из записи FONTS: семейство и оси вариативного шрифта. Одна дверь
+// на весь предпросмотр — строку для разметки собирает она же (fvCss в ipvSubs).
+function ipvFontDecls(fv){
+  if(!fv)return {family:'',vars:''};
+  return {family:fv.family?("'"+fv.family+"'"):'',
+          vars:fv.var?Object.entries(fv.var).map(([a,v])=>"'"+a+"' "+v).join(','):''};
+}
 function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
+  // ---- заливка текста градиентом и свечение: числа из плана --------------------
+  // Обе — ВНУТРИ ipvSubs, а не отдельными функциями файла: стенды отдельных тестов
+  // вырезают из 85-inserts-view.js ровно ipvSubs (и lineHtml в нём), и вызов наружу
+  // ронял бы такой стенд целиком («ipvSubGradCss is not defined»).
+  // Градиент по буквам — то, что CSS умеет через background-clip:text, а AE — эффектом
+  // Gradient Ramp на слое слова: цвета и угол приходят в плане, своих чисел нет.
+  // text-shadow:none — не украшение: тень градиентного слова рисуется ОТДЕЛЬНЫМ слоем
+  // под ним (fx слова ниже). У градиента буквы прозрачны для заливки, и тень, нарисованная
+  // на самих буквах, ложится ПОД них и просвечивает сквозь них чёрным — слово выходило
+  // тёмным, хотя в AE под слоем с Ramp лежит тень слоя, а буквы остаются градиентом.
+  function gradCssFor(g){
+    if(!g)return '';
+    const from=rgb2hex(g.from||[1,1,1]), to=rgb2hex(g.to||[1,1,1]);
+    const ang=(g.angle!=null)?+g.angle:90;
+    return 'background-image:linear-gradient('+ang+'deg,'+from+','+to+');'
+          +'-webkit-background-clip:text;background-clip:text;color:transparent;'
+          +'-webkit-text-fill-color:transparent;text-shadow:none;';
+  }
+  // Свечение — Glo2 в AE, приближение двумя размытыми копиями букв здесь: у CSS нет ни
+  // порога, ни интенсивности, поэтому радиус и сила множат два размытия — тем же приёмом,
+  // что уже живёт в превью интро (12 и 24 px при радиусе 77 и силе 0.62, то есть при
+  // дефолтах интро множитель 1). Перевод «радиус Glo2 -> пиксели CSS» — ОДНО место на
+  // превью: вторая копия формулы у слов субтитров и у слов интро разошлась бы молча.
+  // Тени возвращаются списком в форме text-shadow: у сплошной заливки свечение играет на
+  // буквах, у градиента — функциями drop-shadow на слое ПОД словом (см. fxFor ниже).
+  function glowTsh(g,isY){
+    if(!g||(g.yellow&&!isY))return [];       // «только жёлтые»: белым свечения нет
+    const rad=(g.rad!=null)?+g.rad:40, amt=(g.amt!=null)?+g.amt:1;
+    const gk=(rad/77)*(amt/0.62);
+    if(!(gk>0))return [];
+    const col=rgb2hex(g.fill||[1,1,1]);
+    return [Math.round(12*gk*10)/10,Math.round(24*gk*10)/10].map(b=>'0 0 '+b+'px '+col);
+  }
+  // Тень субтитров: числа те же, что у --subsh в app.css, — второго набора чисел тени у
+  // превью нет. Отсюда же обе формы: список для text-shadow и функции для filter.
+  const SH_TSH=['0 2px 7px #000','0 0 3px #000'];
+  const SH_FX=SH_TSH.map(s=>'drop-shadow('+s+')');
   const pl=IPV.plan;const subs=(pl&&pl.subs)||[];
   el.classList.toggle('plan',!!(pl&&subs.length));
   // styleSubPos ставит на ЭТОТ ЖЕ элемент инлайновый bottom (старый режим — одна строка
@@ -749,20 +1789,34 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
     el.style.removeProperty('--subsh');
   }
   const s=(typeof CURSTYLE!=='undefined'&&CURSTYLE)?CURSTYLE:{};
-  const basePs=s.font||'SFPro-CondensedSemibold';
-  const hlPs=s.hl_font||basePs;
+  // Шрифты субтитров — ИЗ ПЛАНА: их посчитал Python тем же стилем, что уехал в .jsx
+  // (FONT/HL_FONT), и второй копии правила «какой шрифт у субтитров» тут быть не должно.
+  // Своей копией был стиль страницы (CURSTYLE), а он на странице рендера может не
+  // доехать: тело сборки принимает и стиль-ИМЯ (строкой, так строит CLI) — тогда
+  // CURSTYLE это строка, s.font пуст, и субтитры рисовались запасным
+  // SFPro-CondensedSemibold, хотя .jsx собрал BebasNeue-Bold. Замер по кадру владельца
+  // (30 с): «КУБИК» 344 px против 284 в AE, «СУСТ*НОНА» 610 против 498 — и кегль при
+  // этом совпадал (98 против 100), то есть расходился ИМЕННО шрифт.
+  // Поля нет (старый бэкенд без перезапуска) — падаем на стиль, как было.
+  const basePs=pl.sub_font||s.font||'SFPro-CondensedSemibold';
+  const hlPs=pl.sub_hl_font||s.hl_font||basePs;
   const baseFv=ipvFontFor(basePs);
   const hlFv=ipvFontFor(hlPs);
+  // Тонкое начертание пресета «начертание»: имя приходит в плане (его посчитала
+  // сборка стиля), разрешается здесь тем же поиском шрифтов, что и остальные.
+  // Не нашлось в системе — шага начертания не будет вовсе, как и в AE.
+  const thinPs=pl.sub_anim_font||'';
+  const thinFv=thinPs?ipvFontFor(thinPs):null;
   // Кавычки ТОЛЬКО одинарные: строка уезжает в атрибут style="…", и двойная кавычка
   // внутри обрывает атрибут на себе — браузер получал `font-family:` без значения и
   // рисовал субтитры шрифтом страницы (жалоба «в превью не тот шрифт», третий раз).
   // CSS одинарные кавычки принимает и у семейства, и у осей вариативного шрифта.
+  // Семейство и оси собирает ipvFontDecls — та же дверь, что у смены начертания.
   function fvCss(fv){
     if(!fv)return 'font-weight:800;';
-    let cs=fv.family?('font-family:\''+fv.family+'\';'):'';
-    if(fv.var){
-      cs+='font-variation-settings:'+Object.entries(fv.var).map(([a,v])=>"'"+a+"' "+v).join(',')+';';
-    }
+    const d=ipvFontDecls(fv);
+    let cs=d.family?('font-family:'+d.family+';'):'';
+    if(d.vars)cs+='font-variation-settings:'+d.vars+';';
     return cs;
   }
   const baseFvCss=fvCss(baseFv);
@@ -781,13 +1835,17 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
     const bgH=(sbg.h/w*100).toFixed(3)+'cqw';
     const bgR=(sbg.round/w*100).toFixed(3)+'cqw';
     const bgBot=((h-sbg.y)/h*100).toFixed(3)+'%';
-    const bgAnim=(sbg.anim!=null?sbg.anim:0.22)+'s';
+    const bgAnim=(sbg.anim!=null?sbg.anim:0.22);
     bgEl.style.background=bgFill;
     bgEl.style.opacity=bgOp;
     bgEl.style.height=bgH;
     bgEl.style.borderRadius=bgR;
     bgEl.style.bottom=bgBot;
-    bgEl.style.transition='width '+bgAnim+' cubic-bezier(.165,.84,.44,1)';
+    // В рендере перехода НЕТ: ширину на момент t считает ipvSubsBgAt (ниже), а переход
+    // тянул бы её по реальному времени — снимок зависел бы от того, как быстро снимают,
+    // а не от номера кадра. Класс render-mode глушит переход и сам, но инлайновое
+    // значение ему не подчиняется — поэтому его тут и не ставим.
+    bgEl.style.transition=ipvRenderMode()?'none':('width '+bgAnim+'s cubic-bezier(.165,.84,.44,1)');
   }else if(bgEl){
     bgEl.remove();
     bgEl=null;
@@ -798,7 +1856,23 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
     host.className='pvsubs_host';
     el.appendChild(host);
   }
-  const visKey=vis.map(sub=>(sub.stack?'s':'r')+(sub.s)+':'+(sub.gend)+':'+(sub.w||'')+':'+(sub.row||0)).join('|');
+  // Ключ показа: по нему решается, перерисовывать ли слова. Появление по пресету
+  // (поле anim) входит в ключ: у одного и того же слова ключи могут появиться/исчезнуть
+  // между планами (в панели сменили пресет), и тогда разметку обязательно перестроить.
+  // Кегль жёлтых (hl_size_k) и имя тонкого начертания — тоже: и то и другое стоит
+  // в разметке слова, и без них правка стиля не доехала бы до уже нарисованных строк.
+  // Готовность шрифтов — тоже: посадку строк по базовой линии (ниже) мерит вёрстка, а
+  // до загрузки файла шрифта метрики другие (запасной шрифт) — по смене статуса строки
+  // перестраиваются и мерятся заново.
+  const visKey=vis.map(sub=>(sub.stack?'s':'r')+(sub.s)+':'+(sub.gend)+':'+(sub.w||'')+':'+(sub.row||0)
+    +(sub.anim?'a':((sub.words||[]).some(wd=>wd.anim)?'a':''))).join('|')
+    +'|k'+(pl.hl_size_k!=null?pl.hl_size_k:1)+'|f'+(pl.sub_anim_font||'')
+    // Тень, градиент и свечение — тоже в ключе: их числа стоят в РАЗМЕТКЕ слова
+    // (text-shadow буквы либо слой эффектов с drop-shadow под ней), и без них правка
+    // стиля не доехала бы до уже нарисованных строк — как было с hl_size_k.
+    +'|s'+(pl.sub_shadow===false?0:1)+'|g'+JSON.stringify(pl.sub_grad||0)
+    +'|x'+JSON.stringify(pl.sub_glow||0)
+    +'|d'+((typeof document!=='undefined'&&document.fonts&&document.fonts.status)||'');
   if(host.dataset.visKey!==visKey){
     host.dataset.visKey=visKey;
     // Элементы стопки подряд жёлтых помечены в плане stack: они вышли из строк
@@ -817,23 +1891,68 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
       let minFs=Infinity;
       rowSubs.forEach(s=>{if(s.fsize&&s.fsize<minFs)minFs=s.fsize;});
       const fsStyle=(minFs<Infinity)?('font-size:'+(minFs/w*100).toFixed(3)+'cqw;'):'';
+      // Кегль жёлтого слова: множитель стиля (hl_size_k) к кеглю ЭТОЙ строки. Считается
+      // здесь же, где кегль строки: у ужатой строки он свой, и второй копии правила
+      // «от чего считать» быть не должно. При 1.0 (как сегодня) стиля нет вовсе.
+      const baseFs=(minFs<Infinity)?minFs:(pl.fsize||0);
+      const yK=(pl.hl_size_k!=null?pl.hl_size_k:1);
+      const yFs=(yK!==1&&baseFs>0)?('font-size:'+(baseFs*yK/w*100).toFixed(3)+'cqw;'):'';
+      // Заливка градиентом (sub_fill_mode) и свечение (sub_glow): те же числа, что у
+      // .jsx. «Только жёлтые» — свечение лишь жёлтым словам, как ветка GLOW_YEL там.
+      // Поле градиента — sub_grad: sub_fill в плане занят цветом субтитров (--subfc).
+      const gradCss=gradCssFor(pl.sub_grad);
+      const gradOn=!!pl.sub_grad;
+      // Тень и свечение слова сплошной заливки — одним объявлением на буквах: буквы
+      // непрозрачны, тень ложится под них и сквозь них не видна, как в AE (там тень на
+      // слое прекомпа субтитров, свечение — на слоях слов, и они складываются). Свечения
+      // нет — объявления нет вовсе: тень слова остаётся унаследованной из --subsh.
+      const tshFor=(isY)=>{
+        if(gradOn)return '';     // у градиента те же эффекты играет слой под словом
+        const gl=glowTsh(pl.sub_glow,isY);
+        if(!gl.length)return '';
+        return 'text-shadow:'+(pl.sub_shadow===false?[]:SH_TSH).concat(gl).join(',')+';';
+      };
+      // Слой эффектов слова: обёртка ПОД словом, у которой тень и свечение нарисованы
+      // drop-shadow. Он берёт уже нарисованные буквы и кладёт тень под них — ровно то,
+      // что в AE делает тень слоя под слоем с Ramp. Нужен только там, где эффектам
+      // негде больше жить: у градиента (свой text-shadow лёг бы под прозрачные буквы),
+      // поэтому у остальных слов лишнего элемента и лишнего filter нет.
+      const fxFor=(isY)=>{
+        if(!gradOn)return '';
+        const f=(pl.sub_shadow===false?[]:SH_FX)
+          .concat(glowTsh(pl.sub_glow,isY).map(s=>'drop-shadow('+s+')'));
+        return f.length?('filter:'+f.join(' ')+';'):'';
+      };
+      const wrapFx=(html,isY)=>{const fx=fxFor(isY);
+        return fx?('<span class="pvsubw_fx" style="'+fx+'">'+html+'</span>'):html;};
+      // Имена шрифтов слова у пресета «начертание»: тонкое и основное. Пишутся только
+      // тому слову, у которого есть ключи появления, — остальным ступенить нечего.
+      const wFonts=(a)=>((a&&thinFv)?(' data-wf="'+esc(thinPs)+'" data-wb="'+esc(basePs)+'"'):'');
+      // Подложка слова: момент, с которого слово текущее, — число из плана (wd.wbg.t).
+      // Превью по нему выбирает, за каким словом стоят фигуру, и своей формулы «когда
+      // слово звучит» не держит.
+      const wbgAt=(wd)=>((wd&&wd.wbg&&wd.wbg.t!=null)?(' data-wbg="'+wd.wbg.t+'"'):'');
 
       const wordsHtml=rowSubs.map(sub=>{
         if(sub.words&&sub.words.length>1){
           return sub.words.map(wd=>{
             const isY=(wd.color==='yellow');
-            const wCss=isY?hlFvCss:baseFvCss;
+            const wCss=(isY?hlFvCss:baseFvCss)+(isY?yFs:'')+gradCss+tshFor(isY);
             // время появления жёлтого — из плана (t0): по нему ниже идут подъём,
             // проявление и блюр. Своей формулы «когда слово произнесено» в превью нет.
             const t0=(isY&&wd.t0!=null)?(' data-hl0="'+wd.t0+'"'):'';
             // своя длительность появления у укороченного слова (hd): в AE её
             // играет цикл стопки/слов, а не этот — превью берёт готовое число из плана.
             const hd=(isY&&wd.hd!=null)?(' data-hld="'+wd.hd+'"'):'';
-            return '<span class="pvsubw_wd'+(isY?' yel':'')+'"'+t0+hd+' style="'+wCss+'">'+esc(wd.w)+'</span>';
+            // Появление БЕЛОГО слова по пресету стиля: ключи посчитал Python и положил
+            // в план — превью их только интерполирует (ipvSubWordAnim ниже). Своих кривых нет.
+            const wa=(!isY&&wd.anim)?(' data-wa="'+esc(encodeURIComponent(JSON.stringify(wd.anim)))+'"'):'';
+            const wf=(!isY&&wd.anim)?wFonts(wd.anim):'';
+            return wrapFx('<span class="pvsubw_wd'+(isY?' yel':'')+'"'+t0+hd+wa+wf+wbgAt(wd)+' style="'+wCss+'">'+esc(wd.w)+'</span>',isY);
           }).join(' ');
         }else{
           const isY=(sub.color==='yellow');
-          const wCss=isY?hlFvCss:baseFvCss;
+          const wCss=(isY?hlFvCss:baseFvCss)+(isY?yFs:'')+gradCss+tshFor(isY);
           // Жёлтое слово режима «по слову» и стопки въезжает так же, как его слой в AE
           // момент — начало слова (s плана = inPoint слоя), у строки из одного
           // слова — момент ZH из плана (words[0].t0). Длительность — hd плана, если план её
@@ -844,7 +1963,12 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
           const hl0=(isY&&t0!=null)?(' data-hl0="'+t0+'"'):'';
           const wHd=(w0&&w0.hd!=null)?w0.hd:sub.hd;
           const hd=(isY&&wHd!=null)?(' data-hld="'+wHd+'"'):'';
-          return '<span class="pvsubw_wd'+(isY?' yel':'')+'"'+hl0+hd+' style="'+wCss+'">'+esc(sub.w)+'</span>';
+          const wa=(!isY&&sub.anim)?(' data-wa="'+esc(encodeURIComponent(JSON.stringify(sub.anim)))+'"'):'';
+          const wf=(!isY&&sub.anim)?wFonts(sub.anim):'';
+          // Подложка у одиночного слова/строки из одного слова: момент — из элемента
+          // плана, а у строки-однословника он лежит в её единственном слове.
+          const wbg=wbgAt(sub)||wbgAt(w0);
+          return wrapFx('<span class="pvsubw_wd'+(isY?' yel':'')+'"'+hl0+hd+wa+wf+wbg+' style="'+wCss+'">'+esc(sub.w)+'</span>',isY);
         }
       }).join(' ');
 
@@ -855,6 +1979,28 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
     rowMap.forEach((rowSubs,r)=>html+=lineHtml(rowSubs,rowSubs[0].sub_step||pl.sub_step||step,r));
     stackMap.forEach((stSubs,r)=>html+=lineHtml(stSubs,step,r));
     host.innerHTML=html;
+    // Посадка строк по БАЗОВОЙ ЛИНИИ, а не по низу коробки. В AE POSY — базовая линия
+    // текстового слоя (Position точечного текста), а CSS `bottom` ставит нижний край
+    // КОРОБКИ строки: глифы встают выше AE на спуск шрифта. Замер по кадру владельца
+    // (30 с, posy 1132): низ глифов 1102 у нас против 1130 в AE — ровно спуск
+    // BebasNeue-Bold при 140 px (winDescent 300/1000 → 0.5·(1−0.9+0.3)·140 = 28 px).
+    // Спуск мерится в вёрстке: пустой inline-block нулевой высоты стоит НА базовой
+    // линии (тот же приём, что у интро и подписи, см. .pvcap_strut) — числа шрифта
+    // в превью не заводятся, шрифт может быть любой.
+    host.querySelectorAll('.pvsubw').forEach(row=>{
+      const strut=document.createElement('i');
+      strut.className='pvcap_strut';
+      row.appendChild(strut);
+      const baseOff=strut.offsetTop+strut.offsetHeight;   // от верха коробки до базовой линии
+      // Убираем опору: в кадре ей делать нечего. Две двери — потому что node-стенды
+      // превью (tests/test_intro_preview_anim.py и соседние) гоняют эту же функцию на
+      // урезанном DOM: без `remove` падал бы не стенд, а боевая отрисовка субтитров.
+      if(strut.remove)strut.remove();else if(row.removeChild)row.removeChild(strut);
+      const boxH=row.offsetHeight||0;
+      const bot=parseFloat(row.style.bottom||'');
+      if(baseOff>0&&boxH>baseOff&&bot===bot)
+        row.style.bottom=(bot-(boxH-baseOff)/h*100).toFixed(3)+'%';
+    });
   }
   // Появление жёлтого в строке: до своего момента слово невидимо, за HL_DUR
   // поднимается на hl_rise и проявляется — та же кривая, что easePair в AE (keysAt с
@@ -865,9 +2011,21 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
   // а к inline-боксу transform не применяется вовсе (сдвиг просто пропал бы). relative
   // раскладку строки не трогает — в отличие от inline-block, который ломает кернинг.
   const rise=pl.hl_rise||0, hDur=(pl.hl_dur!=null?pl.hl_dur:0.35);
-  const blAmt=pl.hl_blur?(pl.hl_blur_amt||0):0;
+  // Блюр — поле плана hl_blur_css: это УЖЕ пиксели CSS (сигма гауссианы). Число стиля
+  // (hl_blur_amt) — «Blurriness» Gaussian Blur в AE, и подставлять его в blur() нельзя:
+  // выходило вчетверо размытее собранного в AE (перевод — core/xml2ae/layout.css_blur_px,
+  // один на всю сборку). Старый бэкенд без перезапуска поля не шлёт — тогда как было.
+  const blAmt=pl.hl_blur?((pl.hl_blur_css!=null)?pl.hl_blur_css:(pl.hl_blur_amt||0)):0;
   const kpx=(el.clientWidth||w)/w;               // пиксели превью на пиксель кадра
-  host.querySelectorAll('.pvsubw_wd').forEach(wsp=>{
+  // Один список слов на две анимации: у слова бывает либо анимация жёлтого (ключи
+  // выделения), либо появление по пресету стиля — обход дерева один на кадр, а не два.
+  const wSpans=host.querySelectorAll('.pvsubw_wd');
+  wSpans.forEach(wsp=>{
+    // Появление БЕЛОГО слова по пресету стиля (sub_anim): ключи лежат В ПЛАНЕ — их
+    // посчитал Python (core/xml2ae/layout.py), превью кривых не считает вовсе, только
+    // интерполирует (keysAt, та же кривая, что easePair в AE). Анимация — функция
+    // времени: в режиме рендера (ipvRenderAt) ни одного CSS-перехода не заводится.
+    if(wsp.dataset&&wsp.dataset.wa){ ipvSubWordAnim(wsp,tm); return; }
     const t0=parseFloat(wsp.dataset&&wsp.dataset.hl0);
     if(!(t0>=0))return;                          // у слова своей анимации нет — как было
     const hd=parseFloat(wsp.dataset&&wsp.dataset.hld);   // своя длительность — если план дал
@@ -878,38 +2036,20 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
     wsp.style.opacity=rem>0?String(1-rem):'';
     wsp.style.filter=(blAmt&&rem>0)?('blur('+(blAmt*rem*kpx).toFixed(2)+'px)'):'';
   });
+  // Подложка слова — ПОСЛЕ слов: она выбирает текущее слово по их моменту из плана
+  // (data-wbg) и встаёт по его прямоугольнику. Один элемент на кадр, как один слой в AE.
+  // Проверка typeof: стенды отдельных тестов вырезают из файла ТОЛЬКО ipvSubs (без
+  // соседних функций), и без неё вызов ронял бы такой стенд целиком.
+  if(typeof ipvSubWbg==='function') ipvSubWbg(tm);
   if(sbg&&bgEl){
-    let maxW_px=0;
-    const textSpans=host.querySelectorAll('.pvsubw');
-    textSpans.forEach(sp=>{
-      let lineW=0;
-      const wds=sp.querySelectorAll('.pvsubw_wd');
-      if(wds&&wds.length>0){
-        let minX=Infinity,maxX=-Infinity;
-        wds.forEach(wsp=>{
-          const r=wsp.getBoundingClientRect();
-          if(r.width>0){
-            minX=Math.min(minX,r.left);
-            maxX=Math.max(maxX,r.right);
-          }
-        });
-        if(minX<Infinity)lineW=maxX-minX;
-      }
-      if(!lineW){
-        const range=document.createRange();
-        range.selectNodeContents(sp);
-        lineW=range.getBoundingClientRect().width;
-      }
-      maxW_px=Math.max(maxW_px,lineW);
-    });
-    const stageW=el.clientWidth||1080;
-    const k=w/stageW;
-    const rawW=maxW_px*k;
-    if(rawW>0){
-      const pad=sbg.pad!=null?sbg.pad:18.0;
-      const padmin=sbg.padmin!=null?sbg.padmin:70.0;
-      const fullW=rawW+Math.max(2*padmin,rawW*2*pad/100);
-      const fullCqw=(fullW/w*100).toFixed(3)+'cqw';
+    const rawW=ipvSubRawWidth(host,el,w);
+    if(rawW>0){bgEl.dataset.lastRaw=String(rawW);SUBW_CACHE.set(visKey,rawW);}
+    if(SUBW_MEASURE)return;      // идёт замер другого момента: ширину поставит внешний вызов
+    const cur=(rawW>0)?rawW:(parseFloat(bgEl.dataset.lastRaw)||0);
+    // Живое превью — ширина строки, дальше её везёт CSS-переход. Рендер — ширина на t.
+    const full=ipvRenderMode()?ipvSubsBgAt(tm,cur,sbg):ipvSubFullW(cur,sbg);
+    if(full>0){
+      const fullCqw=(full/w*100).toFixed(3)+'cqw';
       bgEl.style.width=fullCqw;
       bgEl.dataset.lastWidth=fullCqw;
     }else if(bgEl.dataset.lastWidth){
@@ -945,8 +2085,12 @@ function ipvUI(tm){const seek=$('ipvseek');if(seek&&document.activeElement!==see
   }
   ipvZoom(tm);                                    // наезд/дрейф Камеры 1 по плану
   ipvShade();                                     // затемнение под интро — из плана
+  if(typeof ipvTrans==='function')ipvTrans(tm);   // переход на входе/выходе видеовставки
   ipvStartBlur(tm);                               // размытие на старте — CSS-фильтр на кадре
   itlPh(tm);ipvIntro(tm);ipvOverlay(tm);aewHighlight(tm);
+  // Слой рото — после кадра и вставок: куски по времени меняются, и на новом куске
+  // холст обязан сменить картинку, а не остаться с фигурой прошлого.
+  ipvRoto(tm);
   if(typeof subrowHighlight==='function')subrowHighlight(tm);
   sfxSync(tm);                                    // SFX по плану
   // Счётчики честности показа: «стык/своп/сидк» — про склейку (сколько прошло подменой
@@ -957,15 +2101,27 @@ function ipvUI(tm){const seek=$('ipvseek');if(seek&&document.activeElement!==see
   const st=IPV.stats,stt=st.styk+'/'+st.swap+'/'+st.seek+'/'+st.cam+'/'+st.stale+'/'+st.back;
   if(stt!==IPV._stt){IPV._stt=stt;console.log(t('стык ')+st.styk+t(' · своп ')+st.swap+t(' · сидк ')+st.seek
     +t(' · кам ')+st.cam+t(' · замер ')+st.stale+t(' · откат ')+st.back);}}
-// размер карточки фотовставки НА ЭКРANE (кадр 1080×1920) — тот же расчёт, что _ins_scale
-// в xml2ae.py: вписываем видимую часть в коробку, не-ультравайд режется маской в квадрат.
-// BH — среднее cam1/cam2 (560/495): стиль (какая камера активна) в UI ещё неизвестен.
+// размер карточки фотовставки НА ЭКРАНЕ (кадр ролика — из плана) — тот же расчёт, что
+// _ins_scale в xml2ae.py: вписываем видимую часть в коробку, не-ультравайд режется маской
+// в квадрат. W/H — размер кадра: у плана он свой (9:16, 1:1, 4:5, 16:9), без плана —
+// прежняя вертикаль. Явные W/H — для стендов (node гоняет эти функции без плана).
+// Коробка (BW/BH/SQ) — из плана, поля ins_box: Python (layout._ins_box) отдаёт её уже
+// умноженной под кадр ролика тем же правилом, что размеры стиля (min(W,H)/1080).
+// Своей копии чисел у превью нет: в 4K-кадре 2160×3840 копия расходилась с собранной
+// карточкой вдвое. BH — среднее cam1/cam2 (у плана обе высоты, стиль — какая камера
+// активна — в UI ещё неизвестен). Плана нет (первый кадр, ошибка /api/scene, стенды) —
+// прежние числа, умноженные на кадр по тому же правилу.
 // mw/mh — ручная форма маски в % (см. scrubMask): растягивают/сужают ВИДИМУЮ часть, а
 // масштаб карточки остаётся авторасчётным — те же клампы, что в JSX (за краем фото пусто).
 // Возвращает и окно маски (w/h), и размер САМОГО фото в тех же px (pw/ph): в прекомпе фото
 // тянется под ширину композа и маска его обрезает, а не ужимает — предпросмотру нужны оба.
 // sc — ручной масштаб (% от авто): множит ВСЮ карточку вместе с маской, как scale слоя в AE.
-function insPreviewBox(iw,ih,mw,mh,sc){const W=1080,H=1920,BW=1030,BH=528,SQ=2.2;
+function insPreviewBox(iw,ih,mw,mh,sc,W,H){
+  if(W==null||H==null){const f=ipvPlanWH();W=f.w;H=f.h;}
+  const p=(typeof IPV!=='undefined'&&IPV.plan)||null,ib=p&&p.ins_box;
+  let BW,BH,SQ;
+  if(ib&&ib.w){BW=+ib.w;BH=Math.round((+ib.h_cam1+ +ib.h_cam2)/2);SQ=+ib.sq||2.2;}
+  else{const k=Math.min(W,H)/1080;BW=1030*k;BH=Math.round((560+495)/2*k);SQ=2.2;}
   const photoH=ih*W/iw;
   let visH=photoH,visW=W;
   if(visH>0&&W/visH<=SQ){visW=visH=Math.min(W,visH);}
@@ -975,8 +2131,10 @@ function insPreviewBox(iw,ih,mw,mh,sc){const W=1080,H=1920,BW=1030,BH=528,SQ=2.2
   visH=Math.max(20,Math.min(photoH,H,visH*(mh==null?100:mh)/100));
   return {w:visW*s,h:visH*s,pw:W*s,ph:photoH*s};}
 // размер видеовставки на экране: заполнение кадра × sc (зеркало fitInto в xml2ae).
+// Кадр — из плана (W/H), плана нет — формат спикера клипа (ipvPlanWH), как было.
 // Пока sc=100, коробка = кадр и предпросмотр рисует видео как раньше, через object-fit:cover.
-function insVideoFill(vw,vh,sc){const W=1080,H=1920;
+function insVideoFill(vw,vh,sc,W,H){
+  if(W==null||H==null){const f=ipvPlanWH();W=f.w;H=f.h;}
   const f=Math.max(W/vw,H/vh)*((sc==null?100:sc)/100);
   return {w:vw*f,h:vh*f};}
 // панорама полноэкранной видеовставки: позиция = x/y как их задал пользователь (px кадра),
@@ -984,7 +2142,8 @@ function insVideoFill(vw,vh,sc){const W=1080,H=1920;
 // (зеркало fillSlack в xml2ae): у вертикального 9:16 при sc=100 запаса нет вовсе — видео
 // не двигалось совсем, а 16:9 по высоте не двигалось никогда. sx/sy остаются в ответе
 // СПРАВКОЙ (сколько ролик вылезает за кадр), позицию они не режут.
-function insVideoPan(vw,vh,x,y){const W=1080,H=1920;
+function insVideoPan(vw,vh,x,y,W,H){
+  if(W==null||H==null){const f=ipvPlanWH();W=f.w;H=f.h;}
   if(!vw||!vh)return {x:x||0,y:y||0,sx:0,sy:0};
   const f=Math.max(W/vw,H/vh),sx=Math.max(0,(vw*f-W)/2),sy=Math.max(0,(vh*f-H)/2);
   return {x:x||0,y:y||0,sx,sy};}
@@ -1004,7 +2163,7 @@ function insVideoEl(media,used){
   used=used||new Set();
   for(let n=0;;n++){
     const key=insVidKey(media,n),have=insVidCache().get(key);
-    if(have){if(!used.has(key)){used.add(key);return have;}continue;}   // занят другой вставкой в этом же кадре
+    if(have){if(!used.has(key)){used.add(key);have.style.visibility='';return have;}continue;}   // занят другой вставкой в этом же кадре
     const v=document.createElement('video');
     v.src='/api/media?path='+encodeURIComponent(media);
     v.muted=true;v.playsInline=true;v.preload='auto';
@@ -1014,15 +2173,15 @@ function insVideoEl(media,used){
     v.addEventListener('loadedmetadata',()=>{
       insVidDimsPut(media,v.videoWidth,v.videoHeight);
       if(IPV.plan&&!insVidPlanDims(media)&&typeof ipvUI==='function')ipvUI(ipvNow());});
+    const onMosFrame=()=>{
+      const wr=(v.closest&&v.closest('.ipvwrap.mosaic'))||(v.parentNode&&v.parentNode.classList&&v.parentNode.classList.contains('mosaic')?v.parentNode:null);
+      if(wr)ipvPixelate(wr,v,true);};
+    v.addEventListener('loadeddata',onMosFrame);
+    v.addEventListener('seeked',onMosFrame);
     insVidCache().set(key,v);used.add(key);return v;}
 }
-// освободить элемент: пауза, снятый src (файл перестаёт держать соединение)
-// и load() — им браузер отпускает ресурс
-function insVidFree(v){if(!v)return;
-  try{v.pause();}catch(e){}
-  try{v.removeAttribute('src');}catch(e){}
-  try{v.load();}catch(e){}
-  if(v.parentNode&&v.parentNode.removeChild)try{v.parentNode.removeChild(v);}catch(e){}}
+function insVidFree(v){if(typeof mediaFree==='function')return mediaFree(v);
+  if(!v)return;try{v.pause();}catch(e){}try{v.removeAttribute('src');}catch(e){}try{v.load();}catch(e){}if(v.parentNode&&v.parentNode.removeChild)try{v.parentNode.removeChild(v);}catch(e){}}
 // размеры файла (как _media_dims в Python): из кэша размеров, иначе с живого элемента
 function insVidDimsGet(media){
   const m=insVidDimsMap().get(normInsPath(media));
@@ -1155,9 +2314,10 @@ function ipvOverlay(tm){const ov=$('ipvins');if(!ov)return;
     const v=ov.querySelector('[data-ins="'+i+'"] video');
     if(!v||!x.media)continue;                        // видеовставка идёт от своего sin вместе с монтажом
     const want=Math.max(0,(x.sin||0)+tm-insSD(x).s);
-    if(Math.abs((v.currentTime||0)-want)>0.4){try{v.currentTime=want;}catch(e){}}
+    if(Math.abs((v.currentTime||0)-want)>vidSeekTol()){try{v.currentTime=want;}catch(e){}}
     if(IPV.playing&&v.paused)v.play().catch(()=>{});
-    if(!IPV.playing&&!v.paused)v.pause();}}
+    if(!IPV.playing&&!v.paused)v.pause();}
+  ipvInsMosaics();}   // мозаика — ПОСЛЕ перемотки вставок: холст обязан нести их кадр
 // ---- вставки ПО ПЛАНУ: всё из plan.inserts, геометрия — готовая, не считается ----
 function ipvOverlayPlan(tm){const ov=$('ipvins');const arr=(IPV.plan&&IPV.plan.inserts)||[];
   const allCards=ipvIns();
@@ -1234,15 +2394,16 @@ function ipvOverlayPlan(tm){const ov=$('ipvins');const arr=(IPV.plan&&IPV.plan.i
   }
   for(let a=0;a<act.length;a++){const item=act[a];
     const key=item.isPlan?item.i:('c'+item.ci);
-    const wr=ov.querySelector('[data-ins="'+key+'"]');if(wr)ipvInsPlace(wr,item.x,tm);}   // покадровая геометрия
+    const wr=ov.querySelector('[data-ins="'+key+'"]');if(wr)ipvInsDraw(wr,item.x,tm);}   // покадровая геометрия
   for(let a=0;a<act.length;a++){const item=act[a],x=item.x;
     if(!item.isPlan||!x.media)continue;                        // видеовставка идёт от своего sin вместе с монтажом
     const v=ov.querySelector('[data-ins="'+item.i+'"] video');
     if(!v)continue;
     const want=Math.max(0,(x.sin||0)+tm-(+x.start));
-    if(Math.abs((v.currentTime||0)-want)>0.4){try{v.currentTime=want;}catch(e){}}
+    if(Math.abs((v.currentTime||0)-want)>vidSeekTol()){try{v.currentTime=want;}catch(e){}}
     if(IPV.playing&&v.paused)v.play().catch(()=>{});
-    if(!IPV.playing&&!v.paused)v.pause();}}
+    if(!IPV.playing&&!v.paused)v.pause();}
+  ipvInsMosaics();}   // мозаика — ПОСЛЕ перемотки вставок: холст обязан нести их кадр
 // покадровая позиция/масштаб/прозрачность вставки из плана. Карточка фото (x.card) — в
 // comp-координатах осевшего масштаба; anim.scale — Scale слоя в AE, делится на осевший S.
 function ipvInsPlace(wr,x,tm){
@@ -1276,8 +2437,17 @@ function ipvInsPlace(wr,x,tm){
   if(x.card){                                        // фото: окно маски из плана, масштаб — anim.scale
     const style=x.style||'cam2';
     let m=1,op=1,px=(x.x||0),py=(x.y||0);
+    // Размытие входа/выхода cam2-вставки: в .jsx на слой вешается Box Blur с ключами
+    // ins.anim.blur (INS_BLUR 41 px -> 0 за INS_ENTER, обратно за INS_EXIT), и БЕЗ него
+    // кадр входа расходился с AE: у нас вставка «проявлялась прозрачностью» резкой, в AE
+    // приходила из размытия. Ключи — из плана, своей формулы у превью нет.
+    let bl=0;
+    if(anim&&anim.blur)bl=keysAt(anim.blur,null,tm);
+    // Осевший Scale слоя (см. шаблон: Ss=scale*sc/100) — нужен и наезду cam2 (m — доля
+    // от него), и радиусу скругления маски: он задан в px ПРЕКОМПА и растёт вместе со
+    // слоем. Считается ОДИН раз на кадр: вторая копия формулы разошлась бы с первой.
+    const S=(x.scale||44)*(x.sc||100)/100;
     if(style==='cam2'&&anim){
-      const S=(x.scale||44)*(x.sc||100)/100;         // осевший Scale слоя (см. шаблон: Ss=scale*sc/100)
       if(S>0&&anim.scale)m=keysAt(anim.scale,null,tm)/S;         // наезд: pk/S -> 1 или rise: S0/S -> 1
       if(anim.opacity)op=keysAt(anim.opacity,null,tm)/100;
       if(anim.position){
@@ -1314,12 +2484,20 @@ function ipvInsPlace(wr,x,tm){
         iph.style.transform='translate(-50%,-50%) translate('+((pho.x||0)*m*k*z)+'px,'
                                                            +((pho.y||0)*m*k*z)+'px)';}
       el.style.opacity=op;
+      el.style.filter=(bl>0)?('blur('+(bl*k).toFixed(2)+'px)'):'';
       const cp=(style==='cam1'&&!x.oncam2)?ipvCamChild(px+sx,py+sy,z):[px+sx,py+sy];
       el.style.transform='translate('+(cp[0]*k)+'px,'+(cp[1]*k)+'px)';
       return;}
     const im=el.querySelector('img');
     if(im){im.style.width=(c.pw*m*k*z)+'px';im.style.height=(c.ph*m*k*z)+'px';}
+    // Скругление окна маски: в .jsx маска-«Скругление» лежит на слое прекомпа, и радиус
+    // (INS_MASK_R, px прекомпа) приходит на экран умноженным на масштаб слоя. Число —
+    // ИЗ ПЛАНА (ins.mask_r): своей копии 60 у превью нет, и правило «у кого маски нет»
+    // (вид white/none, вставка на подложке) решает тоже план — как шаблон.
+    const mr=(x.mask_r!=null)?+x.mask_r:0;
+    el.style.borderRadius=(mr>0)?((mr*(S/100)*m*z*k).toFixed(2)+'px'):'';
     el.style.opacity=op;
+    el.style.filter=(bl>0)?('blur('+(bl*k).toFixed(2)+'px)'):'';   // фильтр на всей карточке: маска и фото разом, как эффект на слое в AE
     // Задание ZG: свободные вставки (кам2 и «кам1 на кам2») идут БЕЗ ipvCamChild — у них
     // ни зума, ни сдвига, ни слежения Камеры 1 (в AE нулы «вставки кам2» и «вставки кам1
     // на кам2» не привязаны к её нулу). Через ipvCamChild они получали сдвиг `pan` и
@@ -1332,6 +2510,229 @@ function ipvInsPlace(wr,x,tm){
   const baseY=isVid?0:((pl&&pl.ins_c2y!=null?pl.ins_c2y:330)-H/2);
   const baseX=isVid?0:((pl&&pl.ins_c2x!=null?pl.ins_c2x:W/2)-W/2);
   el.style.transform='translate('+(((baseX+(x.x||0))+sx)*k)+'px,'+(((baseY+(x.y||0))+sy)*k)+'px)';}
+// ---- слой ПЕРЕХОДА на входе и выходе видеовставки (Quick 2) ------------------------
+// В .jsx на каждой видеовставке стоит слой перехода (`addTransAt`): tl.startTime =
+// cut − TR_IN, то есть слой начинается ЗА TR_IN до стыка, играет файл от нуля до его
+// конца, лежит наложением Add и поверх всего (transLayers.moveToBeginning). Вход
+// вставки поэтому виден РАНЬШЕ её start — ровно то, из-за чего кадр перед вставкой
+// расходился с AE (владелец: на 29 с в AE уже синеватое размытие, у нас кадр камеры).
+// Файл и сдвиг — из плана (plan.trans: media + in), своей копии TR_IN у превью нет.
+function ipvTransPlan(){
+  const pl=IPV.plan,tr=pl&&pl.trans;
+  if(!tr||!tr.media)return null;
+  const shift=+tr.in||0;
+  const evs=[];
+  for(const x of (pl.inserts||[])){
+    if((x.t||x.type)!=='video'||!x.media)continue;      // переход — только у видеовставок
+    evs.push(Math.round((+x.start-shift)*1e4)/1e4);     // вход: слой начинается ДО старта
+    if(!x.noexit)evs.push(Math.round((+x.end-shift)*1e4)/1e4);}   // выход срезан катом — слоя нет
+  return evs.length?{media:tr.media,evs:evs,w:+tr.w||0,h:+tr.h||0}:null;}
+// Переходу нужен ПРОКСИ: исходник — ProRes 4K, браузер его не декодирует (та же беда,
+// что у камер). Заказываем его той же дверью (/api/preview_proxy) и один раз на файл:
+// пока прокси не готов, элемент играет исходник, а на Windows не играет вовсе.
+function ipvTransAsk(pl){
+  const tr=pl&&pl.trans;
+  if(!tr||!tr.media||typeof pvProxyLoad!=='function')return;
+  if((typeof PVPX!=='undefined'&&PVPX.map&&PVPX.map[tr.media])||IPV.transAsked===tr.media)return;
+  IPV.transAsked=tr.media;
+  // Разновидность прокси — обычная, как у превью: allintra-прокси был нужен рендеру
+  // без AE, когда камеры игрались прокси и каждый кадр перематывался. Теперь рендер
+  // берёт кадры камер из ИСХОДНИКОВ (core/webrender.py), и переходу ключевой каждый
+  // кадр не нужен: он тот же прокси превью, что и в живом плеере.
+  pvProxyLoad(IPV.xml,true,[tr.media],false).then(px=>{if(!px)return;
+    pvProxyMerge(px);
+    if(PVPX.map[tr.media])ipvTransRefresh();
+    else if(typeof pvProxyWatch==='function')pvProxyWatch($('ipvstage'));}).catch(()=>{});}
+// Прокси перехода доехал (pvProxyRefresh) — элементу нужен новый src: у ProRes-исходника
+// кадра не было вовсе, и без этой двери переход остался бы невидимым до перезахода в клип.
+// Заказа не было вовсе (сборщик был занят прокси камер) — просим ещё раз: сборщик один
+// на все прокси, и «занято» — не отказ.
+function ipvTransRefresh(){
+  const tp=ipvTransPlan();if(!tp)return;
+  if(typeof PVPX!=='undefined'&&PVPX.map&&!PVPX.map[tp.media]){
+    IPV.transAsked='';
+    if(typeof ipvTransAsk==='function')ipvTransAsk(IPV.plan);}
+  const box=$('ipvtrans');if(!box||!box.querySelectorAll)return;
+  const want=pvSrc(tp.media);
+  box.querySelectorAll('video').forEach(v=>{if(v.getAttribute('src')!==want){
+    v._dead=false;                                   // новый источник — старая немощь не в счёт
+    try{v.setAttribute('src',want);v.load();}catch(e){}}});
+  IPV.cur=-2;if(IPV.vids.length)ipvUI(ipvNow());}
+// Покадрово: у каждого слоя своё время файла (tm − старт слоя). Вне окна файла слой не
+// виден — в AE за концом исходника слой тоже пуст (последний кадр не держится).
+// Пул из 2 элементов на файл перехода вместо элемента на событие: два — чтобы два близких
+// перехода не дрались за один элемент.
+function ipvTrans(tm){
+  const st=$('ipvstage');if(!st)return;
+  const tp=ipvTransPlan();
+  let box=$('ipvtrans');
+  if(!tp){
+    if(box){box.querySelectorAll('video').forEach(mediaFree);box.remove();}
+    IPV.transSig='';return;}
+  if(!box){box=document.createElement('div');box.id='ipvtrans';box.className='ipvtrans';
+    box.dataset.noi18n='1';
+    // Add в AE = сложение каналов: у CSS это plus-lighter. Нет его (старый браузер) —
+    // screen: та же световая накладка, но с «выгоранием» на ярком.
+    box.style.mixBlendMode=(typeof CSS!=='undefined'&&CSS.supports&&
+      CSS.supports('mix-blend-mode','plus-lighter'))?'plus-lighter':'screen';
+    st.appendChild(box);}
+  const sig=tp.media+'|'+tp.evs.join(',');
+  if(sig!==IPV.transSig){
+    IPV.transSig=sig;
+    box.querySelectorAll('video').forEach(mediaFree);
+    box.innerHTML='';
+    const poolSize=Math.min(2,tp.evs.length);
+    for(let i=0;i<poolSize;i++){
+      const v=document.createElement('video');
+      v.className='ipvtransv';v.muted=true;v.volume=0;v.playsInline=true;v.preload='auto';
+      // Файл браузеру не по зубам (ProRes без прокси) — помечаем: по такому <video>
+      // нечего ждать кадр в рендере, а vSeekDone ждал бы полный таймаут на КАЖДОМ
+      // кадре окна перехода (событие `error` приходит один раз).
+      v.addEventListener('error',()=>{v._dead=true;});
+      v.setAttribute('src',pvSrc(tp.media));
+      box.appendChild(v);}}
+  const k=(st.clientWidth||1080)/1080;
+  const vids=box.querySelectorAll('video');
+  let dur=0;
+  vids.forEach(v=>{if(isFinite(v.duration)&&v.duration>0)dur=v.duration;});
+  const evs=(tp.evs||[]).slice().sort((a,b)=>a-b);
+  vids.forEach((v,ix)=>{
+    const subEvs=evs.filter((_,i)=>i%vids.length===ix);
+    if(!subEvs.length){
+      if(v.style.display!=='none'){v.style.display='none';try{v.pause();}catch(e){}}
+      return;}
+    const active=subEvs.find(t0=>{const c=tm-t0;return c>=0&&(dur>0?c<dur:c<2.0);});
+    let t0=active;
+    if(t0==null){
+      t0=subEvs[0];let minD=Math.abs(tm-t0);
+      for(let i=1;i<subEvs.length;i++){
+        const d=Math.abs(tm-subEvs[i]);
+        if(d<minD){minD=d;t0=subEvs[i];}}}
+    v.dataset.t0=String(t0);
+    const ct=tm-t0;
+    const curDur=(isFinite(v.duration)&&v.duration>0)?v.duration:dur;
+    // Размер — ВЕЛИЧИНА ИСХОДНИКА из плана (в AE слой лежит 1:1 в кадре, и в кадре
+    // видна его центральная часть). Играем прокси — он мельче исходника, и «по
+    // videoWidth» кадр обрезался бы иначе: у 720p-прокси в кадр влезла бы половина
+    // ширины вместо четверти. Размера в плане нет — берём размер самого файла.
+    const vw=tp.w||v.videoWidth, vh=tp.h||v.videoHeight;
+    if(ct<0||(curDur>0&&ct>=curDur)||!(vw>0)){                 // до метаданных рисовать нечего
+      if(v.style.display!=='none'){v.style.display='none';try{v.pause();}catch(e){}}
+      return;}
+    if(v.style.display==='none')v.style.display='';
+    v.style.width=(vw*k)+'px';v.style.height=(vh*k)+'px';
+    // Время ставим ТОЧНО на первом кадре слоя: у перехода весь смысл в моменте стыка
+    // (вспышка горит на нём), а грубый допуск живой протяжки (0.4 с у длинных вставок)
+    // здесь оставил бы слой на нуле файла и вспышка не совпала бы с катом. Дальше —
+    // общий допуск: каждый кадр дёргать декодер незачем.
+    const first=(v._at==null||v._at!==v.dataset.t0);
+    if(first||Math.abs((+v.currentTime||0)-ct)>vidSeekTol()){
+      v._at=v.dataset.t0;try{v.currentTime=ct;}catch(e){}}
+    if(IPV.playing&&v.paused)v.play().catch(()=>{});
+    if(!IPV.playing&&!v.paused)v.pause();});}
+// Покадровая отрисовка вставки: только ГЕОМЕТРИЯ (ipvInsPlace). Мозаика — отдельным
+// проходом (ipvInsMosaics): она обязана идти ПОСЛЕ того, как <video> вставки встало на
+// своё время, а внутри ipvInsDraw она попадала в тот же кадр, что и перемотка, и
+// рисовала ПРЕДЫДУЩИЙ кадр ролика (в рендере — до `await` кадров).
+function ipvInsDraw(wr,x,tm){
+  ipvInsPlace(wr,x,tm);}
+// Источник пикселей вставки: у фото это <img> (в маске или на подложке), у ВИДЕО —
+// сам <video>: он и есть первый ребёнок обёртки, внутри него искать нечего. Здесь
+// стоял `el.querySelector('img,video')`, и у видеовставки он возвращал null —
+// мозаика не рисовалась вовсе (владелец: «видеовставка чистая, в AE мозаика»).
+// Фото НА ПОДЛОЖКЕ: мозаика — на самом фото (`.iphoto`), а не на плашке: в AE эффект
+// Mosaic стоит на слое вставки, плашка идёт отдельным слоем.
+function ipvInsSrc(el){
+  if(!el)return null;
+  if(el.tagName==='IMG'||el.tagName==='VIDEO')return el;
+  if(!el.querySelector)return null;
+  return el.querySelector('img.iphoto')||el.querySelector('img,video');}
+// Мозаика ВСЕХ видимых вставок кадра — одним проходом по обёрткам. `force` — перерисовать
+// даже тот кадр <video>, что уже нарисован: в рендере время вставке ставят ДО ожидания
+// кадра, и по кэшу (`cv._t`) холст остался бы с прежним кадром ролика.
+function ipvInsMosaics(force){
+  const ov=$('ipvins');if(!ov||!ov.querySelectorAll)return;
+  ov.querySelectorAll('.ipvwrap.mosaic').forEach(wr=>{
+    const el=wr.firstChild;if(!el)return;
+    const src=ipvInsSrc(el);if(src)ipvPixelate(wr,src,force);});}
+// Мозаика вставки: размер блока — как у эффекта Mosaic в AE (template.py: addMosaic
+// ставит 64x64). Кадр сводится к блокам MOSAIC_BLOCK и растягивается обратно БЕЗ
+// сглаживания: получается мозаика, а не размытие (здесь было `filter:blur(10px)`).
+// Холст живёт В ОБЁРТКЕ рядом с источником: холст в браузере один на всех, а элементов
+// на кадре бывает несколько.
+function ipvPixelate(wr,src,force){
+  if(!wr||!src||typeof document==='undefined')return null;
+  const sw=(src.videoWidth||src.naturalWidth||0),sh=(src.videoHeight||src.naturalHeight||0);
+  if(!sw||!sh){
+    if(src.addEventListener&&!src._mosWait){
+      src._mosWait=true;
+      const retry=()=>{src._mosWait=false;ipvPixelate(wr,src,true);};
+      src.addEventListener('loadeddata',retry,{once:true});
+      src.addEventListener('seeked',retry,{once:true});}
+    return null;}
+  // Размер холста — CSS-коробка элемента, а не его собственные пиксели: коробку ставит
+  // ipvInsPlace, и она же видна в кадре. Ролик 4K, сжатый в карточку, иначе рисовался бы
+  // за краями своей коробки.
+  let w=0,h=0;
+  if(src.getBoundingClientRect){const r=src.getBoundingClientRect();w=Math.round(r.width);h=Math.round(r.height);}
+  if(!w||!h){w=src.clientWidth||0;h=src.clientHeight||0;}
+  if(!w||!h)return null;
+  let cv=(wr.querySelector&&wr.querySelector('canvas.ipvmosaic'))||null;
+  if(!cv){cv=document.createElement('canvas');cv.className='ipvmosaic';
+    src.parentNode.insertBefore(cv,src.nextSibling);}
+  if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h;}
+  cv.style.width=w+'px';cv.style.height=h+'px';
+  // Позицию и масштаб холст берёт у ИСТОЧНИКА: ту же коробку, тот же translate и ту же
+  // прозрачность ставит ipvInsPlace/photos — второго правила «где вставка» тут нет.
+  // Холст абсолютный и центрирован, как источник: фото центрирует CSS (left/top 50% +
+  // translate), видео — флекс обёртки. Раньше холст был обычным флекс-элементом и
+  // вставал РЯДОМ с видео (обёртка — flex-строка), а не поверх него.
+  cv.style.transform='translate(-50%,-50%) '+(src.style.transform||'');
+  cv.style.opacity=src.style.opacity||'';
+  src.style.visibility='hidden';                // источник остаётся в DOM и рисует кадр
+  // Ролик перерисовывается, когда <video> сменил кадр: на паузе превью это новый кадр
+  // монтажа, при игре — каждый кадр. Картинке хватает одной отрисовки. `force` — про
+  // рендер: время вставке ставят ДО ожидания кадра, и по кэшу холст остался бы с прежним.
+  const isVid=(src.tagName==='VIDEO');
+  if(isVid&&src.addEventListener&&!src._mosBound){
+    src._mosBound=true;
+    const onSeek=()=>{
+      const pWr=(src.closest?src.closest('.ipvwrap.mosaic'):null)||wr;
+      if(pWr)ipvPixelate(pWr,src,true);};
+    src.addEventListener('seeked',onSeek);
+    src.addEventListener('loadeddata',onSeek);}
+  const at=isVid?(+src.currentTime||0):-1;
+  if(force||!isVid||cv._t!==at){
+    cv._t=at;
+    drawMosaic(cv,src,sw,sh);
+  }
+  return cv;}
+// Один проход мозаики: уменьшить кадр до блоков и растянуть обратно БЕЗ сглаживания.
+// Вынесено отдельной дверью — её зовёт тест (canvas в браузере не подделать целиком, а
+// числа блоков проверить надо).
+//
+// Блок — MOSAIC_BLOCK px ИСХОДНИКА, как у эффекта Mosaic в AE: эффект стоит на слое ДО
+// его Scale, поэтому в кадре блок выходит 64·ks, где ks — масштаб показа ролика. У 4K
+// 2160×4096, заполняющего кадр 1080×1920, ks = 0.5 → блок 32 px. Замер по кадру
+// владельца (rb_30): период мозаики в AE 34 px (дрожание wiggle(1,15) размывает
+// среднее), то есть «64 px кадра» — неверно вдвое.
+function drawMosaic(cv,src,sw,sh){
+  const ctx=cv.getContext&&cv.getContext('2d');if(!ctx)return null;
+  const k=(IPV.plan&&IPV.plan.w)?(cv.width/IPV.plan.w):1;   // px превью на px кадра
+  // Сводим ИСХОДНИК к блокам m x n, поэтому блок в кадре = cv.width/cols = 64·cv.width/sw.
+  const bw=Math.max(1,Math.round(MOSAIC_BLOCK*k)),bh=Math.max(1,Math.round(MOSAIC_BLOCK*k));
+  const cols=Math.max(1,Math.round(sw*k/bw)),rows=Math.max(1,Math.round(sh*k/bh));
+  if(!cv._small){cv._small=document.createElement('canvas');}
+  const sm=cv._small;
+  if(sm.width!==cols||sm.height!==rows){sm.width=cols;sm.height=rows;}
+  const sctx=sm.getContext&&sm.getContext('2d');if(!sctx)return null;
+  sctx.imageSmoothingEnabled=true;
+  sctx.clearRect(0,0,cols,rows);
+  sctx.drawImage(src,0,0,cols,rows);            // сводим кадр к блокам m x n
+  ctx.imageSmoothingEnabled=false;              // растягиваем БЕЗ сглаживания — мозаика
+  ctx.clearRect(0,0,cv.width,cv.height);
+  ctx.drawImage(sm,0,0,cols,rows,0,0,cv.width,cv.height);
+  return {cols:cols,rows:rows,bw:bw,bh:bh};}
 function ipvMarks(){itlDraw();}   // после правок карточек перерисовываем таймлайн вставок
 function ipvRefresh(){IPV.cur=-2;if(IPV.vids.length)ipvUI(ipvNow());   // перерисовать оверлей после правок карточек
   ipvPlanSoon();}   // правки вставок на шагах 2 и 3 видны после пересчёта плана
@@ -1346,6 +2747,11 @@ function introGroupWindows(ir){
   const groups=Array.isArray(ir)?ir:((ir&&ir.lines)||[]);   // панель шага 2 шлёт {lines,splits}
   return groups.filter(g=>g.ts!=null&&g.te!=null)
     .map(g=>({lines:g.lines,inAt:g.ts,outEnd:g.te,fade:g.fade,front:!!g.front,shadow:g.shadow,ys:g.ys,fonts:g.fonts,
+      // Привязана ли группа к камере (intro_cam у камеры 1, intro_cam2 у групп на
+      // перебивке): поле плана cam — из него ipvIntroPos решает, множит ли общий
+      // масштаб интро смещение группы. Это дверь: забытый тут ключ — и откреплённая
+      // группа кам2 в превью поедет от чужого масштаба, хотя в .jsx стоит на месте.
+      cam:g.cam,
       // Большое слева: левый край и множитель кегля каждой строки — те же
       // готовые числа, что уехали в .jsx (INTRO_LX/INTRO_LK). Это дверь: забытый тут
       // ключ — и превью рисует большую строку по-старому, хотя план её уже посчитал.
@@ -1395,7 +2801,7 @@ function ipvFontFor(ps){if(!ps)return null;
   return null;}
 function ipvEase(u){
   if(u<=0)return 0;if(u>=1)return 1;
-  const be=aeEase(35,90);
+  const be=aeEase();          // эталон 35/90 — из умолчаний aeEase, своей пары чисел нет
   const p=bezierT(be[0],be[2],u);
   return bezierY(be[0],be[2],p);
 }
@@ -1440,13 +2846,46 @@ function ipvIntroDefAnims(){
         [2667/10000,1]
       ]
     },
+    // «Раскрытие» играет F_DUR = 0.3 с — тем же временем, что фейд, масштаб, up/left/right
+    // и счётчик (F_DUR в .jsx, core/xml2ae/template.py:743). Здесь стояла длительность
+    // ГЛИТЧА (сорок четыре сотых): по ней буквы открывались позже, и на 3.0 с последняя
+    // ещё не показывалась — в AE уже «КУДА», у нас «КУД».
     reveal:{
-      dur:44/100,
+      dur:3/10,
       blur:268/10,
-      scale:0.7
+      scale:0.7,
+      // Масштаб буквы у НЕоткрытой буквы — Scale 3D аниматора в .jsx (11 %). Это
+      // единственное, чем аниматор раскрытия двигает буквы: прозрачность у них не
+      // анимируется вовсе (её ведёт Opacity слоя, общая на слово).
+      char_scale:11/100
     }
   };
 }
+// Длительность появления слова интро: у глитча своя (INTRO_ANIMS), у остальных —
+// F_DUR (.jsx). Числа — те же, что уезжают в INTRO_FX; поле плана (intro_anims.f_dur)
+// главнее любой копии: план несёт ровно то число, которым играют ключи .jsx.
+function ipvIntroAppearDur(a){
+  const pl=(typeof IPV!=='undefined'&&IPV.plan)||null;
+  const p=pl&&pl.intro_anims;
+  const v=(p&&p.f_dur!=null)?+p.f_dur:0;
+  return (v>0)?v:((a&&a.dur!=null)?+a.dur:0);}
+// Длительность счётчика интро и появления слова-счётчика — HL_DUR (.jsx,
+// core/xml2ae/layout.py: HL_DUR = 0.35 с). Ею играют ОБА ключа слайдера счётчика
+// (`slP.setValueAtTime(t0,0); slP.setValueAtTime(t0+HL_DUR*SQ,target)` в
+// core/xml2ae/plan_intro_tpl.py) и фейд слова со счётчиком без своей анимации
+// (ветка hasCnt в introAnimFX). Здесь стояло 1.5 с по кривой: на кадре владельца
+// 2.5 с (слово «19» — на 2.1 с) в AE уже 19, а превью показывало 10.
+// Поле плана главнее: если бэкенд отдаст HL_DUR сам, превью возьмёт его, а не копию.
+function ipvIntroHlDur(){
+  const pl=(typeof IPV!=='undefined'&&IPV.plan)||null;
+  const v=(pl&&pl.hl_dur!=null)?+pl.hl_dur:0;
+  return (v>0)?v:35/100;}
+// Параметры появления слова интро. «Раскрытие» играет столько же, сколько фейд и
+// масштаб, — F_DUR .jsx (ключи блюра, Scale слоя и Percent Offset селектора стоят на
+// t0+F_DUR*SQ). Число приезжает ИЗ ПЛАНА (`intro_anims.f_dur`, он же reveal.dur) —
+// своей копии у превью нет; значение по умолчанию осталось только для сборок без
+// блока параметров (живой замер владельца: с длительностью ГЛИТЧА буквы открывались
+// позже AE — на 3.0 с последняя ещё не показывалась, в AE уже «КУДА», у нас «КУД»).
 function ipvIntroAnimParams(){
   const pl=(typeof IPV!=='undefined'&&IPV.plan)||null;
   const a=(pl&&pl.intro_anims)||{};
@@ -1459,12 +2898,32 @@ function ipvIntroAnimParams(){
       op_keys:g.op_keys||d.glitch.op_keys
     },
     reveal:{
-      dur:(r.dur!=null)?r.dur:d.reveal.dur,
-      blur:(r.blur!=null)?r.blur:d.reveal.blur,
-      scale:(r.scale!=null)?r.scale:d.reveal.scale
+      dur:ipvIntroAppearDur(d.reveal),
+      // Блюр — поле плана blur_css: пиксели CSS, а не «Blurriness» AE (см. hl_blur_css
+      // у субтитров: перевод один — core/xml2ae/layout.css_blur_px). Поля нет (старый
+      // бэкенд) — берём число как было, чтобы раскрытие не осталось вовсе без размытия.
+      blur:(r.blur_css!=null)?r.blur_css:((r.blur!=null)?r.blur:d.reveal.blur),
+      scale:(r.scale!=null)?r.scale:d.reveal.scale,
+      // Масштаб неоткрытой буквы: его несёт план (scale_3d аниматора из INTRO_ANIMS),
+      // значение по умолчанию — та же константа шаблона (11 %).
+      char_scale:((r.scale_3d&&r.scale_3d.length)?(+r.scale_3d[0]/100):d.reveal.char_scale)
     }
   };
 }
+// Открытие буквы в анимации «reveal»: доля открытия буквы ci из n при общем ходе u (0..1).
+// Это Percent Offset селектора в AE, едущий от −100 до 100 за F_DUR, с формой «Ramp Up»:
+// выбранная часть текста едет по слову, и буква на своём месте в слове попадает в РАМПУ.
+// Рампа занимает всю ширину слова, поэтому буква открывается не мгновенно на своём шаге,
+// а плавно: доля буквы = clamp(2u − p), где p — её середина в долях слова.
+//
+// Почему не «ступенькой»: раньше буква открывалась на отрезке [i/n, (i+1)/n], и на кадре
+// владельца (3.0 с, u = 0.77) последняя буква «КУДА» получала 0.07 — то есть гасла
+// (её вела ПРОЗРАЧНОСТЬ), хотя в AE она уже растёт масштабом и видна. Замер по кадру AE
+// (rb_3): четыре буквы, последняя в анимации; у нас было три.
+function ipvRevealU(u,ci,n){
+  const total=Math.max(1,+n||1);
+  const p=((+ci||0)+0.5)/total;                  // середина буквы в долях ширины слова
+  return Math.min(1,Math.max(0,2*(+u||0)-p));}
 function ipvGlitchOp(dt,kIn){
   let k=kIn;
   if(!k){
@@ -1566,6 +3025,9 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
       // «свечение слов с глитчем», строке fx=='glow' — по «свечение слов со свечением
       // строки», жёлтому слову хайлайта — по «свечению жёлтого хайлайта» (та же третья
       // дверь, что introHlGlow в .jsx: у группы с глитчем и у строки со свечением её нет).
+      // fx=='glow' здесь — поле ПЛАНА, а не строки клипа: его ставит план по единой
+      // галке стиля intro_accent_glow (accent-строкам при включённой), поэтому превью
+      // показывает ровно то же свечение, что сборка, и поле fx строки не читает.
       // Тень (Drop Shadow) — те же условия, что в .jsx: галка «тень на всех
       // словах» либо своя галка глитча/заднего плана.
       const wfx=(pl&&pl.intro_word_fx)||{};
@@ -1662,7 +3124,12 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
         }
         if(wi>0)dv.appendChild(document.createTextNode(' '));   // межсловный отступ — настоящий пробел шрифта, как в AE
         dv.appendChild(sp);});
-      if(gi>=0&&IPV.intro[gi].lines[IPV.intro[gi].lines.length-1]===l){
+      if(gi>=0&&!ipvRenderMode()&&IPV.intro[gi].lines[IPV.intro[gi].lines.length-1]===l){
+        // Ручка масштаба — элемент ПРАВКИ, а не картинки: в режиме рендера её нет
+        // вовсе. Живой случай: черта с ручкой попала в готовый ролик под текстом
+        // интро (кадр снимается с этой же страницы). CSS её тоже прячет
+        // (.render-mode .intro-scale-handle) — здесь она и не создаётся: нечего
+        // показывать и нечего тащить в снимок.
         const h=document.createElement('i');h.className='intro-scale-handle';h.dataset.t=t('Изменить масштаб интро (двойной клик — вернуть авто)');dv.appendChild(h);}
       io.appendChild(dv);});
       // Посадка строк по y из плана: базовая линия строки — на её y из плана,
@@ -1774,12 +3241,15 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
         return;
       }
       sp.classList.add('on');
-      // Расчёт числового значения счётчика (isCount) от 0 до cntTarget за HL_DUR=1.5с:
+      // Число счётчика (isCount): в .jsx это Slider Control с ДВУМЯ ЛИНЕЙНЫМИ ключами —
+      // 0 на моменте своего слова и цель на t0+HL_DUR*SQ (plan_intro_tpl.py). Ни кривой
+      // (easePair у слайдера нет), ни второго числа длительности тут быть не должно:
+      // на кадре владельца 2.5 с (слово «19» — на 2.1 с, SQ = 0.8482) в AE уже 19,
+      // а превью считало 1.5 с по кривой и показывало 10.
       let curText=sp.dataset.origWord;
       if(isCount){
-        const uCnt=Math.min(1,Math.max(0,dt/(1.5*sq)));
-        const qCnt=ipvEase(uCnt);
-        const curVal=(+sp.dataset.cntTarget)*qCnt;
+        const uCnt=Math.min(1,Math.max(0,dt/(ipvIntroHlDur()*sq)));
+        const curVal=(+sp.dataset.cntTarget)*uCnt;
         const dec=+sp.dataset.cntDec||0;
         let sNum=curVal.toFixed(dec);
         if(sp.dataset.cntComma==='1')sNum=sNum.replace('.',',');
@@ -1817,20 +3287,32 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
         const rDur=(rP.dur!=null)?rP.dur:0;
         if(rDur>0&&dt<rDur*sq){
           const uL=Math.min(1,Math.max(0,dt/(rDur*sq)));
+          // По кривой (easePair) в .jsx играет ТОЛЬКО прозрачность слоя — остальные ключи
+          // раскрытия линейные (setValueAtTime без ease): масштаб слоя 70→100, Gaussian
+          // Blur от блюра плана к нулю и ход селектора Percent Offset −100→100 за F_DUR*SQ.
           const qL=ipvEase(uL);
           sp.style.opacity=qL.toFixed(3);
           const rBl=(rP.blur!=null)?rP.blur:0;
-          const bl=((1-qL)*rBl).toFixed(1);
-          sp.style.filter=(1-qL>0.01&&rBl>0)?('blur('+bl+'px)'):'';
+          const bl=((1-uL)*rBl).toFixed(1);
+          sp.style.filter=(1-uL>0.01&&rBl>0)?('blur('+bl+'px)'):'';
           const rSc=(rP.scale!=null)?rP.scale:0.7;
-          sp.style.transform='scale('+(rSc+(1-rSc)*qL).toFixed(3)+')';
+          sp.style.transform='scale('+(rSc+(1-rSc)*uL).toFixed(3)+')';
+          // Буквы открываются СЛЕВА НАПРАВО по времени плана — как Percent Offset
+          // селектора в AE (форма «Ramp Up»): буква открывается на своём месте в слове,
+          // а последняя — ровно к концу появления. Открытие — РОСТ МАСШТАБА буквы
+          // (аниматор Scale 3D: 11 % → 100 %), а не прозрачность: Opacity в .jsx висит на
+          // СЛОЕ слова (`op.setValueAtTime(t0,0); …(t0+F_DUR*SQ,100); easePair(op)`), и
+          // у буквы ключей прозрачности нет ВООБЩЕ — она всегда непрозрачная.
+          const chars=Math.max(1,curText.length);
+          const cSc=(rP.char_scale!=null)?rP.char_scale:0.11;
           ipvRenderChars(sp,curText,(chEl,ci,n)=>{
-            const p=(n>1)?(ci/(n-1)):0.5;
-            const tStart=p*0.55;
-            const uC=Math.min(1,Math.max(0,(uL-tStart)/0.45));
-            const qC=ipvEase(uC);
-            chEl.style.transform='scale('+(0.1+0.9*qC).toFixed(3)+')';
-            chEl.style.opacity=Math.max(0.15,qC).toFixed(3);
+            const qC=ipvRevealU(uL,ci,Math.max(1,n||chars));
+            // Прозрачность буквы — инлайном и ВСЕГДА полная. Правило `.ipvintro span{opacity:0}`
+            // (static/app.css) прячет КАЖДЫЙ span без класса `on`, а `on` стоит на СЛОВЕ:
+            // с пустым инлайном (как было) буквы гасли на время раскрытия, и кадры 1.0 и
+            // 3.0 с выходили ПУСТЫМИ, хотя в AE буквы уже растут масштабом.
+            chEl.style.opacity='1';
+            chEl.style.transform=(qC>=1)?'':('scale('+(cSc+(1-cSc)*qC).toFixed(3)+')');
           });
         }else{
           sp._chText=null;
@@ -1863,7 +3345,9 @@ function ipvIntro(tm){const io=$('ipvintro');if(!io)return;
       }else{
         sp._chText=null;
         sp.textContent=curText;
-        const dur=(isCount?1.5:0.3)*sq;
+        // Слово со счётчиком без своей анимации появляется за HL_DUR (ветка hasCnt в
+        // introAnimFX), обычное — за F_DUR: обе длительности из .jsx, не свои числа.
+        const dur=(isCount?ipvIntroHlDur():0.3)*sq;
         const u=Math.min(1,Math.max(0,dt/dur));
         const q=ipvEase(u);
         sp.style.opacity=q.toFixed(3);
@@ -1888,8 +3372,14 @@ function ipvIntroPos(gi,tm){const io=$('ipvintro');if(!io)return;
   // scene_plan). Поля в плане нет (старый ответ) = 100%, как сегодня.
   // Галка «интро едет с камерой» снята: зум и сдвиг камеры к блоку не
   // применяются вовсе — точка и зум приходят из ipvIntroChild (там же затемнение).
+  // База блока — от центра кадра. Масштаб общего нула (G) множит её ТОЛЬКО у группы,
+  // привязанной к камере (поле cam из плана, считается из intro_cam/intro_cam2): у
+  // откреплённой нул стоит в координатах кадра и масштаба родителя не наследует — там
+  // база едет как есть, без G (числа уже посчитаны так же в plan_intro). Второго чтения
+  // ключей стиля во фронте нет.
   const G=((pl&&pl.intro_scale!=null)?pl.intro_scale:100)/100;
-  const cc=ipvIntroChild(G*(g?g.dx||0:0), (g?g.y||0:0)+G*(g?g.dy||0:0), tm!=null?tm:ipvNow());
+  const gc=(g&&g.cam!==false)?G:1;
+  const cc=ipvIntroChild(gc*(g?g.dx||0:0), (g?g.y||0:0)+gc*(g?g.dy||0:0), tm!=null?tm:ipvNow(), !!(g&&g.on2));
   // Точка масштабирования блока (intro_scale_anchor): в AE якорь слоя прекомпа стоит на Y
   // строки блока (INTRO_ANCHOR_Y), а Position приезжает уже компенсированным — блок
   // уменьшается ОТ СВОЕГО ТЕКСТА, а не подтягивается к середине кадра. В превью то же
@@ -1972,10 +3462,11 @@ function itlBlockDown(e,i,mode){const x=ipvIns()[i];if(!x)return;
     else d=Math.min(Math.max(0.5,st.d+dt),Math.max(0.5,IPV.dur-st.s));
     s=Math.round(s*10)/10;d=Math.round(d*10)/10;
     insSetSD(x,s,d);
+    insSetSDCard(x,s,d);                       // и в карточку шага 2: она источник истины для ensureJobs
     blk.style.left=(s*ITL.pps)+'px';blk.style.width=Math.max(8,d*ITL.pps)+'px';
     blk.dataset.t=fmtIns(s)+' — '+fmtIns(s+d)+' ('+d+t('с')+') · '+insLbl(x);};
   const up=()=>{window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',up);
-    ipvAfterEdit();
+    ipvAfterEdit();                            // ОДИН раз по отпусканию: re-render (renderIns) посреди драга уносил бы блок из-под пальца
     if(moved&&IPV.vids.length&&!IPV.playing)ipvSeekTo(insSD(x).s+0.01);};   // показать, куда легло
   window.addEventListener('pointermove',move);window.addEventListener('pointerup',up);}
 // клик/протяжка по фону таймлайна = перемотка за курсором (плейхед таскается); колесо = зум (Shift = прокрутка)
@@ -2049,6 +3540,12 @@ $('ipvins').addEventListener('pointerdown',e=>{
   e.preventDefault();e.stopPropagation();
   const pl=IPV.plan,W=pl.w||1080;
   const k=(wr.clientWidth||W)/W;
+  // Обратный пересчёт под формат: x/y вставки живут в БАЗОВЫХ единицах стиля
+  // (1080×1920), а тянем мы в px кадра ролика. Кадр у форматов разной высоты,
+  // поэтому ось делится на СВОЙ множитель: без этого перетащил на квадрате —
+  // в вертикали уехало. Правило одно на фронт и сборку (core/style_geometry.py),
+  // здесь — его обратная сторона.
+  const ak=(typeof camFrameAxisK==='function')?camFrameAxisK():{x:1,y:1};
   // зум делим ТОЛЬКО там, где placement его умножает (фото кам1 на кам1 — печёные ключи)
   const z=(x.card&&x.style==='cam1'&&!x.oncam2)?ipvZoomAt(ipvNow()):1;
   // Вставка «на подложке»: драг двигает ВСЮ карточку — плашку с фото,
@@ -2059,9 +3556,11 @@ $('ipvins').addEventListener('pointerdown',e=>{
             y:onPlate?(INS[real].ky||0):(INS[real].y||0),lock:null};
   // на старте мог висеть сдвиг прошлого драга (рефетч плана ещё не пришёл) — накопляем от него
   const psh=(IPV.insShift&&IPV.insShift.i===i)?IPV.insShift:{dx:0,dy:0};
+  // IPV.insShift — в px КАДРА (его прибавляет ipvInsPlace к координатам плана),
+  // а st.x/st.y — базовые: переводим одно в другое этими двумя множителями.
   const move=ev=>{let dx=(ev.clientX-st.x0)/(k*z),dy=(ev.clientY-st.y0)/(k*z);
     [dx,dy]=axisLock(st,dx,dy,ev.shiftKey);
-    IPV.insShift={i:i,dx:psh.dx+dx,dy:psh.dy+dy};
+    IPV.insShift={i:i,dx:psh.dx+dx*ak.x,dy:psh.dy+dy*ak.y};
     ipvInsPlace(wr,x,ipvNow());};
   const up=ev=>{window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',up);
     let dx=(ev.clientX-st.x0)/(k*z),dy=(ev.clientY-st.y0)/(k*z);
@@ -2083,7 +3582,7 @@ $('ipvins').addEventListener('pointerdown',e=>{
     if(x.card&&x.style==='cam1'&&!x.oncam2){
       // кам1 рисуется из ПЕЧЁНЫХ ключей anim.position (старых x/y) — до прихода нового плана
       // держим сдвиг поверх них, иначе она отпрыгнет назад на ~0.7с пока план пересчитается
-      IPV.insShift={i:i,dx:psh.dx+dx,dy:psh.dy+dy};
+      IPV.insShift={i:i,dx:psh.dx+dx*ak.x,dy:psh.dy+dy*ak.y};
     }else{
       // кам2/видео читают x/y напрямую — правим кэш плана, сдвиг больше не нужен
       x.x=nx;x.y=ny;if(IPV.insShift&&IPV.insShift.i===i)IPV.insShift=null;}};
@@ -2120,14 +3619,18 @@ const ipvIntroDragStart=function ipvIntroDragStart(e,handle){
   // и экранные px переводятся в пространство группы делением на k*G — иначе при 60%
   // блок уезжает из-под пальца, а уголок тянет вдвое сильнее, чем просили.
   const G=((pl&&pl.intro_scale!=null)?pl.intro_scale:100)/100;
+  // gx/gy — базовые px стиля (intro_x/intro_y), а тянем в px кадра ролика: ось
+  // делится на СВОЙ множитель формата, как у вставок. Иначе на квадрате сдвиг
+  // уехал бы в вертикаль в 1.78 раза больше, чем просили.
+  const ak=(typeof camFrameAxisK==='function')?camFrameAxisK():{x:1,y:1};
   const st={x0:e.clientX,y0:e.clientY,gx:INTRO[h].gx||0,gy:INTRO[h].gy||0,gs:INTRO[h].gs||100,lock:null};
   if(handle){e.preventDefault();e.stopPropagation();}
-  const move=ev=>{let dx=(ev.clientX-st.x0)/(k*G),dy=(ev.clientY-st.y0)/(k*G);
+  const move=ev=>{let dx=(ev.clientX-st.x0)/(k*G)/ak.x,dy=(ev.clientY-st.y0)/(k*G)/ak.y;
     if(handle)pl.intro[gi].ds=Math.max(20,Math.min(300,st.gs+dx));
     else{[dx,dy]=axisLock(st,dx,dy,ev.shiftKey);pl.intro[gi].dx=st.gx+dx;pl.intro[gi].dy=st.gy+dy;}   // кэш плана — блок едет за пальцем
     ipvIntroPos(gi);};
   const up=ev=>{window.removeEventListener('pointermove',move);window.removeEventListener('pointerup',up);
-    let dx=(ev.clientX-st.x0)/(k*G),dy=(ev.clientY-st.y0)/(k*G);
+    let dx=(ev.clientX-st.x0)/(k*G)/ak.x,dy=(ev.clientY-st.y0)/(k*G)/ak.y;
     if(handle)INTRO[h].gs=Math.round(Math.max(20,Math.min(300,st.gs+dx))*10)/10;
     else{[dx,dy]=axisLock(st,dx,dy,st.lock!==null);INTRO[h].gx=Math.round((st.gx+dx)*10)/10;INTRO[h].gy=Math.round((st.gy+dy)*10)/10;}   // данные
     captureAE();ipvPlanSoon();};

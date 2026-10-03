@@ -69,11 +69,19 @@ function selectAE(i){if(curAE>=0&&curAE!==i)captureAE();curAE=i;const c=CLIPS[i]
   // стиль: сперва по ключу задания, иначе — узнаём шаблон по содержимому (старые задания,
   // и «кастом», совпадающий с шаблоном 1в1: незачем открывать простыню настроек)
   let sk=(j.styleKey&&j.styleKey!=='__custom__'&&STYLES[j.styleKey])?j.styleKey:styleKeyFor(j.style);
-  if(sk){$('style').value=sk;onStyleChange();}
-  else if(j.style){CURSTYLE=j.style;ensureCustomOption();$('style').value='__custom__';onStyleChange();}
-  else{const cur=$('style').value;                      // клип ещё не трогали — оставляем выбранный стиль
-    if(cur==='__custom__'||!STYLES[cur])$('style').value=STYLES[STYLESAVED]?STYLESAVED:'base';
-    onStyleChange();}
+  if(sk){$('style').value=sk;if($('style'))$('style').dataset.prev=sk;onStyleChange();}
+  else if(j.style){CURSTYLE=stMigrateCamZoom(stMigrateIntroCam2(stMigrateCam2Zoom(stMigrateIntroPos2(j.style))));ensureCustomOption();$('style').value='__custom__';if($('style'))$('style').dataset.prev='__custom__';onStyleChange();}
+  else{const p=j.speaker&&SPEAKERS&&SPEAKERS[j.speaker];
+    if(p&&p.style&&STYLES[p.style]){
+      j.styleKey=p.style;
+      $('style').value=p.style;
+      if($('style'))$('style').dataset.prev=p.style;
+      onStyleChange();
+    }else{
+      const cur=$('style').value;                      // клип ещё не трогали — оставляем выбранный стиль
+      if(cur==='__custom__'||!STYLES[cur])$('style').value=STYLES[STYLESAVED]?STYLESAVED:'base';
+      if($('style'))$('style').dataset.prev=$('style').value;
+      onStyleChange();}}
   const im=$('intromode');if(im)im.value=j.intromode||'word';   // после onStyleChange: reflectStyle ставит режим из стиля
   rotoSync();renderClips3();renderAeDirField();loadWordsFor(c.xml);saveState();
   if($('st_name'))$('st_name').value='';   // вышли из редактора шаблона — см. captureAE (templateEdit)
@@ -99,9 +107,14 @@ function captureAE(){if(curAE<0)return;const c=CLIPS[curAE];if(!c){curAE=-1;retu
   // Копия стиля живёт в задании ТОЛЬКО у безымянного кастома: у именованного стиля
   // источник — файл стиля, его читает сборка (styles.resolve по имени). Копия в задании
   // и была причиной рассинхрона: правка стиля до клипа не доезжала.
+  // Несохранённые правки именованного стиля — исключение: файла с ними нет, и без копии
+  // они пропали бы молча при переходе на другой клип (вопроса «сменить без сохранения?»
+  // при смене клипа нет — клип берёт свой стиль). Клип уходит кастомом с этими правками;
+  // сохранили стиль — правок больше нет, и клип снова ссылается на имя.
   const sk=(val('style')==='__edit__'?(STYLE_EDITING||null):(val('style')||null));
-  j.styleKey=sk;
-  if(sk&&sk!=='__custom__'&&STYLES[sk])delete j.style;else j.style=CURSTYLE;
+  const dirty=(typeof styleDirty==='function')&&styleDirty();
+  j.styleKey=(dirty&&sk&&sk!=='__custom__')?'__custom__':sk;
+  if(!dirty&&sk&&sk!=='__custom__'&&STYLES[sk])delete j.style;else j.style=CURSTYLE;
   c.job=j;
   j.ins=INS.map(x=>({...x}));
   saveState();}
@@ -141,15 +154,15 @@ async function startBuild(jobs,mode,outdir){const el=$('aeres');el.className='mu
   const d=await (await fetch('/api/build_run',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({jobs,mode,outdir:outdir!==undefined?outdir:AEGLOBAL,dest:(val('illdest')||'').trim()})})).json();
   if(d.error){el.className='err';el.textContent='⚠ '+errText(d);return;}
-  uiBusySet(true);progShow(t('Сборка .jsx'),t('готовлю…'));logReset();pollBuild();}
+  uiBusySet(true);progOpen({title:t('Сборка .jsx')});logReset();pollBuild();}
 async function pollBuild(){pollJob(pollBuild,t('Сборка .jsx'),0.3,d=>{const res=d.results||[];const el=$('aeres');
     uiBusySet(false);
     applyInsMoved(d.insmoved);   // вставки переехали в базу — чиним пути у себя
     if(res.length){el.className='ok';el.textContent=res.map(p=>p.replace(/^.*[\\\/]/,'')).join('  ·  ');
-      progDone((UICANCEL?t('Остановлено — собрано '):t('Готово: '))+res.length+t(' .jsx'));}
-    else if(UICANCEL){el.className='muted';el.textContent=t('Остановлено');progDone(t('Остановлено'));}
+      progDone((UICANCEL?t('Остановлено — собрано '):t('Готово: '))+res.length+t(' .jsx'),!!UICANCEL);}
+    else if(UICANCEL){el.className='muted';el.textContent=t('Остановлено');progDone(t('Остановлено'),true);}
     else{el.className='err';el.textContent=t('⚠ Ничего не собралось — смотри Логи');
-      progDone(t('Ошибка — смотри Логи'));$('progFill').className='progfill';}});}
+      progDone(t('Ошибка — смотри Логи'),true);}});}
 
 async function tojsx(){if(uiBusyGuard())return;if(curAE<0){toast(t('Выбери клип'));return;}captureAE();const c=CLIPS[curAE];const xml=c.xml;
   const ir=introResolve();const j=c.job;
@@ -161,39 +174,62 @@ async function tojsx(){if(uiBusyGuard())return;if(curAE<0){toast(t('Выбери
     style:styleForJob({styleKey:(val('style')==='__edit__'?STYLE_EDITING:val('style')),style:CURSTYLE})};
   await startBuild([body],'separate');}
 
-// ================= безголовый рендер в AE (шаг 3) =================
-// Кнопка «Собрать и отрендерить»: тот же джоб, что у сборки текущего, но бэкенд
-// строит БЕЗГОЛОВЫЙ .jsx (очередь+save+quit), гоняет verify_jsx ДО After Effects
-// и рендерит aerender'ом. Свой RJOB на бэкенде, прогресс — честный процент
-// (кадр / кадры из плана).
+// ================= безголовый рендер (шаг 3) =================
+// Кнопка «Собрать и отрендерить»: тот же джоб, что у сборки текущего. ДВИЖКА два:
+// «After Effects» — прежний путь (безголовый .jsx с очередью и save, verify_jsx ДО
+// After Effects, сборка .aep и aerender), «Встроенный» — рендер без After Effects
+// (кадры рисует тот же предпросмотр, звук сводится по плану сцены; см. core/webrender).
+// Свой RJOB на бэкенде у обоих, прогресс — честный процент (кадр / кадры из плана).
 let RENDERPOLL=0;
 let RENDERSEEN=0;   // сколько строк рендер-лога уже в общем кэше (RJOB отдаёт только хвост)
+// ===== выбор движка =====
+// Настройка рендера живёт в ui_state («stateObj» → ключ rendengine) — как папка вывода
+// и радио ручной сборки. Отдельной переменной нет: источник один — сам переключатель,
+// и при загрузке состояние ставит его же (applyState → rendEngineSet).
+function rendEngine(){const r=document.querySelector('input[name=rendengine]:checked');
+  return (r&&r.value==='builtin')?'builtin':'ae';}
+function rendEngineSet(v){
+  const want=(v==='builtin')?'builtin':'ae';
+  document.querySelectorAll('input[name=rendengine]').forEach(r=>{r.checked=(r.value===want);});
+  rendEngineUI();}
+function rendEngineUI(){
+  document.querySelectorAll('#rendengine label').forEach(l=>{
+    const i=l.querySelector('input');if(i)l.classList.toggle('on',i.checked);});
+  // Переключатель — настройка СЛЕДУЮЩЕГО запуска: движок уже идущего рендера держит
+  // сервер (d.engine), и переставленная галка не переписывает подпись его окна.
+  saveState();}
+function rendEngineLabel(){return RENDERENGINE==='builtin'?t('Рендер без AE'):t('Рендер AE');}
+// Движок ТЕКУЩЕГО рендера с сервера: статус читают и после F5 и из другой вкладки, а
+// переключатель к тому моменту мог быть переставлен — подпись окна берём от джоба.
+let RENDERENGINE='ae';
 // «Собрать и отрендерить» идёт по отмеченным галочками, а НЕ по открытому клипу —
 // кнопка стояла вплотную к «Только текущий» и читалась как «текущий», хотя рендерила
 // CLIPS[curAE] (прогон 2026-08-14: галочка на 01, отрендерился 04).
 // Набор собирается той же функцией, что и «Собрать набор» — вторая копия тут
 // гарантированно даст «собралось одно, отрендерилось другое».
 async function startRender(){if(uiBusyGuard())return;const jobs=await collectJobs();if(jobs===null)return;
-  // Рендер нескольких клипов всегда собирает один общий .jsx (_run_render_combined),
-  // радио multimode на рендер не влияет — оно только для ручной сборки «Собрать набор»
-  // (решение пользователя 2026-09-11).
-  const body={jobs,outdir:buildOutdir(),render_dir:val('aerenderdir').trim()||AERENDER};
+  // Рендер нескольких клипов — ОДНА очередь, и у AE, и у встроенного (правило
+  // рендер-пути, решение 2026-09-11): радио multimode на рендер не влияет — оно
+  // только для ручной сборки «Собрать набор».
+  const engine=rendEngine();
+  const body={jobs,outdir:buildOutdir(),render_dir:val('aerenderdir').trim()||AERENDER,engine};
   const el=$('aeresrend');if(el){el.className='muted';el.textContent=t('рендер…');}
-  RENDERSEEN=0;
+  RENDERSEEN=0;RENDERENGINE=engine;
   let d;try{d=await (await fetch('/api/render_run',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify(body)})).json();}
   catch(e){if(el){el.className='err';el.textContent='⚠ '+e;}toast(t('Сервер не ответил: ')+e);return;}
   if(d.error){if(el){el.className='err';el.textContent='⚠ '+errText(d);}toast(errText(d)||d.error);return;}
-  uiBusySet(true);progShow(t('Рендер AE'),t('готовлю…'));logReset();pollRender();}
+  uiBusySet(true);progOpen({title:rendEngineLabel()});logReset();pollRender();}
 // Сбои fetch подряд (как в pollJob): обрыв связи не должен выглядеть рендером.
 // После трёх провалов — в оверлее видно «сервер не отвечает — жду…», задача жива
 // и ретраится как раньше (задание по UI-состояниям).
 let RENDERPOLLFAIL=0;
 async function pollRender(){
   let d;try{d=await (await fetch('/api/render_status')).json();}
-  catch(e){RENDERPOLLFAIL++;if(RENDERPOLLFAIL>=3)progUpdate(null,t('сервер не отвечает — жду…'),t('Рендер AE'),undefined);
+  catch(e){RENDERPOLLFAIL++;if(RENDERPOLLFAIL>=3)progUpdate(null,t('сервер не отвечает — жду…'),rendEngineLabel(),undefined);
     setTimeout(pollRender,1500);return;}
   RENDERPOLLFAIL=0;
+  if(d.engine)RENDERENGINE=d.engine;   // движок джоба: подпись окна — от него, не от переключателя
   // рендер пишет в СВОЙ лог (RJOB); RJOB отдаёт только хвост, поэтому добавляем
   // НОВЫЕ строки по счётчику, а не весь массив (mergeLog с log_total тут не годится:
   // total = длина хвоста не растёт монотонно, и строки дублировались бы каждый тик).
@@ -207,7 +243,6 @@ async function pollRender(){
   const el=$('aeresrend');
   // версия AE и папка вывода — «на виду», а не в глубине лога
   const sub=[d.ae||'',d.out_dir||''].filter(Boolean).join('  ·  ');
-  const cur=(d.cur||'').replace(/^.*[\\\/]/,'');
   // Общий процент рендера по набору: честный процент с сервера d.pct
   // (монотонная шкала 0..15% сборка таймлайнов, 15..35% сборка проекта, 35..100% рендер).
   const items=d.items||[];const total=(d.stage_total!=null&&d.stage_total>0)?d.stage_total:items.length;
@@ -215,50 +250,33 @@ async function pollRender(){
   for(const it of items){if(it.stage==='done')doneN++;else if(it.stage==='render'||it.stage==='jsx'||it.stage==='aep'){if(!curn)curn=it;}}
   const share=(curn&&curn.pct!=null)?curn.pct:0;
   const frac=(d.pct!=null)?Math.max(0,Math.min(1,d.pct)):(total?Math.min(1,(doneN+share)/total):null);
-  const pos=(d.stage_done!=null)?d.stage_done:(doneN+(curn?1:0));
-  // «Клип i из N · имя» — тот же контекст очереди, что у нарезки/сборки (jobProg): при
-  // sub=null подпись берётся из PROGQ, а раньше здесь не было видно, какой клип в работе.
-  progQueue(t('Рендер AE'),pos,total||0,cur||(curn&&curn.name)||'');
-  // «3/12 · <имя> · сборка таймлайнов 5%» — подпись оверлея
-  let qhead=total?pos+'/'+total:'';
-  if(total){
-    const nm=cur||(curn&&curn.name)||'';
-    if(nm)qhead+=' · '+nm;
-    const lbl=d.stage_label||(curn?'рендер':'');
-    if(lbl){
-      const p=Math.round((frac||0)*100);
-      qhead+=' · '+t(lbl)+' '+p+'%';
-    }
-  }
-  // ETA: оценка времени до конца текущей фазы и всей работы.
-  // Прочерк, пока замеров меньше 15 с и нет статистики (бэкенд отдаёт eta=null).
+  // Контекст очереди — «сколько готово из скольких». Имени файла в шапке нет: оно в
+  // строке ролика (форма — в 55-progress.js), а stage_label сервер отдаёт КОДОМ.
+  progQueue(rendEngineLabel(),doneN,total||0);
+  // Этап — кодом события: сервер шлёт stage (jsx|check|aep|render) и stage_label, оба
+  // переводятся словарём PROGEV; процента внутри клипа тут нет — он у строки ролика.
+  const stageEv=curn?(curn.stage||''):'';
+  const stageTxt=PROGEV[stageEv]||(d.stage_label?t(d.stage_label):'');
+  // ETA: оценка времени до конца текущей фазы и всей работы. Прочерк, пока замеров
+  // меньше 15 с и нет статистики (бэкенд отдаёт eta=null).
   const etaPhase=(d.eta_phase!=null&&d.eta_phase>0)?d.eta_phase:((d.eta!=null&&d.eta>0)?d.eta:null);
   const etaTot=(d.eta_total!=null&&d.eta_total>0)?d.eta_total:etaPhase;
-  if(etaTot!=null&&etaTot>0){
-    const isPrelim=!!d.eta_preliminary;
-    const pfx=isPrelim?'~':'';
-    const lbl=d.stage_label||'рендер';
-    if(etaPhase!=null&&etaTot!=null&&Math.abs(etaTot-etaPhase)>5){
-      qhead+=' · '+t('фаза {phase} · всего {total}',{phase:pfx+fmtEta(etaPhase),total:pfx+fmtEta(etaTot)});
-    }else{
-      qhead+=' · '+t('до конца {lbl}: {eta}',{lbl:t(lbl),eta:pfx+fmtEta(etaTot)});
-    }
-  }
+  progEtaSet(etaTot);
   // Подпись собираем одной строкой ДО вызова: progUpdate сам ставит разделитель между
   // ЧЕТВЁРТЫМ и ВТОРЫМ аргументом, и при пустой sub оставлял бы висящий хвост ' · '.
   // Склеиваем только непустые куски и передаём их вторым аргументом (stage), а четвёртый
   // (sub) — null, чтобы хвост не возникал.
-  const subsig=[qhead,sub].filter(Boolean).join(' · ');
-  progUpdate(frac,subsig,t('Рендер AE'),null);
+  const subsig=[stageTxt,sub].filter(Boolean).join(' · ');
+  progUpdate(frac,subsig,rendEngineLabel(),null);
   if(d.running){setTimeout(pollRender,1000);return;}
   uiBusySet(false);
   const bad=d.failed||[];
   const res=d.result||[];   // набор рендерит много файлов — RJOB копит список
   if(res.length){if(el){el.className='ok';el.textContent=res.map(p=>p.replace(/^.*[\\\/]/,'')).join('  ·  ');}
-    progDone((UICANCEL?t('Остановлено — готово: '):t('Готово: '))+res.length+' '+t(plur(res.length,'файл','файла','файлов')));}
+    progDone((UICANCEL?t('Остановлено — готово: '):t('Готово: '))+res.length+' '+t(plur(res.length,'файл','файла','файлов')),!!UICANCEL);}
   else if(bad.length){if(el){el.className='err';el.textContent=t('⚠ {n} — смотри Логи',{n:bad.length});}
-    progDone(UICANCEL?t('Остановлено'):(t('Ошибка — смотри Логи')+' ('+bad[0].reason+')'));$('progFill').className='progfill';}
-  else{progDone(UICANCEL?t('Остановлено'):t('Ошибка — смотри Логи'));$('progFill').className='progfill';}}
+    progDone(UICANCEL?t('Остановлено'):(t('Ошибка — смотри Логи')+' ('+bad[0].reason+')'),true);}
+  else progDone(UICANCEL?t('Остановлено'):t('Ошибка — смотри Логи'),true);}
 
 // Общий сбор набора для «Собрать набор» и «Собрать и отрендерить»: отмечены
 // галочками — только они, пусто = все; проверка разметки с тем же вопросом;
@@ -335,6 +353,32 @@ function introPlus(rows,i,call){return '<span class="introar">'
 function introAddInGroup(rows,i){const at=introGroupEnd(rows,i);
   rows.splice(at,0,{count:1,color:(rows[i]||{}).color||'white'});return at;}
 function aewAddLineIn(i){const at=introAddInGroup(INTRO,i);if(INTRO_PICK>=at)INTRO_PICK++;aewSync();}
+// ---- «добавить слово слева» ----
+// Слова строк идут подряд от начала интро, а строка с `from` (акцент) начинается со своего
+// слова — поэтому слева слово забирается не «у строки выше» как таковой, а у той, КОМУ оно
+// сейчас принадлежит: иначе одно слово показали бы две строки сразу. Опустевшая строка-предыдущая
+// удаляется, а её break/from переезжает на нашу — без переноса группа склеилась бы с соседней.
+// false — брать нечего (строка начинается со слова 0: у первой строки интро кнопка гаснет).
+function introGrowLeft(rows,i){
+  if(!rows||!rows[i])return false;
+  const at=[];let off=0;                 // раскладка как в introWalk: at[k]=[первое слово, сколько]
+  rows.forEach(r=>{if(r.from!=null&&r.from>=0)off=r.from;
+    const c=Math.max(0,r.count|0);at.push([off,c]);off+=c;});
+  if(at[i][0]<=0)return false;
+  const r=rows[i];
+  r.count=Math.max(0,r.count|0)+1;       // слово приходит в эту строку
+  let k=i-1;                             // у обычной строки предыдущее слово — конец предыдущей
+  if(r.from!=null&&r.from>=0){r.from=r.from-1;   // у акцента строка начинается со своего слова
+    k=-1;                                // и слово берётся у того, кто держит from-1
+    for(let j=0;j<i;j++)if(at[j][0]<=r.from&&r.from<at[j][0]+at[j][1])k=j;}
+  if(k>=0){const p=rows[k];p.count=Math.max(0,p.count|0)-1;
+    if(p.count<=0){                      // предыдущая опустела — её место в списке и заголовок
+      if(k===0||p.break||p.from!=null){  // группы уходят нашей строке, иначе та склеится с чужой
+        if(p.break)r.break=true;
+        if(p.from!=null&&r.from==null)r.from=p.from;}
+      rows.splice(k,1);}}
+  return true;}
+function aewGrowLeft(i){if(introGrowLeft(INTRO,i)){introReorder();aewSync();}}
 // ---- тайминг строк интро (как на карточках вставок: ▶ 1:02.4 (1.8с)) ----
 // ts = моменты слов строки. Пусто (count=0 / слова не загружены) — прочерк вместо кнопки.
 function introTimeBadge(ts){
@@ -388,12 +432,17 @@ let INTRO=[];
 function midCount(d){return ((d||{}).mid_groups||[]).filter(g=>g.break!==false).length;}
 // mid_groups приходят уже с переносом по словам: голова несёт break+from, продолжения
 // строк — break:false, from:null (добирают слова подряд, встают в тот же прекомп).
+// Свечение accent-строк здесь БОЛЬШЕ НЕ ставится: это единая настройка стиля
+// intro_accent_glow, и решает её план при сборке (core/xml2ae/plan_intro.py) — включена,
+// светятся все accent-строки, выключена — ни одна. Поле fx строки не читается ни планом,
+// ни превью: у отдельной строки свечение не выбирается (решение владельца 02.10.2026).
 function introRowsFromAI(d){
-  return (d.intro_rows||[]).map(r=>({count:r.count,color:r.color,break:!!r.break,
-      back:!!r.back,big:!!r.big,anim:r.anim||'',fx:r.fx||''}))
+  const rows=(d.intro_rows||[]).map(r=>({count:r.count,color:r.color,break:!!r.break,
+      back:!!r.back,big:!!r.big,anim:r.anim||''}))
     .concat((d.mid_groups||[]).map(g=>({count:g.count,color:g.color,
       break:(g.break!==false),from:(g.from!=null?g.from:null),
-      back:!!g.back,big:!!g.big,anim:g.anim||'',fx:g.fx||''})));}
+      back:!!g.back,big:!!g.big,anim:g.anim||''})));
+  return rows;}
 async function aiIntroRun(){if(uiBusyGuard())return;   // идёт пакетный прогон — второй вызов ИИ параллельно не пускаем
   if(curAE<0){toast(t('Выбери клип'));return;}
   // Клип держим ССЫЛКОЙ на момент запуска, а не индексом curAE: индексы переставляются при
@@ -431,37 +480,80 @@ async function aiIntroAll(){if(uiBusyGuard())return;
   const list=selClips();if(!list.length){toast(t('Нет клипов'));return;}
   const have=list.filter(c=>((c.job||{}).introRows||[]).length);
   if(have.length&&!await askConfirm(t('Интро уже размечено у {n} {p}: {names}.\nИИ заменит эту разметку. Продолжить?',{n:have.length,p:t(plur(have.length,'файла','файлов','файлов')),names:have.map(c=>c.name).join(', ')})))return;
-  progShow(t('ИИ интро'),'—');uiBusySet(true);
+  progOpen({title:t('ИИ интро')});uiBusySet(true);
   try{await aiIntroAllRun(list);}finally{uiBusySet(false);}}
 async function aiIntroAllRun(list){
+  if(typeof AICFG==='undefined'||!AICFG){try{await loadAIProfiles();}catch(e){}}
+  const batch='in'+Date.now().toString(36);
+  const n=aiStepConc('intro');          // «роликов одновременно» шага intro (⚙ → «Разметка»)
   const N=list.length;let ok=0,fail=0,skip=0;
+  // Счётчики — по возврату aiIntroOne ('ok' | 'fail' | 'skip'): чем кончился клип, решает
+  // она одна, обе ветки прогона только складывают это в ok/fail/skip.
+  const tally=r=>{if(r==='ok')ok++;else if(r==='skip')skip++;else fail++;};
   uiLog(t('интро (ИИ) — файлов: ')+N);
-  for(let i=0;i<N;i++){if(UICANCEL)break;const c=list[i];
-    // Контекст очереди — на клип; этап («модель размечает…») ставится отдельно, иначе
-    // пока модель думает, на экране не меняется ничего.
-    progQueue(t('ИИ интро'),i+1,N,c.name);
-    uiLog('▸ '+c.name+t(' — интро (ИИ)…'));
-    // без субтитров интро собирать не из чего — на бэкенде это ошибка, но пропуск честнее
-    if(!((c.status||{}).subs>0)){skip++;uiLog(t('  пропуск — нет субтитров'));continue;}
-    // Ключ перевода берём существующий («ИИ размечает…»): новый текст потребовал бы
-    // правки static/i18n/en.json, а сторож i18n без перевода краснеет.
-    progStep(t('ИИ размечает…'),i/N);
-    try{const d=await aiPost('/api/ai_intro',{xml:c.xml,
-        inserts:(c.inserts||[]).map(x=>({start_sec:x.start_sec,duration_sec:x.duration_sec}))},t('интро (ИИ)'));
-      if(d.error)throw errText(d);
-      insLog(d);
-      c.job=c.job||defJob();c.job.introRows=introRowsFromAI(d);ok++;
-      uiLog(t('  интро: ')+(d.intro_rows||[]).length+t(' строк, акцентов в середине: ')+midCount(d));
-      // открытый в предпросмотре клип обновляем и в панели, иначе на экране осталась бы старая разметка
-      if(curAE>=0&&c===CLIPS[curAE]){INTRO=c.job.introRows.map(r=>({count:r.count,color:r.color||'white',fill:r.fill||null,anim:r.anim||'',fx:r.fx||'',dec:parseInt(r.dec)||0,is_count:!!r.is_count,cnt_words:(Array.isArray(r.cnt_words)?r.cnt_words.slice():null),break:!!r.break,from:(r.from!=null?r.from:null),gx:r.gx||0,gy:r.gy||0,gs:r.gs||100,accent:!!r.accent,back:!!r.back,big:!!r.big}));INTRO_PICK=-1;
-        renderIntro();captureAE();aewRender();}
-    }catch(e){fail++;toast(t('интро · ')+c.name+t(': ')+e);uiLog(t('  ОШИБКА: ')+e);}
-    saveState();await sleep(300);}
+  // Свой список роликов в окне прогресса: серверного задания у прогона нет, и в списке
+  // висели бы остатки прошлой нарезки вместо того, что размечается сейчас.
+  localQStart(list.map(c=>c.name));
+  try{
+    if(n>1){
+      // Пул, как у жёлтых и вставок: сервер держит лимит пачки сам (_ai_begin со
+      // step='intro'), здесь — только ширина и прогресс. Тело на клип — ОДНО на обе
+      // ветки (aiIntroOne ниже): копия разъезжалась, и поля строки интро терялись в одной из них.
+      let done=0;
+      await runPool(list,n,async c=>{
+        // В шапке — «готово из скольких»: имена роликов в работе там не нужны, они в строках.
+        progQueue(t('ИИ интро'),done,N);
+        uiLog('▸ '+c.name+t(' — интро (ИИ)…'));
+        progStep(t('ИИ размечает…'),done/N);
+        tally(await aiIntroOne(c,batch));
+        done++;
+        progStep(t('ИИ размечает…'),done/N);   // завершённых клипов из N
+      });
+    }else{
+      for(let i=0;i<N;i++){if(UICANCEL)break;const c=list[i];
+        // Контекст очереди — на клип; этап («модель размечает…») ставится отдельно, иначе
+        // пока модель думает, на экране не меняется ничего.
+        progQueue(t('ИИ интро'),i,N);
+        uiLog('▸ '+c.name+t(' — интро (ИИ)…'));
+        // Ключ перевода берём существующий («ИИ размечает…»): новый текст потребовал бы
+        // правки static/i18n/en.json, а сторож i18n без перевода краснеет.
+        progStep(t('ИИ размечает…'),i/N);
+        const r=await aiIntroOne(c);           // одиночный прогон пачки не шлёт: batch не передан
+        tally(r);                              // 'ok' | 'fail' | 'skip' — из возврата
+        if(r!=='skip')await sleep(300);}       // сон только здесь: в пуле клипы и так ждут модель
+      }
+  }finally{localQEnd();}
   syncClipLists();
   const tail=(fail?(t(' · ошибок ')+fail):'')+(skip?(t(' · без субтитров ')+skip):'');
-  if(UICANCEL)progDone(t('Остановлено — интро размечено {a} из {b}',{a:ok,b:N})+tail);
+  if(UICANCEL)progDone(t('Остановлено — интро размечено {a} из {b}',{a:ok,b:N})+tail,true);
   else if(!fail&&!skip)progDone(t('Интро размечено: {a} из {b}',{a:ok,b:N}));
-  else{progDone(t('Интро {a} из {b}',{a:ok,b:N})+tail+t(' — см. логи'));$('progFill').className='progfill';}}
+  else progDone(t('Интро {a} из {b}',{a:ok,b:N})+tail+t(' — см. логи'),true);}
+// Тело ИИ-интро на ОДИН клип — одно на обе ветки прогона (пул и последовательный цикл):
+// копия тела разъезжалась, так уже терялся масштаб группы (`gs`) строки интро. Возврат —
+// чем кончился клип: 'ok' | 'fail' | 'skip' (нет субтитров), и счётчики ok/fail/skip
+// вызвавший считает по нему. `batch` необязателен: у одиночного прогона его нет, и поле
+// просто не уезжает в JSON (JSON.stringify выбрасывает undefined).
+async function aiIntroOne(c,batch){
+  // без субтитров интро собирать не из чего — на бэкенде это ошибка, но пропуск честнее
+  if(!((c.status||{}).subs>0)){uiLog(t('  пропуск — нет субтитров'));localQSet(c.name,'wait',t('нет субтитров'));return 'skip';}
+  let res='ok';
+  localQSet(c.name,'intro','');
+  try{const d=await aiPost('/api/ai_intro',{xml:c.xml,batch,
+      inserts:(c.inserts||[]).map(x=>({start_sec:x.start_sec,duration_sec:x.duration_sec}))},t('интро (ИИ)'));
+    if(d.error)throw errText(d);
+    insLog(d);
+    // Свечение accent-строк здесь не ставится: строки едут в задание ЭТОГО клипа как
+    // есть, а fx считает план по галке стиля при сборке.
+    c.job=c.job||defJob();c.job.introRows=introRowsFromAI(d);   // результат — в задание ЭТОГО клипа
+    uiLog(t('  интро: ')+(d.intro_rows||[]).length+t(' строк, акцентов в середине: ')+midCount(d));
+    localQSet(c.name,'done',t('строк интро: ')+(d.intro_rows||[]).length);
+    // открытый в предпросмотре клип обновляем и в панели, иначе на экране осталась бы старая разметка
+    if(curAE>=0&&c===CLIPS[curAE]){INTRO=c.job.introRows.map(r=>({count:r.count,color:r.color||'white',fill:r.fill||null,anim:r.anim||'',fx:r.fx||'',dec:parseInt(r.dec)||0,is_count:!!r.is_count,cnt_words:(Array.isArray(r.cnt_words)?r.cnt_words.slice():null),break:!!r.break,from:(r.from!=null?r.from:null),gx:r.gx||0,gy:r.gy||0,gs:r.gs||100,accent:!!r.accent,back:!!r.back,big:!!r.big}));INTRO_PICK=-1;
+      renderIntro();captureAE();aewRender();}
+  }catch(e){res='fail';localQSet(c.name,'error',''+e);toast(t('интро · ')+c.name+t(': ')+e);uiLog(t('  ОШИБКА: ')+e);}
+  saveState();   // разметка уже в задании клипа — сохраняем и после ошибки, как было в пуле
+  return res;
+}
 // Тонкая обёртка над resolveIntroFor (2026-08-14): своя копия обхода строк
 // здесь разошлась с близнецом и теряла gs группы — превью после рефетча плана возвращало
 // блок к 100%, а в сборку текущего клипа (tojsx/startRender) масштаб группы не уезжал.

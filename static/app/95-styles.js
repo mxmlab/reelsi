@@ -17,7 +17,7 @@ let STYLE_EDITING=null,STYLE_EDIT_ORIG=null,STYLE_TOUCHED=false;
 // и другой голос, и те же цифры режут не там (замеры — в speakers.py). Селектор
 // один раз ставит всё, что зависит от спикера, чтобы это не выбиралось руками
 // каждый прогон (и не забывалось — из-за чего клипы уезжали в чужую папку).
-let SPEAKERS={},SPKSAVED='',SPKDEF={},SPKLAB=[],SPKEDIT='';
+let SPEAKERS={},SPKSAVED='',SPKDEF={},SPKLAB=[],SPKEDIT='',SPKFORMATS={},SPKFORMAT_ORDER=[],SPKDEF_FORMAT='9:16';
 // Глобальная папка для .jsx (клипы БЕЗ тега спикера) — отдельно от того, что поле
 // показывает у клипа с тегом. Тег определяет папку клипа (профиль спикера), поле —
 // вид на неё; глобальное значение хранится здесь, чтобы показ папки спикера не
@@ -32,6 +32,13 @@ async function loadSpeakers(){let d;
   catch(e){uiLog(t('loadSpeakers(запрос): ')+e);return;}
   if(!d.ok){uiLog(t('loadSpeakers(ответ): ')+(d.error||t('ответ без ok')));return;}
   SPEAKERS=d.speakers||{};SPKDEF=d.defaults||{};SPKLAB=d.labels||[];
+  // Форматы кадра — из core/frame.py (роут отдаёт их вместе с профилями): список
+  // один на весь проект, второй копии в интерфейсе нет. Порядок пунктов приезжает
+  // отдельным полем format_order: у словаря JSON порядка нет, ключи Flask сортирует
+  // по алфавиту — по Object.keys список шёл бы 16:9, 1:1, 4:5, 9:16.
+  SPKFORMATS=d.formats||{};SPKFORMAT_ORDER=d.format_order||[];
+  SPKDEF_FORMAT=d.default_format||'9:16';
+  spkFormatFill();
   const sel=$('speaker');if(!sel)return;
   sel.innerHTML='<option value="">'+t('не выбран')+'</option>';
   Object.keys(SPEAKERS).forEach(k=>{const o=document.createElement('option');
@@ -224,6 +231,21 @@ function spkCamDirFill(cds){
       +'<input id="spk_camdir'+k+'" placeholder="'+t('пусто — автоподбор')+'">'
       +'<button class="sm" onclick="pickdir(\'spk_camdir'+k+'\')">'+t('Выбрать…')+'</button>';
     host.appendChild(row);$('spk_camdir'+k).value=(cds&&cds[k])||'';}}
+// Поля LUT в модалке спикера — тоже по строке на камеру (nCams()), как папки камер:
+// у каждой камеры своя таблица .cube, общей быть не может (разные объективы и свет).
+function spkLutFill(lut){
+  const host=$('spk_luts');if(!host)return;host.innerHTML='';
+  const m=lut||{};
+  for(let k=0;k<nCams();k++){
+    const row=document.createElement('div');row.className='setrow';
+    row.innerHTML='<label>'+esc(t('Камера {n}',{n:k+1}))+'</label>'
+      +'<input id="spk_lut'+k+'" placeholder="'+esc(t('пусто — LUT не накладывается'))+'">'
+      +'<button class="sm" onclick="pickcube(\'spk_lut'+k+'\')">'+esc(t('Выбрать…'))+'</button>'
+      +'<button class="sm" onclick="lutClear('+k+')">'+esc(t('Убрать'))+'</button>';
+    host.appendChild(row);$('spk_lut'+k).value=(m[String(k+1)]||'');}}
+// «Убрать» гасит только поле: в профиль правка уезжает по «Сохранить», как у
+// остальных полей окна (иначе кнопка сохраняла бы профиль за спиной у юзера).
+function lutClear(k){const el=$('spk_lut'+k);if(el){el.value='';el.focus();}}
 // Смена спикера подставляет ЕГО папки и стиль.
 async function onSpeakerChange(){const p=SPEAKERS[val('speaker')];
   if(p){
@@ -252,6 +274,23 @@ async function onSpeakerChange(){const p=SPEAKERS[val('speaker')];
 // Профили заводились только руками, файлом в speakers/*.json: чтобы посадить нового
 // человека, приходилось лезть в папку. Роуты save/delspeaker были готовы давно —
 // не было окна.
+// Формат кадра ролика: список из core/frame.py (приезжает с /api/speakers). Первым
+// пунктом — формат по умолчанию: у профилей, заведённых до появления поля, его нет,
+// и такой ролик обязан собираться как раньше (9:16).
+// Порядок пунктов задаёт format_order — ключи core/frame.py по порядку (9:16, 1:1,
+// 4:5, 16:9). У словаря `formats` порядка нет (Flask сортирует ключи JSON), и по
+// Object.keys формат по умолчанию стоял бы последним. Поля нет (старый сервер) —
+// прежнее поведение: порядок по ключам словаря.
+function spkFormatFill(){
+  const sel=$('spk_format');if(!sel)return;
+  const cur=sel.value;
+  sel.innerHTML='';
+  const list=(SPKFORMAT_ORDER&&SPKFORMAT_ORDER.length)
+    ?SPKFORMAT_ORDER.slice():Object.keys(SPKFORMATS);
+  if(list.indexOf(SPKDEF_FORMAT)<0)list.unshift(SPKDEF_FORMAT);
+  list.forEach(f=>{const o=document.createElement('option');
+    o.value=f;o.textContent=(f===SPKDEF_FORMAT)?(f+' — '+t('как раньше')):f;sel.appendChild(o);});
+  sel.value=(cur&&list.indexOf(cur)>=0)?cur:SPKDEF_FORMAT;}
 function openSpeaker(key){
   SPKEDIT=SPEAKERS[key]?key:'';
   const p=SPKEDIT?SPEAKERS[SPKEDIT]:{};
@@ -261,10 +300,14 @@ function openSpeaker(key){
   $('spk_jsxdir').value=p.jsxdir||'';
   $('spk_renderdir').value=p.renderdir||'';
   spkCamDirFill(p.camdirs||[]);
+  spkLutFill(p.lut||{});
   $('spk_hint').value=p.hint||'';
   $('spk_note').value=p.note||'';
   $('spk_bpcut').value=(p.breath_p_cut!=null?p.breath_p_cut:'');
   $('spk_bpmark').value=(p.breath_p_mark!=null?p.breath_p_mark:'');
+  const ins=p.inserts||{};
+  $('spk_ins_photo').value=(ins.photo!=null?ins.photo:'');
+  $('spk_ins_video').value=(ins.video!=null?ins.video:'');
   const ips=p.image_prompts||{};
   $('spk_extra_a').value=(ips.a&&ips.a.extra)||'';
   $('spk_pos_a').value=(ips.a&&ips.a.pos==='prefix')?'prefix':'suffix';
@@ -285,9 +328,56 @@ function openSpeaker(key){
   Object.keys(STYLES).forEach(k=>{const o=document.createElement('option');
     o.value=k;o.textContent=t(STYLES[k].label||k);ss.appendChild(o);});
   ss.value=(p.style&&STYLES[p.style])?p.style:'';
+  spkFormatFill();
+  const fs=$('spk_format');if(fs)fs.value=(p.format&&SPKFORMATS[p.format])?p.format:SPKDEF_FORMAT;
   spkGrid(p.cut||{});
+  // Голос — только сводкой: ручек здесь нет и не будет, крутят их в панели «Голос»
+  // превью нарезки, на звуке клипа (та же функция разметки, см. voiceFxRender).
+  voiceFxRender($('spkVoice'),p.voice_fx,{mode:'summary'});
   $('spk_del').style.display=SPKEDIT?'':'none';
   openModal('mbSpeaker');}
+// ---- пересчёт стиля под кадр формата ----
+// Стиль задуман в кадре 1080×1920 и на все форматы один. При сборке его числа
+// пересчитывает Python (core/style_geometry.py), а здесь — то же правило для
+// ЖИВОГО превью: панель правит стиль в базовых единицах, а превью рисует по
+// кадру ролика, и без пересчёта в квадрате интро стояло бы за краем.
+// Таблица «поле -> вид» приезжает полем geo в схеме панели (/api/style_schema):
+// второй её копии здесь нет — только формула, и та одна (stScaleFactor).
+const ST_BASE_W=1080,ST_BASE_H=1920;
+function stGeoTable(){
+  const g=STSCHEMA&&STSCHEMA.geo;
+  return (g&&typeof g==='object')?g:null;}
+// Множитель вида поля в кадре w×h. Нет таблицы (схема не приехала) — 1: превью
+// работает как раньше, вертикаль остаётся вертикалью.
+function stScaleFactor(kind,w,h){
+  const g=stGeoTable();if(!g||!kind)return 1;
+  const W=+w||0,H=+h||0;if(!(W>0)||!(H>0))return 1;
+  if(kind==='x')return W/ST_BASE_W;
+  if(kind==='y')return H/ST_BASE_H;
+  if(kind==='size')return Math.min(W,H)/ST_BASE_W;
+  return 1;}
+function stScaleGeo(key,w,h){const g=stGeoTable();return (g&&g[key])?stScaleFactor(g[key],w,h):1;}
+// Множитель вида (x/y/size) без конкретного поля: какое поле представляет вид,
+// говорит бэкенд (geo_axis схемы) — своей таблицы «вид -> поле» на фронте нет.
+function stAxisKey(kind){const a=STSCHEMA&&STSCHEMA.geo_axis;return (a&&a[kind])||null;}
+function stScaleKind(kind,w,h){const key=stAxisKey(kind);return key?stScaleGeo(key,w,h):1;}
+function stScaleRound(v){
+  if(typeof v!=='number'||!isFinite(v))return v;
+  return Math.round(v*100)/100;}
+// Стиль, пересчитанный под кадр w×h: вход не меняется, ключи вне таблицы — как есть.
+function stScaleStyle(s,w,h){
+  if(!s)return s;
+  const out={};for(const k in s)out[k]=s[k];
+  const g=stGeoTable();if(!g)return out;
+  for(const k in g){
+    if(typeof out[k]==='number'&&isFinite(out[k]))out[k]=stScaleRound(out[k]*stScaleFactor(g[k],w,h));}
+  return out;}
+// Обратный пересчёт для драга: экранный сдвиг в px КАДРА -> базовые единицы
+// стиля. Без него перетащил на квадрате — а в вертикали уехало.
+function stUnscaleGeo(v,kind,w,h){
+  const k=stScaleFactor(kind,w,h);
+  return k?stScaleRound(v/k):v;}
+
 // Поле пустое = порог общий. Поэтому в value кладём только то, что реально
 // переопределено, а дефолт показываем placeholder'ом — иначе «профиль без правок»
 // сохранился бы с шестнадцатью «своими» порогами, равными общим.
@@ -301,6 +391,779 @@ function spkGrid(cut){const host=$('spk_cut');if(!host)return;host.innerHTML='';
       cell.innerHTML='<label>'+esc(t(lab))+'</label><input type="number" step="0.01" data-cut="'+k+'"'
         +' value="'+(cut[k]!=null?esc(String(cut[k])):'')+'" placeholder="'+esc(String(d))+'">';
     host.appendChild(cell);});}
+
+// ---- голос: ОДИН компонент на два места (панель превью и сводка профиля) ----
+// Настройки живут в профиле спикера (поле voice_fx) и запекаются в WAV ДО After
+// Effects: в проект уедет уже обработанный голос камеры 1, по нему же будет резать
+// нарезка. Но КРУТЯТ их ровно в одном месте — в панели «Голос» превью нарезки, на
+// звуке клипа: там слышно, что выходит (в профиле крутить нечего, слушать нечего).
+// Поэтому и разметка, и чтение значений — одна пара функций (voiceFxRender и
+// voiceFxRead): второй копии блока ни в редакторе профиля, ни где-либо ещё нет.
+// Состояние панели живёт В САМОЙ РАЗМЕТКЕ (порядок строк цепочки = порядок
+// обработки), а не в отдельной переменной: два места об одном и том же разъезжаются.
+//
+// ВЫКЛЮЧАТЕЛЬ ОДИН — «ИИ-шумодав» (и цепочка плагинов под ним). Галок «для нарезки»
+// и «в итоговый трек» больше нет: включено — работает ВЕЗДЕ и ВЕСЬ (нарезка, итоговый
+// трек AE/DRP/XML, черновой рендер, все превью). Правило одно и на сервере
+// (core/voicefx.py:voice_fx_on) — здесь его зеркало для разметки (voiceFxOn).
+const VFX_DB_DEFAULT=40;
+let VSTLIST=[];              // найденные VST3: список один на страницу (пункт «Добавить плагин»)
+let VOICEFXSPK='';           // ключ профиля спикера клипа, открытого в превью (см. pvVoicePanel)
+// Сила RoFormer — доля обработанного в смеси с исходником, %: 100 = только
+// обработанный (штатный режим, владелец выбирал движок по этому звуку). У
+// deep-filter сила другая — предел подавления в дБ (VFX_DB_DEFAULT).
+const VFX_ENGINE_DEFAULT='roformer';
+const VFX_MIX_DEFAULT=100;
+// Состояние окружения RoFormer (одно на страницу): что стоит, что качать и как
+// идёт установка. Спрашивается при открытии панели и опрашивается во время
+// установки (voiceFxSepFill / voiceFxSepWatch).
+let VFXSEP=null;
+let VFXSEP_TIMER=0;
+const VFXSEP_POLL=1500;      // опрос хода установки, мс: шаги идут минутами
+// Движок шумодава из настроек профиля. Явное значение — как записано; поля нет —
+// RoFormer: он движок по умолчанию (DeepFilterNet остаётся в списке, им чистят
+// паузы, но шорох одежды поверх речи он не берёт).
+function vfxEngine(f){
+  const dn=(f&&typeof f.denoise==='object')?f.denoise:{};
+  if(dn.engine==='roformer'||dn.engine==='roformer_aggr')return dn.engine;
+  if(dn.engine==='deepfilter')return 'deepfilter';
+  return VFX_ENGINE_DEFAULT;}
+function vfxEngName(eng){
+  if(eng==='roformer')return t('RoFormer (мягкий)');
+  if(eng==='roformer_aggr')return t('RoFormer (жёсткий)');
+  return 'DeepFilterNet';}
+// Подписи ползунка меняются по движку: у deep-filter это предел подавления в дБ,
+// у RoFormer — доля обработанного в смеси, %.
+function vfxStrengthLabel(eng){return eng==='deepfilter'?t('Подавление, дБ'):t('Доля обработанного, %');}
+function vfxStrengthHint(eng){
+  if(eng==='deepfilter')return t('Предел подавления в дБ: 0 — без обработки, 100 — глушит вместе с шумом и голосом. Начни с 30-40.');
+  return t('Доля обработанного голоса в смеси с исходником, %: 100 — только обработанный, 50 — полусумма с исходником, 0 — без обработки. Ручку слышно сразу, пока идёт прослушивание.');}
+// Сила ДРУГОГО движка лежит в скрытом поле: ползунок один, а значений два, и без
+// запаса переключение движка туда-обратно молча теряло бы настройку.
+function vfxAltDefault(eng){return eng==='deepfilter'?VFX_MIX_DEFAULT:VFX_DB_DEFAULT;}
+// Текущий движок из РАЗМЕТКИ (data-engine ставит и разметка, и dnEngineSync), а не
+// из <select>.value: состояние панели живёт в разметке, и читающий его код не
+// должен зависеть от того, как выпадающий список ведёт себя в конкретном DOM.
+function vfxEngineSel(host){
+  const sel=vfxEl(host,'dn_engine');if(!sel)return VFX_ENGINE_DEFAULT;
+  return sel.dataset.engine||sel.value||VFX_ENGINE_DEFAULT;}
+// Панель, к которой относится элемент разметки: строки цепочки, галки и кнопки зовут
+// обработчики с `this`, а работают всегда в пределах своей панели.
+function voiceFxHost(el){return (el&&el.closest)?el.closest('[data-vfxroot]'):null;}
+function vfxEl(host,k){return host?host.querySelector('[data-vfx="'+k+'"]'):null;}
+function vstTitle(p){return (p&&(p.title||p.name))||((p&&p.path||'').replace(/^.*[\\\/]/,''));}
+// Обработка включена: шумодав или хоть один плагин с галкой. Это ЗЕРКАЛО серверного
+// правила (core/voicefx.py:voice_fx_on) — одно условие на значения профиля
+// (voiceFxLive) и на разметку (voiceFxOn); второй копии быть не должно.
+function voiceFxLive(fx){
+  const f=(fx&&typeof fx==='object')?fx:{},dn=(f.denoise&&typeof f.denoise==='object')?f.denoise:{};
+  return !!(dn.on||(Array.isArray(f.vst)&&f.vst.some(v=>v&&v.on!==false)));}
+function voiceFxOn(host){
+  const dn=vfxEl(host,'dn_on');if(dn&&dn.checked)return true;
+  return Array.from(host.querySelectorAll('[data-vfx="vst_on"]')).some(c=>c.checked);}
+// ЖИВОЙ ХОСТ клипа — этим живёт звук превью. Пока открыто превью и в цепочке есть
+// включённые плагины, голос клипа играет ПРОЦЕСС ХОСТА (трек через цепочку
+// вживую, вровень с картинкой), а окно плагина — лишь его панель: открыл/закрыл,
+// звук не рвётся. Состояние живёт на странице (VOICEFXLIVE), потому что о нём
+// знают двое: панель «Голос» поднимает хост и открывает окна, а плеер спрашивает
+// перед каждым кадром. В профиле этого нет: хост живёт только здесь и только сейчас.
+//
+// Три вопроса — три ответа, и все нужны:
+//   * `voiceFxHostOn` — хост поднят (процесс жив), но звучит ли он, ещё неизвестно;
+//   * `voiceFxLiveOn` — хост РЕАЛЬНО звучит: дорожка шумодава досчитана (только тогда
+//     плеер глушит свой голос — раньше глушение означало бы тишину вместо голоса).
+//     `track_ready` явно `false` — «дорожки ещё нет»; страница ставит его всегда
+//     булевым, а незаданный считается готовым (так стенды, ставящие только sid/running);
+//     `audio_error` — «звук хоста не идёт» (устройство не приняло частоту, поток
+//     отвалился): тогда глушить свой голос НЕЛЬЗЯ, иначе человек слышит тишину;
+//   * `voiceFxWindowOn` — окно плагина открыто прямо сейчас (пока оно открыто, свои
+//     ручки панели не записываем: состояние вот-вот отдаст окно).
+let VOICEFXLIVE=null;
+function voiceFxHostOn(){return !!(VOICEFXLIVE&&VOICEFXLIVE.running);}
+function voiceFxLiveOn(){return !!(VOICEFXLIVE&&VOICEFXLIVE.running&&!VOICEFXLIVE.audio_error&&VOICEFXLIVE.track_ready!==false);}
+function voiceFxWindowOn(){return !!(VOICEFXLIVE&&VOICEFXLIVE.running&&VOICEFXLIVE.window);}
+// Включённые плагины цепочки: одно решение на «нужен ли живой хост» и на подпись
+// панели — второй копии правила быть не должно.
+function voiceFxHasVst(fx){
+  const f=(fx&&typeof fx==='object')?fx:{};
+  return !!(Array.isArray(f.vst)&&f.vst.some(v=>v&&v.path&&v.on!==false));}
+// Строка-сводка значений профиля: то, что видно там, где крутить нечего (редактор
+// профиля). Словами, а не галками: у обработки голоса одно решение — включена она
+// или нет, и включённая работает и в нарезке, и в итоговом треке, и в превью.
+function voiceFxSummary(fx){
+  const f=(fx&&typeof fx==='object')?fx:{};
+  const dn=(f.denoise&&typeof f.denoise==='object')?f.denoise:{};
+  const vst=Array.isArray(f.vst)?f.vst.filter(v=>v&&v.path):[];
+  const on=vst.filter(v=>v.on!==false).length;
+  if(!voiceFxLive(f))return t('Обработка голоса не настроена');
+  const parts=[];
+  const eng=vfxEngine(f);
+  const dbs=(dn.atten_db!=null?dn.atten_db:VFX_DB_DEFAULT);
+  const pct=(dn.mix!=null?dn.mix:VFX_MIX_DEFAULT);
+  if(!dn.on)parts.push(t('Шумодав выключен'));
+  else if(eng==='deepfilter')parts.push(t('Шумодав {db} дБ',{db:dbs}));
+  else parts.push(t('Шумодав {engine} {pct} %',{engine:vfxEngName(eng),pct:pct}));
+  parts.push(vst.length?t('плагинов {n}',{n:vst.length})+(on<vst.length?t(' (включено {on})',{on:on}):''):t('плагинов нет'));
+  parts.push(t('работает везде: нарезка, итоговый трек, превью'));
+  return parts.join(' · ');}
+function vfxDnSummaryText(eng, str){
+  if(eng==='deepfilter')return 'DeepFilterNet · '+str+' дБ';
+  return vfxEngName(eng)+' · '+t('доля')+' '+str+' %';}
+function vfxDnToggle(btn){
+  const host=voiceFxHost(btn);if(!host)return;
+  const det=host.querySelector('[data-vfx="dn_details"]');if(!det)return;
+  const open=(det.style.display!=='none');
+  det.style.display=open?'none':'block';
+  btn.textContent=open?t('▾ настройки'):t('▴ скрыть');}
+function vfxDnUpdateSummary(host){
+  if(!host)return;
+  const sum=host.querySelector('[data-vfx="dn_summary"]');
+  if(!sum)return;
+  const eng=vfxEngineSel(host);
+  const str=voiceFxStrength(host);
+  sum.textContent=vfxDnSummaryText(eng,str);}
+// Разметка блока. mode: panel — панель настроек (превью нарезки), summary — сводка
+// (редактор профиля), off — крутить нечего (у клипа нет спикера или профиль пропал).
+function voiceFxRender(host,fx,opts){
+  if(!host)return;
+  const o=opts||{},f=(fx&&typeof fx==='object')?fx:{};
+  host.setAttribute('data-vfxroot','1');
+  host.dataset.vfxmode=o.mode||'panel';
+  if(o.mode==='summary'){
+    host.innerHTML='<div class="hint">'+esc(voiceFxSummary(f))+'</div>'
+      +'<div class="hint" style="margin-top:6px;font-size:11.5px">'
+      +t('Настраивается в превью нарезки — на звуке клипа: там слышно, что выходит.')+'</div>';
+    return;}
+  if(o.mode==='off'){
+    host.innerHTML='<div class="hint">'+esc(o.note||t('У клипа нет спикера — обработка голоса настраивается в профиле спикера.'))
+      +' <span class="i" data-t="'+esc(t('Обработка голоса — настройка ПРОФИЛЯ спикера: у клипа без тега профиля нет, поэтому и панели нет. Поставь тег спикера на клип или открой клип с тегом.'))+'">!</span></div>';
+    tipArm(host);
+    return;}
+  const dn=(f.denoise&&typeof f.denoise==='object')?f.denoise:{};
+  const eng=vfxEngine(f);
+  const att=(dn.atten_db!=null?dn.atten_db:VFX_DB_DEFAULT);
+  const mix=(dn.mix!=null?dn.mix:VFX_MIX_DEFAULT);
+  // Ползунок показывает силу ТЕКУЩЕГО движка, скрытое поле — силу другого (см. dnEngineSync).
+  const str=(eng==='deepfilter')?att:mix;
+  const alt=(eng==='deepfilter')?mix:att;
+  const vst=(Array.isArray(f.vst)?f.vst:[]).filter(v=>v&&v.path);
+  const curDb=(typeof CURSTYLE!=='undefined'&&CURSTYLE&&CURSTYLE.voice_db!=null)?CURSTYLE.voice_db:0;
+  const vdbVal=Math.round(curDb*2)/2;
+  const vdbTxt=(vdbVal>=0?'+':'')+vdbVal.toFixed(1)+' dB';
+  // ВЫКЛЮЧАТЕЛЬ ОДИН. Галок «Для нарезки» и «В итоговый трек» здесь больше нет:
+  // включённая обработка работает везде и весь, и второго решения у неё нет.
+  // Списки (движок, плагины, «куда играть») — по ширине содержимого, а не на всю
+  // панель: растянутый на полэкрана выпадающий список читается хуже строки под ним.
+  let h='<div class="setrow" style="margin-bottom:10px">'
+    +'<label data-t="'+esc(t('Громкость голоса спикера'))+'">'+t('Громкость')+'</label>'
+    +'<span style="display:flex;gap:12px;align-items:center;flex:1;min-width:0">'
+    +'<input type="range" id="pvvoicedb" data-vfx="voice_db" min="-60" max="12" step="0.5" value="'+vdbVal+'" style="flex:1;min-width:0" oninput="setStyleDb(\'voice\',this.value)">'
+    +'<span id="pvvoicedbv" style="width:62px;text-align:right;font-variant-numeric:tabular-nums;font-size:12px">'+vdbTxt+'</span>'
+    +'</span></div>'
+    +'<div class="sethdr">'+t('Цепочка обработки')+' <span class="i" data-t="'
+    +esc(t('Цепочка обработки голоса: шумодав и плагины идут сверху вниз, в том порядке, в каком стоят в списке.'))+'">!</span></div>'
+    +'<div class="setrow" style="align-items:center;justify-content:space-between;margin-bottom:4px">'
+    +'<label class="chk" style="flex:0 0 auto" data-t="'
+    +esc(t('ИИ-шумодав до VST-плагинов: убирает шум комнаты и улицы. Движок — в настройках ниже; выключено — голос идёт как есть, плагины продолжают работать.'))+'">'
+    +'<input type="checkbox" data-vfx="dn_on"'+(dn.on?' checked':'')+' onchange="vstFxDn(this)"> '+t('Шумодав')+'</label>'
+    +'<span data-vfx="dn_summary" style="font-size:12px;color:var(--mut);margin-left:8px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vfxDnSummaryText(eng,str))+'</span>'
+    +'<button type="button" class="sm link" data-vfx="dn_toggle" onclick="vfxDnToggle(this)" style="background:none;border:none;color:var(--tx);cursor:pointer;padding:2px 6px;font-size:12px;flex:0 0 auto">'+t('▾ настройки')+'</button>'
+    +'</div>'
+    +'<div data-vfx="dn_details" style="display:none;padding:6px 0 6px 12px;border-left:2px solid var(--bd);margin:2px 0 8px 6px">'
+    +'<div class="setrow"><label data-t="'+esc(t('Движок ИИ-шумодава. RoFormer (мягкий и жёсткий) — mel-band модели в своём окружении: берут шорох одежды поверх речи, ставятся отдельно, кнопкой рядом. DeepFilterNet — прежний движок: чистит паузы, шорох одежды на речи не берёт. Профиль без поля движка работает на RoFormer (мягкий).'))+'">'
+    +t('Движок')+'</label>'
+    +'<select data-vfx="dn_engine" data-engine="'+eng+'" style="width:auto;max-width:320px" onchange="dnEngineSync(this)">'
+    +'<option value="deepfilter"'+(eng==='deepfilter'?' selected':'')+'>DeepFilterNet</option>'
+    +'<option value="roformer"'+(eng==='roformer'?' selected':'')+'>'+t('RoFormer (мягкий)')+'</option>'
+    +'<option value="roformer_aggr"'+(eng==='roformer_aggr'?' selected':'')+'>'+t('RoFormer (жёсткий)')+'</option>'
+    +'</select>'
+    +'<button class="sm" data-vfx="sep_install" style="display:none" onclick="voiceFxSepInstall(this)" data-t="'
+    +esc(t('Ставит RoFormer в своё окружение (~/.reelsi/voice_sep): системный Python и его пакеты не трогаются. Качаются окружение audio-separator и две модели — ход виден в общей форме прогресса.'))+'">'
+    +t('Скачать RoFormer')+'</button>'
+    +'<span class="muted" data-vfx="sep_state" style="font-size:11.5px"></span></div>'
+    +'<div class="setrow"><label data-vfx="dn_label" data-t="'+esc(vfxStrengthHint(eng))+'">'
+    +esc(vfxStrengthLabel(eng))+'</label><span style="display:flex;gap:12px;align-items:center;flex:1;min-width:0">'
+    +'<input type="range" data-vfx="dn_atten" min="0" max="100" step="1" value="'+str+'" style="flex:1;min-width:0" oninput="dnAttenSync(this)">'
+    +'<input type="number" data-vfx="dn_atten_num" min="0" max="100" step="1" value="'+str+'" style="width:58px" oninput="dnAttenSync(this)">'
+    +'<input type="hidden" data-vfx="dn_alt" value="'+alt+'">'
+    +'</span></div>'
+    +'</div>'
+    +'<div data-vfx="vst"></div>'
+    +'<div class="setrow" style="margin-top:6px"><select data-vfx="pick" style="width:auto;max-width:320px"></select>'
+    +'<button class="sm" onclick="vstFxList(this,true)" data-t="'
+    +esc(t('Перечитать список плагинов: досканируются только новые и обновлённые — уже прочитанные берутся из кеша. Плагин грузит отдельный процесс, в сервере он не открывается.'))+'">'
+    +t('Обновить список')+'</button>'
+    +'<button class="sm" onclick="vstFxAdd(this)">'+t('+ Добавить плагин')+'</button></div>'
+    +'<div class="setrow" style="margin-top:8px"><label data-t="'
+    +esc(t('Устройство вывода для живого прослушивания в окне плагина. «По умолчанию» — системное. Настройка этой машины, а не спикера: запоминается в браузере.'))+'">'
+    +t('Куда играть')+'</label><select data-vfx="device" style="width:auto;max-width:320px"></select></div>'
+    +'<div class="row" style="gap:12px;align-items:center;margin-top:10px;flex-wrap:wrap">'
+    +'<span class="muted" data-vfx="autosave" style="font-size:11.5px">'
+    +t('Сохраняется само: закрыл окно плагина или отпустил ручку — настройки уже у спикера.')+'</span>'
+    +'<span class="grow"></span></div>'
+    +'<div class="hint" data-vfx="status" style="margin-top:6px;font-size:11.5px"></div>';
+  host.innerHTML=h;
+  const box=vfxEl(host,'vst');
+  if(box)vst.forEach(p=>box.appendChild(vstRow(p)));
+  vstFxNote(host);
+  fxDeviceFill(host);
+  tipArm(host);}
+// Значения панели — то, что уедет в data.voice_fx профиля спикера. Ничего не включено и
+// список пуст → null: у профиля, который не трогали, поля voice_fx не появляется (как у
+// inserts и lut). Сводка панелью не является — читать из неё нечего.
+//
+// Галочек назначения в значениях НЕТ: обработка включена или выключена, и это одно
+// решение (denoise.on или включённый плагин). Сервер выводит из него и нарезку, и
+// итоговый трек, и превью (core/voicefx.py:voice_fx_on) — второй копии решения в
+// профиле не хранится, и старые `cut`/`final=false` обработку не выключают.
+function voiceFxRead(host){
+  if(!host||host.dataset.vfxmode!=='panel')return null;
+  const on=!!(vfxEl(host,'dn_on')||{}).checked;
+  const vst=Array.from(host.querySelectorAll('[data-vst]')).filter(r=>r.dataset.path).map(r=>({
+    path:r.dataset.path,name:r.dataset.name||'',state:r.dataset.state||'',
+    on:!!(r.querySelector('[data-vfx="vst_on"]')||{}).checked}));
+  if(!on&&!vst.length)return null;
+  const eng=vfxEngineSel(host);
+  const strength=voiceFxStrength(host);
+  const other=voiceFxOther(host,eng);
+  return {denoise:{on:on,engine:eng,
+      atten_db:(eng==='deepfilter'?strength:other),
+      mix:(eng==='deepfilter'?other:strength)},
+    vst:vst};}
+// Число ползунка силы (0..100; мусор — 0: «силы нет» переживается, а NaN уехал бы
+// в профиль и зажался бы там дефолтом уже без объяснения откуда).
+function voiceFxStrength(host){
+  const v=parseInt((vfxEl(host,'dn_atten_num')||{}).value,10);
+  return isNaN(v)?0:Math.max(0,Math.min(100,v));}
+// Сила ДРУГОГО движка — из скрытого поля (панель без него — дефолт этого движка).
+function voiceFxOther(host,eng){
+  const v=parseInt((vfxEl(host,'dn_alt')||{}).value,10);
+  return isNaN(v)?vfxAltDefault(eng):Math.max(0,Math.min(100,v));}
+// Строка состояния панели: чем занят сервер (считает окно, печёт голос) и что не
+// вышло. Одна на панель — и для обработки, и для прослушивания.
+function voiceFxStatus(host,text){
+  const el=vfxEl(host||$('pvvoice'),'status');if(el)el.textContent=text||'';}
+// Ползунок и число — одно значение: без синхронизации они разъезжаются молча
+// (число показывает одно, а в профиль уедет то, что осталось в ползунке). Плюс
+// «пересчитать окно»: силу шумодава слышно сразу, пока идёт прослушивание.
+function dnAttenSync(el){
+  const host=voiceFxHost(el);if(!host)return;
+  const r=vfxEl(host,'dn_atten'),n=vfxEl(host,'dn_atten_num');if(!r||!n)return;
+  let v=parseInt(el===n?n.value:r.value,10);
+  if(isNaN(v)||v<0||v>100)v=vfxEngineSel(host)==='deepfilter'?VFX_DB_DEFAULT:VFX_MIX_DEFAULT;
+  r.value=v;n.value=v;
+  vfxDnUpdateSummary(host);
+  pvVoiceTune();}
+// Смена движка шумодава. Ползунок один, а сила у движков своя (дБ против %):
+// значение прошлого движка уезжает в скрытое поле, из него же берётся значение
+// нового — иначе переключение туда-обратно молча теряло бы настройку. Плюс
+// подписи ползунка, кнопка установки RoFormer и пересчёт окна прослушивания.
+function dnEngineSync(sel){
+  const host=voiceFxHost(sel);if(!host)return;
+  const was=sel.dataset.engine||VFX_ENGINE_DEFAULT,now=sel.value||VFX_ENGINE_DEFAULT;
+  const alt=vfxEl(host,'dn_alt');
+  const strength=voiceFxStrength(host);
+  const other=voiceFxOther(host,was);
+  const r=vfxEl(host,'dn_atten'),n=vfxEl(host,'dn_atten_num');
+  if(r)r.value=other;if(n)n.value=other;
+  if(alt)alt.value=strength;
+  sel.dataset.engine=now;
+  const lab=vfxEl(host,'dn_label');
+  if(lab){lab.textContent=vfxStrengthLabel(now);lab.setAttribute('data-t',vfxStrengthHint(now));}
+  if(typeof voiceFxStatus==='function')voiceFxStatus(host,'');
+  if(typeof vtNote==='function'&&typeof ED!=='undefined')vtNote(ED,'');
+  voiceFxSepFill(host);                 // окружения для нового движка может не быть
+  vfxDnUpdateSummary(host);
+  pvVoiceTune();}
+// Одна строка цепочки: галка «вкл», название и кнопки. Иконки стрелок — SVG
+// (эмодзи в хроме запрещены, docs/DESIGN.md), подписи — через t().
+// Путь, имя и состояние плагина лежат в data-атрибутах строки: строка И ЕСТЬ запись
+// цепочки, поэтому порядок строк — это порядок обработки, и второй копии списка нет.
+function vstRow(p){
+  const el=document.createElement('div');el.className='setrow';
+  el.setAttribute('data-vst','1');
+  el.dataset.path=p.path||'';el.dataset.name=p.name||'';el.dataset.state=p.state||'';
+  el.innerHTML='<label class="chk" style="flex:0 0 auto" data-t="'
+    +esc(t('Плагин в цепочке: снятая галка — плагин пропускается'))+'">'
+    +'<input type="checkbox" data-vfx="vst_on"'+(p.on!==false?' checked':'')+' onchange="vstFxOn(this)"></label>'
+    +'<span class="grow" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vstTitle(p))+'</span>'
+    +'<button class="sm" onclick="vstFxEdit(this)" data-t="'
+    +esc(t('Окно плагина откроется СВЕРХУ, сразу: ручки слышно на звуке клипа в реальном времени, а настройки сохраняются сами — закрыл окно, и они уже у спикера.'))+'">'+t('Настроить')+'</button>'
+    +'<button class="icon" aria-label="'+esc(t('Выше в цепочке'))+'" data-t="'+esc(t('Выше в цепочке'))+'"'
+    +' onclick="vstFxMove(this,-1)">'+ico('arrow_up')+'</button>'
+    +'<button class="icon" aria-label="'+esc(t('Ниже в цепочке'))+'" data-t="'+esc(t('Ниже в цепочке'))+'"'
+    +' onclick="vstFxMove(this,1)">'+ico('arrow_down')+'</button>'
+    +'<button class="sm" onclick="vstFxDel(this)">'+t('Убрать')+'</button>';
+  return el;}
+// Пустая цепочка — не пустое место, а строка словами: иначе непонятно, есть ли
+// вообще обработка, и «Добавить плагин» читается как единственный путь.
+function vstFxNote(host){
+  const box=vfxEl(host,'vst');if(!box)return;
+  const rows=box.querySelectorAll('[data-vst]').length;
+  const note=box.querySelector('[data-vfx="vst_none"]');
+  if(rows){if(note)note.remove();return;}
+  if(note)return;
+  const d=document.createElement('div');d.className='muted';d.style.fontSize='12px';
+  d.setAttribute('data-vfx','vst_none');
+  d.textContent=t('плагинов нет — цепочка только из шумодава');
+  box.appendChild(d);}
+// Включили/выключили шумодав: пересчитаться должно всё, что зависит от обработки, —
+// голос клипа (pvVoiceTune) и запечённый трек. Отдельного правила «включили обработку —
+// поставить галку» больше нет: выключатель один, и он же решение.
+function vstFxDn(el){pvVoiceTune();}
+function vstFxOn(el){pvVoiceTune();}
+function vstFxDel(el){
+  const row=(el&&el.closest)?el.closest('[data-vst]'):null;if(!row)return;
+  const host=voiceFxHost(el);row.remove();
+  if(host){vstFxNote(host);pvVoiceTune();}}
+function vstFxMove(el,d){
+  const row=(el&&el.closest)?el.closest('[data-vst]'):null;if(!row)return;
+  const box=row.parentElement,rows=Array.from(box.querySelectorAll('[data-vst]'));
+  const i=rows.indexOf(row),j=i+d;
+  if(i<0||j<0||j>=rows.length)return;
+  if(d<0)box.insertBefore(row,rows[j]);else box.insertBefore(row,rows[j].nextSibling);
+  pvVoiceTune();}
+function vstFxAdd(el){
+  const host=voiceFxHost(el);if(!host)return;
+  const sel=vfxEl(host,'pick'),box=vfxEl(host,'vst');
+  const idx=parseInt(sel&&sel.value,10);
+  if(!box||isNaN(idx)||idx<0||idx>=VSTLIST.length){toast(t('Выбери плагин из списка'));return;}
+  const p=VSTLIST[idx];
+  // Один и тот же плагин дважды в цепочке — это почти всегда промах: у него одно
+  // состояние, и вторая копия молча перетрёт первую.
+  const have=Array.from(box.querySelectorAll('[data-vst]'))
+    .some(r=>r.dataset.path===p.path&&(r.dataset.name||'')===(p.name||''));
+  if(have){toast(t('Этот плагин уже в цепочке'));return;}
+  box.appendChild(vstRow({path:p.path,name:p.name||'',state:'',on:true}));
+  vstFxNote(host);
+  pvVoiceTune();}
+// Список найденных VST3 грузим при открытии панели или по кнопке «Обновить список».
+// Имена читает ОТДЕЛЬНЫЙ процесс (core/voicefx_scan): JUCE оставляет потоки чужого
+// плагина жить до конца процесса, поэтому в сервере плагин не грузится никогда.
+// Прочитанное ложится в кеш на диске (путь + mtime + размер), так что повторное
+// открытие панели не читает НИЧЕГО, а после установки нового плагина досканируется
+// только он. `refresh` — кнопка: она заставляет проверить файлы заново, а не
+// брать список из кеша памяти.
+async function vstFxList(el,refresh){
+  const host=voiceFxHost(el);if(!host)return;
+  const sel=vfxEl(host,'pick');if(!sel)return;
+  sel.innerHTML='<option value="">'+t('ищу плагины…')+'</option>';
+  let d;
+  try{d=await (await fetch('/api/voicefx_vst_list'+(refresh?'?refresh=1':''))).json();}
+  catch(e){sel.innerHTML='<option value="">'+t('список плагинов не пришёл')+'</option>';uiLog('voicefx_vst_list: '+e);return;}
+  if(d.error){sel.innerHTML='<option value="">'+t('список плагинов не пришёл')+'</option>';uiLog('voicefx_vst_list: '+errText(d));return;}
+  VSTLIST=d.plugins||[];sel.innerHTML='';
+  if(!VSTLIST.length){sel.innerHTML='<option value="">'+t('плагинов не нашлось')+'</option>';return;}
+  VSTLIST.forEach((p,i)=>{const o=document.createElement('option');o.value=i;o.textContent=vstTitle(p);sel.appendChild(o);});}
+// Куда играть живое прослушивание: настройка ЭТОЙ машины, а не спикера, поэтому в
+// localStorage, а не в профиле (профиль уезжает на другой компьютер).
+// try/catch — localStorage бывает выключен настройками браузера, и падать из-за
+// запоминания устройства незачем.
+const FX_DEV_KEY='reelsi_fx_device';
+function fxDeviceGet(){try{return localStorage.getItem(FX_DEV_KEY)||'';}catch(e){return '';}}
+function fxDeviceSet(v){try{if(v)localStorage.setItem(FX_DEV_KEY,v);else localStorage.removeItem(FX_DEV_KEY);}catch(e){uiLog('устройство вывода: '+e);}}
+// Список устройств спрашиваем при открытии панели: он нужен и подсказкой «куда
+// играть», и вторым пунктом «По умолчанию» (пусто = системное).
+async function fxDeviceFill(host){
+  const sel=vfxEl(host,'device');if(!sel)return;
+  const want=fxDeviceGet();
+  sel.innerHTML='<option value="">'+t('По умолчанию')+'</option>';
+  let d;
+  try{d=await (await fetch('/api/voicefx_devices')).json();}
+  catch(e){uiLog('voicefx_devices: '+e);return;}
+  if(d.error){uiLog('voicefx_devices: '+errText(d));return;}
+  ((d&&d.devices)||[]).forEach(n=>{const o=document.createElement('option');
+    o.value=n;o.textContent=n;sel.appendChild(o);});
+  // Выбранное устройство могло исчезнуть (наушники выдернули): оставляем
+  // «По умолчанию», а не пустую строку в списке.
+  sel.value=(want&&Array.from(sel.options).some(o=>o.value===want))?want:'';
+  sel.onchange=()=>fxDeviceSet(sel.value);}
+// ---- шумодав RoFormer: состояние окружения и установка ----------------------
+// RoFormer живёт в СВОЁМ окружении (~/.reelsi/voice_sep, core/voicefx_sep): venv с
+// audio-separator и две модели по ~0.9 ГБ. Пока его нет, движок выбрать можно, а
+// работать он не будет — поэтому панель спрашивает состояние и показывает кнопку
+// установки. Числа в разметке нет: размер загрузки приходит с сервера (он один
+// знает и размеры моделей, и что уже скачано).
+function vfxSepStep(step){
+  if(step==='venv')return t('создаю окружение');
+  if(step==='pip')return t('ставлю пакеты audio-separator');
+  if(step==='model')return t('качаю модель');
+  if(step==='done')return t('готово');
+  if(step==='fail')return t('не вышло');
+  return '';}
+// Строка хода установки: шаг, номер и хвост лога (вывод pip и загрузки).
+function vfxSepText(job){
+  if(!job||!job.step)return '';
+  const step=vfxSepStep(job.step);
+  if(job.step==='fail')return t('Установка RoFormer: {step} — {err}',{step:step,err:job.error||''});
+  if(job.step==='done')return t('Установка RoFormer: {step}',{step:step});
+  const last=Array.isArray(job.log)&&job.log.length?job.log[job.log.length-1]:'';
+  const tail=(typeof last==='string'&&last)?' — '+last:'';
+  return t('Установка RoFormer: {step} ({i}/{n})',{step:step,i:job.i,n:job.n})+tail;}
+// Размер загрузки для кнопки: сервер отдаёт и готовую строку, и число байт —
+// считаем по числу, чтобы в английском интерфейсе было «GB», а не «ГБ» (язык
+// сервера и язык браузера могут не совпадать).
+function vfxSepSize(){
+  const b=(VFXSEP&&VFXSEP.size_bytes)?VFXSEP.size_bytes:0;
+  if(!b)return (VFXSEP&&VFXSEP.size)||'';
+  const gb=Math.ceil(b/1073741824*10)/10;
+  return t('~{gb} ГБ',{gb:gb.toFixed(1)});}
+// Показать или спрятать кнопку скачивания: она нужна ровно тогда, когда выбран
+// движок RoFormer, а окружения или модели для него нет. Кнопка стоит РЯДОМ со
+// списком движка и не растягивается: это действие, а не украшение панели.
+function vfxSepApply(host){
+  if(!host)return;
+  const btn=vfxEl(host,'sep_install'),st=vfxEl(host,'sep_state');
+  if(!btn)return;
+  const eng=vfxEngineSel(host);
+  const job=(VFXSEP&&VFXSEP.job)?VFXSEP.job:null;
+  const inst=!!(VFXSEP&&VFXSEP.engines&&VFXSEP.engines[eng]&&VFXSEP.engines[eng].installed);
+  const busy=!!(job&&job.running);
+  const need=(eng==='roformer'||eng==='roformer_aggr')&&(!inst||busy);
+  btn.style.display=need?'':'none';
+  if(!need){if(st)st.textContent='';return;}
+  const size=vfxSepSize();
+  btn.textContent=size?t('Скачать RoFormer ({size})',{size:size}):t('Скачать RoFormer');
+  btn.disabled=busy;
+  if(st)st.textContent=vfxSepText(job);}
+async function voiceFxSepFill(host){
+  if(!host)return;
+  let d;
+  try{d=await (await fetch('/api/voicefx_roformer')).json();}
+  catch(e){uiLog('voicefx_roformer: '+e);vfxSepApply(host);return;}
+  if(d&&d.error){uiLog('voicefx_roformer: '+errText(d));VFXSEP=null;}
+  else VFXSEP=d;
+  vfxSepApply(host);}
+// Установка идёт минутами и уже фоном на сервере: ответ приходит сразу, а ход
+// работы панель дочитывает опросом и показывает в ОБЩЕЙ форме прогресса
+// (55-progress.js: progOpen/progItem/progDone) — у неё есть проценты, строки шагов
+// и хвост лога, а второй такой разметки в интерфейсе быть не должно.
+async function voiceFxSepInstall(el){
+  const host=voiceFxHost(el);if(!host)return;
+  if(el)el.disabled=true;
+  let d;
+  try{d=await (await fetch('/api/voicefx_roformer_install',{method:'POST'})).json();}
+  catch(e){toast(t('Установка не запустилась — сервер не ответил'));uiLog('voicefx_roformer_install: '+e);vfxSepApply(host);return;}
+  if(d&&d.error){toast(errText(d));uiLog('voicefx_roformer_install: '+JSON.stringify(d).slice(0,200));vfxSepApply(host);return;}
+  progOpen({title:t('Установка RoFormer'),items:[{name:t('окружение и модели RoFormer')}]});
+  uiLog(t('ставлю RoFormer — прогресс в общей форме прогресса'));
+  voiceFxSepWatch(host);}
+// Опрос хода установки: строка в шапке общей формы — шаг и проценты, строка задачи —
+// тот же шаг словами. Кнопка на панели при этом остаётся: по ней видно, что установка
+// уже идёт (disabled), и её не нажмут второй раз.
+function voiceFxSepWatch(host){
+  clearTimeout(VFXSEP_TIMER);
+  VFXSEP_TIMER=setTimeout(async()=>{
+    if(!vfxEl(host,'sep_install'))return;        // панель перерисовали — опрос не наш
+    await voiceFxSepFill(host);
+    const job=(VFXSEP&&VFXSEP.job)?VFXSEP.job:null;
+    if(job){
+      progStep(vfxSepText(job));
+      progItem(t('окружение и модели RoFormer'),job.step==='fail'?'error':'voice',
+        {pct:(job.pct||0)/100,detail:job.step==='fail'?(job.error||''):vfxSepStep(job.step)});
+    }
+    if(job&&job.running){voiceFxSepWatch(host);return;}
+    if(!job)return;
+    if(job.step==='fail'){progItem(t('окружение и модели RoFormer'),'error',{reason:job.error||''});
+      progDone(job.error||'',true);
+      toast(t('RoFormer не установился: {err}',{err:job.error||''}));}
+    else{progItem(t('окружение и модели RoFormer'),'done',{detail:t('готово')});
+      progDone(t('RoFormer установлен — можно слушать'));
+      if(typeof voiceFxStatus==='function')voiceFxStatus(host,'');
+      if(typeof vtNote==='function'&&typeof ED!=='undefined')vtNote(ED,'');
+      const fx=voiceFxRead(host);
+      voiceFxHostSync(fx,{force:true});}
+    pvVoiceTune();},VFXSEP_POLL);}
+// Окно плагина открывает СЕРВЕР (отдельным процессом: JUCE требует главный поток) — и
+// это ПАНЕЛЬ уже звучащего живого хоста клипа (core/voicefx_editor --live), а не
+// отдельный процесс со своим звуком. Модель как в Ableton/DaVinci: плагин — вставка на
+// дорожке, голос превью ВСЕГДА идёт через него вживую, окно лишь показывает его ручки.
+// Открыл и закрыл окно — звук не рвётся; добавил, убрал, включил, переставил плагин —
+// цепочка перестраивается на лету (команда `chain`), а нейро-шумодав при этом НЕ
+// считается заново: дорожка шумодава лежит в кеше отдельно от плагинов.
+//
+// Хост поднимается при открытии превью клипа (vtPrep → voiceFxHostSync), пока в цепочке
+// есть включённые плагины, и гаснет, когда превью закрыли, открыли другой клип или
+// плагины выключили. Позицию хосту задаёт плеер теми же командами, что и у себя
+// (play/seek/pause — 60-preview.js:vtLiveUpdate). Настройки сохраняются САМИ: закрыл
+// окно — состояние плагина уехало в профиль спикера (сервер, api/voicefx.py:_save_live),
+// а панель забирает его опросом. Отдельной кнопки «Сохранить у спикера» нет.
+//   VFXHOST.key   — что хост знает о цепочке (по нему решаем, слать ли `chain`);
+//   VFXHOST.seq   — счётчик «поколений»: погашенный хост не оживает от запоздавшего ответа;
+//   VFXHOST.row   — строка цепочки, чьё окно открыли (туда вернётся состояние плагина);
+//   VFXHOST.state — состояние плагина, уже принятое от сервера (без повторных тостов).
+let VFXHOST={timer:0,key:'',seq:0,starting:null,row:null,state:'',skip:''};
+// Ключ цепочки: путь, имя, галка и состояние. Состояние в ключе НУЖНО: правка ручки в
+// окне меняет строку панели, и без него ключ не менялся бы, а хост о ней не узнал.
+function voiceFxHostKey(fx){
+  const f=(fx&&Array.isArray(fx.vst))?fx.vst:[];
+  return JSON.stringify(f.map(v=>[v.path||'',v.name||'',v.on!==false,v.state||'']));}
+async function voiceFxHostPost(url,body){
+  try{return await (await fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)})).json();}
+  catch(e){uiLog(url+': '+e);return {error:String(e)};}}
+// Одна дверь «привести хост в соответствие с панелью»: нужен ли он, поднят ли, знает ли
+// актуальную цепочку. Её зовут и открытие превью, и любая правка ручек (vtPrep), и
+// «Настроить». `opts.window` — хост нужен окну, даже если ни один плагин не включён
+// (правят выключенный, чтобы его потом включить); `opts.force` — слать цепочку, даже
+// если ключ тот же (перед окном: строку могли добавить меньше чем за затишье ручек).
+async function voiceFxHostSync(fx,opts){
+  const o=opts||{};
+  const P=o.player||(typeof ED!=='undefined'?ED:null);
+  if(!P||!P.xml||!vtCam1(P))return false;
+  if(!voiceFxHasVst(fx)&&!o.window&&!voiceFxWindowOn()){
+    // Плагинов не осталось: хост не нужен, превью играет дорожку шумодава в браузере.
+    if(voiceFxHostOn()||VFXHOST.starting)await voiceFxHostStop();
+    return false;}
+  const key=voiceFxHostKey(fx);
+  if(voiceFxHostOn()){
+    if(o.force||key!==VFXHOST.key){
+      VFXHOST.key=key;
+      await voiceFxHostPost('/api/voicefx_live',{sid:VOICEFXLIVE.sid,cmd:'chain',fx:fx||{}});}
+    return true;}
+  return voiceFxHostStart(fx,key,P);}
+// Поднять хост: без окна, на месте бегунка. Второй заход, пока первый идёт, ждёт первого
+// (иначе два процесса на один клип — голос звучал бы дважды).
+function voiceFxHostStart(fx,key){
+  const P=(arguments.length>2&&arguments[2])||(typeof ED!=='undefined'?ED:null);
+  if(!P)return Promise.resolve(false);
+  if(typeof voiceFxStatus==='function')voiceFxStatus($('pvvoice'),'');
+  if(typeof vtNote==='function')vtNote(P,'');
+  if(VFXHOST.starting)return VFXHOST.starting;
+  const seq=++VFXHOST.seq,xml=P.xml,src=vtCam1(P);
+  const at=vtSrcAt(P,typeof vtNow==='function'?vtNow(P):0);
+  // Громкость задания — итог ОБОИХ ползунков (одна формула, voiceFxLiveOutDb): хост
+  // поднимается уже с той громкостью, что человек слышит в превью, и голос не «прыгает»
+  // при первом же пересчёте.
+  const gain=(typeof voiceFxLiveOutDb==='function')?voiceFxLiveOutDb():0.0;
+  VFXHOST.starting=(async()=>{
+    const d=await voiceFxHostPost('/api/voicefx_host',{xml:xml,src:src,fx:fx||{},
+      start:(at==null?0:Math.max(0,at)),device:fxDeviceGet(),speaker:VOICEFXSPK,gain_db:gain});
+    if(seq===VFXHOST.seq)VFXHOST.starting=null;
+    if(!d||!d.ok||!d.sid){
+      if(d&&d.error)uiLog('voicefx_host: '+String(d.error).slice(0,200));
+      if(seq===VFXHOST.seq&&d&&d.error&&typeof voiceFxStatus==='function')
+        voiceFxStatus($('pvvoice'),'⚠ '+errText(d));
+      return false;}
+    if(seq!==VFXHOST.seq||P.xml!==xml){
+      // Пока хост поднимался, превью закрыли или открыли другой клип — он уже лишний.
+      voiceFxHostPost('/api/voicefx_host_stop',{sid:d.sid,xml:xml});return false;}
+    // Хост уже был на сервере (страницу перезагрузили): цепочку он знает по прежнему
+    // заданию, поэтому ключ пуст, и следующая сверка пошлёт актуальную.
+    VFXHOST.key=d.fresh?key:'';VFXHOST.state='';VFXHOST.skip='';
+    if(typeof voiceFxStatus==='function')voiceFxStatus($('pvvoice'),'');
+    if(typeof vtNote==='function')vtNote(P,'');
+    VOICEFXLIVE={sid:d.sid,running:true,track_ready:!!d.track_ready,window:!!d.window,
+      skipped:d.skipped||[],audio_error:d.audio_error||'',xml:xml,track_input:d.track_input||d.input||''};
+    uiLog('живой звук: плагины играют вживую, окно — их панель');
+    voiceFxHostNotes(d);
+    voiceFxHostPoll(P);
+    return true;})();
+  return VFXHOST.starting;}
+// Опрос хоста: жив ли, досчитана ли дорожка, открыто ли окно, что пропущено и не пришло
+// ли новое состояние плагина. 500 мс — не звук, а факт; заодно это «пульс» для сервера
+// (api/voicefx.py снимает хост, если страница замолчала).
+function voiceFxHostPoll(){
+  clearTimeout(VFXHOST.timer);VFXHOST.timer=0;
+  const L=VOICEFXLIVE;if(!L||!L.sid)return;
+  const P=(arguments.length>0&&arguments[0])||(typeof ED!=='undefined'?ED:null);
+  VFXHOST.timer=setTimeout(async()=>{
+    VFXHOST.timer=0;
+    const sid=L.sid;
+    let d;
+    try{d=await (await fetch('/api/voicefx_live?sid='+encodeURIComponent(sid))).json();}
+    catch(e){voiceFxHostPoll(P);return;}        // сервер не ответил — попробуем ещё
+    if(!VOICEFXLIVE||VOICEFXLIVE.sid!==sid)return;   // хост погашен или сменился, пока ждали
+    if(!d.ok||!d.running){voiceFxHostGone(d,P);return;}
+    const was=VOICEFXLIVE;
+    VOICEFXLIVE={sid:sid,running:true,track_ready:!!d.track_ready,window:!!d.window,
+      skipped:d.skipped||[],audio_error:d.audio_error||'',xml:was.xml,track_input:d.track_input||d.input||''};
+    voiceFxHostNotes(d);
+    if(P&&P.vt&&(!!d.track_ready!==!!was.track_ready||d.track_input!==was.track_input||
+        !!d.audio_error!==!!was.audio_error)){
+      // Звук перешёл к хосту (или вернулся к странице, в том числе из-за сбоя звука
+      // хоста): команды считаются с нуля — хост мог стоять на паузе, а страница думать,
+      // что он играет. Тик тут же расставит глушение и пошлёт пуск или паузу.
+      const st=vtOf(P);st.live=null;
+      if(typeof vtNow==='function')vtTick(P,vtNow(P));}
+    if(d.state&&d.state!==VFXHOST.state){
+      // Окно закрыли: состояние плагина уже у спикера (сервер записал), а в строку цепочки
+      // оно возвращается здесь — иначе следующее автосохранение панели вернуло бы прежнее.
+      VFXHOST.state=d.state;
+      const row=VFXHOST.row;
+      if(row&&row.isConnected)row.dataset.state=d.state;
+      toast(t('Настройки плагина сохранены'));}
+    if(was.window&&!d.window){
+      // Окно закрыто: если плагинов больше нет в звуке, хост можно погасить.
+      const host=$('pvvoice');voiceFxHostSync(host?voiceFxRead(host):null,{player:P});}
+    voiceFxHostPoll(P);},500);}
+// Что не так с хостом — словами в панель: плагин не загрузился (с ИМЕНЕМ) или звук
+// хоста не идёт (устройство не приняло частоту, поток отвалился). Строка одна и
+// пишется только когда что-то изменилось, иначе опрос затирал бы ход голоса, который
+// рисует vtNote.
+// Сбой звука ВАЖНЕЕ пропущенного плагина: пока он есть, превью играет свой голос, и
+// человеку нужно знать, почему плагины «не слышно».
+function voiceFxHostNotes(d){
+  const sk=Array.isArray(d&&d.skipped)?d.skipped:[];
+  const err=String((d&&d.audio_error)||'');
+  const key=sk.map(s=>(s&&s.name)||'').join('|')+'|'+err;
+  if(key===VFXHOST.skip)return;
+  VFXHOST.skip=key;
+  if(typeof voiceFxStatus!=='function')return;
+  if(err){
+    voiceFxStatus($('pvvoice'),t('живой звук плагинов не работает: {err}',{err:err}));
+    uiLog('voicefx_host: живой звук плагинов не работает — '+err);
+    return;}
+  if(!sk.length)return;
+  voiceFxStatus($('pvvoice'),sk.map(s=>t('{n} не загрузился — пропущен',{n:(s&&s.name)||''})).join('; '));
+  uiLog('voicefx_host: '+sk.map(s=>((s&&s.name)||'')+' — '+((s&&s.reason)||'')).join('; '));}
+// Хост ушёл сам (упал, завершился: ни один плагин не загрузился): звук возвращается
+// странице. Заново его не поднимаем — это была бы петля; следующая правка ручки или
+// открытие превью поднимут его снова.
+function voiceFxHostGone(d,player){
+  clearTimeout(VFXHOST.timer);VFXHOST.timer=0;
+  const P=player||(typeof ED!=='undefined'?ED:null);
+  VOICEFXLIVE=null;VFXHOST.key='';VFXHOST.row=null;
+  voiceFxHostNotes(d);
+  if(d&&d.ok&&d.error&&typeof voiceFxStatus==='function')
+    voiceFxStatus($('pvvoice'),t('Окно плагина закрылось с ошибкой: {err}',{err:d.error}));
+  if(P&&P.vt&&typeof vtNow==='function')vtTick(P,vtNow(P));}
+// ОДНА формула «что слышно из живого хоста»: громкость голоса спикера (дБ) плюс
+// громкость прослушивания (<video>/<audio> у страницы — множитель MEDIA_VOL, см.
+// 60-preview.js:applyMediaVol). Хост играет СВОИМ процессом, мимо страницы, и без
+// этого ползунок громкости прослушивания его не касался бы вовсе. Второй копии
+// формулы нет: её зовут и правка любого из ползунков, и подъём хоста.
+function voiceFxLiveOutDb(){
+  const s=(typeof CURSTYLE!=='undefined'&&CURSTYLE)?CURSTYLE:{};
+  const vdb=s.voice_db!=null?+s.voice_db:0.;
+  if(isNaN(vdb))return 0.;
+  const vol=(typeof MEDIA_VOL==='number'&&isFinite(MEDIA_VOL))?Math.max(0,Math.min(1,MEDIA_VOL)):1;
+  // Ползунок на нуле — тишина, а не «очень тихо»: Math.log10(0) даёт −Infinity, и
+  // JSON.parse на сервере превратил бы её в null. −120 дБ хост считает за тишину.
+  if(vol<=0)return -120.;
+  return vdb+20*Math.log10(vol);}
+// Громкость живого хоста на лету: шлём команду gain в фоновый процесс
+function voiceFxLiveGain(){
+  if(voiceFxHostOn()&&VOICEFXLIVE&&VOICEFXLIVE.sid){
+    voiceFxHostPost('/api/voicefx_live',{sid:VOICEFXLIVE.sid,cmd:'gain',db:voiceFxLiveOutDb()});}}
+// Погасить хост: превью закрыли, клип сменили, плагины выключили. Процесс снимает сервер
+// по PID (api/voicefx.py:api_voicefx_host_stop). Своё состояние чистим сразу, не дожидаясь
+// ответа: запоздавший ответ погашенного хоста (`seq`) уже не оживит.
+async function voiceFxHostStop(){
+  clearTimeout(VFXHOST.timer);VFXHOST.timer=0;
+  const L=VOICEFXLIVE;
+  VOICEFXLIVE=null;VFXHOST.key='';VFXHOST.row=null;VFXHOST.state='';VFXHOST.skip='';
+  VFXHOST.seq++;VFXHOST.starting=null;
+  // Снять глушение камеры — на ЕДИНСТВЕННОМ плеере шага 1 (редакторе): монтажного
+  // плеера PV с его состоянием воспроизведения больше нет.
+  if(typeof ED!=='undefined'&&ED.vt&&typeof vtNow==='function')vtTick(ED,vtNow(ED));
+  if(typeof IPV!=='undefined'&&IPV.vt&&typeof vtNow==='function')vtTick(IPV,vtNow(IPV));
+  if(typeof CPV!=='undefined'&&CPV.vt)vtTick(CPV,typeof cpvNow==='function'?cpvNow():(typeof vtNow==='function'?vtNow(CPV):0));
+  if(!L||!L.sid)return;
+  await voiceFxHostPost('/api/voicefx_host_stop',{sid:L.sid,xml:L.xml||''});}
+// Страницу закрыли или перезагрузили — хост гасим маячком: fetch на выгрузке не
+// гарантирован, а без этого процесс висел бы до конца работы сервера (его добьёт и
+// молчание опроса, но через минуты).
+if(typeof window!=='undefined'&&typeof window.addEventListener==='function')window.addEventListener('pagehide',()=>{
+  const L=VOICEFXLIVE;if(!L||!L.sid||!navigator.sendBeacon)return;
+  try{navigator.sendBeacon('/api/voicefx_host_stop',
+    new Blob([JSON.stringify({sid:L.sid,xml:L.xml||''})],{type:'application/json'}));}catch(e){}});
+async function vstFxEdit(el){
+  const row=(el&&el.closest)?el.closest('[data-vst]'):null;if(!row)return;
+  const host=voiceFxHost(el),box=row.parentElement;
+  if(typeof voiceFxStatus==='function')voiceFxStatus(host,'');
+  if(typeof vtNote==='function'&&typeof ED!=='undefined')vtNote(ED,'');
+  const idx=Array.from(box.querySelectorAll('[data-vst]')).indexOf(row);
+  const src=vtCam1(ED);
+  if(!src){toast(t('Клип не выбран — окно без звука'));return;}
+  toast(t('Открываю окно плагина…'));
+  // Хост нужен окну, даже если плагин выключен: цепочку шлём как есть, окно откроется в
+  // уже звучащем процессе — звук не прерывается, процесс не перезапускается.
+  const fx=voiceFxRead(host)||{};
+  const ok=await voiceFxHostSync(fx,{window:true,force:true});
+  if(!ok||!VOICEFXLIVE){toast(t('Окно плагина не открылось'));return;}
+  VFXHOST.row=row;
+  const d=await voiceFxHostPost('/api/voicefx_host_edit',
+    {sid:VOICEFXLIVE.sid,index:idx,path:row.dataset.path||''});
+  if(d.error){toast(errText(d));uiLog('voicefx_host_edit: '+JSON.stringify(d).slice(0,200));return;}
+  VOICEFXLIVE.window=true;
+  uiLog('окно плагина открыто — панель звучащего хоста, ручки слышны сразу');}
+// Панель «Голос» превью нарезки: единственное место, где обработка голоса
+// настраивается. Спикер — ТЕГ КЛИПА (job.speaker), как у LUT и рамки: у клипа без
+// тега профиля нет, и крутить нечего (значения живут только в профиле).
+function pvVoicePanel(){
+  const host=$('pvvoice');if(!host)return;
+  const c=(typeof ED!=='undefined'&&ED.xml&&typeof clipByXml==='function')?clipByXml(ED.xml):null;
+  const key=(c&&c.job&&c.job.speaker)||'';
+  VOICEFXSPK=key;
+  const prof=key?(SPEAKERS[key]||null):null;
+  const lbl=$('pvvoicespk');if(lbl)lbl.textContent=prof?(prof.label||key):'';
+  vtStop(ED);   // новый клип — прежняя дорожка обработанного голоса не наша
+  // (хост плагинов гасит сам vtStop: клип другой — звук идёт по нему, а не по прежнему)
+  if(!key){voiceFxRender(host,null,{mode:'off'});return;}
+  if(!prof){
+    voiceFxRender(host,null,{mode:'off',
+      note:t('Профиль спикера «{n}» не нашёлся в speakers/ — обработка голоса настраивается в его профиле.',{n:key})});
+    return;}
+  voiceFxRender(host,prof.voice_fx,{mode:'panel'});
+  vstFxList(host,false);
+  voiceFxSepFill(host);       // есть ли окружение RoFormer: от этого — кнопка скачивания
+  // Включённый ИИ-шумодав работает и в превью: голос ВСЕГО клипа считается сразу при
+  // открытии, пока играет звук камеры (vtPrep, 60-preview.js). Выключен — трек
+  // клипа убирается, и превью играет звук камеры как есть.
+  // Заказ возвращаем: openEditClip ждёт панель, и по её концу видно, что голос уже
+  // запрошен (гонки «открыли превью — а трек ещё не заказан» не остаётся).
+  return vtPrep(ED);
+}
+// --------------------------------------------------------------------------- #
+// Сохранение настроек голоса — САМО, без кнопки
+// --------------------------------------------------------------------------- #
+// Две двери, и обе ведут в одно место — профиль спикера клипа:
+//   * ручки панели (шумодав, движок, цепочка) — после ЗАТИШЬЯ (`pvVoiceAuto`);
+//   * окно плагина — по его закрытию, на СЕРВЕРЕ (`api/voicefx.py:_save_live`):
+//     состояние плагина знает только процесс окна, и забирать его фронту незачем.
+// Запись профиля у обеих дверей ОДНА — `pvVoiceSave` (свежий профиль с сервера,
+// правка ТОЛЬКО voice_fx): вторая копия «как сохранить профиль» разъехалась бы.
+// Затишье: ползунок сыплется на каждый пиксель, а сохранение — это файл профиля.
+const VFX_SAVE_QUIET=700;
+let VFXSAVET=0;
+function pvVoiceAuto(){
+  clearTimeout(VFXSAVET);
+  VFXSAVET=setTimeout(()=>{VFXSAVET=0;
+    // Окно плагина открыто: там свои настройки, и записывать сейчас нечего — иначе
+    // автосохранение панели перетёрло бы состояние, которое вот-вот отдаст окно.
+    if(voiceFxWindowOn())return;
+    pvVoiceSave(null,{bake:true});},VFX_SAVE_QUIET);}
+// Записать профиль под ТЕКУЩИЕ значения панели. Профиль читаем СВЕЖИМ с сервера и
+// правим в нём ОДНО поле: правки чужих полей (LUT, рамка кадра, папки), сделанные
+// в соседних панелях, не затираются. `bake` — пересчитать ли голос клипа сразу:
+// при закрытии окна плагина это делает сервер, и второй счёт не нужен.
+async function pvVoiceSave(btn,opts){
+  const o=opts||{};
+  const host=o.host||voiceFxHost(btn)||$('pvvoice'),key=VOICEFXSPK;
+  if(!host||host.dataset.vfxmode!=='panel')return;
+  if(!key){toast(t('У клипа нет спикера — сохранять некуда'));return;}
+  // Пустая панель и профиль без обработки: сохранять нечего (профиль не должен
+  // обзаводиться полем voice_fx от одного открытия превью).
+  if(voiceFxRead(host)==null&&!(SPEAKERS[key]&&SPEAKERS[key].voice_fx))return;
+  const fx=voiceFxRead(host);
+  voiceFxStatus(host,t('сохраняю профиль…'));
+  let cur;
+  try{cur=await (await fetch('/api/speakers')).json();}
+  catch(e){voiceFxStatus(host,t('профиль не сохранён — сервер не ответил'));uiLog('savespeaker(voice_fx): '+e);return;}
+  const prof=(cur&&cur.speakers&&cur.speakers[key])||SPEAKERS[key];
+  if(!prof){voiceFxStatus(host,t('профиль спикера не найден — сохранять некуда'));return;}
+  const data=JSON.parse(JSON.stringify(prof));
+  if(fx)data.voice_fx=fx;else delete data.voice_fx;
+  let d;
+  try{d=await (await fetch('/api/savespeaker',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({name:key,data:data})})).json();}
+  catch(e){voiceFxStatus(host,t('профиль не сохранён — сервер не ответил'));uiLog('savespeaker(voice_fx): '+e);return;}
+  if(!d.ok){voiceFxStatus(host,errText(d)||t('Профиль не сохранён'));return;}
+  SPEAKERS[d.key||key]=data;
+  voiceFxStatus(host,t('сохранено у спикера «{n}»',{n:data.label||key}));
+  uiLog(t('обработка голоса спикера «{n}» сохранена: ',{n:data.label||key})+voiceFxSummary(fx||{}));
+  if(o.bake!==false)pvVoiceBake();}   // .voice.wav для ЭТОГО клипа — в фоне (60-preview.js)
 async function saveSpeaker(){
   const label=val('spk_label').trim();
   if(!label){toast(t('Дай спикеру имя'));$('spk_label').focus();return;}
@@ -308,6 +1171,13 @@ async function saveSpeaker(){
   // (ref, breath_model) — пересборка их бы стёрла.
   const data=SPKEDIT?JSON.parse(JSON.stringify(SPEAKERS[SPKEDIT])):{};
   data.label=label;data.outdir=val('spk_outdir').trim();data.jsxdir=val('spk_jsxdir').trim();data.renderdir=val('spk_renderdir').trim();data.style=val('spk_style');
+  // Формат кадра: пустой или дефолтный — поля в профиле нет (как у lut и voice_fx):
+  // «профиль без правок» не должен обзаводиться записью про формат, и старый
+  // ролик собирается ровно как собирался.
+  {
+    const f=val('spk_format').trim();
+    if(!f||f===SPKDEF_FORMAT)delete data.format;else data.format=f;
+  }
   data.hint=val('spk_hint');
   // Приписки к промптам генерации картинок (pa/pb — подложка).
   // Пустой слот не пишем, как и раньше: профиль без правок остаётся без image_prompts.
@@ -328,12 +1198,41 @@ async function saveSpeaker(){
     if(videoExA)data.video_prompts.a={extra:videoExA,pos:val('spk_video_pos_a')==='prefix'?'prefix':'suffix'};
     if(videoExB)data.video_prompts.b={extra:videoExB,pos:val('spk_video_pos_b')==='prefix'?'prefix':'suffix'};
   }else delete data.video_prompts;
+  // Обработку голоса это окно НЕ трогает: поле voice_fx пишет только панель «Голос»
+  // в превью нарезки (там её слышно). Копия профиля уже принесла voice_fx из файла —
+  // пересборка полей окна до него не доходит, и присваивания тут нет нарочно.
   // Папки камер: пустое поле не пишется — «профиль без правок» не получает
   // мусорные camdirs, иначе у всех, кто не трогал, «свои» папки сломали бы автоподбор.
   const cds=[];let hasCam=false;
   for(let k=0;k<nCams();k++){const c=val('spk_camdir'+k).trim();cds.push(c);if(c)hasCam=true;}
   if(hasCam)data.camdirs=cds;else delete data.camdirs;
+  // LUT камер: ключ — номер камеры с 1, как в профиле (speakers.py). Пустое поле
+  // не пишется: «профиль без правок» не должен обзавестись пустой таблицей.
+  const luts={};
+  for(let k=0;k<nCams();k++){const c=val('spk_lut'+k).trim();if(c)luts[String(k+1)]=c;}
+  if(Object.keys(luts).length)data.lut=luts;else delete data.lut;
   const note=val('spk_note').trim();if(note)data.note=note;else delete data.note;
+  const insPhotoStr=val('spk_ins_photo').trim(),insVideoStr=val('spk_ins_video').trim();
+  if(!insPhotoStr&&!insVideoStr){
+    delete data.inserts;
+  }else{
+    const insObj={};
+    if(insPhotoStr){
+      const v=parseInt(insPhotoStr,10);
+      if(!/^\d+$/.test(insPhotoStr)||isNaN(v)||v<0||v>30){
+        toast(t('Вставок-фото: число от 0 до 30'));return;
+      }
+      insObj.photo=v;
+    }
+    if(insVideoStr){
+      const v=parseInt(insVideoStr,10);
+      if(!/^\d+$/.test(insVideoStr)||isNaN(v)||v<0||v>30){
+        toast(t('Вставок-видео: число от 0 до 30'));return;
+      }
+      insObj.video=v;
+    }
+    data.inserts=insObj;
+  }
   [['breath_p_cut','spk_bpcut'],['breath_p_mark','spk_bpmark']].forEach(pair=>{
     const s=val(pair[1]).trim(),v=parseFloat(s);
     if(s===''||isNaN(v))delete data[pair[0]];else data[pair[0]]=v;});
@@ -409,8 +1308,87 @@ async function loadStyles(){let d;
     if(STSCHEMA)renderStylePanel();
     const sel=$('style');const want=STYLESAVED||'base';sel.innerHTML='';
     Object.keys(STYLES).forEach(k=>{const o=document.createElement('option');o.value=k;o.textContent=t(STYLES[k].label||k);sel.appendChild(o);});
-    if(want==='__custom__')ensureCustomOption();sel.value=(want==='__custom__')?'__custom__':(STYLES[want]?want:'base');onStyleChange();}
+    if(want==='__custom__')ensureCustomOption();sel.value=(want==='__custom__')?'__custom__':(STYLES[want]?want:'base');sel.dataset.prev=sel.value;onStyleChange();}
   catch(e){toast(t('Стили пришли, но не применились — смотри журнал'));uiLog(t('loadStyles(применение): ')+e);}}
+// Смысл intro_y2 сменился: была добавка к intro_y, стала само положение интро на камере 2
+// (core/styles.py, migrate_intro_pos2 — то же правило). Стиль без метки intro_pos2_v — старый:
+// intro_y2 = intro_y + intro_y2. Сервер переводит стили из /api/styles сам; здесь — копии,
+// которые живут в браузере (кастом в localStorage, копия стиля в задании клипа) и до сервера
+// доходят только на сборке. Без этого панель показала бы старое число в новом смысле, а правка
+// поля потом сложилась бы с intro_y второй раз.
+function stMigrateIntroPos2(st){
+  if(!st||typeof st!=='object'||st.intro_pos2_v!=null)return st;
+  const y=+st.intro_y||0,y2=+st.intro_y2||0;
+  if(y||y2)st.intro_y2=y+y2;
+  st.intro_pos2_v=2;
+  return st;}
+function stMigrateCam2Zoom(st){
+  if(!st||typeof st!=='object'||st.cam2_zoom!=null)return st;
+  if(st.cam2_zoom_on===true){
+    st.cam2_zoom=st.cam1_zoom||'pulse';
+    const keys=['zoom_start','zoom_big','zoom_lo','zoom_hi','drift_lo','drift_hi',
+                'take_zoom','take_min','take_lo','take_hi','take_hold','take_yellow',
+                'take_out','yellow_zoom'];
+    keys.forEach(k=>{if(st['cam1_'+k]!==undefined)st['cam2_'+k]=st['cam1_'+k];});
+  }else{
+    st.cam2_zoom='none';
+  }
+  delete st.cam2_zoom_on;
+  return st;}
+// У интро камеры 2 свои ручки: галка «интро едет с камерой» (intro_cam2) и точка
+// масштабирования (intro_scale_anchor2). Раньше ими правили ключи камеры 1, поэтому
+// старый стиль без этих ключей берёт их значения (core/styles.py, migrate_intro_cam2 —
+// то же правило). Иначе дефолт BASE поменял бы вид уже собранных стилей: у стиля с
+// intro_cam=false интро на перебивке вдруг поехало бы за камерой 2.
+// Копии здесь — те, что живут в браузере (кастом в localStorage, стиль в задании клипа)
+// и до сервера доходят только на сборке.
+function stMigrateIntroCam2(st){
+  if(!st||typeof st!=='object')return st;
+  if(st.intro_cam2==null)st.intro_cam2=(st.intro_cam==null)?true:!!st.intro_cam;
+  if(st.intro_scale_anchor2==null)st.intro_scale_anchor2=st.intro_scale_anchor||'comp';
+  return st;}
+function stMigrateCamZoom(st){
+  if(!st||typeof st!=='object'||(st.cam_zoom_v!=null && st.cam_zoom_v>=3))return st;
+  const v = st.cam_zoom_v || 0;
+  if(v < 2){
+    ['cam1','cam2'].forEach(prefix=>{
+      if(st[prefix+'_take_yellow_mode']===undefined){
+        const oldY=st[prefix+'_take_yellow'];
+        st[prefix+'_take_yellow_mode']=(oldY===true)?'snap':'off';
+      }
+      st[prefix+'_take_yellow']=(st[prefix+'_take_yellow_mode']==='snap'||st[prefix+'_take_yellow_mode']==='only');
+      const zMode=st[prefix+'_zoom'];
+      if(zMode==='none'){
+        st[prefix+'_zoom_start']=false;
+      }
+      if(st[prefix+'_take_zoom']===true&&zMode!=null&&zMode!=='jump'){
+        st[prefix+'_take_zoom']=false;
+      }
+    });
+  }
+  ['cam1','cam2'].forEach(prefix=>{
+    if(st[prefix+'_yellow_zoom']===undefined){
+      const takeZ = !!st[prefix+'_take_zoom'];
+      const ym = st[prefix+'_take_yellow_mode'];
+      if(ym === 'snap'){
+        st[prefix+'_yellow_zoom'] = takeZ;
+      }else if(ym === 'only'){
+        st[prefix+'_yellow_zoom'] = takeZ;
+        st[prefix+'_take_zoom'] = false;
+      }else if(ym === 'off'){
+        st[prefix+'_yellow_zoom'] = false;
+      }else if(st[prefix+'_take_yellow']!==undefined){
+        st[prefix+'_yellow_zoom'] = !!st[prefix+'_take_yellow'] && takeZ;
+      }else{
+        st[prefix+'_yellow_zoom'] = false;
+      }
+    }
+    if(st[prefix+'_take_out']===undefined){
+      st[prefix+'_take_out'] = 2.4;
+    }
+  });
+  st.cam_zoom_v=3;
+  return st;}
 // Миграция состояния: раньше задание клипа хранило РАЗВЁРНУТУЮ КОПИЮ стиля плюс свои
 // поля рото. Теперь клип хранит только ИМЯ стиля, копия остаётся лишь у безымянного
 // кастома. Стиль не узнали — клип честно становится кастомом со своей копией, молча
@@ -422,6 +1400,10 @@ function migrateClipStyles(){
     if(j.roto!==undefined||j.roto_bottom!==undefined){delete j.roto;delete j.roto_bottom;n++;}
     if(j.styleOwn!==undefined){delete j.styleOwn;n++;}
     if(!j.style)return;
+    stMigrateIntroPos2(j.style);
+    stMigrateCam2Zoom(j.style);
+    stMigrateIntroCam2(j.style);
+    stMigrateCamZoom(j.style);
     let k=j.styleKey;
     if(!k||k==='__edit__'||(k!=='__custom__'&&!STYLES[k]))k=styleKeyFor(j.style);
     if(k&&k!=='__custom__'&&STYLES[k]){j.styleKey=k;delete j.style;n++;}
@@ -449,7 +1431,7 @@ function ensureEditOption(key,label){const sel=$('style');
   let o=sel.querySelector('option[value="__edit__"]');
   if(!o){o=document.createElement('option');o.value='__edit__';sel.appendChild(o);}
   o.textContent=t(label)+t(' — правится');}
-function addCustomStyle(){const src=CURSTYLE||STYLES.base||{};CURSTYLE=JSON.parse(JSON.stringify(src));CURSTYLE.label='кастом';ensureCustomOption();$('style').value='__custom__';
+function addCustomStyle(){const src=CURSTYLE||STYLES.base||{};CURSTYLE=JSON.parse(JSON.stringify(src));CURSTYLE.label='кастом';ensureCustomOption();$('style').value='__custom__';$('style').dataset.prev='__custom__';
   STYLE_EDITING=null;STYLE_EDIT_ORIG=null;STYLE_TOUCHED=false;
   if($('st_name'))$('st_name').value='';onStyleChange();}
 const BUILTIN_STYLES={base:1,geologica:1};   // живут в styles.py, файла в styles/ у них нет
@@ -467,6 +1449,7 @@ function editStyle(){
   CURSTYLE=JSON.parse(JSON.stringify(src));
   ensureEditOption(key,src.label||key);
   $('style').value='__edit__';
+  $('style').dataset.prev='__edit__';
   // Рото — теперь поле СТИЛЯ, а не настройка клипа: шаблон его и приносит,
   // fillStyleFields раскладывает по панели вместе с остальными. Прежняя возня с
   // #roto/#rotobottom (запомнить у клипа и вернуть) канула вместе со старой разметкой.
@@ -613,6 +1596,13 @@ function renderLayerOrderUI(){
   });
 }
 
+// Стиль клипа изменён: пометка флагом при редактировании не шаблона,
+// обновление кнопки сохранения и точек расхождения.
+function styleTouched(){
+  if(typeof STYLE_TOUCHED!=='undefined'&&(typeof STYLE_EDITING==='undefined'||!STYLE_EDITING))STYLE_TOUCHED=true;
+  if(typeof updateStyleSaveUI==='function')updateStyleSaveUI();
+  if(typeof updateStyleDiffDots==='function')updateStyleDiffDots();
+}
 // Есть ли на текущем стиле несохранённые правки: в режиме правки шаблона — расхождение
 // CURSTYLE с его снимком до правок; в кастоме — флаг «поля трогали». Задание AC2.
 function styleDirty(){
@@ -623,7 +1613,14 @@ function updateStyleSaveUI(){
   const k=val('style'), custom=k==='__custom__'||k==='__edit__'||!!STYLE_EDITING;
   row.style.display=(styleDirty()||custom)?'':'none';
 }
-async function onStyleChange(){const sel=$('style');const name=sel.value;const custom=$('stylecustom');
+async function onStyleChange(){const sel=$('style');const prev=(sel&&sel.dataset.prev)||sel.value;const name=sel.value;const custom=$('stylecustom');
+  if(name!==prev&&styleDirty()){
+    sel.value=prev;
+    if(!await askConfirm(t('На стиле есть несохранённые правки. Сменить стиль без сохранения?'))){
+      return;
+    }
+    sel.value=name;
+  }
   if(name==='__edit__'){
     // режим правки шаблона: CURSTYLE уже скопирован editStyle — не трогаем, только поля
     if(!CURSTYLE)CURSTYLE=JSON.parse(JSON.stringify(STYLES[STYLE_EDITING]||STYLES.base||{}));
@@ -636,11 +1633,6 @@ async function onStyleChange(){const sel=$('style');const name=sel.value;const c
     fillStyleFields();
   }
   else{
-    // Уход со стиля с несохранёнными правками — спросить, а не потерять молча: правки
-    // живут в CURSTYLE и будут перезаписаны новым шаблоном.
-    if(styleDirty()&&!await askConfirm(t('На стиле есть несохранённые правки. Сменить стиль без сохранения?'))){
-      sel.value=(STYLE_EDITING?'__edit__':'__custom__');return;
-    }
     STYLE_EDITING=null;STYLE_EDIT_ORIG=JSON.parse(JSON.stringify(STYLES[name]||{}));STYLE_TOUCHED=false;
     CURSTYLE=JSON.parse(JSON.stringify(STYLES[name]||{}));
     if(custom)custom.style.display='';
@@ -649,6 +1641,7 @@ async function onStyleChange(){const sel=$('style');const name=sel.value;const c
     const el=$('st_saved');if(el){el.className='ok';el.textContent='';}
     fillStyleFields();
   }
+  if(sel)sel.dataset.prev=sel.value;
   updateStyleDiffDots();
   renderStyleInfo();captureAE();}
 function renderStyleInfo(){const el=$('styleinfo');if(!el)return;
@@ -690,6 +1683,7 @@ function rotoMask(pct){const show=pct>=0;
   document.querySelectorAll('.pvstage').forEach(st=>{let m=st.querySelector('.rotomask');
     if(show){if(!m){m=document.createElement('div');m.className='rotomask';
         m.innerHTML='<div class="rmband"></div>';st.appendChild(m);}
+      m._pct=pct;   // % от высоты ИСХОДНИКА: с рамкой кадра полосу пересчитывает ipvRotoMaskZoom
       m.querySelector('.rmband').style.height=Math.max(0,Math.min(100,pct))+'%';m.style.display='';}
     else if(m)m.style.display='none';});
   // маска рото живёт в координатах ИСХОДНИКА, а кадр двигает наезд Камеры 1 — рамке
@@ -729,14 +1723,19 @@ function pctToPxY(pct){return Math.round(((parseFloat(pct)||0)/100)*styleFrameDi
 function syncDbSliders(){const s=CURSTYLE||{};
   const m=$('ipvmusicdb');if(m)m.value=Math.round((s.music_db!=null?s.music_db:-20)*2)/2;
   const v=$('ipvvoicedb');if(v)v.value=Math.round((s.voice_db!=null?s.voice_db:0)*2)/2;
+  const pv=$('pvvoicedb');if(pv)pv.value=Math.round((s.voice_db!=null?s.voice_db:0)*2)/2;
+  const pvv=$('pvvoicedbv');if(pvv){
+    const val=(s.voice_db!=null?s.voice_db:0);
+    pvv.textContent=(val>=0?'+':'')+val.toFixed(1)+' dB';}
   if(typeof syncSldnums==='function')syncSldnums();
   updateStyleDiffDots();}
 function setStyleDb(which,v){if(!CURSTYLE)CURSTYLE=JSON.parse(JSON.stringify(STYLES.base||{}));
-  const db=Math.max(-40,Math.min(6,Math.round((parseFloat(v)||0)*2)/2));
+  const db=Math.max(-60,Math.min(12,Math.round((parseFloat(v)||0)*2)/2));
   if(which==='music'){CURSTYLE.music_db=db;}
   else{CURSTYLE.voice_db=db;}
   if(typeof stRefresh==='function')stRefresh(which==='music'?'music_db':'voice_db');
   syncDbSliders();applyDbGains();
+  if(typeof styleTouched==='function')styleTouched();
   captureAE();}
 // Точка наезда Камеры 1 прицелом (часть 4): кнопка ставит курсор в crosshair
 // над кадром предпросмотра, клик кладёт точку в cam1_zoom_cx/cy (доли кадра), на кадре
@@ -744,8 +1743,12 @@ function setStyleDb(which,v){if(!CURSTYLE)CURSTYLE=JSON.parse(JSON.stringify(STY
 // только когда точку ПРАВЯТ: в режиме прицела или на наведении/фокусе на кнопке. Раньше
 // висел всегда — «зачем он на кадре» (жалоба 2026-08-13); потерять поставленную точку
 // нельзя и так: она держит зум, и клик по кнопке снова её показывает.
+// ZOOM_PICK хранит ЦЕЛЬ: false | 'auto' | 'cam1' | 'cam2'. 'auto' — камера, что видна в
+// кадре сейчас (см. zoomPickTarget), явная цель — кнопка «Прицел» у поля именно этой камеры.
+// ZOOM_HOVER остаётся булевым (наведение на кнопку), а камера наведения — в ZOOM_HOVER_CAM.
 let ZOOM_PICK=false;
 let ZOOM_HOVER=false;
+let ZOOM_HOVER_CAM='auto';
 // V4: кнопку st_pickzoom панель создаёт ПОСЛЕ fetch('/api/style_schema'), а
 // DOMContentLoaded стреляет раньше — обработчик на саму кнопку не вешался никогда.
 // Делегируем с контейнера панели. mouseenter/mouseleave НЕ всплывают, поэтому их
@@ -753,40 +1756,128 @@ let ZOOM_HOVER=false;
 document.addEventListener('DOMContentLoaded',()=>{
   const host=document.getElementById('stpanel')||document.body;
   ['mouseenter','focusin'].forEach(ev=>host.addEventListener(ev,(e)=>{
-    if(e.target&&e.target.id==='st_pickzoom'){ZOOM_HOVER=true;zoomPickMark();}
+    if(e.target&&(e.target.id==='st_pickzoom'||e.target.id==='st_pickzoom2')){ZOOM_HOVER=true;ZOOM_HOVER_CAM=(e.target.id==='st_pickzoom2')?'cam2':'auto';zoomPickMark();}
   },{capture:true}));
   ['mouseleave','focusout'].forEach(ev=>host.addEventListener(ev,(e)=>{
-    if(e.target&&e.target.id==='st_pickzoom'){ZOOM_HOVER=false;zoomPickMark();}
+    if(e.target&&(e.target.id==='st_pickzoom'||e.target.id==='st_pickzoom2')){ZOOM_HOVER=false;zoomPickMark();}
   },{capture:true}));
 });
-function pickZoomPoint(){const st=$('ipvstage');
+// Чью точку правит клик: 'cam2' — если Камера 2 активна И в кадре сейчас она (перебивка),
+// иначе 'cam1' — как было. Камера 2 неактивна -> всегда камера 1 (прежнее поведение).
+// Явная цель ('cam1'/'cam2') от кнопки у поля своей камеры перекрывает видимую.
+function isCam2Active(st){
+  if(!st)return false;
+  return (st.cam2_zoom&&st.cam2_zoom!=='none')
+    || (st.cam2_fit!=null&&st.cam2_fit!==100)
+    || (st.cam2_pan_x!=null&&st.cam2_pan_x!==0)
+    || (st.cam2_pan_y!=null&&st.cam2_pan_y!==0)
+    || (st.cam2_rot!=null&&st.cam2_rot!==0)
+    || (st.cam2_zoom_cx!=null&&st.cam2_zoom_cx!==0.5)
+    || (st.cam2_zoom_cy!=null&&st.cam2_zoom_cy!==0.5);
+}
+function zoomPickTarget(which){
+  if(which==='cam1'||which==='cam2')return which;
+  const vis=(typeof IPV!=='undefined'&&IPV&&IPV.curCi===1);
+  return (vis&&isCam2Active(CURSTYLE))?'cam2':'cam1';}
+// Ключи стиля точки наезда цели: единственное место, где имена камер расходятся.
+function zoomPickKeys(target){
+  return target==='cam2'?['cam2_zoom_cx','cam2_zoom_cy']:['cam1_zoom_cx','cam1_zoom_cy'];}
+function pickZoomPoint(which){const st=$('ipvstage');
   if(ZOOM_PICK){zoomPickOff();return;}
   if(!st||!st.clientWidth){toast(t('Открой предпросмотр (шаг 3)'));return;}
-  ZOOM_PICK=true;st.classList.add('zoompick');
-  const b=$('st_pickzoom');if(b)b.textContent=t('Отменить точку');
+  ZOOM_PICK=which||'auto';st.classList.add('zoompick');
+  ['st_pickzoom','st_pickzoom2'].forEach(id=>{const b=$(id);if(b)b.textContent=t('Отменить точку');});
   zoomPickMark();}
 function zoomPickOff(){ZOOM_PICK=false;
   const st=$('ipvstage');if(st)st.classList.remove('zoompick');
-  const b=$('st_pickzoom');if(b)b.textContent=t('Прицел');
+  ['st_pickzoom','st_pickzoom2'].forEach(id=>{const b=$(id);if(b)b.textContent=t('Прицел');});
   zoomPickMark();}
+// ---- точка наезда: клик -> ИСХОДНИК кадра, точка исходника -> экран ----
+// Клик приходит долей ЭКРАНА сцены, а в стиль обязан лечь ИСХОДНИК кадра: между ними
+// стоит матрица кадра ipvCamMatrix (зум × заполнение, точка наезда, pan, слежение,
+// поворот — всё, что рисует ipvCamPaint). Раньше записывалась доля экрана, и на
+// увеличенном кадре прицел ставил точку не туда: у камеры 2 в «скачках» кадр увеличен
+// почти всегда (104–137 %, в тейках больше 200 %), у камеры 1 в «наезде с откатом» он
+// почти всё время 100 % — потому ошибка и была видна только на второй.
+// Второй формулы не заводим: обратная матрица считается из ТОЙ ЖЕ ipvCamMatrix, что
+// рисует кадр (образец — ipvCamChild/ipvRotoMaskZoom, тоже зовущие её, а не свою копию).
+function zoomPickCam(target){return (target==='cam2')?'cam2':'cam1';}
+// Точка ИСХОДНИКА (доли кадра) по доле ЭКРАНА сцены (ux, uy). Клик безразмерен, поэтому
+// просто умножается на размер кадра: матрица живёт в px КОМПОЗИЦИИ (её и ставит
+// ipvCamPaint через setTransform), а доля экрана от размера сцены не зависит.
+function zoomPickSource(ux,uy,tm,target){
+  const pl=(typeof IPV!=='undefined'&&IPV)?IPV.plan:null;
+  const W=(pl&&pl.w)||1080,H=(pl&&pl.h)||1920;
+  let x=ux*W,y=uy*H;
+  const m=(typeof ipvCamMatrix==='function')?ipvCamMatrix(tm,zoomPickCam(target)):null;
+  if(m){                                       // обратная матрица 2D: det = a*d − b*c
+    const det=m[0]*m[3]-m[1]*m[2];
+    if(det!==0){
+      const dx=x-m[4],dy=y-m[5];
+      x=(m[3]*dx-m[2]*dy)/det;y=(-m[1]*dx+m[0]*dy)/det;
+      // Точка наезда в стиле — НЕ точка исходника, а точка КАДРА, где этот пиксель стоит без
+      // зума: в AE это якорь нула, а горизонт поворачивает слой под нулом. Поэтому поворот
+      // возвращаем обратно (R·p): при rot=0 это та же точка, при горизонте — без него
+      // неподвижным при наезде оказался бы соседний пиксель.
+      const s=Math.sqrt(det),co=m[0]/s,si=m[1]/s,rx=co*x-si*y,ry=si*x+co*y;
+      x=rx;y=ry;
+    }
+  }
+  return [x/W+0.5,y/H+0.5];                    // px композиции от центра -> доли кадра
+}
 function zoomPickMark(){const st=$('ipvstage');if(!st)return;
   let m=$('zoommark');
+  // Маркер точки наезда — элемент ПРАВКИ: в режиме рендера его нет вовсе (кадр
+  // снимается с этой же страницы, и маркер попал бы в готовый ролик). CSS его тоже
+  // прячет (.render-mode .zoommark) — здесь он и не создаётся.
+  if(!m&&typeof ipvRenderMode==='function'&&ipvRenderMode())return;
   if(!m){m=document.createElement('div');m.id='zoommark';m.className='zoommark';st.appendChild(m);}
   if(!ZOOM_PICK&&!ZOOM_HOVER){m.style.display='none';return;}   // вне правки точки маркер кадр не засоряет
-  const cx=(CURSTYLE&&CURSTYLE.cam1_zoom_cx!=null)?CURSTYLE.cam1_zoom_cx:0.5;
-  const cy=(CURSTYLE&&CURSTYLE.cam1_zoom_cy!=null)?CURSTYLE.cam1_zoom_cy:0.5;
-  m.style.display='';m.style.left=(cx*100)+'%';m.style.top=(cy*100)+'%';}
+  // Маркер — точка ТОЙ камеры, что правится сейчас (видимой или выбранной кнопкой).
+  // Рисуется по ПРЯМОЙ матрице: перекрестие едет вместе с кадром, и на проигрывании
+  // или перемотке оно остаётся ровно там, где точка исходника на экране СЕЙЧАС (зовёт
+  // его ipvCamPaint на каждый нарисованный кадр), а не там, где точка в долях кадра.
+  const tg=zoomPickTarget(ZOOM_PICK||ZOOM_HOVER_CAM);
+  const kk=zoomPickKeys(tg);
+  const cx=(CURSTYLE&&CURSTYLE[kk[0]]!=null)?CURSTYLE[kk[0]]:0.5;
+  const cy=(CURSTYLE&&CURSTYLE[kk[1]]!=null)?CURSTYLE[kk[1]]:0.5;
+  let ux=cx,uy=cy;
+  if(typeof ipvCamMatrix==='function'){
+    const pl=(typeof IPV!=='undefined'&&IPV)?IPV.plan:null;
+    const W=(pl&&pl.w)||1080,H=(pl&&pl.h)||1920;
+    const Wc=st.clientWidth||W,Hc=st.clientHeight||H;
+    const m=ipvCamMatrix(ipvNow(),zoomPickCam(tg));
+    // точка наезда (кадр без зума) -> точка исходника: снять горизонт (R⁻¹), см. zoomPickSource
+    const qx=(cx-0.5)*W,qy=(cy-0.5)*H;
+    const det=m[0]*m[3]-m[1]*m[2],s=Math.sqrt(det)||1,co=m[0]/s,si=m[1]/s;
+    const px=co*qx+si*qy,py=-si*qx+co*qy;
+    ux=(m[0]*px+m[2]*py+m[4])/W;
+    uy=(m[1]*px+m[3]*py+m[5])/H;
+  }
+  m.style.display='';m.style.left=(ux*100)+'%';m.style.top=(uy*100)+'%';}
+// Точка исходника для клика: обратный пересчёт и ограничение 0.02..0.98 — ОДНО место
+// на весь прицел (его же проверяет стенд). Клик по сцене приходит долей экрана.
+function zoomPickPoint(ux,uy,tm,target){
+  const src=(typeof zoomPickSource==='function') ? zoomPickSource(ux,uy,tm,target) : [ux,uy];
+  return [Math.max(0.02,Math.min(0.98,src[0])),Math.max(0.02,Math.min(0.98,src[1]))];}
 function zoomPickClick(e){const st=$('ipvstage');if(!ZOOM_PICK||!st)return;
   const r=st.getBoundingClientRect();
-  const cx=Math.max(0.02,Math.min(0.98,(e.clientX-r.left)/r.width));
-  const cy=Math.max(0.02,Math.min(0.98,(e.clientY-r.top)/r.height));
-  if(typeof applyZoomPoint==='function')applyZoomPoint(cx,cy);
+  const ux=Math.max(0,Math.min(1,(e.clientX-r.left)/(r.width||1)));
+  const uy=Math.max(0,Math.min(1,(e.clientY-r.top)/(r.height||1)));
+  const tg=zoomPickTarget(ZOOM_PICK);                         // цель фиксируется на клике: кадр мог смениться
+  // Экран -> исходник целевой камеры (обратная матрица), и только ПОСЛЕ него ограничение
+  // 0.02..0.98: оно про точку исходника, а не про экран.
+  const pt=zoomPickPoint(ux,uy,(typeof ipvNow==='function')?ipvNow():0,tg);
+  const cx=pt[0],cy=pt[1];
+  if(typeof applyZoomPoint==='function')applyZoomPoint(cx,cy,tg);
   else{
     if(!CURSTYLE)CURSTYLE=JSON.parse(JSON.stringify(STYLES.base||{}));
-    CURSTYLE.cam1_zoom_cx=cx;CURSTYLE.cam1_zoom_cy=cy;
+    const kk=zoomPickKeys(tg);
+    CURSTYLE[kk[0]]=cx;CURSTYLE[kk[1]]=cy;
     zoomPickMark();
-    if(typeof stRefresh==='function')stRefresh('cam1_zoom_cx');
+    if(typeof stRefresh==='function')stRefresh(kk[0]);
     else updateStyleDiffDots();
+    if(typeof styleTouched==='function')styleTouched();
     captureAE();ipvPlanSoon();
   }
   zoomPickOff();}
@@ -850,6 +1941,10 @@ async function pickdir(id){try{const d=await (await fetch('/api/pickdir')).json(
   else if(id==='aerenderdir')renderDirCommit($(id));
   else saveState();}}
   catch(e){toast(t('Не открылся выбор папки — сервер не ответил'));uiLog(t('pickdir: ')+e);}}
+// Выбор таблицы LUT (.cube) для камеры спикера — как pickdir, только файл и с
+// фильтром .cube: таблицу кладут рядом с исходниками, и в общей папке её не найти.
+async function pickcube(id){try{const d=await (await fetch('/api/pickcube')).json();if(d.path){$(id).value=d.path;}}
+  catch(e){toast(t('Не открылся выбор файла — сервер не ответил'));uiLog(t('pickcube: ')+e);}}
 function musicUI(){const m=val('musicmode');const ib=$('musicinbox');if(ib)ib.style.display=(m==='random')?'none':'';
   const pk=$('musicpick');if(pk)pk.style.display=(m==='file')?'':'none';const lb=$('musicinlbl');if(lb)lb.textContent=(m==='file')?t('Путь к файлу'):t('Ссылка YouTube');
   const inp=$('aemusic');if(inp)inp.placeholder=(m==='file')?'…\\music\\track.m4a':'https://youtube.com/...';}
@@ -1002,6 +2097,7 @@ function sfxSave(){
   if(SFX.db)s[p+"_db"]=+SFX.db.toFixed(1);else delete s[p+"_db"];
   if(p==="pop"&&typeof stRefresh==='function')stRefresh('pop_db');
   updateStyleDiffDots();
+  if(typeof styleTouched==='function')styleTouched();
   captureAE();ipvPlanSoon();}
 function sfxSaveDb(v){SFX.db=parseFloat(v)||0;sfxSave();}
 function sfxReset(){

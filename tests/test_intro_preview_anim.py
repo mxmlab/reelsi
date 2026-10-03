@@ -356,13 +356,18 @@ def test_node_full_dom_intro_preview(tmp_path):
 
 
 def test_sfx_ev_pop_def_out(xml_subs):
-    """События звука pop в плане сцены: при дефолтном стиле out равен None (JS берёт 0.1с)."""
+    """События звука pop в плане сцены: конец звука (`out`) — та же базовая обрезка 0.1 с.
+
+    Число обязано быть В ПЛАНЕ, а не правилом у каждого читателя: раньше `out` был None,
+    превью брало свои 0.1 с, а рендер без After Effects резал событие по длине файла —
+    поп (0.43 с) звучал вчетверо длиннее, чем в собранном проекте AE.
+    """
     plan = xml2ae.scene_plan(xml_subs, highlights=[0, 1])
     sfx = plan.get("audio", {}).get("sfx", [])
     pop = next((s for s in sfx if s["kind"] == "pop"), None)
     if pop and pop["events"]:
         ev = pop["events"][0]
-        assert ev["out"] is None, "по умолчанию out в плане сцены None (JS берёт 0.1с)"
+        assert ev["out"] == 0.1, ("у «попа» конец звука — 0.1 с, как outPoint в шаблоне", ev)
 
 
 def test_intro_scale_formula_0968():

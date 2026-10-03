@@ -23,20 +23,53 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
 from core import draftrender as d  # noqa: E402
+from core import encoders  # noqa: E402
+from core.aicut import config as aicut_config  # noqa: E402
+from core.aicut import config_actions  # noqa: E402
+
+
+def _save_cfg(video_encoder: str) -> None:
+    """Конфиг с одним профилем (пустые profiles load_ai_config игнорирует) и настройкой.
+
+    Файл — во временном каталоге теста: боевой `ai_config.json` (личный, с ключами)
+    тесты не читают и не пишут никогда (см. REELSI_AI_CONFIG в conftest).
+    """
+    aicut_config.save_ai_config({
+        "active": "Тест",
+        "profiles": {"Тест": {"provider": "lmstudio",
+                              "base_url": "http://localhost:1234/v1",
+                              "api_key": "", "model": "тестовая"}},
+        "video_encoder": video_encoder})
+
+
+def _set_encoder(value: str) -> None:
+    """Сменить настройку «Видеокодек» ДЕЙСТВИЕМ настройки — как это делает ⚙ в UI.
+
+    Именно так ловится дефект: смена настройки обязана сбросить кэши выбора кодека,
+    иначе следующий черновик соберётся прежним кодеком до перезапуска сервера.
+    """
+    cfg = aicut_config.load_ai_config()
+    config_actions.set_video_encoder(cfg, {"value": value})
+    aicut_config.save_ai_config(cfg)
 
 
 @pytest.fixture(autouse=True)
 def reset_cache():
-    """Кэш живёт на процесс — между тестами обнуляем, иначе они видят чужой выбор."""
-    d._HW_CACHE = "unset"
+    """Кэш ПРОБ живёт на процесс — между тестами обнуляем: соседний тест с другой
+    подменённой пробой иначе увидел бы чужой ответ (выбор кэша не имеет вовсе)."""
+    d.reset_cache()
     yield
-    d._HW_CACHE = "unset"
+    d.reset_cache()
 
 
 def _fake(monkeypatch, system, working=()):
-    """Платформа + набор кодеков, которые «проходят пробу»."""
+    """Платформа + набор кодеков, которые «проходят пробу».
+
+    Подменяется `draftrender.probe_encoder` — своя проба черновика: её зовёт
+    `encoders.pick` через `probe_family`, а кэш проб не даёт запускать её дважды.
+    """
     monkeypatch.setattr(d.platform, "system", lambda: system)
-    monkeypatch.setattr(d, "_probe_encoder", lambda name: name in working)
+    monkeypatch.setattr(d, "probe_encoder", lambda name: name in working)
 
 
 def test_mac_picks_videotoolbox(monkeypatch):
@@ -71,13 +104,18 @@ def test_unknown_platform_still_tries_something(monkeypatch):
 
 
 def test_probe_runs_once_and_is_cached(monkeypatch):
-    """Проба — это запуск ffmpeg. Гонять её на каждый черновик нельзя."""
+    """Проба — это запуск ffmpeg. Гонять её на каждый черновик нельзя.
+
+    Кэшируется ПРОБА, а не выбор: выбор нарочно пересчитывается каждый раз (настройку
+    меняют в любой момент), и проба при этом берётся из кэша — запуск ffmpeg один.
+    """
     calls = []
     monkeypatch.setattr(d.platform, "system", lambda: "Windows")
-    monkeypatch.setattr(d, "_probe_encoder", lambda n: calls.append(n) or (n == "h264_nvenc"))
+    monkeypatch.setattr(d, "probe_encoder",
+                        lambda n: calls.append(n) or (n == "h264_nvenc"))
     assert d.hw_encoder() == "h264_nvenc"
     assert d.hw_encoder() == "h264_nvenc"
-    assert calls == ["h264_nvenc"], "проба запускалась повторно"
+    assert calls == ["h264_nvenc"], f"проба запускалась повторно: {calls}"
 
 
 def test_refresh_forces_reprobe(monkeypatch):
@@ -163,6 +201,55 @@ def test_no_hardware_encoder_means_one_plain_try():
     """Без аппаратного энкодера — один честный заход на libx264."""
     assert len(_tries(rot=False, hw=None)) == 1
     assert _tries(rot=True, hw=None) == _tries(rot=False, hw=None)
+
+
+# --------------------------------------------------------------------------- #
+# смена настройки «Видеокодек» действует БЕЗ перезапуска сервера
+# --------------------------------------------------------------------------- #
+def test_setting_change_switches_encoder_in_same_process(monkeypatch):
+    """«nvidia» -> «cpu» действием настройки: следующий же вызов — libx264, без refresh.
+
+    Дефект владельца: «Выбрал Intel Quick Sync — всё равно нагружает NVIDIA». Итоговый
+    выбор кэшировался на процесс сервера, поэтому первый черновик после старта
+    запоминал NVENC и смена настройки не меняла ничего до перезапуска. Теперь
+    помнится только ПРОБА, а выбор считается при каждом вызове.
+    """
+    _save_cfg("nvidia")
+    _fake(monkeypatch, "Windows", working=("h264_nvenc", "h264_qsv"))
+    assert d.hw_encoder() == "h264_nvenc"
+
+    _set_encoder("cpu")
+    assert d.hw_encoder() is None, "выбор держится за прежнюю настройку"
+    assert encoders.pick("draft").args[1] == "libx264"
+    assert "cuda" not in str(_tries(rot=False, hw=d.hw_encoder())), \
+        "при «Процессор» декод всё ещё уходит на CUDA"
+
+
+def test_setting_change_switches_to_intel_decode_in_same_process(monkeypatch):
+    """«nvidia» -> «intel»: кодек h264_qsv, и декод БЕЗ `-hwaccel cuda`.
+
+    У Intel аппаратный только ЭНКОД, декод — процессором, в том числе потому, что на
+    аппаратных кадрах не работает фильтр `crop` рамки кадра (см. `_decode_tries`).
+    """
+    _save_cfg("nvidia")
+    _fake(monkeypatch, "Windows", working=("h264_nvenc", "h264_qsv"))
+    assert d.hw_encoder() == "h264_nvenc"
+
+    _set_encoder("intel")
+    assert d.hw_encoder() == "h264_qsv", "выбор держится за прежнюю настройку"
+    tries = _tries(rot=False, hw="h264_qsv")
+    for inp, _vf, codec in tries:
+        assert "-hwaccel" not in inp, "при Quick Sync декод ушёл на карту"
+    assert "h264_qsv" in tries[0][2], "аппаратный энкод Intel потерян вместе с декодом"
+
+
+def test_setting_change_back_to_auto_picks_hardware_again(monkeypatch):
+    """Обратно на «авто» — снова NVENC: сброс кэшей не «залипает» на CPU."""
+    _save_cfg("cpu")
+    _fake(monkeypatch, "Windows", working=("h264_nvenc",))
+    assert d.hw_encoder() is None
+    _set_encoder("auto")
+    assert d.hw_encoder() == "h264_nvenc"
 
 
 # --------------------------------------------------------------------------- #

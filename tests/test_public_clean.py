@@ -20,7 +20,6 @@ r"""Сторож обезличивания всего публикуемого 
 конкретный логин, а не буква диска.
 """
 import os
-import subprocess
 import sys
 
 import pytest
@@ -30,6 +29,8 @@ ROOT = os.path.dirname(HERE)
 
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 import public_slice  # noqa: E402
+
+from tests import gitfiles  # noqa: E402
 
 SPDX = "SPDX-License-Identifier: AGPL-3.0-or-later"
 SPDX_EXT = (".py", ".js", ".jsx", ".ps1", ".sh")
@@ -48,13 +49,13 @@ def _git_files():
     Файлы, которых нет на диске, пропускаем: пока переезд не закоммичен,
     индекс ещё держит старые пути — `ae_inspect.jsx` числится отслеживаемым, а лежит
     уже в `tools/`. Читать нечего — значит и проверять нечего.
+
+    Без git (docker-прогон CI, дерево распаковано) список даёт обход — см.
+    `tests/gitfiles.py`: сторож обезличивания не должен зависеть от наличия git.
     """
-    out = subprocess.check_output(
-        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
-        cwd=ROOT, text=True, encoding="utf-8")
     seen = set()
     files = []
-    for f in out.splitlines():
+    for f in gitfiles.git_files(ROOT):
         if f and f not in seen and os.path.exists(os.path.join(ROOT, f)):
             seen.add(f)
             files.append(f)

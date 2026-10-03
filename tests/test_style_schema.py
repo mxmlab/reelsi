@@ -37,7 +37,16 @@ SHARED_KEYS = {
 # Настоящие пары key/key2: одна ручка-точка (ctl="point") с двумя координатами.
 # Это исключение из правила «один ключ — одно поле», и оно описано явно: появилась
 # новая пара — её сперва вписывают сюда.
-POINT_PAIRS = {("cam1_zoom_cx", "cam1_zoom_cy")}
+POINT_PAIRS = {
+    ("cam1_zoom_cx", "cam1_zoom_cy"),
+    ("cam2_zoom_cx", "cam2_zoom_cy"),
+    ("cam1_zoom_lo", "cam1_zoom_hi"),
+    ("cam2_zoom_lo", "cam2_zoom_hi"),
+    ("cam1_drift_lo", "cam1_drift_hi"),
+    ("cam2_drift_lo", "cam2_drift_hi"),
+    ("cam1_take_lo", "cam1_take_hi"),
+    ("cam2_take_lo", "cam2_take_hi"),
+}
 
 
 @pytest.fixture
@@ -74,7 +83,7 @@ def _iter_nodes(layers=None):
 
 
 def _key_uses(nodes=None):
-    """Каждое место, где схема называет ключ: [(ключ, 'key'|'key2'|'toggle'), ...]."""
+    """Каждое место, где схема называет ключ: [(ключ, 'key'|'key2'|'toggle'|'link'), ...]."""
     uses = []
     for _, node in _iter_nodes() if nodes is None else nodes:
         for slot in ("key", "key2"):
@@ -82,6 +91,8 @@ def _key_uses(nodes=None):
                 uses.append((node[slot], slot))
         if node.get("toggle"):
             uses.append((node["toggle"], "toggle"))
+        if node.get("link"):
+            uses.append((node["link"], "link"))
     return uses
 
 
@@ -321,3 +332,47 @@ def test_api_style_schema_matches_schema(client):
             f"{name} разъехались: только в ответе {sorted(from_api - from_schema)}, "
             f"только в схеме {sorted(from_schema - from_api)}"
         )
+
+
+def test_camera_tooltips_and_zoom_options_contract():
+    """Подсказки камер (пп. 5–7) и чистые русские подписи вариантов на склейке (п. 8)."""
+    fields_by_key = {
+        node["key"]: node for kind, node in _iter_nodes() if kind == "field" and "key" in node
+    }
+
+    # п. 5: честная подсказка у camN_take_hold (правило: удержание считается
+    # СВЕРХ конца фразы, и отъезд больше не сжимается — не влез, значит его нет)
+    for k in ("cam1_take_hold", "cam2_take_hold"):
+        tip = fields_by_key[k].get("tip") or ""
+        assert "Сколько держать приближение СВЕРХ конца фразы хайлайта" in tip, f"не та подсказка у {k}"
+        assert "камера держит пик до конца куска" in tip
+
+    # п. 6: подсказки у camN_zoom_cx, camN_head_x, camN_head_smooth, lm_* и lm2_*
+    lm_keys = [
+        "lm_exposure", "lm_contrast", "lm_highlights", "lm_shadows", "lm_whites", "lm_blacks",
+        "lm_temp", "lm_tint", "lm_sat",
+        "lm2_exposure", "lm2_contrast", "lm2_highlights", "lm2_shadows", "lm2_whites", "lm2_blacks",
+        "lm2_temp", "lm2_tint", "lm2_sat",
+    ]
+    check_keys = [
+        "cam1_zoom_cx", "cam2_zoom_cx",
+        "cam1_head_x", "cam2_head_x",
+        "cam1_head_smooth", "cam2_head_smooth",
+    ] + lm_keys
+
+    for k in check_keys:
+        assert k in fields_by_key, f"нет поля {k} в схеме"
+        tip = fields_by_key[k].get("tip")
+        assert tip and str(tip).strip(), f"у поля {k} пустой tip"
+
+    # п. 7: подсказка cam1_fit
+    fit_tip = fields_by_key["cam1_fit"].get("tip") or ""
+    assert "Перебивки Камеры 2 не трогает" not in fit_tip
+    assert "На камеру 2 не влияет: у неё своё заполнение в «Камера 2 → Transform»." in fit_tip
+
+    # п. 8: режимы на склейке без смеси языков
+    for zk in ("cam1_zoom", "cam2_zoom"):
+        opts = fields_by_key[zk].get("options", [])
+        labels = [opt[1] if isinstance(opt, (list, tuple)) else opt["label"] for opt in opts]
+        assert labels == ["нет", "плавный наезд с откатом", "скачок", "дрейф"], f"варианты {zk}: {labels}"
+

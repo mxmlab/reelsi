@@ -135,6 +135,16 @@ def atomic_bytes_write(path: str | os.PathLike[str], data: bytes) -> None:
     _atomic_write(path, lambda f: f.write(data), mode="wb")
 
 
+def atomic_stream_write(path: str | os.PathLike[str], write: Callable[[IO[Any]], object]) -> None:
+    """Записать поток байтами: write(f) получает открытый tmp-файл (режим "wb").
+
+    Для того, что собирается НЕ в памяти: обработанный голос спикера бывает на час
+    (десятки мегабайт WAV), и пишут его потоково — ffmpeg и pedalboard пишут прямо
+    в файл. Целостность та же, что у остальных записей: читатель видит либо прежний
+    файл, либо целиком новый, а не половину."""
+    _atomic_write(path, write, mode="wb")
+
+
 def json_load_soft(path: str | os.PathLike[str], default: Any = None) -> Any:
     """Прочитать JSON, битый файл — отдать default (не ронять вызывающего).
 

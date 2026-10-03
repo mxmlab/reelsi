@@ -266,17 +266,22 @@ def test_тритон_берёт_intro_hl_fill_из_стиля(xml_subs, tmp_pat
     assert 'var tt=addFX(L,"ADBE Tritone"); setP(tt,"ADBE Tritone-0002",INTRO_HL_FILL);' in jsx
 
 
-def test_строка_back_со_свечением_тень_заднего_плана_есть(xml_subs, tmp_path):
-    """back + fx=='glow': тень заднего плана остаётся (условие ln.anim=="glitch"||ln.back)."""
+def test_строка_back_тень_заднего_плана_есть_и_accent_светится(xml_subs, tmp_path):
+    """back-строка получает тень заднего плана; свечение приходит accent-строке по галке стиля.
+
+    Свечение строки — единая галка стиля intro_accent_glow и только для accent-строк,
+    поэтому «back со свечением» как выбор строки больше не существует: тень заднего плана
+    остаётся (условие ln.anim=="glitch"||ln.back), а ветку fx=="glow" приносит accent-строка.
+    """
     jsx, _ = _build(xml_subs, tmp_path, [
-        dict(words=["ГЛАВНОЕ"], color="white", times=[T_CAM1]),
-        dict(words=["фон"], color="white", times=[T_CAM1 + 0.5], back=True, fx="glow"),
+        dict(words=["ГЛАВНОЕ"], color="accent", times=[T_CAM1]),
+        dict(words=["фон"], color="white", times=[T_CAM1 + 0.5], back=True),
     ], name="back_glow.jsx")
 
     assert "function introWordShadow(L, isBack)" in jsx
     assert "BACK_SHADOW_OP=131, BACK_SHADOW_SOFT=38" in jsx
     assert 'if(ln.anim=="glitch"||ln.back) introWordShadow(' in jsx
-    # Blur строка со свечением не приносит: ветка fx=="glow" без глитча
+    # Ветка свечения без глитча есть: её приносит accent-строка по галке стиля
     assert 'if(anim=="glitch"){' in jsx and '} else if(fx=="glow"){' in jsx
 
 

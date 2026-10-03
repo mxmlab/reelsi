@@ -570,7 +570,8 @@ def test_default_big_step_ratio_to_cap(fixture_font, xml_subs):
 DOORS_SRC = ("static/app/60-preview.js", "static/app/90-ae.js")
 # 6 копий в 90-ae.js: selectAE, captureAE, introLinesFor, introRowsFromAI, панель
 # одиночного ИИ-интро (aiIntroRun — ответ кладётся в панель под гвардией «клип открыт»)
-# и пакетный aiIntroAllRun. В 60-preview.js их было две — в панели слов предпросмотра
+# и общее тело на клип aiIntroOne — его зовут и пул, и последовательная ветка aiIntroAllRun.
+# В 60-preview.js их было две — в панели слов предпросмотра
 # нарезки (pvwOpen и pvwCommitIntro); панель удалена вместе с контейнерами, которые
 # она рисовала, её копии ушли. Общих функций разметки строк это не касается:
 # introRowHtml/introToggleCount живут здесь же и проверяются отдельно.
@@ -806,23 +807,24 @@ def test_template_keeps_big_layout_wiring(xml_subs, tmp_path):
 
 # ---- 8. масштаб появления — от базы слоя --------------------------------------
 
-# Фикстура: большая «8» слева, строка стопки «КИЛО» и строка заднего плана «ФОН» — у всех
+# Фикстура: большая «8» слева, строка стопки «КИЛО» (accent — светится по галке стиля,
+# поэтому в сборке есть ветка introAnimFX) и строка заднего плана «ФОН» — у всех
 # одна и та же анимация, чтобы видеть, каких слоёв ветка introAnimFX касается.
 MG_LINES = [
     {"words": ["8"], "color": "white", "times": [T_CAM1], "big": True},
-    {"words": ["КИЛО"], "color": "white", "times": [T_CAM1 + 0.3]},
+    {"words": ["КИЛО"], "color": "accent", "times": [T_CAM1 + 0.3]},
     {"words": ["ФОН"], "color": "white", "times": [T_CAM1 + 0.6], "back": True},
 ]
 # "" — обычный фейд по Opacity (ветка else в introAnimFX); Scale слоя анимирует ТОЛЬКО
-# reveal. Ветка else в сборке появляется, только если у строки есть fx="glow": без
-# anim/fx/cnt introAnimFX в .jsx нет вовсе — тогда проверять нечего.
+# reveal. Ветка else в сборке появляется, только если у какой-то строки есть fx="glow":
+# без anim/fx/cnt introAnimFX в .jsx нет вовсе — тогда проверять нечего. Свечение строки
+# даёт accent по галке стиля intro_accent_glow (поле fx строки не читается).
 MG_ANIMS = ("", "up", "left", "right", "reveal", "glitch")
 
 
 def _mg_intro(anim):
-    """Строки фикстуры с одной и той же анимацией (фейд приходит с fx="glow")."""
-    extra = {"fx": "glow"} if not anim else {}
-    return [dict(x, anim=anim, **extra) for x in MG_LINES]
+    """Строки фикстуры с одной и той же анимацией (ветку свечения приносит accent-строка)."""
+    return [dict(x, anim=anim) for x in MG_LINES]
 
 
 # Проверки для прогона в node: база слоя — Scale, выставленный ДО анимации, и ключи

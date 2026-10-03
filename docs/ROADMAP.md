@@ -129,7 +129,7 @@ ffmpeg tile + волна + слова) для СПОРНЫХ мест и спр�
 
 ### Очистка временных файлов
 
-**Статус: сделано** (авто-очистка `_tmp` перед нарезкой в `api/jobs.py:292`, роут и кнопка `POST /api/clean_tmp` в `api/jobs.py:550`, `draftrender.clean_tmp`).
+**Статус: сделано** (авто-очистка `_tmp` перед нарезкой в `api/jobs.py:270`, роут и кнопка `POST /api/clean_tmp` в `api/jobs.py:528`, `draftrender.clean_tmp`).
 
 - Все новые временные артефакты (draft mp4, склейки аудио self-check, композиты Omni) —
   в ОДНУ папку `<outdir>/_tmp/` (не в %TEMP%), имена по хэшу входа.

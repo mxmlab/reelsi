@@ -152,7 +152,8 @@ async function vidGenerate(){
                        kind:vidRefKind(r),duration:r.duration||0,w:r.w||0,h:r.h||0}))};
   $('vidresult').style.display='none';
   logReset();
-  progShow(t('Генерация видео'),t('отправляю запрос…'));
+  progOpen({title:t('Генерация видео')});
+  progUpdate(null,t('отправляю запрос…'));
   const b=$('vidgo');if(b)b.disabled=true;
   try{await videoStart(body,{
     onResult:res=>vidShowResult(res),
@@ -205,14 +206,13 @@ function videoFinish(d,ctx){
       return;}
     // при отмене текст из потока НЕ глотаем: там сказано, приняли ли её у
     // провайдера — иначе задача досчитается и молча спишется
-    if(VIDCANCEL){progDone(t('Остановлено'));
-      $('progFill').className='progfill';   // остановлено ≠ сделано: зелёный только у «Готово» (как у нарезки)
+    if(VIDCANCEL){progDone(t('Остановлено'),true);   // остановлено ≠ сделано: зелёный только у «Готово»
       if(ctx&&ctx.onCancel)videoCall(ctx,'onCancel',d);else toast(errText(d)||t('Генерация видео остановлена'));
       return;}
-    if(d.error){progDone('✗ '+errText(d));
+    if(d.error){progDone(errText(d),true);
       if(ctx&&ctx.onError)videoCall(ctx,'onError',d);else toast('⚠ '+errText(d));
       return;}
-    const miss={error:t('Готово (файла нет — см. логи)')};progDone(miss.error);
+    const miss={error:t('Готово (файла нет — см. логи)')};progDone(miss.error,true);
     if(ctx&&ctx.onError)videoCall(ctx,'onError',miss);else toast('⚠ '+miss.error);
   }finally{videoCall(ctx,'onSettled',d);}
 }
@@ -250,9 +250,12 @@ async function pollVideo(){
   }catch(e){vidRetryWait();return;}
   VIDRETRY=0;                            // валидный status — сбой транспорта кончился
   mergeLog(d);
+  // Последнюю строку лога разбираем в КОД события (одно место — progEventFromLog):
+  // в шапку идёт короткий статус («генерирую видео · 12с»), сама строка — в «Показать логи».
   const last=[...LOGCACHE].map(fmtLog).reverse().find(l=>l.trim())||'';
+  const ev=progEventFromLog(last);
   const el=d.elapsed?(' · '+d.elapsed+t('с')):'';
-  progUpdate(null,last.trim().slice(0,80)+el,t('Генерация видео'),t('видео считается в облаке'));
+  progUpdate(null,(ev?PROGEV[ev]:t('видео считается в облаке'))+el,t('Генерация видео'));
   if(!d.running&&!d.done){videoStateLost(VIDCTX);return;}
   if(d.done){VIDPOLL=false;vidBusy(false);const s=$('vidstop');if(s)s.disabled=false;
     vidHistLoad();                 // чем бы ни кончилось — строка задачи должна обновиться

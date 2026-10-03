@@ -47,11 +47,42 @@
     video_prompts
             личные приписки к промпту генерации видео-вставок (слоты a и b),
             с той же структурой {extra, pos}. Отсутствие = чистый запрос карточки.
+    inserts
+            квота вставок на шаг 2: {"photo": <int>, "video": <int>}, диапазон 0..30,
+            сумма >= 1. Пусто = 10 фото и 3 видео.
+    lut
+            LUT (.cube) на видео камеры: {"<номер камеры с 1>": "путь"}. В превью
+            накладывается на лету, в сборке прожигается в видео — AE плохо
+            работает с цветом. Пусто — цвет как есть.
     breath_model
             свой `breath_model.*.json`. Пусто = общий. Обучается
             `train_breath.py --speaker <имя>`, НО на текущих объёмах личные
             модели общей проигрывают (21.8% против 25% при равной точности):
             данных на одного мало. Поле на будущее
+    format
+            формат кадра ролика: один из ключей `frame.FORMATS` ("9:16", "1:1",
+            "4:5", "16:9"). Отсюда его берут секвенция Premiere, масштаб клипов
+            камер, превью, черновик, .drp и поиск стоков (core/frame.py —
+            единственный источник). Пусто = 9:16, как снималось до сих пор
+    frame
+            рамка кадра КАЖДОЙ камеры: {"<номер камеры с 1>": {"x", "y", "zoom"}}.
+            Какая часть исходника попадает в кадр: x/y — точка исходника (доли
+            ПОКАЗЫВАЕМОГО кадра, после поворота), встающая в центр кадра ролика,
+            zoom — проценты от «кадр заполнен ровно», 100..400. Задаётся мышкой в
+            превью шага 3, применяется везде, где собирается картинка (.jsx,
+            превью, XML, черновик). Камеры в поле нет или значения 0.5/0.5/100 —
+            обрезка по центру, как было (core/frame.py — единственный источник
+            геометрии рамки)
+    voice_fx
+            обработка голоса камеры 1 — ИИ-шумодав и цепочка VST3
+            ({"denoise": {"on", "engine", "atten_db", "mix"},
+            "vst": [{"path", "name", "state", "on"}], "cut", "final"}).
+            Движок (`engine`) — `deepfilter` (предел подавления в дБ, `atten_db`),
+            `roformer` или `roformer_aggr` (доля обработанного в смеси, `mix`, %);
+            поля нет — прежний `deepfilter`, как у профилей, записанных до
+            появления RoFormer. Форма и дефолты — `core/voicefx.py:normalize_fx`,
+            редактор — блок «Голос» в превью нарезки. Запекается в WAV до
+            After Effects; пусто = голос как есть
 
 Профиль без `cut` = текущее поведение один в один: дефолты здесь и константы в
 `gigaam_cut.tune` — одни и те же числа, за этим следит `tests/test_speakers.py`.
@@ -60,6 +91,7 @@ from __future__ import annotations
 import os, json, re, copy
 from typing import Any
 
+from core import frame
 from core import paths
 from core.fileio import atomic_text_write
 from core.umsg import ReelsiError
@@ -157,6 +189,137 @@ def load(key: str | None) -> dict[str, Any] | None:
     return None
 
 
+def _check_voice_fx(raw: Any) -> None:
+    """Проверить поле `voice_fx` перед записью профиля (иначе — ValueError).
+
+    Строгая проверка тут, а не при использовании: профиль — единственное место,
+    где настройки обработки голоса вообще лежат, и молча записанный мусор (строка
+    вместо дБ, чужой ключ) всплыл бы потом в нарезке, уже без объяснения откуда.
+    Битые значения, пришедшие ИЗ файла (правленного руками), при использовании
+    смягчает core.voicefx.normalize_fx — профиль из-за них не падает.
+    """
+    if not isinstance(raw, dict):
+        raise ValueError("поле voice_fx должно быть объектом")
+    unknown = [k for k in raw if k not in ("denoise", "vst", "cut", "final")]
+    if unknown:
+        raise ValueError("неизвестные ключи voice_fx: " + ", ".join(sorted(str(k) for k in unknown)))
+    dn = raw.get("denoise")
+    if dn is not None:
+        if not isinstance(dn, dict):
+            raise ValueError("поле voice_fx.denoise должно быть объектом")
+        bad_dn = [k for k in dn if k not in ("on", "engine", "atten_db", "mix")]
+        if bad_dn:
+            raise ValueError("неизвестные ключи voice_fx.denoise: "
+                             + ", ".join(sorted(str(k) for k in bad_dn)))
+        if "on" in dn and not isinstance(dn["on"], bool):
+            raise ValueError("voice_fx.denoise.on должен быть true/false")
+        if "engine" in dn:
+            # Импорт внутри функции: core.voicefx сам импортирует speakers на
+            # уровне модуля, и встречный импорт сверху был бы кольцом. Список
+            # движков живёт там же, где нормализация поля, — второй копии нет.
+            from core import voicefx
+            if dn["engine"] not in voicefx.DENOISE_ENGINES:
+                raise ValueError("некорректное значение voice_fx.denoise.engine: "
+                                 "ожидается одно из "
+                                 + ", ".join(voicefx.DENOISE_ENGINES))
+        if "atten_db" in dn:
+            att = dn["atten_db"]
+            if not isinstance(att, int) or isinstance(att, bool) or att < 0 or att > 100:
+                raise ValueError("некорректное значение voice_fx.denoise.atten_db: "
+                                 "ожидается число от 0 до 100")
+        if "mix" in dn:
+            mix = dn["mix"]
+            if not isinstance(mix, int) or isinstance(mix, bool) or mix < 0 or mix > 100:
+                raise ValueError("некорректное значение voice_fx.denoise.mix: "
+                                 "ожидается число от 0 до 100")
+    vst = raw.get("vst")
+    if vst is not None:
+        if not isinstance(vst, list):
+            raise ValueError("поле voice_fx.vst должно быть списком")
+        for i, item in enumerate(vst):
+            if not isinstance(item, dict):
+                raise ValueError(f"элемент voice_fx.vst[{i}] должен быть объектом")
+            bad = [k for k in item if k not in ("path", "name", "state", "on")]
+            if bad:
+                raise ValueError(f"неизвестные ключи voice_fx.vst[{i}]: "
+                                 + ", ".join(sorted(str(k) for k in bad)))
+            if not isinstance(item.get("path"), str) or not item["path"].strip():
+                raise ValueError(f"voice_fx.vst[{i}].path: нужен путь к плагину")
+            for key in ("name", "state"):
+                if key in item and not isinstance(item[key], str):
+                    raise ValueError(f"voice_fx.vst[{i}].{key} должен быть строкой")
+            if "on" in item and not isinstance(item["on"], bool):
+                raise ValueError(f"voice_fx.vst[{i}].on должен быть true/false")
+    for key in ("cut", "final"):
+        if key in raw and not isinstance(raw[key], bool):
+            raise ValueError(f"voice_fx.{key} должен быть true/false")
+
+
+def _check_lut(raw: Any) -> dict[str, str]:
+    """Проверить поле `lut` перед записью профиля (иначе — ValueError).
+
+    Строгая проверка тут, а не при использовании, — по той же причине, что у
+    voice_fx: профиль единственное место, где путь к таблице вообще лежит, и молча
+    записанный мусор (номер камеры строкой, путь к чему угодно) всплыл бы потом в
+    превью, уже без объяснения откуда.
+
+    Пустой путь — ключ не пишется: пустое поле в редакторе значит «LUT не задан»,
+    и профиль без правок не должен обзаводиться пустой таблицей.
+    """
+    if not isinstance(raw, dict):
+        raise ValueError("поле lut должно быть объектом")
+    out: dict[str, str] = {}
+    for k, v in raw.items():
+        cam = str(k).strip()
+        if not cam.isdigit() or int(cam) < 1:
+            raise ValueError(f"некорректный номер камеры в lut: {k!r} (нужно число от 1)")
+        if not isinstance(v, str):
+            raise ValueError(f"lut.{cam}: нужен путь к файлу .cube")
+        path = v.strip()
+        if not path:
+            continue
+        if not path.lower().endswith(".cube"):
+            raise ValueError(f"lut.{cam}: путь должен оканчиваться на .cube")
+        out[cam] = path
+    return out
+
+
+def _check_format(raw: Any) -> str:
+    """Проверить поле `format` перед записью профиля (иначе — ValueError).
+
+    Строгая проверка тут, а не при использовании, — по той же причине, что у
+    voice_fx и lut: формат ролика выбирают в профиле, и молча записанное чужое
+    значение («916», «вертикаль») всплыло бы потом в нарезке, уже без объяснения
+    откуда. Незнакомое значение при ЧТЕНИИ файла, правленного руками, смягчает
+    core.frame.speaker_format — профиль из-за него не падает, ролик собирается 9:16.
+
+    Пустое значение — ключ не пишется: пустое поле в редакторе значит «формат по
+    умолчанию», и профиль без правок не должен обзаводиться записью про формат.
+    """
+    if not isinstance(raw, str):
+        raise ValueError("поле format должно быть строкой")
+    fmt = raw.strip()
+    if not fmt:
+        return ""
+    if fmt not in frame.FORMATS:
+        raise ValueError(f"неизвестный формат кадра: {raw!r} (нужно одно из "
+                         + ", ".join(sorted(frame.FORMATS)))
+    return fmt
+
+
+def _check_frame(raw: Any) -> dict[str, dict[str, float]]:
+    """Проверить поле `frame` перед записью профиля (иначе — ValueError).
+
+    Обёртка над `core.frame.check_frames`: рамка — геометрия кадра, и правило у
+    неё одно на всех, кто её применяет (.jsx, XML, черновик, превью). Вторая
+    копия проверки здесь разошлась бы с той, по которой считают.
+
+    Рамка на дефолте (0.5/0.5/100) ключа не заводит: камера без правок не должна
+    появляться в профиле, как не появляется пустой LUT и пустой формат.
+    """
+    return frame.check_frames(raw)
+
+
 def save(name: str | None, data: Any) -> tuple[str, str]:
     """Записать профиль. Возвращает (ключ, путь)."""
     if not isinstance(data, dict):
@@ -167,6 +330,38 @@ def save(name: str | None, data: Any) -> tuple[str, str]:
     unknown = [k for k in cut if k not in CUT_DEFAULTS]
     if unknown:
         raise ValueError("неизвестные пороги: " + ", ".join(sorted(unknown)))
+    if "inserts" in d:
+        ins = d["inserts"]
+        if not isinstance(ins, dict):
+            raise ValueError("поле inserts должно быть объектом")
+        unknown_ins = [k for k in ins if k not in ("photo", "video")]
+        if unknown_ins:
+            raise ValueError("неизвестные ключи inserts: " + ", ".join(sorted(str(k) for k in unknown_ins)))
+        for k, v in ins.items():
+            if not isinstance(v, int) or isinstance(v, bool) or v < 0 or v > 30:
+                raise ValueError(f"некорректное значение inserts.{k}: ожидается число от 0 до 30")
+        if sum(ins.values()) < 1:
+            raise ValueError("сумма вставок (photo + video) должна быть не меньше 1")
+    if "voice_fx" in d:
+        _check_voice_fx(d["voice_fx"])
+    if "lut" in d:
+        luts = _check_lut(d["lut"])
+        if luts:
+            d["lut"] = luts
+        else:
+            del d["lut"]          # одни пустые пути — поля нет, как у inserts и voice_fx
+    if "format" in d:
+        fmt = _check_format(d["format"])
+        if fmt:
+            d["format"] = fmt
+        else:
+            del d["format"]       # пусто = формат по умолчанию (9:16), поля нет
+    if "frame" in d:
+        fr = _check_frame(d["frame"])
+        if fr:
+            d["frame"] = fr
+        else:
+            del d["frame"]        # все камеры на дефолте — поля нет, как у lut
     os.makedirs(SPEAKER_DIR, exist_ok=True)
     key = _key(name or d["label"])
     path = os.path.join(SPEAKER_DIR, key + ".json")

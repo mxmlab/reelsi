@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/mxmlab/reelsi/actions/workflows/ci.yml/badge.svg)](https://github.com/mxmlab/reelsi/actions/workflows/ci.yml)
 
-Reelsi is a local editing assistant for talking-head video. AI cuts footage by content and builds ready-to-edit projects for Adobe Premiere Pro and After Effects. Nothing is uploaded to remote servers, except text sent to your chosen cloud AI provider.
+Reelsi is a local editing assistant for talking-head video. AI cuts footage by content and builds ready-to-edit projects for Adobe Premiere Pro and After Effects. Nothing is uploaded to remote servers, except what is needed by your chosen cloud AI provider: transcript text, and if cloud features are enabled, audio for transcription and images for insert description and generation; with local models, nothing leaves your machine.
 
 > Russian version: [README.ru.md](README.ru.md).
 

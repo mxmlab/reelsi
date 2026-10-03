@@ -161,14 +161,15 @@ def test_anim_reveal_with_back(xml_subs, tmp_path):
 
 
 def test_fx_glow(xml_subs, tmp_path):
-    """fx=='glow': статичное свечение (Glow 149/77/0.62, без Blur)."""
+    """Свечение строки: accent + галка стиля -> статичное свечение (Glow 149/77/0.62)."""
     intro = [
-        dict(words=["ПЕРВОЕ"], color="white", times=[T_CAM1], fx="glow"),
+        dict(words=["ПЕРВОЕ"], color="accent", times=[T_CAM1]),
         dict(words=["СДО*НУТЬ"], color="white", times=[T_CAM2])
     ]
     jsx, _ = _build(xml_subs, tmp_path, intro)
     g1, g2 = _groups(jsx)
     assert g1[0].get("fx") == "glow"
+    assert "fx" not in g2[0], "белая строка свечения не получает"
 
     assert 'setP(fxGb,"ADBE Gaussian Blur 2-0001",3.4);' in jsx
     assert 'setP(fxGl,"ADBE Glo2-0002",149);' in jsx
@@ -192,17 +193,18 @@ def test_прекомп_с_глитчем_и_без_глитча(xml_subs, tmp_p
 
 
 def test_план_сцены_несет_anim_и_fx(xml_subs):
-    """scene_plan проносит anim и fx в intro lines для превью."""
+    """scene_plan проносит anim и fx в intro lines для превью; fx — из галки стиля, не из поля строки."""
     intro = [
         dict(words=["ПЕРВОЕ"], color="white", times=[T_CAM1], anim="glitch", fx="glow"),
-        dict(words=["ВТОРОЕ"], color="white", times=[T_CAM2], anim="reveal")
+        dict(words=["ВТОРОЕ"], color="accent", times=[T_CAM2], anim="reveal")
     ]
     plan = xml2ae.scene_plan(xml_subs, intro=intro, intro_splits=[1], disclaimer="", style={})
     lines_g1 = plan["intro"][0]["lines"]
     lines_g2 = plan["intro"][1]["lines"]
     assert lines_g1[0].get("anim") == "glitch"
-    assert lines_g1[0].get("fx") == "glow"
+    assert "fx" not in lines_g1[0], "поле fx строки снова читается планом"
     assert lines_g2[0].get("anim") == "reveal"
+    assert lines_g2[0].get("fx") == "glow", "accent-строка без свечения по галке стиля"
 
 
 @node
@@ -603,10 +605,10 @@ def test_одновременные_glitch_и_glow_добавляют_эффек
 
 
 def test_прекомп_только_с_glow_получает_мягкий_glow(xml_subs, tmp_path):
-    """Прекомп с fx=='glow' без anim=='glitch' Glo2 не получает: усиленный Glow 211/93/0.42
+    """Прекомп с свечением accent-строки без anim=='glitch' Glo2 не получает: усиленный Glow 211/93/0.42
     на мастере включается ТОЛЬКО глитчем — иначе свечение пересвечивало картинку."""
     intro = [
-        dict(words=["ТОЛЬКО"], color="white", times=[T_CAM1], fx="glow"),
+        dict(words=["ТОЛЬКО"], color="accent", times=[T_CAM1]),
         dict(words=["БЕЗ ГЛИТЧА"], color="white", times=[T_CAM2])
     ]
     jsx, _ = _build(xml_subs, tmp_path, intro)
@@ -651,9 +653,9 @@ def test_звук_глитча_тайминги_и_обрезка(xml_subs, tmp_
 
 
 def test_count_сочетается_с_глитчем_и_свечением(xml_subs, tmp_path):
-    """is_count=True на строке с anim='glitch' и fx='glow': Slider Control, Glitch Animator, Glow."""
+    """is_count=True на accent-строке с anim='glitch': Slider Control, Glitch Animator, Glow."""
     intro = [
-        dict(words=["1500"], color="white", times=[T_CAM1], is_count=True, anim="glitch", fx="glow"),
+        dict(words=["1500"], color="accent", times=[T_CAM1], is_count=True, anim="glitch", fx="glow"),
         dict(words=["СДО*НУТЬ"], color="white", times=[T_CAM2])
     ]
     jsx, _ = _build(xml_subs, tmp_path, intro)

@@ -186,11 +186,29 @@ console.log(JSON.stringify(res));
 """
 
 
+def _off(code):
+    """Подстановки выключенных ручек — пустые: градиент, свечение и подложка слова.
+
+    Шаблон цикла подставляется здесь вручную (replace, а не %-формат), поэтому новые
+    подстановки надо снять явно — иначе они уехали бы в node как текст и уронили стенд
+    синтаксисом. Ровно то же уезжает в .jsx со стилем по умолчанию.
+    """
+    for token in ("%(grad_call)s", "%(grad_call_kw)s", "%(glow_call)s",
+                  "%(wbg_base)s", "%(wbg_hl)s", "%(wbg_row)s"):
+        code = code.replace(token, "")
+    return code
+
+
 @node
-@pytest.mark.parametrize("loop_key, loop_code", [
-    ("words", SUBS_LOOP_WORDS.replace("%(sub_count_code)s", "").replace("%(hl_blur_call)s", "").replace("%(hl_dur_js)s", "HL_DUR")),
-    ("words_joined", SUBS_LOOP_WORDS_JOINED.replace("%(sub_count_code)s", "").replace("%(hl_blur_call)s", "").replace("%(hl_dur_js)s", "HL_DUR")),
-    ("rows", SUBS_LOOP_ROWS.replace("%(sub_rows)s", "_SUB_ROWS_DATA").replace("%(sub_step)g", "_SUB_STEP_DATA").replace("%(hl_blur_call)s", "").replace("%(hl_dur_js)s", "HL_DUR")),
+@pytest.mark.parametrize("loop_key, loop_code", [    # base_anim — подстановка появления БАЗОВОГО слова (пресет sub_anim): в этих
+    # прогонах пресет выключен, и подстановка ровно та же, что в .jsx без ключа стиля.
+    # hl_fsz — кегль жёлтого слова (множитель hl_size_k): в стенде он равен базовому
+    # (k = 1), потому что стенд проверяет РАСКЛАДКУ по X, а не контраст размера.
+    # Градиент, свечение и подложка слова в этих прогонах выключены — их подстановки
+    # пусты (ровно то, что уезжает в .jsx со стилем по умолчанию).
+    ("words", _off(SUBS_LOOP_WORDS.replace("%(sub_count_code)s", "").replace("%(hl_blur_call)s", "").replace("%(hl_dur_js)s", "HL_DUR").replace("%(base_anim)s", "").replace("%(hl_fsz)s", "FONT_SIZE"))),
+    ("words_joined", _off(SUBS_LOOP_WORDS_JOINED.replace("%(sub_count_code)s", "").replace("%(hl_blur_call)s", "").replace("%(hl_dur_js)s", "HL_DUR").replace("%(base_anim)s", "").replace("%(hl_fsz)s", "FONT_SIZE"))),
+    ("rows", _off(SUBS_LOOP_ROWS.replace("%(sub_rows)s", "_SUB_ROWS_DATA").replace("%(sub_step)g", "_SUB_STEP_DATA").replace("%(hl_blur_call)s", "").replace("%(hl_dur_js)s", "HL_DUR").replace("%(base_anim)s", "").replace("%(hl_fsz)s", "cur_fsz"))),
 ])
 def test_sub_wide_geometry_invariant_in_node(loop_key, loop_code, tmp_path):
     """Инвариант геометрии: для каждого слоя X(3) - (SW - W)/2 == X(1) с точностью 1e-6."""

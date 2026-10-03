@@ -239,13 +239,35 @@ def test_plan_camera_follow_keys_and_cache_branches(xml_subs, monkeypatch, two_a
     follow = plan["zoom"].get("follow")
     assert follow, "фикстура: слежение не дало ключей — сторож проверял бы пустоту"
     assert follow == cam.zoom["follow"]
-    assert len(follow["keys"]) > 1 and len(follow["ease"]) == len(follow["keys"])
+    assert len(follow["keys"]) > 1 and follow.get("linear") is True and "ease" not in follow
     assert cam.cam1_follow_decl and cam.cam1_follow_decl in _jsx(xml_subs, style=style)
     assert cam.cam1_follow_js and cam.cam1_follow_js in _jsx(xml_subs, style=style)
     # галка снята — слежения нет ни в плане, ни в .jsx
     plan_off, cam_off = _check(xml_subs, style={"cam1_head_follow": False})
     assert "follow" not in plan_off["zoom"]
     assert cam_off.cam1_follow_decl == "" and cam_off.cam1_follow_js == ""
+
+
+def test_follow_keys_batched_set_values_at_times(xml_subs, monkeypatch):
+    """Ключи слежения ставятся пачкой `setValuesAtTimes`, без поштучного `setValueAtTime`.
+
+    Запасной цикл LINEAR защищён проверкой `keyInInterpolationType(1)`.
+    """
+    from core import headtrack
+    monkeypatch.setattr(headtrack, "load_cached", lambda xml_path, video, ranges=None: HEAD)
+    style = {"cam1_head_follow": True, "cam1_head_min": 120}
+    _plan, cam = _check(xml_subs, style=style)
+    assert cam.cam1_follow_js, "слежение должно быть активно"
+    assert "posX.setValuesAtTimes(times, values)" in cam.cam1_follow_js
+    assert "setValueAtTime" not in cam.cam1_follow_js
+    assert "keyInInterpolationType(1) !== KeyframeInterpolationType.LINEAR" in cam.cam1_follow_js
+
+    # Проверка генератора для Камеры 2
+    from core.xml2ae.plan_camera import _follow_keys_js
+    c2_js = _follow_keys_js("cam2null", "CAM2_FOLLOW", 2)
+    assert "posX.setValuesAtTimes(times, values)" in c2_js
+    assert "setValueAtTime" not in c2_js
+    assert "keyInInterpolationType(1) !== KeyframeInterpolationType.LINEAR" in c2_js
 
 
 def test_plan_camera_roto_markup(xml_subs):

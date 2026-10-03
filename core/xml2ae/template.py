@@ -15,13 +15,13 @@ SUBS_LOOP_WORDS = r"""    for (var i=0;i<SUBS.length;i++){
         var d = sp.value; d.resetCharStyle(); d.resetParagraphStyle(); d.text=sw[2];
         try{setFont(d, (hl?HL_FONT:FONT));}catch(e){ try{setFont(d, FONT);}catch(e2){} }   // жёлтый шрифт не найден -> база (не дефолт AE)
         try{d.fauxBold=(hl&&HL_BOLD);}catch(e){}   // искусственный жирный на жёлтых
-        d.fontSize=FONT_SIZE; d.fillColor=(hl?HL_FILL:FILL); d.applyFill=true;
+        d.fontSize=%(hl_fsz)s; d.fillColor=(hl?HL_FILL:FILL); d.applyFill=true;
         try{d.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
         sp.setValue(d);
         try{ var rr=L.sourceRectAtTime(sw[0]/FPS+0.001,false);
-             if(rr.width>FITW){ d.fontSize=Math.max(40, Math.floor(FONT_SIZE*FITW/rr.width)); sp.setValue(d); } }catch(e){}
+             if(rr.width>FITW){ d.fontSize=Math.max(40, Math.floor(%(hl_fsz)s*FITW/rr.width)); sp.setValue(d); } }catch(e){}
         var posP = L.property("ADBE Transform Group").property("ADBE Position");
-        var t0 = sw[0]/FPS;
+        var t0 = sw[0]/FPS;%(grad_call)s%(glow_call)s
         L.inPoint = t0;
         if (hl){
             var finalY = POSY + row*HL_STEP;
@@ -30,10 +30,10 @@ SUBS_LOOP_WORDS = r"""    for (var i=0;i<SUBS.length;i++){
             posP.setValueAtTime(t0+%(hl_dur_js)s, [SW/2, finalY]);
             var op = L.property("ADBE Transform Group").property("ADBE Opacity");
             op.setValueAtTime(t0, 0); op.setValueAtTime(t0+%(hl_dur_js)s, 100);
-            easePair(posP); easePair(op);%(hl_blur_call)s
+            easePair(posP); easePair(op);%(hl_blur_call)s%(wbg_hl)s
         } else {
             L.outPoint = sw[1]/FPS;
-            posP.setValue([SW/2, POSY]);
+            posP.setValue([SW/2, POSY]);%(base_anim)s%(wbg_base)s
         }%(sub_count_code)s
     }"""
 
@@ -51,10 +51,10 @@ SUBS_LOOP_WORDS_JOINED = r"""    var i=0;
             try{ var rr=L.sourceRectAtTime(sw[0]/FPS+0.001,false);
                  if(rr.width>FITW){ d.fontSize=Math.max(40, Math.floor(FONT_SIZE*FITW/rr.width)); sp.setValue(d); } }catch(e){}
             var posP = L.property("ADBE Transform Group").property("ADBE Position");
-            var t0 = sw[0]/FPS;
+            var t0 = sw[0]/FPS;%(grad_call)s%(glow_call)s
             L.inPoint = t0;
             L.outPoint = sw[1]/FPS;
-            posP.setValue([SW/2, POSY]);%(sub_count_code)s
+            posP.setValue([SW/2, POSY]);%(sub_count_code)s%(wbg_base)s
             i++;
         } else {
             var j=i;
@@ -69,13 +69,14 @@ SUBS_LOOP_WORDS_JOINED = r"""    var i=0;
                 var d = sp.value; d.resetCharStyle(); d.resetParagraphStyle(); d.text=kw[2];
                 try{setFont(d, HL_FONT);}catch(e){ try{setFont(d, FONT);}catch(e2){} }
                 try{d.fauxBold=HL_BOLD;}catch(e){}
-                d.fontSize=FONT_SIZE; d.fillColor=HL_FILL; d.applyFill=true;
+                d.fontSize=%(hl_fsz)s; d.fillColor=HL_FILL; d.applyFill=true;
                 try{d.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
                 sp.setValue(d);
                 var rr={width:0};
                 try{ rr=L.sourceRectAtTime(kw[0]/FPS+0.001,false);
-                     if(rr.width>FITW){ d.fontSize=Math.max(40, Math.floor(FONT_SIZE*FITW/rr.width)); sp.setValue(d);
+                     if(rr.width>FITW){ d.fontSize=Math.max(40, Math.floor(%(hl_fsz)s*FITW/rr.width)); sp.setValue(d);
                                         rr=L.sourceRectAtTime(kw[0]/FPS+0.001,false); } }catch(e){}
+                var t0w = kw[0]/FPS;%(grad_call_kw)s%(glow_call)s
                 r_layers.push(L);
                 r_widths.push(rr.width);
                 r_words.push(kw);
@@ -99,7 +100,7 @@ SUBS_LOOP_WORDS_JOINED = r"""    var i=0;
                 posP.setValueAtTime(t0+%(hl_dur_js)s, [wCenter, finalY]);
                 var op = L.property("ADBE Transform Group").property("ADBE Opacity");
                 op.setValueAtTime(t0, 0); op.setValueAtTime(t0+%(hl_dur_js)s, 100);
-                easePair(posP); easePair(op);%(hl_blur_call)s%(sub_count_code)s
+                easePair(posP); easePair(op);%(hl_blur_call)s%(base_anim)s%(sub_count_code)s
             }
             i = j + 1;
         }
@@ -118,9 +119,9 @@ SUBS_LOOP_ROWS = r"""    var SUB_ROWS = %(sub_rows)s;
             var d=sp.value; d.resetCharStyle(); d.resetParagraphStyle(); d.text=wd[1];
             try{setFont(d, (w_hl?HL_FONT:FONT));}catch(e){ try{setFont(d, FONT);}catch(e2){} }
             try{d.fauxBold=(w_hl&&HL_BOLD);}catch(e){}
-            d.fontSize=cur_fsz; d.fillColor=(w_hl?HL_FILL:FILL); d.applyFill=true;
+            d.fontSize=%(hl_fsz)s; d.fillColor=(w_hl?HL_FILL:FILL); d.applyFill=true;
             try{d.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
-            sp.setValue(d);
+            sp.setValue(d);%(grad_call)s%(glow_call)s
             // Жёлтое в строке: при hl_row_anim="word" въезжает в момент, когда
             // слово произнесено (wd[0]), но не раньше строки и не позже, чем остаётся место
             // на подъём (иначе оно всплывало бы уже после ухода строки). "row" и белые —
@@ -155,8 +156,8 @@ SUBS_LOOP_ROWS = r"""    var SUB_ROWS = %(sub_rows)s;
                 op.setValueAtTime(t0, 0); op.setValueAtTime(t0+%(hl_dur_js)s, 100);
                 easePair(posP); easePair(op);%(hl_blur_call)s
             } else {
-                posP.setValue([wCenter, lineY]);
-            }
+                posP.setValue([wCenter, lineY]);%(base_anim)s
+            }%(wbg_row)s
             curX += r_widths[wi] + spc;
         }
     }"""
@@ -171,13 +172,13 @@ SUBS_LOOP_STACK = r"""
         var d = sp.value; d.resetCharStyle(); d.resetParagraphStyle(); d.text=sw[2];
         try{setFont(d, HL_FONT);}catch(e){ try{setFont(d, FONT);}catch(e2){} }
         try{d.fauxBold=HL_BOLD;}catch(e){}
-        d.fontSize=FONT_SIZE; d.fillColor=HL_FILL; d.applyFill=true;
+        d.fontSize=%(hl_fsz)s; d.fillColor=HL_FILL; d.applyFill=true;
         try{d.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
         sp.setValue(d);
         try{ var rr=L.sourceRectAtTime(sw[0]/FPS+0.001,false);
-             if(rr.width>FITW){ d.fontSize=Math.max(40, Math.floor(FONT_SIZE*FITW/rr.width)); sp.setValue(d); } }catch(e){}
+             if(rr.width>FITW){ d.fontSize=Math.max(40, Math.floor(%(hl_fsz)s*FITW/rr.width)); sp.setValue(d); } }catch(e){}
         var posP = L.property("ADBE Transform Group").property("ADBE Position");
-        var t0 = sw[0]/FPS;
+        var t0 = sw[0]/FPS;%(grad_call)s%(glow_call)s
         L.inPoint = t0;
         var finalY = POSY + row*HL_STEP;
         L.outPoint = sw[5]/FPS;
@@ -185,7 +186,7 @@ SUBS_LOOP_STACK = r"""
         posP.setValueAtTime(t0+%(hl_dur_js)s, [SW/2, finalY]);
         var op = L.property("ADBE Transform Group").property("ADBE Opacity");
         op.setValueAtTime(t0, 0); op.setValueAtTime(t0+%(hl_dur_js)s, 100);
-        easePair(posP); easePair(op);%(hl_blur_call)s
+        easePair(posP); easePair(op);%(hl_blur_call)s%(wbg_hl)s
     }"""
 
 
@@ -206,13 +207,14 @@ SUBS_LOOP_STACK_JOINED = r"""
             var d = sp.value; d.resetCharStyle(); d.resetParagraphStyle(); d.text=kw[2];
             try{setFont(d, HL_FONT);}catch(e){ try{setFont(d, FONT);}catch(e2){} }
             try{d.fauxBold=HL_BOLD;}catch(e){}
-            d.fontSize=FONT_SIZE; d.fillColor=HL_FILL; d.applyFill=true;
+            d.fontSize=%(hl_fsz)s; d.fillColor=HL_FILL; d.applyFill=true;
             try{d.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
             sp.setValue(d);
             var rr={width:0};
             try{ rr=L.sourceRectAtTime(kw[0]/FPS+0.001,false);
-                 if(rr.width>FITW){ d.fontSize=Math.max(40, Math.floor(FONT_SIZE*FITW/rr.width)); sp.setValue(d);
+                 if(rr.width>FITW){ d.fontSize=Math.max(40, Math.floor(%(hl_fsz)s*FITW/rr.width)); sp.setValue(d);
                                     rr=L.sourceRectAtTime(kw[0]/FPS+0.001,false); } }catch(e){}
+            %(grad_call)s%(glow_call)s
             r_layers.push(L);
             r_widths.push(rr.width);
             r_words.push(kw);
@@ -236,10 +238,36 @@ SUBS_LOOP_STACK_JOINED = r"""
             posP.setValueAtTime(t0+%(hl_dur_js)s, [wCenter, finalY]);
             var op = L.property("ADBE Transform Group").property("ADBE Opacity");
             op.setValueAtTime(t0, 0); op.setValueAtTime(t0+%(hl_dur_js)s, 100);
-            easePair(posP); easePair(op);%(hl_blur_call)s
+            easePair(posP); easePair(op);%(hl_blur_call)s%(wbg_hl)s
         }
         si = sj + 1;
     }"""
+
+
+# ---- Обработанный голос камеры 1 (core/voicefx.py, флаг voice_fx.final) ----
+# Рядом с XML лежит <стем>.voice.wav, и в проекте AE голос звучит ИЗ НЕГО, а не из
+# звуковой дорожки видео камеры. Подстановки выбирает сборка: голос не обработан —
+# все они пусты (voice_lay = "lay"), и .jsx остаётся прежним байт в байт (golden,
+# tests/fixtures/golden_geometry.jsx). Здесь именно ТЕКСТ .jsx, поэтому фрагменты
+# живут в шаблоне, а не в Python-коде сборки.
+#
+# voice_wav  — объявление пути: строка целиком (а не один литерал), чтобы у
+#              необработанного голоса в .jsx не появилось ни одной новой строки;
+# voice_src  — импорт WAV один раз на камеру, вне цикла клипов;
+# voice_clip — аудиослой клипа: те же startTime/inPoint/outPoint, что у видеослоя;
+#              видимость НЕ копируем — голос звучит и под кадром камеры 2;
+#              родитель — нул камеры, звук видеослоя выключен;
+# voice_lay  — на кого ложатся громкость VOICE_DB, микро-фейды и цензура: на сам
+#              аудиослой (vl), а не на видео.
+VOICE_WAV_DECL = "    var VOICE_WAV=%s;  // обработанный голос камеры 1: звук ролика идёт из него\n"
+VOICE_SRC_DECL = (
+    "        var vsrc = null;\n"
+    "        if(!isSecond && VOICE_WAV){ vsrc = imp(VOICE_WAV); toBin(vsrc,\"Звук\"); }\n")
+VOICE_CLIP_DECL = (
+    "\n                            if(vsrc){ var vl=main.layers.add(vsrc); vl.name=\"Голос\";\n"
+    "                                vl.startTime=lay.startTime; vl.inPoint=lay.inPoint;\n"
+    "                                vl.outPoint=lay.outPoint;\n"
+    "                                vl.parent=nul; lay.audioEnabled=false; }")
 
 
 AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
@@ -248,15 +276,15 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     // ===== STYLE / SHADOW (edit me) =====
     var FONT = %(font)s;                       // PostScript-имя шрифта базового текста
     var HL_FONT = %(hl_font)s;                 // шрифт выделенных слов (жирный вариант)
-    var HL_BOLD = %(hl_bold)s;                 // искусственный жирный (fauxBold) на выделенных
+    var HL_BOLD = %(hl_bold)s;                 // искусственный жирный (fauxBold) на выделенных%(hl_size_decl)s
     var FONT_SIZE = %(fsize)d, FILL = %(fill)s, POSY = %(posy)d;
     var HL_FILL = %(hlfill)s%(hlfill3_decl)s;                  // цвет выделения [r,g,b]
     var HL_RISE = %(hl_rise)g, HL_DUR = %(hl_dur)g;  // slide-up: снизу вверх на HL_RISE px за HL_DUR c%(hl_row_decl)s%(hl_blur_decl)s
-    var HL_STEP = %(hl_step)g;                 // шаг вертикальной стопки для подряд идущих жёлтых
+    var HL_STEP = %(hl_step)g;                 // шаг вертикальной стопки для подряд идущих жёлтых%(sa_decl)s
     var HL_EASE_OUT = %(hl_ease_out)d, HL_EASE_IN = %(hl_ease_in)d;     // cubic-bezier(0.35,0.01,0.10,0.99)
     var SH_OPACITY = %(sh_op)g, SH_DIR = %(sh_dir)g, SH_DIST = %(sh_dist)g, SH_SOFT = %(sh_soft)g;%(intro_shadow_decl)s
     // вставки фото/видео — дефолты-средние из компа 1221 (правь при желании)
-    var INS_MASK_R = 60;                                  // радиус скругления маски на прекомпе фото, px
+    var INS_MASK_R = %(ins_mask_r)s;                                  // радиус скругления маски на прекомпе фото, px
     var INS_FX = %(ins_fx)s;                              // "card" чёрная тень+скругление | "white" старый вид (белая тень+чокер)
 %(ins_plate_decl)s    var INS_C1_ON2_X = %(ins_c1on2_x)g, INS_C1_ON2_Y = %(ins_c1on2_y)g;  // стиль кам1, попавший на перебивку: общий сдвиг точки покоя всех таких вставок, px
     var INS_C2_Y = %(ins_c2y)d%(ins_c2x_decl)s;                           // Кам2: Y точки покоя вставки, px (считает Python: INS_C2_Y_FR * H)
@@ -265,7 +293,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     // Тайминги анимаций вставок (вход/выход, guard, noexit, пик наезда, вылет из-за
     // спины) считает Python и кладёт готовые ключи в ins.anim — в шаблоне их больше
     // не досчитываем: превью читает те же ключи из плана сцены
-    var TR_IN = 0.386, TR_SFX_LEAD = 0.083;    // Quick2 до стыка / whoosh ещё раньше
+    var TR_IN = %(tr_in)g, TR_SFX_LEAD = %(tr_sfx_lead)g;    // Quick2 до стыка / whoosh ещё раньше
     // ====================================
     var W=%(w)d, H=%(h)d, FPS=%(fps)s, DUR=%(dur).4f;
     var CAM=%(cams)s;        // [{path, clips:[[start,end,in,out,enabled,scale],...]}, ...]
@@ -283,8 +311,8 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
                                     // Опускание под INTRO_SAFE_TOP считает Python — здесь только поправка Scale.
     var INTRO_ON2=%(intro_on2)s;    // [0|1 на группу] — группа появляется на перебивке (Камера 2): свой нул
 %(intro_front_decl)s%(intro_ly_decl)s%(intro_lx_decl)s%(intro_anchor_decl)s%(intro_above_roto_decl)s%(intro_cam_decl)s    var INTRO_IDY=%(intro_idy)s;    // [px на группу] — опускание блока под INTRO_SAFE_TOP, считает Python
-    var INTRO_Y2=%(intro_y2)g;      // сдвиг по вертикали (px) нула «интро на кам2» ПОВЕРХ INTRO_Y:
-                                    // на перебивке кадр другой, и текст за спиной просится ниже
+    var INTRO_Y2=%(intro_y2)g;      // положение по вертикали (px) нула «интро на кам2» — САМО по себе, не поверх
+                                    // INTRO_Y: на перебивке кадр другой, и текст за спиной просится ниже
     var INTRO_WIDE=3;               // ширина интро-прекомпа в долях кадра: прекомп шире кадра, чтобы
                                     // размер текста поджимался СКАЛОЙ СЛОЯ в мастере, не заходя в композ.
                                     // Текст внутри всегда раскладывается в полный кегль — ужимание
@@ -298,9 +326,9 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
                                    // 100 = кадр заполнен ровно, 120 = врезка на 20%%. Считается от РЕАЛЬНОГО
                                    // размера исходника (AE его знает), а не от масштаба из Премьера — тот
                                    // врёт, если файл пережали: 1080p-исходник приезжал со scale=50.4 и
-                                   // вставал вполовину кадра. Рото-копия едет следом. Зум нула — поверх.%(cam1_rot_decl)s%(cam1_follow_decl)s
+                                   // вставал вполовину кадра. Рото-копия едет следом. Зум нула — поверх.%(cam1_rot_decl)s%(cam2_rot_decl)s%(cam1_follow_decl)s%(cam2_follow_decl)s
     var MUSIC=%(music)s, MUSIC_DB=%(music_db)g;  // музыка отдельным аудиослоем, уровень в dB
-    var VOICE_DB=%(voice_db)g;                    // базовая громкость голоса (камера 1); цензура ныряет отсюда в −100
+%(voice_wav)s    var VOICE_DB=%(voice_db)g;                    // базовая громкость голоса (камера 1); цензура ныряет отсюда в −100
     var AUDIO_FADE=%(audio_fade)g;                // сек: микро-фейд громкости на краях каждого аудио-клипа (0 = выкл)
     var RISER=%(riser)s;                          // интро-SFX (ризер) или ""
     var DISCLAIMER=%(disclaimer)s, DISC_END=%(disc_end)g, DISC_SIZE=%(disc_size)s, DISC_Y=%(disc_y)d%(disc_lead_decl)s;
@@ -388,7 +416,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             prop.setInterpolationTypeAtKey(k, KeyframeInterpolationType.BEZIER, KeyframeInterpolationType.BEZIER);
         if (prop.numKeys<2) return;
         temporalEase(prop, HL_EASE_IN, HL_EASE_OUT);   // Position 1-мерна — откат внутри
-    }%(hl_blur_fn)s%(hl_short_fn)s
+    }%(sa_fn)s%(hl_blur_fn)s%(hl_short_fn)s%(sub_fx_fn)s
 
     var main = app.project.items.addComp(%(name)s, W, H, 1.0, Math.max(DUR,1)%(comp_dur)s, FPS);
 
@@ -403,7 +431,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
         %(disc_lead_js)sdsp.setValue(dd);
         dl.property("ADBE Transform Group").property("ADBE Position").setValue([W/2, DISC_Y]);
         var dop=dl.property("ADBE Transform Group").property("ADBE Opacity");
-        dop.setValueAtTime(Math.max(0,DISC_END-0.35), 100); dop.setValueAtTime(DISC_END, 0);
+        dop.setValueAtTime(Math.max(0,DISC_END-0.35), 100); dop.setValueAtTime(DISC_END, 0); easePair(dop);
         dl.outPoint=DISC_END;
         try{ var g=dl.property("ADBE Effect Parade").addProperty("ADBE Glo2");
              try{g.property("Glow Radius").setValue(42);}catch(e){} }catch(e){}
@@ -416,7 +444,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     var subc = app.project.items.addComp(%(sub_comp_name)s, SW, H, 1.0, Math.max(DUR,1), FPS);
     toBin(subc,"Субтитры");                     // в корне — только основные композиции
     var FITW = W*0.92;                          // длинные слова ужимаем под эту ширину
-%(sub_loop)s
+%(sub_wbg_js)s%(sub_loop)s%(sub_wbg_tail)s
     // ---- поп-SFX на каждое жёлтое слово (в момент появления) ----
     if (POP){ var popItem=imp(POP);
         if (popItem){ for (var pi=0; pi<SUBS.length; pi++){ if (SUBS[pi][3]){
@@ -436,7 +464,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
         // лежал в Премьере, и после пережатия 4K->1080p врёт вдвое (см. CAM1_FIT).
         var fitS = 100; try{ fitS = 100*Math.max(W/src.width, H/src.height); }catch(e){}
         var cl = track.clips;
-        for (var j=0;j<cl.length;j++){
+%(voice_src)s        for (var j=0;j<cl.length;j++){
             var c = cl[j];
             if (isSecond && !c[4]) continue;     // скрытые клипы 2-й камеры не создаём
             var lay = main.layers.add(src);
@@ -446,21 +474,21 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             lay.outPoint  = c[1]/FPS;
             lay.enabled   = c[4];
             if (isSecond){ try{ lay.audioEnabled = false; }catch(e){} }  // звук 2-й камеры выкл
-            // Камера 1 — от заполнения кадра (CAM1_FIT), перебивки — как было в Премьере
-            var csc = isSecond ? c[5] : fitS*CAM1_FIT/100;
-            try{ lay.property("ADBE Transform Group").property("ADBE Scale").setValue([csc,csc]); }catch(e){}%(cam1_rot_cam)s
-            lay.parent = nul;
+            // Одна формула на все камеры: заполнение кадра (fitS) × рамка камеры; Камера 1 ещё × CAM1_FIT
+            var csc = fitS*(track.frame?track.frame.zoom:100)/100*(isSecond?1:CAM1_FIT/100);
+            try{ lay.property("ADBE Transform Group").property("ADBE Scale").setValue([csc,csc]); }catch(e){}%(cam1_rot_cam)s%(cam2_rot_cam)s
+%(cam_frame_pos)s            lay.parent = nul;
             %(lumetri_cam)s
-            if (!isSecond){ cam1Layers.push({lay:lay, a:c[0]/FPS, b:c[1]/FPS});  // для рото-порядка
-                            try{ var alv0=lay.property("ADBE Audio Group").property("ADBE Audio Levels");
+            if (!isSecond){ cam1Layers.push({lay:lay, a:c[0]/FPS, b:c[1]/FPS});  // для рото-порядка%(voice_clip)s
+                            try{ var alv0=%(voice_lay)s.property("ADBE Audio Group").property("ADBE Audio Levels");
                                  alv0.setValue([VOICE_DB,VOICE_DB]);             // базовая громкость голоса
                                  // микро-фейд на краях клипа — убирает щелчки на жёстких склейках
-                                 if (AUDIO_FADE>0 && (lay.outPoint-lay.inPoint) > 4*AUDIO_FADE){
-                                     alv0.setValueAtTime(lay.inPoint, [-48,-48]);
-                                     alv0.setValueAtTime(lay.inPoint+AUDIO_FADE, [VOICE_DB,VOICE_DB]);
-                                     alv0.setValueAtTime(lay.outPoint-AUDIO_FADE, [VOICE_DB,VOICE_DB]);
-                                     alv0.setValueAtTime(lay.outPoint, [-48,-48]); } }catch(e){}
-                            if (CENSOR.length) censorLayer(lay); }               // цензура голоса базовой камеры (ныряет с VOICE_DB)
+                                 if (AUDIO_FADE>0 && (%(voice_lay)s.outPoint-%(voice_lay)s.inPoint) > 4*AUDIO_FADE){
+                                     alv0.setValueAtTime(%(voice_lay)s.inPoint, [-48,-48]);
+                                     alv0.setValueAtTime(%(voice_lay)s.inPoint+AUDIO_FADE, [VOICE_DB,VOICE_DB]);
+                                     alv0.setValueAtTime(%(voice_lay)s.outPoint-AUDIO_FADE, [VOICE_DB,VOICE_DB]);
+                                     alv0.setValueAtTime(%(voice_lay)s.outPoint, [-48,-48]); } }catch(e){}
+                            if (CENSOR.length) censorLayer(%(voice_lay)s); }               // цензура голоса базовой камеры (ныряет с VOICE_DB)
         }
         return nul;
     }
@@ -512,14 +540,15 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
     // в пикселях, а автофит длинных строк (INTRO_FIT_W) должен остаться своим у каждого прекомпа
     if (INTRO_SCALE!=100)
         try{ introNull.property("ADBE Transform Group").property("ADBE Scale").setValue([INTRO_SCALE,INTRO_SCALE]); }catch(e){}
-    // «интро на кам2» — ВТОРОЙ такой же нул для групп, выпавших на перебивку (INTRO_ON2).
-    // Устроен один в один как «интро» (родитель — Null Камеры 1, тот же масштаб), отличается
-    // только своим сдвигом INTRO_Y2: на кам2 кадр другой и текст за спиной ставят ниже.
+    // «интро на кам2» — ВТОРОЙ такой же нул для групп, выпавших на перебивку (INTRO_ON2), тот же масштаб.
+    // Положение у него СВОЁ (INTRO_Y2, не INTRO_Y + INTRO_Y2): на кам2 кадр другой и текст за спиной
+    // ставят ниже, а двигать интро камеры 1 не должно двигать вторую камеру.
+    // Родителем НЕ Null Камеры 1: на перебивке она спрятана, но её зум множил бы и позицию, и размер
+    // текста вокруг чужой точки наезда — сдвиг уезжал «совсем не так». По умолчанию нул стоит в
+    // координатах кадра; при зуме Камеры 2 его подвязывает к нулу камеры 2 подстановка после её ключей.
     // Двигая этот нул, правишь разом все интро-прекомпы, попавшие на перебивку.
     var introNull2 = main.layers.addNull(Math.max(DUR,1)); introNull2.name="интро на кам2"; introNull2.enabled=false;
-    if(cam1null%(intro_cam_cond)s){ introNull2.parent=cam1null;
-        introNull2.property("ADBE Transform Group").property("ADBE Position").setValue([%(intro_x_js)s,INTRO_Y+INTRO_Y2]); }
-    else introNull2.property("ADBE Transform Group").property("ADBE Position").setValue([W/2%(intro_x_p)s,H/2+INTRO_Y+INTRO_Y2]);
+    introNull2.property("ADBE Transform Group").property("ADBE Position").setValue([W/2%(intro_x_p)s,H/2+INTRO_Y2]);
     if (INTRO_SCALE!=100)
         try{ introNull2.property("ADBE Transform Group").property("ADBE Scale").setValue([INTRO_SCALE,INTRO_SCALE]); }catch(e){}
 
@@ -548,7 +577,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             if (inHold === KeyframeInterpolationType.HOLD || outHold === KeyframeInterpolationType.HOLD)
                 sc.setInterpolationTypeAtKey(k, inHold, outHold);
         }
-    }%(cam1_follow_js)s
+    }%(cam1_follow_js)s%(cam2_js)s%(cam2_follow_js)s%(intro2_cam2_js)s
 
     // ---- music as an audio layer (at MUSIC_DB) ----
     if (MUSIC){
@@ -802,7 +831,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             var iLop=iL.property("ADBE Transform Group").property("ADBE Opacity");
             if(gI==0&&inAt==0){ iLop.setValueAtTime(0,100); }
             else { iLop.setValueAtTime(inAt,0); iLop.setValueAtTime(inAt+F_DUR,100); easePair(iLop); }
-            iLop.setValueAtTime(Math.max(outStart,outEnd-F_FADE),100); iLop.setValueAtTime(outEnd,0);
+            iLop.setValueAtTime(Math.max(outStart,outEnd-F_FADE),100); iLop.setValueAtTime(outEnd,0); easePair(iLop);
             %(intro_comp_glow)s
             %(intro_comp_shadow)s
         }
@@ -827,12 +856,12 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
             // ровно тот же масштаб, что у кадра своей камеры: рото-копия обязана лежать
             // пиксель-в-пиксель, иначе человек разъезжается с собственным кадром
             var rfit=100; try{ rfit = 100*Math.max(W/camSrc.width, H/camSrc.height); }catch(e){}
-            var rsc = (ci==0) ? rfit*CAM1_FIT/100 : rr.scale;
+            var rsc = (ci==0) ? rfit*CAM1_FIT/100 : rr.scale;%(roto_frame_scale)s
             try{ cc.property("ADBE Transform Group").property("ADBE Scale").setValue([rsc,rsc]); }catch(e){}
             %(lumetri_roto)s
             var mk = main.layers.add(maskIt); mk.name="Рото маска";   // альфа над копией
             mk.startTime=rr.ts; mk.inPoint=rr.ts; mk.outPoint=rr.te;
-            mk.parent=nulls[ci];%(roto_pos_mk)s%(roto_rot_mk)s
+            mk.parent=nulls[ci];%(roto_pos_mk)s%(roto_rot_mk)s%(roto_frame_pos)s
             // маска может быть в уменьшенном разрешении (mf = во сколько раз мельче исходника)
             var msc=rsc*(rr.mf||1);
             try{ mk.property("ADBE Transform Group").property("ADBE Scale").setValue([msc,msc]); }catch(e){}

@@ -118,6 +118,22 @@ def test_nearest_unknown_model_unchanged():
     assert catalog.nearest_supported_level("lmstudio", "qwen3.6-27b", "medium") == "medium"
 
 
+# ---- «Родной» effort: только семейство openai/* ----
+def test_native_effort_prefix_is_only_openai():
+    """Правило одно: «родной» effort получают модели с префиксом openai/*.
+
+    У них effort передаётся родным параметром, и наш потолок обрывает
+    размышления (баг 02.10.2026). Другие семейства не трогаем: у Anthropic/Gemini
+    effort — доля max_tokens, и потолок им нужен."""
+    assert config.uses_native_effort("openai/gpt-5.6-luna")
+    assert config.uses_native_effort("OpenAI/gpt-5")          # регистр не важен
+    assert not config.uses_native_effort("anthropic/claude-sonnet-5")
+    assert not config.uses_native_effort("google/gemini-3.8-flash")
+    assert not config.uses_native_effort("deepseek/deepseek-v4-flash")
+    assert not config.uses_native_effort("gpt-5.6-luna")      # без префикса — как раньше
+    assert not config.uses_native_effort(None)
+
+
 # ---- effective_step_reasoning на подставленном ai_config ----
 def test_effective_medium_becomes_low(cfg_path):
     """Хранимое medium у deepseek-v4-flash -> эффективное low (как в API)."""

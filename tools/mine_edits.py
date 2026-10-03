@@ -27,7 +27,8 @@
        отдельно «слишком короткие»);
     2) встречаемость >= 2 раз (однократные — в отчёте отдельно «однократные», с `--all`
        попадают в общую кучу);
-    3) стоп-лист из `okwords.txt`: слова из белого списка в плохие не предлагаются;
+    3) стоп-лист из `okwords.txt`: слова из белого списка в плохие не предлагаются
+       (той же сверкой `censor.match`, что и цензура: `=слово` в списке — только целое);
 - термин = правая часть (то, на что исправил), варианты = левые части. Термин — это
   название, которого ASR не знает: латиница/цифры («MOTS-C», «TB500») или короткая
   аббревиатура без гласных («ЛПНП»). Вариант прогоняется через защиту `terms.learn`
@@ -151,8 +152,8 @@ def build_report(pairs: Any, edits: Any, errs: Any, terms_data: Any, apply: bool
                 stem = re.sub(r"[^0-9a-zа-яё]", "", (w or "").lower())
                 if not stem or "*" in stem:
                     continue
-                # Стоп-лист обычных слов из okwords.txt
-                if any(ok in stem for ok in ok_stems):
+                # Стоп-лист обычных слов из okwords.txt (`=слово` в нём — только целое слово)
+                if censor.match(stem, ok_stems) is not None:
                     continue
                 bad_raw.setdefault(stem, []).append(e["clip"])
         elif e["kind"] == "term":

@@ -7,11 +7,16 @@
 подстрок на случай «каталога нет и кэша нет» (см. шапку секции с таблицами).
 """
 from __future__ import annotations
-import os, json, threading
+import os, json, re, time, threading
+import urllib.request, urllib.parse, urllib.error
 from typing import Any, Callable
 
-from core.app_meta import APP_REFERER, APP_NAME, env   # noqa: F401  (переэкспорт)
+from core.app_meta import APP_REFERER, APP_NAME, env, http_req   # noqa: F401  (переэкспорт)
 from core.fileio import atomic_json_dump
+
+# Кэш total_slots локального llama-server (/props): url -> (ts_expire, slots)
+_PROPS_CACHE: dict[str, tuple[float, int]] = {}
+_PROPS_CACHE_LOCK = threading.Lock()
 
 # Конфиг пишут два потока (api/ai.py и core/aicut/video.py): уникальный tmp спасает
 # от перемешивания половин, но не от двух os.replace по одному пути на Windows.
@@ -62,6 +67,8 @@ PROVIDER_PRESETS = {
                     "models": ["llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b"]},
     "ollama":      {"label": "Ollama (локально)", "base_url": "http://localhost:11434/v1",
                     "models": ["qwen2.5:32b", "deepseek-r1:32b", "llama3.3"]},
+    "unsloth":     {"label": "Unsloth Studio (локально)", "base_url": "http://127.0.0.1:8888/v1",
+                    "models": ["unsloth/Qwen-Image-2.1-GGUF/qwen-image-2.1-Q8_0.gguf"]},
     "openai":      {"label": "OpenAI-совместимый (свой URL)", "base_url": "", "models": []},
 }
 
@@ -85,6 +92,28 @@ STEP_TITLES = {"cut": "Нарезка", "yellow": "Жёлтые слова", "in
 # бюджет как у соседних знакомых уровней.
 REASONING_BUDGET = {"off": 0, "minimal": 2000, "low": 4000, "medium": 8000,
                     "high": 16000, "xhigh": 24000, "max": 32000}
+
+# Модели, которым effort уходит РОДНЫМ параметром, а не долей max_tokens.
+# У Anthropic/Gemini и пр. OpenRouter считает reasoning.effort ПРОЦЕНТОМ от
+# max_tokens запроса, поэтому потолок им обязателен (см. reason_budget). А у
+# семейства openai/* effort передаётся родным параметром (reasoning_effort):
+# модель думает столько, сколько считает нужным, и наш потолок её размышления
+# не ограничивает — он обрывает уже посчитанный ответ. Именно так упала разметка
+# вставок 02.10.2026: 6 вызовов подряд finish=length ровно по 26000 токенов
+# (ответ 10000 + REASONING_BUDGET["high"]=16000), из них 25682–26000 на
+# размышления. Таким моделям отдаём потолок вывода САМОЙ модели из каталога.
+# Список — ПРЕФИКСЫ id моделей; другие семейства не трогаем.
+NATIVE_EFFORT_PREFIXES = ["openai/"]
+
+
+def uses_native_effort(model: str | None) -> bool:
+    """effort этой модели — родной параметр, а не доля max_tokens (см. выше).
+
+    Для таких моделей при включённом «уме» _ask_openai шлёт потолок вывода самой
+    модели из каталога, а не наш бюджет (ответ + размышления): иначе размышления
+    обрываются на нашем потолке, и шаг падает на finish=length."""
+    m = (model or "").lower()
+    return any(m.startswith(p) for p in NATIVE_EFFORT_PREFIXES)
 
 
 def step_reasoning(step: str) -> str:
@@ -160,6 +189,85 @@ def step_profile(step: str) -> str | None:
     if name and name in (cfg.get("profiles") or {}):
         return name
     return cfg.get("active")
+
+
+def step_is_local(step: str) -> bool:
+    """Локальный ли профиль шага: lmstudio или base_url на loopback.
+
+    Вынесено из step_concurrency — та же логика проверки провайдера и адреса,
+    но нужна отдельно для решения о параллельности нарезки (cut_parallel_width).
+    """
+    name = step_profile(step)
+    prof = (load_ai_config().get("profiles") or {}).get(name) or {} if name else {}
+    provider = prof.get("provider") or "lmstudio"
+    if provider == "lmstudio":
+        return True
+    base_url = str(prof.get("base_url") or PROVIDER_PRESETS.get(provider, {}).get("base_url") or DEFAULT_URL)
+    parsed = urllib.parse.urlsplit(base_url)
+    host = (parsed.hostname or "").lower()
+    return host in ("127.0.0.1", "localhost", "::1")
+
+
+def step_concurrency(step: str) -> int:
+    """Число одновременных запросов для шага.
+
+    Порядок источников: переопределение НА ШАГЕ (вкладки «Нарезка»/«Разметка»,
+    step_concurrency_override — его пишет действие set_step_concurrency), затем
+    явное из профиля (1..16), иначе 1 для lmstudio, для локального сервера
+    (loopback) — опрос /props (total_slots), для остальных (облако) — 4."""
+    cfg = load_ai_config()
+    # Переопределение шага — ПЕРВЫМ: поле профиля осталось УМОЛЧАНИЕМ для шагов,
+    # у которых своего числа нет, иначе настройка на вкладке молча не работала бы.
+    ov = (cfg.get("step_concurrency_override") or {}).get(step)
+    if isinstance(ov, int) and not isinstance(ov, bool) and 1 <= ov <= 16:
+        return ov
+    name = step_profile(step)
+    prof = (cfg.get("profiles") or {}).get(name) or {} if name else {}
+    c = prof.get("concurrency")
+    if isinstance(c, int) and not isinstance(c, bool) and 1 <= c <= 16:
+        return c
+
+    if step_is_local(step):
+        provider = prof.get("provider") or "lmstudio"
+        if provider == "lmstudio":
+            return 1
+        base_url = str(prof.get("base_url") or PROVIDER_PRESETS.get(provider, {}).get("base_url") or DEFAULT_URL)
+        with _PROPS_CACHE_LOCK:
+            cached = _PROPS_CACHE.get(base_url)
+            if cached is not None and time.time() < cached[0]:
+                return cached[1]
+        slots = 1
+        try:
+            clean_url = re.sub(r"/v1/?$", "", base_url.rstrip("/"))
+            props_url = f"{clean_url}/props"
+            req = http_req(props_url)
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+                val = data.get("total_slots")
+                if isinstance(val, int) and not isinstance(val, bool) and val >= 1:
+                    slots = max(1, min(16, val))
+        except ReelsiError: raise
+        except Exception:
+            slots = 1
+        with _PROPS_CACHE_LOCK:
+            _PROPS_CACHE[base_url] = (time.time() + 60.0, slots)
+        return slots
+
+    return 4
+
+
+def cut_parallel_width(mode: str, review: bool, n_clips: int) -> int:
+    """Сколько роликов ИИ-нарезки гнать одновременно.
+
+    - mode != "gigaam" или review → 1 (старый путь и ревью параллелить нельзя).
+    - step_is_local("cut") → 1 (локальная модель решения на той же GPU, что и распознавание).
+    - Иначе min(step_concurrency("cut"), n_clips), не меньше 1.
+    """
+    if mode != "gigaam" or review:
+        return 1
+    if step_is_local("cut"):
+        return 1
+    return max(1, min(step_concurrency("cut"), n_clips))
 
 
 def reason_budget(base: int, level: str) -> int:
@@ -447,6 +555,9 @@ def _profile_dict(name: str | None, prof: dict[str, Any]) -> dict[str, Any]:
              if isinstance(k, str) and isinstance(v, str)}
         if h:
             res["headers"] = h
+    c = prof.get("concurrency")
+    if isinstance(c, int) and not isinstance(c, bool) and 1 <= c <= 16:
+        res["concurrency"] = c
     return res
 
 
@@ -527,4 +638,16 @@ def glitch_glow_mode() -> str:
     """Режим свечения жёлтого глитча: 'builtin' (Blur + Glo2) | 'deepglow2' (сторонний плагин)."""
     val = load_ai_config().get("glitch_glow")
     return val if val in GLITCH_GLOW_MODES else "builtin"
+
+
+def ae_build_workers_cfg() -> Any:
+    """Значение настройки ae_build_workers из ai_config (по умолчанию 'auto')."""
+    env = os.environ.get("REELSI_AE_BUILD_WORKERS")
+    if env is not None:
+        return env
+    try:
+        return load_ai_config().get("ae_build_workers", "auto")
+    except Exception:
+        return "auto"
+
 

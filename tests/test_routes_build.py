@@ -21,6 +21,7 @@ import glob
 import gzip
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -278,6 +279,67 @@ def test_export_drp_contract(client, xml_nosubs, tmp_path, fake_probe):
     assert len(r.data) > 1000
     assert set(glob.glob(os.path.join(tmpdir, "*.drp"))) == drp_before, \
         "роут оставил временный .drp в %TEMP%"
+
+
+def test_export_drp_uses_voice_next_to_xml(client, xml_nosubs, fake_probe, tmp_path, monkeypatch):
+    """Обработка голоса включена, `.voice.wav` рядом с XML — звук камеры 1 берётся из него.
+
+    Правило одно на всех читателей (`core.voicefx.clip_voice_wav`): спикер клипа из
+    сайдкара нарезки плюс `voice_fx_on`. Второй копии правила быть не должно. Видео
+    камеры 1 и запись камеры 2 при этом не меняются, а с выключенной обработкой
+    `.drp` прежний (это проверяет `test_export_drp_contract` — там сайдкара со
+    спикером рядом с XML нет вовсе).
+    """
+    import wave
+    from core import drp, speakers
+
+    voices = tmp_path / "speakers"
+    voices.mkdir()
+    monkeypatch.setattr(speakers, "SPEAKER_DIR", str(voices))
+    speakers.save("Голос", {"label": "Голос",
+                            "voice_fx": {"denoise": {"on": True, "engine": "deepfilter",
+                                                     "atten_db": 40}, "vst": []}})
+    # Сайдкар нарезки роут собирает сам (это его документированное поведение):
+    # первый вызов — чтобы он появился, дальше дописываем в него спикера клипа.
+    assert client.post("/api/export_drp", json={"xml": xml_nosubs}, headers=H).status_code == 200
+    side = json.load(open(os.path.splitext(xml_nosubs)[0] + ".project.json", encoding="utf-8"))
+    assert len(side["cams"]) == 2, "фикстура поехала: камер не две"
+    side["speaker"] = "Голос"
+    with open(os.path.splitext(xml_nosubs)[0] + ".project.json", "w", encoding="utf-8") as f:
+        json.dump(side, f, ensure_ascii=False)
+
+    voice = os.path.splitext(xml_nosubs)[0] + ".voice.wav"
+    with wave.open(voice, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(44100)
+        w.writeframes(b"\x00" * 44100)                   # секунда тишины
+
+    # Читатель сам печёт свежий трек, если файла нет или он под другие настройки; тут
+    # печь нечем (ffmpeg и модели не гоняем): «печь» отдаёт готовый файл рядом с XML.
+    from core import voicefx
+    monkeypatch.setattr(voicefx, "clip_cam1", lambda x: xml_nosubs)
+    monkeypatch.setattr(voicefx, "ensure_final_voice", lambda x, cam, fx, **kw: (voice, voice))
+    r = client.post("/api/export_drp", json={"xml": xml_nosubs}, headers=H)
+    assert r.status_code == 200 and r.data[:2] == b"PK", r.data[:200]
+    out = tmp_path / "voice.drp"
+    out.write_bytes(r.data)
+
+    mp = drp.read(str(out))["MediaPool/Master/MpFolder.xml"].decode("utf-8")
+    recs = re.findall(r"<Sm2MpVideoClip\b.*?</Sm2MpVideoClip>", mp, re.S)
+    assert len(recs) == 2, "в медиапуле не две камеры — фикстура поехала"
+
+    def name(rec, tag):
+        """Имя файла из блоба <Clip> блока <BtVideoInfo> (видео) / <BtAudioInfo> (звук)."""
+        block = re.search(r"<" + tag + r"\b.*?</" + tag + r">", rec, re.S).group(0)
+        h = [x for x in re.findall(r"<Clip>([0-9a-f]{40,})</Clip>", block)
+             if drp.is_zstd_blob(x)][0]
+        return drp.pb_get_str(drp.unpack_fields(h)[1], 2)
+
+    assert name(recs[0], "BtVideoInfo") == "CLIP-030.MP4", "видео камеры 1 подменилось"
+    assert name(recs[0], "BtAudioInfo") == os.path.basename(voice), \
+        "звук камеры 1 не взял голос из файла рядом с XML"
+    assert name(recs[1], "BtAudioInfo") == "CLIP-031.MP4", "звук камеры 2 подменился"
 
 
 def test_export_drp_bad_input(client, xml_nosubs, tmp_path, fake_probe):

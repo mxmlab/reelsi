@@ -30,11 +30,17 @@ from api import jobs  # noqa: E402
 def test_curwork_is_global_in_omnicut_job():
     """Проверяем статически: динамически это стоило бы запуска настоящей нарезки.
     `global` виден в объекте кода — присвоенное имя лежит либо в co_names (глобальное),
-    либо в co_varnames (локальное), третьего не дано."""
-    code = jobs.run_omnicut_job.__code__
-    assert "CURWORK" not in code.co_varnames, (
-        "CURWORK снова локальный: потерян global, «Стоп» не почистит %TEMP%")
-    assert "CURWORK" in code.co_names, "CURWORK вообще не читается — маркер WORK_DIR= потерян"
+    либо в co_varnames (локальное), третьего не дано.
+    CURWORK используется во вложенной _one(), поэтому проверяем её код."""
+    outer_code = jobs.run_omnicut_job.__code__
+    # _one — вложенная функция, ищем её объект кода среди констант
+    one_codes = [c for c in outer_code.co_consts
+                 if hasattr(c, "co_name") and c.co_name == "_one"]
+    assert one_codes, "вложенная функция _one не найдена в run_omnicut_job"
+    one_code = one_codes[0]
+    assert "CURWORK" not in one_code.co_varnames, (
+        "CURWORK снова локальный в _one: потерян global, «Стоп» не почистит %TEMP%")
+    assert "CURWORK" in one_code.co_names, "CURWORK вообще не читается в _one — маркер WORK_DIR= потерян"
 
 
 def test_kill_curproc_removes_work_dirs(tmp_path, monkeypatch):

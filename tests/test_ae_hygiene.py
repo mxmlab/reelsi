@@ -139,6 +139,7 @@ def _env(monkeypatch, tmp_path):
 def test_combined_deletes_stale_aelog_before_master(clips, tmp_path, monkeypatch):
     """Набор «Один на всё»: .aelog.txt прошлого прогона (с «evalFile ok:») удаляется до
     запуска мастера, и ни одной строки старого лога в журнал джоба не попадает."""
+    monkeypatch.setenv("REELSI_AE_BUILD_WORKERS", "1")
     outdir = str(tmp_path / "jsx")
     render_dir = str(tmp_path / "exp")
     os.makedirs(outdir)
@@ -170,6 +171,55 @@ def test_combined_deletes_stale_aelog_before_master(clips, tmp_path, monkeypatch
     text = _log_text(render.RJOB)
     assert "[aelog]" not in text, "строки старого лога попали в журнал джоба:\n" + text
     assert any(f["name"] in ("01_C0233", "02_C0234") for f in render.RJOB["failed"])
+
+
+def test_combined_n3_deletes_stale_aelog_before_parts(clips, tmp_path, monkeypatch):
+    """Набор «Один на всё» (N=3): старые .aelog.txt частей и слияния удаляются до запуска
+    воркеров AfterFX, и ни одной строки старого лога в журнал джоба не попадает."""
+    monkeypatch.setenv("REELSI_AE_BUILD_WORKERS", "3")
+    outdir = str(tmp_path / "jsx")
+    render_dir = str(tmp_path / "exp")
+    parts_dir = os.path.join(outdir, "_parts")
+    os.makedirs(outdir)
+    os.makedirs(render_dir)
+    os.makedirs(parts_dir)
+    _env(monkeypatch, tmp_path)
+
+    # 3 клипа для 3 воркеров
+    xml1 = clips["xml1"]
+    xml2 = clips["xml2"]
+    xml3 = str(tmp_path / "03_C0235.xml")
+    with open(xml1, "r", encoding="utf-8") as f:
+        content = f.read()
+    with open(xml3, "w", encoding="utf-8") as f:
+        f.write(content.replace("C0233", "C0235"))
+
+    # Старые логи частей и слияния
+    stale_logs = [os.path.join(parts_dir, f"reelsi_batch.part{k}.aelog.txt") for k in range(3)]
+    stale_logs.append(os.path.join(outdir, "reelsi_batch.merge.aelog.txt"))
+    for p in stale_logs:
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("REELSI-OLD: прошлый прогон\n")
+
+    seen_at_launch = []
+
+    def on_afterfx(cmd):
+        # Если старые логи частей не удалены до запуска — они будут видны на диске
+        seen_at_launch.append(any(os.path.isfile(p) for p in stale_logs[:3]))
+
+    launched = []
+    _install_popen(monkeypatch, launched, on_afterfx=on_afterfx)
+    batch = [{"xml_path": xml1, "outdir": outdir, "roto": False},
+             {"xml_path": xml2, "outdir": outdir, "roto": False},
+             {"xml_path": xml3, "outdir": outdir, "roto": False}]
+    _reset_job(["01_C0233", "02_C0234", "03_C0235"])
+    render_job.run_render_combined(render.RJOB, batch, outdir, render_dir)
+
+    assert launched == ["fake_afterfx.exe", "fake_afterfx.exe", "fake_afterfx.exe"], launched
+    assert seen_at_launch and not any(seen_at_launch), "старые журналы частей не удалены до запуска AfterFX"
+    text = _log_text(render.RJOB)
+    assert "REELSI-OLD" not in text, "строки старого лога попали в журнал джоба:\n" + text
+    assert all(any(f["name"] == name for f in render.RJOB["failed"]) for name in ("01_C0233", "02_C0234", "03_C0235"))
 
 
 def test_single_deletes_stale_aelog_before_afterfx(clips, tmp_path, monkeypatch):
@@ -206,6 +256,7 @@ def test_single_deletes_stale_aelog_before_afterfx(clips, tmp_path, monkeypatch)
 def test_combined_stale_aep_not_updated_fails(clips, tmp_path, monkeypatch):
     """Набор «Один на всё»: .aep остался от прошлого прогона и не пересохранён мастером —
     ролики в failed, aerender не запускается, в логе прямо сказано про прошлый прогон."""
+    monkeypatch.setenv("REELSI_AE_BUILD_WORKERS", "1")
     outdir = str(tmp_path / "jsx")
     render_dir = str(tmp_path / "exp")
     os.makedirs(outdir)
@@ -237,6 +288,68 @@ def test_combined_stale_aep_not_updated_fails(clips, tmp_path, monkeypatch):
     reasons = [f["reason"] for f in render.RJOB["failed"]]
     assert len(reasons) == 2, reasons
     assert all("не сохранил .aep" in r for r in reasons), reasons
+    text = _log_text(render.RJOB)
+    assert "остался от прошлого прогона" in text, "нет строки про .aep прошлого прогона:\n" + text
+    assert not render.RJOB["result"]
+
+
+def test_combined_n3_stale_aep_not_updated_fails(clips, tmp_path, monkeypatch):
+    """Набор «Один на всё» (N=3): .aep остался от прошлого прогона и не пересохранён
+    слиянием — ролики в failed, aerender не запускается, в логе прямо сказано про прошлый прогон."""
+    monkeypatch.setenv("REELSI_AE_BUILD_WORKERS", "3")
+    outdir = str(tmp_path / "jsx")
+    render_dir = str(tmp_path / "exp")
+    parts_dir = os.path.join(outdir, "_parts")
+    os.makedirs(outdir)
+    os.makedirs(render_dir)
+    os.makedirs(parts_dir)
+    _env(monkeypatch, tmp_path)
+
+    # 3 клипа для 3 воркеров
+    xml1 = clips["xml1"]
+    xml2 = clips["xml2"]
+    xml3 = str(tmp_path / "03_C0235.xml")
+    with open(xml1, "r", encoding="utf-8") as f:
+        content = f.read()
+    with open(xml3, "w", encoding="utf-8") as f:
+        f.write(content.replace("C0233", "C0235"))
+
+    aep = os.path.join(outdir, "reelsi_batch.aep")
+    with open(aep, "wb") as f:
+        f.write(b"old_project")
+    past = 1000000000.0                      # время «прошлого прогона»
+    os.utime(aep, (past, past))
+
+    def on_afterfx(cmd):
+        cmd_str = " ".join(str(c) for c in cmd)
+        if "part" in cmd_str:
+            # Части успешно собираются
+            for k in range(3):
+                part_aep = os.path.join(parts_dir, f"reelsi_batch.part{k}.aep")
+                part_aelog = os.path.join(parts_dir, f"reelsi_batch.part{k}.aelog.txt")
+                if not os.path.isfile(part_aep):
+                    with open(part_aep, "wb") as f:
+                        f.write(b"part_project")
+                if not os.path.isfile(part_aelog):
+                    with open(part_aelog, "w", encoding="utf-8") as f:
+                        f.write(f"REELSI-PART: {k} ok\n")
+        elif "merge" in cmd_str:
+            # Слияние пишет журнал, но проект НЕ пересохраняет — .aep остаётся старым
+            merge_aelog = os.path.join(outdir, "reelsi_batch.merge.aelog.txt")
+            with open(merge_aelog, "w", encoding="utf-8") as f:
+                f.write("REELSI-MERGE: ok\n")
+
+    launched = []
+    _install_popen(monkeypatch, launched, on_afterfx=on_afterfx)
+    batch = [{"xml_path": xml1, "outdir": outdir, "roto": False},
+             {"xml_path": xml2, "outdir": outdir, "roto": False},
+             {"xml_path": xml3, "outdir": outdir, "roto": False}]
+    _reset_job(["01_C0233", "02_C0234", "03_C0235"])
+    render_job.run_render_combined(render.RJOB, batch, outdir, render_dir)
+
+    assert not any("aerender" in exe for exe in launched), "aerender запустился по старому .aep: %r" % launched
+    reasons = [f["reason"] for f in render.RJOB["failed"]]
+    assert len(reasons) == 3, reasons
     text = _log_text(render.RJOB)
     assert "остался от прошлого прогона" in text, "нет строки про .aep прошлого прогона:\n" + text
     assert not render.RJOB["result"]

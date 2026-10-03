@@ -1,0 +1,110 @@
+<!doctype html><html lang="__UI_LANG__"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reelsi — рендер кадров</title>
+<!-- Страница рендера без After Effects: ролик собирается из ТОГО ЖЕ предпросмотра
+     шага 3, кадр за кадром. Грузит те же static/app/*.js, что и основной интерфейс
+     (список собирает сервер по содержимому папки, см. _app_scripts в webui.py), —
+     второй копии отрисовки нет и быть не должно: разъехавшийся рендер хуже отсутствующего.
+     Отличия страницы ровно два: сцена стоит в НАТУРАЛЬНОМ размере кадра (w×h, масштаб 1)
+     и нет ни одной панели/модалки. Панели не нужны, но общий код вешает на их элементы
+     обработчики прямо при загрузке — поэтому внизу лежит служебный каркас пустышек.
+
+     Тело сборки (стиль, вставки, интро, музыка) приходит не из localStorage (его у
+     страницы нет), а с сервера: сборщик кладёт его в _tmp клипа и отдаёт сюда id
+     (?body=…). Страница забирает его запросом и подставляет превью дверью IPV_BODY —
+     план сцены считается ровно из тех же полей, что шлёт шаг 3. -->
+<link rel="stylesheet" href="/static/app.css?v=__V__">
+<style>
+/* Сцена — пиксель в пиксель кадр ролика: снимок снимается с неё как есть. */
+html,body{margin:0;padding:0;background:#000;overflow:hidden}
+#ipvstage{margin:0;max-width:none;aspect-ratio:auto;border-radius:0;
+  width:var(--rw,1080px);height:var(--rh,1920px)}
+</style>
+</head><body>
+<div class="pvstage" id="ipvstage">
+  <div id="ipvtopline" class="ipvtopline" style="display:none"><div class="pvtl_track"></div><div class="pvtl_prog"></div></div>
+  <div id="ipvcaption" class="ipvcaption" data-noi18n style="display:none"><div class="pvcap_inner"></div><span class="pvcap_text"></span></div>
+  <div id="ipvintro" class="ipvintro" data-noi18n></div>
+  <div id="ipvins" class="ipvins"></div>
+  <div id="ipvsub" class="pvsub" data-noi18n></div>
+</div>
+<!-- Служебный каркас: без этих элементов общий код спотыкается на первой же строке
+     (таймлайн вставок, ползунок и время превью, модалки, к которым привязаны горячие
+     клавиши). Ничего не показывают и ни на что не влияют.
+     Селектора спикера (#speaker) тут НЕТ нарочно: loadSpeakers, найдя его, идёт дальше
+     и правит поля интерфейса и сохранённое состояние — странице рендера это ни к чему,
+     а чужое состояние она писать не должна. Без него та же функция просто наполняет
+     SPEAKERS/SPKFORMATS и выходит. -->
+<div hidden>
+  <div id="itl"><div id="itlin"></div><div id="itlruler"></div><div id="itlblocks"></div><span id="itlph"></span></div>
+  <span id="ipvtime">0:00 / 0:00</span>
+  <input id="ipvseek" type="range" min="0" max="1000" value="0">
+  <button id="ipvplay"></button>
+</div>
+<div id="mbPreview" hidden></div>
+<div id="mbInserts" hidden></div>
+<div id="mbCams" hidden></div>
+<div id="mbConfirm" hidden></div>
+<script>const __BASE__=__BASE_JSON__;
+const REELSI_I18N=__I18N_EN__;
+const REELSI_DEFAULT_LANG="__UI_LANG__";</script>
+__APP_JS__
+<script>
+// ---- запуск страницы рендера ----
+// Своего интерфейса тут нет: единственное, что делает этот код — приносит телу сборки
+// путь к плану и выставляет сцену в размер кадра. Кадры рисует ipvRenderAt (85-inserts-view.js).
+(async function(){
+  const q=new URLSearchParams(location.search);
+  const xml=q.get('xml')||'';
+  const id=q.get('body')||'';
+  const fail=m=>{window.reelsiRenderError=String(m);document.title='рендер: '+m;};
+  // 1. Тело сборки: тот же объект, что шаг 3 шлёт на /api/scene.
+  let d=null;
+  try{d=await (await fetch('/api/render_body?xml='+encodeURIComponent(xml)
+    +'&id='+encodeURIComponent(id))).json();}
+  catch(e){fail(t('тело сборки: ')+e);return;}
+  if(!d||!d.ok){fail(errText(d)||t('тело сборки не прочиталось'));return;}
+  IPV_BODY=d.body;
+  // Стиль — из того же тела: по нему превью берёт шрифты субтитров и интро.
+  CURSTYLE=(d.body&&d.body.style)||null;
+  // 2. Спикер клипа: LUT камер, рамка кадра и формат ролика живут в его профиле. Спикера
+  //    берём из сайдкара рядом с XML — тем же путём, что сборка .jsx, а не из состояния
+  //    браузера: у страницы рендера его нет.
+  CLIPS=[{xml:xml,job:{speaker:d.speaker||''}}];
+  await loadSpeakers();
+  await loadFonts();
+  // 3. Кадры камер этого куска — ГОТОВЫМИ КАРТИНКАМИ: их вынул ffmpeg до съёмки
+  //    (core/webrender.py), папка приезжает в адресе. Пусто — превью перематывает
+  //    <video>, как раньше: выемка это ускорение, а не условие рендера.
+  IPV_FRAMES=q.get('frames')||'';
+  // ...и РАСШИРЕНИЕ этих картинок: имя файла собирает страница (ipvFrameURL), и оно
+  //    обязано совпасть с тем, чем вынимал ffmpeg (png/jpg — решает core/webrender.py).
+  //    Не пришло (старый сборщик, живое превью) — прежний jpg.
+  IPV_FEXT=(q.get('fext')||'jpg').replace(/^\./,'');
+  // ...и ГРАНИЦЫ куска: [первый кадр, сколько их]. По ним примерка кадра (ipvFramePrime)
+  //    не просит картинку за последним кадром куска: её в этой папке нет (кадр уже
+  //    соседнего куска), сервер отвечал бы 404 — и камера уходила бы на перемотку до
+  //    конца куска. Не пришли — границ нет, страница рендерит ролик целиком (живое превью).
+  const f0=parseInt(q.get('fstart')||'',10),fn=parseInt(q.get('fcount')||'',10);
+  IPV_FRANGE=(f0>=0&&fn>0)?[f0,fn]:null;
+  // 4. Прокси камер: короткая сторона — как у кадра ролика (у живого превью 720; снимок
+  //    идёт в натуральном размере, и 720 в нём было бы мылом). Число приходит от сборщика,
+  //    он взял его из того же плана; нет его — берём формат спикера.
+  const wh=ipvPlanWH();
+  PVPX.height=parseInt(q.get('pxh')||'',10)||Math.min(wh.w,wh.h);
+  IPVMODE='ae';                       // интро и вставки шага 3 — часть кадра
+  await ipvOpen(xml);
+  // 5. План сцены читает сам предпросмотр (ipvPlanFetch внутри ipvOpen) — ждём его.
+  const t0=Date.now();
+  while(!IPV.plan&&!window.reelsiRenderError&&Date.now()-t0<180000)
+    await new Promise(r=>setTimeout(r,50));
+  if(!IPV.plan){fail(t('план сцены не пришёл'));return;}
+  // 6. Сцена — натуральный размер кадра.
+  const W=IPV.plan.w||1080,H=IPV.plan.h||1920;
+  document.documentElement.style.setProperty('--rw',W+'px');
+  document.documentElement.style.setProperty('--rh',H+'px');
+  window.reelsiRenderInfo={xml:xml,w:W,h:H,fps:IPV.fps||IPV.plan.fps||60,dur:IPV.dur||IPV.plan.dur||0};
+  window.reelsiRenderReady=true;      // съёмщик ждёт именно этого
+})();
+</script>
+</body></html>

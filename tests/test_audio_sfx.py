@@ -96,9 +96,14 @@ def test_sfx_carries_events_in_plan(xml_subs, tmp_path):
     sfx = {s["kind"]: s for s in plan["audio"]["sfx"]}
     assert "pop" in sfx and "riser" in sfx
     assert sfx["pop"]["events"], "нет событий: жёлтые слова должны стать событиями"
-    # события несут ГОТОВЫЙ старт: t = ev − at + in (JS не пересчитывает)
+    # события несут ГОТОВЫЙ старт: t = ev − at + in (JS не пересчитывает), а `out` —
+    # конец звука в файле: у «попа» это базовая обрезка 0.1 с, тот же outPoint, что
+    # ставит шаблон .jsx, и то же число режет рендер без After Effects. Раньше `out`
+    # был None, и длину попа каждый читатель брал своим правилом (превью 0.1 с, микс —
+    # по длине файла, 0.43 с у боевого «type & delete.wav»).
     e = sfx["pop"]["events"][0]
-    assert "t" in e and e["in"] == 0 and e["out"] is None
+    assert "t" in e and e["in"] == 0 and e["out"] == 0.1
+    assert sfx["riser"]["events"][0]["out"] is None, "у ризера outPoint не ставится — до конца файла"
     assert sfx["pop"]["db"] == 3
     assert sfx["riser"]["events"][0]["t"] == 0.0
     # удар 0.2, in 0: старт = ev − 0.2 + 0 = ev − 0.2

@@ -367,7 +367,7 @@ async function runAI(){
   if(!QUEUE.length){toast(t('Очередь пуста'));return;}
   if(!val('ai_outdir').trim()){toast(t('Не задана папка результата'));return;}
   if(CAMDIRS.slice(0,nCams()).some(d=>!(d||'').trim())){toast(t('Не заданы папки камер'));return;}
-  cutBusy(true);CUTLABEL=t('ИИ-нарезка');progShow(t('ИИ-нарезка'),t('готовлю…'));
+  cutBusy(true);CUTLABEL=t('ИИ-нарезка');progOpen({title:t('ИИ-нарезка')});
   // selfcheck не шлём: в режиме GigaAM (дефолт) этот путь не исполняется вовсе,
   // сервер сам ставит False (см. run_omnicut_job). Убрано 2026-08-11.
   const body={outdir:val('ai_outdir'),pairs:QUEUE,camdirs:CAMDIRS.slice(0,nCams()),
@@ -389,7 +389,8 @@ async function runCustom(){
 
   if(branch==='vad'){
     if(!val('base').trim()){toast(t('Не задана папка проекта'));return;}
-    cutBusy(true);CUTLABEL=t('Кастомная нарезка');progShow(t('Кастомная нарезка'),'Whisper + VAD…');
+    cutBusy(true);CUTLABEL=t('Кастомная нарезка');progOpen({title:t('Кастомная нарезка')});
+    progUpdate(null,'Whisper + VAD');
     const body={
       base:val('base'),
       outdir:val('ai_outdir'),
@@ -403,7 +404,7 @@ async function runCustom(){
     if(d.error){toast(errText(d));cutBusy(false);hideProg();return;}
     logReset();pollAI();
   }else{
-    cutBusy(true);CUTLABEL=t('Кастомная нарезка');progShow(t('Кастомная нарезка'),t('готовлю…'));
+    cutBusy(true);CUTLABEL=t('Кастомная нарезка');progOpen({title:t('Кастомная нарезка')});
     const body={
       outdir:val('ai_outdir'),
       pairs:QUEUE,
@@ -421,13 +422,14 @@ async function runCustom(){
 const runClassic=runCustom;
 // ---- единое ядро поллинга джоба: /api/status → лог → прогресс → onDone(d) ----
 // eager: доля «внутри текущего клипа» для бара (0.15 нарезка, 0.3 сборка); null = без бара.
-// Имя клипа приходит с сервера (progress.name) и кладётся в контекст очереди — тогда строка
-// очереди у серверных задач та же, что у клиентских («клип i из N · имя» + этап).
+// В шапку идут только «сколько готово из скольких» и заголовок: имя файла и строка лога
+// туда не попадают (они в строках роликов и в «Показать логи» — см. 55-progress.js).
+// progress.i с сервера — номер НАЧАТОГО клипа (1-based), поэтому готовых на один меньше.
 function jobProg(d,eager,title){
-  const p=(d.progress&&d.progress.n)?{i:+d.progress.i,n:+d.progress.n,name:d.progress.name||''}
-        :(PROGMARK?{i:+PROGMARK[1],n:+PROGMARK[2],name:''}:null);        // фолбэк: [i/N] из лога
-  if(!p)return{frac:null,sub:''};
-  progQueue(title,p.i,p.n,p.name);
+  const p=(d.progress&&d.progress.n)?{i:+d.progress.i,n:+d.progress.n}
+        :(PROGMARK?{i:+PROGMARK[1],n:+PROGMARK[2]}:null);     // фолбэк: [i/N] из лога
+  if(!p||!p.n)return{frac:null,sub:''};
+  progQueue(title,Math.max(0,p.i-1),p.n);
   if(eager==null)return{frac:null,sub:''};
   return{frac:(p.i-1)/p.n+eager/p.n,sub:''};}
 // onTick(d) зовётся на КАЖДОМ опросе (не только в конце) — нарезка так отдаёт
@@ -437,6 +439,12 @@ function jobProg(d,eager,title){
 // (задание по UI-состояниям). Удачный ответ — счётчик в ноль, обычный текст сам
 // возвращается следующим progUpdate.
 let POLLFAIL=0;
+// Этап последней серверной строки лога — КОДОМ события, а не хвостом строки: разбор
+// живёт в одном месте (progEventOf, 55-progress.js), а сама строка ждёт в «Показать
+// логи». Ничего не разобралось — этап не показываем вовсе: сырое в шапку не идёт.
+function jobStageText(){
+  const last=[...LOGCACHE].reverse().find(l=>fmtLog(l).trim());
+  return PROGEV[progEventOf(last)]||'';}
 async function pollJob(self,title,eager,onDone,onTick){
   // сеть/рестарт сервера не должны молча убивать поллинг (кнопки остались бы залоченными) — ретраим
   let d;try{d=await (await fetch('/api/status?since='+LOGSINCE)).json();}
@@ -446,9 +454,8 @@ async function pollJob(self,title,eager,onDone,onTick){
   mergeLog(d);
   queueRender(d);    // очередь этапов: единая дверь для нарезки/сборки/черновика
   if(onTick)onTick(d);
-  const last=[...LOGCACHE].map(fmtLog).reverse().find(l=>l.trim());
   const pr=jobProg(d,eager,title);
-  progUpdate(pr.frac,(last||'').trim().slice(0,80),title,pr.sub);
+  progUpdate(pr.frac,jobStageText(),title,pr.sub);
   if(d.done){onDone(d);return;}
   setTimeout(self,1000);}
 
@@ -474,8 +481,8 @@ async function pollAI(){pollJob(pollAI,CUTLABEL,0.15,d=>{
     let msg=UICANCEL?t('Остановлено — готово клипов: ')+n:(n?t('Готово: {n} клип(ов)',{n:n}):(bad.length?'':t('Готово (файлов нет — см. логи)')));
     if(bad.length)msg+=(msg?' · ':'')+t('⚠ не собрались ({n}): ',{n:bad.length})
       +bad.map(f=>f.name+' — '+(f.reason||'?').slice(0,90)).join(' · ');
-    progDone(msg);
-    if(bad.length)$('progFill').className='progfill';   // не красим в зелёный, если были падения
+    // Падения были — окно кончается НЕ зелёным: «поработал» и «упало» — разные статусы.
+    progDone(msg,bad.length>0);
     renderClips1();saveState();refreshStatuses();},
   d=>{cutAdopt(d);progReadySet((d.results||[]).length);});}
 

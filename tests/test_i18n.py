@@ -130,9 +130,16 @@ def test_russian_needs_no_dictionary():
 
 
 def _backend_err_codes():
+    """Коды umsg(...) из модулей, ошибки которых видит пользователь.
+
+    `core/*.py` — наравне с api/: пользовательскую ошибку с кодом поднимает и
+    ядро (`core/lut.py` — разбор таблицы LUT), а словарь обязан знать КАЖДЫЙ
+    такой код, иначе в английском интерфейсе останется русский текст.
+    """
     import glob
     codes = set()
     for f in glob.glob(os.path.join(ROOT, "api", "*.py")) + \
+            glob.glob(os.path.join(ROOT, "core", "*.py")) + \
             glob.glob(os.path.join(ROOT, "core", "aicut", "*.py")) + \
             glob.glob(os.path.join(ROOT, "core", "xml2ae", "*.py")):
         src = io.open(f, encoding="utf-8").read()

@@ -799,7 +799,7 @@ def main(argv: list[str] | None = None, root: str | None = None) -> int:
     parser.add_argument("--ref", default="HEAD", help="Коммит-источник среза (по умолчанию HEAD)")
     parser.add_argument("--keep", action="store_true", help="Оставить каталог среза на диске (для разбора падений)")
     parser.add_argument("--workdir", default=None, metavar="DIR",
-                        help=f"Родительский каталог для дерева среза (иначе ${ENV_SLICE_WORKDIR} или %TEMP%)")
+                        help=f"Родительский каталог для дерева среза (иначе ${ENV_SLICE_WORKDIR} или %%TEMP%%)")
     parser.add_argument("--root", default=None, help="Корень репозитория (по умолчанию автоопределение)")
     parser.add_argument("--only", action="append", default=None, metavar="ШАГ",
                         help=f"Гнать только эти шаги ({', '.join(STEP_NAMES)}); можно через запятую")

@@ -4,10 +4,12 @@
 
 CANCEL и EPOCH живут здесь и здесь же ПЕРЕПРИСВАИВАЮТСЯ. Наружу они не
 переэкспортируются намеренно: `from .llm import CANCEL` связал бы имя один раз, и
-отмена перестала бы работать. Снаружи есть функции — cancelled(), is_current().
+отмена перестала бы работать. Снаружи есть функции — cancelled(), is_current(),
+idle_since(), others_live().
 
-Поколение вызова (EPOCH) нужно, чтобы «Стоп» и перезагрузка страницы не убивали
-вызов, стартовавший ПОСЛЕ них: устаревший поток видит чужой epoch и выходит сам.
+Номер вызова (EPOCH) и пачка вызова (_LIVE) нужны, чтобы вызовы одной пачки
+не отменяли друг друга при параллельной работе, а «Стоп» и новый одиночный запуск
+вытесняли старые вызовы: устаревший поток видит свой номер в _DEAD и выходит сам.
 """
 from __future__ import annotations
 import os, re, json, shutil, subprocess, time, threading
@@ -16,7 +18,7 @@ from typing import Any, Callable, cast
 
 from .config import (APP_NAME, APP_REFERER, DEFAULT_URL, REASONING_LEVELS,
                      AI_LOG_PATH, AI_LOG_CAP, AI_LOG_MAX_MB,
-                     REASONING_BUDGET,
+                     REASONING_BUDGET, uses_native_effort,
                      apply_profile_headers, model_supports_caching, resolve_profile)
 from . import catalog
 from core.fileio import atomic_text_write
@@ -32,13 +34,16 @@ _AI_LOG_LOCK = threading.Lock()
 
 
 def ai_log_append(step: str | None, prof: dict[str, Any] | None, ok: bool | None, in_t: int | None = None, out_t: int | None = None, rt: int | None = None, finish: str | None = None,
-                  ms: float | int | None = None, err: str | None = None) -> None:
+                  ms: float | int | None = None, err: str | None = None, mt: int | None = None) -> None:
     """Дописать одну запись ИИ-вызова в ai_calls.jsonl (JSONL, по строке на вызов).
 
     step — имя шага ("cut"/"yellow"/"inserts"/"intro"/"plan" или что передал
     вызывающий), prof — словарь профиля (модель/провайдер/reasoning), токены и
     время — что вернул провайдер. Ошибки тоже пишутся (ok=False): сгоревшие 200k
     токенов видны именно по паре «огромный out/rt + err» — на этом ловился баг.
+    mt — ФАКТИЧЕСКИ отправленный потолок вывода: без него в журнале не видно,
+    обрезал ответ наш max_tokens или лимит самого провайдера (баг 02.10.2026:
+    finish=length ровно по 26000 — наш потолок, но по журналу это не читалось).
 
     Авточистка: файл держим не больше AI_LOG_MAX_MB и не больше AI_LOG_CAP строк —
     при превышении переписываем, оставляя хвост (самое свежее). Чистка только при
@@ -53,6 +58,9 @@ def ai_log_append(step: str | None, prof: dict[str, Any] | None, ok: bool | None
         "reasoning": (prof or {}).get("reasoning") or "off",
         "ok": ok, "in": in_t, "out": out_t, "rt": rt,
         "finish": finish, "ms": (int(ms) if ms is not None else None), "err": err,
+        # mt без аргумента берём из профиля: так потолок попадает и в запись об
+        # ошибке, которую пишет обёртка _ask_openai (её код его уже не видит).
+        "mt": mt if mt is not None else (prof or {}).get("mt"),
     }
     try:
         with _AI_LOG_LOCK:
@@ -89,34 +97,46 @@ def _ai_log_prune_if_big() -> None:
 # Эндпоинты, запускающие новый ИИ-вызов, сбрасывают его в False.
 CANCEL = False
 
-# ПОКОЛЕНИЕ ИИ-ВЫЗОВА. Одного флага CANCEL мало: «Стоп» рвёт fetch у КЛИЕНТА, а поток
-# сервера ещё живёт внутри стрима. Если сразу запустить вызов заново (типовой случай:
-# отменил medium-reasoning, поставил off), он ставил CANCEL=False — старый поток терял
-# признак отмены, продолжал жечь провайдера, а по завершении дёргал unload_ours() и
-# убивал генерацию НОВОГО вызова: UI «залипал». Теперь у каждого вызова свой номер:
-# старт нового и «Стоп» его увеличивают, поток с устаревшим номером обязан умереть сам.
+# РЕЕСТР ИИ-ВЫЗОВОВ: номер вызова (EPOCH) и пачка. Вызовы одной пачки не
+# отменяют друг друга, одиночные (batch=None) и запуск новой пачки вытесняют
+# старые (помещают их номера в _DEAD). «Стоп» переводит всех живых в _DEAD.
 EPOCH = 0
 _EPOCH_LOCK = threading.Lock()
 _LOCAL = threading.local()          # epoch потока; нет его (CLI, потоки джоба) — старое поведение
+_LIVE: dict[int, str | None] = {}   # живые вызовы: номер -> пачка (None = одиночный)
+_DEAD: set[int] = set()             # живые, но отменённые (их поток обязан выйти сам)
 
 
-def begin_call() -> int:
-    """Начать новый одиночный ИИ-вызов из текущего потока: отменить все прошлые
-    (их номер устареет) и снять флаг «Стоп». Возвращает номер вызова."""
+def begin_call(batch: str | None = None) -> int:
+    """Начать новый ИИ-вызов из текущего потока: вызовы одной пачки друг друга не
+    отменяют; одиночный вызов или вызовы другой пачки отменяются (уходят в _DEAD).
+    Снимает флаг «Стоп». Возвращает номер вызова."""
     global CANCEL, EPOCH
     with _EPOCH_LOCK:
         EPOCH += 1
         CANCEL = False
+        for live_ep, live_batch in list(_LIVE.items()):
+            if batch is None or live_batch != batch:
+                _DEAD.add(live_ep)
+        _LIVE[EPOCH] = batch
         _LOCAL.epoch = EPOCH
         return EPOCH
 
 
+def end_call(ep: int) -> None:
+    """Завершить вызов с номером ep: убрать из реестра живых и отменённых."""
+    with _EPOCH_LOCK:
+        _LIVE.pop(ep, None)
+        _DEAD.discard(ep)
+
+
 def cancel_call() -> int:
-    """Кнопка «Стоп»: отменить текущий вызов. Возвращает номер, до которого отменено —
-    по нему отложенная выгрузка модели поймёт, что вызов уже сменился новым."""
+    """Кнопка «Стоп»: отменить текущие вызовы (все живые переводятся в _DEAD).
+    Возвращает номер, до которого отменено — штамп момента «Стопа»."""
     global CANCEL, EPOCH
     with _EPOCH_LOCK:
         CANCEL = True
+        _DEAD.update(_LIVE)
         EPOCH += 1
         return EPOCH
 
@@ -134,14 +154,18 @@ def cancelled() -> bool:
     """Отменён ли ИИ-вызов ТЕКУЩЕГО потока: нажали «Стоп» либо поверх нас стартовал
     новый вызов. Потоки без своего номера (CLI, джоб) смотрят только на CANCEL."""
     ep = getattr(_LOCAL, "epoch", None)
-    return bool(CANCEL) if ep is None else (bool(CANCEL) or ep != EPOCH)
+    with _EPOCH_LOCK:
+        return bool(CANCEL) if ep is None else (bool(CANCEL) or ep in _DEAD)
 
 
 def cancel_reason() -> Any:
     """Почему вызов прерван — «Стоп» или его вытеснил новый запуск (важно различать:
     во втором случае ошибка прилетит клиенту, которого уже нет, а работает новый)."""
     ep = getattr(_LOCAL, "epoch", None)
-    if ep is not None and ep != EPOCH and not CANCEL:
+    with _EPOCH_LOCK:
+        in_dead = ep is not None and ep in _DEAD
+        is_cancel = bool(CANCEL)
+    if in_dead and not is_cancel:
         return umsg("cancel_replaced", "вызов заменён новым запуском")
     return umsg("cancelled", "остановлено кнопкой «Стоп»")
 
@@ -151,7 +175,22 @@ def is_current(ep: int | None = None) -> bool:
     выгружать модель LM Studio: устаревший поток этим убил бы чужую генерацию."""
     if ep is None:
         ep = getattr(_LOCAL, "epoch", None)
-    return ep is None or (ep == EPOCH and not CANCEL)
+    if ep is None:
+        return True
+    with _EPOCH_LOCK:
+        return not CANCEL and ep not in _DEAD
+
+
+def idle_since(stamp: int) -> bool:
+    """Нет ни одного живого вызова с номером > stamp."""
+    with _EPOCH_LOCK:
+        return not any(ep > stamp for ep in _LIVE)
+
+
+def others_live(ep: int) -> bool:
+    """Есть ли живой неотменённый вызов, кроме ep."""
+    with _EPOCH_LOCK:
+        return any(k != ep and k not in _DEAD for k in _LIVE)
 
 
 # --- Управление VRAM LM Studio (16 ГБ впритык: держим загруженной ОДНУ модель) ---
@@ -227,46 +266,57 @@ def unload_ours(emit: Callable[..., Any] = console_emit) -> None:
             emit("  (lms unload не сработал: {err})", err=e)
 
 
-def ensure_loaded(model: str, url: str | None = None, ttl: int = 1800, emit: Callable[..., Any] = console_emit) -> None:
+_LOAD_LOCK = threading.Lock()
+
+
+def ensure_loaded(model: str, url: str | None = None, ttl: int = 1800, parallel: int = 1, emit: Callable[..., Any] = console_emit) -> None:
     """Гарантировать, что модель загружена в LM Studio.
     Выгружает ТОЛЬКО наши ранее загруженные модели (если загружали другую),
     чужие модели пользователя не трогает (жалоба 2026-08-21).
     Best-effort: если lms/REST недоступны, молча полагаемся на JIT."""
-    loaded = loaded_models(url)
-    if loaded is not None and model in loaded:
-        with _OUR_MODELS_LOCK:
-            _OUR_MODELS.add(model)
-        return
-    lms = _lms_bin()
-    if not lms:
-        return
-    try:
-        # Выгружаем только НАШИ модели, чужие не трогаем
-        with _OUR_MODELS_LOCK:
-            to_unload = [m for m in _OUR_MODELS if m != model]
-        for m in to_unload:
-            try:
-                subprocess.run([lms, "unload", m], capture_output=True, timeout=60)
-                with _OUR_MODELS_LOCK:
-                    _OUR_MODELS.discard(m)
-            except ReelsiError: raise
-            except Exception as ex:
-                log.warning("не выгрузил модель «%s» из LM Studio: %s — "
-                            "видеопамяти может не хватить", m, ex)
-        subprocess.run([lms, "load", model, "--gpu", "max", "--ttl", str(ttl)],
-                       capture_output=True, timeout=300)
-        with _OUR_MODELS_LOCK:
-            _OUR_MODELS.add(model)
-        emit("  LM Studio: загружена {model}", model=model)
-    except ReelsiError: raise
-    except Exception as e:
-        emit("  (lms load не сработал: {err}; полагаюсь на JIT)", err=e)
+    with _LOAD_LOCK:
+        loaded = loaded_models(url)
+        if loaded is not None and model in loaded:
+            with _OUR_MODELS_LOCK:
+                _OUR_MODELS.add(model)
+            return
+        lms = _lms_bin()
+        if not lms:
+            return
+        try:
+            # Выгружаем только НАШИ модели, чужие не трогаем
+            with _OUR_MODELS_LOCK:
+                to_unload = [m for m in _OUR_MODELS if m != model]
+            for m in to_unload:
+                try:
+                    subprocess.run([lms, "unload", m], capture_output=True, timeout=60)
+                    with _OUR_MODELS_LOCK:
+                        _OUR_MODELS.discard(m)
+                except ReelsiError: raise
+                except Exception as ex:
+                    log.warning("не выгрузил модель «%s» из LM Studio: %s — "
+                                "видеопамяти может не хватить", m, ex)
+            cmd = [lms, "load", model, "--gpu", "max", "--ttl", str(ttl)]
+            if parallel > 1:
+                cmd.extend(["--parallel", str(parallel)])
+            subprocess.run(cmd, capture_output=True, timeout=300)
+            with _OUR_MODELS_LOCK:
+                _OUR_MODELS.add(model)
+            emit("  LM Studio: загружена {model}", model=model)
+        except ReelsiError: raise
+        except Exception as e:
+            emit("  (lms load не сработал: {err}; полагаюсь на JIT)", err=e)
 
 
 def warn_foreign_models(emit: Callable[..., Any] = console_emit) -> None:
-    """Предупредить в лог, если в LM Studio висит сторонняя (не наша) модель,
-    которая может занять VRAM перед тяжёлым локальным шагом (ASR/GigaAM/Omni).
-    Информирование вместо самоуправства: работу не останавливает и модель не выгружает."""
+    """перед тяжёлым локальным шагом: выгрузить нашу модель картинок в Unsloth Studio
+    и предупредить о чужих моделях LM Studio."""
+    try:
+        from .images import unsloth_unload_ours
+        unsloth_unload_ours(emit=emit)
+    except ReelsiError: raise
+    except Exception as e:
+        log.warning("Не удалось выгрузить модель Unsloth Studio: %s", e)
     try:
         info = loaded_info()
         if not info:
@@ -545,16 +595,20 @@ def _ask_openai_impl(prof: dict[str, Any], system: str, user: str, schema: dict[
     last_err, attempt, busy, stalled = None, 0, 0, 0
     lvl_base = prof.get("reasoning") or "off"
     lvl_prev = lvl_base
+    sent_mt: int | None = None                   # потолок, реально ушедший в ЭТОЙ попытке
     while attempt <= retries:
         if cancelled():
             raise ReelsiError(cancel_reason())
+        sent_mt = None                           # при повторном запросе потолок пересчитывается
         if attempt and last_err is not None:
             emit("! ответ модели не разобран ({err}) — повторяю ({attempt}/{retries})…",
                  err=last_err, attempt=attempt, retries=retries)
             if is_local:
                 unload_ours(emit=emit)                # перезагрузка лечит залипание
         if is_local:
-            ensure_loaded(model, url, emit=emit)     # выгрузит прочие модели и загрузит нужную
+            par = prof.get("concurrency")
+            par_val = par if isinstance(par, int) and not isinstance(par, bool) and par > 1 else 1
+            ensure_loaded(model, url, parallel=par_val, emit=emit)     # выгрузит прочие модели и загрузит нужную
         # Фактический уровень на эту попытку: при повторе после битого JSON понижаем
         # на ступень (высокий -> medium -> low -> off) — тот же бюджет размышлений
         # второй раз жечь нельзя, иначе и повтор утонет в том же размышлении.
@@ -632,9 +686,14 @@ def _ask_openai_impl(prof: dict[str, Any], system: str, user: str, schema: dict[
                 # раздумий (см. комментарий выше). При off потолок не шлём как раньше.
                 mt = max_tokens
                 if c.get("out_limit"):
-                    mt = min(mt, c["out_limit"])
+                    if uses_native_effort(model):
+                        mt = c["out_limit"]     # своё считает сама (см. config.py)
+                    else:
+                        mt = min(mt, c["out_limit"])
                 tok_key = "max_completion_tokens" if use_max_completion else "max_tokens"
                 payload[tok_key] = mt
+                sent_mt = mt
+                prof["mt"] = mt
                 emit("[max_tokens] model={model} -> max_tokens={mt} (ум {lvl}, бюджет размышлений {budget})",
                      model=model, mt=mt, lvl=lvl, budget=REASONING_BUDGET.get(lvl, 0))
         elif use_effort and (lvl == "off" or lvl in REASONING_LEVELS or supported):
@@ -653,9 +712,14 @@ def _ask_openai_impl(prof: dict[str, Any], system: str, user: str, schema: dict[
             if lvl != "off":
                 mt = max_tokens
                 if c.get("out_limit"):
-                    mt = min(mt, c["out_limit"])
+                    if uses_native_effort(model):
+                        mt = c["out_limit"]     # своё считает сама (см. config.py)
+                    else:
+                        mt = min(mt, c["out_limit"])
                 tok_key = "max_completion_tokens" if use_max_completion else "max_tokens"
                 payload[tok_key] = mt
+                sent_mt = mt
+                prof["mt"] = mt
                 emit("[max_tokens] model={model} -> max_tokens={mt} (ум {lvl}, бюджет размышлений {budget})",
                      model=model, mt=mt, lvl=lvl, budget=REASONING_BUDGET.get(lvl, 0))
         if use_cache:
@@ -810,8 +874,18 @@ def _ask_openai_impl(prof: dict[str, Any], system: str, user: str, schema: dict[
         # ЦЕЛЫЙ элемент — json.loads проходит, нужного ключа нет, и шаг молча
         # возвращал пустой результат («вставок: 0») вместо повтора.
         if ch.get("finish_reason") == "length":
-            # своего потолка мы больше не ставим, так что это лимит САМОГО провайдера
+            # Обрыв бывает двух РАЗНЫХ видов, и лечатся они по-разному: упёрлись в
+            # НАШ потолок (при включённом уме мы его всё же шлём — ответ + бюджет
+            # размышлений) или в лимит самого провайдера/модели. Видно по числу:
+            # при нашем потолке completion_tokens ровно дотягивает до sent_mt.
             rt = ((u.get("completion_tokens_details") or {}).get("reasoning_tokens") or 0)
+            out_tok = u.get("completion_tokens")
+            if sent_mt is not None and isinstance(out_tok, int) and out_tok >= sent_mt:
+                raise ReelsiError(umsg("output_cut_ours",
+                                      f"ответ упёрся в потолок вывода {out_tok} токенов"
+                                      + (f" (из них {rt} на размышления)" if rt else "")
+                                      + " — модель не успела ответить; понизь «ум» на этом шаге",
+                                      tokens=out_tok, reasoning=rt))
             raise ReelsiError(umsg("output_cut",
                                   f"провайдер оборвал ответ по своему лимиту вывода "
                                   f"({u.get('completion_tokens', '?')} токенов"
@@ -822,7 +896,7 @@ def _ask_openai_impl(prof: dict[str, Any], system: str, user: str, schema: dict[
         ai_log_append(step, prof, ok=True,
                       in_t=u.get("prompt_tokens"), out_t=u.get("completion_tokens"),
                       rt=(u.get("completion_tokens_details") or {}).get("reasoning_tokens"),
-                      finish=ch.get("finish_reason"),
+                      finish=ch.get("finish_reason"), mt=sent_mt,
                       ms=(time.time() - (_t0 or time.time())) * 1000)
         try:
             data = json.loads(raw)
@@ -909,10 +983,17 @@ def _ask_anthropic_impl(prof: dict[str, Any], system: str, user: str, schema: di
     if lvl in ("low", "medium", "high") and _anthropic_supports_thinking(model):
         thinking_budget = {"low": 2000, "medium": 8000, "high": 16000}[lvl]
 
+    # Потолок, реально ушедший в текущую попытку (max_tokens у Anthropic
+    # обязателен, поэтому он есть всегда) — по нему отличаем наш обрыв от лимита
+    # провайдера в stop_reason=max_tokens (см. ветку ниже).
+    sent_mt: int | None = None
+
     def _call(thinking: int | None) -> Any:
+        nonlocal sent_mt
         mt = max_tokens
         if thinking and thinking >= mt:
             mt = thinking + 4000          # max_tokens СТРОГО > budget_tokens
+        sent_mt = mt
         kwargs = dict(model=model, max_tokens=mt, system=system,
                       messages=[{"role": "user", "content": user}],
                       output_config={"format": {"type": "json_schema", "schema": schema}})
@@ -959,6 +1040,14 @@ def _ask_anthropic_impl(prof: dict[str, Any], system: str, user: str, schema: di
         # последний ЦЕЛЫЙ элемент — json.loads проходит, обязательного поля нет, и шаг
         # молча отдавал пустой результат. У OpenAI тут отказ, у Claude была строка в лог.
         if resp.stop_reason == "max_tokens":
+            # Anthropic.stop_reason=max_tokens — это ЛИБО наш max_tokens (он тут
+            # обязателен по API), ЛИБО потолок модели. Отличаем по числу, как в
+            # _ask_openai: output_tokens дотянул до отправленного — обрезали МЫ.
+            if sent_mt is not None and u.output_tokens >= sent_mt:
+                raise ReelsiError(umsg("output_cut_ours",
+                                      f"ответ упёрся в потолок вывода {u.output_tokens} токенов"
+                                      " — модель не успела ответить; понизь «ум» на этом шаге",
+                                      tokens=u.output_tokens, reasoning=0))
             raise ReelsiError(umsg("output_cut",
                                   f"провайдер оборвал ответ по своему лимиту вывода "
                                   f"({u.output_tokens} токенов). "
@@ -967,7 +1056,7 @@ def _ask_anthropic_impl(prof: dict[str, Any], system: str, user: str, schema: di
                                   tokens=u.output_tokens))
         ai_log_append(step, prof, ok=True,
                       in_t=u.input_tokens, out_t=u.output_tokens,
-                      finish=resp.stop_reason,
+                      finish=resp.stop_reason, mt=sent_mt,
                       ms=(time.time() - (_t0 or time.time())) * 1000)
         try:
             data = json.loads(raw)

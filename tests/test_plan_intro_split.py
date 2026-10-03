@@ -164,7 +164,10 @@ def _inputs(xml, plan, style=None, intro=None, splits=None, highlights=None):
         cnt_positions=_intro_cnt_positions, line_font=_intro_line_font,
         fit_ds=_intro_fit_ds, appear_dur=_intro_appear_dur, anims=INTRO_ANIMS,
         # Ключи зума и тип интерполяции — из плана: ровно те, с которыми звался блок.
-        cam1_scale=plan["zoom"]["keys"], holds=[bool(h) for h in plan["zoom"]["holds"]])
+        cam1_scale=plan["zoom"]["keys"], holds=[bool(h) for h in plan["zoom"]["holds"]],
+        # Зум Камеры 2 — из плана, тем же путём, что cam1_scale (пусто, если неактивна).
+        cam2_scale=(plan["zoom"].get("cam2") or {}).get("keys", []),
+        cam2_holds=[bool(h) for h in (plan["zoom"].get("cam2") or {}).get("holds", [])])
 
 
 def _check(xml, intro=None, splits=None, style=None, highlights=None, inserts=None):

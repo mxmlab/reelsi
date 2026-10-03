@@ -24,6 +24,9 @@ from core import arrowfix  # noqa: F401  # предзагрузка pyarrow до
 from core import sync
 from core import vad
 from core import align
+from core import frame
+from core import speakers
+from core import voicefx
 from core import xmlbuild
 from core import aicut
 from core import paths
@@ -765,6 +768,19 @@ def main(work: str) -> None:
               "его пороги НЕ применятся (папка и стиль работают как обычно).",
               flush=True)
     if gigaam_path:
+        # Голос спикера (настройки — в профиле speakers/*.json). Синхронизация камер
+        # выше посчитана по СЫРОМУ звуку, поэтому подмена wavs[0] её не трогает:
+        # Включена обработка (`core.voicefx.voice_fx_on`) — нарезка слушает голос
+        # ПОСЛЕ ВСЕЙ цепочки спикера (шумодав + включённые VST-плагины) и громкость
+        # стиля: распознавание, вздохи и паузы идут по тому же звуку, что уедет в
+        # ролик. Собирает цепочку `apply_cut_fx` той же дверью, что и вывод
+        # (`render_cached`), и кеширует её целиком: повторная нарезка без правок
+        # ничего не печёт заново. Итоговый `.voice.wav` тут НЕ запекается: он
+        # печётся на выводе (сборка AE/XML/DRP/черновик) под настройки на тот момент.
+        # Шаг сам терпит сбой: нарезка важнее обработки.
+        _vemit = wrap_emit(lambda m: print(m, flush=True))
+        speaker_prof = speakers.load(a.speaker) if a.speaker else None
+        voicefx.apply_cut_fx(wavs[0], cams[0], speaker_prof, emit=_vemit)
         from core.gigaam_cut import run as _gc_run
         stages: dict[str, Any] = {}
         # Явный draft: в CLI без флага --no-draft черновик включён; при --omni-review черновик обязателен (как на сервере)
@@ -1105,8 +1121,13 @@ def main(work: str) -> None:
             print(f"self-check пропущен: {ex}", flush=True)
 
     assign = align.assign_cameras(keep, N, return_every=a.cam_return, big_chunk_sec=6.0) if N > 1 else None
+    # Формат ролика — из профиля спикера (сайдкара рядом с XML ещё нет: его пишем
+    # ниже). Профиль задан ради порогов нарезки, но формат кадра — тоже его поле:
+    # иначе XML, а за ним .jsx, превью и черновик собрались бы в чужом размере.
+    _seq_w, _seq_h = frame.frame_size(frame.speaker_format(a.speaker))
     info = xmlbuild.build(cams, keep, offsets, a.out, assign=assign,
-                          scale=a.scale, sub_words=None, music_path=None)
+                          seq_w=_seq_w, seq_h=_seq_h,
+                          sub_words=None, music_path=None)
 
     # сайдкар для редактора нарезки: как пересобрать XML из отредактированных блоков
     proj = {"cams": cams, "offsets": offsets, "fps": 60, "cam_return": a.cam_return,

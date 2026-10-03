@@ -158,7 +158,11 @@ def _intro_plan(xml, plan, st, groups, font_ps, hl_font_ps):
         accent_word=_accent_word, parse_count=_parse_intro_count,
         cnt_positions=_intro_cnt_positions, line_font=_intro_line_font,
         fit_ds=_intro_fit_ds, appear_dur=_intro_appear_dur, anims=INTRO_ANIMS,
-        cam1_scale=plan["zoom"]["keys"], holds=[bool(h) for h in plan["zoom"]["holds"]]))
+        cam1_scale=plan["zoom"]["keys"], holds=[bool(h) for h in plan["zoom"]["holds"]],
+        # Зум Камеры 2 — как его отдаёт plan_camera: пусто, если Камера 2 неактивна
+        # (в этих сборках её зум не включается).
+        cam2_scale=(plan["zoom"].get("cam2") or {}).get("keys", []),
+        cam2_holds=[bool(h) for h in (plan["zoom"].get("cam2") or {}).get("holds", [])]))
 
 
 def _tpl_inputs(st, groups, ip, glitch_glow):
@@ -176,10 +180,14 @@ def _tpl_inputs(st, groups, ip, glitch_glow):
         groups=groups, intro=ip,
         # Точка масштабирования прекомпа (intro_scale_anchor): режим и готовые числа на
         # группу посчитал plan_intro — блок берёт их из него, как и build.py.
-        scale_anchor=ip.scale_anchor, anchor_y=ip.anchor_y, anchor_dy=ip.anchor_dy,
+        scale_anchor=ip.scale_anchor, scale_anchor2=ip.scale_anchor2,
+        anchor_y=ip.anchor_y, anchor_dy=ip.anchor_dy,
         any_glitch=any(x.get("anim") == "glitch" for g in groups for x in g),
         any_back=any(bool(x.get("back") and not x.get("accent")) for g in groups for x in g),
         any_big=any(_grp_big_i(g) is not None for g in groups),
+        # Пресет появления субтитров «глитч» в этих сборках не включён: функцию глитча
+        # в .jsx приносит он (scene_plan передаёт sub_anim_glitch из плана субтитров).
+        subs_glitch=False,
         accent_color_used=any(x.get("color") == "accent" for g in groups for x in g),
         custom_color_used=any(x.get("color") == "custom" for g in groups for x in g),
         style=style_values,

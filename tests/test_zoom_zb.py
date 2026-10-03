@@ -208,7 +208,8 @@ def test_node_roto_mask_zoom_center_invariant():
         transformOrigin: '',
         willChange: '',
         backfaceVisibility: ''
-      }}
+      }},
+      querySelector: (sel) => null   // полосы .rmband в стенде нет: рамка кадра её не трогает
     }};
     const st = {{
       querySelector: (sel) => sel === '.rotomask' ? m : null,

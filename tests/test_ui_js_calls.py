@@ -51,7 +51,9 @@ with this super true false null undefined import export
 BROWSER_GLOBALS = frozenset("""
 AbortController Array Audio Blob Boolean Date Error Function Map MutationObserver
 Number Promise RegExp Set String
-cancelAnimationFrame clearInterval clearTimeout encodeURIComponent fetch isFinite
+Float32Array Float64Array Int8Array Int16Array Int32Array Uint8Array Uint8ClampedArray
+Uint16Array Uint32Array
+cancelAnimationFrame clearInterval clearTimeout decodeURIComponent encodeURIComponent fetch isFinite
 isNaN parseFloat parseInt requestAnimationFrame setInterval setTimeout
 """.split())
 

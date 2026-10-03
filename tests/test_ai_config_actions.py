@@ -122,6 +122,25 @@ SCENARIOS = [
      "body": {"action": "set_step_profile", "step": "yellow", "name": "НетТакого"},
      "expect": "no_profile"},
 
+    # ---- set_step_concurrency ----
+    # «Роликов одновременно» на вкладках «Нарезка»/«Разметка»: переопределение НА ШАГЕ
+    # поверх числа из профиля модели. Последний сценарий снимает оба переопределения,
+    # чтобы состояние конфига вернулось к прежнему (журнал `config` ниже не поехал).
+    {"name": "set_step_concurrency: успех (cut=2 строкой)", "method": "POST",
+     "body": {"action": "set_step_concurrency", "step": "cut", "value": "2"}},
+    {"name": "set_step_concurrency: успех (yellow=3 числом)", "method": "POST",
+     "body": {"action": "set_step_concurrency", "step": "yellow", "value": 3}},
+    {"name": "set_step_concurrency: неизвестный шаг", "method": "POST",
+     "body": {"action": "set_step_concurrency", "step": "нетакого", "value": 2},
+     "expect": "unknown_step"},
+    {"name": "set_step_concurrency: больше 16", "method": "POST",
+     "body": {"action": "set_step_concurrency", "step": "cut", "value": "20"},
+     "expect": "bad_concurrency"},
+    {"name": "set_step_concurrency: пусто — своё число снято (cut)", "method": "POST",
+     "body": {"action": "set_step_concurrency", "step": "cut", "value": ""}},
+    {"name": "set_step_concurrency: пусто — своё число снято (yellow)", "method": "POST",
+     "body": {"action": "set_step_concurrency", "step": "yellow", "value": None}},
+
     # ---- set_active ----
     {"name": "set_active: успех (Клод)", "method": "POST",
      "body": {"action": "set_active", "name": "Клод"}},
@@ -193,6 +212,29 @@ SCENARIOS = [
     {"name": "set_glitch_glow: недопустимый режим", "method": "POST",
      "body": {"action": "set_glitch_glow", "value": "мусор"},
      "expect": "glitch_glow_mode_invalid"},
+
+    # ---- set_video_encoder ----
+    # Чем кодировать видео, которое Reelsi пишет сам (черновик и видео камер с LUT):
+    # «auto» или семейство кодеков. Настройка МАШИННАЯ — про железо, а не про ролик.
+    # Пробу здесь не гоняем нарочно: нерабочее семейство encoders сам заменяет авто
+    # (предупреждение в лог), а проба — это запуск ffmpeg, стенду он не нужен.
+    {"name": "set_video_encoder: успех (nvidia)", "method": "POST",
+     "body": {"action": "set_video_encoder", "value": "nvidia"}},
+    {"name": "set_video_encoder: успех (cpu)", "method": "POST",
+     "body": {"action": "set_video_encoder", "value": "cpu"}},
+    {"name": "set_video_encoder: назад в авто", "method": "POST",
+     "body": {"action": "set_video_encoder", "value": "auto"}},
+    {"name": "set_video_encoder: недопустимое значение", "method": "POST",
+     "body": {"action": "set_video_encoder", "value": "мусор"},
+     "expect": "video_encoder_invalid"},
+
+    # ---- set_stock_keys ----
+    # Ключи стоков (раздел `stock`). Берём env-записи: в конфиге лежит ИМЯ переменной,
+    # а не секрет, — в эталон попадает ровно то же, что и у профиля «Текстовая»,
+    # то есть ни одного сырого ключа (эталон лежит в репозитории).
+    {"name": "set_stock_keys: ключи стоков из окружения", "method": "POST",
+     "body": {"action": "set_stock_keys", "pexels_key": "env:NZ_STOCK_PEXELS",
+              "pixabay_key": "env:NZ_STOCK_PIXABAY"}},
 
     # ---- save_profile ----
     {"name": "save_profile: новый профиль + set_active", "method": "POST",

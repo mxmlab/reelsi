@@ -179,6 +179,33 @@ async function setStepProfile(sel){
   AICFG.reasoning_effective=d.reasoning_effective||AICFG.reasoning_effective;
   fillStepProfiles();cutSummary();markupSummary();
   toast(t('модель · ')+(step==='cut'?t('нарезка'):step)+': '+name);}
+// «Роликов одновременно»: поля на вкладках «Нарезка» (conc_cut) и «Разметка»
+// (conc_markup). В поле — ТОЛЬКО своё переопределение шага: пусто = «как в профиле
+// модели» (умолчание), а placeholder — итоговое число из AICFG.step_concurrency,
+// чтобы было видно, сколько роликов пойдёт сейчас (у разметки — шаг yellow).
+function fillStepConcurrency(){if(!AICFG)return;
+  const sc=AICFG.step_concurrency||{}, ov=AICFG.step_concurrency_override||{};
+  const cut=$('conc_cut'), mk=$('conc_markup');
+  if(cut){cut.value=ov.cut!=null?ov.cut:'';cut.placeholder=(sc.cut!=null?sc.cut:'…');}
+  if(mk){mk.value=ov.yellow!=null?ov.yellow:'';mk.placeholder=(sc.yellow!=null?sc.yellow:'…');}}
+// Сколько роликов шаг гонит СРАЗУ (сохраняется в ai_config.step_concurrency_override).
+// Разметка — это ТРИ шага (жёлтые, вставки и ИИ-интро): одно число пишем в каждый, иначе
+// половина разметки шла бы по своему числу, а половина — по профилю. Пусто — снять своё число.
+async function setStepConcurrency(inp){
+  const steps=(inp.id==='conc_markup')?['yellow','inserts','intro']:['cut'];
+  const value=(inp.value||'').trim();
+  for(const step of steps){
+    let d;
+    try{d=await (await fetch('/api/ai_config',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'set_step_concurrency',step,value})})).json();}
+    catch(e){toast(t('Сервер не ответил: ')+e);fillStepConcurrency();return;}
+    if(d.error){toast('⚠ '+errText(d));fillStepConcurrency();return;}
+    AICFG.step_concurrency=d.step_concurrency||AICFG.step_concurrency;
+    AICFG.step_concurrency_override=d.step_concurrency_override||AICFG.step_concurrency_override;}
+  fillStepConcurrency();cutSummary();markupSummary();
+  toast(t('роликов одновременно · ')+(inp.id==='conc_markup'?t('разметка'):t('нарезка'))
+    +': '+(value||t('как в профиле')));}
 async function setCutAsr(name){
   let d;
   try{d=await (await fetch('/api/ai_config',{method:'POST',
@@ -412,7 +439,7 @@ function setVadThreshold(key,val){
   }
 }
 function fillAIProfileSelects(){if(!AICFG)return;
-  fillStepReasoning();fillStepProfiles();fillCutAsr();
+  fillStepReasoning();fillStepProfiles();fillStepConcurrency();fillCutAsr();
   const om=$('omniprofile');
   if(om){const cur=AICFG.active_omni||'__local__';
     const LOCALS=['__local__','__gigaam__'];
@@ -431,6 +458,10 @@ function fillAIProfileSelects(){if(!AICFG)return;
     $('ais_rembgRow').style.display=imgGenOn()?'flex':'none';}
   const gg=$('glitchglow');
   if(gg)gg.value=AICFG.glitch_glow||'builtin';
+  const bw=$('aebuildworkers');
+  if(bw)bw.value=String(AICFG.ae_build_workers||'auto');
+  fillStockKeys();
+  fillVideoEncoder();
   const gr=$('illgenRow');if(gr)gr.style.display=imgGenOn()?'flex':'none';
   fillVideoControls();
   cutSummary();markupSummary();
@@ -557,6 +588,10 @@ function aiSetTab(tab){
   document.querySelectorAll('#aisTabs .tab').forEach(b=>{const on=(b.dataset.tab===tab);
     b.classList.toggle('on',on);b.setAttribute('aria-selected',on?'true':'false');});
   allowed.forEach(k=>{const el=$('aistab_'+k);if(el){const on=k===tab;el.style.display=on?'':'none';el.setAttribute('aria-hidden',on?'false':'true');}});
+  // Список живых видеокодеков (⚙ → Инструменты → «Видеокодек») — сюда, а не в общую
+  // загрузку настроек: проба кодеков это микро-энкод, и платить за неё должен только
+  // тот, кто открыл вкладку с этим выбором.
+  if(tab==='tools')loadVideoEncoders();
 }
 // Короткая сводка «что сейчас выбрано» прямо на странице — настройки уехали в ⚙,
 // и без неё было не видно, какой моделью считается нарезка/разметка.
@@ -736,6 +771,70 @@ async function setGlitchGlow(v){
   catch(e){toast(t('Сервер не ответил: ')+e);fillAIProfileSelects();return;}
   if(d.error){toast('⚠ '+errText(d));fillAIProfileSelects();}
   else AICFG.glitch_glow=d.glitch_glow;}
+async function setAeBuildWorkers(v){
+  let d;
+  try{d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'set_ae_build_workers',value:v})})).json();}
+  catch(e){toast(t('Сервер не ответил: ')+e);fillAIProfileSelects();return;}
+  if(d.error){toast('⚠ '+errText(d));fillAIProfileSelects();}
+  else AICFG.ae_build_workers=d.ae_build_workers;}
+// Видеокодек (⚙ → Инструменты → Экспорт): чем Reelsi кодирует СВОЁ видео — черновой
+// рендер и видео камер с прожжённым LUT. «Авто» — первое, что реально работает на этой
+// машине; проба — микро-энкод, поэтому список живых кодеков спрашиваем отдельным
+// запросом при заходе на вкладку (/api/encoders), а не тянем в каждом ответе ai_config.
+// Недоступные на этой машине пункты гасим с пометкой: выбор такого кодека сервер молча
+// заменит авто (encoders.pick предупредит в лог) — лучше не дать выбрать вовсе.
+let VENC=null;   // {available:['nvidia','cpu'], auto:'nvidia'} из GET /api/encoders
+const VENC_LABELS={nvidia:'NVIDIA (NVENC)',intel:'Intel (Quick Sync)',amd:'AMD (AMF)',
+  apple:'Apple (VideoToolbox)',cpu:'Процессор (x264/x265)'};
+// Короткие имена — для подписи «Авто (сейчас: …)»: вложенные скобки там не читаются.
+const VENC_SHORT={nvidia:'NVIDIA NVENC',intel:'Intel Quick Sync',amd:'AMD AMF',
+  apple:'Apple VideoToolbox',cpu:'Процессор x264/x265'};
+function vencLabel(f){return t(VENC_SHORT[f]||f);}
+function fillVideoEncoder(){if(!AICFG)return;
+  const sel=$('vencoder');if(!sel)return;
+  const cur=AICFG.video_encoder||'auto';
+  const av=(VENC&&VENC.available)||null, auto=(VENC&&VENC.auto)||null;
+  let html='<option value="auto">'+esc(t('Авто')+(auto?' ('+t('сейчас: ')+vencLabel(auto)+')':''))+'</option>';
+  Object.keys(VENC_LABELS).forEach(f=>{
+    const off=!!(av&&av.indexOf(f)<0);
+    html+='<option value="'+f+'"'+(f===cur?' selected':'')+(off?' disabled':'')+'>'
+      +esc(t(VENC_LABELS[f])+(off?t(' — нет на этой машине'):''))+'</option>';});
+  sel.innerHTML=html;
+  // Кодек мог остаться в конфиге с прошлого железа: показываем «Авто», а не пустой
+  // селект — сервер в этом случае тоже уходит в авто (encoders.pick).
+  sel.value=(cur==='auto'||(av&&av.indexOf(cur)>=0))?cur:'auto';}
+async function loadVideoEncoders(){
+  if(VENC)return;            // проба кэширована на процесс и на сервере — хватит одного раза
+  try{VENC=await (await fetch('/api/encoders')).json();}catch(e){VENC=null;}
+  if(VENC&&VENC.error)VENC=null;
+  fillVideoEncoder();}
+async function setVideoEncoder(v){
+  // Сервер недоступен — молча терять выбор нельзя: тост и возврат селекта к сохранённому.
+  let d;
+  try{d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'set_video_encoder',value:v})})).json();}
+  catch(e){toast(t('Сервер не ответил: ')+e);fillVideoEncoder();return;}
+  if(d.error){toast('⚠ '+errText(d));fillVideoEncoder();return;}
+  AICFG.video_encoder=d.video_encoder;fillVideoEncoder();}
+// Ключи стоков (⚙ → Генерация → Стоки). Наружу сервер отдаёт ТОЛЬКО маску «•••xxxx»,
+// её и показываем в поле: не тронешь — ключ не изменится (маска = «не менял»), очистишь
+// поле — провайдер выключится. Заполняется при открытии настроек, как профиль картинок.
+function fillStockKeys(){if(!AICFG)return;
+  const s=AICFG.stock||{};
+  const p=$('stk_pexels');if(p)p.value=s.pexels_key||'';
+  const b=$('stk_pixabay');if(b)b.value=s.pixabay_key||'';}
+async function saveStockKeys(){
+  // Сервер недоступен — молча терять введённый ключ нельзя: тост и возврат полей
+  // к сохранённому состоянию (задание по UI-состояниям).
+  let d;
+  try{d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'set_stock_keys',pexels_key:val('stk_pexels'),pixabay_key:val('stk_pixabay')})})).json();}
+  catch(e){toast(t('Сервер не ответил: ')+e);fillStockKeys();return;}
+  const res=$('stk_res');
+  if(d.error){toast('⚠ '+errText(d));if(res)res.textContent='';fillStockKeys();return;}
+  AICFG.stock=d.stock;fillStockKeys();
+  if(res)res.textContent=t('ключи стоков сохранены');}
 // «Убрать фон» у уже выбранного файла (кнопка на карточке) — рядом ляжет <имя>-nobg.png
 async function insRembg(i){if(curIns<0)return;const x=CLIPS[curIns].inserts[i];if(!x||!x.media)return;
   if(x.genBusy)return;
@@ -803,7 +902,11 @@ async function insGenBatch(c,ask){
   // Явная кнопка с подтверждением цены (ask=true) — осознанный запрос: генерим и снятое.
   const need=(c.inserts||[]).filter(x=>x.type!=='video'&&!x.media&&(ask||!x.noAuto)&&(x.query||'').trim());
   if(!need.length){if(ask)toast(t('Все фото-вставки уже с файлами'));return 0;}
-  if(ask&&!await askConfirm(t('Сгенерить {n} картинок (~{cost})?',{n:need.length,cost:'$'+(need.length*0.04).toFixed(2)})+'\n'
+  const imgProf=(typeof AICFG!=='undefined'&&AICFG&&AICFG.profiles&&AICFG.profiles[AICFG.active_image])||{};
+  const askText=(imgProf.provider==='unsloth')
+    ? t('Сгенерить {n} картинок локально (~{min} мин)?',{n:need.length,min:Math.ceil(need.length*55/60)})
+    : t('Сгенерить {n} картинок (~{cost})?',{n:need.length,cost:'$'+(need.length*0.04).toFixed(2)});
+  if(ask&&!await askConfirm(askText+'\n'
     +t('Каждая упадёт в базу вставок и переиспользуется в следующих роликах.')))return 0;
   uiLog(t('✨ генерация недостающих ({name}): {n} шт…',{name:c.name,n:need.length}));
   let n=0;const t0=performance.now();
@@ -870,15 +973,53 @@ async function aiStatsLoad(){
       +'<tbody>'+(rows||'<tr><td colspan="10" class="muted">'+t('пока нет вызовов')+'</td></tr>')+'</tbody></table>';
   }catch(e){el.textContent='';}}
 function aiSetList(){AISNAMES=Object.keys(AICFG.profiles);
+  // Имя профиля — в свой span (.aisItem .nm): обрезка многоточием работает только
+  // на блоке, а на самом .aisItem (flex-контейнер) текст резался краем без многоточия.
+  // Полное имя — в title: в списке оно обрезано.
   $('aisList').innerHTML=AISNAMES.map((n,i)=>
-      '<div class="aisItem'+(n===AIEDIT?' on':'')+'" tabindex="0" role="button" onclick="aiSetPick(AISNAMES['+i+'])" data-t="'+esc(n)+'">'
-      +(n===AICFG.active?'<span class="dot">●</span>':'')+esc(n)+'</div>').join('')
-    +'<div class="aisItem" style="color:var(--mut)" tabindex="0" role="button" onclick="aiSetNew()">'+esc(t('＋ Новый профиль'))+'</div>';}
+      '<div class="aisItem'+(n===AIEDIT?' on':'')+'" tabindex="0" role="button" onclick="aiSetPick(AISNAMES['+i+'])" data-t="'+esc(n)+'" title="'+esc(n)+'">'
+      +(n===AICFG.active?'<span class="dot">●</span>':'')+'<span class="nm">'+esc(n)+'</span></div>').join('')
+    +'<div class="aisItem" style="color:var(--mut)" tabindex="0" role="button" onclick="aiSetNew()">'
+      +'<span class="nm">'+esc(t('＋ Новый профиль'))+'</span></div>';}
 function aiSyncKeyType(val){
   const el=$('ais_key');
   if(!el)return;
   el.type=(typeof val==='string'&&val.startsWith('env:'))?'text':'password';
 }
+// ---- «Подключения»: снимок полей формы -------------------------------------------
+// Подвал показывает, есть ли несохранённые правки, а «Отмена» возвращает поля к
+// СОХРАНЁННОМУ профилю. Снимок берётся там же, где поля заполняются из профиля
+// (aiSetPick/aiSetNew) и после успешного сохранения. Сравнивать с AICFG нельзя:
+// сервер отдаёт ключ маской, и «поле не трогали» обязано считаться «не менял».
+let CONNSNAP=null;
+function connForm(){return {name:val('ais_name').trim(),provider:$('ais_provider').value,
+  base_url:val('ais_url').trim(),api_key:$('ais_key').value,headers_text:val('ais_headers'),
+  model:val('ais_model').trim(),concurrency:val('ais_concurrency').trim()};}
+function connSnap(){CONNSNAP=JSON.stringify(connForm());connDirtyUI();}
+function connDirty(){return CONNSNAP!=null&&JSON.stringify(connForm())!==CONNSNAP;}
+function connDirtyUI(){const el=$('connDirty');if(!el)return;
+  el.textContent=connDirty()?t('есть несохранённые правки'):'';}
+// Результат «Проверить» гаснет, как только тронули поля: он про ту конфигурацию,
+// которую проверяли, а не про новую.
+function connTestClear(){const el=$('connTestRes');if(el){el.textContent='';el.className='muted';}}
+function connTestShow(msg,cls){const el=$('connTestRes');if(!el)return;
+  el.className=cls||'muted';el.textContent=msg||'';}
+// Адрес спрашиваем только у «своего URL»: у остальных провайдеров он известен и
+// подставляется из пресета — на виду он только сбивал с толку.
+function aiSetUrlRow(){
+  const row=$('conn_url_row'),p=$('ais_provider');
+  if(row)row.style.display=(p&&p.value==='openai')?'':'none';}
+function _bindConnForm(){
+  const box=$('connBody');
+  if(!box||!box.addEventListener)return;
+  const touched=()=>{connTestClear();connDirtyUI();};
+  box.addEventListener('input',touched);
+  box.addEventListener('change',touched);
+}
+if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',_bindConnForm);
+else _bindConnForm();
+function aiSetCancel(){if(AIEDIT)aiSetPick(AIEDIT);else aiSetNew();
+  aiSetStatus(t('правки отменены'));}
 function aiSetPick(name){AIEDIT=name;const p=AICFG.profiles[name]||{};
   $('ais_name').value=name||'';
   $('ais_provider').value=p.provider||'lmstudio';
@@ -890,6 +1031,7 @@ function aiSetPick(name){AIEDIT=name;const p=AICFG.profiles[name]||{};
     ?Object.entries(hdrs).map(([k,v])=>k+': '+v).join('\n')
     :'';
   $('ais_model').value=p.model||'';
+  $('ais_concurrency').value=p.concurrency!=null?p.concurrency:'';
   $('aisDel').style.display='';
   const cl=$('aisClone');if(cl)cl.style.display='';
   const ab=$('aisActive');if(ab)ab.style.display=(name&&AICFG&&name===AICFG.active)?'none':'';
@@ -903,7 +1045,7 @@ function aiSetPick(name){AIEDIT=name;const p=AICFG.profiles[name]||{};
       kw.textContent='';kw.style.display='none';
     }
   }
-  aiSetHints();aiSetModelInput();aiSetStatus('');aiSetList();}
+  aiSetHints();aiSetModelInput();aiSetStatus('');aiSetList();aiSetUrlRow();connTestClear();connSnap();}
 function aiSetNew(){AIEDIT=null;
   $('ais_name').value='';$('ais_provider').value='lmstudio';
   $('ais_url').value=((AICFG.presets||{}).lmstudio||{}).base_url||'';
@@ -911,11 +1053,12 @@ function aiSetNew(){AIEDIT=null;
   aiSyncKeyType('');
   $('ais_headers').value='';
   $('ais_model').value='';
+  $('ais_concurrency').value='';
   const kw=$('ais_key_warn');if(kw){kw.textContent='';kw.style.display='none';}
   $('aisDel').style.display='none';
   const cl=$('aisClone');if(cl)cl.style.display='none';
   const ab=$('aisActive');if(ab)ab.style.display='none';
-  aiSetHints();aiSetModelInput();aiSetStatus('');aiSetList();}
+  aiSetHints();aiSetModelInput();aiSetStatus('');aiSetList();aiSetUrlRow();connTestClear();connSnap();}
 function aiClearMaskKeyOnUrlChange(){
   const k=$('ais_key');
   if(k&&(k.value||'').trim().startsWith('•••')){
@@ -927,7 +1070,8 @@ function aiClearMaskKeyOnUrlChange(){
 function aiSetProv(){const pre=(AICFG.presets||{})[$('ais_provider').value]||{};
   $('ais_url').value=pre.base_url||'';    // автозаполнение по провайдеру, поле редактируемое
   aiClearMaskKeyOnUrlChange();
-  $('ais_model').value='';aiSetHints();aiSetModelInput();}
+  aiSetUrlRow();
+  $('ais_model').value='';aiSetHints();aiSetModelInput();connDirtyUI();}
 function aiSetHints(models){const pre=(AICFG.presets||{})[$('ais_provider').value]||{};
   let ms=models||pre.models||[];
   // OpenRouter без подтянутого списка: сразу покажем известные reasoning-модели,
@@ -955,19 +1099,20 @@ function aiSetHints(models){const pre=(AICFG.presets||{})[$('ais_provider').valu
 }
 function aiSetStatus(msg,cls){const el=$('aisStatus');el.className=cls||'muted';el.textContent=msg||'';}
 function aiSetForm(){return {provider:$('ais_provider').value,base_url:val('ais_url').trim(),
-  api_key:$('ais_key').value,headers_text:val('ais_headers'),model:val('ais_model').trim()};}
+  api_key:$('ais_key').value,headers_text:val('ais_headers'),model:val('ais_model').trim(),
+  concurrency:val('ais_concurrency').trim()};}
 async function aiSetSave(){
   const name=val('ais_name').trim();if(!name){aiSetStatus(t('⚠ дай имя профилю'),'err');return;}
   const d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'save_profile',name,old_name:AIEDIT,profile:aiSetForm()})})).json();
   if(d.error){aiSetStatus('⚠ '+errText(d),'err');return;}
-  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.glitch_glow=d.glitch_glow;
+  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.glitch_glow=d.glitch_glow;AICFG.ae_build_workers=d.ae_build_workers;
   fillAIProfileSelects();aiSetPick(name);aiSetStatus(t('сохранено'),'ok');}
 async function aiSetMakeActive(){if(!AIEDIT)return;
   const d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'set_active',name:AIEDIT})})).json();
   if(d.error){aiSetStatus('⚠ '+errText(d),'err');return;}
-  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.glitch_glow=d.glitch_glow;
+  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.glitch_glow=d.glitch_glow;AICFG.ae_build_workers=d.ae_build_workers;
   fillAIProfileSelects();aiSetPick(AIEDIT);aiSetStatus(t('активный профиль: {n}',{n:AIEDIT}),'ok');}
 async function aiSetClone(){if(!AIEDIT)return;
   const baseName=AIEDIT;
@@ -983,21 +1128,24 @@ async function aiSetClone(){if(!AIEDIT)return;
   const d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'clone_profile',name:baseName,new_name:newName})})).json();
   if(d.error){aiSetStatus('⚠ '+errText(d),'err');return;}
-  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.glitch_glow=d.glitch_glow;
+  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.glitch_glow=d.glitch_glow;AICFG.ae_build_workers=d.ae_build_workers;
   fillAIProfileSelects();aiSetPick(newName);aiSetStatus(t('профиль продублирован'),'ok');}
 async function aiSetDelete(){if(!AIEDIT)return;
   if(!await askConfirm(t('Удалить профиль «{n}»?',{n:AIEDIT})))return;
   const d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'delete_profile',name:AIEDIT})})).json();
   if(d.error){aiSetStatus('⚠ '+errText(d),'err');return;}
-  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.glitch_glow=d.glitch_glow;
+  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.glitch_glow=d.glitch_glow;AICFG.ae_build_workers=d.ae_build_workers;
   fillAIProfileSelects();aiSetPick(d.active);}
-async function aiSetTest(){aiSetStatus(t('проверяю…'));
+// Результат проверки — РЯДОМ с кнопкой (#connTestRes), а не в подвале и не тостом:
+// он относится к кнопке, которую нажали, и читается там же. Живёт до первой правки
+// полей (см. _bindConnForm).
+async function aiSetTest(){connTestShow(t('проверяю…'),'muted');
   try{const d=await (await fetch('/api/ai_test',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({name:AIEDIT,profile:aiSetForm()})})).json();
-    if(d.error)aiSetStatus('✗ '+errText(d),'err');
-    else aiSetStatus(t('работает · {ms} мс',{ms:d.ms}),'ok');}
-  catch(e){aiSetStatus(t('✗ сервер не ответил: ')+e,'err');}}
+    if(d.error)connTestShow('✗ '+errText(d),'err');
+    else connTestShow(t('✓ работает · {ms} мс',{ms:d.ms}),'ok');}
+  catch(e){connTestShow(t('✗ сервер не ответил: ')+e,'err');}}
 async function aiSetModels(){aiSetStatus(t('запрашиваю список моделей…'));
   try{const d=await (await fetch('/api/ai_models',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({name:AIEDIT,profile:aiSetForm()})})).json();
@@ -1011,6 +1159,7 @@ async function aiSetModels(){aiSetStatus(t('запрашиваю список м
     if(d.base_url&&d.base_url!==curUrl){
       $('ais_url').value=d.base_url;
       urlNote=t(' · Base URL обновлён на {u}',{u:d.base_url});
+      connDirtyUI();               // адрес приехал из провайдера — правка формы видна сразу
     }
     aiSetHints(d.models);
     aiSetModelInput();   // пересчитать доступность reasoning под уже введённую модель

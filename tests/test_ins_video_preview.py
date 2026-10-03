@@ -51,8 +51,9 @@ SIZES = {"16:9": (1920, 1080), "9:16": (1080, 1920)}
 # функции боевого файла, которые нужны стенду (тела настоящие, не копии)
 FUNCS = ("normInsPath", "insVideoFill", "insVidCache", "insVidDimsMap", "insVidKey",
          "insVideoEl", "insVidFree", "insVidDimsGet", "insVidDimsPut", "insVidPlanDims",
-         "ipvInsDims", "insVidKeep", "insVidSweep", "insVidFreeAll",
-         "ipvIns", "insSD", "insImgURL", "insCardKey", "ipvInsPlace", "ipvOverlayPlan")
+         "ipvInsDims", "insVidKeep", "insVidSweep", "insVidFreeAll", "ipvPlanWH",
+         "ipvIns", "insSD", "insImgURL", "insCardKey", "ipvInsPlace", "ipvOverlayPlan",
+         "ipvInsDraw", "ipvInsSrc", "ipvInsMosaics", "ipvPixelate", "drawMosaic")
 
 
 def _func(src, name):
@@ -75,7 +76,10 @@ def _js():
     """Настоящие тела функций из static/app/85-inserts-view.js — для прогона в node."""
     with open(JS, "r", encoding="utf-8") as f:
         src = f.read()
-    return "\n".join(_func(src, n) for n in FUNCS)
+    # MOSAIC_BLOCK — объявление верхнего уровня (его читает drawMosaic), а не функция.
+    m = re.search(r"^const MOSAIC_BLOCK=\d+;", src, re.M)
+    assert m, "в исходнике не нашлось объявление MOSAIC_BLOCK"
+    return m.group(0) + "\n" + "\n".join(_func(src, n) for n in FUNCS)
 
 
 def _run_node(code):
@@ -108,10 +112,13 @@ function El(tag){
   this.currentTime=0;this.videoWidth=0;this.videoHeight=0;this.calls=[];
 }
 El.prototype.appendChild=function(c){c.parentNode=this;this.children.push(c);return c;};
+El.prototype.insertBefore=function(c,ref){c.parentNode=this;var i=ref?this.children.indexOf(ref):-1;
+  if(i>=0)this.children.splice(i,0,c);else this.children.push(c);return c;};
 El.prototype.removeChild=function(c){var i=this.children.indexOf(c);
   if(i>=0)this.children.splice(i,1);c.parentNode=null;return c;};
 Object.defineProperty(El.prototype,'firstChild',{get:function(){return this.children[0]||null;}});
 Object.defineProperty(El.prototype,'clientWidth',{get:function(){return STAGE_W;}});
+Object.defineProperty(El.prototype,'clientHeight',{get:function(){return 1920;}});
 Object.defineProperty(El.prototype,'innerHTML',{
   get:function(){return this._html||'';},
   set:function(v){this._html=String(v);if(String(v)==='')this.children=[];}});
@@ -354,3 +361,30 @@ def test_dims_arrive_with_metadata_and_the_frame_is_redrawn():
     assert out["dims"] == 1, "размеры файла не закэшированы — следующий показ снова без размера"
     assert abs(float(out["after"].rstrip("px")) - 1920 * f) < 1e-6, \
         f"после метаданных коробка {out['after']}, ждали {1920 * f}px"
+
+
+@node
+def test_cached_video_resets_hidden_visibility_after_mosaic():
+    """6. Видео из кэша после мозаики отдаётся с чистой видимостью (`visibility=''`).
+
+    `ipvPixelate` прячет источник (`src.style.visibility='hidden'`) и рисует мозаику
+    на холсте рядом. При повторной выдаче элемента из кэша `insVideoEl` (например,
+    когда сняли галку mosaic и оверлей перестроился) видимость обязана быть сброшена,
+    иначе видео остаётся спрятанным в кадре до перезахода в модалку.
+    """
+    code = _js() + _DOM_JS + """
+    var v1=insVideoEl('C:/v/clip.mp4');
+    v1.videoWidth=1920;v1.videoHeight=1080;
+    var wr=new El('div');
+    wr.appendChild(v1);
+    ipvPixelate(wr,v1);
+    var vis1=v1.style.visibility;
+    var v2=insVideoEl('C:/v/clip.mp4');
+    console.log(JSON.stringify({same:v1===v2, vis1:vis1, vis2:v2.style.visibility}));
+    """
+    out = _run_node(code)
+
+    assert out["same"], "из кэша выдан не тот же самый элемент"
+    assert out["vis1"] == "hidden", f"ipvPixelate не спрятал источник: {out['vis1']!r}"
+    assert out["vis2"] == "", f"повторная выдача insVideoEl не сбросила visibility: {out['vis2']!r}"
+

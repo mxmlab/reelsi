@@ -36,6 +36,8 @@ import sys
 import tokenize
 import unicodedata
 
+import pytest
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 
@@ -59,6 +61,13 @@ _TEMPLATES = "core/xml2ae/"
 
 _DOC_EXT = {".md", ".txt", ".yml", ".yaml", ".toml", ".cfg", ".ini", ""}
 _COMMENT_EXT = {".js", ".jsx", ".css"}
+
+# Сторож обходит дерево репозитория (список даёт `tests/gitfiles.py`) — под
+# `pytest -n auto --dist loadgroup` он идёт в одном воркере с остальными
+# сторожами дерева и не читает его вровень с самопроверкой `test_public_clean`:
+# та на время кладёт в корень временный файл, а одновременный обход дерева и
+# правка его состава — гонка, на которой сторожа уже падали.
+pytestmark = pytest.mark.xdist_group("repo_tree")
 
 
 def _ignored_patterns():

@@ -66,7 +66,7 @@ function camFrameDim(){const pl=camFramePlan();return {W:(pl&&pl.w)||1080,H:(pl&
 // Клип открытого предпросмотра: и спикер, и его рамка — у СВОЕГО клипа (как у LUT,
 // 86-lut.js): предпросмотр мог остаться открытым от другого ролика.
 function camFrameClip(){return (typeof lutClip==='function')?lutClip():null;}
-function camFrameSpeaker(){const c=camFrameClip();return (c&&c.job&&c.job.speaker)||'';}
+function camFrameSpeaker(){return clipSpeaker(camFrameClip());}
 function camFrameProfile(){const k=camFrameSpeaker();
   return (k&&typeof SPEAKERS!=='undefined'&&SPEAKERS[k])||null;}
 

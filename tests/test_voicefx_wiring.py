@@ -11,9 +11,10 @@
   нарезку на сыром звуке;
 * `analysis_wav` — тот же ffmpeg, что у `sync.extract_audio` (моно, `sync.SR`, PCM),
   и запись атомарная: сбой не оставляет нарезку без звука вовсе;
-* `ensure_final_voice` / `final_voice_for_build` — `<стем>.voice.wav` рядом с XML,
-  повторный вызов не копирует, смена настроек копирует заново, нет спикера или
-  флага — None, старый файл не удаляется;
+* `ensure_final_voice` / `final_voice_for_build` — `<стем>.voice.<key8>.wav` рядом с
+  XML (имя версии в сайдкаре `.voice.json`, резолвер `final_voice_path`),
+  повторный вызов не копирует, смена настроек копирует заново под новым именем, нет
+  спикера или флага — None, занятый прежний файл не трогается;
 * сборка .jsx — VOICE_WAV с путём, звук видео камеры 1 выключен, громкость/фейды/
   цензура на аудиослое; без обработанного голоса .jsx остаётся прежним байт в байт
   (эталон tests/fixtures/golden_geometry.jsx).
@@ -297,11 +298,17 @@ def test_ensure_final_voice_bakes_once_then_only_on_change(xml_path, cam1, tmp_p
 
     got = voicefx.ensure_final_voice(xml_path, cam1, fx, emit=_noop)[0]
     assert got == voicefx.final_voice_path(xml_path)
-    assert got == os.path.splitext(xml_path)[0] + ".voice.wav", "файл не рядом с XML"
+    # Имя ВЕРСИОННОЕ и лежит рядом с XML: под постоянным именем файл пришлось бы
+    # заменять на месте, а занятый файл (его держит плеер превью или отдача
+    # /api/media) замене не поддаётся — новый голос тогда просто не появлялся.
+    key = voicefx.final_voice_key(cam1, fx)
+    assert got == os.path.splitext(xml_path)[0] + ".voice." + key[:8] + ".wav", \
+        "файл не рядом с XML или имя не версионное"
     assert open(got, "rb").read() == b"RIFF processed voice"
     meta = json.loads(open(os.path.splitext(xml_path)[0] + ".voice.json",
                            encoding="utf-8").read())
     assert meta["key"] and meta["src"] == cam1
+    assert meta["file"] == os.path.basename(got), "сайдкар не назвал файл версии"
     assert calls == {"render": 1, "copy": 1}
 
     # Тот же ключ кеша — файл уже запечён: ни рендера, ни копии

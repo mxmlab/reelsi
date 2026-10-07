@@ -5,7 +5,8 @@
 
 Плеер шага 1 — редактор нарезки (ED), и дорожка обработанного голоса живёт на нём:
 спикера панель берёт по `ED.xml`, файл камеры 1 — по `ED.cams`, а сам заказ уходит
-дверьми `/api/voicefx_bake` (трек) и `/api/voicefx_host` (живой хост плагинов).
+дверью `/api/voicefx_bake` (итоговый голос с цепочкой; живой хост плагинов поднимает
+отдельная дверь `/api/voicefx_host` — и только при открытом окне плагина).
 
 Порядок при открытии один и он же — суть бага: `openPreview` (клип и камеры) → `edOpen`
 (`ED.xml`) → `pvVoicePanel` (панель и заказ). Пока панель звалась в конце `openPreview`,
@@ -57,19 +58,24 @@ PREVIEW_FUNCS = (
     "openEditClip", "openPreview", "pvVideoTo", "pvWordAt", "pvSegAt", "pvSrc",
     "bufMake", "bufIdle", "bufArm", "bufRoll", "bufTake", "bufSwap", "spareLead",
     "spareIdle", "spareStop", "spareSwap", "spareRollAt",
+    # Гашение дорожки и её разбега идёт через дублёра голоса (spareStop -> vtSpareStop),
+    # а стык блока редактора взводит и пускает его же (edArm -> vtSpareAt/Arm/Roll).
+    "vtSpareOf", "vtSpareLive", "vtSpareIdle", "vtSpareStop", "vtSpareAt", "vtSpareArm",
+    "vtSpareRoll", "vtSpareTake", "vtSpareSwap", "vtSpareCtl", "voicePrime",
     "camVisual", "camIdle", "camApply", "camTrack", "camDeltas", "camBufs",
     "vtOf", "vtCam1", "vtSrcAt", "vtNow", "vtAudioCam", "vtPlaying", "vtIsPv", "vtIsEd",
     "vtMuteHost", "vtStage", "vtEl", "vtNote", "vtName", "vtProfileFx", "vtFx", "vtDetach",
     "vtStop", "vtPause", "vtGate", "vtLiveOn", "vtSetMute", "vtLiveUpdate", "vtLiveRate", "vtLiveExpect",
     "vtLiveCmd", "vtLiveSid", "vtLivePlay", "vtLivePause", "vtPrep", "vtVoiceShow",
     "vtVoiceWatch", "vtVoicePoll", "vtVoiceLine", "vtVoiceStop", "vtVoiceTake", "vtVoiceUse",
-    "vtUse", "vtTick", "pvProgRow", "pvProgDrop",
+    "vtUse", "vtTick", "vtSeek", "vtRate", "vtSeekAt",
+    "vtHostLive", "vtLivePrep", "vtStatesWait", "vtHostDown", "pvProgRow", "pvProgDrop",
 )
 # Единственный плеер шага 1 — редактор (70-editor.js)
 EDITOR_FUNCS = (
     "edOpen", "edResize", "edTotal", "edBlockAt", "edCutTime", "edCutOf", "edS2X", "edX2S",
     "edUI", "edRaw", "edInCut", "edWords", "edSeek", "edToggle", "edPlay", "edPause",
-    "edTake", "edJump", "edArm", "edTick",
+    "edTake", "edJump", "edVoiceSeekWait", "edVoiceSeekClose", "edVoiceSeekOff", "edArm", "edTick",
 )
 
 
@@ -124,6 +130,14 @@ def _bodies() -> str:
     preview = PREVIEW_JS.read_text(encoding="utf-8")
     editor = EDITOR_JS.read_text(encoding="utf-8")
     out = [_func_src(styles, n) for n in VOICE_FUNCS]
+    # Пороги синхрона дорожки — ИЗ ФАЙЛА: свои копии в стенде разъезжались бы с
+    # боевыми молча (перемотка становится скоростью — на этом и попались). Допуск
+    # подмены дублёра голоса (VT_SWAP_*) и запас взвода (VT_ARM) — оттуда же.
+    for name in ("VT_SOFT", "VT_DRIFT", "VT_RATE", "VT_QUIET", "VT_POLL",
+                 "VT_SWAP_LO", "VT_SWAP_HI", "VT_ARM"):
+        m = re.search(r"^const %s=.*$" % name, preview, re.M)
+        assert m is not None, f"в 60-preview.js нет const {name}"
+        out.append(m.group(0))
     for name in PREVIEW_FUNCS:
         src = _func_src(preview, name)
         if name == "vtTick":              # боевую дорожку зовём из счётчика стенда
@@ -209,6 +223,9 @@ function cancelAnimationFrame(){}
 STATE = r"""
 // Состояние модуля, которое в браузере живёт в общем скоупе страницы
 let MEDIA_VOL=1;
+// Выключатель мутационного теста (test_voice_spare.py): без него вырезанный `edJump`
+// спотыкался бы о необъявленное имя. В бою он всегда 0.
+let EDMUTVOICE=0;
 let CURSTYLE={voice_db:0,music_db:-20};
 let VOICEFXSPK='';
 let VOICEFXLIVE=null;
@@ -219,7 +236,6 @@ const CALLS=[];const LOGS=[];
 const VTTICK=[];
 let PVPX={map:{},xml:'',poll:0,watch:[],height:0};
 const PV_PREROLL=0.35,PV_SWAP_LO=-0.12,PV_SWAP_HI=0.5;
-const VT_DRIFT=0.15,VT_QUIET=400,VT_POLL=1000;
 const VT_LIVE_DRIFT=0.4;
 const EDRULER=18;
 // Опросы (хост, ход голоса) в стенде не идут: таймеры складываются и не запускаются —
@@ -244,6 +260,8 @@ const CLIPS=[CLIP];
 let SPEAKERS={'Голос':{label:'Голос',voice_fx:{denoise:{on:true,engine:'roformer',mix:100},
   vst:[{path:'C:/p/eq.vst3',name:'EQ',on:true,state:''}]}}};
 function clipByXml(xml){return (xml&&xml===CLIP.xml)?CLIP:null;}
+// Дверь спикера клипа (40-queue.js): панель голоса берёт профиль у ЕГО спикера.
+function clipSpeaker(c){return (c&&c.job&&c.job.speaker)||'';}
 function clipLabel(c){return (c&&(c.label||c.name))||'';}
 function pvTitle(){}
 function selectAE(){}
@@ -367,13 +385,17 @@ def test_open_preview_renders_the_voice_panel_of_the_clip() -> None:
 # 2. Заказ голоса при открытии: дорожка и живой хост плагинов
 # --------------------------------------------------------------------------- #
 @node
-def test_open_preview_asks_for_the_track_and_raises_the_plugin_host() -> None:
-    """При открытии уходят ОБА заказа: `/api/voicefx_bake` и `/api/voicefx_host`.
+def test_open_preview_asks_for_the_final_track_and_does_not_raise_the_host() -> None:
+    """При открытии уходит ИТОГОВЫЙ заказ (`/api/voicefx_bake`, `final: true`).
 
-    Живая проверка: в логе сервера не было ни того, ни другого — заказ уходил от
-    монтажного плеера (PV), а панель с дорожкой уже переехали на редактор (ED), у
-    которого не было ни клипа, ни камеры. `final` при этом НЕ ставится: у шага 1 есть
-    панель, и трек просится не как итоговый файл для сборки.
+    Живой хост — отдельный процесс, и подогнать его к картинке точнее 0,4 с нельзя:
+    с включёнными VST превью лагало. Поэтому хост поднимается ТОЛЬКО при открытом
+    окне плагина («Настроить»), а в остальное время все шаги играют запечённую
+    дорожку с цепочкой — ту самую, что уедет в AE, DRP и черновик.
+
+    Живая проверка (раньше): в логе сервера не было ни одного из двух заказов —
+    заказ уходил от монтажного плеера (PV), а панель с дорожкой уже переехали на
+    редактор (ED), у которого не было ни клипа, ни камеры.
     """
     out = _run("""
 (async()=>{
@@ -386,15 +408,13 @@ def test_open_preview_asks_for_the_track_and_raises_the_plugin_host() -> None:
 })();
 """)
     assert out["bakes"] == 1, f"голос клипа не заказан при открытии: {out['urls']}"
-    assert out["hosts"] == 1, f"живой хост плагинов не поднят при открытии: {out['urls']}"
+    assert out["hosts"] == 0, (
+        f"живой хост поднят без открытого окна плагина: {out['urls']}")
     bake = out["bake"]
     assert bake["xml"] == "C:/out/01_clip.xml" and bake["src"] == "C:/cam1.mp4", bake
-    assert "final" not in bake, f"у шага 1 трек просят как итоговый: {bake}"
+    assert bake.get("final") is True, (
+        f"без открытого окна заказан не итоговый голос: {bake}")
     assert bake["fx"]["vst"][0]["on"] is True, f"настройки цепочки уехали не из панели: {bake}"
-    host = out["host"]
-    assert host["xml"] == "C:/out/01_clip.xml" and host["src"] == "C:/cam1.mp4", host
-    assert host["start"] == 0, f"хост подняли не с места плейхеда редактора: {host}"
-    assert host["speaker"] == "Голос", host
 
 
 # --------------------------------------------------------------------------- #

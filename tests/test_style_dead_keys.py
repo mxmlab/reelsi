@@ -6,7 +6,11 @@
 Сборка больше не читает roto_video, caption_padx/caption_pady и intro_fx_fade/
 intro_fx_fade_last, но в пользовательских styles/*.json они остались с прежних
 версий. migrate_style_dict выкидывает их на любом входе — и на чтении файла,
-и на resolve(), и на save()/patch()."""
+и на resolve(), и на save()/patch().
+
+Сырые intro_comp_shadow_op/intro_comp_shadow2_op в DEAD_KEYS НЕ лежат: их переводит
+в проценты migrate_intro_comp_shadow_pct (см. tests/test_intro_shadow_pct.py), а
+вычистка съела бы значение до конвертации."""
 import json
 import os
 import sys

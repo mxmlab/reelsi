@@ -120,3 +120,60 @@ def test_сбой_записи_не_трогает_старый_файл(tmp_pat
         fileio.atomic_json_dump(str(p), {"new": 2})
     assert json.loads(p.read_text(encoding="utf-8")) == {"old": 1}, "старый файл затёрт"
     assert [x.name for x in tmp_path.iterdir()] == ["state.json"], "временный файл остался"
+
+
+def test_move_file_переносит_и_убирает_исходник(tmp_path):
+    """Обычный случай: имя есть только в приёмнике, в источнике файла нет."""
+    src = tmp_path / "источник.bin"
+    src.write_bytes(b"\x00\x01data")
+    dst = tmp_path / "приёмник.bin"
+
+    fileio.move_file(str(src), str(dst))
+
+    assert not src.exists(), "исходник остался лежать"
+    assert dst.read_bytes() == b"\x00\x01data"
+
+
+def test_move_file_между_дисками_копирует_и_удаляет(tmp_path, monkeypatch):
+    """os.replace через границу устройств бросает OSError (EXDEV) — переносим
+    копированием: содержимое доехало, исходник убран."""
+    src = tmp_path / "src.bin"
+    src.write_bytes(b"cross-device payload")
+    dst = tmp_path / "dst.bin"
+
+    def cross_device(*a, **k):
+        raise OSError(18, "Invalid cross-device link")
+
+    monkeypatch.setattr(fileio.os, "replace", cross_device)
+    fileio.move_file(str(src), str(dst))
+
+    assert dst.read_bytes() == b"cross-device payload"
+    assert not src.exists(), "исходник остался — файл теперь в двух местах"
+
+
+def test_move_file_не_удалённый_исходник_сносит_копию(tmp_path, monkeypatch):
+    """Исходник удалить не вышло (на Windows его держит открытый дескриптор) —
+    сделанная копия убирается, наружу исключение: файла не два, а ошибка видна."""
+    src = tmp_path / "busy.bin"
+    src.write_bytes(b"busy payload")
+    dst = tmp_path / "dst.bin"
+
+    def cross_device(*a, **k):
+        raise OSError(18, "Invalid cross-device link")
+
+    real_remove = os.remove
+
+    def no_remove(path, *a, **k):
+        # shutil.copy2 сам убирает свой недописанный файл назначения — эту уборку
+        # пропускаем: занят ИСХОДНИК, скопировать его удалось, а удалить нет.
+        if os.path.abspath(str(path)) == os.path.abspath(str(src)):
+            raise PermissionError(13, "Permission denied", str(path))
+        real_remove(path)
+
+    monkeypatch.setattr(fileio.os, "replace", cross_device)
+    monkeypatch.setattr(fileio.os, "remove", no_remove)
+    with pytest.raises(PermissionError):
+        fileio.move_file(str(src), str(dst))
+
+    assert src.exists(), "исходник должен остаться нетронутым"
+    assert not dst.exists(), "копия осталась — файл оказался в двух местах"

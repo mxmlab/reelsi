@@ -38,6 +38,9 @@
   glitch         звук глитча интро: ключ | путь | None(=glitch)
   glitch_db      громкость звука глитча интро (dB), дефолт 0
   music_db       на сколько тише музыка (dB), дефолт −20
+  music_mode     откуда берётся музыка: off | random | file | url (дефолт random)
+  music_dir      папка треков для random; "" = папка music рядом с проектом
+  music_src      путь к файлу (file) или ссылка YouTube (url)
   voice_db       базовая громкость голоса (dB), дефолт 0; цензура ныряет voice_db→−100→voice_db
   disclaimer     текст дисклеймера в начале; None = дефолтный, "" = скрыть, строка = свой
   intro_riser    интро-SFX (ризер) в начале ролика: True/False
@@ -48,6 +51,14 @@
   intro_mode     'word' | 'line'
   cam1_fit       масштаб кадра Камеры 1, % заполнения композиции (100 = кадр заполнен ровно)
   intro_scale    общий масштаб интро, % (на нуле «интро»)
+  intro_margin   отступ от краёв кадра камеры 1, % с КАЖДОЙ стороны (дефолт 4): доля ширины
+                 для подгонки группы = 1 − 2·margin/100; правило одно на привязанное интро
+                 (только ужатие) и откреплённое (в обе стороны)
+  intro_margin2  то же для групп на перебивке (камера 2); нет ключа — как у камеры 1
+                 (см. migrate_intro_fit_per_cam)
+  intro_fit_max  потолок увеличения интро камеры 1, % («Масштаб интро»); режет только рост
+                 откреплённой группы
+  intro_fit_max2 то же для камеры 2; нет ключа — как у камеры 1 (см. migrate_intro_fit_per_cam)
   intro_line_step межстрочный интервал интро, % от обычного шага 160 px (дефолт 100)
   intro_y        общий сдвиг интро по вертикали, px
   intro_y2       САМОСТОЯТЕЛЬНОЕ положение интро на перебивке (камера 2) по вертикали, px — как intro_y
@@ -118,9 +129,9 @@
                   Threshold 0..255, Radius 0..500 px, Intensity 0..10
                   (в шаблоне были жёсткие 149/77/0.62)
   intro_comp_shadow_fill  цвет тени ПРЕКОМПА интро на камере 1 [r,g,b] 0..1
-  intro_comp_shadow_op    ...непрозрачность этой тени, 0..255
+  intro_comp_shadow_opacity   ...непрозрачность этой тени, % (0..100)
   intro_comp_shadow2_fill цвет тени ПРЕКОМПА интро на камере 2 [r,g,b] 0..1
-  intro_comp_shadow2_op   ...непрозрачность этой тени, 0..255
+  intro_comp_shadow2_opacity  ...непрозрачность этой тени, % (0..100)
   intro_comp_shadow_dir/dist/soft  направление (град), дистанция (px) и мягкость (px)
                   тени прекомпа — общие для обеих камер (в шаблоне 135/0/287)
   intro_shade    галка: мягкое чёрное затемнение снизу кадра под текстом интро
@@ -240,6 +251,17 @@ BASE: dict[str, Any] = {
     "glitch": None,                        # gltchgltch_24.wav / glitch
     "glitch_db": 0.0,                      # громкость звука глитча, dB (0 = как в файле)
     "music_db": -20.0,
+    # МУЗЫКА: откуда берётся трек — свойство СТИЛЯ, как и громкость (music_db) рядом.
+    # Раньше режим/ссылка/папка музыки жили общими полями шага 3 (musicmode/aemusic/
+    # aemusicdir в состоянии интерфейса) и были одни на все клипы: у клипов разных
+    # спикеров музыка не могла быть разной, а «случайный» трек выбирался заново на
+    # каждой сборке и нигде не был виден. Теперь стиль решает «как», клип может
+    # переопределить (job.music_override), а выбранный при «случайно» трек лежит в
+    # job.music_pick — сборка и превью играют ОДИН И ТОТ ЖЕ файл.
+    "music_mode": "random",                # off (без музыки) | random (из music_dir) | file (music_src —
+                                           # путь к файлу) | url (music_src — ссылка YouTube, скачается)
+    "music_dir": "",                       # папка треков; пусто = <папка проекта>/music, как раньше
+    "music_src": "",                       # путь к файлу (file) или ссылка YouTube (url)
     "voice_db": 0.0,                       # базовая громкость голоса (dB); цензура ныряет voice_db→−100→voice_db
     "audio_fades": True,                   # микро-фейд ~10мс на краях аудио-клипов камеры (щелчки на склейках)
     "disclaimer": None,                    # текст дисклеймера в начале; None = дефолтный, "" = скрыть, иначе свой
@@ -302,14 +324,25 @@ BASE: dict[str, Any] = {
                                            # из Премьера — тот врёт на пережатых файлах. Зум нула поверх
     "intro_scale": 100.0,                  # общий масштаб всего интро, % (нул «интро»); 100 = как рисует
                                            # скрипт сам. Врезка кадра на интро не влияет — оно на своём нуле
-    "intro_fit_w": 92.0,                   # «Интро по ширине, %»: доля ширины кадра, под
-                                           # которую подгоняется ОТКРЕПЛЁННОЕ от камеры интро — в обе
-                                           # стороны (и увеличение, и ужатие). Привязанное, как и раньше,
-                                           # только ужимается по константе INTRO_FIT_W = 0.92
-    "intro_fit_max": 250.0,                # «Потолок увеличения интро, %»: выше этой доли
-                                           # откреплённая группа не растягивается (одно короткое слово
-                                           # без потолка раздувалось до 667–819 % кадра). Режется только
-                                           # увеличение: ds = min(fit, потолок), ужатие не ограничено
+    "intro_margin": 4.0,                   # «Отступ от краёв, %» камеры 1: с КАЖДОЙ стороны кадра
+                                           # (0…30). Доля ширины, под которую подгоняется группа,
+                                           # = 1 − 2·margin/100. Правило ОДНО на оба режима: и
+                                           # откреплённое интро (в обе стороны), и привязанное
+                                           # (только ужатие — шире его держит зум камеры).
+                                           # Миграция старых стилей — из прежней ручки intro_fit_w
+                                           # (см. migrate_intro_fit_per_cam): 92 % ширины = 4 % с края
+    "intro_margin2": 4.0,                  # то же для групп, попавших на перебивку (камера 2).
+                                           # Своя ручка: кадр перебивки другой, и текст на нём
+                                           # подгоняют иначе. Дефолт «как у камеры 1» даёт миграция
+    "intro_fit_max": 250.0,                # «Масштаб интро, %» (потолок увеличения) камеры 1:
+                                           # выше этой доли кадра ОТКРЕПЛЁННАЯ группа не растягивается
+                                           # (одно короткое слово без потолка раздувалось до 667–819 %
+                                           # кадра). Режется только увеличение: ds = min(fit, потолок),
+                                           # ужатие не ограничено. Привязанное ручку не читает:
+                                           # там потолок задаёт ручной gs, а ширину — зум камеры
+    "intro_fit_max2": 250.0,               # то же для групп на перебивке (камера 2): свой потолок,
+                                           # как и своя доля ширины. Дефолт «как у камеры 1» даёт
+                                           # миграция (migrate_intro_fit_per_cam)
     "intro_line_step": 100.0,              # межстрочный интервал интро, % от обычного шага (160 px);
                                            # 100 = как было. Множитель ОДИН: шаги строк и опускание
                                            # блока (xml2ae/layout) и var LINE_STEP в шаблоне
@@ -320,6 +353,9 @@ BASE: dict[str, Any] = {
     "intro_pos2_v": 2,                     # версия смысла intro_y2 (2 = положение). Служебный ключ: нет его
                                            # в стиле — стиль старый, intro_y2 в нём была добавкой к intro_y
     "cam_zoom_v": 3,                       # версия раскладки анимации зума (3 = независимые длинный кусок и жёлтые слова)
+    "intro_comp_shadow_v": 1,              # версия смысла теней прекомпа интро (1 = непрозрачность в
+                                           # процентах 0..100, а не сырые 0..255 AE). Служебный ключ:
+                                           # нет его в стиле — стиль старый, `_op` в нём ещё в шкале AE
     "intro_mode": "word",
     "intro_glow": 1.0,                     # Glow Intensity на интро-тексте (AE-дефолт 1.0)
     "intro_dg_with_glow": False,           # галка «Deep Glow вместе со свечением строки»:
@@ -433,12 +469,18 @@ BASE: dict[str, Any] = {
     # Дефолты = прежняя жёсткая белая тень dropShadow(iL, 68) — при них .jsx не меняется
     # ни на байт (golden); направление 135, дистанция 0 и мягкость 287 в шаблоне.
     "intro_comp_shadow_fill": [1, 1, 1],   # цвет тени прекомпа интро на камере 1 [r,g,b]
-    "intro_comp_shadow_op": 68.0,          # ...непрозрачность, 0..255 (было 68)
+    # Непрозрачность тени прекомпа — В ПРОЦЕНТАХ (0..100): в панели ручка подписана «%»,
+    # и раньше рядом с ней стояло сырое значение AE (0..255) — человек ставил 50 % и
+    # получал 20 %. В 0..255 число переводит ОДНО место — core/xml2ae/plan_style.py
+    # (opacity*255/100), ключи `_op` с прежним смыслом читает только migrate_intro_comp_shadow_pct.
+    "intro_comp_shadow_opacity": 26.7,     # ...непрозрачность, % (дефолт = прежние 68 из 255)
     "intro_comp_shadow2_fill": [1, 1, 1],  # цвет тени прекомпа интро на камере 2 [r,g,b]
-    "intro_comp_shadow2_op": 68.0,         # ...непрозрачность, 0..255
+    "intro_comp_shadow2_opacity": 26.7,    # ...непрозрачность, % (дефолт = прежние 68 из 255)
     # Направление/дистанция/мягкость тени прекомпа — общие для обеих камер,
     # как и в шаблоне: 135/0/287 стояли там жёстко. При дефолтах подстановка прежняя —
-    # ровно строка dropShadow(iL, 68), .jsx не меняется ни на байт (golden).
+    # ровно строка dropShadow(iL, 68): непрозрачность 26.7 % даёт 68.085 из 255, и
+    # шаблон считает это дефолтом по допуску 0.05 (plan_intro_tpl). .jsx не меняется
+    # ни на байт (golden).
     "intro_comp_shadow_dir": 135.0,        # направление тени прекомпа, град (AE Direction)
     "intro_comp_shadow_dist": 0.0,         # дистанция тени прекомпа, px (0 = под текстом)
     "intro_comp_shadow_soft": 287.0,       # мягкость тени прекомпа, px (AE Softness)
@@ -457,6 +499,16 @@ BASE: dict[str, Any] = {
                                            # asc нижней) + disc_gap, высоты из файла шрифта
                                            # (fonts.ink_extent), кегль — ужатый под ширину
                                            # кадра (layout.DISC_FIT_W)
+    # Ручки дисклеймера: тот же кегль/положение, что в AE, но доступные из панели.
+    # При умолчаниях числа .jsx прежние байт в байт (golden): масштаб 100 ничего не
+    # множит, 76.4% высоты — это прежнее H·0.764, сдвиг 0 не объявляет DISC_X.
+    "disc_scale": 100.0,                   # масштаб дисклеймера, %: множитель к
+                                           # подобранному под ширину кеглю (подбор «только
+                                           # уменьшение» применяется ДО множителя)
+    "disc_y": 76.4,                        # положение блока по высоте, % кадра: базовая
+                                           # линия первой строки (в 1920 это 1466 px)
+    "disc_dx": 0.0,                        # сдвиг по горизонтали от центра кадра, px
+                                           # (центр — 540 при кадре 1080)
     "cam1_zoom_cx": 0.5,                   # точка наезда Камеры 1 по X, доли кадра; 0.5 = центр.
                                            # В AE якорь/позиция нула считаются от неё:
                                            # при наезде неподвижна эта точка, а не центр кадра
@@ -683,6 +735,9 @@ ALL_LAYER_IDS = ("subs", "intro", "photo", "video", "roto")
 #   caption_pady     — верхнее/нижнее поле плашки, заменено caption_ky 2026-08-20;
 #   intro_fx_fade    — фейд эффектов интро, заменён общим intro_fade 2026-09-16;
 #   intro_fx_fade_last — то же для последней группы интро.
+# Сырые intro_comp_shadow_op/intro_comp_shadow2_op в этот список НЕ входят нарочно:
+# их переводит в проценты migrate_intro_comp_shadow_pct, а вычистка здесь съела бы
+# значение ДО конвертации. Сама миграция старые ключи из словаря убирает.
 DEAD_KEYS = ("roto_video", "caption_padx", "caption_pady", "intro_fx_fade", "intro_fx_fade_last")
 
 
@@ -744,6 +799,30 @@ def migrate_style_dict(data: Any) -> tuple[Any, bool]:
 INTRO_POS2_V = 2
 
 
+MUSIC_MODES = ("off", "random", "file", "url")
+
+
+def migrate_music(data: Any) -> Any:
+    """Музыка стала свойством стиля: у старых стилей ключей нет — доводим их дефолтами.
+
+    Доводить нужно ЯВНО, а не только слиянием с BASE: режим «random» — это прежнее
+    поведение (случайный трек из папки музыки), и стиль без ключей обязан остаться
+    ровно таким. Незнакомый режим (правленный руками JSON) сводим к «random»: с
+    неизвестной строкой сборка не нашла бы трек и смолчала.
+
+    Меняется словарь в памяти: файлы стилей молча не переписываются — на диске они
+    остаются старыми до первого сохранения из панели, как и у прочих миграций.
+    """
+    if not isinstance(data, dict):
+        return data
+    if data.get("music_mode") not in MUSIC_MODES:
+        data["music_mode"] = "random"
+    for key in ("music_dir", "music_src"):
+        if data.get(key) is None:
+            data[key] = ""
+    return data
+
+
 def migrate_intro_pos2(data: Any) -> Any:
     """Старый смысл intro_y2 («добавка к intro_y») -> новый («положение интро на кам2»).
 
@@ -797,6 +876,104 @@ def migrate_intro_cam2(data: Any) -> Any:
             anchor = BASE["intro_scale_anchor"]
         data["intro_scale_anchor2"] = anchor
     return data
+
+
+def migrate_intro_fit_per_cam(data: Any) -> Any:
+    """Подгонка интро стала ПОКАДРОВОЙ: `intro_margin`/`intro_margin2` и `intro_fit_max2`.
+
+    Раньше доля ширины кадра для автофита была ОДНА на обе камеры (`intro_fit_w`) и жила
+    отдельной ручкой. Теперь ручек две: «Отступ от краёв, %» — доля ширины кадра
+    `1 − 2·margin/100`, и она выбирается по камере группы (см. plan_intro). Проценты
+    переводим один в другой ровно: `margin = (100 − intro_fit_w)/2` (92 % ширины = 4 %
+    с каждого края), поэтому уже собранные стили выглядят как раньше и на камере 1,
+    и на перебивке.
+
+    `intro_fit_max` (потолок увеличения) — камера 1, у перебивки свой `intro_fit_max2`:
+    у старого стиля его нет вовсе, и брать дефолт BASE значило бы поменять вид собранных
+    роликов — наследуем от камеры 1.
+
+    Меняется словарь в памяти: файлы стилей молча не переписываются.
+    """
+    if not isinstance(data, dict):
+        return data
+    if "intro_margin" not in data:
+        raw = data.get("intro_fit_w")
+        if raw is None:
+            # Новый стиль (ключа intro_fit_w в нём нет вовсе): прежний смысл ручки —
+            # та же формула, что и у старых, от дефолтной доли 92 %.
+            raw = 100.0 - 2.0 * float(BASE["intro_margin"])
+        try:
+            margin = (100.0 - float(raw)) / 2.0
+        except (TypeError, ValueError):
+            margin = float(BASE["intro_margin"])
+        data["intro_margin"] = margin
+    if "intro_margin2" not in data:
+        data["intro_margin2"] = data["intro_margin"]
+    if "intro_fit_max2" not in data:
+        data["intro_fit_max2"] = data.get("intro_fit_max", BASE["intro_fit_max"])
+    return data
+
+
+INTRO_COMP_SHADOW_V = 1
+
+
+def migrate_intro_comp_shadow_pct(data: Any) -> Any:
+    """Непрозрачность тени прекомпа интро: сырые 0..255 AE -> проценты 0..100.
+
+    Ручки `intro_comp_shadow_op`/`intro_comp_shadow2_op` в панели были подписаны
+    «Прозрачность, камера N, %», а в них лежало сырое значение AE Drop Shadow Opacity
+    (0..255): человек ставил «50 %» и получал 20 %, а дефолт 68 выглядел как «68 %»,
+    будучи 27 %. Ключи переименованы в `intro_comp_shadow_opacity` /
+    `intro_comp_shadow2_opacity` и означают проценты; в 0..255 их переводит ОДНО место —
+    `core/xml2ae/plan_style.py` (см. комментарий там).
+
+    Старый ключ конвертируем ровно: `opacity = round(op/255*100, 1)` — 68 -> 26.7,
+    31 -> 12.2, 255 -> 100. Проценты округляются до десятых: у той же тени они печатаются
+    в .jsx через `%g`, и лишние знаки после запятой в ручке не нужны.
+
+    Признак того, что стиль уже переведён, — САМ НОВЫЙ КЛЮЧ `_opacity`: в старом смысле
+    его не существовало, ручку панель заводит через `setStyle`. Поэтому второй проход
+    ничего не пересчитывает, а стиль, собранный вручную сразу в процентах, не портится
+    (иначе 50 % уехали бы в 20 %, то есть тот же баг наоборот). Метка
+    `intro_comp_shadow_v` решает то же самое для файла пресета — чтобы повторный
+    `_files()` не считал его старым. Решение живёт В ПАМЯТИ: файл на диске
+    перезаписывается только при сохранении из панели.
+    """
+    if not isinstance(data, dict) or data.get("intro_comp_shadow_v") is not None:
+        return data
+    for old_key, new_key in (("intro_comp_shadow_op", "intro_comp_shadow_opacity"),
+                             ("intro_comp_shadow2_op", "intro_comp_shadow2_opacity")):
+        # Переводим ТОЛЬКО когда в стиле старый ключ, а нового нет: старый смысл жил
+        # ровно в ключе `_op`, и `_opacity` рядом с ним появиться не мог. Так стиль,
+        # собранный вручную сразу в процентах и без метки, не портится: 50 % — это 50 %,
+        # а не сырые 50 из 255 (иначе получился бы ровно тот же баг наоборот).
+        if new_key in data:
+            data.pop(old_key, None)
+            continue
+        if old_key not in data:
+            continue
+        data[new_key] = data.pop(old_key)
+        _shadow_pct(data, new_key)
+    data["intro_comp_shadow_v"] = INTRO_COMP_SHADOW_V
+    return data
+
+
+def _shadow_pct(data: dict[str, Any], key: str) -> None:
+    """Сырые 0..255 AE -> проценты 0..100: `round(op/255*100, 1)`.
+
+    Вызывается только тогда, когда в ключе лежит старый смысл (см. выше). Пустое
+    значение — «ручки нет»: подставлять вместо него число значило бы перебить дефолт BASE.
+    Некорректное (строка не-число) значение молча оставляем как есть: разберёт валидация.
+    """
+    src = data.get(key)
+    if src is None:
+        return
+    try:
+        data[key] = round(float(src) / 255.0 * 100.0, 1)
+    except (TypeError, ValueError):
+        return
+
+
 CAM1_TO_CAM2_ZOOM_KEYS: tuple[tuple[str, str], ...] = (
     ("cam1_zoom_start", "cam2_zoom_start"),
     ("cam1_zoom_big", "cam2_zoom_big"),
@@ -926,11 +1103,21 @@ def resolve(style: Any) -> Any:
     data, _ = migrate_style_dict(data)
     data = migrate_cam2_zoom(data)
     data = migrate_cam_zoom(data)
+    # Музыка стиля: у старых стилей ключей нет — доводим дефолтами до слияния с BASE,
+    # иначе незнакомый режим уехал бы в сборку как есть.
+    data = migrate_music(data)
     # Старый intro_y2 (добавка) -> положение; метка в BASE уже стоит, поэтому решаем ДО слияния.
     data = migrate_intro_pos2(data)
     # Ручки интро камеры 2 (intro_cam2/intro_scale_anchor2) у старых стилей наследуются
     # от камеры 1 — тоже ДО слияния: иначе дефолт BASE перекрыл бы прежнее поведение.
     data = migrate_intro_cam2(data)
+    # Подгонка по ширине стала покадровой (intro_margin/intro_margin2, intro_fit_max2):
+    # у старого стиля вместо них одна ручка intro_fit_w — переводим её ДО слияния с BASE.
+    data = migrate_intro_fit_per_cam(data)
+    # Тень прекомпа: старые 0..255 -> проценты (intro_comp_shadow*_opacity). Тоже ДО слияния:
+    # ключа `_opacity` у старого стиля нет вовсе, и дефолт BASE молча вернул бы 26.7 %
+    # вместо посчитанных из его же `_op`.
+    data = migrate_intro_comp_shadow_pct(data)
     base.update({k: v for k, v in (data or {}).items() if v is not None or k in ("hl_font",)})
     # Гарантировать lo <= hi для диапазонов обеих камер
     for prefix in ("cam1", "cam2"):
@@ -978,8 +1165,10 @@ def _files() -> dict[str, Any]:
                         except Exception as ex:
                             log.warning("пресет %s не переписан под новый формат: %s", p, ex)
                     # Только в памяти (после возможной переписи выше): старый файл на диске не трогаем.
-                    out[os.path.splitext(f)[0]] = migrate_intro_cam2(
-                        migrate_intro_pos2(migrate_cam_zoom(migrate_cam2_zoom(data))))
+                    out[os.path.splitext(f)[0]] = migrate_intro_comp_shadow_pct(
+                        migrate_intro_fit_per_cam(migrate_intro_cam2(
+                            migrate_intro_pos2(migrate_cam_zoom(migrate_cam2_zoom(
+                                migrate_music(data)))))))
             except ReelsiError: raise
             except Exception as ex:
                 log.warning("пресет %s не прочитан: %s — стиль пропущен", p, ex)
@@ -1010,6 +1199,9 @@ def save(name: str, data: Any) -> tuple[str, str]:
     data = migrate_cam_zoom(data)
     data = migrate_intro_pos2(data)      # стиль без метки — старый: пишем уже в новом смысле
     data = migrate_intro_cam2(data)      # ручки интро камеры 2 — наследуем от камеры 1
+    data = migrate_music(data)           # музыка стиля — доводим режим и папку до дефолтов
+    data = migrate_intro_fit_per_cam(data)   # старая ручка intro_fit_w -> отступы по камерам
+    data = migrate_intro_comp_shadow_pct(data)  # 0..255 тени прекомпа -> проценты
     safe = "".join(c for c in (name or "custom") if c.isalnum() or c in "-_ ").strip() or "custom"
     fname = safe + ".json"
     atomic_json_dump(os.path.join(STYLE_DIR, fname), data, indent=1)
@@ -1053,6 +1245,9 @@ def patch(name: str, patch_dict: Any) -> tuple[Any, Any]:
     data = migrate_cam_zoom(data)
     data = migrate_intro_pos2(data)
     data = migrate_intro_cam2(data)
+    data = migrate_music(data)          # режим/папка музыки — до правки, как и прочие миграции
+    data = migrate_intro_fit_per_cam(data)
+    data = migrate_intro_comp_shadow_pct(data)  # тень прекомпа: 0..255 -> проценты — до правки
     data.update(patch_dict)
     data, _ = migrate_style_dict(data)
     atomic_json_dump(target, data, indent=1)

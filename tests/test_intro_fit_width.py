@@ -153,11 +153,12 @@ def test_detached_long_line_shrinks_to_the_frame_width(wide_font, xml_subs):
 # ==================================================== 3. привязанное — как на main
 
 def test_attached_intro_still_only_shrinks(wide_font, xml_subs):
-    """3. Галка «интро едет с камерой» включена — поведение прежнее (как на main).
+    """3. Галка «интро едет с камерой» включена — прежнее правило: только ужатие.
 
     Короткая строка остаётся на ds = 100 (вверх автофит не тянет: увеличивает зум
-    камеры), длинная ужимается ровно по прежней формуле с INTRO_FIT_W и зумом 160 %,
-    а ручка «Интро по ширине» на привязанное не влияет вовсе.
+    камеры), длинная ужимается по доле ширины СВОЕЙ камеры (дефолтный отступ 4 % — те же
+    92 %) с учётом зума 160 %. Отдельная ручка ширины есть теперь и у привязанного интро:
+    доля у него та же (`intro_margin`, «Отступ от краёв»), а не константа.
     """
     short = _group(xml_subs, {}, cam1_scale=ZOOM)
     long_ = _group(xml_subs, {}, intro=LONG, cam1_scale=ZOOM)
@@ -168,12 +169,14 @@ def test_attached_intro_still_only_shrinks(wide_font, xml_subs):
 
     expected = 100.0 * W * INTRO_FIT_W / ((FSIZE * 10) * (INTRO_SCALE / 100.0) * 1.6)
     assert long_["ds"] == pytest.approx(expected, rel=1e-9), \
-        "привязанное ужимается не по прежней формуле (INTRO_FIT_W + зум камеры)"
+        "привязанное ужимается не по доле ширины своей камеры и не по зуму"
     assert long_["ds"] < detached["ds"], \
         "привязанное обязано ужиматься зумом сильнее откреплённого"
 
-    knob = _group(xml_subs, {"intro_fit_w": 80}, intro=LONG, cam1_scale=ZOOM)
-    assert knob["ds"] == long_["ds"], "ручка «Интро по ширине» тронула привязанное интро"
+    # Свой отступ у привязанного интро работает: 20 % с края — доля 0.60 ширины кадра.
+    knob = _group(xml_subs, {"intro_margin": 20.0}, intro=LONG, cam1_scale=ZOOM)
+    assert knob["ds"] < long_["ds"], "ручка «Отступ от краёв» не тронула привязанное интро"
+    assert _visible(knob["ds"], FSIZE * 10, z=ZOOM[0][1]) == pytest.approx(W * 0.60, rel=1e-3)
 
 
 # ==================================================== 4. рука сильнее автофита
@@ -195,65 +198,68 @@ def test_manual_group_scale_beats_the_fit_both_ways(wide_font, xml_subs):
     assert attached["ds"] == 125
 
 
-# ==================================================== 5. ручка intro_fit_w и сторож
+# ==================================================== 5. ручка отступа и сторож
 
-def test_intro_fit_w_knob_sets_the_frame_share(wide_font, xml_subs):
-    """5а. intro_fit_w = 80 — ширина цели 0.80·W, и вверх, и вниз.
+def test_intro_margin_knob_sets_the_frame_share(wide_font, xml_subs):
+    """5а. Отступ 10 % с края — ширина цели 0.80·W, и вверх, и вниз.
 
-    Потолок увеличения поднят: у короткой строки подгонка (637–733 %) выше дефолтных
-    250, и с ними ручка меняла бы не ширину, а только упор в потолок.
+    Доля ширины = 1 − 2·margin/100 (правило ОДНО на оба режима). Потолок увеличения
+    поднят: у короткой строки подгонка выше дефолтных 250, и с ними ручка меняла бы не
+    ширину, а только упор в потолок.
     """
     hi = {"intro_cam": False, "intro_fit_max": 1000}
-    short = _group(xml_subs, dict(hi, intro_fit_w=80))
-    long_ = _group(xml_subs, dict(hi, intro_fit_w=80), intro=LONG)
+    short = _group(xml_subs, dict(hi, intro_margin=10.0))
+    long_ = _group(xml_subs, dict(hi, intro_margin=10.0), intro=LONG)
 
     assert _visible(short["ds"], FSIZE) == pytest.approx(W * 0.80, rel=0.01)
     assert short["ds"] > 100
     assert _visible(long_["ds"], FSIZE * 10) == pytest.approx(W * 0.80, rel=0.01)
     assert long_["ds"] < 100
-    # дефолт 92: у той же группы ds больше — ручка реально рулит шириной
+    # дефолт (4 % — те же 92 %) : у той же группы ds больше — ручка реально рулит шириной
     assert short["ds"] < _group(xml_subs, hi)["ds"]
 
 
-def test_intro_fit_w_knob_lives_in_schema_base_and_assembly(wide_font, xml_subs, tmp_path):
+def test_intro_margin_knob_lives_in_schema_base_and_assembly(wide_font, xml_subs, tmp_path):
     """5б. Сторож «каждая ручка» (test_r11_li_every_knob) и счётчики схемы.
 
-    Поле обязано быть в схеме (num, 50…100, шаг 1, рядом с intro_scale в «Transform»),
-    дефолт — в styles.BASE, перевод — в en.json, а снятая галка «интро едет с камерой»
-    вместе с новой ручкой обязана менять собранный .jsx: иначе ручка мертва и молчит.
+    Поле обязано быть в схеме (num, 0…30, шаг 1, в группе «Камера 1»), дефолт — в
+    styles.BASE, перевод — в en.json, а изменение ручки — менять собранный .jsx: иначе
+    ручка мертва и молчит. Старой общей ручки `intro_fit_w` в BASE и схеме больше нет.
     """
-    field = watcher.schema_field("intro_fit_w")
-    assert field, "в схеме нет ручки intro_fit_w"
-    assert field.get("ctl") == "num", "intro_fit_w перестала быть числом"
-    assert (field.get("min"), field.get("max"), field.get("step")) == (50, 100, 1)
-    assert field.get("label") == "Интро по ширине, %"
-    assert field.get("tip") == ("только у открепленного от камеры интро: группа подгоняется "
-                                "под эту долю ширины кадра (увеличивается и ужимается); "
-                                "группы с ручным масштабом не трогаются")
-    assert "intro_fit_w" in watcher.schema_keys(), \
+    field = watcher.schema_field("intro_margin")
+    assert field, "в схеме нет ручки intro_margin"
+    assert field.get("ctl") == "num", "intro_margin перестала быть числом"
+    assert (field.get("min"), field.get("max"), field.get("step")) == (0, 30, 1)
+    assert field.get("label") == "Отступ от краёв, % (камера 1)"
+    assert "show_if" not in field, "ручка снова спрятана от привязанного интро"
+    assert "intro_margin" in watcher.schema_keys(), \
         "ручка не попадает в счётчики схемы (test_style_schema)"
+    assert watcher.schema_field("intro_margin2") is not None, "нет ручки камеры 2"
+    assert watcher.schema_field("intro_fit_w") is None, "старая ручка осталась в схеме"
 
-    assert styles.BASE.get("intro_fit_w") == 92.0, "дефолт intro_fit_w в styles.BASE не 92"
-    assert styles.resolve(None).get("intro_fit_w") == 92.0
+    assert styles.BASE.get("intro_margin") == 4.0, "дефолт intro_margin в styles.BASE не 4"
+    assert styles.resolve(None).get("intro_margin") == 4.0
+    assert "intro_fit_w" not in styles.BASE, "старая ручка осталась в BASE"
 
     en = json.load(io.open(os.path.join(ROOT, "static", "i18n", "en.json"),
                            encoding="utf-8"))
-    assert en.get(field["label"]) == "Intro width, %"
+    assert en.get(field["label"]), "подпись ручки осталась без перевода"
     assert en.get(field["tip"]), "тултип ручки остался без перевода"
 
     ref = _build(xml_subs, tmp_path, {"intro_cam": False, "intro_fit_max": 1000},
                  name="fit92.jsx")
-    mod = _build(xml_subs, tmp_path, {"intro_cam": False, "intro_fit_w": 80,
+    mod = _build(xml_subs, tmp_path, {"intro_cam": False, "intro_margin": 10.0,
                                       "intro_fit_max": 1000},
                  name="fit80.jsx")
-    assert ref != mod, "ручка intro_fit_w не изменила собранный .jsx"
+    assert ref != mod, "ручка intro_margin не изменила собранный .jsx"
     ds92 = _grp_ds(ref)
     ds80 = _grp_ds(mod)
     assert ds92 > ds80 > 0, f"ds не поехал за ручкой: {ds92} -> {ds80}"
-    # привязанное интро ручку не читает: сборки при gs по умолчанию совпадают
+    # привязанное интро читает СВОЙ отступ, но не потолок увеличения: сборки при
+    # одинаковом отступе и разном потолке совпадают
     on92 = _build(xml_subs, tmp_path, {}, name="on92.jsx")
-    on80 = _build(xml_subs, tmp_path, {"intro_fit_w": 80}, name="on80.jsx")
-    assert on92 == on80, "ручка «Интро по ширине» изменила привязанное интро"
+    on92b = _build(xml_subs, tmp_path, {"intro_fit_max": 1000}, name="on92b.jsx")
+    assert on92 == on92b, "потолок увеличения изменил привязанное интро"
 
 
 def _grp_ds(jsx):

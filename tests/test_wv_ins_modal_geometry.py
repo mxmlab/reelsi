@@ -163,6 +163,7 @@ def _old_css(tmp_path):
 
 
 @chrome
+@pytest.mark.xdist_group("chrome")
 def test_aemode_preview_layout_is_the_same_as_before_cc632e3(tmp_path):
     """Шаг 3 (`.aemode`): раскладка колонок ровно как на CSS до cc632e3 (ширины ±2 px).
 
@@ -205,6 +206,7 @@ def test_aemode_preview_layout_is_the_same_as_before_cc632e3(tmp_path):
 
 
 @chrome
+@pytest.mark.xdist_group("chrome")
 def test_inserts_modal_height_is_constant_with_2_and_30_inserts(tmp_path):
     """Высота окна и положение таймлайна не зависят от числа карточек (1280x900)."""
     few = _run_chrome(tmp_path, "ins2.html", _measure(1280, 900, 2), 1280, 900)
@@ -233,6 +235,7 @@ def test_inserts_modal_height_is_constant_with_2_and_30_inserts(tmp_path):
 
 
 @chrome
+@pytest.mark.xdist_group("chrome")
 def test_inserts_modal_full_height_and_no_page_scroll(tmp_path):
     """Окно занимает видимый экран (как другие полноэкранные модалки) и не даёт прокрутки страницы."""
     m = _run_chrome(tmp_path, "ins_full.html", _measure(1440, 1000, 30), 1440, 1000)
@@ -249,6 +252,7 @@ def test_inserts_modal_full_height_and_no_page_scroll(tmp_path):
 
 
 @chrome
+@pytest.mark.xdist_group("chrome")
 def test_inserts_modal_fills_1080p_and_video_frame_is_large(tmp_path):
     """1920x1080: окно вставок занимает экран, кадр видео — не меньше 500 px по высоте.
 
@@ -280,6 +284,7 @@ def test_inserts_modal_fills_1080p_and_video_frame_is_large(tmp_path):
 
 
 @chrome
+@pytest.mark.xdist_group("chrome")
 def test_inserts_modal_720p_keeps_timeline_in_window(tmp_path):
     """1280x720 — как было: таймлайн внутри окна и виден, прокрутки страницы нет.
 

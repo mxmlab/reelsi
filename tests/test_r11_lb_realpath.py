@@ -79,7 +79,7 @@ def test_export_xml_symlink_to_secret_rejected(client, tmp_path, symlink_maker, 
     """export_xml по ссылке x.xml -> ai_config.json: 403, ключ не отдаётся."""
     x_xml = tmp_path / "x.xml"
     symlink_maker(fake_ai_config, x_xml)
-    r = client.get(f"/api/export_xml?path={x_xml}", headers=H)
+    r = client.post("/api/export_xml", json={"path": str(x_xml)}, headers=H)
     assert r.status_code == 403
     assert FAKE_KEY not in r.get_data(as_text=True)
 
@@ -90,7 +90,7 @@ def test_export_xml_symlink_to_non_xml_target_rejected(client, tmp_path, symlink
     secret.write_text("СЕКРЕТНЫЙ_ТЕКСТ", encoding="utf-8")
     y_xml = tmp_path / "y.xml"
     symlink_maker(secret, y_xml)
-    r = client.get(f"/api/export_xml?path={y_xml}", headers=H)
+    r = client.post("/api/export_xml", json={"path": str(y_xml)}, headers=H)
     assert r.status_code == 403
     assert "СЕКРЕТНЫЙ_ТЕКСТ" not in r.get_data(as_text=True)
 

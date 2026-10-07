@@ -5,6 +5,8 @@ import json
 import subprocess
 import sys
 import tempfile
+from typing import Any
+
 import numpy as np
 import pytest
 import soundfile as sf
@@ -99,8 +101,17 @@ def test_omni_asr_gigaam_failure_exits_cleanly(tmp_path, monkeypatch, capsys):
         def transcribe_longform(self, path):
             raise RuntimeError("CUDA memory allocation failed")
 
+    seen_load: dict[str, Any] = {}
+
+    def fake_load_model(name, **kw):
+        # download_root приходит от core.gigaam_cache: папка весов — одна на
+        # приложение, а не домашняя у пакета (иначе на read-only `HOME` отказ).
+        seen_load["name"] = name
+        seen_load.update(kw)
+        return FailingGigaAM()
+
     mock_gigaam = type(sys)("gigaam")
-    mock_gigaam.load_model = lambda name: FailingGigaAM()
+    mock_gigaam.load_model = fake_load_model
     monkeypatch.setitem(sys.modules, "gigaam", mock_gigaam)
 
     with pytest.raises(SystemExit) as exc_info:
@@ -113,6 +124,9 @@ def test_omni_asr_gigaam_failure_exits_cleanly(tmp_path, monkeypatch, capsys):
 
     assert exc_info.value.code != 0
     assert not out_file.exists()
+    assert seen_load.get("name") == "v3_ctc"
+    assert seen_load.get("download_root"), (
+        "модель загружена без папки весов — веса уедут в домашнюю у пакета")
 
     captured = capsys.readouterr()
     assert "Ошибка GigaAM инференса на куске 0.0–1.0: CUDA memory allocation failed" in captured.err

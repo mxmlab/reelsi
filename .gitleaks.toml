@@ -27,4 +27,8 @@ paths = [
   # tests/test_gdrive.py:58 — фиктивный resourcekey=0-ABCDEFGHIXJQpIGqBJq3MC внутри
   # тестовой ссылки Google Drive: разбор ссылки, к реальному диску не ходим.
   '''tests/test_gdrive\.py''',
+  # tests/test_security_fixes.py:73, 277 — подставное значение заголовка
+  # «abcdef123456»: в фикстуре ai_config (X-Token) и в проверке resolve_header_mask.
+  # Строка выдумана в тесте, никуда не отправляется и секретом быть не может.
+  '''tests/test_security_fixes\.py''',
 ]

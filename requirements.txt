@@ -8,10 +8,15 @@
 # Check what is installed and what will fail:  python reelsi/doctor.py
 #
 # IMPORTANT: torch is installed SEPARATELY and FIRST - pick the build for your
-# GPU at https://pytorch.org/get-started/locally/ . Versions here are
-# intentionally unpinned: PyPI ships a CPU build, and everything GPU-bound
+# GPU at https://pytorch.org/get-started/locally/ . torch is intentionally
+# unpinned: PyPI ships a CPU build, and everything GPU-bound
 # (Omni, GigaAM, roto, forced-align) would run tens of times slower. Tested:
 #   pip install torch==2.5.1 torchaudio==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+#
+# Everything else carries an UPPER bound on the major version: a bare `>=` lets
+# pip install a fresh release that breaks the subtitle step on a clean install
+# (librosa 1.0 dropped the audioread fallback, PyAV 19 dropped
+# `metadata_errors`) - exactly what the owner's already-pinned machine never saw.
 torch
 torchaudio
 # needed by rotoscoping (RVM via torch.hub)
@@ -20,21 +25,25 @@ torchvision>=0.20
 # --- core ---
 # web UI (webui.py) and /api/*
 flask>=3.0
-numpy>=1.26
+numpy>=1.26,<3
 # camera sync (cross-correlation), VAD
 scipy>=1.11
-soundfile>=0.12
-# SSM repeat detection
-librosa>=0.10
+soundfile>=0.12,<1
+# SSM repeat detection, resampling
+librosa>=0.10,<1.0
 # interactive CLI (reelsi.py)
 questionary>=2.0
 
 # --- speech recognition ---
 # default subtitle engine
-faster-whisper>=1.0
+faster-whisper>=1.0,<2
+# PyAV is faster-whisper's decoder: it imports av even when handed a float32
+# array. 19.0 removed the `metadata_errors` argument that faster-whisper 1.2
+# still passes, so every path-based call raises TypeError - keep it below 19.
+av>=12,<19
 # Qwen2.5-Omni; if Omni fails to load, install from git:
 #   pip install git+https://github.com/huggingface/transformers
-transformers>=4.46
+transformers>=4.46,<5
 accelerate>=1.0
 huggingface-hub>=0.26
 # audio/video preprocessing for Qwen2.5-Omni

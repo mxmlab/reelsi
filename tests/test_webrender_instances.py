@@ -16,9 +16,12 @@
 3. **Куски стартуют РАЗОМ, а не по очереди.** Живой прогон: 300 кадров, 4 экземпляра,
    ~0.23 с на кадр — итог 59 с, ровно как у ОДНОГО экземпляра: второй Chrome стартовал
    только на кадре 210, потому что цикл запускал кусок и тут же ждал его конца.
-   Проверяется и дверью «стартовали все, и только потом пошли кадры», и временем:
-   общее время — максимум по кускам, а не их сумма. Мутация (последовательный цикл)
-   обязана валить ту же проверку — она собирается из испорченного исходника.
+   Проверяется дверью «стартовали все, и только потом пошли кадры» и НАЛОЖЕНИЕМ
+   интервалов съёмки: кусок, начавший позже, чем кончил сосед, — это очередь.
+   Мутация (последовательный цикл) обязана валить ту же проверку — она собирается из
+   испорченного исходника. По секундам «разом» не проверяется: под нагрузкой
+   многопроцессного прогона `time.sleep` уезжает вместе с очередью потоков, и порог
+   «меньше 0.7 от суммы» падал на занятой машине сам по себе.
 4. **Каждый кусок кодирует СВОЙ сегмент, склейка — без перекодирования.** Сегменты
    собираются `ffmpeg -f concat -safe 0 -i список -c copy`: кодек и параметры у всех
    одни и те же, поэтому лишний ключевой кадр на стыке не виден, а держать кадры в
@@ -157,15 +160,26 @@ class _Stream:
     """Поток кадров съёмщика: `[длина][кадр]` с задержкой на кадр и общей дверью.
 
     Задержка — «кусок снимается столько-то»: по ней видно, идут экземпляры разом
-    (время ≈ максимум) или по очереди (время ≈ их сумма).
+    (куски работают одновременно) или по очереди (второй начинается после первого).
+
+    Времена кадров пишутся в `order`, если он дан: `_StartOrder` по ним отвечает,
+    снимали ли куски РАЗОМ. По секундам этого не проверить: под нагрузкой прогона
+    `time.sleep` уезжает вместе с очередью потоков, и «общее время меньше суммы»
+    перестаёт быть признаком — оба числа растут от нагрузки, а не от устройства кода.
     """
 
-    def __init__(self, frames, delay=0.0, gate=None):
+    def __init__(self, frames, delay=0.0, gate=None, order=None, chunk=None):
         self._frames = list(frames)
         self._buf = b""
         self._delay = delay
         self._gate = gate
+        self._order = order
+        # Номер СВОЕГО куска известен уже здесь: куски стартуют разом, и к моменту
+        # первого кадра общий счётчик кассы уже указывает на последнего запущенного —
+        # записывать время по нему значило бы приписать все кадры одному куску.
+        self._chunk = 0 if chunk is None else int(chunk)
         self._started = False
+        self._ended = False                 # последний кадр отдан: кусок кончил читать
 
     def read(self, n):
         if not self._started:
@@ -176,13 +190,57 @@ class _Stream:
                     "кусок начал снимать раньше, чем запустились все экземпляры")
         if not self._buf:
             if not self._frames:
+                if not self._ended:
+                    self._ended = True
+                    if self._order is not None:
+                        self._order.finished(self._chunk)
                 return b""
             frame = self._frames.pop(0)
             if self._delay:
                 time.sleep(self._delay)
             self._buf = struct.pack(">I", len(frame)) + frame
+            if self._order is not None:
+                self._order.read(self._chunk)
         chunk, self._buf = self._buf[:n], self._buf[n:]
         return chunk
+
+
+class _StartOrder:
+    """Когда какой кусок начал и кончил снимать: по ним видно, шли куски РАЗОМ.
+
+    Время читается тем же `time.monotonic`, что у рендера, а не «порядком вызовов»:
+    признак «разом» — интервалы кусков НАКЛАДЫВАЮТСЯ. Последовательный цикл (мутация в
+    `_mutated_module`) даёт интервалы, которые только стыкуются: следующий кусок
+    начинается ПОСЛЕ конца предыдущего. Порог по секундам это ловил и раньше, но под
+    нагрузкой многопроцессного прогона `sleep` уезжает, и «меньше 0.7 от суммы» —
+    не свойство кода, а свойство загрузки машины.
+    """
+
+    def __init__(self):
+        self.first: dict[int, float] = {}
+        self.last: dict[int, float] = {}
+
+    def read(self, chunk):
+        """Кадр отдан куску `chunk`: его первый кадр и последний (время съёмки)."""
+        now = time.monotonic()
+        self.first.setdefault(chunk, now)
+        self.last[chunk] = now
+
+    def finished(self, chunk):
+        """Кусок кончил читать: без кадров у него вовсе конец = «сейчас»."""
+        self.last.setdefault(chunk, time.monotonic())
+
+    def overlapped(self) -> bool:
+        """Снимали ли куски РАЗОМ: у каждого начало раньше, чем кончил другой.
+
+        Один кусок (или ни одного) — накладываться нечему, и это не нарушение.
+        """
+        chunks = sorted(set(self.first) | set(self.last))
+        if len(chunks) < 2:
+            return True
+        ends = [self.last.get(k, 0.0) for k in chunks]
+        return all(self.first.get(k, 0.0) < max(ends[j] for j in range(len(chunks)) if j != i)
+                   for i, k in enumerate(chunks))
 
 
 def _new_state(**kw):
@@ -193,7 +251,7 @@ def _new_state(**kw):
     return state
 
 
-def _fake_popen(state, delay=0.0, gate=None):
+def _fake_popen(state, delay=0.0, gate=None, order=None, on_start=None):
     """Съёмщик, кодировщик куска и склейка вместо настоящих процессов.
 
     Кадры куска — по его `--start`/`--frames`: по ним видно, что каждый кусок ушёл в
@@ -238,15 +296,18 @@ def _fake_popen(state, delay=0.0, gate=None):
 
         def __init__(self, cmd, **k):
             state["cap"].append(list(cmd))
+            chunk = int(cmd[cmd.index("--chunk") + 1])
             if gate is not None:
                 gate.starting()
+            if on_start is not None:
+                on_start(chunk)      # «все экземпляры подняты»: дверь для отмены
             self.cmd = list(cmd)
             self.pid = 111
             first = int(cmd[cmd.index("--start") + 1])
             count = int(cmd[cmd.index("--frames") + 1])
             # Кадр узнаваем по номеру: по нему видно, что куски склеены ПО ПОРЯДКУ.
             frames = [b"F%05d" % (first + i) for i in range(count)]
-            self.stdout = _Stream(frames, delay, gate)
+            self.stdout = _Stream(frames, delay, gate, order, chunk=chunk)
             self.stderr = io.BytesIO(b"#chrome-pid 4242\n")
 
         def poll(self):
@@ -343,22 +404,42 @@ def test_all_chunks_start_before_any_frames_are_read(tmp_path, monkeypatch):
 
 
 def test_render_time_is_the_slowest_chunk_not_the_sum(tmp_path, monkeypatch):
-    """Время рендера ≈ максимум по кускам, а не их сумма: экземпляры идут разом.
+    """Куски снимаются РАЗОМ: съёмка каждого накладывается по времени на соседей.
 
-    Задержка стоит на каждом кадре куска: разом три куска идут 0.3 с, по очереди —
-    0.9 с. Порог берётся между ними, и он же — критерий мутации ниже.
+    Задержка стоит на каждом кадре куска, и признаки «разом» два: дверь «все
+    запущены» (`test_all_chunks_start_before_any_frames_are_read`) и НАЛОЖЕНИЕ
+    интервалов съёмки. Второй здесь и проверяется по часам `time.monotonic`: у каждого
+    куска записано время его первого и последнего кадра, и кусок, начавший снимать
+    позже, чем кончил предыдущий, — это очередь, а не экземпляры разом.
+
+    Почему НЕ «общее время меньше 0.7 от суммы» (так было): под нагрузкой
+    многопроцессного прогона `time.sleep` в потоке стенда уезжает вместе с очередью
+    потоков, оба числа растут ВМЕСТЕ с загрузкой машины, а не с устройством кода. Замер
+    шести параллельных прогонов: 0.31–0.45 с при пороге 0.63 (максимум 0.30, сумма
+    0.90) — то есть проверка стояла в полутора шагах от ложного падения и падала
+    «сама», когда машина занята. Наложение интервалов от загрузки не зависит: чтобы его
+    сломать, надо вернуть последовательный цикл — что и делает мутация ниже.
+
+    Секунды остались только нижней границей: она доказывает, что задержка стенда
+    отработала и мерить есть что. Верхней границы по времени нет — она была бы
+    проверкой загрузки машины.
     """
     state = _new_state()
-    xml, out = _render_env(wr, state, tmp_path, monkeypatch, delay=PER_FRAME)
+    order = _StartOrder()
+    xml, out = _render_env(wr, state, tmp_path, monkeypatch, delay=PER_FRAME, order=order)
     t0 = time.monotonic()
     res = _render(wr, state, xml, out)
     elapsed = time.monotonic() - t0
     assert res["ok"], res
     assert elapsed >= MAX_S * 0.5, (
         f"рендер прошёл за {elapsed:.2f} с — задержка стенда не отработала, мерить нечего")
-    assert elapsed < SUM_S * 0.7, (
-        f"рендер занял {elapsed:.2f} с при сумме кусков {SUM_S:.2f} с и максимуме "
-        f"{MAX_S:.2f} с: экземпляры идут по очереди, а не разом")
+    # Наложение: каждый кусок начал снимать РАНЬШЕ, чем кончил последний из соседей.
+    # Последовательный цикл даёт интервалы, которые только стыкуются: следующий кусок
+    # начинается после конца предыдущего, и здесь это видно без секунд.
+    assert order.overlapped(), (
+        "куски снимались ПО ОЧЕРЕДИ, а не разом: интервалы съёмки не накладываются — "
+        f"начало/конец по кускам {sorted(order.first.items())} / "
+        f"{sorted(order.last.items())}")
 
 
 def _mutated_module(tmp_path):
@@ -366,8 +447,8 @@ def _mutated_module(tmp_path):
 
     Проверка не «на словах»: тот же исходник с возвращённым последовательным циклом
     (ровно то, что было до правки) собирается отдельным модулем, и тест требует, чтобы
-    проверка времени из него вышла красной. Так сторож не сможет молча перестать
-    ловить очередь экземпляров.
+    проверка наложения интервалов из него вышла красной. Так сторож не сможет молча
+    перестать ловить очередь экземпляров.
     """
     path_src = os.path.join(ROOT, "core", "webrender.py")
     with open(path_src, encoding="utf-8") as f:
@@ -393,14 +474,21 @@ def _mutated_module(tmp_path):
 
 
 def test_mutation_sequential_chunks_are_caught(tmp_path, monkeypatch):
-    """Мутация: вернуть последовательный цикл — проверка времени обязана покраснеть."""
+    """Мутация: вернуть последовательный цикл — проверка наложения обязана покраснеть."""
     mod = _mutated_module(tmp_path)
     state = _new_state()
-    xml, out = _render_env(mod, state, tmp_path, monkeypatch, delay=PER_FRAME)
+    order = _StartOrder()
+    xml, out = _render_env(mod, state, tmp_path, monkeypatch, delay=PER_FRAME, order=order)
     t0 = time.monotonic()
     res = _render(mod, state, xml, out)
     elapsed = time.monotonic() - t0
     assert res["ok"], res
+    assert not order.overlapped(), (
+        "мутация не поймана: с последовательным циклом интервалы съёмки всё равно "
+        f"наложились (начало/конец по кускам {sorted(order.first.items())} / "
+        f"{sorted(order.last.items())})")
+    # Та же мутация обязана упереться и в секунды: последовательный цикл снимает куски
+    # один за другим, а это сумма, а не максимум.
     assert elapsed >= SUM_S * 0.7, (
         "мутация не поймана: с последовательным циклом рендер собрался за "
         f"{elapsed:.2f} с (сумма кусков ≈ {SUM_S:.2f} с, максимум ≈ {MAX_S:.2f} с)")
@@ -549,16 +637,46 @@ def test_cancel_stops_every_chunk_and_cleans_up(tmp_path, monkeypatch):
     Отмена приходит на середине куска (кадр — 0.05 с, кусок — 0.3 с): все экземпляры
     уже подняты, и уборка обязана погасить КАЖДЫЙ — и съёмщика, и его кодировщик:
     брошенный Chrome остался бы висеть со своим профилем и своей страницей.
+
+    Отмена ждёт ДВЕРИ «все запущены», а не только часов: под нагрузкой прогона цикл
+    запуска кусков идёт медленнее часов, и «Стоп» успевал прийти между первым и
+    третьим — тест падал на «кусков не три». Условие «прошло 0.18 с» остаётся, но
+    проверяется ТОЛЬКО после того, как запустился последний экземпляр: так сторож
+    ловит отмену на середине куска, а не гонку запуска с часами.
     """
     state = _new_state(alive=True)
-    xml, out = _render_env(wr, state, tmp_path, monkeypatch, delay=PER_FRAME)
+    order = _StartOrder()
+    started = threading.Event()
+
+    def started_once(chunk):
+        if chunk + 1 >= INSTANCES:
+            started.set()
+
+    xml, out = _render_env(wr, state, tmp_path, monkeypatch, delay=PER_FRAME,
+                           order=order, on_start=started_once)
     t0 = time.monotonic()
+
+    def cancel():
+        # Рендер обязан успеть поднять ВСЕ экземпляры: «Стоп» на середине куска — это
+        # проверка уборки КАЖДОГО, а не того, кто успел стартовать до звонка.
+        #
+        # Ждать здесь НЕЛЬЗЯ: `cancel` зовётся из ТОГО ЖЕ цикла, что запускает куски
+        # (перед каждым), и ожидание последнего экземпляра останавливало запуск
+        # предыдущих — ожидание превращалось в клинч на свои же 15 с, и рендер
+        # отменялся только после четвёртой попытки. «Ещё не все» здесь — это «не
+        # отменяем» (False), а не «подождём»: цикл дойдёт до последнего куска и снова
+        # спросит, уже с открытой дверью.
+        return started.is_set() and time.monotonic() - t0 > MAX_S * 0.6
+
     res = wr.render(xml, str(out), dur=DUR, instances=INSTANCES, audio=False,
-                    cancel=lambda: time.monotonic() - t0 > MAX_S * 0.6,
-                    emit=_emit(state))
+                    cancel=cancel, emit=_emit(state))
     assert res["cancelled"] is True and res["ok"] is False, res
     assert len(state["cap"]) == INSTANCES, state["cap"]
     assert 0 < res["frames"] < FRAMES, res
+    assert order.overlapped(), (
+        "куски снимались по очереди: интервалы съёмки не накладываются — "
+        f"начало/конец по кускам {sorted(order.first.items())} / "
+        f"{sorted(order.last.items())}")
     # Каждый запущенный кусок погашен — и съёмщик, и его кодировщик.
     assert state["killed_procs"] == ["tree"] * (2 * INSTANCES), state["killed_procs"]
     assert _segs_in_work(tmp_path) == [], _segs_in_work(tmp_path)

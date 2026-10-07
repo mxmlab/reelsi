@@ -41,6 +41,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 
+QUEUE_JS = ROOT / "static" / "app" / "40-queue.js"
 PREVIEW_JS = ROOT / "static" / "app" / "60-preview.js"
 VIEW_JS = ROOT / "static" / "app" / "85-inserts-view.js"
 
@@ -66,13 +67,21 @@ def _func_src(src: str, name: str) -> str:
 
 
 def _track_src(*extra: str) -> str:
-    """Тела всех функций дорожки (`vt*`) + названные функции шага 3."""
+    """Тела функций дорожки (`vt*`), дверь спикера и названные функции шага 3.
+
+    `vtProfileFx` берёт профиль спикера клипа через `clipSpeaker(c)`, а живёт дверь
+    в `40-queue.js`: стенд собирает только `60-preview.js`, и без неё он падал бы на
+    `ReferenceError`. Вырезаем дверь из её файла (приём `tests/test_two_speakers.py`),
+    а не копируем текстом — копия разъехалась бы с боевой молча.
+    """
     preview = PREVIEW_JS.read_text(encoding="utf-8")
     view = VIEW_JS.read_text(encoding="utf-8")
+    queue = QUEUE_JS.read_text(encoding="utf-8")
     names = sorted(set(re.findall(r"^(?:async\s+)?function\s+(vt[A-Za-z0-9_$]*)\s*\(",
                                   preview, re.M)))
     assert names, "в 60-preview.js нет ни одной функции дорожки (vt*)"
     out = [_func_src(preview, n) for n in names]
+    out.append(_func_src(queue, "clipSpeaker"))
     out += [_func_src(view, n) for n in extra]
     return "\n".join(out)
 
@@ -96,9 +105,9 @@ globalThis.document={createElement:t=>{const el=new El(t);MADE.push(el);return e
 """
 
 STATE = r"""
-// Состояние страницы, к которому обращаются боевые функции дорожки. Константы —
-// те же числа, что в 60-preview.js: стенд проверяет поведение, а не настройку порогов.
-const VT_DRIFT=0.15,VT_QUIET=400,VT_POLL=1000;
+// Состояние страницы, к которому обращаются боевые функции дорожки. Пороги синхрона
+// подставляются ИЗ ФАЙЛА (см. `_run_node`): свои копии разъезжались бы с боевыми
+// молча — перемотка становится скоростью, и стенд проверял бы не то.
 let MEDIA_VOL=1;
 function voiceWiring(){}
 function $(id){return (globalThis.__byId&&globalThis.__byId[id])||null;}
@@ -124,10 +133,27 @@ let IPV={vids:[],bufs:[],segs:[],audio:[],words:[],dur:0,fps:60,aidx:0,curCi:-1,
 """
 
 
+def _consts() -> str:
+    """Пороги синхрона дорожки — из 60-preview.js, а не копией в стенде.
+
+    Копия разъезжается с боевыми молча: пока в стенде стоял `VT_DRIFT=0.15`, а в
+    файле стало 0.25 (перемотка превратилась в подводку скоростью), стенд проверял
+    бы прежнее поведение и был бы зелёным на сломанном.
+    """
+    preview = PREVIEW_JS.read_text(encoding="utf-8")
+    out = []
+    for name in ("VT_SOFT", "VT_DRIFT", "VT_RATE", "VT_QUIET", "VT_POLL"):
+        m = re.search(r"^const %s=.*$" % name, preview, re.M)
+        assert m is not None, f"в 60-preview.js нет const {name}"
+        out.append(m.group(0))
+    return "\n".join(out)
+
+
 def _run_node(body: str) -> Any:
     """Прогнать стенд под node и вернуть разобранный JSON с последней строки."""
     import tempfile
-    src = DOM + STATE + _track_src("ipvNow", "ipvNowFrame") + "\n" + body
+    src = (DOM + _consts() + "\n" + STATE + _track_src("ipvNow", "ipvNowFrame")
+           + "\n" + body)
     with tempfile.TemporaryDirectory(prefix="voice_track_") as d:
         path = Path(d) / "stand.js"
         path.write_text(src, encoding="utf-8")
@@ -236,10 +262,12 @@ def test_track_code_lives_in_one_place() -> None:
 
 @node
 def test_steps23_live_host_fallback_and_final_audio_switch() -> None:
-    """Шаги 2-3: готов -> <audio> с voice.wav, хост не зовётся.
+    """Шаги 2-3: готов -> <audio> с voice.wav, живой хост не зовётся НИКОГДА.
 
-    Не готов -> зовётся хост и фоновое запекание.
-    Готово -> переключение на voice.wav, хост гасится.
+    У шага 3 нет ни панели «Голос», ни окон плагинов: крутить нечего, а живой хост —
+    отдельный процесс, который не подогнать к картинке точнее 0,4 с (с включёнными VST
+    превью лагало). Поэтому оба случая — и готовый голос, и ещё считающийся — идут
+    ИТОГОВЫМ заказом (`final: true`), а пока трек считается, звучит звук камеры.
     """
     body = r"""
 let hostSyncCalls = [];
@@ -252,6 +280,8 @@ globalThis.voiceFxHostStop = async function() {
   hostStopCalls++;
   return true;
 };
+globalThis.voiceFxHostDump = async function() { return null; };
+globalThis.voiceFxHostOn = function() { return false; };
 
 IPV.cams = [{ path: 'C:/cam1.mp4' }];
 IPV.audio = [{ ts: 0, te: 10, src: 100 }];
@@ -292,7 +322,7 @@ globalThis.fetch = async(url, opt) => {
     audioPath: IPV.vt.path
   };
 
-  // Сценарий 2: голос НЕ готов (running: true) -> зовется хост и фоновое запекание
+  // Сценарий 2: голос НЕ готов (running: true) -> играет звук камеры, идёт опрос хода
   vtStop(IPV);
   hostSyncCalls = [];
   hostStopCalls = 0;
@@ -303,6 +333,7 @@ globalThis.fetch = async(url, opt) => {
   await vtPrep(IPV);
   const case2Before = {
     bakeCalls: bakeCalls.length,
+    finalFlag: bakeCalls[0].body.final,
     hostSyncs: hostSyncCalls.length,
     hostPlayerIsIpv: hostSyncCalls[0] ? hostSyncCalls[0].player === IPV : false,
     audioOn: IPV.vt.on
@@ -330,11 +361,15 @@ globalThis.fetch = async(url, opt) => {
     assert res["case1"]["hostSyncs"] == 0, "для готового голоса поднялся живой хост"
     assert res["case1"]["audioOn"] is True and res["case1"]["audioPath"] == "C:/out/01_clip.voice.wav"
 
-    # Случай 2
-    assert res["case2Before"]["hostSyncs"] == 1, "для неготового голоса не поднялся живой хост"
-    assert res["case2Before"]["hostPlayerIsIpv"] is True, "в живой хост передан не тот плеер"
+    # Случай 2: шаг 3 живым хостом не пользуется никогда — ни с готовым, ни со считающимся
+    assert res["case2Before"]["bakeCalls"] == 1, "итоговый голос не заказан"
+    assert res["case2Before"]["finalFlag"] is True, \
+        "для неготового голоса заказан не итоговый трек"
+    assert res["case2Before"]["hostSyncs"] == 0, \
+        "у шага 3 нет окон плагинов — живому хосту там взяться неоткуда"
+    assert res["case2Before"]["audioOn"] is False, \
+        "пока трек считается, играет звук камеры, а не пустая дорожка"
     assert res["case2After"]["audioOn"] is True and res["case2After"]["audioPath"] == "C:/out/01_clip.voice.wav"
-    assert res["case2After"]["hostStops"] >= 1, "после готовности итогового голоса хост не был погашен"
 
 
 # --------------------------------------------------------------------------- #

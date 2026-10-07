@@ -128,6 +128,63 @@ def _norm_or_error(jobs: Any, code: str) -> list[dict[str, Any]]:
         raise ReelsiError(umsg("build_set_invalid", f"Некорректный набор: {err}", err=err))
 
 
+# ==========================================================================
+# Обработанный голос в итоге сборки
+# ==========================================================================
+# Подпись строки резолвера итогового голоса (`core.voicefx.final_voice_for_build`):
+# по ней сборка понимает, что клип уехал со звуком камеры, и берёт причину из самой
+# строки. Резолвер печатает её и сам, но только в лог, а лог читают разве что по
+# нужде: итог сборки обязан сказать об этом человеку — молчаливый откат на звук
+# камеры и есть тот дефект, из-за которого «на шаге 1 звучало, а в проекте нет».
+VOICE_FAIL_MARK = "обработанный голос не подключён"
+
+
+def _voice_tap(emit: Any, seen: list[str]) -> Any:
+    """emit сборки, который ещё и запоминает строку сбоя запекания голоса.
+
+    `emit` доезжает сюда и шаблоном с vars, и уже подставленной строкой: сборка .jsx
+    оборачивает его своим `wrap_emit` и собирает `{err}` сама. Поэтому строка
+    опознаётся по подписи, а причина берётся из неё как есть — разбирать текст по
+    скобкам значило бы потерять причину на первой же чужой скобке.
+    """
+    def _tap(line: str = "", /, **vars: Any) -> None:
+        emit(line, **vars)
+        text = str(vars.get("err") or line)
+        if VOICE_FAIL_MARK in text:
+            seen.append(text.lstrip("! ").strip())
+    return _tap
+
+
+def _voice_warn(xml_path: str, stem: str, seen: list[str]) -> None:
+    """Предупреждение в итог сборки: обработка голоса включена, а голос не подключён.
+
+    Клип при этом СОБРАН: это не падение, и в `results` он остаётся. Но проект уедет
+    со звуком камеры — и человек обязан узнать это из итога сборки, а не только из
+    строки лога. Запись идёт в тот же `JOB["failed"]`, что и падения клипов (этот
+    канал уже доезжает до интерфейса через /api/status), и отличается полем `warn`:
+    интерфейс показывает её предупреждением, а не «не собрался».
+
+    Причина — из строки резолвера; строки нет (у клипа нет камеры 1 — считать голос
+    не по чему) — своя.
+    """
+    from core import voicefx
+    fx = voicefx.clip_final_fx(xml_path)
+    if fx is None:
+        return                        # обработки нет — голос клипу и не нужен
+    cam1 = voicefx.clip_cam1(xml_path)
+    if cam1 and voicefx.final_voice_ready(xml_path, cam1, fx):
+        return                        # голос подключён: сборка взяла именно его
+    if not cam1:
+        reason = "у клипа нет камеры 1 — считать голос не по чему"
+    elif seen:
+        reason = seen[-1]
+    else:
+        reason = "обработанный голос не подключён — звук идёт с камеры"
+    emit("! {stem}: голос без обработки — {why}", stem=stem, why=reason)
+    with LOCK:
+        JOB["failed"].append({"name": stem, "reason": reason, "warn": True})
+
+
 def _run_build_job(norm: list[dict[str, Any]], mode: str, outdir: str | None) -> None:
     """Фоновая сборка .jsx со стримом лога в общий JOB (как у нарезки)."""
     try:
@@ -177,12 +234,20 @@ def _run_build_job(norm: list[dict[str, Any]], mode: str, outdir: str | None) ->
             # с тех пор, как у клипа появилась своя папка по тегу спикера.
             # В поштучной ветке и в рендере он снимается так же.
             jobs = [{k: v for k, v in j.items() if k != "outdir"} for j in norm]
+            seen_voice: dict[str, list[str]] = {}
             for j in jobs:
-                j["emit"] = emit          # build_combined -> to_ae_full(**kw)
+                # emit ЭТОГО клипа: build_combined берёт его из задачи
+                # (`kw.setdefault`), поэтому строка сбоя голоса остаётся привязанной
+                # к своему клипу — общий .jsx собирается один на всех.
+                j["emit"] = _voice_tap(emit, seen_voice.setdefault(j["xml_path"], []))
             try:
                 path, n = xml2ae.build_combined(jobs, os.path.join(od, "Reelsi_all.jsx"),
                                                 emit=emit, cancel=stopped,
                                                 progress=set_progress)
+                for j in jobs:
+                    _voice_warn(j["xml_path"],
+                                os.path.splitext(os.path.basename(j["xml_path"]))[0],
+                                seen_voice.get(j["xml_path"], []))
                 # Результат ОДИН на весь набор, а элементы — по клипам:
                 # при успехе все они получают done с путём общего .jsx. Пишем под тем же
                 # локом, где появляется result, — threading.Lock нереентерабелен, поэтому
@@ -221,12 +286,16 @@ def _run_build_job(norm: list[dict[str, Any]], mode: str, outdir: str | None) ->
                         return
                     printed.add(od)
                 kw = {k: v for k, v in j.items() if k not in ("xml_path", "outdir")}
+                seen: list[str] = []
                 try:
                     p, nc, ns = xml2ae.to_ae_full(j["xml_path"], os.path.join(od, stem + ".jsx"),
-                                                  emit=emit, cancel=stopped, **kw)
+                                                  emit=_voice_tap(emit, seen), cancel=stopped, **kw)
                     # Одно место записи «готово»: item_done и кладёт путь
                     # в results, и переводит элемент в done — вторым местом их не развести.
                     item_done(JOB, LOCK, stem, p)
+                    # Включённая обработка голоса — а голос не подключён: в итог
+                    # сборки предупреждением, не только строкой в логе.
+                    _voice_warn(j["xml_path"], stem, seen)
                     # Полный путь, а не одно имя: «куда положил» — первый вопрос,
                     # который задают логу, и раньше ответа в нём не было.
                     emit("  -> {path} ({clips} клипов, {subs} субтитров)",
@@ -499,9 +568,14 @@ def api_swap_cam() -> Response:
 # Скачивание таймлайна: XML с настоящими таймкодами + .drp (DaVinci Resolve).
 # ==========================================================================
 
-@bp.route("/api/export_xml")
+@bp.route("/api/export_xml", methods=["POST"])
 def api_export_xml() -> Response | tuple[str, int]:
     """Скачать таймлайн: на лету проставляем настоящие таймкоды исходников.
+
+    POST, а не GET: роут ПИШЕТ — `sync_xml_voice` правит XML на диске. GET с побочным
+    действием чужая страница могла дёрнуть тегом `<img src>`: ответ ей не прочитать,
+    но файл уже перезаписан (та же причина, по которой в `_SIDE_EFFECT_GETS` стоят
+    `/api/waveform` и `/api/pick*`). Путь приходит в теле: `{"path": "<файл>.xml"}`.
 
     Файл на диске рабочий, его читают редактор, субтитры и `xml2ae` — поэтому чиним
     только копию на выходе. Нарезки, сделанные до правки `probe()` (2026-08-06),
@@ -510,7 +584,8 @@ def api_export_xml() -> Response | tuple[str, int]:
     сдвигом в часы. С правильным таймкодом XML открывается одинаково в обоих —
     сверено с экспортом самого Премьера, отличий больше нет ни одного.
     """
-    path = (request.args.get("path") or "").strip().strip('"')
+    d = request.get_json(silent=True) or {}
+    path = (jstr(d, "path") or "").strip().strip('"')
     # Расширение — ДО чтения файла: роут читал ЛЮБОЙ файл по пути
     # (`/proc/self/environ` на Linux), а при сбое разбора отдавал его вложением.
     # Теперь .xml (без учёта регистра) — условие входа, остальное 403 как у /api/media.
@@ -555,9 +630,9 @@ def api_export_drp() -> Response | tuple[str, int]:
     `<stem>.project.json`, как при пересборке XML: кто не нарезан там — вставки
     без media в сборку не уйдут.
 
-    Рядом с XML может лежать `<stem>.voice.wav` — обработанный голос камеры 1
-    (`core/voicefx`): у записи камеры 1 звук берётся из него, видео и клипы
-    таймлайна не меняются. Файла нет — `.drp` прежний.
+    Рядом с XML может лежать итоговый голос камеры 1 (`<stem>.voice.<key8>.wav`,
+    путь отдаёт резолвер `core.voicefx.final_voice_path`): у записи камеры 1 звук
+    берётся из него, видео и клипы таймлайна не меняются. Файла нет — `.drp` прежний.
     """
     d = request.get_json() or {}
     xml = jstr(d, "xml").strip().strip('"')

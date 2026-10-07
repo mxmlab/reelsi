@@ -20,7 +20,9 @@
   * галка intro_fx_glow: у слова строки fx=="glow" нет Glo2 (и ветки `else if(fx=="glow")`
     в шаблоне не остаётся), у глитч-слова свечение есть;
   * свои intro_word_glow_thr/rad/int доезжают в .jsx вместо 149/77/0.62 — в ОБЕ ветки;
-  * свои intro_comp_shadow_dir/dist/soft доезжают вместо 135/0/287 в introCompShadow;
+  * свои intro_comp_shadow_dir/dist/soft доезжают вместо 135/0/287 в introCompShadow,
+    а непрозрачность тени в стиле — проценты (intro_comp_shadow_opacity, 0..100) и
+    переводится в сырые 0..255 планом (50 % -> 127.5);
   * план сцены несёт новые ключи для превью (plan.intro_word_fx/plan.intro_comp_shadow),
     и фронт (static/app/85-inserts-view.js) читает ИХ, а не ключи стиля;
   * дефолты ничего не меняют: сборка с новыми ключами, выставленными явно, побайтово
@@ -276,14 +278,18 @@ def test_свои_числа_тени_прекомпа_доезжают(xml_subs
 
 
 def test_цвет_тени_прекомпа_и_новые_числа_вместе(xml_subs, tmp_path):
-    """Новые числа работают и вместе со своим цветом/прозрачностью тени прекомпа."""
+    """Новые числа работают и вместе со своим цветом/непрозрачностью тени прекомпа.
+
+    Непрозрачность — проценты (50 % -> 127.5 из 255): ручка 0..100, а в .jsx уезжает
+    сырое значение AE.
+    """
     jsx = _build(xml_subs, tmp_path,
-                 style={"intro_comp_shadow_fill": [0, 0, 0], "intro_comp_shadow_op": 240.0,
+                 style={"intro_comp_shadow_fill": [0, 0, 0], "intro_comp_shadow_opacity": 50.0,
                         "intro_comp_shadow_dir": 20.0, "intro_comp_shadow_dist": 8.0,
                         "intro_comp_shadow_soft": 40.0}, name="cs_mix.jsx")
     fn = _comp_shadow_fn(jsx)
     assert 'setP(ds,"ADBE Drop Shadow-0001", on2?[1,1,1]:[0,0,0]);' in fn
-    assert 'setP(ds,"ADBE Drop Shadow-0002", on2?68:240);' in fn
+    assert 'setP(ds,"ADBE Drop Shadow-0002", on2?68.1:127.5);' in fn
     assert 'setP(ds,"ADBE Drop Shadow-0003",20);' in fn
     assert 'setP(ds,"ADBE Drop Shadow-0004",8);' in fn
     assert 'setP(ds,"ADBE Drop Shadow-0005",40);' in fn
@@ -320,8 +326,9 @@ def test_план_несёт_новые_ключи_для_превью(xml_subs)
         "glow_thr": 200.0, "glow_rad": 123.0, "glow_int": 1.25,
     }
     assert plan["intro_comp_shadow"] == {"dir": 45.0, "dist": 12.0, "soft": 88.0}
-    # прежняя дверь тени прекомпа (цвет/прозрачность своей камеры) не сломана
-    assert plan["intro"][0]["shadow"] == {"fill": [1, 1, 1], "op": 68}
+    # прежняя дверь тени прекомпа (цвет/прозрачность своей камеры) не сломана:
+    # непрозрачность — сырые 0..255, посчитанные из процентов ручки
+    assert plan["intro"][0]["shadow"] == {"fill": [1, 1, 1], "op": 68.1}
 
 
 def test_план_дефолты_для_превью(xml_subs):

@@ -25,6 +25,7 @@ _SAVE_LOCK = threading.Lock()
 # HERE — корень репозитория, а НЕ папка пакета: ai_config.json всегда лежал
 # рядом с aicut.py, и пакет не должен этого менять.
 from core import paths
+from core import device as _device
 from core.umsg import ReelsiError
 from core.applog import get_logger
 
@@ -261,13 +262,26 @@ def cut_parallel_width(mode: str, review: bool, n_clips: int) -> int:
 
     - mode != "gigaam" или review → 1 (старый путь и ревью параллелить нельзя).
     - step_is_local("cut") → 1 (локальная модель решения на той же GPU, что и распознавание).
-    - Иначе min(step_concurrency("cut"), n_clips), не меньше 1.
+    - Иначе min(step_concurrency("cut"), n_clips), не меньше 1 — и НЕ больше того, что
+      тянет видеокарта: каждый процесс ролика держит CUDA-контекст ~570 МиБ (замер:
+      четыре процесса = 2307 из 4096 МиБ), поэтому заданные 10 роликов на 4 ГБ — это
+      гарантированный OOM в подпроцессе, а в интерфейсе «код 1» без причины.
     """
     if mode != "gigaam" or review:
         return 1
     if step_is_local("cut"):
         return 1
-    return max(1, min(step_concurrency("cut"), n_clips))
+    width = max(1, min(step_concurrency("cut"), n_clips))
+    budget = _device.parallel_width_budget()          # None — карты нет, потолка нет
+    if budget is None or width <= budget:
+        return width
+    # Строка про потолок — в лог задания: без неё «просил 10, порезало 6» выглядит
+    # как потерянная настройка, а не как предел карты.
+    vram = _device.vram_total_mib()
+    card = "{:.1f}".format(vram / 1024) if vram else "?"
+    log.info("карта %s ГиБ, каждый ролик держит ~%d МиБ — одновременно не больше %d "
+             "(просили %d)", card, _device.CUT_ROLE_VRAM_MIB, budget, width)
+    return budget
 
 
 def reason_budget(base: int, level: str) -> int:
@@ -449,7 +463,7 @@ def mask_ai_key(k: str) -> str:
 
 
 def masked_profiles(cfg: dict[str, Any]) -> dict[str, Any]:
-    """Профили для интерфейса: те же поля, но ключ закрыт маской.
+    """Профили для интерфейса: те же поля, но ключ и СВОИ ЗАГОЛОВКИ закрыты маской.
 
     У env-ключа добавляется key_env_ok — «переменная есть в окружении сервера»:
     без него интерфейс не отличит рабочий профиль от профиля с забытой переменной."""
@@ -458,6 +472,8 @@ def masked_profiles(cfg: dict[str, Any]) -> dict[str, Any]:
         k = p.get("api_key") or ""
         env_name = key_env_name(k)
         item = {**p, "api_key": mask_ai_key(k)}
+        if "headers" in item:
+            item["headers"] = mask_headers(item.get("headers"))
         if env_name is not None:
             val = os.environ.get(env_name, "")
             item["key_env_ok"] = bool(val.strip() if isinstance(val, str) else val)
@@ -472,6 +488,67 @@ def unmask_ai_key(key: str | None, saved_name: str | None) -> str:
         saved = load_ai_config()["profiles"].get(saved_name or "", {})
         return saved.get("api_key") or ""
     return key
+
+
+def mask_header_value(v: str) -> str:
+    """Значение своего заголовка наружу — той же маской, что ключ («•••xxxx»).
+
+    Заголовок — поддерживаемый канал секретов (`apply_profile_headers`): там
+    `Authorization`, `x-api-key` и прочие токены. `GET /api/ai_config` отдавал их
+    открытым текстом в браузер (localStorage, история, devtools), и в DOM они
+    светились в поле «Свои заголовки». `env:VAR` не маскируется: это имя
+    переменной, а не секрет — значение подставит `resolve_key` на сервере."""
+    if not v:
+        return v
+    if key_env_name(v) is not None:
+        return v
+    return "•••" + v[-4:]
+
+
+def mask_headers(hdrs: Any) -> Any:
+    """Словарь своих заголовков профиля с закрытыми значениями (ключи как есть)."""
+    if not isinstance(hdrs, dict):
+        return hdrs
+    return {k: mask_header_value(v) if isinstance(v, str) else v for k, v in hdrs.items()}
+
+
+def unmask_header_value(v: str, saved: Any) -> str:
+    """Значение заголовка из формы: маска «•••…» = «не менял» -> сохранённое значение.
+
+    Без этого сохранение с маской записало бы в конфиг саму маску — то есть
+    потеряло бы токен, а профиль показывался бы как рабочий (ровно тот же класс
+    ошибки, от которого защищён ключ профиля)."""
+    v = (v or "").strip()
+    if v.startswith("•••") and isinstance(saved, str) and saved:
+        return saved
+    return v
+
+
+def unmask_headers(hdrs: Any, saved: Any) -> dict[str, str]:
+    """Словарь заголовков из формы: значения-маски подменяются сохранёнными.
+
+    Ключ-маска при смене адреса и провайдера уже отвергается в `save_profile`, так
+    что сохранённый токен к чужому адресу этой дверью не уедет."""
+    saved_h = saved if isinstance(saved, dict) else {}
+    if not isinstance(hdrs, dict):
+        return {}
+    out: dict[str, str] = {}
+    for k, v in hdrs.items():
+        if not (isinstance(k, str) and isinstance(v, str)):
+            continue
+        out[k] = unmask_header_value(v, saved_h.get(k))
+    return out
+
+
+def resolve_header_mask(hdrs: Any, prof_name: str | None) -> dict[str, str]:
+    """Заголовки для ЖИВОГО вызова (проверка, список моделей): маски не уезжают.
+
+    Интерфейс шлёт форму как есть, а в ней значение из `GET /api/ai_config` уже
+    закрыто маской. Отправить маску провайдеру значит сломать проверку связи на
+    ровном месте (`•••xxxx` вместо токена) — поэтому маска подменяется сохранённым
+    значением профиля."""
+    saved = load_ai_config()["profiles"].get(prof_name or "", {})
+    return unmask_headers(hdrs, saved.get("headers") if isinstance(saved, dict) else None)
 
 
 def saved_profile_for_masked(p: dict[str, Any], name: str | None) -> dict[str, Any] | None:

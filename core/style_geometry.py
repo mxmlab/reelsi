@@ -93,6 +93,10 @@ FIELD_KIND: dict[str, str] = {
     "caption_y": Y,
     # Скругление плашки подписи, px (зажимается половиной её высоты, а высота — от кегля).
     "caption_bg_round": SIZE,
+    # --- дисклеймер ---
+    # Сдвиг дисклеймера по горизонтали от центра кадра, px: «x»-поле, как сдвиги
+    # интро/вставок — в 16:9 он обязан ехать вместе с шириной кадра.
+    "disc_dx": X,
     # --- интро ---
     # Общий сдвиг всего интро по горизонтали, px (нул «интро»).
     "intro_x": X,
@@ -140,7 +144,8 @@ FIELD_KIND: dict[str, str] = {
 # Группы (по смыслу, а не по имени):
 #   * доли и проценты кадра/размера: sub_y (доля высоты кадра), insert_c2_x/y,
 #     cam1_zoom_cx/cy, cam2_zoom_cx/cy, cam1_head_x (доли), cam1_fit, sub_scale,
-#     intro_scale, intro_fit_w, intro_line_step, intro_big_step, back_step,
+#     intro_scale, intro_margin/intro_margin2 (процент с каждого края, доля ширины
+#     из него — 1 − 2·margin/100), intro_line_step, intro_big_step, back_step,
 #     back_step_after, back_scale, intro_big_over (проценты-множители);
 #   * проценты зума камеры: cam1_zoom_big/lo/hi, cam1_drift_lo/hi, cam1_take_lo/hi,
 #     cam1_head_min, insert_plate_scale;
@@ -149,8 +154,9 @@ FIELD_KIND: dict[str, str] = {
 #   * dB и проценты прозрачности: glitch_db, music_db, voice_db, pop_db,
 #     sub_bg_op, top_line_track_op, caption_bg_op, intro_shade_op;
 #   * 0..255/0..10 у эффектов: intro_shadow_op, back_shadow_op,
-#     intro_comp_shadow_op, intro_comp_shadow2_op, intro_word_glow_thr,
-#     intro_word_glow_int, intro_glow;
+#     intro_word_glow_thr, intro_word_glow_int, intro_glow;
+#   * проценты непрозрачности тени прекомпа интро (в 0..255 их переводит план):
+#     intro_comp_shadow_opacity, intro_comp_shadow2_opacity;
 #   * цвет камер (Lumetri): экспозиция и ползунки цвета — безразмерные, как в AE;
 #   * ротоскоп: roto_bottom — доля низа кадра под маску (0..1);
 #   * углы: intro_shadow_dir, intro_comp_shadow_dir, cam1_rot;
@@ -180,12 +186,16 @@ FRAME_INDEPENDENT: frozenset[str] = frozenset({
     "top_line_track_op",
     # подпись
     "caption_bg_op", "caption_kx", "caption_ky",
+    # дисклеймер: масштаб — множитель подобранного кегля (кегль уже размер кадра),
+    # положение — доля ВЫСОТЫ кадра, как sub_y
+    "disc_scale", "disc_y",
     # интро: множители, проценты и времена
-    "intro_scale", "intro_fit_w", "intro_fit_max", "intro_line_step",
+    "intro_scale", "intro_margin", "intro_margin2", "intro_fit_max", "intro_fit_max2",
+    "intro_line_step",
     "intro_big_step", "intro_big_over", "back_step",
     "back_scale", "intro_fade", "intro_fx_hold_add", "intro_last_hold",
     "intro_sub_fade", "intro_shadow_op", "intro_shadow_dir",
-    "back_shadow_op", "intro_comp_shadow_op", "intro_comp_shadow2_op",
+    "back_shadow_op", "intro_comp_shadow_opacity", "intro_comp_shadow2_opacity",
     "intro_comp_shadow_dir", "intro_word_glow_thr", "intro_word_glow_int",
     "intro_glow", "intro_shade_op",
     # вставки
@@ -221,7 +231,7 @@ FRAME_INDEPENDENT: frozenset[str] = frozenset({
     # звук
     "pop_db", "glitch_db", "music_db", "voice_db", "pop_lead",
     # версии миграций
-    "cam_zoom_v",
+    "cam_zoom_v", "intro_comp_shadow_v",
 })
 
 

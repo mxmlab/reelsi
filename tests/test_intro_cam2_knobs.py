@@ -336,7 +336,7 @@ def test_ручки_кам2_в_группах_схемы():
     """Камерные ручки интро собраны в intro.cam1 и intro.cam2 с одинаковым порядком и подписями.
 
     Тень прекомпа обеих камер — в одной группе intro.cshadow (поля
-    intro_comp_shadow_fill/op и intro_comp_shadow2_fill/op переехали туда).
+    intro_comp_shadow_fill/opacity и intro_comp_shadow2_fill/opacity переехали туда).
     """
     from core.style_schema import LAYERS
     intro = next(s for s in LAYERS if s["id"] == "intro")
@@ -348,8 +348,8 @@ def test_ручки_кам2_в_группах_схемы():
     cshadow = next(g for g in intro["items"] if g["id"] == "intro.cshadow")
     cshadow_keys = [it["key"] for it in cshadow["items"]]
     assert cshadow_keys[:4] == [
-        "intro_comp_shadow_fill", "intro_comp_shadow_op",
-        "intro_comp_shadow2_fill", "intro_comp_shadow2_op",
+        "intro_comp_shadow_fill", "intro_comp_shadow_opacity",
+        "intro_comp_shadow2_fill", "intro_comp_shadow2_opacity",
     ], f"тень прекомпа обеих камер обязана лежать в intro.cshadow: {cshadow_keys}"
 
     cam1 = next(g for g in intro["items"] if g["id"] == "intro.cam1")
@@ -357,18 +357,26 @@ def test_ручки_кам2_в_группах_схемы():
 
     expected_cam1 = [
         "intro_y", "intro_anchor", "intro_scale_anchor", "intro_cam",
-        "intro_roto_by_pos",
+        "intro_margin", "intro_fit_max", "intro_roto_by_pos",
     ]
     expected_cam2 = [
         "intro_y2", "intro_anchor2", "intro_scale_anchor2", "intro_cam2",
-        "intro_roto_by_pos2",
+        "intro_margin2", "intro_fit_max2", "intro_roto_by_pos2",
     ]
     assert [it["key"] for it in cam1["items"]] == expected_cam1
     assert [it["key"] for it in cam2["items"]] == expected_cam2
 
-    expected_labels = [
+    # Подписи камерных ручек свои у каждой камеры (ручки ширины — по камерам), остальные
+    # совпадают: «Якорь», «Точка масштабирования» и галки читаются одинаково.
+    expected_cam1_labels = [
         "Положение по Y", "Якорь", "Точка масштабирования", "Едет с камерой",
+        "Отступ от краёв, % (камера 1)", "Масштаб интро, % (камера 1)",
         "Над рото в нижней половине",
     ]
-    assert [it["label"] for it in cam1["items"]] == expected_labels
-    assert [it["label"] for it in cam2["items"]] == expected_labels
+    expected_cam2_labels = [
+        "Положение по Y", "Якорь", "Точка масштабирования", "Едет с камерой",
+        "Отступ от краёв, % (камера 2)", "Масштаб интро, % (камера 2)",
+        "Над рото в нижней половине",
+    ]
+    assert [it["label"] for it in cam1["items"]] == expected_cam1_labels
+    assert [it["label"] for it in cam2["items"]] == expected_cam2_labels

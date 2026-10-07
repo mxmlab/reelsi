@@ -938,7 +938,9 @@ def test_preview_swaps_video_instead_of_seeking_at_the_cut(js):
     assert "function pvTick(" not in js, "вернулся второй плеер шага 1 (pvTick)"
     # дублёр обязан жить ВНЕ P.vids: иначе pvVisual покажет его как отдельную камеру
     take = js[js.index("function bufTake(P,b,at)"):js.index("function spareLead(P)")]
-    assert "P.vids[b.slot]=b.el;b.el=old" in take, "подмена больше не меняет элементы местами"
+    assert "P.vids[b.slot]=b.el" in take and "b.el=old" in take, (
+        "подмена больше не меняет элементы местами (у камер — слот в P.vids, у дорожки голоса — её <audio>)")
+    assert "bufSwap(P,b)" in take, "подмена идёт мимо общего обмена ролями"
     assert "P.bufs.forEach(b=>{b.el.volume=MEDIA_VOL;})" in js, (
         "громкость мимо дублёров: после подмены они выходят в эфир и уровень прыгнет")
 
@@ -1103,7 +1105,7 @@ def test_double_buffer_catches_up_to_the_seam_by_rate(js):
         "скорость догона считается не из «сколько медиа осталось на сколько времени»")
 
     take = js[js.index("function bufTake(P,b,at)"):js.index("function spareLead(P)")]
-    assert "P.vids[b.slot].playbackRate=1" in take, (
+    assert "live.playbackRate=1" in take, (
         "дублёр выходит в эфир с разгонной скоростью — картинка поедет быстрее звука")
 
 
@@ -1622,20 +1624,21 @@ def test_insert_shift_survives_ensure_jobs_rebuild(js):
     """Сдвиг вставки, сделанный драгом в предпросмотре, переживает пересборку списка.
     ensureJobs целиком пересобирает c.job.ins из карточек шага 2 и убивал
     x/y: драг писал только в INS, а источник x/y — карточка c.inserts (в ui_state у всех
-    54 вставок на момент жалобы стояли нули). Теперь драг пишет и в карточку тем же
-    norm-сравнением пути, а перенос tw для ручных вставок без карточки несёт x/y.
+    54 вставок на момент жалобы стояли нули). Теперь драг пишет и в карточку, найденную по
+    стабильному id вставки (insCardFor), а перенос tw для ручных вставок без карточки несёт x/y.
     """
     drag = _fn_body(js, "$('ipvins').addEventListener('pointerdown'")
-    assert "cl.inserts" in drag, "драг не дотягивается до карточек шага 2"
-    assert "normInsPath(INS[real].media)" in drag, (
-        "карточка ищется не тем norm-сравнением, что ensureJobs")
-    assert "cl.inserts[ic].x=nx" in drag and "cl.inserts[ic].y=ny" in drag, (
+    assert "insCardFor(INS[real])" in drag, (
+        "драг ищет карточку мимо общего insCardFor — у дублей одного файла правка уедет в первую")
+    assert "card.x=nx" in drag and "card.y=ny" in drag, (
         "сдвиг не записывается в карточку шага 2 (источник x/y)")
 
     jobs = _fn_body(js, "function ensureJobs(")
     assert "noexit:x.noexit,x:x.x,y:x.y" in jobs, (
         "перенос tw для ручных вставок (без карточки) не несёт x/y")
     assert "normInsPath(x.media)" in jobs, "ensureJobs не использует общий normInsPath"
+    assert "tw[x.uid]" in jobs, (
+        "подстройки переносятся не по стабильному id карточки — дубли одного файла получат чужие")
 
 
 def test_frame_drag_shift_locks_one_axis(js):
@@ -1851,7 +1854,8 @@ def test_proxy_moves_on_the_seam_not_in_the_live_video(js):
     assert "bufSwap(P,b)" in hand, "передача эфира идёт мимо общего обмена"
 
     swap = _fn_body(js, "function bufSwap(P,b)")
-    assert "P.vids[b.slot]=b.el;b.el=old" in swap, "общий обмен потерял подмену элементов"
+    assert "P.vids[b.slot]=b.el" in swap and "b.el=old" in swap, (
+        "общий обмен потерял подмену элементов")
 
 
 def test_players_remember_camera_paths_and_watch_proxies(js):
@@ -2665,76 +2669,87 @@ def test_remove_selected_reloads_panel_when_active_removed(js):
         "при пустом списке не снимается принадлежность панели (AEXML)")
 
 
-def test_insdel_undo_snapshot_and_restore_contract(js, html):
-    """Одноуровневый undo удаления вставки: снимок ДО мутации, откат по XML.
+def test_inserts_history_undo_redo_contract(js, html):
+    """Отмена и повтор правок вставок: снимок состояния, ОДНА дверь записи, кнопки в окне.
 
-    insDel делает снимок {xml, idx, копию вставки, ТОЧНОЕ ins_rejected} до splice —
-    иначе undo вернёт вставку уже после того, как insDel дописал брак в rejected.
-    undo ищет клип ПО XML (индекс мог уехать), кладёт вставку на исходное место и
-    восстанавливает ins_rejected. Кнопка disabled, когда отменять нечего.
-    insClearMedia — другой сценарий (снять файл, карточка остаётся), его не трогаем.
+    Раньше отмена была одноуровневой (INS_UNDO) и только на удаление. Теперь история на клип:
+    снимок {inserts, ins_rejected, insTarget, job_ins}, стеки отмены и повтора глубиной 100, а
+    пишет в них ОДНА дверь — insHistTouch, которую зовёт saveState (поэтому в историю попадает
+    ЛЮБАЯ правка, а не перечисленные вручную двери). Поведение — пять разных правок, пять
+    отмен, повтор и предел глубины — гоняет tests/test_ins_identity_undo.py на боевых функциях.
     """
-    assert 'id="insUndoBtn"' in html, "кнопки undo в окне вставок нет"
+    assert 'id="insUndoBtn"' in html, "кнопки отмены в окне вставок нет"
     btn = html[html.index('id="insUndoBtn"') - 120:html.index('id="insUndoBtn"') + 260]
     assert 'data-ic="undo"' in btn and 'aria-label=' in btn and 'data-t=' in btn, (
         "кнопка не с undo-иконкой / без имени / без справки")
+    assert "Ctrl+Z" in btn, "кнопка отмены не подписана горячей клавишей"
+    assert 'id="insRedoBtn"' in html and 'onclick="insRedo()"' in html, (
+        "рядом с отменой нет кнопки повтора")
+    redo = html[html.index('id="insRedoBtn"') - 120:html.index('id="insRedoBtn"') + 260]
+    assert 'aria-label=' in redo and 'data-t=' in redo, "у кнопки повтора нет имени и справки"
+    assert "Ctrl+Shift+Z" in redo, "кнопка повтора не подписана горячей клавишей"
+
+    # двери: запись — только insHistTouch, а insDel своей копии снимка больше не держит
     dele = _fn_body(js, "function insDel(")
-    assert "INS_UNDO={" in dele, "insDel не делает снимок для undo"
-    assert dele.index("INS_UNDO={") < dele.index("c.inserts.splice"), (
-        "снимок делается ПОСЛЕ splice — undo вернёт не то")
-    assert "insUndoUI()" in dele, "insDel не обновляет кнопку undo"
+    assert "INS_UNDO" not in dele, "у insDel снова своя копия отмены вместо общего журнала"
+    assert "saveState()" in dele, "удаление не доходит до общей двери истории (saveState)"
+
+    boot = _read(os.path.join(ROOT, "static", "app", "99-boot.js"))
+    save = boot[boot.index("function saveState()"):boot.index("function srvStateSave(")]
+    assert "insHistTouch()" in save, "saveState не зовёт insHistTouch — история останется пустой"
+
+    hist = _fn_body(js, "function insHistState(")
+    for fld in ("inserts", "ins_rejected", "insTarget", "job_ins"):
+        assert fld in hist, "в снимок истории не попало поле " + fld
+    touch = _fn_body(js, "function insHistTouch(")
+    assert "h.undo.push(last)" in touch and "h.redo.length=0" in touch, (
+        "новая правка не уходит в стек отмены или не очищает стек повтора")
+    assert "INS_HIST_MAX" in touch, "глубина стека отмены не ограничена"
     und = _fn_body(js, "function insUndo(")
-    assert "CLIPS.find" in und and ".xml===u.xml" in und, "undo ищет клип не по XML"
-    assert "splice(Math.min(u.idx" in und, "вставка не возвращается на исходное место"
-    assert "c.ins_rejected" in und, "undo не восстанавливает ins_rejected"
-    assert "renderInsHost()" in und and "syncClipLists()" in und and "saveState()" in und
-    assert "INS_UNDO=null" in und, "после undo снимок не гасится — кнопка останется активной"
+    assert "h.undo.pop()" in und and "h.redo.push(" in und, (
+        "отмена не перекладывает состояние в стек повтора")
+    red = _fn_body(js, "function insRedo(")
+    assert "h.redo.pop()" in red and "h.undo.push(" in red, (
+        "повтор не возвращает состояние обратно в стек отмены")
+    ap = _fn_body(js, "function insHistApply(")
+    assert "INS_HIST_APPLY=true" in ap, (
+        "применение снимка не защищено флагом — откат сам станет шагом истории")
+    assert "ipvAfterEdit()" in ap, "после отката экран не перерисовывается общим путём"
 
 
-def test_insdel_undo_runs_the_real_helpers(js):
-    """insDel/insUndo исполняются боевыми в node: удалить → откатить точно.
+def test_inserts_history_clip_and_depth_are_declared_once(js):
+    """Журнал истории — один на клип, а глубина задана одним числом.
 
-    Статическая проверка не поймала бы, что undo кладёт вставку не на исходный
-    индекс или не восстанавливает ins_rejected. Сценарий: фото с query уходит в
-    rejected при удалении; клип впереди удалён (target уехал с индекса — поиск по
-    XML); откат возвращает вставку со всеми полями и rejected как было, а снимок
-    гаснет (кнопка disabled).
+    Стек на клип (ключ — xml): переключение клипа в окне зовёт insHistReset, иначе на новом
+    клипе отменялись бы правки прежнего. Отдельная копия «undo для удаления» вернулась бы —
+    её тут и сторожим.
     """
-    helpers = "\n".join(_func(js, n) for n in ("insDel", "insUndo", "insUndoUI"))
-    out = _run_node(
-        "let INS_UNDO=null,curIns=-1;"
-        "function renderInsHost(){}function syncClipLists(){}function saveState(){}"
-        "function uiLog(){}function t(v){return v;}const $=()=>({disabled:false});"
-        + helpers +
-        "const clip={xml:'A',inserts:["
-        "{type:'photo',start_sec:1,query:'sunset',media:'x.png'},"
-        "{type:'video',start_sec:5,query:'',media:'y.mp4'}],ins_rejected:[{query:'old'}]};"
-        "CLIPS=[{xml:'B',inserts:[]},clip];curIns=1;"
-        "insDel(0);"
-        "const afterDel=JSON.parse(JSON.stringify(CLIPS[1]));"
-        "CLIPS.splice(0,1);curIns=0;"
-        "insUndo();"
-        "const c=CLIPS[0];"
-        "console.log(JSON.stringify({"
-        "afterDelIns:afterDel.inserts.length,"
-        "afterDelRej:afterDel.ins_rejected.length,"
-        "afterDelLastQuery:afterDel.ins_rejected[afterDel.ins_rejected.length-1].query,"
-        "restoredIns:c.inserts.length,"
-        "i0type:c.inserts[0].type,i0sec:c.inserts[0].start_sec,"
-        "i0query:c.inserts[0].query,i0media:c.inserts[0].media,"
-        "i1sec:c.inserts[1].start_sec,i1media:c.inserts[1].media,"
-        "rejected:c.ins_rejected.length,firstQuery:c.ins_rejected[0].query,"
-        "hasUndo:!!INS_UNDO}));")
-    assert out == {
-        "afterDelIns": 1,                          # после удаления осталась только видео
-        "afterDelRej": 2,                          # фото дописало брак в rejected
-        "afterDelLastQuery": "sunset",
-        "restoredIns": 2,
-        "i0type": "photo", "i0sec": 1, "i0query": "sunset", "i0media": "x.png",
-        "i1sec": 5, "i1media": "y.mp4",
-        "rejected": 1, "firstQuery": "old",        # rejected вернулся к ДО-удаления значению
-        "hasUndo": False,                          # снимок погас — кнопка disabled
-    }
+    assert "INS_HIST={}" in js or "INS_HIST = {}" in js, "журнал истории не заведён"
+    reset = _fn_body(js, "function insHistReset(")
+    assert "INS_HIST[c.xml]={undo:[],redo:[]}" in reset, (
+        "сброс истории не заводит пустые стеки отмены/повтора на клипе")
+    assert "INS_HIST_LAST[c.xml]=" in reset, "сброс истории не ставит базовый снимок"
+    assert "INS_UNDO" not in js, "вернулась прежняя одноуровневая отмена (INS_UNDO)"
+    assert js.count("INS_HIST_MAX=100") == 1, "предел глубины истории задан не одним числом"
+
+
+def test_insdel_goes_through_the_common_history_door(js):
+    """insDel — обычная правка: мутирует состояние и зовёт saveState, своей отмены не держит.
+
+    Одноуровневый снимок внутри insDel (INS_UNDO) ушёл вместе с прежней отменой: удаление
+    попадает в общий журнал тем же путём, что тайминг, выбор файла и драг. Копия журнала
+    (или снимок «до splice» рядом с ним) снова разошлась бы с общей дверью — на этом уже
+    горели introResolve.
+    """
+    dele = _fn_body(js, "function insDel(")
+    assert "INS_UNDO" not in dele, "в insDel вернулась своя копия отмены"
+    assert "ins_rejected" in dele, (
+        "удаление карточки с запросом больше не отбраковывает запрос для повторной разметки")
+    assert dele.index("ins_rejected") < dele.index("c.inserts.splice"), (
+        "отбраковка пишется ПОСЛЕ удаления — повторная разметка не узнает про удалённое")
+    assert "saveState()" in dele, "insDel не доходит до общей двери истории (saveState)"
+    assert "renderInsHost()" in dele and "syncClipLists()" in dele, (
+        "после удаления не перерисованы список карточек и теги клипов")
 
 
 def test_step2_phase_buttons_and_checkboxes_fd(html, js):
@@ -2979,6 +2994,10 @@ def test_style_panel_layer_order_and_slider_contracts(css, js):
     assert "min-width:240px" in slider_rules.replace(" ", "") or "min-width: 240px" in slider_rules
 
 
+# Группа "chrome": замер идёт в настоящем безголовом Chrome, а несколько браузеров
+# разом под `pytest -n auto` меряют геометрию под нагрузкой и разъезжаются. Вместе со
+# стендами геометрии окна вставок тест идёт в том же воркере (--dist loadgroup).
+@pytest.mark.xdist_group("chrome")
 def test_preview_modal_style_column_geometry_no_overlap(css, tmp_path):
     """Узкое окно 1000x640: колонка панели стиля не налезает на таймлайн (п. 9)."""
     # 1. CSS-правила: inscols и блоки стиля замкнуты по высоте и скроллу

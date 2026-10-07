@@ -30,7 +30,8 @@ from typing import Any, Callable, Sequence, cast
 from .jsutil import _jd, _r
 from .layout import (INTRO_BASE_Y, INTRO_F_OUT, INTRO_SAFE_TOP, INTRO_SCALE,
                      _intro_group_window, _intro_i_dy, _show_segments, _zoom_max,
-                     intro_big_layout, intro_block_span, intro_clamp_window,
+                     intro_big_layout, intro_block_span,
+                     intro_clamp_window,
                      intro_hits_subs, intro_line_sizes, intro_line_ys,
                      intro_sub_window)
 from .plan_camera import _intro_hl_words
@@ -177,16 +178,23 @@ def _grp_big_i(g: list[dict[str, Any]]) -> int | None:
 def _scale_anchor_y(mode: str, ys: Sequence[float | None], h: float) -> float:
     """Y якоря масштабирования прекомпа в координатах прекомпа, px (intro_scale_anchor).
 
-    "first" — Y первой строки блока, "block" — середина между первой и последней строкой,
-    всё остальное ("comp" и незнакомое значение) — центр композиции прекомпа h/2, то есть
-    прежнее поведение. Строки без Y (вырожденная раскладка «большое слева» отдаёт None) —
-    тоже центр: якорь обязан быть числом. Округление до сотых — как у самих ys.
+    "first" — Y САМОЙ ВЕРХНЕЙ строки блока (минимум из непустых ys), "block" — середина
+    между верхней и нижней строкой (min/max), всё остальное ("comp" и незнакомое значение) —
+    центр композиции прекомпа h/2, то есть прежнее поведение. Строки без Y (вырожденная
+    раскладка «большое слева» отдаёт None) — тоже центр: якорь обязан быть числом.
+    Округление до сотых — как у самих ys.
+
+    Верх блока — именно МИНИМУМ ys, а не первая по списку: у группы «большое слева» первой
+    в списке лежит БОЛЬШАЯ строка, а её базовая линия — низ блока (intro_big_layout сажает
+    её на базовую линию последней строки стопки). Автофит жмёт группу вокруг якоря, и с
+    якорем на низу большой строки верх блока уезжал вниз от соседей без большой строки. У
+    обычной группы строки идут сверху вниз, поэтому её число не меняется ни на сотую.
     """
-    _ok = [v for v in ys if v is not None]
+    _ok = [float(v) for v in ys if v is not None]
     if mode == "first" and _ok:
-        return round(float(_ok[0]), 2)
+        return round(min(_ok), 2)
     if mode == "block" and _ok:
-        return round((float(_ok[0]) + float(_ok[-1])) / 2.0, 2)
+        return round((min(_ok) + max(_ok)) / 2.0, 2)
     return h / 2.0
 
 
@@ -415,7 +423,7 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
     # и в правиле _far ниже. Второй копии числа нет.
     _intro_last_hold = float(inp.intro_last_hold)
     intro_sub_cut, intro_sub_fade = style.intro_sub_cut, style.intro_sub_fade
-    _G, _fit_w, _fit_max = style.intro_scale_k, style.fit_w, style.fit_max
+    _G = style.intro_scale_k
     _intro_cam = style.intro_cam
     # Ручка камеры 2 — своя: нул «интро на кам2» либо ребёнок нула Камеры 2, либо в
     # координатах кадра (см. build_intro2_cam2 в build.py). Значение по умолчанию для
@@ -423,6 +431,8 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
     _intro_cam2 = style.intro_cam2
     cam1_scale, holds = inp.cam1_scale, inp.holds
     cam2_scale_raw, cam2_holds_raw = inp.cam2_scale, inp.cam2_holds
+    # Непрозрачность тени прекомпа — уже в 0..255: проценты ручки пересчитаны ОДНИМ
+    # местом в plan_style.read_style, здесь второй формулы нет.
     intro_comp_shadow_fill, intro_comp_shadow_op = style.intro_comp_shadow_fill, style.intro_comp_shadow_op
     intro_comp_shadow2_fill, intro_comp_shadow2_op = (style.intro_comp_shadow2_fill,
                                                       style.intro_comp_shadow2_op)
@@ -554,9 +564,6 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
             # формулы не заводим, автофит мерит то же, что считает раскладка.
             _big_total = -2.0 * float(cast(Any, _lx)[_big_i])
             _n_stack = len(_stack)
-        _intro_ly.append(_ys)
-        _intro_lx.append(_lx)
-        _intro_lk.append(_lk)
         # Базовая позиция блока интро: невзведённая (без зума) позиция по
         # вертикали от ЦЕНТРА кадра = (INTRO_Y | INTRO_Y2 на кам2) − INTRO_BASE_Y + iDy. gDy НЕ
         # включаем — он уже живёт отдельным полем dy (драг правит dy в кэше
@@ -577,15 +584,19 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
         # сильнее автофита), автофит не урезает его значение.
         # Зум камеры СВОЕЙ группы в автофит входит, только пока интро к ней привязано:
         # откреплённый текст её зумом не растёт — ключей нет, значит _zoom_max даёт 100.
-        # Откреплённое интро подгоняется к ширине кадра в ОБЕ стороны:
-        # увеличивать его зумом больше некому, поэтому доля ширины — из ручки intro_fit_w,
-        # а потолок увеличения — из intro_fit_max.
+        # Откреплённое интро подгоняется к ширине кадра в ОБЕ стороны (увеличивать его
+        # зумом больше некому), привязанное — только ужимается. Доля ширины у КАЖДОЙ
+        # камеры своя (ручка «Отступ от краёв»: intro_margin | intro_margin2), и потолок
+        # увеличения тоже (intro_fit_max | intro_fit_max2) — выбираем оба здесь, тем же
+        # выбором камеры группы, что и галку _cs: второго места с этим правилом нет.
+        _fit_w = style.fit_w2 if _on2 else style.fit_w
+        _fit_max = style.fit_max2 if _on2 else style.fit_max
         if _gs == 100:
             _ds = _intro_fit_ds(_lines, _ts, _te, _ds, meta["w"], _G,
                                 _cam_keys,
                                 meta["fps"], back_scale, intro_font_ps, intro_hl_font_ps,
                                 _fsize_base, holds=_cam_holds, big_w=_big_total,
-                                fit_w=None if _cs else _fit_w,
+                                fit_w=_fit_w,
                                 both_ways=not _cs,
                                 fit_max=None if _cs else _fit_max)
         _idy = _intro_i_dy(meta["h"], 1 if _anchor == "first" else _n_stack,
@@ -605,6 +616,18 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
         # наследует: его базу _G множить не должен — иначе текст уезжал бы от смены
         # общего масштаба интро, которой в кадре не видно.
         _y = round(_base_y + (_G * (-INTRO_BASE_Y + _idy) if _cs else (-INTRO_BASE_Y + _idy)), 2)
+        # Группу с большой строкой НИЧЕМ не выравниваем отдельно: её положение задаёт тот
+        # же ключ стиля, что у обычных групп (intro_y/intro_y2 и intro_anchor/
+        # intro_anchor2), а верхняя строка СТОПКИ стоит на базе якоря — ровно там же, где
+        # верхняя строка обычной группы того же масштаба и камеры. Раньше верх блока
+        # подгоняли под обычную раскладку той же группы (intro_big_top_shift): большая
+        # строка подобрана под высоту стопки и ручкой intro_big_over приподнята над верхом,
+        # и подгонка сдвигала ВСЮ стопку с базы якоря — группа с большой стояла не там, где
+        # её поставил стиль, да ещё и y уезжал на компенсацию якоря. Раскладка строк ВНУТРИ
+        # блока (intro_big_layout: большая слева, стопка справа) при этом не меняется.
+        _intro_ly.append(_ys)
+        _intro_lx.append(_lx)
+        _intro_lk.append(_lk)
         # Кегль каждой строки (back_scale/lk) и Y базовых линий — одни и те же числа нужны
         # и безопасной зоне ниже, и решению про полосу субтитров.
         _line_sizes = intro_line_sizes(_lines, _fsize_base, back_scale, _lk)
@@ -777,8 +800,11 @@ def plan_intro(inp: IntroInputs) -> IntroPlan:
                            # контейнера (как у блока без ключа), и .jsx прежний байт в байт.
                            **({"anchor_y": _ay} if _anchor_mode != "comp" else {}),
                            # Тень прекомпа этой группы: цвет и непрозрачность
-                           # ТОЙ камеры, на которой группа (_on2). Тем же числом живёт
-                           # превью (filter: drop-shadow), второй копии выбора камеры нет.
+                           # ТОЙ камеры, на которой группа (_on2). Непрозрачность — сырые
+                           # 0..255 (проценты пересчитаны в plan_style.read_style, у превью
+                           # своей формулы нет: оно делит это число на 255 для CSS).
+                           # Тем же числом живёт превью (filter: drop-shadow), второй копии
+                           # выбора камеры нет.
                            "shadow": {"fill": (intro_comp_shadow2_fill if _on2
                                                else intro_comp_shadow_fill),
                                       "op": (intro_comp_shadow2_op if _on2

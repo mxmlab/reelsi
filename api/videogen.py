@@ -14,7 +14,7 @@ from ._core import (APP_NAME, APP_REFERER, LOG_CAP, bp, env, jstr, journal_inter
 from core import paths
 from core.fileio import atomic_json_dump, quarantine_unreadable
 from core.umsg import ReelsiError, umsg
-from core.app_meta import http_req
+from core.app_meta import http_req, unsafe_url_reason
 from core.applog import get_logger
 
 log = get_logger(__name__)
@@ -534,6 +534,13 @@ def api_video_probe() -> Response:
     url = jstr(d, "url").strip()
     if not url.lower().startswith("https://"):
         return jsonify(ok=False, error="нужна https-ссылка")
+    # Ссылку-референс берёт ffprobe, то есть запрос уходит по адресу из тела запроса:
+    # `https://127.0.0.1` или `https://169.254.169.254` — это запрос внутрь машины и в
+    # локальную сеть. Проверка та же, что на скачивании готового ролика (core/stock.py,
+    # core/aicut/video.py): один SSRF-гвард на всех, кто ходит по чужому адресу.
+    reason = unsafe_url_reason(url)
+    if reason:
+        return jsonify(ok=False, error=reason)
     info = aicut.probe_media(url)
     if not info:
         return jsonify(ok=False, kind="video" if aicut.is_video_url(url) else "image",

@@ -7,11 +7,15 @@
 (цвет [1,1,1], направление 135, дистанция 0, мягкость 287) — одну на обе камеры.
 Ключи стиля `intro_comp_shadow*` (камера 1) и `intro_comp_shadow2*` (камера 2) задают
 свой цвет и непрозрачность; группа берёт значения ТОЙ камеры, на которой висит
-(INTRO_ON2[gI] — тот же признак, что у нула «интро на кам2»). Превью рисует ту же тень
-фильтром `drop-shadow` по числу из плана (plan.intro[].shadow).
+(INTRO_ON2[gI] — тот же признак, что у нула «интро на кам2»). Непрозрачность в стиле —
+ПРОЦЕНТЫ (`intro_comp_shadow_opacity`/`intro_comp_shadow2_opacity`, 0..100), в сырые
+0..255 AE её переводит одно место — plan_style. Превью рисует ту же тень фильтром
+`drop-shadow` по числу из плана (plan.intro[].shadow), перевод — общая дверь
+`aeShadowCss` (она же у субтитров, вставок и плашки: замер r = 0.374·Softness).
 
-Дефолты (белая, 68) НЕ меняют .jsx: подстановка — ровно прежняя строка dropShadow(iL, 68),
-объявление introCompShadow пустое (побайтовость стережёт golden_geometry.jsx).
+Дефолты (белая, 26.7 % = прежние 68 из 255) НЕ меняют .jsx: подстановка — ровно прежняя
+строка dropShadow(iL, 68), объявление introCompShadow пустое (побайтовость стережёт
+golden_geometry.jsx).
 
 Фикстура: timeline_subs.xml.gz — первый кат на кадре 443 @60fps (7.3833 с): до него
 Камера 1, после — Камера 2.
@@ -71,27 +75,34 @@ def test_дефолт_прежний_dropshadow(xml_subs, tmp_path):
 
 
 def test_камера_2_чёрная_тень_240(xml_subs, tmp_path):
-    """Стиль с чёрной тенью 240 у камеры 2: в .jsx объявлена introCompShadow с выбором
+    """Стиль с чёрной тенью на камере 2: в .jsx объявлена introCompShadow с выбором
     по INTRO_ON2[gI] и числами камеры 2; в плане у группы камеры 2 — свои значения,
-    у группы камеры 1 — дефолтные."""
-    style = {"intro_comp_shadow2_fill": [0, 0, 0], "intro_comp_shadow2_op": 240}
+    у группы камеры 1 — дефолтные.
+
+    Ручка `intro_comp_shadow2_opacity` — ПРОЦЕНТЫ (0..100): 94 % дают 239.7 из 255, и
+    именно это сырое число видят .jsx и план (проценты пересчитаны в plan_style).
+    """
+    style = {"intro_comp_shadow2_fill": [0, 0, 0], "intro_comp_shadow2_opacity": 94.0}
     groups = _plan(xml_subs, TIMES, SPLITS, style)["intro"]
     assert [g["on2"] for g in groups] == [False, False, True]
-    assert groups[0]["shadow"] == {"fill": [1, 1, 1], "op": 68}
-    assert groups[2]["shadow"] == {"fill": [0, 0, 0], "op": 240}
+    assert groups[0]["shadow"] == {"fill": [1, 1, 1], "op": 68.1}
+    assert groups[2]["shadow"] == {"fill": [0, 0, 0], "op": 239.7}
 
     jsx = _build(xml_subs, tmp_path, TIMES, SPLITS, style)
     assert "introCompShadow(iL, INTRO_ON2[gI]);" in jsx
     assert re.search(r"function introCompShadow\(L, on2\)", jsx)
-    assert "[0,0,0]" in jsx and "240" in jsx
+    assert "[0,0,0]" in jsx and "239.7" in jsx
 
 
 def test_фронт_превью_рисует_тень():
-    """Сторож фронта: introGroupWindows протаскивает shadow из плана, ipvIntro ставит
-    на #ipvintro фильтр drop-shadow (приближение AE Drop Shadow, дистанция 0)."""
+    """Сторож фронта: introGroupWindows протаскивает shadow из плана, ipvIntro зовёт
+    общую дверь перевода Drop Shadow (aeShadowCss — тот же перевод, что у субтитров,
+    вставок и плашки: своих чисел тени у превью нет)."""
     js = open(os.path.join(ROOT, "static", "app", "85-inserts-view.js"),
               encoding="utf-8").read()
     assert re.search(r"shadow:g\.shadow", js), (
         "introGroupWindows обязан протащить shadow из плана")
-    assert re.search(r"filter='drop-shadow\(", js), (
-        "ipvIntro обязан ставить filter: drop-shadow для тени прекомпа")
+    assert re.search(r"function aeShadowCss\(sh,k\)", js), (
+        "в превью нет общей двери перевода Drop Shadow в CSS")
+    assert re.search(r"io\.style\.filter=aeShadowCss\(\{op255:sh\.op", js), (
+        "ipvIntro обязан ставить тень прекомпа общей дверью aeShadowCss")

@@ -86,9 +86,11 @@ function cpvStep(){if(!CPV.playing)return;
   const st=pvStep(CPV);if(!st)return;
   if(st.end){cpvPause();cpvSeekTo(0);return;}
   cpvApply(st.tm,true);spareRollAt(CPV,st.tm);
+  if(typeof pvAudioLimit==='function')pvAudioLimit($('cpvstage'),CPV);   // строка про звук Firefox — по ходу игры
   cpvUI(st.tm);}
 function cpvTick(){if(!CPV.playing)return;cpvStep();CPV.raf=requestAnimationFrame(cpvTick);}
 function cpvPlay(){if(!CPV.vids.length)return;CPV.playing=true;$('cpvplay').innerHTML=ico('pause');
+  if(typeof audioWake==='function')audioWake();   // граф будится одной дверью — из обработчика нажатия
   CPV.vids[0].play().catch(()=>{});cpvApply(cpvNow(),true);sparePrime(CPV);
   if(typeof vtTick==='function')vtTick(CPV,cpvNow());
   CPV.raf=requestAnimationFrame(cpvTick);clearInterval(CPV.itv);CPV.itv=setInterval(cpvStep,120);}

@@ -378,7 +378,18 @@ def plan_audio(inp: AudioInputs) -> AudioPlan:
                                     for t in _glitch_word_times],
                          "db": glitch_db, "base": 0.0})
     music_path = ""
-    _mdir = music_dir or os.path.join(base, "music")   # папка музыки (по умолчанию рядом с XML)
+    # Папку музыки присылает интерфейс явно (musicPickDir — вся лестница там), и это же
+    # значение уезжает в музыку превью: своей лестницы у сервера нет. Папку XML брать
+    # нельзя: `base` приходит сюда из plan_assets (`base or _project_base(xml_path)`), а
+    # тот отдаёт папку самого XML, если она не похожа на папку вывода. Клип из
+    # `_tools_claude/repro_big` так и искал треки в `repro_big/music` и собрался без
+    # музыки (2026-10-06), хотя треки лежат в папке проекта. Запасная ступень —
+    # `<присланная папка проекта>/music` — работает, только когда эта папка НЕ папка
+    # самого XML; иначе папки нет: выдумывать её нечем, а чужой `music` рядом с XML
+    # молча отдал бы пустой выбор.
+    _mdir = str(music_dir or "").strip()
+    if not _mdir and base and os.path.abspath(base) != os.path.dirname(os.path.abspath(xml_path or "")):
+        _mdir = os.path.join(base, "music")
     if music_random or music:
         ckpt("музыка")
     if music_random:                                   # случайно из уже скачанных

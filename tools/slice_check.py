@@ -21,6 +21,15 @@ pytest; ruff; mypy (конфигурация берётся из `pyproject.toml
 Код возврата ненулевой, если хоть один шаг провален или не прогонялся без явного
 флага пропуска; провал самих тестов отдаёт их собственный код.
 
+Команда pytest одна на шаги pytest и linux и повторяет CI: `-n auto`
+(pytest-xdist — в CI из `requirements-dev.txt`, локально может не стоять) и
+`-m "not perf"` (тесты бюджета времени меряют скорость раннера, а не код).
+Без xdist в окружении прогон идёт одним процессом с предупреждением в выводе;
+`REELSI_PYTEST_NO_XDIST=1` выключает `-n` принудительно. Окружение прогона (оба
+шага) несёт `REELSI_MYPY_STEP=1`: у slice_check есть свой шаг mypy, и второму
+прогону внутри набора места нет — под `-n auto` он дольше таймаута pytest, а
+thread-таймаут роняет воркер целиком.
+
 Чего здесь нет по сравнению с CI и почему: pip-audit (тянет сеть и базу
 уязвимостей), история публичного репозитория у gitleaks (сканируется только
 дерево среза — историю смотрит джоба `scan`), `reelsi --help` из установленного
@@ -53,9 +62,11 @@ pytest; ruff; mypy (конфигурация берётся из `pyproject.toml
 провале тестов — их код, как и раньше); не собрался срез — 2.
 """
 import argparse
+import importlib.util
 import io
 import os
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -79,7 +90,24 @@ if sys.stderr and hasattr(sys.stderr, "reconfigure"):
     except Exception:
         pass
 
-PYTEST_ARGS = ["-m", "pytest", "tests", "-q"]
+# Команда pytest здесь одна на все шаги и повторяет CI (`ci.yml`, джоба test):
+# `-n auto` (pytest-xdist) — параллельно, `-m "not perf"` — без тестов бюджета
+# времени. Локально xdist может не стоять: тогда `-n` не добавляется, а прогон
+# идёт одним процессом с предупреждением в выводе (см. `pytest_args`).
+# `--dist loadgroup` (пара к `-n auto`): тесты, поднимающие настоящий Chrome,
+# помечены xdist_group("chrome") и обязаны идти в ОДНОМ воркере — несколько
+# браузеров разом меряют геометрию под нагрузкой нестабильно. Без xdist обоих
+# аргументов нет: `--dist` без плагина роняет запуск, а не параллелит.
+PYTEST_BASE_ARGS = ["-m", "pytest", "tests", "-q"]
+PYTEST_PERF_MARK = ["-m", "not perf"]
+PYTEST_XDIST_ARGS = ["-n", "auto", "--dist", "loadgroup"]
+ENV_PYTEST_NO_XDIST = "REELSI_PYTEST_NO_XDIST"
+# У этого же прогона есть свой шаг mypy (ниже, `step_mypy`) — ровно как в джобе
+# `test` CI. Без переменной тест-храповик гоняет mypy ВТОРОЙ раз: под `-n auto` это
+# дольше таймаута pytest (120 с, timeout_method=thread), и thread-таймаут убивает
+# весь процесс воркера («node down: Not properly terminated»), то есть шаг pytest
+# падает не из-за кода. Имя переменной то же, что выставляет ci.yml.
+ENV_MYPY_STEP = "REELSI_MYPY_STEP"
 TAIL_LINES = 15                     # сколько последних строк вывода команды печатать
 TREE_PREFIX = "reelsi_slice_"       # префикс временного каталога среза
 JSX_TMP_PREFIX = "reelsi_jsx_"      # каталог копий `.jsx` -> `.js` для `node --check`
@@ -105,7 +133,7 @@ SKIP = "ПРОПУЩЕН"
 STEP_NAMES = ("pytest", "ruff", "mypy", "jsx", "smoke", "requirements", "gitleaks", "linux")
 
 STEP_HINTS = {
-    "pytest": "python -m pytest tests -q",
+    "pytest": "python -m pytest tests -q -n auto --dist loadgroup -m \"not perf\" (без xdist — без -n)",
     "ruff": "ruff check .",
     "mypy": "mypy (список модулей — из pyproject.toml среза)",
     "jsx": "node --check по ExtendScript и static/app/*.js",
@@ -317,9 +345,63 @@ def init_git(tree: str) -> None:
             raise public_slice.SliceGitError(f"Ошибка git {' '.join(args)}: {res.stderr.strip()}")
 
 
+def has_xdist() -> bool:
+    """Стоит ли pytest-xdist: без него `-n auto` роняет запуск, а не параллелит.
+
+    Локально xdist ставить не обязательно, в CI он из requirements-dev.txt;
+    переменная REELSI_PYTEST_NO_XDIST=1 выключает `-n` принудительно (разбор).
+    """
+    if os.environ.get(ENV_PYTEST_NO_XDIST) == "1":
+        return False
+    return importlib.util.find_spec("xdist") is not None
+
+
+def pytest_env() -> dict[str, str]:
+    """Окружение шага pytest: та же переменная, что ставит джоба `test` CI.
+
+    У slice_check свой шаг mypy (`step_mypy`), поэтому второй прогон внутри набора
+    не нужен: тест-храповик пропускается. Он же и опасен — под `-n auto` второй
+    прогон дольше таймаута pytest, а thread-таймаут роняет воркер целиком.
+    Отдельной функцией — чтобы это можно было проверить тестом, не запуская прогон.
+    """
+    return {**os.environ, ENV_MYPY_STEP: "1"}
+
+
+def pytest_command(ci_args: str = "") -> list[str]:
+    """Команда pytest: база, `-n auto` при xdist, `-m "not perf"` и аргументы CI.
+
+    Аргументы из `ci.yml` (покрытие) идут последними, как в самой джобе, где они
+    продолжение той же строки. Порядок здесь проверяется тестом, а не глазами.
+
+    Строка из `ci.yml` разбирается `shlex.split` на отдельные аргументы: одним
+    элементом списка она уезжала в шаг linux целым куском, и pytest получал один
+    аргумент `-q -n auto ...` вместо шести — «ignored explicit argument», код 4.
+    """
+    args = [sys.executable, *PYTEST_BASE_ARGS]
+    if has_xdist():
+        args += PYTEST_XDIST_ARGS
+    args += PYTEST_PERF_MARK
+    if ci_args:
+        args += shlex.split(ci_args)
+    return args
+
+
+def linux_pytest_command(ci_args: str = "") -> str:
+    """Команда pytest внутри контейнера шага linux: `python` образа плюс аргументы.
+
+    `shlex.join` — по ЭЛЕМЕНТАМ списка: `-m "not perf"` обязан дойти до pytest
+    ОДНИМ аргументом через три оболочки подряд (ssh -> docker -> sh). Склейка
+    элементов в одну строку и потеря кавычек — ровно то, на чём этот шаг падал.
+    """
+    return shlex.join(["python", *pytest_command(ci_args)[1:]])
+
+
 def run_pytest(tree: str) -> subprocess.CompletedProcess:
     """pytest в каталоге среза — тем же интерпретатором, что запущен сам скрипт."""
-    return run_command([sys.executable, *PYTEST_ARGS], tree)
+    if not has_xdist():
+        print("pytest-xdist нет: `-n auto` не добавляется, набор идёт одним процессом — "
+              "параллельный прогон как в CI не проверен")
+    return run_command(pytest_command(), tree, env=pytest_env())
 
 
 def remove_tree(tree: str) -> None:
@@ -659,13 +741,16 @@ def step_linux(tree: str, host: str | None = None,
     except Exception as e:
         return StepResult("linux", FAIL, f"ошибка упаковки среза в tar: {e}")
 
-    if pytest_args:
-        pytest_cmd = f"python -m pytest tests {pytest_args}"
-    else:
-        pytest_cmd = "python -m pytest tests"
-    if "-p no:cacheprovider" not in pytest_cmd:
-        pytest_cmd += " -p no:cacheprovider"
+    # Та же команда, что в шаге pytest и в CI: `-n auto` (в образе xdist из
+    # requirements-dev.txt) и `-m "not perf"` плюс аргументы покрытия из ci.yml.
+    # Первый элемент — интерпретатор ХОСТА, а команда идёт внутри контейнера:
+    # там это `python` из образа. Сборка команды — в `linux_pytest_command`:
+    # строка из ci.yml обязана разобраться на отдельные аргументы ДО shlex.join.
+    pytest_cmd = linux_pytest_command(pytest_args)
 
+    # Та же переменная, что у шага pytest: у slice_check есть свой шаг mypy, и
+    # второй прогон внутри набора на Linux тоже не нужен (в контейнере он ровно
+    # так же не влезает в таймаут pytest).
     # --init обязателен: без него pytest = PID 1 внутри контейнера, killpg(1)
     # совпадает со своей группой процессов и пропускается ядром Linux (дефект
     # «тест убил раннер CI» становится невидим), и зомби-процессы не пожинаются.
@@ -673,7 +758,7 @@ def step_linux(tree: str, host: str | None = None,
         'd=$(mktemp -d) && '
         'tar -xf - -C "$d" && '
         '(cd "$d" && git init -q && git add -A && git -c user.name=slice -c user.email=slice@local commit -qm slice) && '
-        f'docker run --rm --init --user "$(id -u):$(id -g)" -e HOME=/tmp -e COVERAGE_FILE=/tmp/.coverage -v "$d:/src" -w /src {image} {pytest_cmd}; '
+        f'docker run --rm --init --user "$(id -u):$(id -g)" -e HOME=/tmp -e COVERAGE_FILE=/tmp/.coverage -e {ENV_MYPY_STEP}=1 -v "$d:/src" -w /src {image} {pytest_cmd}; '
         'rc=$?; rm -rf "$d"; exit $rc'
     )
     cmd = ["ssh", "-o", "BatchMode=yes", target_host, remote_script]

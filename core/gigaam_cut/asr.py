@@ -68,8 +68,12 @@ def transcribe_words_whole(
     слово на границе окна), transcribe(word_timestamps=True) на окно, тайминги
     сдвигаем на начало окна. Модель выгружается сразу после."""
     import gigaam
+    from core.gigaam_cache import gigaam_dir
     emit("GigaAM: загрузка {model} (whole-file, word_timestamps)…", model=model_name, flush=True)
-    model = gigaam.load_model(model_name)
+    # download_root — иначе пакет качает веса в свою `~/.cache/gigaam`: на машине,
+    # где домашняя папка недоступна на запись (контейнер, сервисная учётка), это
+    # PermissionError из недр пакета вместо понятного отказа (core/gigaam_cache.py).
+    model = gigaam.load_model(model_name, download_root=gigaam_dir())
     try:
         words = _transcribe_words_manual(model, wav_path, emit=emit)
     finally:

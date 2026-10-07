@@ -22,9 +22,13 @@ not vulnerabilities:
 - **The API accepts filesystem paths from the front end** and reads and writes
   media anywhere the user's account can reach. That is the entire purpose of the
   tool — it edits your video files. Two limits do apply: every `/api/*` request is
-  rejected unless its `Host` header is localhost (this is what stops a hostile page
-  from reaching the API via DNS rebinding), and `/api/media` will never serve
-  `ai_config.json`, whatever path you ask it for.
+  rejected unless its `Host` header is a localhost name **on this server's port** (this
+  is what stops a hostile page from reaching the API via DNS rebinding), and `/api/media`
+  will never serve `ai_config.json`, whatever path you ask it for. Every file path that
+  comes from an answer of an external service (a stock item's `id`, a generated image
+  URL) is sanitised and checked to stay inside its folder, and such download addresses
+  are refused unless they are plain `http`/`https` to a public host — never `file://`,
+  loopback or a private range.
 - **Generated ExtendScript (`.jsx`) runs inside After Effects** with whatever
   permissions AE has.
 - **API keys live in plaintext** in `ai_config.json`, protected by the operating
@@ -56,7 +60,11 @@ What *is* in scope, and worth reporting:
   media file, or LLM response that leads to code execution or writes outside the
   working directory.
 - Path traversal reachable from a source that is not the local user: a malicious
-  filename inside an imported project, an LLM response, or a downloaded asset.
+  filename inside an imported project, an LLM response, a downloaded asset, or a path
+  built from the answer of a stock/generation provider.
+- Server-side request forgery: an address from an external answer (a generated image
+  URL, a stock download URL, a video reference) that makes the server read a local
+  file or reach a loopback/private address.
 - A web page in the user's browser being able to drive the local API. The `Host`
   check closes DNS rebinding; a way around it, or a state-changing `POST` reachable
   from a hostile page, is worth reporting.

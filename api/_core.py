@@ -31,7 +31,7 @@ from core.applog import get_logger
 # или подменяются в тестах — реэкспорт приводил бы к устареванию копии в api._core.
 from core.jobstate import (  # noqa: F401
     _JOURNAL_BOUND, _JOB_INTERRUPTED,
-    JOURNAL_LOCK, _cross_lock_acquire, _cross_lock_release,
+    JOURNAL_LOCK, _cross_lock_acquire, _cross_lock_release, cross_lock_task,
     item_done, item_fail, item_set, items_init, journal_bind, journal_boot,
     journal_finish, journal_interrupted, journal_touch, journal_write, kill_tree,
     log_entry, sysexit_text, task_popen_kwargs, umsg_err)
@@ -106,7 +106,7 @@ def _json_error(e: Exception) -> Response | tuple[Response, int]:
 # Защита от DNS rebinding (Host) и CSRF (Origin/Sec-Fetch-Site)
 # --------------------------------------------------------------------------- #
 # Сервер слушает только 127.0.0.1 и авторизации не имеет — это осознанно, локальный
-# однопользовательский инструмент (см. SECURITY.md). Но одна дыра из этого всё же
+# однопользовательский инструмент (см. .github/SECURITY.md). Но одна дыра из этого всё же
 # следует: любая страница, открытая в браузере юзера, может резолвить свой домен в
 # 127.0.0.1 и обратиться к нашему API уже «со своего origin» — CORS в этом случае не
 # мешает. А `/api/media` по замыслу отдаёт ЛЮБОЙ файл с диска, в том числе
@@ -116,13 +116,71 @@ def _json_error(e: Exception) -> Response | tuple[Response, int]:
 # 127.0.0.1, подставной домен — нет. Ходить по имени машины или LAN-адресу всё равно
 # нельзя: сервер на этих адресах не слушает.
 _LOCAL_HOSTS = {"localhost", "127.0.0.1", "[::1]", "::1"}
+DEFAULT_UI_PORT = 5001             # порт, на котором поднимается UI (webui.main)
+
+
+def local_ui_port() -> int:
+    """Порт, на котором реально поднят этот сервер: `PORT` webui, иначе умолчание.
+
+    Порт читается в момент вызова, а не зашивается: изолированный профиль (5098) и
+    копия на другом порту — тот же код, и «свой» порт для них свой."""
+    try:
+        import webui
+        return int(getattr(webui, "PORT", 0) or DEFAULT_UI_PORT)
+    except Exception:
+        try:
+            return int(os.environ.get("PORT") or DEFAULT_UI_PORT)
+        except (TypeError, ValueError):
+            return DEFAULT_UI_PORT
+
+
+def local_host() -> str:
+    """Адрес этого сервера (`127.0.0.1:<свой порт>`) для внутренних запросов к себе.
+
+    Собран из СВОЕГО порта, а не из `request.host`: заголовок подставляет кто угодно,
+    и запрос уехал бы на чужой адрес."""
+    return f"127.0.0.1:{local_ui_port()}"
+
+
+def _own_ports() -> set[int]:
+    """Порты, на которых нас можно слушать: порт, о котором мы знаем сами.
+
+    Именно СВОЙ порт (`PORT` webui), а не `SERVER_PORT` из окружения запроса: его
+    собирает HTTP-сервер из того же заголовка `Host`, и сверка Host с ним сравнивала
+    бы заголовок с самим собой — то есть ничего не проверяла бы.
+    """
+    return {local_ui_port()}
 
 
 def _host_is_local(host: str) -> bool:
+    """Host — наш? Сравниваются И имя, И порт (если порт в Host назван).
+
+    Имени мало: `127.0.0.1:5999` — тоже локальное имя, но чужая дверь на этой
+    машине, и «локальный» Host с чужим портом означает, что запрос пришёл не от
+    нашего интерфейса. Голое имя без порта — свой клиент: порт тогда по умолчанию
+    для схемы, и `localhost` без него — это мы же.
+    """
     if not host:
         return False                     # HTTP/1.1 без Host — не браузер и не наш UI
-    h = host.rsplit(":", 1)[0] if not host.endswith("]") else host
-    return h.strip().lower() in _LOCAL_HOSTS
+    h = host.strip().lower()
+    if h in _LOCAL_HOSTS:
+        return True
+    if h.startswith("["):                # IPv6: порт идёт после закрывающей скобки
+        name, _, port = h.partition("]")
+        name += "]"
+        port = port[1:] if port.startswith(":") else ""
+    else:
+        name, _, port = h.rpartition(":")
+        if not name:
+            return False
+    if name not in _LOCAL_HOSTS:
+        return False
+    if not port:
+        return True
+    try:
+        return int(port) in _own_ports()
+    except ValueError:
+        return False                     # «127.0.0.1:порт» — порт не число
 
 
 # --------------------------------------------------------------------------- #
@@ -131,7 +189,7 @@ def _host_is_local(host: str) -> bool:
 # Проверки Host мало. При атаке из браузера Host как раз 127.0.0.1:5001, а «простой»
 # POST (без preflight) чужая открытая страница отправить может — и /api/cancel,
 # /api/video_cancel, /api/ai_stop или любой эндпоинт, терпящий пустое тело,
-# выполнится (SECURITY.md относит это к уязвимостям). Браузер САМ проставляет
+# выполнится (.github/SECURITY.md относит это к уязвимостям). Браузер САМ проставляет
 # Sec-Fetch-Site (страница его подделать не может), поэтому смотрим на него, а если
 # его нет — на Origin. У curl/CLI/тестового клиента Flask нет ни того, ни другого:
 # их не блокируем, иначе сломается весь внешний вызов API.
@@ -430,8 +488,8 @@ def emit(line: str, /, **vars: Any) -> None:
 # стриме провайдера. Считаем живые потоки и контролируем лимит одновременных вызовов
 # (одиночные — строго по одному, пачки одного запуска — до concurrency шага).
 AI_ACTIVE = 0
-AI_ACTIVE_BY: dict[str | None, int] = {}
-AI_BATCH_BY_EP: dict[int, str | None] = {}
+AI_ACTIVE_BY: dict[tuple[str, str | None] | str | None, int] = {}
+AI_BATCH_BY_EP: dict[int, tuple[str, str | None] | str | None] = {}
 AI_WAIT_SEC = 25
 
 
@@ -472,21 +530,25 @@ def _ai_begin(label: str = "", batch: str | None = None, step: str | None = None
     t0 = time.time()
     warned = False
     waited_foreign = False
+    slot_key: tuple[str, str | None] = (batch, step)
     while True:
         if aicut.cancelled():
             aicut.end_call(ep)
             raise ReelsiError(aicut.cancel_reason())
         with LOCK:
-            other_active = sum(cnt for b, cnt in AI_ACTIVE_BY.items() if b != batch and cnt > 0)
+            other_active = sum(
+                cnt for k, cnt in AI_ACTIVE_BY.items()
+                if (k[0] if isinstance(k, tuple) else k) != batch and cnt > 0
+            )
             foreign_clear = (other_active == 0)
             if not foreign_clear and not waited_foreign:
                 if time.time() - t0 >= AI_WAIT_SEC:
                     waited_foreign = True
             if foreign_clear or waited_foreign:
-                if AI_ACTIVE_BY.get(batch, 0) < limit:
+                if AI_ACTIVE_BY.get(slot_key, 0) < limit:
                     AI_ACTIVE += 1
-                    AI_ACTIVE_BY[batch] = AI_ACTIVE_BY.get(batch, 0) + 1
-                    AI_BATCH_BY_EP[ep] = batch
+                    AI_ACTIVE_BY[slot_key] = AI_ACTIVE_BY.get(slot_key, 0) + 1
+                    AI_BATCH_BY_EP[ep] = slot_key
                     if waited_foreign:
                         emit("! предыдущий ИИ-вызов не отпустил провайдера за {sec}с — стартую поверх него", sec=AI_WAIT_SEC)
                     return ep
@@ -507,12 +569,12 @@ def _ai_end(ep: int, unload: bool = False) -> None:
     global AI_ACTIVE
     from core import aicut
     with LOCK:
-        batch = AI_BATCH_BY_EP.pop(ep, None)
+        batch_key = AI_BATCH_BY_EP.pop(ep, None)
         AI_ACTIVE = max(0, AI_ACTIVE - 1)
-        if batch in AI_ACTIVE_BY:
-            AI_ACTIVE_BY[batch] = max(0, AI_ACTIVE_BY[batch] - 1)
-            if AI_ACTIVE_BY[batch] == 0:
-                AI_ACTIVE_BY.pop(batch, None)
+        if batch_key in AI_ACTIVE_BY:
+            AI_ACTIVE_BY[batch_key] = max(0, AI_ACTIVE_BY[batch_key] - 1)
+            if AI_ACTIVE_BY[batch_key] == 0:
+                AI_ACTIVE_BY.pop(batch_key, None)
     try:
         if unload and aicut.is_current(ep) and not aicut.others_live(ep):
             try:
@@ -540,6 +602,26 @@ def job_finish() -> None:
     _cross_lock_release()
 
 
+def lock_owner_text(fallback: str) -> str:
+    """Текст отказа «занято» с именем задачи, которая держит межзадачный лок.
+
+    Раньше отказ был один на все случаи — «Уже выполняется другая задача — дождись
+    или смотри Логи» — и не называл ни задачи, ни места, где виден её прогресс:
+    сборка прокси превью держит тот же лок, что нарезка, но живёт в своём окне.
+    Имя владелец записывает при захвате (`cross_lock_task`), строку прогресса
+    отдаёт его подсказка. Владельца нет (старая копия интерфейса, лок снят
+    аварией) — возвращаем прежний текст: врать про незнакомую задачу хуже, чем
+    молчать о ней. Код ошибки остаётся на месте вызова — по нему интерфейс берёт
+    перевод (`ERR_<код>`), поэтому здесь только текст."""
+    owner = jobstate.cross_lock_owner()
+    if not owner:
+        return fallback
+    prog = jobstate.cross_lock_progress()
+    if prog:
+        return f"Уже выполняется: {owner} ({prog})"
+    return f"Уже выполняется: {owner} — прогресс в Логах"
+
+
 def job_start(kind: str = "", label: str = "", **extra: Any) -> bool:
     """Атомарно занять JOB (защита от двойного клика). True = заняли, False = уже идёт.
     kind/label — структурный тип задачи для клиента (никакого сниффинга лога)."""
@@ -549,6 +631,9 @@ def job_start(kind: str = "", label: str = "", **extra: Any) -> bool:
         JOB.update(running=True, log=[], results=[], failed=[], done=False, cancel=False,
                    log_base=0, kind=kind, label=label, progress=None, insmoved={},
                    items=[], stalled=False, **extra)
+    # Имя задачи — ДО захвата: владелец пишет его в файл лока, чтобы отказ назвал
+    # того, кто держит видеокарту (нарезка/сборка/черновик).
+    cross_lock_task(label or kind)
     if not _cross_lock_acquire():          # соседний интерфейс уже что-то считает
         with LOCK:
             JOB["running"] = False

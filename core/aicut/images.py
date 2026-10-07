@@ -18,7 +18,7 @@ from .config import APP_NAME, APP_REFERER, _profile_dict, apply_profile_headers,
 from .llm import ai_log_append, cancel_reason, cancelled
 from core.applog import get_logger
 from core.umsg import ReelsiError, umsg
-from core.app_meta import console_emit, http_req
+from core.app_meta import console_emit, http_req, unsafe_url_reason
 
 log = get_logger(__name__)
 
@@ -492,6 +492,15 @@ def _gen_image_unsloth(prompt: str, prof: dict[str, Any], emit: Callable[..., An
             elif item.get("url"):
                 img_url = item["url"]
                 if img_url.startswith("http://") or img_url.startswith("https://"):
+                    # Абсолютный адрес — его назвал провайдер, а не пользователь:
+                    # `file://` и `http://127.0.0.1` читали бы с диска и уводили запрос
+                    # внутрь машины. Свой base_url (LM Studio на 127.0.0.1) сюда не
+                    # попадает вовсе — ему соответствует ОТНОСИТЕЛЬНЫЙ путь ниже.
+                    reason = unsafe_url_reason(img_url)
+                    if reason:
+                        raise ReelsiError(umsg("gen_failed",
+                            f"генерация картинки упала после 1 попыток: {reason}",
+                            tries=1, last=reason))
                     full_url = img_url
                 else:
                     full_url = f"{root.rstrip('/')}/{img_url.lstrip('/')}"

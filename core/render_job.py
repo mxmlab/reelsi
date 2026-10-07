@@ -125,7 +125,13 @@ def kill_proc(p: Any) -> None:
 
 def render_kill(job: RenderJob) -> None:
     """«Стоп» из интерфейса (/api/cancel зовёт): флаг джобу + реально убить
-    текущий subprocess (AfterFX или aerender) с деревом."""
+    процессы рендера с деревом.
+
+    Это И текущий процесс (AfterFX или aerender — одиночный путь), И весь список
+    `job.procs`: у встроенного рендера без AE детей несколько (node-съёмщик со своим
+    Chrome, ffmpeg куска, склейка), и регистрирует их он сам (`_child_registrar`).
+    Гасим СВОИ процессы по PID — по имени убивать нельзя: на машине открыт браузер
+    человека и может идти чужая сборка."""
     with job.lock:
         job["cancel"] = True
         p = job.proc
@@ -1844,6 +1850,24 @@ def run_proc_batch(job: RenderJob, aer: str, aep_call: str, comps: Sequence[Any]
     return AE_STALLED if watch.stalled else rc
 
 
+def _child_registrar(job: RenderJob) -> Callable[[Any], None]:
+    """Дверь «запомни ребёнка встроенного рендера»: по этому списку работает «Стоп».
+
+    Дети встроенного рендера — node-съёмщик (а с ним и его Chrome) и ffmpeg куска со
+    склейкой. Список живёт в том же поле, что у AE-ветки (`job.procs`), и гасится тем
+    же путём (`render_kill` -> `kill_proc`): до этого «Остановить» на встроенном
+    рендере не гасило НИЧЕГО, потому что render_kill знал только AfterFX/aerender, а
+    «Стоп» был виден рендеру лишь между кадрами.
+
+    Копим под замком джоба: список читает чужой поток (`/api/cancel`), и без замка он
+    мог прочитать его ровно посередине правки.
+    """
+    def add(proc: Any) -> None:
+        with job.lock:
+            job.procs.append(proc)
+    return add
+
+
 def run_render_builtin(job: RenderJob, norm: Sequence[dict[str, Any]], outdir: str | None,
                        render_dir: str, host: str = "") -> None:
     """Рендер ВСТРОЕННЫМ движком: кадры рисует наш же предпросмотр (`core/webrender`).
@@ -1897,6 +1921,9 @@ def run_render_builtin(job: RenderJob, norm: Sequence[dict[str, Any]], outdir: s
             job["stage_done"] = i
             job["stage_total"] = total_n
             job["pct"] = max(0.0, min(1.0, i / float(total_n or 1)))
+            # Дети ЭТОГО клипа: прошлый клип уже доснят, его процессы погашены, и в
+            # списке «Стоп» им делать нечего.
+            job.procs = []
         item_set(job, job.lock, stem, stage="render")
         job.emit("--- {stem}: рендер без AE -> {out} ---", stem=stem, out=mov)
         try:
@@ -1910,7 +1937,8 @@ def run_render_builtin(job: RenderJob, norm: Sequence[dict[str, Any]], outdir: s
                     j["xml_path"], mov,
                     body={k: v for k, v in j.items() if k != "xml_path"},
                     host=host, cancel=lambda: bool(job["cancel"]),
-                    emit=_builtin_progress(job, i), codec=codec)
+                    emit=_builtin_progress(job, i), codec=codec,
+                    on_child=_child_registrar(job))
         except ReelsiError:
             raise
         except (SystemExit,) as e:
@@ -1922,6 +1950,11 @@ def run_render_builtin(job: RenderJob, norm: Sequence[dict[str, Any]], outdir: s
             job.emit("  ОШИБКА рендера: {err}", err=str(e))
             item_fail(job, job.lock, stem, str(e), bucket="failed")
             continue
+        finally:
+            # Список «Стоп» — на один клип: у доснятого процесса гасить нечего, а
+            # мёртвые объекты в списке только путали бы уборку.
+            with job.lock:
+                job.procs = []
         if job["cancel"]:
             item_fail(job, job.lock, stem, "остановлено", bucket="failed")
             job.emit("⏹ Остановлено")
@@ -1943,11 +1976,16 @@ def run_render_builtin(job: RenderJob, norm: Sequence[dict[str, Any]], outdir: s
 def _builtin_progress(job: RenderJob, index: int) -> Any:
     """Дверь лога для встроенного рендера: строки в лог джоба + процент по кадрам.
 
-    Кадры рендер печатает строкой «кадр N из M» — по ней и считается прогресс клипа:
+    Кадры рендер печатает строкой «кадр N/M» — по ней и считается прогресс клипа:
     `pct` джоба идёт от клипов (i/total), а внутри клипа очередь этапов показывает
     долю кадров. Номер кадра в строке — СУММА готовых кадров всех кусков рендера
     (core.webrender._Progress), поэтому доля монотонна и не скачет между
     экземплярами Chrome. Без этого полоса стояла бы на месте весь клип.
+
+    Форму разбирает ТОЛЬКО эта дверь, и форма у неё одна: сырой счётчик куска
+    съёмщик печатает иначе (`кусок N: кадр a/b`, capture.mjs). Раньше обе строки
+    выглядели одинаково, и процент клипа ходил вверх-вниз: суммарная строка давала
+    19 %, а следом пришедшая сырая от отставшего куска — 5 %.
     """
     def emit(line: str = "", /, **vars: Any) -> None:
         m = _FRAME_RE.match(line)
@@ -1966,8 +2004,11 @@ def _builtin_progress(job: RenderJob, index: int) -> Any:
     return emit
 
 
-# Строка прогресса съёмщика («кадр 12/180») — формат в одном месте: печатает её
-# core/webrender._pump_frames, разбирает эта дверь.
+# Строка прогресса РОЛИКА («кадр 12/180») — формат в одном месте: печатает её
+# core/webrender._Progress (сумма готовых кадров всех кусков), разбирает эта дверь.
+# Сырой счётчик куска съёмщика (capture.mjs) печатается ДРУГОЙ формой нарочно
+# («кусок 3: кадр 79/1590»): раньше он подходил под эту же регулярку и уводил
+# процент клипа назад — отставший кусок возвращал полосу с 19 % на 5 %.
 _FRAME_RE = re.compile(r"^кадр\s+(\d+)/(\d+)$")
 
 

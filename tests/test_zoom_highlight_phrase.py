@@ -196,8 +196,8 @@ def test_intro_words_join_highlight_phrases(xml_subs):
 # 4. Схема: тень прекомпа одной группой, группа хайлайта
 # ---------------------------------------------------------------------------
 
-CSHADOW_KEYS = ["intro_comp_shadow_fill", "intro_comp_shadow_op",
-                "intro_comp_shadow2_fill", "intro_comp_shadow2_op",
+CSHADOW_KEYS = ["intro_comp_shadow_fill", "intro_comp_shadow_opacity",
+                "intro_comp_shadow2_fill", "intro_comp_shadow2_opacity",
                 "intro_comp_shadow_dir", "intro_comp_shadow_dist",
                 "intro_comp_shadow_soft"]
 
@@ -215,8 +215,8 @@ def test_shadow_fields_live_in_one_group():
     assert keys == CSHADOW_KEYS, f"состав/порядок группы intro.cshadow: {keys}"
 
     labels = [it["label"] for it in cshadow["items"] if it.get("type") == "field"][:4]
-    assert labels == ["Цвет, камера 1", "Прозрачность, камера 1, %",
-                      "Цвет, камера 2", "Прозрачность, камера 2, %"]
+    assert labels == ["Цвет, камера 1", "Непрозрачность тени, камера 1, %",
+                      "Цвет, камера 2", "Непрозрачность тени, камера 2, %"]
 
     for gid in ("intro.cam1", "intro.cam2"):
         grp = next(g for g in intro["items"] if g["id"] == gid)

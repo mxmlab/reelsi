@@ -9,7 +9,9 @@
    files` обязан содержать все эти модули, а `[[tool.mypy.overrides]]` — держать для
    них `disallow_untyped_defs = true`. Граница может расти, уменьшаться — нет.
 2. **`mypy` по этому списку не находит ошибок.** Нет `mypy` — тест пропускается с
-   причиной: в CI он есть (ставится рядом с ruff), локально может не стоять.
+   причиной: в CI он есть (ставится рядом с ruff), локально может не стоять. Если CI
+   гоняет mypy отдельным шагом, он выставляет `REELSI_MYPY_STEP=1`, и тест
+   пропускается с причиной «mypy идёт отдельным шагом CI» — второй прогон не нужен.
 3. **`.project.json` пишет и читает ровно один модуль.** `write_project` ставит
    `version`, `read_project` читает файл БЕЗ `version` (старый = версия 0), и прямых
    `atomic_json_dump(... ".project.json" ...)` вне `core/project_file.py` нет —
@@ -19,6 +21,7 @@
 import ast
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -42,6 +45,7 @@ LOWER_BOUND = (
     "core/media.py",
     "core/paths.py",
     "core/app_meta.py",
+    "core/_pathguard.py",
     "core/aerender.py",
     "core/cams.py",
     "core/rclone.py",
@@ -81,6 +85,7 @@ LOWER_BOUND = (
     "core/drp.py",
     "core/insertlib.py",
     "core/stock.py",
+    "core/clipstore.py",
     "core/omni_cut.py",
     "core/verify_jsx.py",
     "core/voicefx.py",
@@ -138,6 +143,7 @@ LOWER_BOUND = (
     "core/falign.py",
     "core/falign_cli.py",
     "core/fonts.py",
+    "core/gigaam_cache.py",
     "core/gigaam_cut/__init__.py",
     "core/gigaam_cut/__main__.py",
     "core/gigaam_cut/asr.py",
@@ -175,6 +181,7 @@ LOWER_BOUND = (
     "tools/intro_hook_rules.py",
     "tools/intro_rules.py",
     "tools/mine_edits.py",
+    "tools/mutate_clip_speaker.py",
     "tools/public_slice.py",
     "tools/slice_check.py",
     "tools/train_breath.py",
@@ -186,6 +193,29 @@ LOWER_BOUND = (
 # Каталоги, которые сканирует сторож писателей .project.json: код, а не тесты
 # (тесты вправе готовить файл руками — им и проверяем чтение старого формата).
 CODE_DIRS = ("core", "api", "tools")
+
+# CI гоняет mypy отдельным шагом и ставит эту переменную у шага pytest: второй
+# прогон того же mypy (~26 с) внутри набора не нужен. Отдельная функция — чтобы
+# тест мог проверить пропуск, не запуская mypy.
+ENV_MYPY_STEP = "REELSI_MYPY_STEP"
+
+# Таймаут прогона mypy: в pytest.ini стоит 120 с (timeout_method = thread) — это
+# потолок для всего набора, а здесь ДВА прогона mypy (win32 и linux) по строгому
+# списку модулей, и на 16 воркерах `pytest -n auto` они вместе дольше 120 с. Дело
+# не в медленном тесте, а в том, как падает thread-таймаут: он убивает ВЕСЬ процесс
+# воркера, и раннер сообщает «worker crashed … node down», то есть шаг pytest
+# краснеет из-за сторожа типизации, а не из-за кода. 600 с — с запасом на холодный
+# старт и полную загрузку машины.
+MYPY_TIMEOUT_S = 600
+
+
+def _require_mypy() -> None:
+    """Пропускает тест, если mypy идёт отдельным шагом CI или не установлен."""
+    if os.environ.get(ENV_MYPY_STEP) == "1":
+        pytest.skip("mypy идёт отдельным шагом CI")
+    if importlib.util.find_spec("mypy") is None:
+        pytest.skip("mypy не установлен (в CI ставится рядом с ruff: pip install -r "
+                    "requirements-dev.txt)")
 
 
 def _pyproject() -> dict[str, Any]:
@@ -232,11 +262,10 @@ def test_pyproject_strict_modules_require_annotations():
     )
 
 
+@pytest.mark.timeout(MYPY_TIMEOUT_S)
 def test_mypy_reports_no_errors():
     """`mypy` по строгому списку — 0 ошибок под win32 и linux (нет mypy — пропуск с причиной)."""
-    if importlib.util.find_spec("mypy") is None:
-        pytest.skip("mypy не установлен (в CI ставится рядом с ruff: pip install -r "
-                    "requirements-dev.txt)")
+    _require_mypy()
     # --no-incremental: без него mypy заводит .mypy_cache в корне репозитория, а тесты
     # не должны оставлять следов в дереве (сторож изоляции в conftest.py).
     # Проверяем обе платформы явно (win32 и linux), независимо от ОС хоста.

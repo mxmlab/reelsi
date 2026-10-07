@@ -26,11 +26,39 @@ from typing import Any, Callable, Generator
 from core import encoders
 from core.app_meta import console_emit
 from core.jobstate import JOB_LOCK_PATH
+from core.umsg import ReelsiError, umsg
 
 
 def _gpu_lock_path() -> str:
     """Путь к файлу замка GPU: рядом с локом джоба."""
     return JOB_LOCK_PATH + ".gpu"
+
+
+# Сколько раз пробуем ОТКРЫТЬ файл замка, если его нет и создать его не даёт не
+# «нет прав», а сбой (файловая система отвалилась, временный отказ). Считать такое
+# «карта занята» нельзя: ждать тут нечего, но и падать с первого раза — значит
+# терять редкий честный случай. Три попытки — доля секунды, а не вечный спин.
+_OPEN_TRIES = 3
+
+
+def _unwritable_ancestor(path: str) -> str:
+    """Ближайший существующий каталог над `path`, в который нельзя писать; '' — можно.
+
+    Писать замок придётся в существующий каталог: если такого над `path` нет вовсе,
+    его не создать — значит тоже нельзя. `os.access` при этом проверяет не только
+    права: у read-only тома он честно говорит «нельзя», а у каталога с одной лишь
+    снятой галкой «только чтение» на Windows может сказать «можно» — тогда откажет
+    сам `open`, и это разберёт цикл ниже.
+    """
+    probe = os.path.abspath(path if os.path.isdir(path) else os.path.dirname(path) or ".")
+    while probe:
+        if os.path.isdir(probe):
+            return "" if os.access(probe, os.W_OK) else probe
+        parent = os.path.dirname(probe)
+        if parent == probe:              # дошли до корня — существующего каталога нет
+            return probe
+        probe = parent
+    return ""
 
 
 @contextlib.contextmanager
@@ -42,15 +70,50 @@ def gpu_lock(
 
     Блокирующее взятие файлового замка: не взялся → ``time.sleep(0.5)`` и снова.
     Если ждём дольше 1 с — один раз печатаем предупреждение в лог. Не реентерабелен.
+
+    «Занято» и «сломано» различаются: занятость — это отказ в блокировке уже
+    ОТКРЫТОГО файла (замок держит другой процесс), и ждать её честно. А не открылся
+    сам файл замка (каталог только для чтения, нет прав, файл закрыт от записи) или
+    его каталог не создать — это поломка, а не занятость: прежний `while True` крутил
+    её вечно, и пользователь видел «жду видеокарту», хотя ждать было нечего.
     """
     path = _gpu_lock_path()
+    folder = os.path.dirname(path) or "."
+    if folder and not os.path.isdir(folder):
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError:
+            pass                         # причину назовём ниже, по тому же каталогу
+    bad_dir = _unwritable_ancestor(folder)
+    if bad_dir:
+        raise ReelsiError(umsg("gpu_lock_unwritable",
+            f"Замок видеокарты не создать: нет права записи в «{bad_dir}»",
+            path=bad_dir))
     fh = None
     waited = 0.0
     warned = False
+    opens = 0
     try:
         while True:
             try:
                 fh = open(path, "a+b")
+            except PermissionError as e:
+                # Файл замка закрыт от записи (read-only, «Access is denied»):
+                # повторять бессмысленно — это поломка, а не занятость
+                raise ReelsiError(umsg("gpu_lock_failed",
+                    f"Замок видеокарты не открывается ({e}): {path}", err=e, path=path))
+            except OSError as e:
+                opens += 1
+                # Каталог-то писать можно, а файл не открывается: отказ ресурса
+                # (файловая система, временная блокировка) — несколько попыток и
+                # причина наружу. «Карта занята» тут ни при чём, и крутить это вечно
+                # значило бы повторять исходный дефект.
+                if opens >= _OPEN_TRIES:
+                    raise ReelsiError(umsg("gpu_lock_failed",
+                        f"Замок видеокарты не открывается ({e}): {path}", err=e, path=path))
+                time.sleep(0.25)
+                continue
+            try:
                 fh.seek(0)
                 if os.name == "nt":
                     import msvcrt
@@ -64,7 +127,7 @@ def gpu_lock(
                     )
                 break  # замок взят
             except Exception:
-                # Не удалось — файл занят другим процессом
+                # Файл ОТКРЫТ, но замок держит другой процесс — вот это и есть занятость
                 if fh is not None:
                     try:
                         fh.close()

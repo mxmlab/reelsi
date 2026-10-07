@@ -183,6 +183,8 @@ def _ai_config_answer(cfg: dict[str, Any], full: bool = False) -> dict[str, Any]
                                 for k in aicut.STEP_REASONING_DEFAULT},
         "step_profiles": {k: aicut.step_profile(k)
                           for k in aicut.STEP_REASONING_DEFAULT},
+        "step_local": {k: aicut.step_is_local(k)
+                       for k in aicut.STEP_REASONING_DEFAULT},
         "step_concurrency": step_conc,
         # Переопределения НА ШАГЕ (вкладки «Нарезка»/«Разметка»): словарь как в
         # конфиге — интерфейсу нужно СВОЁ число шага, а не только итоговое.
@@ -296,10 +298,13 @@ def api_ai_test() -> Response:
                 hdrs = saved.get("headers") if isinstance(saved.get("headers"), dict) else None
             else:
                 # профиля нет (маска при чужом имени) — прежнее поведение: ключ из формы,
-                # а маска остаётся пустым ключом, а не уезжает провайдеру как есть
+                # а маска остаётся пустым ключом, а не уезжает провайдеру как есть.
+                # Заголовки из формы могли прийти маской (их закрывает GET /api/ai_config):
+                # отправить «•••xxxx» провайдеру — сломать проверку на ровном месте.
                 raw_key = _unmask_ai_key(p.get("api_key"), jstr(d, "name"))
                 raw_base = p.get("base_url")
                 hdrs = p.get("headers") if isinstance(p.get("headers"), dict) else aicut.parse_headers_text(p.get("headers_text"))
+                hdrs = aicut.resolve_header_mask(hdrs, jstr(d, "name"))
             prof = {"provider": p.get("provider") or "lmstudio",
                     "base_url": aicut.normalize_base_url(raw_base or ""),
                     "api_key": aicut.resolve_key(raw_key),
@@ -354,6 +359,7 @@ def api_ai_models() -> Response:
         raw_base = ((p.get("base_url") or "").strip()
                 or aicut.PROVIDER_PRESETS.get(provider, {}).get("base_url") or "")
         hdrs = p.get("headers") if isinstance(p.get("headers"), dict) else aicut.parse_headers_text(p.get("headers_text"))
+        hdrs = aicut.resolve_header_mask(hdrs, jstr(d, "name"))
     base = aicut.normalize_base_url(raw_base)
     try:
         if not base:

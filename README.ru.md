@@ -25,10 +25,12 @@
 Проверено только на Windows 11 с видеокартой NVIDIA и Adobe After Effects / Premiere Pro. Другие платформы не проверялись; заметки о переносе — [docs/PLATFORMS.md](docs/PLATFORMS.md).
 
 - Python 3.10 и ffmpeg в переменной PATH.
+- Рекомендуемый браузер для предпросмотра — на Chromium (Chrome, Edge, Brave и подобные). В Firefox звук исходников камер с дорожками PCM не декодируется вовсе — превью молчит, пока не переедет на прокси превью.
 - Видеокарта NVIDIA с поддержкой CUDA.
 - Adobe After Effects для финальной сборки и рендера графики.
 - LM Studio для локальной работы или API-ключ облачного провайдера.
 - Опциональные утилиты: `rclone` (скачивание с Google Drive), `yt-dlp` (музыка).
+- Необязательные Python-пакеты из `requirements-optional.txt` ставятся по одному: каждый включает ровно одну возможность, остальное продолжает работать (`pedalboard` — живой мониторинг через VST3-плагины и список устройств вывода; `gigaam` — пословная нарезка; `silero-vad`, `rembg`, `anthropic`, `yt-dlp`). `python doctor.py` называет, чего нет и что без этого отключится.
 - Шаблоны субтитров используют шрифт SF Pro; пересборка под другой шрифт: `python tools/harvest_good.py "path/to/reference.xml"`.
 
 ## Установка
@@ -119,9 +121,17 @@ pre-commit install
 
 ```bash
 python -m pytest tests -q
+python -m pytest tests -q -n auto --dist loadgroup -m "not perf"   # как в CI
 ruff check .
 mypy
 ```
+
+Вторая форма — ровно то, что гоняет CI: `-n auto` (pytest-xdist) раздаёт набор по
+воркерам, `--dist loadgroup` держит тесты, поднимающие настоящий Chrome
+(`xdist_group("chrome")`), в одном воркере — несколько браузеров разом мерят
+геометрию нестабильно, — а `-m "not perf"` не пускает тесты бюджета времени: они
+меряют скорость раннера, а не код (локально идут). Два флага неразрывны: без
+группы тесты с Chrome расходятся по воркерам.
 
 ## Лицензия
 

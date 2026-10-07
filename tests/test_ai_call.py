@@ -245,7 +245,15 @@ def test_level_is_downgraded_one_step_on_retry(monkeypatch):
     """Повтор после битого JSON не жжёт тот же бюджет размышлений второй раз.
 
     Первый вызов утонул в размышлениях, второй утонул бы так же — и заплачено
-    дважды. На повторе уровень понижается на ступень (high -> medium)."""
+    дважды. На повторе уровень понижается на ступень (high -> medium).
+
+    Возможности модели берутся из каталога, и подменённый `urlopen` ловит ЕГО запрос
+    тоже (каталог зовёт тот же `urllib.request.urlopen`): при заполненном кэше каталога
+    в воркере счёт вызовов сдвигался, и «битый JSON» отдавался уже второму вызову —
+    повтора не наступало, тест падал на `seen[1]` (`-n auto`, порядок тестов в воркере).
+    Поэтому каталог здесь назван явно — как в соседних тестах файла: «возможностей нет»,
+    и первый вызов `urlopen` — ровно запрос модели.
+    """
     seen, log = [], []
     calls = {"n": 0}
 
@@ -256,6 +264,11 @@ def test_level_is_downgraded_one_step_on_retry(monkeypatch):
             return FakeResp([sse(content='{битый'), DONE])     # битый JSON -> повтор
         return FakeResp([sse(content='{"ok": true}'), DONE])
 
+    monkeypatch.setattr(aicut.llm.catalog, "caps", lambda p, m, emit=None: {
+        "reasoning": None, "reasoning_kind": None, "efforts": None,
+        "structured_output": None, "temperature": None, "out_limit": None,
+        "ctx_limit": None, "cache": None, "default": None, "cost": None,
+        "catalog_provider": None})
     monkeypatch.setattr(aicut.llm.urllib.request, "urlopen", fake_urlopen)
     prof = {"provider": "openrouter", "base_url": "https://x/v1", "api_key": "k",
             "model": "test/model", "reasoning": "high", "name": "t"}

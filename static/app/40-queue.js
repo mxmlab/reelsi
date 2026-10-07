@@ -39,7 +39,6 @@ async function loadCams(){
   }
   if(!val('ai_outdir'))$('ai_outdir').value=d.outdir;
   if(!AEGLOBAL){AEGLOBAL=d.outdir;renderAeDirField();}
-  if(!val('aemusicdir'))$('aemusicdir').value=(d.base||'')+'\\music';
   if(!val('gdrive_dest'))$('gdrive_dest').value=(d.base||'')+'\\gdrive_downloads';
   $('caminfo').textContent=t('Папки: ')+d.dirs.map(x=>x.name+' ('+x.files.length+')').join(', ');
   buildCamRows();
@@ -327,14 +326,27 @@ if(typeof document!=='undefined'){
 if(typeof window!=='undefined'){
   window.addEventListener('blur',()=>{SHIFT_HELD=false;});
 }
-function clipByXml(xml){return CLIPS.find(c=>c.xml===xml);}
+// Путь клипа к XML, как он есть НА ДИСКЕ. Сохранённая чужая склейка
+// («/home/out\03.xml» — папка-posix плюс обратный слэш) на Linux это ОДНО имя
+// файла с '\' внутри: такого файла нет, и по нему молча ломались превью, статусы,
+// разметка и сборка. Признак — абсолютный posix-путь: у Windows-путей ('C:\…',
+// '\\server\…') разделитель и так обратный, подмены там не будет.
+function clipPathFix(p){p=String(p==null?'':p);return p.charAt(0)==='/'?p.replace(/\\/g,'/'):p;}
+// Ключ сравнения путей клипов — ТОТ ЖЕ, что у normInsPath (85-inserts-view.js):
+// разделители и регистр. Полное равенство строк плодило ВТОРОЙ клип на тот же файл
+// при малейшей нестыковке разделителей (Windows 'C:\out\1.xml' против 'C:/out/1.xml'
+// из другого источника), и ошибка не падала, а размножалась: у каждого клипа своя
+// разметка, а собирался бы только один.
+function clipKey(p){return normInsPath(clipPathFix(p));}
+function clipByXml(xml){const k=clipKey(xml);return CLIPS.find(c=>clipKey(c.xml)===k);}
 // Тег спикера ставится ЗДЕСЬ, в ЕДИНСТВЕННОЙ точке рождения клипа:
 // после нарезки спикер точно тот, с которым резали; «Из папки результата» берёт
 // папку из ai_outdir, а это папка спикера; «Добавить XML…» — догадка, тег поэтому
 // исправим на шаге 3. «Не выбран» — запасной путь, работает как всегда.
 function newClip(xml){const j=defJob();
   // Спикер уже выбран на шаге 1 — тег ставится здесь; его стиль и есть стиль клипа
-  // (профиль — источник, пока клип не помечен «свой стиль»).
+  // (профиль — источник, пока клип не помечен «свой стиль»). Общий выбор: новая
+  // нарезка/профиль, не клип — клип рождается ИЗ этой нарезки, чужого тега не бывает.
   const spk=val('speaker');
   if(spk){j.speaker=spk;
     const p=SPEAKERS[spk];
@@ -346,7 +358,26 @@ async function scanOutdir(){const dir=val('ai_outdir').trim();
   if(!dir){toast(t('Не задана папка результата'));return;}
   try{const d=await (await fetch('/api/scanxml',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dir})})).json();
     if(d.error){toast(errText(d));return;}
-    let added=0;(d.paths||[]).forEach(x=>{if(!clipByXml(x)){CLIPS.push(newClip(x));added++;}});
+    const clipsSnap=d.clips||{},ins=d.inserts||{},spk=d.speakers||{},introMap=d.intro||{};
+    let added=0;(d.paths||[]).forEach(x=>{if(clipByXml(x))return;
+      let c;
+      if(clipsSnap[x]){
+        c=clipsSnap[x];
+        c.xml=x;
+        c.name=(x||'').replace(/^.*[\\\/]/,'');
+        c.status={};
+      }else{
+        c=newClip(x);
+        // Вставки и спикера возвращаем С ДИСКА: без этого повторный подхват уже
+        // нарезанного давал пустые карточки и чужой стиль — готовая разметка терялась.
+        const arr=ins[x];if(Array.isArray(arr)&&arr.length){c.inserts=arr;c.insTarget=arr.length;}
+        const s=spk[x];if(s){c.job.speaker=s;const p=SPEAKERS[s];if(p&&p.style&&STYLES[p.style])c.job.styleKey=p.style;}
+        if(introMap[x]&&typeof introRowsFromAI==='function'){
+          c.job=c.job||defJob();
+          c.job.introRows=introRowsFromAI(introMap[x]);
+        }
+      }
+      CLIPS.push(c);added++;});
     toast(added?t('Добавлено из папки: {n}',{n:added}):t('Новых XML в папке нет'));
     renderClips1();saveState();refreshStatuses();
   }catch(e){toast(t('Не прочитал папку результата — сервер не ответил. Проверь, что webui запущен'));uiLog('scanxml: '+e);}}
@@ -370,6 +401,7 @@ async function runAI(){
   cutBusy(true);CUTLABEL=t('ИИ-нарезка');progOpen({title:t('ИИ-нарезка')});
   // selfcheck не шлём: в режиме GigaAM (дефолт) этот путь не исполняется вовсе,
   // сервер сам ставит False (см. run_omnicut_job). Убрано 2026-08-11.
+  // Общий выбор: новая нарезка/профиль, не клип — здесь собираются параметры НАРЕЗКИ.
   const body={outdir:val('ai_outdir'),pairs:QUEUE,camdirs:CAMDIRS.slice(0,nCams()),
     speaker:val('speaker'),
     review:$('chk_review')?$('chk_review').checked:false};
@@ -405,6 +437,7 @@ async function runCustom(){
     logReset();pollAI();
   }else{
     cutBusy(true);CUTLABEL=t('Кастомная нарезка');progOpen({title:t('Кастомная нарезка')});
+    // Общий выбор: новая нарезка/профиль, не клип — здесь собираются параметры НАРЕЗКИ.
     const body={
       outdir:val('ai_outdir'),
       pairs:QUEUE,
@@ -463,13 +496,15 @@ async function pollJob(self,title,eager,onDone,onTick){
 // JOB["results"] после каждого файла, а ждать конца всей очереди, чтобы начать
 // править, незачем (просьба юзера). Возвращает, сколько клипов добавилось.
 function cutAdopt(d){
-  const od=val('ai_outdir').replace(/[\\\/]+$/,'');
-  if(!od)return 0;
+  // Папку НЕ подставляем: /api/status отдаёт в results ПОЛНЫЕ пути (их пишет сам
+  // сервер), а склейка в JS своим разделителем ломалась на Linux — «<папка>\имя.xml»
+  // там одно имя файла, и «файл не найден» было верным ответом не про тот файл.
   let n=0;
-  (d.results||[]).forEach(x=>{const full=od+'\\'+x;
+  (d.results||[]).forEach(full=>{
     if(clipByXml(full))return;
     CLIPS.push(newClip(full));n++;
-    uiLog(t('нарезан: {x} — можно править, не дожидаясь остальных',{x:x}));});
+    uiLog(t('нарезан: {x} — можно править, не дожидаясь остальных',
+      {x:String(full||'').replace(/^.*[\\\/]/,'')}));});
   if(n){renderClips1();saveState();refreshStatuses();}
   return n;}
 
@@ -487,6 +522,24 @@ async function pollAI(){pollJob(pollAI,CUTLABEL,0.15,d=>{
   d=>{cutAdopt(d);progReadySet((d.results||[]).length);});}
 
 // ---- render clip lists ----
+// Скачивание таймлайна XML — POST-ом, а не переходом по ссылке: сервер на этом
+// роуте ПИШЕТ (проставляет настоящие таймкоды в копию), и GET с побочным действием
+// чужая страница дёргала тегом <img src>. Ответ — файл вложением, его и сохраняем.
+function dlXml(c){
+  fetch('/api/export_xml',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({path:c.xml})})
+    .then(async r=>{
+      if(!r.ok){let e=r.status===404?t('не найден'):r.status===403?t('запрещено'):'',ed=null;
+        try{const b=await r.json();ed=b;e=b.error||e}catch(_){}
+        throw new Error((ed&&errText(ed))||e||t('скачивание XML не удалось ')+r.status);}
+      const blob=await r.blob();
+      const u=URL.createObjectURL(blob);
+      const a=document.createElement('a');a.href=u;
+      a.download=(c.name||'timeline').replace(/\.xml$/i,'')+'.xml';
+      document.body.appendChild(a);a.click();a.remove();
+      setTimeout(()=>URL.revokeObjectURL(u),4000);})
+    .catch(e=>toast(t('Не скачалось XML: ')+e.message));
+}
 function clipActs(i,step){const c=CLIPS[i];
   let a='<div class="acts">';
   if(step===1){
@@ -497,7 +550,7 @@ function clipActs(i,step){const c=CLIPS[i];
     if(nc==null||nc>1)a+='<button class="icon" aria-label="'+t('Раскладка камер')+'" data-t="'+t('Раскладка камер (какая активна на каждом куске)')+'" onclick="openCamsFor('+i+')">'+ico('cam')+'</button>';
     // не /api/media: export_xml на лету проставляет настоящие таймкоды исходников —
     // без них DaVinci Resolve раскладывает нарезку со сдвигом в часы (Премьеру всё равно)
-    a+='<a class="icon" aria-label="'+t('Скачать XML')+'" data-t="'+t('Скачать XML — открывается и в Premiere, и в DaVinci Resolve')+'" href="/api/export_xml?path='+encodeURIComponent(c.xml)+'" style="text-decoration:none;padding:5px 8px;color:var(--mut)">'+ico('dl')+'</a>';
+    a+='<button class="icon" aria-label="'+t('Скачать XML')+'" data-t="'+t('Скачать XML — открывается и в Premiere, и в DaVinci Resolve')+'" onclick="dlXml(CLIPS['+i+'])" style="text-decoration:none;padding:5px 8px;color:var(--mut)">'+ico('dl')+'</button>';
     a+='<button class="icon" aria-label="'+t('Удалить клип')+'" data-t="'+t('Удалить клип: убрать из списка или стереть с диска со всеми сайдкарами')+'" onclick="delClip('+i+')">'+ico('x')+'</button>';
   }else if(step===2){
     a+='<button class="sm" onclick="markupOne('+i+')">'+ico('ai','gold')+' '+markupOneLabel(c)+'</button>';
@@ -546,7 +599,7 @@ function dlClip(i){const c=CLIPS[i];if(!c)return;
         setTimeout(()=>URL.revokeObjectURL(u),4000);})
       .catch(e=>toast(t('Не скачалось .drp: ')+e.message));
   }else{
-    location.href='/api/export_xml?path='+encodeURIComponent(c.xml);
+    dlXml(c);
   }}
 function editedTag(c){return c.edited?'<span class="tag ok" data-t="'+t('Нарезка правлена вручную')+'">'+t('правлено')+'</span>':'';}
 // Теги статуса. На шаге 2 (del=true) у КАЖДОГО непустого тега появляется крестик при
@@ -665,7 +718,7 @@ function renderClips3(){const h=$('clips3');if(!h)return;h.innerHTML='';
   syncBuildBtn();syncDelSel();}
 // Тег спикера на клипе: как он влияет на стиль/папки/пороги, видно по селектору.
 // Клип ставится в очередь на шаге 1 при выбранном спикере — тег ставится там же.
-function spkSelHTML(i,c){const k=(c.job||{}).speaker||'';
+function spkSelHTML(i,c){const k=clipSpeaker(c);
   let o='<button type="button" role="option" data-k="" aria-selected="'+(k===''?'true':'false')+'">'+t('не выбран')+'</button>';
   Object.keys(SPEAKERS).forEach(key=>{const s=SPEAKERS[key];
     o+='<button type="button" role="option" data-k="'+esc(key)+'" aria-selected="'+(key===k?'true':'false')+'">'+esc(s.label||key)+'</button>';});
@@ -677,11 +730,21 @@ function spkSelHTML(i,c){const k=(c.job||{}).speaker||'';
 // withName=false — только метки (шаг 3: имя уже видно по селектору спикера, дублировать
 // его тегом нельзя — юзер просил «не надо второй раз писать кто это»); на шагах 1-2
 // селектора нет, там имя остаётся.
-function spkTagHTML(c,withName){const k=(c.job||{}).speaker||'';
+function spkTagHTML(c,withName){const k=clipSpeaker(c);
   const sp=SPEAKERS[k];
   let out='';
   if(withName!==false&&sp)out+='<span class="tag" data-t="'+esc(t('Спикер: {n}',{n:sp.label||k}))+'">'+esc(sp.label||k)+'</span>';
   return out;}
+// Спикер КЛИПА — единственный источник для ОПЕРАЦИЙ над этим клипом, то есть для
+// квоты ИИ-вставок, стоков, картинок и видео (тег job.speaker, ставит его newClip и
+// селектор строки шага 3). Общий селектор шага 1 — это НОВАЯ нарезка, не клип:
+// у клипа «Спикер не выбран» профиля нет и быть не должно, поэтому запасного пути
+// на общий выбор здесь НЕТ — иначе клип спикера Б получал квоту спикера А (владелец
+// выбрал наверху спикера А, работал с клипом спикера Б, а вставок выходило 7 вместо 13).
+// ОДНА ДВЕРЬ: любое чтение спикера КЛИПА во фронте идёт сюда — папки .jsx и рендера,
+// LUT, кадр камеры, голос, формат стока, стиль, подпись панели стиля. Прямое чтение
+// `c.job.speaker` мимо двери — та же ошибка «взяли не того спикера», только тише.
+function clipSpeaker(c){return (c&&c.job&&c.job.speaker)||'';}
 // Смена тега у клипа на шаге 3: переезжают стиль (кроме «свой стиль»), папки и пороги
 // нового спикера. Тег без профиля или снятие тега — запасной путь «не выбран» не ломаем.
 function setClipSpeaker(i,key){
@@ -712,7 +775,7 @@ function syncBuildBtn(){const n=CLIPS.filter(c=>c.sel).length;
   const rms=$('rmSelClips');if(rms)rms.disabled=!n;   // метла «убрать отмеченные» — только когда есть что убирать
   // Клипы ДВУХ спикеров в одном наборе собираются только по одному — каждый в свою
   // папку: «Собрать набор» и «Один на всё» для них не существуют.
-  const sel=selClips();const spks=new Set(sel.map(c=>(c.job||{}).speaker||'').filter(Boolean));
+  const sel=selClips();const spks=new Set(sel.map(c=>clipSpeaker(c)).filter(Boolean));
   const mixed=spks.size>1;
   if(b)b.disabled=!!mixed;
   const co=document.querySelector('input[name=multimode][value=combined]');
@@ -917,5 +980,61 @@ async function refreshStatuses(){
   }finally{REFRESHING=false;}
   renderClips1();renderClips2();renderClips3();saveState();   // ncams влияет и на кнопку раскладки камер на шаге 1; clips3 иначе не видит клипов, нарезанных во время очереди
   if(REFRESHWANT){REFRESHWANT=false;refreshStatuses();}
+}
+
+async function openTrash(){
+  const dir=val('ai_outdir').trim();
+  if(!dir){toast(t('Не задана папка результата'));return;}
+  $('trashList').innerHTML='<div class="muted">'+t('Загрузка корзины…')+'</div>';
+  openModal('mbTrash');
+  try{
+    const res=await fetch('/api/trash_list',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({dir})
+    });
+    const d=await res.json();
+    if(d.error){
+      $('trashList').innerHTML='<div class="empty">'+errText(d)+'</div>';
+      return;
+    }
+    const items=d.items||[];
+    if(!items.length){
+      $('trashList').innerHTML='<div class="empty">'+t('Корзина пуста')+'</div>';
+      return;
+    }
+    $('trashList').innerHTML=items.map(it=>{
+      const mb=((it.bytes||0)/1048576).toFixed(2);
+      const dt=it.deleted_at?it.deleted_at.replace('T',' ').substring(0,19):'';
+      return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px;border-bottom:1px solid var(--bd)">'
+        +'<div style="display:flex;flex-direction:column;gap:2px;overflow:hidden">'
+        +'<span style="font-weight:500;word-break:break-all">'+esc(it.stem||it.id)+'</span>'
+        +'<span class="muted" style="font-size:11px">'+esc(dt)+' · '+t('{n} файлов',{n:it.files||0})+' · '+mb+t(' МБ')+'</span>'
+        +'</div>'
+        +'<button class="sm" onclick="restoreTrashItem(\''+esc(it.id)+'\')">'+t('Вернуть')+'</button>'
+        +'</div>';
+    }).join('');
+  }catch(e){
+    $('trashList').innerHTML='<div class="empty">'+t('Ошибка загрузки корзины: ')+esc(String(e))+'</div>';
+  }
+}
+
+async function restoreTrashItem(id){
+  const dir=val('ai_outdir').trim();
+  if(!dir){toast(t('Не задана папка результата'));return;}
+  try{
+    const res=await fetch('/api/trash_restore',{
+      method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({dir,id})
+    });
+    const d=await res.json();
+    if(d.error){toast(errText(d));return;}
+    const n=(d.restored||[]).length;
+    const sk=(d.skipped||[]).length;
+    toast(t('Восстановлено файлов: {n}',{n})+(sk?t(' · пропущено: {m}',{m:sk}):''));
+    closeModal('mbTrash');
+    scanOutdir();
+  }catch(e){
+    toast(t('Ошибка восстановления: ')+e);
+  }
 }
 

@@ -974,6 +974,20 @@ canvas.ipvroto{position:absolute;inset:0;width:100%;height:100%;pointer-events:n
 .ipvcaption .pvcap_inner{position:absolute;box-sizing:border-box}
 .ipvcaption .pvcap_text{position:absolute;left:0;top:0;white-space:nowrap;line-height:1.4125}
 .ipvcaption .pvcap_strut{display:inline-block;width:0;height:0;vertical-align:baseline}
+/* ===== Дисклеймер ===== */
+/* Блок в AE — центрированный абзац: центр блока по X, базовая линия ПЕРВОЙ строки по Y
+   (Position текстового слоя). Кегль, положение и шаг строк ставит ipvDisc ЧИСЛАМИ ПЛАНА
+   в cqw — тех же единицах, что у подписи; своей копии формул в CSS нет.
+   Горизонталь — ОДНИМ способом: left = x − W/2 (его ставит ipvDisc), ширина — кадр
+   (100cqw), строки центрирует text-align:center. transform тут запрещён: сдвиг уже сидит
+   в left, и translateX(-50%) уводил блок ещё на полкадра влево — строки занимали
+   −540…526 px кадра вместо 0…1080 и резались левым краем.
+   Внутренний span — обычный блок потока (НЕ absolute): так text-align:center центрирует
+   строки по x. В кадре ширины хватает: кегль подобран под DISC_FIT_W (Python), переноса нет. */
+.ipvdisc{position:absolute;left:50%;width:100cqw;pointer-events:none;z-index:7;
+  white-space:pre;text-align:center;line-height:1}
+.ipvdisc .pvdis_text{display:block;white-space:pre}
+.ipvdisc .pvcap_strut{display:inline-block;width:0;height:0;vertical-align:baseline}
 /* интро-текст в предпросмотре AE: блок «за спиной» ~23% сверху, слова проявляются по таймингам.
    Кегль — ИЗ ПЛАНА, как у субтитров: в AE и интро, и субтитры используют один
    FONT_SIZE, поэтому --introsfs ставит ipvIntro из plan.fsize; 8.4cqw — фолбэк «плана нет». */
@@ -1219,4 +1233,16 @@ button.icon .ic{width:16px;height:16px;vertical-align:-3.5px}
 #stpanel .layer-order-btn:hover:not(:disabled),.layer-order-btn:hover:not(:disabled){color:var(--tx) !important;background:transparent !important}
 .layer-order-btn:disabled{opacity:.25;cursor:default;pointer-events:none}
 .layer-order-btn .ic{width:12px;height:12px}
+
+/* ===== Плашка «вкладка устарела» =====
+   Сервер отверг запись состояния (ревизия разошлась): состояние этой вкладки
+   остаётся расходящимся до перезагрузки, поэтому плашка ПОСТОЯННАЯ, а не тост.
+   Ниже тостов по z-index (тост — 100) и по центру сверху: она не должна
+   перекрывать окно прогресса и не должна исчезать. Красный — цвета ошибки,
+   зелёный Pulse Green тут был бы неправдой: работа не сохранена. */
+#srvstale{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:90;
+  display:flex;align-items:center;gap:12px;max-width:80vw;padding:8px 14px;
+  background:var(--bg2);border:1px solid var(--dng);border-radius:var(--r);
+  color:var(--tx);font-size:12px}
+#srvstale button.sm{height:var(--h-sm);flex:none}
 

@@ -64,9 +64,12 @@ PREVIEW_FUNCS = ("vtOf", "vtCam1", "vtSrcAt", "vtNow", "vtAudioCam", "vtPlaying"
                  "vtNote", "vtName", "vtProfileFx", "vtFx", "vtDetach", "vtStop", "vtPause",
                  "vtLiveOn", "vtSetMute", "vtLiveUpdate", "vtLiveRate", "vtLiveExpect", "vtLiveCmd",
                  "vtLiveSid", "vtLivePlay", "vtLivePause",
-                 "vtIsPv", "vtIsEd", "vtMuteHost", "vtStage", "vtPrep", "vtVoiceShow", "vtVoiceWatch", "vtVoicePoll",
-                 "pvProgRow", "pvProgDrop", "vtVoiceLine", "vtVoiceStop", "vtVoiceTake", "vtVoiceUse", "vtUse", "vtTick",
-                 "applyDbGains", "dbToGain")
+                 "vtIsPv", "vtIsEd", "vtMuteHost", "vtStage", "vtHostLive", "vtLivePrep",
+                 "vtStatesWait", "vtStatesTake", "vtHostDown",
+                 "vtPrep", "vtVoiceShow", "vtVoiceWatch", "vtVoicePoll",
+                 "pvProgRow", "pvProgDrop", "vtVoiceLine", "vtVoiceStop", "vtVoiceTake",
+                 "vtVoiceUse", "vtUse", "vtTick", "vtSeek", "vtRate", "vtSeekAt",
+                 "voiceGraphNeeded", "applyDbGains", "dbToGain")
 
 
 def _func_src(src: str, name: str) -> str:
@@ -216,15 +219,37 @@ let VOICEFXLIVE=null;
 // Плеер: время монтажа и дорожка обработанного голоса (vt*, 60-preview.js)
 let MEDIA_VOL=1;
 let PV={audio:[],aidx:0,vids:[],playing:false,scrubbing:false,xml:'',voicePanel:'pvvoice'};
-const VT_DRIFT=0.15,VT_QUIET=400,VT_POLL=1000;
 function voiceWiring(){}
+// Сервер живого хоста: состояния плагинов он отдаёт на dump_states. Штатная ветка
+// «окно закрыли» зовёт и его, и гашение (60-preview.js:vtHostDown).
+function voiceFxHostPost(url,body){
+  return globalThis.fetch(url,{method:'POST',body:JSON.stringify(body)}).then(r=>r.json());}
+function voiceFxHostDump(P){return Promise.resolve(null);}
+function voiceFxHostOn(){return false;}
 """
+
+
+def _sync_consts() -> str:
+    """Пороги синхрона дорожки — из 60-preview.js, а не копией в стенде.
+
+    Копия разъезжается с боевыми молча: пока в стенде стоял `VT_DRIFT=0.15`, а в
+    файле стало 0.25 (перемотка превратилась в подводку скоростью), стенд проверял
+    бы прежнее поведение и был бы зелёным на сломанном.
+    """
+    preview = PREVIEW_JS.read_text(encoding="utf-8")
+    out = []
+    for name in ("VT_SOFT", "VT_DRIFT", "VT_RATE", "VT_QUIET", "VT_POLL"):
+        m = re.search(r"^const %s=.*$" % name, preview, re.M)
+        assert m is not None, f"в 60-preview.js нет const {name}"
+        out.append(m.group(0))
+    return "\n".join(out)
 
 
 def _run_node(tmp_path: Path, body: str, name: str = "voice_stand.js") -> Any:
     """Прогнать стенд под node и вернуть разобранный JSON с последней строки."""
     path = tmp_path / name
-    path.write_text(DOM + STATE + _src(*(VOICE_FUNCS + PREVIEW_FUNCS)) + "\n" + body,
+    path.write_text(DOM + _sync_consts() + "\n" + STATE
+                    + _src(*(VOICE_FUNCS + PREVIEW_FUNCS)) + "\n" + body,
                     encoding="utf-8")
     proc = subprocess.run(["node", str(path)], capture_output=True, text=True,
                           encoding="utf-8-sig", errors="replace", timeout=60,

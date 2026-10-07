@@ -24,11 +24,12 @@ Python (`core/xml2ae/layout.py`, `plan_subs.py`), план несёт готов
 5. пресет появления `glitch` — ТОТ ЖЕ глитч, что у строк интро: в .jsx зовётся
    `introAnimFX`, числа общие (layout.SUB_GLITCH_*), а в плане лежат ключи мерцания;
 6. превью (node, боевые функции static/app/85-inserts-view.js): подложка встаёт за
-   ТЕКУЩИМ словом по ключам плана, градиент и свечение — теми же числами, а тень
-   градиентного слова играет ОТДЕЛЬНЫМ слоем под ним (на буквах она просвечивала бы
-   сквозь прозрачные буквы и слово выходило тёмным), глитч мерцает по ключам плана;
-   мутации «подложка не за текущим словом», «тень снова на буквах» и «свечение без
-   имени свойства / без drop-shadow» красят стенд;
+   ТЕКУЩИМ словом по ключам плана, градиент и свечение — теми же числами, тень слов
+   лежит фильтром контейнера слов по числам плана (aeShadowCss — как Drop Shadow слоя
+   прекомпа в AE; на буквах градиента она просвечивала бы сквозь прозрачные буквы и
+   слово выходило тёмным), глитч мерцает по ключам плана; мутации «подложка не за
+   текущим словом», «тень снова на буквах» и «свечение без имени свойства / без
+   drop-shadow» красят стенд;
 7. умолчания: все новые ключи выключены, собранный .jsx не меняется ни на байт
    (эталон fixtures/golden_geometry.jsx), разметка полей в core/style_geometry.py есть.
 """
@@ -104,7 +105,7 @@ def _preview_plan(plan):
     """Только то, что читает ipvSubs: числа превью берёт из плана, своих не держит."""
     keys = ("w", "h", "posy", "fsize", "sub_step", "hl_step", "hl_rise", "hl_dur",
             "hl_blur", "hl_blur_amt", "subs", "hl_size_k", "sub_anim_font",
-            "sub_wbg", "sub_grad", "sub_glow")
+            "sub_wbg", "sub_grad", "sub_glow", "shadows")
     return {k: plan[k] for k in keys if k in plan}
 
 
@@ -573,14 +574,14 @@ console.log('OK: pill backs the current word');
 
 
 @node
-def test_preview_gradient_puts_shadow_below_the_word(xml_subs, tmp_path):
-    """Градиент: буквы остаются градиентом, а тень уходит ОТДЕЛЬНЫМ слоем под слово.
+def test_preview_gradient_does_not_paint_the_shadow_on_the_letters(xml_subs, tmp_path):
+    """Градиент: буквы остаются градиентом, а тень слов лежит фильтром ПОД ними.
 
-    Тень, нарисованная `text-shadow` на самих буквах градиента, ложится ПОД прозрачные
-    буквы и просвечивает сквозь них чёрным — слово выходило тёмным, хотя числа тени те же,
-    что у белого. В AE тень лежит на слое ПОД слоем с Ramp, поэтому у градиентного слова
-    своего `text-shadow` нет вовсе: тень и свечение играет обёртка `.pvsubw_fx` функциями
-    `drop-shadow` — она берёт УЖЕ нарисованные буквы и кладёт тень под них.
+    Тень, нарисованная `text-shadow` на буквах градиента, ложится под прозрачные буквы
+    и просвечивает сквозь них чёрным — слово выходило тёмным, хотя числа тени те же,
+    что у белого. В AE Drop Shadow висит на слое ПРЕКОМПА субтитров: выше слов и
+    подложки слова, а не на буквах. Тем же местом её рисует и превью — фильтром
+    контейнера слов, числами из плана (одна дверь aeShadowCss, см. test_shadow_css).
     """
     st = {"sub_fill_mode": "gradient", "sub_grad_from": [0.2, 0.4, 0.6],
           "sub_grad_to": [0.8, 0.6, 0.4], "sub_grad_angle": 45}
@@ -591,11 +592,12 @@ def test_preview_gradient_puts_shadow_below_the_word(xml_subs, tmp_path):
     checks = r"""
 const wtext=%(w)s, tm=%(tm)s, g=plan.sub_grad;
 // Слой эффектов слова: в разметке это обёртка <span class="pvsubw_fx" style="…"> вокруг
-// спана слова. Читается разметка ЦЕЛИКОМ (host().innerHTML) — по ней видно и слово, и слой.
-function fxStyle(text){
+// спана слова. Читается разметка ЦЕЛИКОМ (host().innerHTML) — по ней видно и слово,
+// и слой. Обёртки у градиента без свечения нет вовсе: тень живёт не в разметке.
+function fxHtml(){
   const html=host().innerHTML;
-  const i=html.indexOf('>'+text+'</span>');
-  assert(i>=0,'в разметке нет слова '+text);
+  const i=html.indexOf('>'+wtext+'</span>');
+  assert(i>=0,'в разметке нет слова '+wtext);
   const a=html.lastIndexOf('<span class="pvsubw_fx"',i);
   const b=html.lastIndexOf('<span class="pvsubw_wd',i);
   if(a<0||b<0)return '';                     // обёрток в разметке нет вовсе
@@ -612,12 +614,17 @@ const want='background-image:linear-gradient('+g.angle+'deg,'+rgb2hex(g.from)+',
 assert(sp.styleStr.indexOf(want)>=0,'градиент не по плану: '+sp.styleStr);
 // На буквах тени нет: у градиента она просвечивала бы сквозь прозрачные буквы.
 assert(sp.styleStr.indexOf('text-shadow:none')>=0,'у слова не снят text-shadow: '+sp.styleStr);
-// Тень — на слое ПОД словом, функциями drop-shadow: числа те же, что у --subsh.
-const fx=fxStyle(wtext);
-assert(fx,'у градиентного слова нет слоя эффектов под ним: '+fx);
-assert(fx.indexOf('filter:')===0,'слой эффектов без filter: '+fx);
-assert(fx.indexOf('drop-shadow(0 2px 7px #000)')>=0,'на слое нет тени слова: '+fx);
-assert(fx.indexOf('drop-shadow(0 0 3px #000)')>=0,'на слое нет второй тени слова: '+fx);
+assert(fxHtml().indexOf('drop-shadow')<0,'тень градиента уехала в разметку слова: '+fxHtml());
+// Тень слов — фильтр контейнера слов: пиксели превью на пиксель кадра, как у
+// остальных теней превью (числа тени заданы в пикселях кадра).
+const k=(subEl.clientWidth||plan.w)/plan.w;
+const hf=host().style.filter;
+assert(hf.indexOf('drop-shadow(')===0,'тень субтитров не фильтр контейнера слов: '+hf);
+assert(hf===aeShadowCss(plan.shadows.sub,k),'тень субтитров не по числам плана: '+hf);
+// Числа тени — ИЗ ПЛАНА: мягкость вдвое меняет фильтр. Своих чисел у превью нет.
+const soft=JSON.parse(JSON.stringify(plan)); soft.shadows.sub.soft=plan.shadows.sub.soft*2;
+paint(soft,tm);
+assert(host().style.filter!==hf,'мягкость плана не доехала до тени субтитров');
 console.log('OK: gradient keeps the letters, the shadow lies below');
 """ % {"w": json.dumps(w["w"], ensure_ascii=False), "tm": json.dumps(round(w["s"] + 0.01, 6))}
     _expect_ok(_run_preview(tmp_path, "grad_shadow.js", plan, checks), "тень градиентного слова")
@@ -633,11 +640,13 @@ console.log('OK: gradient keeps the letters, the shadow lies below');
 def test_preview_gradient_glow_plays_on_the_layer_below(xml_subs, tmp_path):
     """Градиент + свечение: светит слой ПОД словом, цветом и радиусом плана.
 
-    Свечение — Glo2 на слое слова в .jsx; у градиента оно, как и тень, играет на слое под
-    словом, а числа те же, что у слов интро: радиус и сила множат две размытые копии букв
-    (12 и 24 px при радиусе 77 и силе 0.62 — при дефолтах интро множитель 1). Галка
-    «только жёлтые» — ветка GLOW_YEL в .jsx: белое слово свечения не получает. Галка
-    снята — светится и белое: числа берутся из ПЛАНА, а не из памяти прошлого кадра.
+    Свечение — Glo2 на слое слова в .jsx; у градиента оно играет на слое под словом
+    (буквы градиента прозрачны для заливки, и text-shadow просвечивал бы сквозь них),
+    а числа те же, что у слов интро: радиус и сила множат две размытые копии букв
+    (12 и 24 px при радиусе 77 и силе 0.62 — при дефолтах интро множитель 1). Тень слов
+    к обёртке отношения не имеет: её рисует фильтр контейнера слов. Галка «только жёлтые»
+    — ветка GLOW_YEL в .jsx: белое слово свечения не получает. Галка снята — светится и
+    белое: числа берутся из ПЛАНА, а не из памяти прошлого кадра.
     """
     st = {"sub_fill_mode": "gradient", "sub_grad_from": [0.2, 0.4, 0.6],
           "sub_grad_to": [0.8, 0.6, 0.4], "sub_grad_angle": 45,
@@ -666,11 +675,13 @@ const col=rgb2hex(gl.fill);
 const gk=(gl.rad/77)*(gl.amt/0.62);
 const halo=[Math.round(12*gk*10)/10,Math.round(24*gk*10)/10]
   .map(b=>'drop-shadow(0 0 '+b+'px '+col+')');
-// Белое слово: тень слова на слое есть, свечения при галке «только жёлтые» — нет.
+// Белое слово: свечения при галке «только жёлтые» нет — обёртки с filter нет вовсе.
+// Тень слов при этом на месте: её рисует фильтр контейнера слов (слой прекомпа в AE),
+// а не разметка слова.
 paint(plan,tm);
 let fx=fxStyle(wtext);
-assert(fx&&fx.indexOf('drop-shadow(0 2px 7px #000)')>=0,'у белого слова нет тени: '+fx);
 assert(fx.indexOf(col)<0,'свечение уехало на белое слово: '+fx);
+assert(host().style.filter.indexOf('drop-shadow(')===0,'тень слов пропала: '+host().style.filter);
 // Жёлтое слово: свечение теми же числами плана, и тоже на слое под словом.
 paint(plan,ytm);
 let ys=words().filter(s=>s.textContent===ytext)[0];
@@ -693,8 +704,8 @@ console.log('OK: preview glows on the layer below by plan');
     _expect_ok(_run_preview(tmp_path, "grad_glow.js", plan, checks), "свечение градиента")
     # Откат: свечение уезжает в filter голым списком теней — CSS такого не примет.
     bad = _run_preview(tmp_path, "grad_glow_mut.js", plan, checks,
-                       src=((".concat(glowTsh(pl.sub_glow,isY).map(s=>'drop-shadow('+s+')'))",
-                             ".concat(glowTsh(pl.sub_glow,isY))"),))
+                       src=(("glowTsh(pl.sub_glow,isY).map(s=>'drop-shadow('+s+')')",
+                             "glowTsh(pl.sub_glow,isY)"),))
     err = _expect_red(bad, "возврат свечения без drop-shadow")
     assert "свечени" in err, "мутация покраснела не на том: %s" % err[-500:]
 
@@ -705,8 +716,9 @@ def test_preview_glow_on_the_word_for_solid_fill(xml_subs, tmp_path):
 
     Без имени свойства (`text-shadow:`) список теней браузер выбрасывает целиком, и
     свечения не было вовсе, хотя числа лежали в разметке. Стенд сверяет ОБЪЯВЛЕНИЕ
-    целиком: тень слова плюс две размытые копии букв ЦВЕТОМ ПЛАНА — и что при галке
-    «только жёлтые» белое слово свечения не получает.
+    целиком: две размытые копии букв ЦВЕТОМ ПЛАНА (тень слов сюда не входит — её рисует
+    фильтр контейнера слов, aeShadowCss) — и что при галке «только жёлтые» белое слово
+    свечения не получает.
     """
     st = {"sub_glow_on": True, "sub_glow_yellow": True, "sub_glow_amt": 1.0,
           "sub_glow_rad": 40.0, "sub_glow_fill": [0.0, 1.0, 0.5]}
@@ -722,15 +734,15 @@ const col=rgb2hex(gl.fill);
 const gk=(gl.rad/77)*(gl.amt/0.62);
 const b1=Math.round(12*gk*10)/10, b2=Math.round(24*gk*10)/10;
 const glow='0 0 '+b1+'px '+col+',0 0 '+b2+'px '+col;
-// Жёлтое слово: тень слова и свечение цветом плана — ОДНИМ объявлением text-shadow.
+// Жёлтое слово: свечение цветом плана — ОДНИМ объявлением text-shadow.
 paint(plan,ytm);
 let ys=words().filter(s=>s.textContent===ytext)[0];
 assert(ys,'не нашёлся спан жёлтого слова');
 assert(ys.classList.contains('yel'),'жёлтое слово потеряло свой класс');
-assert(ys.styleStr.indexOf('text-shadow:0 2px 7px #000,0 0 3px #000,'+glow+';')>=0,
+assert(ys.styleStr.indexOf('text-shadow:'+glow+';')>=0,
   'свечение жёлтого не по плану: '+ys.styleStr);
-// Белое слово: свечения при галке «только жёлтые» нет, и тень его не подменена —
-// объявления text-shadow у слова вовсе нет (тень приходит унаследованной из --subsh).
+// Белое слово: свечения при галке «только жёлтые» нет — объявления text-shadow у слова
+// вовсе нет (CSS-тень снята: --subsh:none, тень AE рисует фильтр контейнера слов).
 paint(plan,tm);
 let ws=words().filter(s=>s.textContent===wtext)[0];
 assert(ws,'не нашёлся спан белого слова');
@@ -744,8 +756,8 @@ console.log('OK: preview glows on the letters by plan');
     _expect_ok(_run_preview(tmp_path, "solid_glow.js", plan, checks), "свечение сплошного слова")
     # Откат: список теней уезжает БЕЗ имени свойства — объявление невалидно.
     bad = _run_preview(tmp_path, "solid_glow_mut.js", plan, checks,
-                       src=(("return 'text-shadow:'+(pl.sub_shadow===false?[]:SH_TSH).concat(gl).join(',')+';';",
-                             "return (pl.sub_shadow===false?[]:SH_TSH).concat(gl).join(',');"),))
+                       src=(("return 'text-shadow:'+gl.join(',')+';';",
+                             "return gl.join(',');"),))
     _expect_red(bad, "возврат свечения без имени свойства")
 
 

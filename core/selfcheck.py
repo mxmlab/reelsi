@@ -80,7 +80,10 @@ def _transcribe_words(wav: str, model: Any = None, engine: str = "whisper:large-
         return asr_backends.transcribe_words(wav, engine=engine, use_terms=False)
     from core import transcribe as tr
     m = model or tr.get_model(engine.split(":", 1)[1])
-    segs, _info = m.transcribe(wav, language="ru", word_timestamps=True,
+    # Массив, а не путь: с путём faster-whisper декодирует его PyAV'ом, а PyAV 19
+    # убрал `metadata_errors`, который faster-whisper 1.2 ещё передаёт — вызов
+    # падал TypeError на свежей установке (та же причина, что в core.transcribe).
+    segs, _info = m.transcribe(tr.read_mono16k(wav), language="ru", word_timestamps=True,
                                vad_filter=False, condition_on_previous_text=False)
     out = []
     for s in segs:

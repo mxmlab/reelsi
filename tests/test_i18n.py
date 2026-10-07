@@ -135,12 +135,15 @@ def _backend_err_codes():
     `core/*.py` — наравне с api/: пользовательскую ошибку с кодом поднимает и
     ядро (`core/lut.py` — разбор таблицы LUT), а словарь обязан знать КАЖДЫЙ
     такой код, иначе в английском интерфейсе останется русский текст.
+    `core/gigaam_cut/*.py` — тот же случай, что `core/aicut`: модули движка
+    поднимают ошибки на пути нарезки, который запускает человек.
     """
     import glob
     codes = set()
     for f in glob.glob(os.path.join(ROOT, "api", "*.py")) + \
             glob.glob(os.path.join(ROOT, "core", "*.py")) + \
             glob.glob(os.path.join(ROOT, "core", "aicut", "*.py")) + \
+            glob.glob(os.path.join(ROOT, "core", "gigaam_cut", "*.py")) + \
             glob.glob(os.path.join(ROOT, "core", "xml2ae", "*.py")):
         src = io.open(f, encoding="utf-8").read()
         for m in re.finditer(r'umsg\("([a-z0-9_]+)"', src):

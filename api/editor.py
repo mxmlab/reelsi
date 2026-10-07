@@ -443,10 +443,27 @@ def api_gen_subs() -> Response:
             from core import align
             from core import xmlbuild
             from core import asr_backends
+            from core import sync as _sync
+            from core.gpulock import gpu_lock
             p = _ensure_project(xml)                      # сайдкар или реконструкция из XML
             cams = p["cams"]; offsets = p["offsets"]; N = len(cams)
             keep = [(float(s), float(e)) for s, e in p["keep"]]
-            y, sr = librosa.load(cams[0], sr=16000, mono=True)
+            # Звук камеры достаём ЧЕРЕЗ ffmpeg во временный wav, а не читаем исходный
+            # mp4/mov напрямую: librosa 1.0 убрала запасной декодер audioread, а
+            # libsndfile видео не читает вовсе — на свежей установке `librosa.load` по
+            # видео падал LibsndfileError, и субтитры не собирались. Тот же путь, что в
+            # core.emphasis: extract_audio качает только звук (`-vn`).
+            fd, wav = tempfile.mkstemp(prefix="_gensubs_src_", suffix=".wav")
+            os.close(fd)
+            try:
+                _sync.extract_audio(cams[0], wav)
+                y, sr = librosa.load(wav, sr=16000, mono=True)
+            finally:
+                try:
+                    os.remove(wav)
+                except ReelsiError: raise
+                except OSError:
+                    pass  # временный wav уже убран
             parts = [y[int(s*16000):int(e*16000)] for s, e in keep]
             cut = np.concatenate(parts) if parts else y[:0]
             # Имя уникальное: Flask threaded=True, и два запроса субтитров (два окна,
@@ -459,7 +476,13 @@ def api_gen_subs() -> Response:
                 # Единая точка входа в плаггable ASR-бэкенды (каждый сам управляет VRAM
                 # и выгружает свою модель после транскрипции).
                 # emit — чтобы подмены по словарю терминов были видны в логе, а не молча
-                words = asr_backends.transcribe_words(tmp, engine=subengine, emit=emit)  # [{w,start,end}] сек на cut-таймлайне
+                # Под замком видеокарты: распознавание идёт в ПРОЦЕССЕ сервера, а gpu_lock
+                # заведён ровно на «две модели на карте не живут». Без него субтитры
+                # поверх идущей нарезки — это Whisper и GigaAM разом: на 4 ГБ OOM, на
+                # 16 ГБ тихая деградация. Берём той же строкой, что нарезка
+                # (core/gigaam_cut/pipeline.py).
+                with gpu_lock("субтитры", emit=emit):
+                    words = asr_backends.transcribe_words(tmp, engine=subengine, emit=emit)  # [{w,start,end}] сек на cut-таймлайне
                 words_path = sidecar_path(xml, ".words.json")
                 atomic_json_dump(words_path, words, indent=1)
             finally:
@@ -517,8 +540,15 @@ def api_aicut_preview() -> Response:
 
 @bp.route("/api/scanxml", methods=["POST"])
 def api_scanxml() -> Response:
-    """Все .xml в папке (для «подхватить клипы из папки выхода» — список клипов живёт
-    в localStorage и в другом браузере/после чистки пустой)."""
+    """Все .xml в папке + вставки каждого клипа с диска (для «подхватить клипы из
+    папки выхода» — список клипов живёт в localStorage и в другом браузере/после
+    чистки пустой).
+
+    Раньше роут отдавал только пути, и «Из папки результата» возвращала клипы с
+    пустыми вставками: восстановить уже готовую разметку было нечем. Теперь тем же
+    проходом собираем вставки из сайдкара `.inserts.json` и собранного `.jsx`
+    (`core.recover`), плюс спикера прогона из `.project.json` — клип вернётся тем
+    же стилем, каким его делали. Ключи `inserts`/`speakers` — по пути XML."""
     d = request.get_json() or {}
     dir_ = jstr(d, "dir").strip().strip('"')
     try:
@@ -527,7 +557,38 @@ def api_scanxml() -> Response:
         try:
             files = sorted(os.path.join(dir_, f) for f in os.listdir(dir_)
                            if f.lower().endswith(".xml"))
-            return jsonify(ok=True, paths=files)
+            from core import clipstore, recover
+            from core.fileio import json_load_soft
+            clips: dict[str, Any] = {}
+            inserts: dict[str, Any] = {}
+            speakers: dict[str, str] = {}
+            intro: dict[str, Any] = {}
+            for p in files:
+                c_snap = clipstore.load_clip(p)
+                if c_snap is not None:
+                    clips[p] = c_snap
+                else:
+                    ins = recover.recover_inserts(p)
+                    if ins:
+                        inserts[p] = ins
+                    spk = recover.read_project_speaker(p)
+                    if spk:
+                        speakers[p] = spk
+                    stem, _ = os.path.splitext(p)
+                    intro_data = json_load_soft(stem + ".intro.json")
+                    if isinstance(intro_data, dict):
+                        intro[p] = intro_data
+            resp: dict[str, Any] = {
+                "ok": True,
+                "paths": files,
+                "inserts": inserts,
+                "speakers": speakers,
+            }
+            if clips:
+                resp["clips"] = clips
+            if intro:
+                resp["intro"] = intro
+            return jsonify(**resp)
         except ReelsiError: raise
         except Exception as e:
             raise ReelsiError(umsg("scanxml_failed", f"{type(e).__name__}: {e}",

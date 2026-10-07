@@ -30,3 +30,8 @@ anthropic>=0.40
 # copyright - the responsibility is on the user. That is why the package is
 # optional.
 yt-dlp>=2024.1
+
+# Live monitoring through VST3 plugins: the plugin window, the chain baked into
+# the voice track and the list of output devices. Without it the voice panel
+# still works, but there are no plugins - the camera audio plays as is.
+pedalboard>=0.9

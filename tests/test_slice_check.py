@@ -85,7 +85,7 @@ class _FakeCommands:
 
     def __call__(self, args, cwd, env=None, timeout=None, input=None, **kwargs):
         joined = " ".join(str(a) for a in args)
-        self.calls.append({"args": joined, "cwd": cwd, "input": input})
+        self.calls.append({"args": joined, "cwd": cwd, "input": input, "env": env})
         code = 0
         for marker, value in self.codes.items():
             if marker in joined:
@@ -345,6 +345,35 @@ def test_явный_пропуск_linux_не_красит_код(repo, fake_too
     assert "linux НЕ ПРОГОНЯЛСЯ" in out, out
     assert "[ПРОПУЩЕН] linux" in out
     assert not fake.calls_with("ssh"), "шаг linux всё же запускался"
+
+
+def test_pytest_шаг_помечает_mypy_отдельным_шагом(repo, fake_tools, fake_commands):
+    """Окружение шага pytest несёт REELSI_MYPY_STEP=1 — и локально, и в docker.
+
+    Почему это не мелочь: у slice_check есть СВОЙ шаг mypy, и тест-храповик в
+    наборе был бы вторым прогоном. Под `pytest -n auto` он дольше таймаута pytest
+    (120 с, timeout_method = thread), а thread-таймаут убивает весь процесс
+    воркера — «worker crashed … node down», то есть шаг pytest краснеет из-за
+    сторожа типизации, а не из-за кода.
+    """
+    fake = fake_commands()
+    assert slice_check.main(["--root", str(repo), "--linux-ssh", "user@host"]) == 0
+
+    local = [c for c in fake.calls if " -m pytest " in c["args"] and c["args"].startswith(slice_check.sys.executable)]
+    assert len(local) == 1, f"шаг pytest запускался не один раз: {len(local)}"
+
+    ssh_calls = fake.calls_with("ssh")
+    assert len(ssh_calls) == 1, "ssh должен вызываться ровно один раз"
+    for args, env in ((local[0]["args"], local[0]["env"]), (ssh_calls[0]["args"], ssh_calls[0]["env"])):
+        if env is None:
+            assert f"{slice_check.ENV_MYPY_STEP}=1" in args, (
+                f"в команде {args} нет -e {slice_check.ENV_MYPY_STEP}=1"
+            )
+            continue
+        assert env.get(slice_check.ENV_MYPY_STEP) == "1", (
+            f"шаг pytest идёт без {slice_check.ENV_MYPY_STEP}=1: mypy гоняется вторым "
+            "прогоном и роняет воркер под `-n auto`"
+        )
 
 
 def test_команда_ssh_содержит_init_batchmode_и_образ(repo, fake_tools, fake_commands):

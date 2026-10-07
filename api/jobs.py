@@ -17,8 +17,9 @@ from core import cutstages
 from core.cutjob import CutOptions
 from ._core import (DEFAULT_BASE, JOB, LOCK, bp, emit, is_reelsi_target, item_done,
                     item_fail, item_set, items_init, job_finish, job_start, jstr,
-                    journal_interrupted, kill_tree, set_progress, set_stalled,
-                    sysexit_text, task_popen_kwargs, umsg_err, _cross_lock_release)
+                    journal_interrupted, kill_tree, lock_owner_text, set_progress,
+                    set_stalled, sysexit_text, task_popen_kwargs, umsg_err,
+                    _cross_lock_release)
 from core.jobstate import pump_stdout
 from core.umsg import ReelsiError, umsg
 from core.app_meta import child_env, module_cmd
@@ -185,7 +186,10 @@ def run_job(base: str, outdir: str, pairs: list[list[str]], opts: dict[str, Any]
                 made.append(out_xml)
                 # Одно место записи «готово»: item_done и кладёт путь в
                 # results, и переводит элемент в done — вторым местом их не развести.
-                item_done(JOB, LOCK, stem, os.path.basename(out_xml))
+                # Путь ПОЛНЫЙ: имя без папки заставляло клиента склеивать его самому,
+                # и на Linux склейка чужим разделителем ('\\') давала несуществующий
+                # файл (см. /api/scanxml — он и раньше отдавал пути целиком).
+                item_done(JOB, LOCK, stem, out_xml)
             except (ReelsiError, SystemExit) as e:
                 # cutjob.process_pair отвечает понятной ошибкой через SystemExit
                 # (umsg) — это BaseException, и он проходил мимо except Exception:
@@ -267,6 +271,24 @@ def run_job(base: str, outdir: str, pairs: list[list[str]], opts: dict[str, Any]
         job_finish()
 
 
+def cut_engine_label(engine: str) -> str:
+    """Короткое имя ASR-движка для подписи шага: «GigaAM-v3 (RU, CTC)» -> «GigaAM-v3».
+
+    Подпись шага нарезки называла движок всегда «Omni», даже когда режет GigaAM
+    (движок берётся из active_cut_asr, см. aicut.cut_asr_engine) — по этой строке
+    человек понимает, чем именно его режут. Уточнения каталога в скобках
+    отбрасываем: строка сама заключена в скобки («ИИ-нарезка (… + LLM + SSM)»).
+    Неизвестный движок отдаём как есть."""
+    try:
+        from core import asr_backends
+        meta = asr_backends.engine_meta(engine) or {}
+        label = str(meta.get("label") or "")
+    except ReelsiError: raise
+    except Exception:
+        label = ""
+    return label.split(" (")[0].strip() or engine
+
+
 def run_omnicut_job(outdir: str, pairs: list[list[str]], model: str | None = None, draft: bool = True, selfcheck: bool = False, review: bool = False, mode: str = "gigaam", selfcheck_model: str = "whisper:large-v3", speaker: str | None = None, dedupe: bool | None = None, stages: dict[str, Any] | None = None) -> None:
     """ИИ-нарезка через omni_cut.py (Omni + LLM + SSM) — как subprocess, стримим лог.
     stages — словарь ступеней нарезки; если задан, draft и dedupe берутся из него.
@@ -310,6 +332,9 @@ def run_omnicut_job(outdir: str, pairs: list[list[str]], model: str | None = Non
 
         from core import aicut
         k = aicut.cut_parallel_width(mode, review, len(pairs))
+        # Чем РЕЖЕТ этот прогон — в подпись шага. Раньше там всегда стояло «Omni»,
+        # хотя движок слуха берётся из active_cut_asr (может быть GigaAM).
+        cut_engine = cut_engine_label(aicut.cut_asr_engine(emit=emit))
         if k > 1:
             emit("ИИ-нарезка: {k} ролика одновременно", k=k)
         done_count = 0     # счётчик завершённых роликов (под LOCK)
@@ -346,8 +371,8 @@ def run_omnicut_job(outdir: str, pairs: list[list[str]], model: str | None = Non
                 return
             stem = os.path.splitext(os.path.basename(cams_i[0]))[0]
             out_xml = os.path.join(outdir, f"{i:02d}_{stem}.xml")
-            emit("[{i}/{n}] {stem} — ИИ-нарезка (Omni + LLM + SSM), ~5–10 мин",
-                 i=i, n=len(pairs), stem=stem)
+            emit("[{i}/{n}] {stem} — ИИ-нарезка ({engine} + LLM + SSM), ~5–10 мин",
+                 i=i, n=len(pairs), stem=stem, engine=cut_engine)
             if not parallel:
                 set_progress(i, len(pairs), stem)
             else:
@@ -479,7 +504,8 @@ def run_omnicut_job(outdir: str, pairs: list[list[str]], model: str | None = Non
                 elif os.path.isfile(out_xml):
                     # Одно место записи «готово»: item_done и кладёт путь
                     # в results, и переводит элемент в done — вторым местом их не развести.
-                    item_done(JOB, LOCK, stem, os.path.basename(out_xml))
+                    # Путь ПОЛНЫЙ (см. run_job): клиент больше не склеивает папку сам.
+                    item_done(JOB, LOCK, stem, out_xml)
                 else:
                     reason = key_err or (tail[-1] if tail else "процесс не дал вывода")
                     if p.returncode:
@@ -583,7 +609,7 @@ def api_omnicut_run() -> Response:
             raise ReelsiError(umsg("no_result_dir", "Не задана папка результата"))
         pairs = build_pairs(d.get("camdirs") or [], d.get("pairs") or [])
         if not job_start(kind="cut", label="ИИ-нарезка"):
-            raise ReelsiError(umsg("busy", "Уже выполняется"))
+            raise ReelsiError(umsg("busy", lock_owner_text("Уже выполняется")))
         raw_stages = d.get("stages")
         if raw_stages is None:
             raw_stages = {}
@@ -628,7 +654,8 @@ def api_draft_render() -> Response:
             raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml_path}",
                                   path=xml_path))
         if not job_start(kind="draft", label="Черновик mp4"):
-            raise ReelsiError(umsg("busy_other", "Уже выполняется другая задача"))
+            raise ReelsiError(umsg("busy_other",
+                                   lock_owner_text("Уже выполняется другая задача")))
     except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 
@@ -813,7 +840,7 @@ def api_run() -> Response:
             if not isinstance(opts, dict):
                 raise ReelsiError(umsg("no_opts", "Нет параметров нарезки (opts)"))
         if not job_start(kind="cut", label="Классическая нарезка"):
-            raise ReelsiError(umsg("busy", "Уже выполняется"))
+            raise ReelsiError(umsg("busy", lock_owner_text("Уже выполняется")))
         try:
             threading.Thread(target=run_job, args=(base, outdir, pairs, opts),
                              daemon=True).start()

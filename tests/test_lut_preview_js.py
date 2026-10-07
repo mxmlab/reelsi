@@ -47,6 +47,9 @@ let LUTMAX=1920,LUT_GL=null,LUT_NOLOG=false,LUT_VFAIL=false;
 const LOGS=[];
 function uiLog(m){LOGS.push(String(m));}
 function t(s){return s;}                       // переводчик страницы: на русском ключ как есть
+// Дверь спикера клипа живёт в 40-queue.js: lutPath берёт спикера ТОЛЬКО у клипа
+// (запасного пути на общий селектор у операции над клипом нет).
+function clipSpeaker(c){return (c&&c.job&&c.job.speaker)||'';}
 globalThis.document={createElement:()=>({getContext:()=>null})};   // WebGL2 в node нет
 """
 

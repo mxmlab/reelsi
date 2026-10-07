@@ -24,6 +24,7 @@
     {"cmd": "pause"}                остановить чтение трека
     {"cmd": "track", "path": ...}   заменить трек (шумодав досчитал весь клип)
     {"cmd": "chain", "chain": […]}  перестроить цепочку НА ЛЕТУ (поток не трогаем)
+    {"cmd": "dump_states"}          отдать состояние ВСЕХ загруженных плагинов (событие `states`)
     {"cmd": "open_editor", "index": N, "path": X.vst3}  открыть окно плагина в ЭТОМ же процессе
     {"cmd": "stop"}                 закрыть хост (звук кончился)
     {"cmd": "quit"}                 закрыть хост, не трогая звук
@@ -60,9 +61,10 @@
 пишем в stderr одной строкой.
 
 События родителю едут JSON-строками в stdout (`_emit_event`): `editor_open`,
-`editor_closed`, `state` (состояние плагина по закрытию окна), `chain` (что
-реально встало в цепочку и что пропущено), `empty` (ни одного плагина не
-встало — играть нечем) и `audio_error` (звук хоста не идёт: устройство не
+`editor_closed`, `state` (состояние плагина по закрытию окна), `states` (состояния
+ВСЕХ загруженных плагинов — по команде `dump_states`), `chain` (что реально встало
+в цепочку и что пропущено), `empty` (ни одного плагина не встало — играть нечем)
+и `audio_error` (звук хоста не идёт: устройство не
 приняло частоту, поток отвалился — по нему страница возвращает звук СЕБЕ,
 а не глушит свой голос в пользу молчащего хоста). Живой хост дублирует их в
 файл событий из задания (`events_file`): его stdout родителю не читает никто,
@@ -634,6 +636,46 @@ def _open_editor(loaded: list[tuple[dict[str, Any], Any]], index: int,
     _emit_event("editor_closed", index=int(index))
 
 
+def plugin_states(loaded: list[tuple[dict[str, Any], Any]]) -> list[dict[str, str]]:
+    """Состояния ВСЕХ загруженных плагинов: `[{path, name, state_b64}, …]`.
+
+    Одна дверь на оба события о состоянии (`state` по закрытию окна и `states` по
+    команде `dump_states`) и на запись файла состояния: второй копии сбора быть не
+    должно — иначе «состояние всех плагинов» и «состояние одного» разъедутся.
+
+    Берутся ВСЕ загруженные, включая выключенные: выключенный плагин держат
+    загруженным нарочно (включение галки не оплачивается вторыми секундами загрузки),
+    и его ручки человек тоже крутит. Путь — ключ записи в профиле: у оболочек
+    (WaveShell) имена повторяются, а путь один на строку панели и на задание.
+    """
+    out: list[dict[str, str]] = []
+    for item, plug in loaded:
+        path = str(item.get("path") or "")
+        if not path:
+            continue
+        try:
+            raw = bytes(plug.raw_state)
+        except Exception:                             # noqa: BLE001 — чужой плагин не повод падать
+            continue
+        if not raw:
+            continue
+        out.append({"path": path, "name": str(item.get("name") or ""),
+                    "state_b64": base64.b64encode(raw).decode("ascii")})
+    return out
+
+
+def _dump_states(loaded: list[tuple[dict[str, Any], Any]]) -> None:
+    """Отдать состояние ВСЕХ загруженных плагинов событием `states`.
+
+    Зовётся ПЕРЕД гашением хоста (сервер потом снимет процесс по PID): состояние
+    знает только процесс хоста, и без этого события настройки, накрученные в окнах,
+    пропали бы при «закрыл превью / сменил клип». Работает и когда окно уже закрыто:
+    педалборд с командой `dump_states` ждёт события, и разбирать по одной записи
+    профиля на каждый плагин было бы дороже, чем один раз весь список.
+    """
+    _emit_event("states", plugins=plugin_states(loaded))
+
+
 def _apply_chain(pb: Any, loaded: list[tuple[dict[str, Any], Any]], ref: BoardRef,
                  items: list[dict[str, Any]]) -> None:
     """Перестроить цепочку на лету: новая доска в обёртке, поток не пересоздаётся.
@@ -668,6 +710,9 @@ def _host_loop(pb: Any, loaded: list[tuple[dict[str, Any], Any]], ref: BoardRef,
         name = str(cmd.get("cmd") or "")
         if name == "quit":
             return
+        if name == "dump_states":
+            _dump_states(loaded)
+            continue
         if name == "chain":
             _apply_chain(pb, loaded, ref, _chain_items(cmd))
             continue

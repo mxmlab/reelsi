@@ -2,14 +2,47 @@
 # Copyright (c) 2026 Maxim Si
 """Local word-level transcription via faster-whisper (GPU)."""
 import json, os, hashlib, re
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 from core import cuda_env
-from core.device import ct2_device
+from core.app_meta import console_emit
+from core.device import (ct2_device, free_vram_mib, is_oom_error, vram_total_mib,
+                         whisper_fits)
 from core.fileio import atomic_json_dump
-from core.umsg import ReelsiError, cli_error
+from core.umsg import ReelsiError, cli_error, umsg
 cuda_env.setup()
 
 DEFAULT_MODEL_SIZE = "large-v3"
+
+# Частота, которую ждёт Whisper: массив для `model.transcribe` обязан быть моно
+# float32 именно на ней — иначе faster-whisper молча считает свои 16 кГц.
+SR = 16000
+
+
+def read_mono16k(wav_path: str) -> Any:
+    """Прочитать wav в массив float32 16 кГц моно — то, что ждёт `model.transcribe`.
+
+    Зачем не отдать путь. faster-whisper декодирует путь своим `decode_audio` через
+    PyAV; PyAV 19 убрал аргумент `metadata_errors`, который faster-whisper 1.2 ещё
+    передаёт, и КАЖДЫЙ вызов с путём падал `TypeError: open() got an unexpected
+    keyword argument 'metadata_errors'` — на свежей установке субтитры не собирались
+    вовсе. С массивом PyAV не участвует. Ремаплинг — только когда частота не 16 кГц
+    (обычные пути проекта: wav от `core.sync.extract_audio` и склейка selfcheck).
+    """
+    import numpy as np
+    import soundfile as sf
+    try:
+        a, sr = sf.read(wav_path, dtype="float32", always_2d=True)
+    except ReelsiError:
+        raise
+    except Exception as e:
+        raise ReelsiError(umsg("audio_read_failed",
+                               f"{os.path.basename(wav_path)}: {type(e).__name__}: {e}",
+                               path=wav_path, err=f"{type(e).__name__}: {e}"))
+    y = a.mean(axis=1)                 # любой канал -> моно: моно остаётся собой
+    if int(sr) != SR:
+        import librosa
+        y = librosa.resample(y, orig_sr=int(sr), target_sr=SR)
+    return np.ascontiguousarray(y, dtype=np.float32)
 
 
 def words_cache_path(src: str, model_size: str = DEFAULT_MODEL_SIZE, engine: str | None = None, lang: str | None = None) -> str:
@@ -55,6 +88,116 @@ def save_words_cache(path: str, words: Sequence[dict[str, Any]] | None) -> None:
 
 
 _MODEL: tuple[tuple[str, str, str], Any] | None = None  # cache (key, WhisperModel) so a batch loads large-v3 only once
+
+# Ступени Whisper по убыванию аппетита — по ним идём вниз, когда модель не влезает.
+# Заказные имена остаются в порядке пользователя, но большая модель всегда может
+# заменить меньшую: смысл шага — «взять ту, что поместится», а не «строго эту».
+_WHISPER_LADDER = ("large-v3", "medium", "small")
+
+# Сколько раз пробуем разную точность на ОДНОЙ ступени: float16 → int8_float16.
+_WHISPER_DTYPES = ("float16", "int8_float16")
+
+
+def _pick_whisper_candidates(model_size: str, compute_type: str) -> list[tuple[str, str]]:
+    """Цепочка «модель+точность» от заказанной к самой скромной, без повторов.
+
+    Оценки и порядок — в `core/device.py` (`WHISPER_VRAM_MIB`): сначала пробуем
+    запрошенную точность в половинной, затем ту же модель в int8 (весов вдвое
+    меньше), затем ступень ниже — как и советует разбор нехватки памяти. Ошибка
+    здесь не стоит ничего: неудачная попытка ловится вызывающим и заменяется
+    следующей.
+    """
+    if model_size not in _WHISPER_LADDER:
+        return [(model_size, compute_type)]      # своя/локальная модель: лестница не наша
+    sizes = list(_WHISPER_LADDER[_WHISPER_LADDER.index(model_size):])
+    order: list[str] = []
+    for size in sizes:
+        for compute in _WHISPER_DTYPES:
+            if size == model_size and compute == compute_type:
+                order.insert(0, compute)         # заказную точность пробуем ПЕРВОЙ
+            elif compute not in order:
+                order.append(compute)
+    return [(size, compute) for size in sizes for compute in order]
+
+
+def _fallback_note(from_size: str, from_ct: str, to_size: str, to_ct: str) -> str:
+    """Строка «что взяли вместо чего» — с размером карты, чтобы причина была видна."""
+    vram = vram_total_mib()
+    card = "{:.1f} ГБ".format(vram / 1024) if vram else "карта"
+    return (f"{card}: {from_size} в {from_ct} не влезла — "
+            f"взяли {to_size}/{to_ct}")
+
+
+def _walk_transcribe(wav_path: str, candidates: list[tuple[str, str]], lang: str,
+                     make_model: Callable[[str, str], Any],
+                     attempt: Callable[[Any], list[dict[str, Any]]],
+                     emit: Callable[..., Any] | None, where: str) -> list[dict[str, Any]]:
+    """Перебрать цепочку «модель+точность» до первого успеха.
+
+    Падение по нехватке памяти — не поломка, а сигнал взять ступень скромнее:
+    `large-v3` в float16 на карте 3.7 ГБ не влезает (~3 ГБ весов + контекст), а на
+    `int8_float16` тот же файл считается. Всё остальное (нет файла модели, битые
+    веса) наверх уходит сразу: повторять его на трёх размерах — терять время и
+    прятать настоящую причину.
+
+    Между попытками модель освобождается ЯВНО: на Windows занятая видеопамять не
+    даёт честный OOM, а вешает машину — ждать сборщик мусора тут нельзя.
+    """
+    emit_fn = emit or console_emit
+    last_oom: BaseException | None = None
+    for i, (size, ct) in enumerate(candidates):
+        fits = whisper_fits(size, ct, free_vram_mib())
+        # Заказанную ступень пробуем ВСЕГДА, даже если по нашей оценке она не влезает:
+        # оценка примерная, а живая попытка честная — и именно её падение даёт
+        # настоящую причину. Сверка по карте решает только про ЗАПАСНЫЕ ступени:
+        # их пропускаем, чтобы не занимать карту впустую.
+        if not fits and i:
+            emit_fn("  ↷ {size}/{ct} пропущена: не влезает в свободную память",
+                    size=size, ct=ct)
+            continue
+        if i:
+            emit_fn("  ↷ не влезло — пробую {size}/{ct}", size=size, ct=ct)
+        try:
+            return attempt(make_model(size, ct))
+        except ReelsiError:
+            raise
+        except Exception as e:
+            if not is_oom_error(e):
+                raise                            # не память — это настоящая ошибка
+            last_oom = e
+            release_model()                      # соседняя ступень должна получить карту чистой
+            if i + 1 < len(candidates):
+                nxt, nxt_ct = candidates[i + 1]
+                emit_fn("  ⚠ " + _fallback_note(size, ct, nxt, nxt_ct))
+    vram = vram_total_mib()
+    card = f"{vram / 1024:.1f}" if vram else "?"
+    tried = ", ".join(f"{s}/{c}" for s, c in candidates)
+    # umsg("код", …) — одной строкой: так код видит сторож словаря
+    # (`tests/test_i18n.py::_backend_err_codes`), иначе перевод молча не проверяется.
+    raise ReelsiError(umsg("whisper_gpu_fallback",
+        f"Карта {card} ГБ: не влезла ни одна ступень Whisper ({tried}) и в половинной "
+        f"точности, и в int8. Возьми модель меньше в настройках субтитров. "
+        f"Последняя ошибка: {str(last_oom)[:200]}",
+        where=where, tried=tried, card=card, err=str(last_oom)[:200]))
+
+
+def _transcribe_with(model: Any, wav_path: str, lang: str) -> list[dict[str, Any]]:
+    """Один проход распознавания готовой моделью (тело `transcribe`, без выбора модели)."""
+    segments, info = model.transcribe(
+        read_mono16k(wav_path), language=lang, word_timestamps=True,
+        vad_filter=True,                    # skip non-speech -> kills most hallucinations
+        condition_on_previous_text=False,   # stop runaway repetition loops
+        no_speech_threshold=0.6)
+    words = []
+    for s in segments:
+        # титры YouTube / галлюцинации на тишине — вон; живые призывы («подписывайтесь») — оставляем
+        if _drop_segment(s):
+            continue
+        for w in (s.words or []):
+            t = w.word.strip()
+            if t:
+                words.append({"w": t, "start": float(w.start), "end": float(w.end)})
+    return words
 
 
 def get_model(model_size: str = "large-v3", device: str = "cuda", compute_type: str = "float16") -> Any:
@@ -143,43 +286,67 @@ def _drop_segment(s: Any) -> bool:
 
 
 def transcribe(wav_path: str, model_size: str = "large-v3", lang: str = "ru", device: str = "cuda",
-               compute_type: str = "float16", model: Any = None) -> list[dict[str, Any]]:
-    model = model or get_model(model_size, device, compute_type)
-    segments, info = model.transcribe(
-        wav_path, language=lang, word_timestamps=True,
-        vad_filter=True,                    # skip non-speech -> kills most hallucinations
-        condition_on_previous_text=False,   # stop runaway repetition loops
-        no_speech_threshold=0.6)
-    words = []
-    for s in segments:
-        # титры YouTube / галлюцинации на тишине — вон; живые призывы («подписывайтесь») — оставляем
-        if _drop_segment(s):
-            continue
-        for w in (s.words or []):
-            t = w.word.strip()
-            if t:
-                words.append({"w": t, "start": float(w.start), "end": float(w.end)})
-    return words
+               compute_type: str = "float16", model: Any = None,
+               emit: Callable[..., Any] | None = console_emit) -> list[dict[str, Any]]:
+    """Путь wav -> слова. Сигнатура прежняя, а ВНУТРЬ модели уходит массив
+    (`read_mono16k`): с путём faster-whisper декодировал его PyAV'ом и падал на
+    свежей установке (см. причину в `read_mono16k`).
+
+    Модель, которая не влезла в карту, — не конец работы: цепочка ступеней
+    (`_pick_whisper_candidates`) пробует ту же модель в int8, затем размер меньше,
+    и лишь когда не вышло ничего, поднимает `ReelsiError` с кодом и причиной.
+    Переданная снаружи готовая `model` повтору не подлежит — её выбрал вызывающий.
+    """
+    if model is not None:
+        return _transcribe_with(model, wav_path, lang)
+    candidates = _pick_whisper_candidates(model_size, compute_type)
+    return _walk_transcribe(
+        wav_path, candidates, lang,
+        make_model=lambda size, ct: get_model(size, device, ct),
+        attempt=lambda m: _transcribe_with(m, wav_path, lang),
+        emit=emit, where=model_size)
 
 
 def transcribe_segments(wav_path: str, intervals: Sequence[tuple[float, float]] | None = None, model_size: str = "large-v3", lang: str = "ru",
-                        device: str = "cuda", compute_type: str = "float16", model: Any = None) -> list[dict[str, Any]]:
+                        device: str = "cuda", compute_type: str = "float16", model: Any = None,
+                        emit: Callable[..., Any] | None = console_emit) -> list[dict[str, Any]]:
     """Транскрибировать КАЖДЫЙ речевой интервал отдельным (изолированным) вызовом
     Whisper. Дубли, разделённые паузой, сохраняются, а не «причёсываются» в один —
     у модели нет сквозного контекста между тактами. Тайминги — глобальные (сек).
-    Ловит переснятия через паузу; рестарт без паузы остаётся внутри одного интервала."""
-    import numpy as np
+    Ловит переснятия через паузу; рестарт без паузы остаётся внутри одного интервала.
+
+    Модель берётся запасным путём — как в `transcribe`: без него нехватка памяти на
+    первом же интервале роняла весь ролик, хотя ступень пониже на этой карте
+    считается. Готовая `model` снаружи повтору не подлежит."""
     from faster_whisper.audio import decode_audio
-    model = model or get_model(model_size, device, compute_type)
+    from core import vad
+    if intervals is None:
+        intervals = vad.speech_intervals(wav_path)
     SR = 16000
     audio = decode_audio(wav_path, sampling_rate=SR)   # работает и с wav, и с видео
-    if intervals is None:
-        from core import vad
-        intervals = vad.speech_intervals(wav_path)
+    if model is None:
+        def _attempt(m: Any) -> list[dict[str, Any]]:
+            return _run_segments(m, audio, intervals or [], lang, SR)
+
+        return _walk_transcribe(
+            wav_path, _pick_whisper_candidates(model_size, compute_type), lang,
+            make_model=lambda size, ct: get_model(size, device, ct),
+            attempt=_attempt, emit=emit, where=model_size)
+    return _run_segments(model, audio, intervals or [], lang, SR)
+
+
+def _run_segments(model: Any, audio: Any, intervals: Sequence[tuple[float, float]],
+                  lang: str, sr: int) -> list[dict[str, Any]]:
+    """Все речевые интервалы одной уже загруженной моделью (тело `transcribe_segments`).
+
+    Отдельной функцией, потому что запасной путь по памяти повторяет не загрузку, а
+    весь проход: готовая модель не знает, в какую ступень её выбрали.
+    """
+    import numpy as np
     words = []
     for (s, e) in intervals:
-        a0 = max(0, int(s * SR)); a1 = min(len(audio), int(e * SR))
-        if a1 - a0 < int(0.10 * SR):
+        a0 = max(0, int(s * sr)); a1 = min(len(audio), int(e * sr))
+        if a1 - a0 < int(0.10 * sr):
             continue
         clip = np.ascontiguousarray(audio[a0:a1])
         segs, _ = model.transcribe(

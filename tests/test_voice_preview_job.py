@@ -547,9 +547,8 @@ globalThis.document={createElement:t=>{const el=new El(t);MADE.push(el);return e
 """
 
 STAND_STATE = r"""
-// Боевые константы дорожки и заглушки соседних дверей. Числа — те же, что в
-// 60-preview.js: стенд проверяет поведение, а не настройку порогов.
-const VT_DRIFT=0.15,VT_QUIET=400,VT_POLL=1000;
+// Заглушки соседних дверей. Пороги синхрона подставляются ИЗ ФАЙЛА (см. `_sync_consts`):
+// свои копии разъезжались бы с боевыми молча.
 let MEDIA_VOL=1;
 function voiceWiring(){}
 function t(s,vars){return String(s).replace(/\{(\w+)\}/g,(m,k)=>
@@ -585,10 +584,27 @@ let PV={vids:[],bufs:[],segs:[],audio:[],words:[],dur:0,aidx:0,curCi:-1,scrubbin
 """
 
 
+def _sync_consts() -> str:
+    """Пороги синхрона дорожки — из 60-preview.js, а не копией в стенде.
+
+    Копия разъезжается с боевыми молча: пока в стенде стоял `VT_DRIFT=0.15`, а в
+    файле стало 0.25 (перемотка превратилась в подводку скоростью), стенд проверял
+    бы прежнее поведение и был бы зелёным на сломанном.
+    """
+    preview = PREVIEW_JS.read_text(encoding="utf-8")
+    out = []
+    for name in ("VT_SOFT", "VT_DRIFT", "VT_RATE", "VT_QUIET", "VT_POLL"):
+        m = re.search(r"^const %s=.*$" % name, preview, re.M)
+        assert m is not None, f"в 60-preview.js нет const {name}"
+        out.append(m.group(0))
+    return "\n".join(out)
+
+
 def _run_node(tmp_path: Path, body: str, name: str = "stand.js") -> Any:
     """Прогнать стенд под node и вернуть разобранный JSON с последней строки."""
-    src = (STAND_DOM + STAND_STATE + _voice_src("vtVoiceUse", "pvProgRow", "pvProgDrop", "pvProxyBlock",
-                                    "pvProxyBox", "pvProxyStages") + "\n" + body)
+    src = (STAND_DOM + _sync_consts() + "\n" + STAND_STATE
+           + _voice_src("vtVoiceUse", "pvProgRow", "pvProgDrop", "pvProxyBlock",
+                        "pvProxyBox", "pvProxyStages") + "\n" + body)
     path = tmp_path / name
     path.write_text(src, encoding="utf-8")
     proc = subprocess.run(["node", str(path)], capture_output=True, text=True,

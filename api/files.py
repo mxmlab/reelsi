@@ -3,12 +3,14 @@
 """Файлы и папки: список камер, автоподбор камер по звуку, поиск ещё не нарезанных
 дублей, нативные диалоги выбора, отдача медиа, ui_state.
 """
-import os, re, sys, json, subprocess
+import os, re, sys, json, subprocess, threading
 from typing import Any, cast
 from flask import request, jsonify, send_file, Response
-from core.fileio import atomic_json_dump
+from core.fileio import atomic_json_dump, json_load_soft
 from core.project_file import read_project
+from core.applog import get_logger
 from core import cams
+from core import clipstore
 from core import lutbake
 from core import sync
 from core import xmlbuild
@@ -16,6 +18,8 @@ from core.lut import load_cube
 from ._core import (DEFAULT_BASE, UI_STATE_PATH, _never_serve, app_out_dir, bp,
                     is_reelsi_target, jstr, umsg_err, sidecar_path)
 from core.umsg import ReelsiError, umsg
+
+log = get_logger("reelsi.files")
 
 
 def _cams_response(base: str) -> Response:
@@ -258,34 +262,92 @@ def api_files() -> Response:
     return jsonify(files=cams.list_videos(d), name=os.path.basename(d))
 
 
+# Ревизия состояния UI и замок его файла. Ревизия — целое, лежит в самом файле
+# состояния верхним ключом _rev: переживает перезапуск сервера, в отличие от счётчика
+# в памяти. Замок один на чтение-изменение-запись: без него два одновременных POST с
+# одним base_rev оба увидели бы старую ревизию и оба прошли бы.
+_UI_STATE_REV_KEY = "_rev"
+_UI_STATE_LOCK = threading.Lock()
+
+
+def _ui_state_rev(raw: Any) -> int:
+    """Ревизия состояния из прочитанного файла. Файла нет/битый/ключа нет — 0."""
+    if not isinstance(raw, dict):
+        return 0
+    rev = raw.get(_UI_STATE_REV_KEY)
+    if isinstance(rev, bool) or not isinstance(rev, int):
+        return 0
+    return max(0, rev)
+
+
 @bp.route("/api/ui_state", methods=["GET", "POST"])
 def api_ui_state() -> Response:
-    """Серверное зеркало состояния UI (клипы/очередь/стиль). localStorage остаётся
-    основным и быстрым, файл — надёжная копия: переживает смену браузера, чистку
-    и квоту localStorage. Пишется атомарно (tmp+replace)."""
+    """Состояние UI на сервере — ГЛАВНОЕ при загрузке страницы, localStorage лишь
+    зеркало браузера. Владелец: «состояние должно быть на сервере, а не только в
+    Chrome, который может сохранять неверное» — устаревшая вкладка (вторая вкладка,
+    старый профиль браузера, другой браузер) при загрузке перекрывала серверное и
+    через пару секунд откатывала работу над клипами.
+
+    GET отдаёт текущую ревизию вместе с состоянием. POST принимает `base_rev` —
+    ревизию, от которой правка росла; разошлись — НЕ пишем ничего (ни состояние,
+    ни снимки клипов) и отвечаем кодом `stale_state`: фронт останавливает запись из
+    этой вкладки. Ревизия — верхний ключ `_rev` в самом файле состояния, чтобы она
+    переживала перезапуск сервера; наружу она уезжает отдельным полем, в state её нет.
+
+    Всё чтение-изменение-запись — под ОДНИМ замком: два одновременных POST с одним
+    и тем же base_rev иначе прошли бы оба и второй затёр первый.
+    """
     if request.method == "GET":
-        try:
-            if os.path.isfile(UI_STATE_PATH):
-                with open(UI_STATE_PATH, encoding="utf-8") as f:
-                    return jsonify(ok=True, state=json.load(f))
-            return jsonify(ok=True, state=None)
-        except ReelsiError: raise
-        except Exception as e:
-            return jsonify(**umsg_err(ReelsiError(umsg("ui_state_load_failed", f"{type(e).__name__}: {e}"))))
+        with _UI_STATE_LOCK:
+            try:
+                if os.path.isfile(UI_STATE_PATH):
+                    with open(UI_STATE_PATH, encoding="utf-8") as f:
+                        raw = json.load(f)
+                    if isinstance(raw, dict):
+                        rev = _ui_state_rev(raw)
+                        raw = dict(raw)
+                        raw.pop(_UI_STATE_REV_KEY, None)
+                        return jsonify(ok=True, state=raw, rev=rev)
+                    return jsonify(ok=True, state=raw, rev=0)
+                return jsonify(ok=True, state=None, rev=0)
+            except ReelsiError: raise
+            except Exception as e:
+                return jsonify(**umsg_err(ReelsiError(umsg("ui_state_load_failed", f"{type(e).__name__}: {e}"))))
+
     d = request.get_json(silent=True) or {}
     # тело без JSON давало d.get("state") is None, и зеркало перезаписывалось
     # значением null — состояние пользователя пропадало молча
     if not isinstance(d, dict) or d.get("state") is None:
         return jsonify(**umsg_err(ReelsiError(umsg("ui_state_empty",
             "пустое или повреждённое тело запроса — состояние не перезаписано"))))
-    try:
-        # Общий tmp на два одновременных запроса (два таба) перемешивал половины:
-        # каждый open(tmp,"w") усекал файл другого. mkstemp — свой tmp на запись.
-        atomic_json_dump(UI_STATE_PATH, d.get("state"))
-        return jsonify(ok=True)
-    except ReelsiError: raise
-    except Exception as e:
-        return jsonify(**umsg_err(ReelsiError(umsg("ui_state_save_failed", f"{type(e).__name__}: {e}"))))
+    state = d.get("state")
+    with _UI_STATE_LOCK:
+        try:
+            # Запрос без base_rev (старый клиент) — принимается как раньше: совместимость
+            # важнее строгости, иначе обновлённый сервер отказывал бы старой странице.
+            base_rev = d.get("base_rev")
+            rev = _ui_state_rev(json_load_soft(UI_STATE_PATH))
+            if isinstance(base_rev, int) and not isinstance(base_rev, bool) and base_rev != rev:
+                return jsonify(**umsg_err(ReelsiError(umsg("stale_state",
+                    "Состояние изменено в другой вкладке или браузере — эта вкладка устарела"))),
+                    rev=rev, stale=True)
+            next_rev = rev + 1
+            # Общий tmp на два одновременных запроса (два таба) перемешивал половины:
+            # каждый open(tmp,"w") усекал файл другого. mkstemp — свой tmp на запись.
+            payload: Any = state
+            if isinstance(state, dict):
+                payload = dict(state)
+                payload[_UI_STATE_REV_KEY] = next_rev
+            atomic_json_dump(UI_STATE_PATH, payload)
+            if isinstance(state, dict):
+                try:
+                    clipstore.save_clips(state)
+                except Exception as e:
+                    log.warning("Не удалось сохранить снимки клипов clipstore: %s", e)
+            return jsonify(ok=True, rev=next_rev)
+        except ReelsiError: raise
+        except Exception as e:
+            return jsonify(**umsg_err(ReelsiError(umsg("ui_state_save_failed", f"{type(e).__name__}: {e}"))))
 
 
 def _native_pick(dialog_call: str) -> str:
@@ -573,16 +635,57 @@ def api_lut() -> Response | tuple[str, int]:
 def api_music_random() -> Response:
     """Случайный аудиофайл из папки музыки — ТОТ ЖЕ выбор, что на сборке
     (ytmusic.random_track в xml2ae/build.py). Превью так слушает ползунок «Музыка»
-    в режиме «случайно»; сборка всё равно выберет трек заново, уровень тот же."""
+    в режиме «случайно»; сборка выбирает трек тем же сидом (путь XML), поэтому
+    превью и .jsx играют один файл.
+
+    `exclude` — что выбирать нельзя (кнопка «Другой трек» у клипа): без него
+    детерминированный выбор вернул бы тот же трек, и кнопка выглядела бы сломанной.
+    """
     d = request.get_json(silent=True) or {}
     dir_ = jstr(d, "dir")
     seed = d.get("seed")
+    exclude = d.get("exclude")
     try:
         from core import ytmusic
-        return jsonify(path=ytmusic.random_track(dir_, seed=seed) or "")
+        return jsonify(path=ytmusic.random_track(dir_, seed=seed, exclude=exclude) or "")
     except ReelsiError: raise
     except Exception as e:
         return jsonify(path="", **umsg_err(ReelsiError(umsg("music_random_failed", f"{type(e).__name__}: {e}"))))
+
+
+@bp.route("/api/music_fetch", methods=["POST"])
+def api_music_fetch() -> Response:
+    """Скачать трек по ссылке YouTube в папку музыки и вернуть путь к файлу.
+
+    Кнопка «Скачать» у поля ссылки: до неё ссылка скачивалась ТОЛЬКО на сборке, и
+    проверить, что по ней вообще что-то есть, было нечем. Скачанный файл ложится в ту
+    же папку, из которой берёт треки режим «случайно», и сразу может быть выбран им.
+
+    Папка по умолчанию — `music` рядом с репозиторием (`DEFAULT_BASE`), ровно та же,
+    что подставляется полю «Папка для музыки» при первом запуске: второй копии этого
+    правила на сервере не заводится.
+    """
+    d = request.get_json(silent=True) or {}
+    url = jstr(d, "url").strip().strip('"')
+    dir_ = jstr(d, "dir").strip().strip('"') or os.path.join(DEFAULT_BASE, "music")
+    if not url:
+        return jsonify(**umsg_err(ReelsiError(umsg("music_url_empty", "Не задана ссылка на трек"))))
+    try:
+        from core import ytmusic
+
+        def _emit(line: str = "", /, **vars: Any) -> None:
+            # Строки yt-dlp приходят с подстановками ({name}/{dir}) и в формате строки
+            # лога: в файловый лог кладём готовый текст, а не формат и kwargs — logging
+            # на посторонние kwargs ругается.
+            try:
+                log.info(str(line).format(**vars) if vars else str(line))
+            except (KeyError, IndexError, ValueError):
+                log.info("%s %s", line, vars)
+
+        return jsonify(ok=True, path=ytmusic.resolve(url, dir_, emit=_emit) or "")
+    except ReelsiError: raise
+    except Exception as e:
+        return jsonify(**umsg_err(ReelsiError(umsg("music_fetch_failed", f"Не скачалось: {e}", err=str(e)))))
 
 
 @bp.route("/api/waveform")
@@ -771,20 +874,22 @@ def api_clip_delete() -> Response:
         files_to_delete.append({"path": fpath, "size": sz})
 
     total_bytes = sum(f["size"] for f in files_to_delete)
+    trash_id = ""
 
     if not dry:
-        deleted: list[dict[str, Any]] = []
-        for item in files_to_delete:
-            p = item["path"]
-            try:
-                if os.path.isfile(p):
-                    os.remove(p)
-                deleted.append(item)
-            except ReelsiError: raise
-            except Exception as e:
-                skipped.append({"path": p, "why": f"ошибка удаления: {e}"})
-        files_to_delete = deleted
-        total_bytes = sum(f["size"] for f in files_to_delete)
+        paths_to_move = [f["path"] for f in files_to_delete]
+        try:
+            trash_id, moved, failed = clipstore.move_to_trash(xml_path, paths_to_move)
+            moved_set = {os.path.realpath(p).lower() for p in moved}
+            # deleted — только фактически перенесённое: занятый файл остался на диске,
+            # в «удалённые» он не попадает, а уходит в skipped с причиной от clipstore.
+            deleted = [f for f in files_to_delete if os.path.realpath(f["path"]).lower() in moved_set]
+            for rec in failed:
+                skipped.append({"path": rec["path"], "why": f"не перенесён: {rec['why']}"})
+            files_to_delete = deleted
+            total_bytes = sum(f["size"] for f in files_to_delete)
+        except Exception as e:
+            return jsonify(**umsg_err(ReelsiError(umsg("trash_move_failed", f"Ошибка переноса в корзину: {e}", err=str(e)))))
         try:
             # Пустая `_graded` после уборки не нужна; непустая (файлы других нарезок)
             # остаётся — os.rmdir на ней и падает, а падать тут не из-за чего.
@@ -800,5 +905,54 @@ def api_clip_delete() -> Response:
             if b.lower() not in seen_cams:
                 seen_cams.add(b.lower())
                 cam_names.append(b)
-    return jsonify(ok=True, files=files_to_delete, bytes=total_bytes, skipped=skipped, cams=cam_names)
+    resp: dict[str, Any] = {
+        "ok": True,
+        "files": files_to_delete,
+        "bytes": total_bytes,
+        "skipped": skipped,
+        "cams": cam_names,
+    }
+    if not dry:
+        resp["trash"] = trash_id
+    return jsonify(**resp)
+
+
+@bp.route("/api/trash_list", methods=["POST"])
+def api_trash_list() -> Response:
+    """Список удалённых наборов в корзине папки."""
+    d = request.get_json(silent=True) or {}
+    dir_ = jstr(d, "dir").strip().strip('"')
+    if not dir_:
+        return jsonify(**umsg_err(ReelsiError(umsg("no_folder", "не указана папка"))))
+    if not os.path.isdir(dir_):
+        return jsonify(**umsg_err(ReelsiError(umsg("no_folder", f"Нет папки: {dir_}", path=dir_))))
+
+    try:
+        items = clipstore.list_trash(dir_)
+        return jsonify(ok=True, items=items)
+    except ReelsiError: raise
+    except Exception as e:
+        return jsonify(**umsg_err(ReelsiError(umsg("trash_list_failed", f"Не удалось получить список корзины: {e}", err=str(e)))))
+
+
+@bp.route("/api/trash_restore", methods=["POST"])
+def api_trash_restore() -> Response:
+    """Восстановить файлы клипа из корзины на исходные места."""
+    d = request.get_json(silent=True) or {}
+    dir_ = jstr(d, "dir").strip().strip('"')
+    id_ = jstr(d, "id").strip().strip('"')
+    if not dir_:
+        return jsonify(**umsg_err(ReelsiError(umsg("no_folder", "не указана папка"))))
+    if not id_:
+        return jsonify(**umsg_err(ReelsiError(umsg("bad_trash_id", "не указан id записи в корзине"))))
+    if not os.path.isdir(dir_):
+        return jsonify(**umsg_err(ReelsiError(umsg("no_folder", f"Нет папки: {dir_}", path=dir_))))
+
+    try:
+        res = clipstore.restore_trash(dir_, id_)
+        return jsonify(**res)
+    except ReelsiError: raise
+    except Exception as e:
+        return jsonify(**umsg_err(ReelsiError(umsg("trash_restore_failed", f"Ошибка восстановления из корзины: {e}", err=str(e)))))
+
 

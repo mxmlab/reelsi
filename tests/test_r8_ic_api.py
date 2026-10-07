@@ -625,7 +625,7 @@ def test_export_xml_refuses_non_xml(client, tmp_path):
     """Текст по пути больше не читается: секрет не уходит даже вложением."""
     secret = tmp_path / "secret.txt"
     secret.write_text("СЕКРЕТ", encoding="utf-8")
-    r = client.get(f"/api/export_xml?path={secret}", headers=H)
+    r = client.post("/api/export_xml", json={"path": str(secret)}, headers=H)
     assert r.status_code == 403
     assert "СЕКРЕТ" not in r.get_data(as_text=True)
 
@@ -637,7 +637,7 @@ def test_export_xml_serves_xml(client, tmp_path, monkeypatch):
     for name in ("clip.xml", "clip.XML"):
         f = tmp_path / name
         f.write_text("<xmeml/>", encoding="utf-8")
-        r = client.get(f"/api/export_xml?path={f}", headers=H)
+        r = client.post("/api/export_xml", json={"path": str(f)}, headers=H)
         assert r.status_code == 200, name
         assert r.get_data(as_text=True) == "<xmeml/>"
 

@@ -14,8 +14,22 @@ AUDIO_EXT = (".m4a", ".mp3", ".wav", ".aac", ".opus", ".flac", ".ogg")
 YTDLP_TIMEOUT = 1800
 
 
-def random_track(outdir: str | None, emit: Callable[..., Any] = console_emit, seed: object = None) -> str | None:
-    """Случайный (или детерминированный по seed) аудиофайл из папки скачанной музыки (или None, если пусто)."""
+def random_track(outdir: str | None, emit: Callable[..., Any] = console_emit, seed: object = None,
+                 exclude: object = None) -> str | None:
+    """Случайный (или детерминированный по seed) аудиофайл из папки скачанной музыки (или None, если пусто).
+
+    `exclude` — то, что выбирать НЕЛЬЗЯ: путь файла или список путей. Нужен кнопке
+    «Другой трек» у клипа в режиме «случайно»: без исключения она могла вернуть тот же
+    файл, и нажатие выглядело сломанным (человек не видит, что выбор детерминированный).
+    Файлы сравниваются по basename, без учёта регистра: папку собирают вручную, и один
+    и тот же трек приезжает то с прямыми, то с обратными слешами.
+    Если исключать больше нечего (в папке один трек) — выбор пуст: честнее отдать
+    прежний трек, чем «ничего».
+
+    Пул СОРТИРОВАН (sorted), и это контракт детерминированного выбора: тот же seed даёт
+    тот же файл. Им пользуются и превью (через /api/music_random), и сборка
+    (plan_audio.py, seed = путь XML), поэтому клип играет один и тот же трек.
+    """
     if not outdir or not os.path.isdir(outdir):
         return None
     files = sorted([os.path.join(outdir, f) for f in os.listdir(outdir)
@@ -23,6 +37,12 @@ def random_track(outdir: str | None, emit: Callable[..., Any] = console_emit, se
     if not files:
         emit("  в папке нет аудио: {dir}", dir=outdir)
         return None
+    if exclude:
+        ex = exclude if isinstance(exclude, (list, tuple, set)) else [exclude]
+        skip = {os.path.basename(str(x)).lower() for x in ex if x}
+        rest = [f for f in files if os.path.basename(f).lower() not in skip]
+        if rest:
+            files = rest
     if seed is not None:
         import hashlib
         idx = int(hashlib.md5(str(seed).encode("utf-8")).hexdigest(), 16) % len(files)

@@ -70,7 +70,7 @@ function lutClip(){
 
 // Путь к .cube этой камеры из профиля спикера клипа ('' — LUT не задан).
 function lutPath(ci){
-  const c=lutClip(),spk=(c&&c.job&&c.job.speaker)||'';
+  const c=lutClip(),spk=clipSpeaker(c);
   const tab=(spk&&typeof SPEAKERS!=='undefined'&&SPEAKERS[spk]&&SPEAKERS[spk].lut)||null;
   return String((tab&&tab[String(ci+1)])||'').trim();}
 

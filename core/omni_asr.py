@@ -443,8 +443,11 @@ def main(args: Sequence[str] | None = None) -> None:
         engine = a.engine if a.engine else aicut.omni_local_engine()  # 'qwen' | 'gigaam'
         if engine == "gigaam":
             import gigaam
+            from core.gigaam_cache import gigaam_dir
             print("Omni ЛОКАЛЬНО: GigaAM-v3-CTC (Загрузка...)", flush=True)
-            model = gigaam.load_model("v3_ctc")
+            # download_root: веса — в общую папку GigaAM (core/gigaam_cache.py), не в
+            # `~/.cache/gigaam` пакета: на read-only домашней папке это PermissionError.
+            model = gigaam.load_model("v3_ctc", download_root=gigaam_dir())
             proc = None  # Для GigaAM процессор из transformers не нужен
         else:
             print("Omni ЛОКАЛЬНО: Qwen2.5-Omni", flush=True)

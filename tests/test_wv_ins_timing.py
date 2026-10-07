@@ -58,8 +58,10 @@ def _stand():
     ins = _read(INS_JS)
     ae = _read(AE_JS)
     parts = [_func(ae, "defJob")]
-    parts += [_func(ins, n) for n in ("normInsPath", "ipvIns", "insSD", "insSetSD", "insCardFor",
-                                      "insSetSDCard", "ipvAfterEdit", "cardToIns", "itlBlockDown")]
+    parts += [_func(ins, n) for n in ("normInsPath", "insEnsureUids", "ipvIns", "insSD", "insSetSD",
+                                      "insCardFor", "insSetSDCard", "ipvAfterEdit", "cardToIns",
+                                      "itlBlockDown")]
+    parts.append("let INSUIDSEQ=0;")           # счётчик запасного uid — тем же объявлением, что в файле
     parts.append(_func(ae, "ensureJobs"))
     return "\n".join(parts)
 
@@ -155,8 +157,10 @@ console.log(JSON.stringify({dur:cardDur,start:cardStart,after:CLIPS[0].job.ins[0
 def test_timing_write_back_is_one_door_for_both_modes():
     """Запись тайминга в карточку — общий помощник (insCardFor/insSetSDCard), не копия в драге.
 
-    Тот же поиск карточки по normInsPath, что у записи x/y и у ensureJobs: три места —
-    одно правило. Копия разъехалась бы так же, как уже разъезжались introResolve.
+    Карточка ищется по СТАБИЛЬНОМУ id вставки (cid карточки uid): у трёх вставок с одним
+    файлом путь не различает, кто есть кто, и правка уезжала в первую карточку. Путь остался
+    запасным ключом для легаси-вставок без cid — и расходует карточки по одной. Копия правила
+    в драге разъехалась бы так же, как уже разъезжались introResolve.
     """
     ins = _read(INS_JS)
     drag = ins[ins.index("function itlBlockDown("):]
@@ -167,6 +171,11 @@ def test_timing_write_back_is_one_door_for_both_modes():
     assert "normInsPath" in _func(ins, "insCardFor"), (
         "карточка ищется не тем norm-сравнением пути, что ensureJobs")
     assert "cl.inserts.findIndex" in _func(ins, "insCardFor"), "поиск карточки потерял findIndex"
+    card_for = _func(ins, "insCardFor")
+    assert "x.cid||x.uid" in card_for, (
+        "карточка ищется не по стабильному id — дубли одного файла снова спутаются")
+    assert "claimed[" in card_for, (
+        "запасной поиск по пути не расходует карточки по одной: всем дублям достанется первая")
 
     # Ручная вставка шага 3 (карточки у неё нет) — запись не падает и ничего не портит
     code = (_stand() + _DOM

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reelsi"
-version = "0.3.0b0"
+version = "0.3.1b0"
 description = "AI video editor on top of Premiere and After Effects: multicam cut, word-by-word subtitles, AE assembly"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -50,6 +50,7 @@ files = [
     "core/media.py",
     "core/paths.py",
     "core/app_meta.py",
+    "core/_pathguard.py",
     "core/aerender.py",
     "core/cams.py",
     "core/rclone.py",
@@ -89,6 +90,7 @@ files = [
     "core/drp.py",
     "core/insertlib.py",
     "core/stock.py",
+    "core/clipstore.py",
     "core/omni_cut.py",
     "core/verify_jsx.py",
     "core/voicefx.py",
@@ -146,6 +148,7 @@ files = [
     "core/falign.py",
     "core/falign_cli.py",
     "core/fonts.py",
+    "core/gigaam_cache.py",
     "core/gigaam_cut/__init__.py",
     "core/gigaam_cut/__main__.py",
     "core/gigaam_cut/asr.py",
@@ -183,6 +186,7 @@ files = [
     "tools/intro_hook_rules.py",
     "tools/intro_rules.py",
     "tools/mine_edits.py",
+    "tools/mutate_clip_speaker.py",
     "tools/public_slice.py",
     "tools/slice_check.py",
     "tools/train_breath.py",
@@ -201,6 +205,7 @@ module = [
     "core.media",
     "core.paths",
     "core.app_meta",
+    "core._pathguard",
     "core.aerender",
     "core.cams",
     "core.rclone",
@@ -240,6 +245,7 @@ module = [
     "core.drp",
     "core.insertlib",
     "core.stock",
+    "core.clipstore",
     "core.omni_cut",
     "core.verify_jsx",
     "core.voicefx",
@@ -297,6 +303,7 @@ module = [
     "core.falign",
     "core.falign_cli",
     "core.fonts",
+    "core.gigaam_cache",
     "core.gigaam_cut.__init__",
     "core.gigaam_cut.__main__",
     "core.gigaam_cut.asr",
@@ -334,6 +341,7 @@ module = [
     "tools.intro_hook_rules",
     "tools.intro_rules",
     "tools.mine_edits",
+    "tools.mutate_clip_speaker",
     "tools.public_slice",
     "tools.slice_check",
     "tools.train_breath",

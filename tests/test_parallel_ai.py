@@ -391,7 +391,7 @@ def test_routes_pass_batch_and_step(client: Any, monkeypatch: pytest.MonkeyPatch
 
 
 def test_ai_config_get_returns_step_concurrency(client: Any) -> None:
-    """11. /api/ai_config GET отдаёт step_concurrency со всеми шагами."""
+    """11. /api/ai_config GET отдаёт step_concurrency со всеми шагами, а также step_local и step_profiles."""
     r = client.get("/api/ai_config", headers=H)
     assert r.status_code == 200
     data = r.get_json()
@@ -401,6 +401,12 @@ def test_ai_config_get_returns_step_concurrency(client: Any) -> None:
         assert step in step_conc
         assert isinstance(step_conc[step], int)
         assert 1 <= step_conc[step] <= 16
+    assert "step_local" in data
+    assert "step_profiles" in data
+    for step in ("yellow", "inserts", "intro"):
+        assert step in data["step_local"]
+        assert isinstance(data["step_local"][step], bool)
+        assert step in data["step_profiles"]
 
 
 def test_ai_begin_concurrency_error_does_not_leak_call_id(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -419,4 +425,55 @@ def test_ai_begin_concurrency_error_does_not_leak_call_id(monkeypatch: pytest.Mo
         _core._ai_begin("test_leak", batch="b", step="yellow")
 
     assert aicut.idle_since(0) is True
+
+
+def test_batch_per_step_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
+    """13. При step_concurrency=1 у обоих шагов один batch с шагами yellow и inserts
+    занимает два слота одновременно, а второй yellow того же batch ждёт."""
+    monkeypatch.setattr(aicut, "step_concurrency", lambda step: 1)
+
+    try:
+        ep_yellow1 = _core._ai_begin("yellow_1", batch="shared_batch", step="yellow")
+        ep_inserts = _core._ai_begin("inserts_1", batch="shared_batch", step="inserts")
+
+        assert _core.AI_ACTIVE == 2
+        assert _core.AI_ACTIVE_BY.get(("shared_batch", "yellow"), 0) == 1
+        assert _core.AI_ACTIVE_BY.get(("shared_batch", "inserts"), 0) == 1
+
+        yellow2_started = threading.Event()
+        yellow2_done = threading.Event()
+        yellow2_ep: list[int] = []
+
+        def worker() -> None:
+            yellow2_started.set()
+            ep = _core._ai_begin("yellow_2", batch="shared_batch", step="yellow")
+            yellow2_ep.append(ep)
+            yellow2_done.set()
+            _core._ai_end(ep)
+
+        t = threading.Thread(target=worker)
+        t.start()
+        assert yellow2_started.wait(timeout=2.0) is True
+        time.sleep(0.2)
+
+        # Второй yellow ждёт своего слота
+        assert not yellow2_done.is_set()
+
+        # Освобождаем первый yellow — второй yellow получает слот и завершается
+        _core._ai_end(ep_yellow1)
+        assert yellow2_done.wait(timeout=3.0) is True
+        t.join(timeout=3.0)
+
+        _core._ai_end(ep_inserts)
+        assert _core.AI_ACTIVE == 0
+    finally:
+        with _core.LOCK:
+            _core.AI_ACTIVE = 0
+            _core.AI_ACTIVE_BY.clear()
+            _core.AI_BATCH_BY_EP.clear()
+        with ai_llm._EPOCH_LOCK:
+            ai_llm._LIVE.clear()
+            ai_llm._DEAD.clear()
+            ai_llm.CANCEL = False
+
 

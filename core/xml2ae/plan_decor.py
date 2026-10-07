@@ -43,6 +43,33 @@ from .plan_style import StyleValues, read_style
 from .plan_subs import SubsPlan
 
 
+# Тени AE (Drop Shadow) в пикселях композиции: тень слов субтитров, тень вставок и тень
+# плашки под субтитрами. Числа стоят ЗДЕСЬ, а читают их обе стороны: подстановки .jsx
+# (build.to_ae_full отдаёт SH_* в шаблон, INS_SH_* — литералы template.py) и план сцены —
+# из него превью рисует CSS-аналог (aeShadowCss в static/app/85-inserts-view.js).
+# op — непрозрачность в процентах ручки (0..100): в .jsx она умножается на 255/100, и
+# ровно это готовое число (шкала AE 0..255) отдаёт план полем op255.
+SH_SUB_OP, SH_SUB_DIR, SH_SUB_DIST, SH_SUB_SOFT = 68.0, 181.0, 5.0, 44.0
+INS_SH_OP, INS_SH_DIR, INS_SH_DIST, INS_SH_SOFT = 49.0, 135.0, 15.0, 70.0
+
+
+def shadows_plan() -> dict[str, dict[str, Any]]:
+    """Тени AE для превью: {имя: {op255, dir, dist, soft, color}}.
+
+    color — [r,g,b] 0..1, как у остальных цветов плана; все три тени чёрные (у субтитров
+    цвет Drop Shadow не задан вовсе — это дефолт AE, у вставок и плашки в .jsx стоит
+    [0,0,0]). Дистанция и мягкость — px кадра: превью множит их на пиксели превью.
+    """
+    return {
+        "sub": {"op255": round(SH_SUB_OP * 255 / 100, 1), "dir": SH_SUB_DIR,
+                "dist": SH_SUB_DIST, "soft": SH_SUB_SOFT, "color": [0.0, 0.0, 0.0]},
+        "ins": {"op255": round(INS_SH_OP * 255 / 100, 1), "dir": INS_SH_DIR,
+                "dist": INS_SH_DIST, "soft": INS_SH_SOFT, "color": [0.0, 0.0, 0.0]},
+        "sub_bg": {"op255": SUB_BG_SH_OP, "dir": SUB_BG_SH_DIR, "dist": SUB_BG_SH_DIST,
+                   "soft": SUB_BG_SH_SOFT, "color": [0.0, 0.0, 0.0]},
+    }
+
+
 @dataclass(frozen=True)
 class DecorInputs:
     """Вход оформления кадра: всё, что `scene_plan` знает к моменту вызова.
@@ -62,6 +89,11 @@ class DecorInputs:
     disclaimer: Any
     font_ps: Any
     style: StyleValues
+    # Время дисклеймера: длительность показа (DISC_END, секунды) и галка «копия в конце»
+    # (уже вместе с «текст не пуст»). Нужны хвостовой копии превью — своей второй копии
+    # правила «когда она есть» у превью нет.
+    disc_sec: Any = 1.35
+    disc_end_on: Any = False
 
 
 @dataclass(frozen=True)
@@ -85,6 +117,10 @@ class DecorPlan:
     caption_plan: object     # подпись о ролике для превью (None при выключенной галке)
     caption_js: str          # JS слоя подписи
     disc_size: float | int   # кегль дисклеймера под ширину кадра
+    disc_x_decl: str         # объявление DISC_X ("" — центр кадра, .jsx прежний)
+    disc_x_js: str           # точка по X в Position слоя ("W/2" либо "DISC_X")
+    disc_y: int              # положение дисклеймера, px (базовая линия первой строки)
+    disclaimer_plan: dict | None   # дисклеймер для превью (None — текста нет)
     disc_lead_decl: str      # объявление DISC_LEAD ("" — зазора нет)
     disc_lead_js: str        # применение зазора в головном блоке дисклеймера
     disc_lead_js_tail: str   # применение зазора в хвостовом блоке дисклеймера
@@ -181,6 +217,8 @@ def plan_decor(inp: DecorInputs) -> DecorPlan:
     sub_scale = inp.subs.sub_scale
     caption, disclaimer = inp.caption, inp.disclaimer
     font_ps = inp.font_ps
+    # Время дисклеймера — для хвостовой копии превью: длительность показа и «копия есть».
+    disc_sec, disc_end_on = inp.disc_sec, inp.disc_end_on
     # Стиль — структурой, прочитанной один раз: имена локальных переменных оставлены
     # прежними (stv), источник у них теперь поле структуры.
     stv = inp.style
@@ -430,15 +468,27 @@ def plan_decor(inp: DecorInputs) -> DecorPlan:
     # 47 она давала ровно 0.992·W, у Oswald-Bold 1194 px (за краем кадра 1080) и пользователь
     # ужимал слой руками. Кегль только УМЕНЬШАЕТСЯ: узкий шрифт дисклеймер не раздувает.
     # Ширины нет (шрифта/глифа нет в системе) — прежняя база, как сегодня.
+    # Масштаб из стиля (disc_scale) — МНОЖИТЕЛЬ уже подобранного кегля: подбор «только
+    # уменьшение» идёт ДО него, иначе ручка 100 % раздувала бы узкий шрифт.
     _disc_base = int(meta["h"] * 0.0245)
     _disc_lines = (disclaimer or "").split("\n")
     _disc_w = [_fonts.text_width(font_ps, _ln, _disc_base) for _ln in _disc_lines]
     if any(_w is None for _w in _disc_w):
-        disc_size = _disc_base
+        _disc_fit: float = float(_disc_base)
     else:
         _disc_w_max = max(_disc_w)
-        disc_size = (round(_disc_base * DISC_FIT_W * meta["w"] / _disc_w_max, 2)
-                     if _disc_w_max > DISC_FIT_W * meta["w"] else _disc_base)
+        _disc_fit = (round(_disc_base * DISC_FIT_W * meta["w"] / _disc_w_max, 2)
+                     if _disc_w_max > DISC_FIT_W * meta["w"] else float(_disc_base))
+    disc_size: float = round(_disc_fit * float(stv.disc_scale) / 100.0, 2)
+    # Положение блока — как Position текстового слоя в AE: базовая линия первой строки,
+    # поэтому доля кадра, а не пиксели (в квадрате 76.4 % — это свои пиксели). Усечение, а
+    # не округление: дефолтные 76.4 % обязаны дать прежнее int(H·0.764) = 1466, иначе
+    # .jsx разошёлся бы с эталоном на пиксель.
+    disc_y = int(float(meta["h"]) * stv.disc_y / 100.0)
+    disc_x = int(round(float(meta["w"]) / 2.0 + stv.disc_dx))
+    # При дефолтном сдвиге DISC_X не объявляется вовсе: шаблон берёт W/2, и .jsx
+    # остаётся прежним байт в байт (golden).
+    disc_x_decl = "" if not stv.disc_dx else ", DISC_X=%g" % disc_x
     # Интервал дисклеймера: шаг строк = «хвост вниз верхней строки + высота букв нижней +
     # disc_gap» при УЖЕ подобранном кегле (высоты даёт fonts.ink_extent по контурам глифов).
     # Зазор не задан (None = интервал авто) или высот нет — DISC_LEAD не объявляется вовсе.
@@ -449,6 +499,16 @@ def plan_decor(inp: DecorInputs) -> DecorPlan:
             disc_lead = round(max(_disc_ink[_i][1] + _disc_ink[_i + 1][0]
                                   for _i in range(len(_disc_ink) - 1))
                               + float(cast(Any, stv.disc_gap)), 2)
+    # asc — подъём первой строки над её базовой линией при УЖЕ подобранном кегле: высота
+    # верхних выносов из контуров глифов (fonts.ink_extent, тот же замер, что у disc_gap и
+    # у капители интро). В AE якорь центрированного текстового слоя — Position = [x,
+    # БАЗОВАЯ ЛИНИЯ ПЕРВОЙ строки], поэтому превью без этого числа ставило бы верх блока
+    # наугад и уезжало от .jsx. Шрифта/глифа нет — 0.72 кегля, как у запасной ветки
+    # капители (`_cap` в layout.py): число обязано быть и тогда, когда файла шрифта нет.
+    disc_asc = None
+    if _disc_lines and any(_ln.strip() for _ln in _disc_lines):
+        _disc_ext = _fonts.ink_extent(font_ps, _disc_lines[0], disc_size)
+        disc_asc = float(_disc_ext[0]) if _disc_ext is not None else 0.72 * disc_size
     # Применение интервала к текстовому документу — в ОБОИХ блоках дисклеймера (головной в
     # template.py, концевой ниже). При дефолтах подстановка пустая: .jsx прежний байт в байт
     # (golden). typeof-guard: DISC_LEAD объявляется только вместе с зазором стиля.
@@ -457,11 +517,41 @@ def plan_decor(inp: DecorInputs) -> DecorPlan:
     disc_lead_decl = (", DISC_LEAD=%g" % disc_lead) if disc_lead is not None else ""
     disc_lead_js = ("" if disc_lead is None else _disc_lead_code + "\n        ")
     disc_lead_js_tail = ("" if disc_lead is None else "\n    " + _disc_lead_code)
+    # Точка по X в подстановках шаблона: при дефолтном сдвиге это ровно прежнее W/2 —
+    # .jsx остаётся байт в байт прежним (golden), а DISC_X не объявляется вовсе.
+    disc_x_js = "DISC_X" if stv.disc_dx else "W/2"
+    # Дисклеймер для превью: те же числа, что уехали подстановками в .jsx, — второй копии
+    # формулы у превью нет. Ключа нет вовсе, когда текста нет (пустая строка = скрыт):
+    # превью тогда не заводит ни слоя, ни правила, как у подписи без галки.
+    # Текст в AE — центрированный абзац, поэтому перенос строк держим как есть (lines),
+    # а не склеиваем: центр блока совпадает с центром кадра. `asc` — подъём первой строки
+    # над базовой линией (её и держит Position.y), без него превью центрировало бы не там.
+    # fade/glow — числа шаблона (0.35 и 42), t_end — длительность показа DISC_END;
+    # end_copy — окно хвостовой копии (она живёт на ДЛИНЕ ролика, композиция длиннее).
+    disclaimer_plan = None
+    if _disc_lines and any(_ln.strip() for _ln in _disc_lines):
+        _disc_dur = float(meta["dur"]) / float(meta["fps"])   # длина контента, секунды
+        disclaimer_plan = {
+            "lines": _disc_lines,
+            "font": font_ps,
+            "size": disc_size,
+            "x": disc_x,
+            "y": disc_y,
+            "asc": disc_asc,
+            "lead": disc_lead,
+            "t_end": float(cast(Any, disc_sec)),
+            "fade": 0.35,
+            "glow": 42.0,
+            "end_copy": ({"t0": _disc_dur, "t1": _disc_dur + float(cast(Any, disc_sec))}
+                         if disc_end_on else None),
+        }
     return DecorPlan(
         sub_hide=sub_hide, sub_comp_name=sub_comp_name, sub_shadow=sub_shadow,
         sub_shadow_js=sub_shadow_js, sub_bg_on=sub_bg_on, sub_bg_plan=sub_bg_plan,
         sub_bg_js=sub_bg_js, sub_scale_js=sub_scale_js,
         top_line_plan=top_line_plan, top_line_js=top_line_js,
         caption_plan=caption_plan, caption_js=caption_js,
-        disc_size=disc_size, disc_lead_decl=disc_lead_decl,
+        disc_size=disc_size, disc_x_decl=disc_x_decl, disc_x_js=disc_x_js,
+        disc_y=disc_y, disclaimer_plan=disclaimer_plan,
+        disc_lead_decl=disc_lead_decl,
         disc_lead_js=disc_lead_js, disc_lead_js_tail=disc_lead_js_tail)

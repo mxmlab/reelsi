@@ -319,8 +319,8 @@ def test_preview_drag_writes_kx_ky_for_plate():
     """3. Драг: у вставки на подложке сдвиг уезжает в kx/ky (не в x/y), у обычной — в x/y."""
     with open(JS, "r", encoding="utf-8") as f:
         src = f.read()
-    code = (_js("normInsPath", "axisLock", "cardToIns") + "\n"
-            + _DRAG_STUBS + "\n" + _drag_handler(src) + """
+    code = (_js("normInsPath", "axisLock", "cardToIns", "insEnsureUids", "insCardFor") + "\n"
+            + "let INSUIDSEQ=0;\n" + _DRAG_STUBS + "\n" + _drag_handler(src) + """
     const plate={card:{w:400,h:300,plate:'C:/x/plate.png',photo:{w:100,h:80,x:5,y:6}},
                  style:'cam2',x:0,y:0,scale:44,sc:100,anim:{}};
     const plain={card:{w:400,h:300,pw:800,ph:600},style:'cam2',x:0,y:0,scale:44,sc:100,anim:{}};

@@ -441,20 +441,103 @@ clip's speaker was not found.
 
 **The live voice host (`core/voicefx_editor.py`, `--live`)** is a separate process per clip:
 it plays the track (the voice after the denoiser) through the enabled VST plug-ins in step
-with the picture (commands `play`/`seek`/`pause`/`track`/`chain`/`gain` over stdin) and
-opens plug-in windows in the MAIN thread (JUCE cannot otherwise), without interrupting the
-sound. The output stream is opened at the DEVICE's rate (`sample_rate=None` when it refuses
-48 kHz), and a streaming resampler sits at the end of the chain: the plug-ins still compute
-at 48 kHz, and `write` gets the stream's rate. A sound failure (device, stream) is reported
-as an `audio_error` event in the status of `/api/voicefx_live`, and the page then gives the
-sound back to ITSELF instead of muting its own voice in favour of a silent host. The host's
-volume is the speaker's voice volume (dB) plus the play volume (20·log10).
+with the picture (commands `play`/`seek`/`pause`/`track`/`chain`/`gain`/`dump_states` over
+stdin) and opens plug-in windows in the MAIN thread (JUCE cannot otherwise), without
+interrupting the sound. The output stream is opened at the DEVICE's rate
+(`sample_rate=None` when it refuses 48 kHz), and a streaming resampler sits at the end of
+the chain: the plug-ins still compute at 48 kHz, and `write` gets the stream's rate. A
+sound failure (device, stream) is reported as an `audio_error` event in the status of
+`/api/voicefx_live`, and the page then gives the sound back to ITSELF instead of muting its
+own voice in favour of a silent host. The host's volume is the speaker's voice volume (dB)
+plus the play volume (20·log10).
+
+**Format: live plug-ins only while a window is open (changed 2026-10-06).** The host is
+raised while at least one plug-in window is open: then the sound goes through the chain
+live ("turn the knobs and listen"), and the player attaches the DENOISE TRACK (without
+plug-ins — otherwise the chain would be heard twice). With the windows closed, the settings
+of ALL plug-ins are saved, the voice is re-baked, and ALL steps (step 1 `ED`, step 2,
+step 3 `IPV`) play the FINAL baked voice (`final: true`, the versioned file with the chain)
+from the cache. The reason: the host is a separate process and cannot be aligned to the
+picture closer than 0.4 s — with VSTs enabled the preview lagged ("it did not finish the
+ends, sometimes played more and in the wrong place"), with them disabled it was even.
+
+Closing the last window and stopping the host (preview closed, clip changed, leaving the
+step) begin with the `dump_states` command: the host reports the state of EVERY loaded
+plug-in (including disabled ones — they are kept loaded and their knobs are turned too) as
+a `states` event carrying `[{path, name, state_b64}]`. The server writes them into the
+speaker profile BY PLUG-IN PATH in a single save (`api/voicefx.py:_save_live_dump` →
+`_save_live_states`), and only then is the host killed by PID (`core/voicefx.py:live_stop`
+with a hook). Without this, stopping with a window open would lose what was dialled in: only
+the host process knows the state, and killing by PID gives no answer back. While the new
+voice is being baked, the PREVIOUS baked track keeps playing (not the camera sound), the
+voice line says "recomputing the voice…"; when ready, the `<audio>` source is swapped
+without pausing playback. The host input is the denoise track if it is enabled and already
+computed; the raw sound is left only for those who have nothing else to play (no cache —
+while RoFormer computes, one needs to hear a voice, not silence).
+
+Sync of the own track (`vtTick`, `static/app/60-preview.js`): a drift of 0.03–0.25 s is
+absorbed by SPEED (`playbackRate` ±6 %, as with the cameras — `camTrack`), above 0.25 s by
+a seek, and on pause/scrub and on a cut jump (`vtSeekAt`, from `edJump`) the position is
+set exactly and at once. Seeking every 0.15 s was what sounded like "played in the wrong
+place".
 
 **Added 2026-07-23: shared volume control** on all three video previews (edit
 `PV`, inserts `IPV`, layout `CPV`). An `<input data-vol>` slider in each panel,
 one `MEDIA_VOL` value (localStorage `autocut2_vol`, 0..1) for all players —
 `setMediaVol` writes the key, applies to ALL `<video>` (only the unmuted one is
 audible) and syncs all sliders; new `<video>` take `MEDIA_VOL` at creation.
+
+**Preview audio and the Web Audio graph (2026-10-07).** `createMediaElementSource` is an
+IRREVERSIBLE door: after it an element sounds only through the graph, and a suspended
+`AudioContext` (the browser keeps it `suspended` until a real gesture) mutes that path
+silently — this was the "the video plays, there is no sound, and there are no errors" defect.
+So only what actually NEEDS the graph goes into it, through exactly two doors, each with its
+own job:
+
+- **`audioWake()`** — the one door that wakes the context, called from the click handler by
+  every player (`edPlay`, `ipvPlay`, `cpvPlay`). Before, `AUDIO.resume()` existed in EXACTLY
+  one place — the MUSIC sync: the step-3 player sounded because `ipvPlay` called `musicSync`
+  at the end, and nothing woke the graph for the step-1 player.
+- **`voiceGraphNeeded()`** — whether the graph is needed for volume: only `VG.gain` can do the
+  style's voice volume (`voice_db`), an element's `volume` cannot go above 1.
+- **`voiceWiring(v)`** — a request to attach (the element exists, the decision comes later),
+  and **`voiceEnsure()`** — "the graph is needed now": it wires the `VOICEPEND` queue and wakes
+  the context. Only the doors where processing really sounds call it (`vtGate` with the gate
+  open, `vtEl`/`vtSpareOf` when the voice track is created) plus `applyDbGains`. The single
+  place that calls `createMediaElementSource` is `voiceGraphWire`.
+
+A speaker WITHOUT processing never touches the graph: the camera audio plays directly and does
+not depend on the `AudioContext` state. The camera sound used to be wired into the graph
+unconditionally, on element creation even.
+
+**Firefox — a row about the FACT, not a guess.** The footage is written `pcm_s16be` in MP4;
+Chromium reads that track (measured 2026-10-07: Chrome 152 on Windows and Linux), Firefox does
+not. The `<video>.mozHasAudio` property exists ONLY in Firefox, so the code asks the element
+itself (`fxAudioFact`): the answer is remembered on the element TOGETHER with its `src`
+(moving to the preview proxy changes the source — the old answer was not about it), and the row
+"Firefox cannot read the sound of these cameras — the sound will appear with the proxy" is
+raised by a DEFERRED pass (`FIREFOX_FACT_MIN = 1.5` s of playback, since before the first
+decoded frame `mozHasAudio` means nothing) and is dropped once the cause is gone. In Chromium
+the row never appears. The recommended browser is Chromium-based (Chrome, Edge, Brave).
+
+**There is NO audio proxy — it was removed on purpose.** The earlier version built an `.m4a`
+first and played it through a separate `<audio>` wherever the source was "unreadable". On
+Windows Chrome the camera sound `pcm_s16be` IS read, so the proxy played ON TOP of the camera
+sound: the voice was louder (in phase) and doubled (with an offset), and the camera was muted
+only on a camera change. So it is gone front and back: no `<audio>` proxy, no
+`media.probe_audio_codec`, no `_audio_proxy_plan`/`build_audio_proxy`, and no `audio` field in
+`/api/preview_proxy` — the route is a plain video proxy again, and its track is aac. Guard:
+`tests/test_preview_audio.py`.
+
+**`pedalboard` is declared.** It was listed nowhere — not in `requirements*.txt`, not in
+`pyproject.toml`, not in the installers, not in `doctor.py` — so turning the plug-ins on was
+the only way to learn about it. It now lives in `requirements-optional.txt` and in the
+doctor's optional list ("live monitoring through VST3 plugins and the output device list").
+The output device list is no longer tied to it: without the package `/api/voicefx_devices`
+answers with the devices the sound system reports (Windows registry,
+`core.voicefx.system_output_devices`) and a `reason` field, instead of failing with "no
+pedalboard"; the `reason` is shown in the panel (`static/app/95-styles.js`, `fxDeviceFill`),
+not only written to the log.
 
 **Changed 2026-08-01: "Files" panel** — a "Mark up all" button on the "Files"
 tab → runs `/api/ai_yellow` + `/api/ai_inserts` + `/api/ai_intro` per clip without
@@ -480,6 +563,14 @@ generation; video catalog `video_catalog.json`.
 
 This section holds the key points of how the system really works — what breaks
 most often and what must NOT be changed without understanding.
+
+**RULE:** an operation on a CLIP takes its speaker only from the clip —
+`clipSpeaker(c)` (the clip's `job.speaker` tag). The step 1 general selector is the NEW
+cut and the speaker profile editor, not a clip: a clip operation has no fallback to it,
+or else a speaker B clip takes speaker A's quota (7 inserts instead of 13). The server
+does NOT look the speaker up from `clip.json` itself — the interface choice is the
+source of truth. A new speaker-dependent feature adds its check to
+`tests/test_two_speakers.py` (the list of all such features lives there too).
 
 **RULE:** insert images/videos must live in the `Reelsi_out/` folder (that is,
 always next to the XML). It's a contract: `xml2ae` looks them up by relative path.
@@ -575,6 +666,15 @@ XML).
 
 **RULE:** subtitles are generated by the "Markup all" step on the finished XML; cutting does not generate them in either branch.
 
+**Pipelined markup (`markupAllRun`, `markupPlan`).** Batch markup on step 2 ("Markup all") is orchestrated
+via an asynchronous pipeline: subtitle generation runs sequentially on GPU (1 clip at a time). As soon
+as a clip finishes subtitles, it is pushed to downstream queues (yellow highlights and inserts). Cloud steps
+(`!step_local[step]`) run immediately without waiting for other clips' subtitles to finish, and run concurrently
+with each other for the same clip. Local steps (`step_local[step]`) wait for all subtitles to finish before
+starting due to VRAM limits; if both yellow and inserts are local using different models, inserts wait for all
+yellow highlights to complete to avoid model thrashing. Failures in one phase do not abort other phases or clips.
+A clip is marked `done` only when all requested phases finish.
+
 **RULE:** every key of `styles.BASE` must have a UI handle. The handle lives in THREE
 places: the element in `templates/index.html` (a `div#stylepart_*` tab), the read in
 `fillStyleFields()` (`static/app/95-styles.js`), the write in `stEdit()` — plus the
@@ -657,7 +757,7 @@ over-the-shoulder fly-out loses its point, a deliberate choice).
 | `core/insertlib.py` | insert library: XML + folder scan, `insertlib.json` index, semantic lookup; also `remove_bg` (rembg) and `nobg_path(media)` — ONE cache of a photo without background for the build and the preview (`<folder>/<stem>.nobg.png`; error of rembg or a non-image returns the source path and reports through `emit`) |
 | `api/` | **shared backend**: all `/api/*` (Blueprint), JOB/LOCK, jobs |
 | `api/previewcalc.py` | the preview door "compute roto and tracking": `/api/preview_calc` (the button, a background calculation through `core/xml2ae/precompute.py`), `/api/preview_calc_status` (per-chunk progress and "what is already computed"), `/api/preview_calc_cancel`. Its own state `PCJOB` and the shared job lock (`_cross_lock_acquire`), so the heavy GPU stage never runs on top of a cut, a build or a render. The body is the one of `/api/scene` and is normalized by the same door, otherwise the plan and the masks would diverge |
-| `api/voicefx.py` | the speaker's voice: the denoiser, the VST chain and the live host (`/api/voicefx_live`, commands `play`/`seek`/`pause`/`track`/`chain`/`gain`), the plug-in window (`/api/voicefx_host`, `_host_edit`, `_host_stop`) and baking `<stem>.voice.wav` (`/api/voicefx_bake`, `..._status`, `..._cancel`). The sound is computed by `core/voicefx.py`, the live host is `core/voicefx_editor.py` (one process per clip) |
+| `api/voicefx.py` | the speaker's voice: the denoiser, the VST chain and the live host (`/api/voicefx_live`, commands `play`/`seek`/`pause`/`track`/`chain`/`gain`/`dump_states`), the plug-in window (`/api/voicefx_host`, `_host_edit`, `_host_stop`) and baking the final voice (`<stem>.voice.<key8>.wav` plus the `.voice.json` sidecar; `/api/voicefx_bake`, `..._status`, `..._cancel`). The sound is computed by `core/voicefx.py`, the live host is `core/voicefx_editor.py` (one process per clip, only while a plug-in window is open) |
 | `webui.py` | **main** web UI (port 5001) |
 | `tests/` | pytest golden tests of contracts |
 | `core/draftrender.py` | draft render 720p |
@@ -681,7 +781,7 @@ when there are no repeats); "least-used camera" exceptions work crudely, designe
 for 4 cameras.
 
 **Output path** — `Reelsi_out/` (the folder one level above `reelsi/`), names
-`NN_stem.xml`, sidecars (`.project.json`, `.cuts.json`, `.omni.json`...).
+`NN_stem.xml`, sidecars (`.project.json`, `.cuts.json`, `.omni.json`, `<stem>.clip.json` snapshot of clip state and `_reelsi_trash/` recycle bin with restore).
 
 **Run** — `python reelsi/omni_cut.py --out Reelsi_out/NN.xml -cam1 ... --cam2 ...`
 **Run (webui)** — the "Cut" tab → `python -m webui` — no, `webui.py`.
@@ -820,6 +920,32 @@ interface state, NOT project:
 **`ins_data` contracts** — insert state (per clip):
 - `inserts` (list), `rejected`, `ins_image` (images), `ins_video` (videos),
 - `ins_slots` (slots 1/2), `gen_image`, `gen_video` (generation flags).
+
+**final voice contracts** — the clip's processed voice `<stem>.voice.<key8>.wav`
+(next to the XML, `core/voicefx.py`) — the baked processed voice of camera 1: `key8`
+  is the first 8 characters of the processing cache key (`final_voice_key`), so the
+  name changes together with the settings: a new take lands NEXT TO the old one
+  instead of on top of it. The version
+  name and the key live in the `<stem>.voice.json` sidecar — `{"key": …, "src": …,
+  "file": "<file name>"}` — and the sidecar is written atomically AFTER the file
+  appears, so a reader never gets a dead path. Readers take the path ONLY through the
+  `final_voice_path` resolver: the name from the sidecar when the file is there,
+  otherwise the old `<stem>.voice.wav` (clips baked before versioned names keep
+  reading as they did). Why a versioned name: under a constant one the track had to be
+  REPLACED in place, and on Windows that replacement fails while the file is held open
+  by the preview player (it plays exactly that file), by `/api/media` or by an open
+  AE/Premiere project — the new voice never appeared at all and the failure was
+  silent. The preview player plays the IMMUTABLE cache copy (`cache_path`: named after
+  the settings), while the version file next to the XML is what AE
+  (`final_voice_for_build`), Premiere XML (`core/xmlbuild.py`), `.drp` (`api/build.py`)
+  and the draft render (`core/draftrender.py`) read; the other versions are pruned
+  best-effort — a busy one is removed next time. One bake per clip: `ensure_final_voice`
+  holds a lock on `realpath(xml)`, so a second order for the same clip gets the ready
+  track without computing. A failed bake is visible in the build RESULT: a clip with
+  processing on and no voice attached lands in `JOB["failed"]` as a record with
+  `warn: true` and a reason (`api/build.py`, `_voice_warn`), and the interface shows it
+  as a warning in the build window and in the final toast (`static/app/90-ae.js`), not
+  as a log line.
 
 **`px` contracts** — pixel contracts for inserts (coordinates, scale) — `px` in
 `xml2ae` — `PIX_*` constants in `layout.py`.
@@ -1077,6 +1203,9 @@ generation profiles (separate from LLM), models from the catalog.
   roto/`.jsx`); the preview draws it and never recomputes.
 - `POST /api/cams_load` / `cams_save` / `swap_cam` — camera layout on step 2.
 - `POST /api/export_xml` / `export_drp` — download the timeline as XML / `.drp`.
+  **`export_xml` is a POST, not a GET**: it rewrites the XML (`sync_xml_voice`), so as a GET it
+  could be triggered by another page with an `<img src>` tag. The front end (the clip download
+  button, the step-2 download, the XML format in the download dialog) posts the path in the body.
 - `POST /api/render_run`, `GET /api/render_status` — headless AE render (Windows
   only, `aerender`), own job.
 - `POST /api/preview_proxy`, `GET /api/preview_proxy_status` — 720p 4:2:0 proxies
@@ -1111,6 +1240,43 @@ generation profiles (separate from LLM), models from the catalog.
 - Sound trimming (pop/transition) with sliders — planned.
 
 ## Gotchas
+
+**GOTCHA 0b — how many clips the card cuts is decided by free VRAM, not by the wish
+(2026-10-07).** Every cut process holds a CUDA context of its OWN, ~568 MiB, until it exits
+(measured on a 4096 MiB card: four processes = 2307 MiB, peak 696 MiB under work), so the clip
+count taken from the settings (1..16) is capped by free memory:
+`core/device.py:parallel_width_budget` = `free_vram // CUT_ROLE_VRAM_MIB` (600 MiB), measured
+the way `doctor.py` does (torch, then `nvidia-smi`); a machine without CUDA has no cap, and the
+reason goes into the job log ("карта 4.0 ГиБ, каждый ролик держит ~600 МиБ — одновременно не
+больше 6 (просили 10)"). Ten clips on a 4 GB card used to mean `OutOfMemoryError` inside a
+subprocess and a bare "code 1". Same place: **subtitles (`POST /api/gen_subs`) recognize under
+`gpu_lock("субтитры")`** — without the lock two ASR models (Whisper and GigaAM) sat on the card
+next to a running cut — and a model that does not fit is retried with `compute_type="int8_float16"`
+and then one step down the ladder (large-v3 → medium → small) with the reason in the log; when
+nothing fits, the answer carries the `whisper_gpu_fallback` code with its translation.
+Out-of-memory is recognised by exception type or text in one place
+(`core/device.py:is_oom_error`). Guard: `tests/test_gpu_budget.py`.
+
+**GOTCHA 0a — a preview shadow is a Drop Shadow → CSS translation, not a "similar number"
+(2026-10-07).** The preview drew shadows with hard-coded numbers of its own (`soft/2` for the
+intro precomp, its own `text-shadow`s for the subtitles, `drop-shadow(0 6px 18px …)` for the
+inserts, nothing at all for the plate), and the shadow came out 1.34× wider than the one AE
+builds. A render of AE 2026 measured the translation (a white square in a precomp, black
+shadow, Opacity 255, Distance 0; Softness 50/150/287 gave a Gaussian sigma of 9.5/28.0/53.5 px
+by an erf edge fit, rmse < 0.004), so σ = 0.187·Softness; CSS blurs a `drop-shadow` with
+σ = r/2, hence `r = 0.374·Softness`. The translation is ONE door for the whole preview,
+`aeShadowCss(sh, k)` (`static/app/85-inserts-view.js`): `k` is preview pixels per frame pixel,
+the offset is `dx = Dist·cos(Dir)`, `dy = Dist·sin(Dir)` (frame Y points down) and
+`alpha = Opacity/255` one to one. Subtitles (the filter sits on the word container — it is the
+Drop Shadow of the subtitle precomp layer, so it covers the word background too), the subtitle
+background, photo inserts (the filter is composed with the entry blur in AE's order) and the
+intro precomp all call it. The numbers of the three shadows live in one place in Python
+(`core/xml2ae/plan_decor.py:shadows_plan` — the `SH_SUB_*`, `INS_SH_*` and `SUB_BG_SH_*`
+constants from `core/xml2ae/layout.py`) and reach the preview as `plan["shadows"]` (`sub`,
+`ins`, `sub_bg`; `op255` is AE's 0..255 scale, into which the knob's percent is converted by
+multiplying by 255/100), while the `.jsx` gets them through the same substitutions; the preview
+keeps no shadow numbers of its own. For a default style the built `.jsx` is byte-for-byte the
+old one. Stand: `tests/test_shadow_css.py`.
 
 **GOTCHA 0 — two doors to one state are a bug even when both "work" (2026-10-02).** An
 insert on step 3 lives in two places: the PREVIEW list and the clip card (what is saved).
@@ -1192,6 +1358,51 @@ pyannote/speechbrain); longform is windowed (~18s) with seams at the quietest po
 
 **GOTCHA 11 — `.jpg` inserts.** AE can't read them (to check).
 
+### Security (closed 2026-10-07)
+
+The rule in one line: **names and addresses from an EXTERNAL service's answer are untrusted
+input**, exactly like a request body. One helper for all of it — `core/_pathguard.py`:
+`safe_name()` cleans a name down to letters, digits, `.`, `_` and `-` (separators, a bare `..`
+and control characters are replaced — `../x` becomes `-x` rather than a way out of the folder;
+Windows-reserved names such as `CON` are dropped too), and `inside_dir()` additionally checks
+the `realpath` of the result stays inside the target folder (cleaning the name alone does not
+catch a symlink inside the folder). A stock item's file name, built from `cand["id"]`, used to
+let `id="../../../../tmp/OWNED"` land the file outside the library.
+
+Addresses go through `core/app_meta.unsafe_url_reason(url)`: plain `http`/`https` only, and
+EVERY address a host name resolves to is checked (a single host string is bypassed by a name
+that resolves to a private IP): loopback, link-local, private, reserved, multicast and
+undefined are refused. Redirects run through `SafeRedirectHandler` with the same check, and a
+request to a foreign host carries no `Authorization`, `Proxy-Authorization` or `Cookie`
+(`HTTPRedirectHandler` otherwise moves every header except `Content-*`). A refusal is a reason
+not to download, not a crash: the loop takes the next address and the paid-for result is not
+lost. The guard sits in `core/stock.py`, `core/aicut/images.py` and `/api/video_probe`;
+requests to the PROVIDER itself are not affected — a person picks its `base_url`, and
+`http://127.0.0.1:1234` (LM Studio) is a normal address there. Guard test:
+`tests/test_security_fixes.py`.
+
+- **AI profile headers go out masked, like the key.** An `Authorization` / `x-api-key` value
+  is as much a secret as `api_key`, and `GET /api/ai_config` handed it to the browser in clear
+  text (localStorage, devtools, the "Custom headers" field itself). `apply_profile_headers`
+  reads the headers from the profile, they go out as `•••xxxx`, a value that is still a mask
+  never overwrites the real one on save (the same `resolve_header_mask` rule as the key), and a
+  live call (`Check`, model list) resolves the mask back. `env:VAR` is not masked: it is a
+  variable name, not a secret.
+- **The GPU lock no longer spins on "waiting" forever.** `core/gpulock.py` treated ANY failure
+  — a read-only folder, missing permission, an `msvcrt` failure — as "busy": `while True` with
+  a 0.5 s sleep and a "waiting for the GPU" line, with nothing to wait for. Being busy is now
+  only a refusal to lock an ALREADY OPEN file (some other process holds it, and waiting for
+  that is honest), while a lock file that cannot be created or opened raises `ReelsiError` with
+  the reason at once.
+- **`_host_is_local` compares the PORT too.** `127.0.0.1:5999` is a local name but a foreign
+  door on this machine: a `Host` that names a port must name OUR port (`api/_core.py`). The
+  address for a render without AE is built from the server's own port instead of the `Host`
+  header, which anything can set; the port comes from `local_ui_port()`, not from the request's
+  `SERVER_PORT` (the HTTP server builds that from the same header).
+- **`/api/export_xml` is a `POST`** because it writes a file: as a `GET` a hostile page could
+  trigger it with an `<img src>` tag.
+- The link to `.github/SECURITY.md` was fixed — it pointed nowhere.
+
 ## How to run / check
 
 - Web: `python reelsi/webui.py` → http://127.0.0.1:5001.
@@ -1200,6 +1411,14 @@ pyannote/speechbrain); longform is windowed (~18s) with seams at the quietest po
 - Classic CLI: `python reelsi/reelsi.py --cams 2|1` (or `--single`, `--no-cut`,
   `--aggressive`).
 - Tests: `python -m pytest tests -q`.
+- **As in CI: `python -m pytest tests -q -n auto --dist loadgroup -m "not perf"`.**
+  `-n auto` (pytest-xdist) spreads the suite over workers; `--dist loadgroup` is
+  mandatory with it and keeps the tests that start a REAL Chrome (`test_ui_static`,
+  `test_wv_ins_modal_geometry`, `test_webrender`, marked `xdist_group("chrome")`)
+  inside one worker, because several browsers at once measure geometry unreliably;
+  `-m "not perf"` leaves out the time-budget tests (`test_emphasis_prosody`) that
+  measure the runner rather than the code and run locally. The pair
+  "`-n auto` + `--dist loadgroup`" is guarded by `tests/test_ci_config.py`.
 
 **PROJECT RULES** — comments and commits are IN RUSSIAN. Chat too.
 **PROJECT RULES** — the repository is the `reelsi/` folder, branch `main`.

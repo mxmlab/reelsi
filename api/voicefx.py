@@ -174,7 +174,7 @@ class _VoiceJob(TypedDict, total=False):
     i: int
     n: int
     path: str          # трек в КЕШЕ обработки: имя по настройкам, файл не перезаписывается
-    final_wav: str     # `<стем>.voice.wav` рядом с XML: его читают AE, DRP, XML, черновик
+    final_wav: str     # голос рядом с XML (версионное имя): его читают AE, DRP, XML, черновик
     key: str
     error: str
     pid: int
@@ -416,7 +416,9 @@ def _voice_run_bake(xml: str, src: str, fx: dict[str, Any]) -> None:
                 xml, src, norm, emit=_voice_emit(xml),
                 progress=_voice_progress(xml),
                 cancelled=lambda: _voice_cancelled(xml), pid_of=_voice_pid(xml))
-            _voice_finish(xml, final_dst, final_dst, voicefx.final_voice_key(src, norm))
+            # Плееру — кеш (файл не перезаписывается), `final` — файл рядом с XML для
+            # AE/DRP/XML; ровно то же разделение, что в готовой ветке `_voice_bake_json`.
+            _voice_finish(xml, cache_dst, final_dst, voicefx.final_voice_key(src, norm))
         else:
             path = voicefx.denoise_track(
                 src, norm["denoise"], emit=_voice_emit(xml),
@@ -505,14 +507,28 @@ def _voice_bake_json(xml: str, src: str, fx: dict[str, Any], final: bool = False
                                "Выбери клип — обработка идёт по его звуку"))
     if final:
         final_wav = voicefx.final_voice_path(xml)
+        # Плееру — копия в КЕШЕ, а не файл рядом с XML: тот лежит под именем версии
+        # настроек и его читают AE/DRP/XML, а браузер играет НЕИЗМЕНЯЕМЫЙ файл кеша
+        # (имя по содержимому настроек) — подмена источника звука не рвёт
+        # воспроизведение и не зависит от того, кто держит файл рядом с XML.
+        cache_wav = voicefx.cache_path(src, norm)
         key = voicefx.final_voice_key(src, norm)
         if voicefx.final_voice_ready(xml, src, norm):
-            with VOICELOCK:
-                _voice_set(_voice_slot(xml), running=False, queued=False, done=True, want=False,
-                           path=final_wav, final_wav=final_wav, pct=100, key=key, error="")
-                VOICELAST["xml"] = xml
-            return jsonify(ok=True, xml=xml, ready=True, queued=False, running=False,
-                           path=final_wav, final=final_wav, pct=100, i=0, n=0, key=key)
+            # Кеш обработки — именно кеш: его чистят, а в свежей рабочей копии его нет
+            # вовсе. Итоговый файл рядом с XML — ТА ЖЕ самая запись (её читают AE, DRP,
+            # XML), поэтому возвращаем её в кеш и только потом отвечаем «готово»: иначе
+            # плеер получил бы тот же ключ с мёртвым URL, `/api/media` ответил бы 404,
+            # `<audio>` встал с ошибкой 4, а панель писала бы «голос готов».
+            voicefx.restore_cache_from_final(cache_wav, final_wav)
+            if os.path.isfile(cache_wav):
+                with VOICELOCK:
+                    _voice_set(_voice_slot(xml), running=False, queued=False, done=True, want=False,
+                               path=cache_wav, final_wav=final_wav, pct=100, key=key, error="")
+                    VOICELAST["xml"] = xml
+                return jsonify(ok=True, xml=xml, ready=True, queued=False, running=False,
+                               path=cache_wav, final=final_wav, pct=100, i=0, n=0, key=key)
+            # Копия не удалась (кеш занят или каталог недоступен): «готово» было бы
+            # ложью с мёртвой ссылкой — считаем заново, как при неготовом голосе.
         _voice_start(xml, src, norm, final=True)
     else:
         # Превью играет ДОРОЖКУ ШУМОДАВА: плагины — вживую через хост. Готовность
@@ -543,9 +559,12 @@ def _voice_bake_json(xml: str, src: str, fx: dict[str, Any], final: bool = False
 def api_voicefx_bake() -> Response:
     """Голос клипа для превью: готов — путь, нет — запустить запекание и отдать ход.
 
-    body: {xml, src, fx, final}. `xml` — XML клипа (рядом с ним ляжет `<стем>.voice.wav`),
-    `src` — файл камеры 1, `fx` — настройки обработки с панели голоса.
-    `final=True` — для шагов 2–3 (проверка/запекание итогового `<стем>.voice.wav`).
+    body: {xml, src, fx, final}. `xml` — XML клипа (рядом с ним ляжет запечённый
+    голос версии этих настроек), `src` — файл камеры 1, `fx` — настройки обработки
+    с панели голоса.
+    `final=True` — для шагов 2–3 (проверка/запекание итогового голоса клипа).
+    `path` — то, что играет плеер: НЕИЗМЕНЯЕМАЯ копия в кеше обработки;
+    `final` — тот же голос рядом с XML, его читают AE, DRP, Premiere XML и черновик.
 
     Обработка выключена — запечённый голос клипа УБИРАЕТСЯ (core.voicefx.clear_final_voice):
     «выключил шумодав — звук исходный» обязано работать и для превью, и для XML,
@@ -610,17 +629,26 @@ def api_voicefx_bake_cancel() -> Response:
 
 @bp.route("/api/voicefx_devices")
 def api_voicefx_devices() -> Response:
-    """Устройства вывода звука для живого прослушивания: {ok, devices, default}.
+    """Устройства вывода звука для живого прослушивания: {ok, devices, default, reason}.
 
     Отдельным роутом, а не полем соседнего ответа: список нужен ВСЕГДА при открытии
     блока настроек голоса, а окно плагина открывается редко и блокирует запрос до
     своего закрытия — узнавать устройства из него значило бы ждать этого закрытия.
+
+    Без pedalboard роут отдаёт список ТЕМ ЖЕ ответом, а не ошибкой про плагины:
+    устройства вывода — это звуковая система (core.voicefx.system_output_devices), и
+    с VST3 у них одна судьба только в старом коде. Причина, по которой список пуст
+    или неполон, едет полем `reason` — панель показывает её человеку; `error` тут
+    остаётся за настоящими сбоями звуковой системы, а не за отсутствием плагинов.
     """
     try:
         try:
             from core import voicefx
             d = voicefx.output_devices()
-            return jsonify(ok=True, devices=d["devices"], default=d["default"])
+            # Причина спрашивается ОТДЕЛЬНОЙ дверью ядра: контракт `output_devices`
+            # — `{devices, default}`, и поле в нём меняло бы его для всех читателей.
+            return jsonify(ok=True, devices=d["devices"], default=d["default"],
+                           reason=voicefx.devices_reason())
         except ReelsiError as e:
             raise _forward(e) from None
         except Exception as e:
@@ -716,8 +744,19 @@ def _save_live(session: Any) -> None:
     _save_live_done(session, session.state, session.exit_code)
 
 
+def _save_live_dump(session: Any, states: list[dict[str, str]]) -> None:
+    """Сохранить состояния ВСЕХ плагинов хоста — по их отдаче (`dump_states`).
+
+    Зовётся хуком гашения (`core.voicefx.live_stop`): хост снимают и при открытом
+    окне (закрыли превью, сменили клип, ушли с шага), а состояние знает только его
+    процесс. Путь тот же, что у закрытия окна (`_save_live_states`): профиль читается
+    свежим, правится ОДНО поле `voice_fx`.
+    """
+    _save_live_states(session, states, session.exit_code)
+
+
 def _save_live_done(session: Any, state_b64: str, code: int | None) -> None:
-    """Записать состояние плагина в профиль спикера клипа.
+    """Записать состояние плагина в профиль спикера клипа (окно закрылось).
 
     Тот же путь, что у прежней кнопки «Сохранить у спикера», и это нарочно: профиль
     читается СВЕЖИМ с диска, правится в нём ОДНО поле `voice_fx`, остальные поля
@@ -728,31 +767,73 @@ def _save_live_done(session: Any, state_b64: str, code: int | None) -> None:
     править, пока окно было открыто, и записать состояние одного плагина другому
     (по месту в списке) — это тихо испортить чужую настройку.
 
-    Голос клипа пересчитывается тем же следствием: запечённый `<стем>.voice.wav`
+    Голос клипа пересчитывается тем же следствием: запечённый `<стем>.voice.<key8>.wav`
     собран под ПРЕЖНИЕ настройки, и следующий заход превью (или сборка) видит
     расхождение ключа кеша и печёт трек заново (`ensure_final_voice`).
     """
+    want = _session_open_path(session)
+    if code not in (0, None) or not state_b64:
+        session.error = str(umsg("voicefx_no_state",
+                                 "Плагин закрылся, не отдав состояние"))
+        _live_note("окно плагина: состояние не сохранено — {err}", err=session.error)
+        return
+    if not want:
+        return
+    if not _save_live_states(session, [{"path": want, "state_b64": state_b64}], code):
+        session.error = str(umsg("voicefx_plugin_gone",
+                                 "Плагин убран из цепочки — состояние не сохранено",
+                                 n=os.path.basename(want)))
+        _live_note("окно плагина: состояние не сохранено — плагин убран из цепочки")
+
+
+def _session_open_path(session: Any) -> str:
+    """Путь плагина, чьё окно открывали: сперва прямое поле, иначе — по индексу.
+
+    У сессии есть `open_path` (его ставит `live_open_editor`), но старые записи и
+    тесты создают сессию одним индексом — поэтому запасной путь по `chain` остаётся.
+    """
+    path = str(getattr(session, "open_path", "") or "")
+    if path:
+        return path
+    chain = session.chain
+    if 0 <= session.index < len(chain):
+        return str(chain[session.index].get("path") or "")
+    return ""
+
+
+def _live_note(line: str, /, **vars: Any) -> None:
+    """Строка о живом звуке — в лог сервера.
+
+    Лог идёт в консоль сервера, а НЕ в задание запекания: у запекания своё задание
+    на клип (VOICEJOBS), и сбой сохранения плагина не повод объявлять упавшим чужой
+    счёт голоса. Фронту причину несёт сессия окна (`session.error`, её отдаёт
+    /api/voicefx_live).
+    """
+    from core.voicefx import console_emit
+    console_emit(line, **vars)
+
+
+def _save_live_states(session: Any, states: list[dict[str, str]],
+                      code: int | None) -> bool:
+    """Вписать состояния плагинов в профиль спикера: по ПУТИ, одним сохранением.
+
+    Одна дверь на оба случая — закрытие окна (одно состояние) и гашение хоста
+    (`dump_states`, все сразу): профиль читается СВЕЖИМ с диска, правится в нём
+    ОДНО поле `voice_fx`, остальное уезжает тем, чем лежало. Вторая копия
+    «как сохранить профиль» разъехалась бы — и правки соседних панелей
+    (пороги, LUT, рамка, папки) затирались бы.
+
+    Плагин ищется ПО ПУТИ, а не по месту в списке: цепочку могли править, пока окно
+    было открыто, и записать состояние одного плагина другому — это тихо испортить
+    чужую настройку. Плагина в профиле нет — запись по нему не делаем вовсе (в
+    отличие от закрытия окна: это не сбой, а цепочка, которую уже почистили).
+
+    Возвращает True, если профиль записан.
+    """
     from core import speakers as spk
 
-    # Лог — в консоль сервера, а НЕ в задание запекания: у запекания теперь своё
-    # задание на клип (VOICEJOBS), и сбой сохранения плагина не повод объявлять
-    # упавшим чужой счёт голоса. Фронту причину несёт сессия окна (`session.error`,
-    # её отдаёт /api/voicefx_live).
-    from core.voicefx import console_emit
-
-    def _note(line: str, /, **vars: Any) -> None:
-        """Строка о сохранении — в лог сервера."""
-        console_emit(line, **vars)
-
-    def _fail(text: str) -> None:
-        session.error = text
-        _note("окно плагина: состояние не сохранено — {err}", err=text)
-
-    if not session.speaker:
-        return
-    if code not in (0, None) or not state_b64:
-        _fail(str(umsg("voicefx_no_state", "Плагин закрылся, не отдав состояние")))
-        return
+    if code not in (0, None) or not session.speaker or not states:
+        return False
     try:
         profiles = spk.all_speakers()
         spk_key = session.speaker if session.speaker in profiles else ""
@@ -763,29 +844,39 @@ def _save_live_done(session: Any, state_b64: str, code: int | None) -> None:
                     break
         found = profiles.get(spk_key)
         if not isinstance(found, dict):
-            _fail(str(umsg("voicefx_no_speaker", "Профиль спикера не найден",
-                           n=session.speaker)))
-            return
+            session.error = str(umsg("voicefx_no_speaker", "Профиль спикера не найден",
+                                     n=session.speaker))
+            _live_note("окно плагина: состояние не сохранено — профиль спикера не найден")
+            return False
         from core import voicefx
         fx = voicefx.normalize_fx(found.get("voice_fx"))
         vst = [dict(p) for p in fx["vst"]]
-        chain = session.chain
-        want_path = str(chain[session.index]["path"]) if 0 <= session.index < len(chain) else ""
-        target = next((i for i, p in enumerate(vst) if p.get("path") == want_path), -1)
-        if target < 0:
-            _fail(str(umsg("voicefx_plugin_gone",
-                           "Плагин убран из цепочки — состояние не сохранено",
-                           n=os.path.basename(want_path))))
-            return
-        vst[target]["state"] = state_b64
+        # Пустая запись не трогает профиль: у плагина без состояния (окна не
+        # открывали) сохранять нечего, а пустая строка затёрла бы живые ручки.
+        applied = 0
+        for st in states:
+            path = str(st.get("path") or "")
+            state = str(st.get("state_b64") or "")
+            if not path or not state:
+                continue
+            target = next((i for i, p in enumerate(vst) if p.get("path") == path), -1)
+            if target < 0:
+                continue
+            vst[target]["state"] = state
+            applied += 1
+        if not applied:
+            return False
         data = dict(found)
         data["voice_fx"] = dict(fx, vst=vst)
         spk.save(spk_key or session.speaker, data)
         session.saved = True
-        _note("окно плагина: состояние сохранено в профиль спикера «{n}»",
-              n=spk_key or session.speaker)
+        _live_note("окно плагина: состояние сохранено в профиль спикера «{n}»",
+                   n=spk_key or session.speaker)
+        return True
     except Exception as e:                       # noqa: BLE001 — сохранение не повод падать
-        _fail(f"{type(e).__name__}: {e}")
+        session.error = f"{type(e).__name__}: {e}"
+        _live_note("окно плагина: состояние не сохранено — {err}", err=session.error)
+        return False
 
 
 def _live_payload(session: Any) -> dict[str, Any]:
@@ -950,6 +1041,10 @@ def api_voicefx_host_stop() -> Response:
     глушит звук, но процесс остаётся жив — а «после закрытия превью не остаётся ни
     одного» относится и к зависшему хосту. Чужой PID не трогаем: он наш от старта.
 
+    Перед гашением хост отдаёт состояние ВСЕХ загруженных плагинов (`dump_states`), и
+    оно уезжает в профиль спикера (`_save_live_dump`) — окно могло быть открыто, а
+    состояние знает только процесс хоста.
+
     Сессии нет — не ошибка: хост уже ушёл сам (упал, завершился на пустой цепочке),
     и повторная просьба «погаси» обязана быть тихой, а не 500-й на закрытии превью.
     """
@@ -961,7 +1056,7 @@ def api_voicefx_host_stop() -> Response:
         session = voicefx.live_session(sid) if sid else _voice_host_get(xml)
         killed = False
         if session is not None and not session.done:
-            killed = voicefx.live_stop(session)
+            killed = voicefx.live_stop(session, _save_live_dump)
         if xml:
             with VOICELOCK:
                 VOICEHOST.pop(xml, None)
@@ -1005,7 +1100,8 @@ def api_voicefx_live() -> Response:
         return jsonify(ok=True, **_live_payload(session))
     d = request.get_json(silent=True) or {}
     cmd = _text(d, "cmd")
-    if cmd not in ("play", "seek", "pause", "stop", "chain", "open_editor", "gain"):
+    if cmd not in ("play", "seek", "pause", "stop", "chain", "open_editor", "gain",
+                   "dump_states"):
         return jsonify(**umsg_err(ReelsiError(
             umsg("voicefx_no_window", f"Неизвестная команда живого звука: {cmd!r}"))))
     try:
@@ -1015,6 +1111,17 @@ def api_voicefx_live() -> Response:
             sent = voicefx.live_command(session, {"cmd": "gain", "db": _db(d)})
         elif cmd == "chain":
             sent = voicefx.live_chain(session, d.get("fx"))
+        elif cmd == "dump_states":
+            # Состояние всех плагинов хост отдаёт событием `states`: забираем его
+            # ожиданием и сразу пишем в профиль спикера. Хост после этого жив —
+            # гасит его отдельная дверь (`/api/voicefx_host_stop`), и там состояние
+            # берётся тем же путём.
+            before = voicefx.live_dump_request(session)
+            states = voicefx.live_dump_wait(session, before)
+            sent = True
+            if states and session.speaker:
+                _save_live_dump(session, states)
+            return jsonify(ok=True, sent=sent, states=states, **_live_payload(session))
         elif cmd == "open_editor":
             sent = voicefx.live_open_editor(session, _int(d, "index", -1), _text(d, "path"))
         else:

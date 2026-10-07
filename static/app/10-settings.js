@@ -173,11 +173,15 @@ async function setStepProfile(sel){
   try{d=await (await fetch('/api/ai_config',{method:'POST',
     headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'set_step_profile',step,name})})).json();}
-  catch(e){toast(t('Сервер не ответил: ')+e);fillStepProfiles();return;}
-  if(d.error){toast('⚠ '+errText(d));fillStepProfiles();return;}
+  catch(e){toast(t('Сервер не ответил: ')+e);fillStepProfiles();fillStepReasoning();return;}
+  if(d.error){toast('⚠ '+errText(d));fillStepProfiles();fillStepReasoning();return;}
   AICFG.step_profiles=d.step_profiles||AICFG.step_profiles;
   AICFG.reasoning_effective=d.reasoning_effective||AICFG.reasoning_effective;
-  fillStepProfiles();cutSummary();markupSummary();
+  // Уровни «Ум» строятся по модели НОВОГО профиля шага — без перерисовки селект
+  // показывал уровни прежней модели (у неё их могло не быть вовсе, и он был бы
+  // disabled), пока не закроешь и не откроешь настройки заново. Соседняя
+  // setStepReasoning делает так же — здесь вызов был пропущен.
+  fillStepProfiles();fillStepReasoning();cutSummary();markupSummary();
   toast(t('модель · ')+(step==='cut'?t('нарезка'):step)+': '+name);}
 // «Роликов одновременно»: поля на вкладках «Нарезка» (conc_cut) и «Разметка»
 // (conc_markup). В поле — ТОЛЬКО своё переопределение шага: пусто = «как в профиле
@@ -603,6 +607,7 @@ function cutSummary(){const el=$('cutsum');if(!el||!AICFG)return;
   const lv=((AICFG.reasoning_effective||{}).cut)||((AICFG.reasoning_steps||{}).cut)||'off';
   const cutAsr=(AICFG&&AICFG.active_cut_asr)||'gigaam';
   const cutL=engLabel(cutAsr);
+  // общий выбор: новая нарезка/профиль, не клип — сводка рассказывает про нарезку шага 1.
   const sp=(typeof SPEAKERS!=='undefined')?SPEAKERS[val('speaker')]:null;
   const n=sp?Object.keys(sp.cut||{}).length:0;
 
@@ -890,7 +895,7 @@ async function insGenOne(i,slot){if(curIns<0)return;const x=CLIPS[curIns].insert
   // reject, и стартовала вторая ПЛАТНАЯ генерация (аудит, гонка двойного клика).
   if(x.media&&(x.libAuto||x.genAuto))await insRejectMedia(x.media,x.query);
   const c=CLIPS[curIns];
-  const spkKey=(c&&c.job&&c.job.speaker)||(val('speaker')||'').trim()||undefined;
+  const spkKey=clipSpeaker(c)||undefined;
   try{await insGenCore(x,slot,spkKey);}
   catch(e){toast('⚠ '+e);uiLog(t('✨ генерация: ОШИБКА — ')+e);}
   x.genBusy=false;renderInsHost();syncClipLists();saveState();}
@@ -910,7 +915,7 @@ async function insGenBatch(c,ask){
     +t('Каждая упадёт в базу вставок и переиспользуется в следующих роликах.')))return 0;
   uiLog(t('✨ генерация недостающих ({name}): {n} шт…',{name:c.name,n:need.length}));
   let n=0;const t0=performance.now();
-  const spkKey=(c&&c.job&&c.job.speaker)||(val('speaker')||'').trim()||undefined;
+  const spkKey=clipSpeaker(c)||undefined;
   for(const x of need){                            // последовательно — не ловить 429
     if(typeof UICANCEL!=='undefined'&&UICANCEL)break;
     const ti=performance.now();

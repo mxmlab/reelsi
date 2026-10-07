@@ -9,7 +9,7 @@
 
 На каждый роут: плохой вход (пустое поле, несуществующий путь, чужой тип) и рабочий
 путь на КОПИИ эталона `tests/fixtures/timeline_nosubs.xml` в tmp_path — проверяется
-контракт ответа и побочные эффекты (сайдкар `project.json`, сам XML, мусор в %TEMP%).
+контракт ответа и побочные эффекты (сайдкар `project.json`, сам XML, мусор во временной папке).
 
 Изоляция: медиа фикстуры (`<tmp_path>/footage/...`) на диске не лежит, поэтому ffprobe
 (`xmlbuild.probe`) и синхрон камер (`sync.extract_audio`/`find_offset`) подменены —
@@ -256,10 +256,14 @@ def test_swap_cam_bad_input(client, xml_nosubs, tmp_path, fake_probe, fake_sync)
 # --------------------------------------------------------------------------- #
 # /api/export_drp
 # --------------------------------------------------------------------------- #
-def test_export_drp_contract(client, xml_nosubs, tmp_path, fake_probe):
+def test_export_drp_contract(client, xml_nosubs, tmp_path, fake_probe, monkeypatch):
     """Ответ — zip-контейнер `.drp` вложением; временный файл за собой убран."""
-    tmpdir = tempfile.gettempdir()
-    drp_before = set(glob.glob(os.path.join(tmpdir, "*.drp")))
+    # Своя временная папка: общий %TEMP% делят соседние воркеры `-n auto` и другие
+    # прогоны на машине, и их `.drp` ронял проверку «роут убрал за собой».
+    tmpdir = tmp_path / "tmp"
+    tmpdir.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(tmpdir))
+    drp_before = set(glob.glob(os.path.join(str(tmpdir), "*.drp")))
 
     pic = tmp_path / "pic.png"
     pic.write_bytes(b"\x89PNG\r\n\x1a\n fake")
@@ -277,8 +281,8 @@ def test_export_drp_contract(client, xml_nosubs, tmp_path, fake_probe):
     assert "attachment" in cd and "timeline_nosubs.drp" in cd
     assert r.data[:2] == b"PK", "`.drp` — это zip-контейнер (docs/DRP_SPEC.md)"
     assert len(r.data) > 1000
-    assert set(glob.glob(os.path.join(tmpdir, "*.drp"))) == drp_before, \
-        "роут оставил временный .drp в %TEMP%"
+    assert set(glob.glob(os.path.join(str(tmpdir), "*.drp"))) == drp_before, \
+        "роут оставил временный .drp в своей временной папке"
 
 
 def test_export_drp_uses_voice_next_to_xml(client, xml_nosubs, fake_probe, tmp_path, monkeypatch):

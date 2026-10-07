@@ -19,7 +19,9 @@
 5. **Выбор сохраняется и читается** — как остальные настройки рендера (`ui_state`).
 6. **Подготовка задания — в ядре.** `render_job.prepare_render_task`: движок (пусто — AE,
    чужое — отказ), папка вывода (создаётся сразу), адрес запущенного сервера и заголовок
-   задания в журнале. Роут только вынимает строки из тела запроса.
+   задания в журнале. Роут только вынимает строки из тела запроса; адрес он собирает из
+   СВОЕГО порта (`local_ui_port`), а не из заголовка `request.host` — заголовок
+   подставляет кто угодно.
 
 Запуск: python -m pytest tests/test_webrender_engine.py -q
 """
@@ -37,6 +39,8 @@ sys.path.insert(0, ROOT)
 from core import render_job  # noqa: E402
 from core.render_job import RenderJob  # noqa: E402
 from core.umsg import ReelsiError  # noqa: E402
+
+import api  # noqa: E402  (порт сервера — api._core.local_ui_port)
 
 
 @pytest.fixture()
@@ -311,14 +315,14 @@ def _start(client, xml, engine=None, monkeypatch=None, render_dir=None):
     return d, seen
 
 
-def test_route_passes_the_engine_and_the_request_host(client, xml_clip, tmp_path, monkeypatch):
-    """`engine` и адрес сервера уезжают в диспетчер: свой порт не зашивается."""
+def test_route_passes_the_engine_and_the_server_port(client, xml_clip, tmp_path, monkeypatch):
+    """`engine` и адрес сервера уезжают в диспетчер: адрес — из СВОЕГО порта."""
     d, seen = _start(client, xml_clip, "builtin", monkeypatch, render_dir=str(tmp_path / "exp"))
     assert d.get("ok"), d
     args = seen.get("args") or ()
     assert args[4] == "builtin", args          # engine — пятый аргумент диспетчера
-    assert args[5], "адрес сервера (request.host) не доехал"
-    assert args[5] in ("localhost", "127.0.0.1") or ":" in str(args[5]), args[5]
+    assert args[5], "адрес сервера не доехал"
+    assert args[5] == "127.0.0.1:%d" % api._core.local_ui_port(), args[5]
 
 
 def test_route_rejects_an_unknown_engine(client, xml_clip, monkeypatch):

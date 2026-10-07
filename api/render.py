@@ -29,7 +29,7 @@ from core.render_job import RenderJob
 from core.umsg import ReelsiError, umsg
 from .inserts import _convert_inserts
 from ._core import (JOB, LOCK, _cross_lock_acquire, _cross_lock_release, bp, jstr,
-                    journal_bind, journal_interrupted, log_entry, umsg_err)
+                    journal_bind, journal_interrupted, local_host, log_entry, umsg_err)
 
 log = get_logger("reelsi.render")
 
@@ -78,7 +78,8 @@ RJOB = RenderJob(
 
 def render_kill() -> None:
     """«Стоп» из интерфейса (/api/cancel зовёт): флаг джобу + реально убить
-    текущий subprocess (AfterFX или aerender) с деревом.
+    процессы рендера (AfterFX/aerender, а у встроенного движка — node-съёмщик со
+    своим Chrome, ffmpeg куска и склейку) с деревом.
 
     Тонкая обёртка: работу делает core.render_job, имя осталось здесь — его зовёт
     api/jobs.py из /api/cancel."""
@@ -93,8 +94,8 @@ def api_render_run() -> Response:
 
     `engine` — «ae» (по умолчанию, прежний путь: AfterFX + aerender) или «builtin»
     (рендер без After Effects, кадры снимает наш же предпросмотр). Встроенному нужен
-    ЗАПУЩЕННЫЙ сервер: адрес берётся из самого запроса (`request.host`), а не
-    зашивается — он и так запущен, а порт у изолированного профиля свой.
+    ЗАПУЩЕННЫЙ сервер: адрес берётся у самого процесса (`local_host`), а не из
+    заголовка `request.host` — заголовок подставляет кто угодно.
     """
     d = request.get_json() or {}
     try:
@@ -105,7 +106,7 @@ def api_render_run() -> Response:
         # Выбор движка и подготовка задания (папка вывода, адрес сервера, заголовок в
         # журнале) — в core/render_job.py: роут только вынимает строки из тела запроса.
         task = render_job.prepare_render_task(jstr(d, "engine"), jstr(d, "render_dir"),
-                                              jstr(d, "outdir"), request.host)
+                                              jstr(d, "outdir"), local_host())
         with RLOCK:
             if RJOB["running"]:
                 raise ReelsiError(umsg("render_busy",

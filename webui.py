@@ -43,6 +43,10 @@ _STATIC = os.path.join(HERE, "static")
 # У страницы рендера свой запуск: она не показывает панелей и не имеет права писать
 # чужое состояние интерфейса.
 RENDER_SKIP_JS = ("99-boot.js",)
+# Порт UI — модульной константой: его читает не только main(), но и проверка Host
+# (api/_core._host_is_local сверяет порт из Host с ЭТИМ портом: у изолированного
+# профиля 5098, у копии на другом порту — свой, зашивать 5001 нельзя).
+PORT = int(os.environ.get("PORT") or 5001)
 _CACHE: dict[str, Any] = {"mtime": None, "html": ""}
 _CACHE_RENDER: dict[str, Any] = {"mtime": None, "html": ""}
 _I18N = I18N_FILE
@@ -163,7 +167,7 @@ def main() -> None:
     from core import bootstrap
     for _msg in bootstrap.ensure_user_files():
         print(f"  + {_msg}")
-    port = int(os.environ.get("PORT") or 5001)
+    port = PORT
     url = f"http://127.0.0.1:{port}"
     print(f"Reelsi Web UI v{APP_VERSION} -> {url}")
     log = get_logger("reelsi")

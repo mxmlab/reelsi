@@ -187,10 +187,19 @@ def register(name: str, fn: Any) -> None:
 def _whisper(wav_path: str, **opts: Any) -> list[dict[str, Any]]:
     from core import aicut
     from core import transcribe
+    # emit — чтобы строки запасного пути («не влезло — взяли int8») дошли до лога
+    # задания, а не остались в консоли сервера. Без него аргумент не передаём вовсе:
+    # у `transcribe` свой приёмник по умолчанию, и лишний None его бы перебил.
+    emit = opts.pop("emit", None)
     aicut.unload_ours()                      # free VRAM for Whisper
     aicut.warn_foreign_models()
     try:
-        return transcribe.transcribe(wav_path, **opts)
+        # emit передаём ТОЛЬКО когда он есть: у `transcribe` свой приёмник по
+        # умолчанию, и лишний `emit=None` его перебил бы (а заодно поехал бы вызов
+        # у всех, кто подменяет `transcribe` в тестах).
+        if emit is None:
+            return transcribe.transcribe(wav_path, **opts)
+        return transcribe.transcribe(wav_path, **opts, emit=emit)
     finally:
         # Выгружаем модель даже при падении транскрипции, иначе занятая VRAM
         # намертво вешает последующие запуски на Windows вместо OOM

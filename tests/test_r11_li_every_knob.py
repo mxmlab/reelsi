@@ -463,16 +463,25 @@ def _get_test_mutation(k, item, base_val, tmp_path):
         return st_setup, "upper"
     elif k == "intro_anchor2":
         return st_setup, "first"
-    elif k == "intro_fit_w":
-        # «Интро по ширине» работает только у ОТКРЕПЛЁННОГО интро:
-        # привязанное ужимается по константе INTRO_FIT_W, и ручка на него не влияет.
-        st_setup["intro_cam"] = False
-        return st_setup, 80.0
+    elif k == "intro_margin":
+        # «Отступ от краёв» камеры 1 работает в ОБОИХ режимах, но ручки ширины
+        # подгоняют группу по ИЗМЕРЕННОЙ ширине строки — метрику им ставит тест ниже.
+        return st_setup, 20.0
+    elif k == "intro_margin2":
+        # То же у камеры 2: её группы видны только при активном зуме Камеры 2 (иначе
+        # группа висит на нуле камеры 1 и берёт её ручки).
+        st_setup["cam2_zoom"] = "pulse"
+        return st_setup, 20.0
     elif k == "intro_fit_max":
-        # «Потолок увеличения интро» — та же семья: только откреплённое интро.
-        # Значение заведомо ниже подгонки (её поднимает метрика в тесте ниже): иначе ручка
-        # не упёрлась бы в потолок и .jsx не изменился бы.
+        # «Масштаб интро» (потолок увеличения) — семья ручек ширины: только откреплённое
+        # интро. Значение заведомо ниже подгонки (её поднимает метрика в тесте ниже):
+        # иначе ручка не упёрлась бы в потолок и .jsx не изменился бы.
         st_setup["intro_cam"] = False
+        return st_setup, 400.0
+    elif k == "intro_fit_max2":
+        # …и свой потолок у камеры 2, со своим зумом для её групп.
+        st_setup["cam2_zoom"] = "pulse"
+        st_setup["intro_cam2"] = False
         return st_setup, 400.0
     elif k == "intro_riser_file":
         st_setup["intro_riser"] = True
@@ -638,13 +647,14 @@ def test_exceptions_read_in_code_or_reported_as_dead():
 @pytest.mark.parametrize("knob_key", TESTED_KEYS)
 def test_each_knob_affects_assembly(knob_key, xml_subs, music_file, tmp_path, monkeypatch):
     """2. Каждая ручка влияет: изменение значения ключа меняет собранный .jsx относительно базы."""
-    if knob_key in ("intro_fit_w", "intro_fit_max"):
-        # Ручки ОТКРЕПЛЁННОГО интро подгоняют группу по ИЗМЕРЕННОЙ ширине
-        # строки: без метрики шрифта они мертвы, а зависит она от того, какие шрифты стоят на
-        # машине. Буква = ровно кегль — как в test_intro_detach, числа не машины, а формулы.
-        # Потолку этого мало: строка фикстуры короткая, до ручки (400) подгонка не дотянулась
-        # бы, поэтому для него буква ещё уже — потолок обязан упереться.
-        width = (lambda ps, text, size: 1.0 * len(text)) if knob_key == "intro_fit_max" \
+    if knob_key in ("intro_margin", "intro_margin2", "intro_fit_max", "intro_fit_max2"):
+        # Ручки ширины интро подгоняют группу по ИЗМЕРЕННОЙ ширине строки: без метрики
+        # шрифта они мертвы, а зависит она от того, какие шрифты стоят на машине.
+        # Буква = ровно кегль — как в test_intro_detach, числа не машины, а формулы.
+        # Потолкам этого мало: строка фикстуры короткая, до ручки (400) подгонка не
+        # дотянулась бы, поэтому для них буква ещё уже — потолок обязан упереться.
+        width = (lambda ps, text, size: 1.0 * len(text)) \
+            if knob_key in ("intro_fit_max", "intro_fit_max2") \
             else (lambda ps, text, size: float(size) * len(text))
         monkeypatch.setattr(fonts, "text_width", width)
 

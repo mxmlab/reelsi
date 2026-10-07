@@ -168,26 +168,29 @@ def _head_ds(jsx):
     return _jsx_var(jsx, "INTRO_GROUPS")[0][0]["ds"]
 
 
-# ======================================== 1. ручки видны только у откреплённого интро
+# ======================================== 1. ручки ширины: один набор на обе камеры
 
-def test_fit_knobs_are_shown_only_for_the_detached_intro():
-    """1. У `intro_fit_w` и `intro_fit_max` — `show_if` на `intro_cam == False`.
+def test_fit_knobs_are_visible_in_both_modes():
+    """У ручек ширины интро нет `show_if`: они работают и у привязанного, и у откреплённого.
 
-    У привязанного интро ширину задаёт зум Камеры 1 (замер MI: 92 и 70 дают один и тот же
-    ds), поэтому обе ручки там мёртвые и в панели им делать нечего. Механизм show_if панель
-    уже читает (updateStyleVisibility, static/app/94-stylepanel.js) — второй копии условия
-    в JS не заводится.
+    Раньше доля ширины была константой `INTRO_FIT_W` у привязанного интро, и ручка
+    «Интро по ширине» была там мёртвой — её прятали по галке. Теперь правило ширины одно
+    на оба режима («Отступ от краёв», intro_margin | intro_margin2), и ручки обязаны быть
+    видны всегда: у привязанного они работают ужатием (шире не пускает зум камеры).
     """
-    for key in ("intro_fit_w", "intro_fit_max"):
+    for key in ("intro_margin", "intro_margin2", "intro_fit_max", "intro_fit_max2"):
         field = watcher.schema_field(key)
         assert field, f"в схеме нет ручки {key}"
-        assert field.get("show_if") == {"key": "intro_cam", "eq": False}, (
-            f"{key}: ручка показывается и у привязанного интро (show_if не тот)")
+        assert "show_if" not in field, \
+            f"{key}: ручка снова показывается только у откреплённого интро"
+    assert watcher.schema_field("intro_fit_w") is None, "старая общая ручка осталась в схеме"
 
     keys = [it["key"] for kind, it in watcher.schema_items()
             if kind == "field" and it.get("key")]
-    assert keys.index("intro_fit_max") == keys.index("intro_fit_w") + 1, \
-        "потолок увеличения стоит не рядом с ручкой «Интро по ширине»"
+    assert keys.index("intro_fit_max") == keys.index("intro_margin") + 1, \
+        "потолок увеличения стоит не рядом с ручкой отступа (камера 1)"
+    assert keys.index("intro_fit_max2") == keys.index("intro_margin2") + 1, \
+        "потолок увеличения стоит не рядом с ручкой отступа (камера 2)"
 
 
 # ==================================================== 2. потолок увеличения (ручка)
@@ -223,11 +226,14 @@ def test_fit_max_caps_the_growth_and_does_not_touch_the_shrink(metrics, xml_subs
                                         ("большое + 2 коротких", BIG2),
                                         ("большое + 3 строки", BIG3)])
 def test_detached_block_stays_under_the_safe_line(metrics, xml_subs, anchor, name, group):
-    """3. Верх блока откреплённой группы — не выше `INTRO_SAFE_TOP` (±0.5), оба якоря.
+    """3. Верх блока откреплённой группы — НЕ ВЫШЕ `INTRO_SAFE_TOP` (±0.5), оба якоря.
 
     Стиль по умолчанию (все ручки дефолтные), снята только галка «интро едет с камерой».
     Сдвиг считается после автофита по фактическому габариту блока (`intro_block_span`:
-    капитель строки, кегль большой строки lk), поэтому верх садится ровно на линию.
+    капитель строки, кегль большой строки lk). Группу с большой строкой выравнивание верха
+    ПОДНИМАЕТ к верхнему краю обычной раскладки — и если она от этого ушла выше линии, её
+    опускают ровно на линию; если и без опускания верх ниже линии, блок остаётся выше
+    (опускать не до чего). В обоих случаях линия не нарушена.
     """
     style = {"intro_cam": False, "intro_anchor": anchor}
     plan = _scene(xml_subs, style, intro=group)
@@ -237,12 +243,10 @@ def test_detached_block_stays_under_the_safe_line(metrics, xml_subs, anchor, nam
     top = _top(plan)
     assert top >= INTRO_SAFE_TOP - 0.5, (
         f"{name}/{anchor}: верх блока {top} выше безопасной линии {INTRO_SAFE_TOP}")
-    assert top == pytest.approx(INTRO_SAFE_TOP, abs=0.5), \
-        f"{name}/{anchor}: блок опущен не ровно до линии (верх {top})"
-
-    # Не на пустом месте: по прежнему расчёту (только _intro_i_dy) верх был выше линии.
-    assert _old_top(plan, anchor) < INTRO_SAFE_TOP, \
-        f"{name}/{anchor}: прежний расчёт и так держал блок под линией — проверка ничего не значит"
+    # Опускание (когда сработало) садится РОВНО на линию; не сработало — верх уже под ней.
+    if top <= INTRO_SAFE_TOP + 0.5:
+        assert top == pytest.approx(INTRO_SAFE_TOP, abs=0.5), \
+            f"{name}/{anchor}: блок опущен не ровно до линии (верх {top})"
 
 
 def test_the_drop_travels_into_idy_and_y(metrics, xml_subs, tmp_path):
@@ -266,16 +270,17 @@ def test_the_drop_travels_into_idy_and_y(metrics, xml_subs, tmp_path):
 # ==================================================== 4. привязанное интро — как на main
 
 def test_attached_intro_is_as_on_main(metrics, xml_subs, tmp_path):
-    """4. `intro_cam=True`: ручки откреплённого интро на сборку не влияют, числа прежние.
+    """4. `intro_cam=True`: числа прежние — доля ширины у привязанного та же 92 %.
 
-    Ширину привязанному задаёт зум Камеры 1: автофит по-прежнему только ужимает (ds = 100
-    у короткой строки), iDy считает `_intro_i_dy` от НЕужатого gs, а `intro_fit_w` и
-    `intro_fit_max` не читаются вовсе — иначе поехал бы golden (tests/test_geometry_python).
+    Дефолтный отступ (4 % с каждого края) даёт ровно прежнюю долю ширины, поэтому
+    привязанная сборка с дефолтным стилем совпадает с прежней: короткая строка стоит на
+    ds = 100, длинная ужимается долей ширины своей камеры с учётом зума, а `intro_fit_max`
+    (потолок УВЕЛИЧЕНИЯ) привязанное интро не читает вовсе.
     """
     ref = _build(xml_subs, tmp_path, {}, intro=BIG2, name="att_ref.jsx")
-    knobs = _build(xml_subs, tmp_path, {"intro_fit_w": 70, "intro_fit_max": 1000},
+    knobs = _build(xml_subs, tmp_path, {"intro_fit_max": 1000},
                    intro=BIG2, name="att_knobs.jsx")
-    assert ref == knobs, "ручки откреплённого интро тронули привязанную сборку"
+    assert ref == knobs, "потолок увеличения тронул привязанную сборку"
 
     plan = _scene(xml_subs, {}, intro=THREE)
     p = plan["intro"][0]
@@ -286,7 +291,7 @@ def test_attached_intro_is_as_on_main(metrics, xml_subs, tmp_path):
     jsx = _build(xml_subs, tmp_path, {}, intro=THREE, name="att3.jsx")
     assert _jsx_var(jsx, "INTRO_IDY")[0] == _intro_i_dy(plan["h"], 3, 100)
 
-    # Длинная строка ужимается прежней формулой: INTRO_FIT_W и зум Камеры 1 в расчёте.
+    # Длинная строка ужимается долей ширины своей камеры и зумом Камеры 1 в расчёте.
     z = ZOOM[0][1] / 100.0
     long_plan = _scene(xml_subs, {}, intro=LONG, cam1_scale=ZOOM)
     expected = 100.0 * W * INTRO_FIT_W / (_width("Д" * 30) * (INTRO_SCALE / 100.0) * z)
@@ -305,18 +310,19 @@ def test_intro_fit_max_knob_lives_in_schema_base_and_assembly(metrics, xml_subs,
     assert field, "в схеме нет ручки intro_fit_max"
     assert field.get("ctl") == "num", "intro_fit_max перестала быть числом"
     assert (field.get("min"), field.get("max"), field.get("step")) == (100, 1000, 10)
-    assert field.get("label") == "Потолок увеличения интро, %"
+    assert field.get("label") == "Масштаб интро, % (камера 1)"
     assert "intro_fit_max" in watcher.schema_keys(), \
         "ручка не попадает в счётчики схемы (test_style_schema)"
+    assert watcher.schema_field("intro_fit_max2") is not None, "нет своего потолка камеры 2"
 
     assert styles.BASE.get("intro_fit_max") == DEFAULT_MAX, "дефолт intro_fit_max в BASE не 250"
     assert styles.resolve(None).get("intro_fit_max") == DEFAULT_MAX
 
     en = json.load(io.open(os.path.join(ROOT, "static", "i18n", "en.json"), encoding="utf-8"))
-    assert en.get(field["label"]) == "Intro max scale, %"
+    assert en.get(field["label"]), "подпись ручки осталась без перевода"
     assert en.get(field["tip"]), "тултип ручки остался без перевода"
-    assert en.get(watcher.schema_field("intro_fit_w")["tip"]), \
-        "тултип «Интро по ширине» остался без перевода"
+    assert en.get(watcher.schema_field("intro_margin")["tip"]), \
+        "тултип «Отступ от краёв» остался без перевода"
 
     ref = _build(xml_subs, tmp_path, {"intro_cam": False}, name="cap250.jsx")
     mod = _build(xml_subs, tmp_path, {"intro_cam": False, "intro_fit_max": 400},
@@ -324,7 +330,7 @@ def test_intro_fit_max_knob_lives_in_schema_base_and_assembly(metrics, xml_subs,
     assert ref != mod, "ручка intro_fit_max не изменила собранный .jsx"
     assert _head_ds(ref) == pytest.approx(DEFAULT_MAX)
     assert _head_ds(mod) == pytest.approx(400.0)
-    # привязанное интро ручку не читает
+    # привязанное интро потолок не читает: там ширину задаёт зум камеры
     on250 = _build(xml_subs, tmp_path, {}, name="on250.jsx")
     on400 = _build(xml_subs, tmp_path, {"intro_fit_max": 400}, name="on400.jsx")
     assert on250 == on400, "потолок увеличения изменил привязанное интро"

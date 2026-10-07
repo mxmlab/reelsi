@@ -29,7 +29,7 @@ from core import encoders
 from . import catalog
 from .config import (GLITCH_GLOW_MODES, OMNI_LOCAL, OMNI_LOCAL_ENGINES, REASONING_LEVELS,
                      STEP_REASONING_DEFAULT, normalize_base_url, parse_headers_text,
-                     step_profile, unmask_ai_key)
+                     step_profile, unmask_ai_key, unmask_headers)
 from .images import IMAGE_OFF
 from .video import VIDEO_OFF, video_caps, video_model_cfg
 
@@ -338,7 +338,9 @@ def save_profile(cfg: dict[str, Any], d: dict[str, Any]) -> None:
     hdrs = (p.get("headers") if isinstance(p.get("headers"), dict)
             else parse_headers_text(_s(p, "headers_text")))
     if hdrs:
-        newp["headers"] = hdrs
+        # Значения заголовков в форме — маска «•••xxxx» (их закрывает GET /api/ai_config):
+        # записать маску значит потерять токен, поэтому маска подменяется сохранённой.
+        newp["headers"] = unmask_headers(hdrs, saved_prof.get("headers"))
     raw_c = p.get("concurrency")
     if raw_c is not None and not (isinstance(raw_c, str) and raw_c.strip() == ""):
         if isinstance(raw_c, bool):

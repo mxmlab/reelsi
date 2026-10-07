@@ -936,7 +936,8 @@ def test_page_returns_its_own_sound_when_the_host_audio_fails(tmp_path: Path) ->
     styles = STYLES_JS.read_text(encoding="utf-8")
     src = "\n".join(_func_src(prev, n) for n in (
         "vtOf", "vtAudioCam", "vtPlaying", "vtSrcAt", "vtLiveOn", "vtLiveUpdate", "vtLiveExpect",
-        "vtLiveRate", "vtLiveCmd", "vtLiveSid", "vtGate", "vtTick", "vtIsEd", "vtMuteHost"))
+        "vtLiveRate", "vtLiveCmd", "vtLiveSid", "vtGate", "vtTick", "vtSeek", "vtRate",
+        "vtIsEd", "vtMuteHost"))
     src += "\n" + "\n".join(_func_src(styles, n) for n in (
         "voiceFxLiveOn", "voiceFxHostPoll", "voiceFxHostNotes", "voiceFxHostGone"))
     lets = re.search(r"let VFXHOST=\{[^\n]*\};", styles)
@@ -946,7 +947,7 @@ const CALLS=[];const LOGS=[];const TIMERS=[];const STATUS=[];
 let VOICEFXLIVE=null;
 let AUDIOERR='';
 const VT_LIVE_DRIFT=0.4;
-const VT_DRIFT=0.15;
+const VT_SOFT=0.03,VT_DRIFT=0.25,VT_RATE=0.06;
 """ + lets.group(0) + r"""
 globalThis.setTimeout=(fn,ms)=>{TIMERS.push(fn);return TIMERS.length;};
 globalThis.clearTimeout=()=>{};

@@ -18,7 +18,7 @@
 тоже состояние, поэтому пути и открытый хэндл лока живут здесь.
 """
 import json, os, queue, signal, subprocess, threading, time
-from typing import IO, Any, Iterable, cast
+from typing import IO, Any, Callable, Iterable, cast
 
 from core import paths
 from core.fileio import atomic_json_dump
@@ -240,15 +240,107 @@ def pump_stdout(p: subprocess.Popen[str]) -> queue.Queue[str | None]:
 JOB_LOCK_PATH = env("JOB_LOCK") or paths.root("job.lock")
 _JOB_LOCK_FH: IO[bytes] | None = None
 
+# Имя задачи, которая держит лок, и как узнать её прогресс. Нужны ОТКАЗУ «уже
+# выполняется»: он обязан сказать, что именно идёт. Замок берут разные задачи
+# (нарезка, сборка, рендер, сборка прокси превью), и «другая задача» одинаково
+# звучала для всех — а сборка прокси ещё и показывает прогресс в своём окне,
+# куда по сообщению «смотри Логи» человек не попадал.
+# Хранится ДВАЖДЫ: в этом процессе (для своего отказа) и в самом файле лока — его
+# читает вторая копия интерфейса, у которой своего имени владельца нет.
+_JOB_LOCK_TASK: str | None = None
+_JOB_LOCK_HINT: Callable[[], str] | None = None
+# Имя для СЛЕДУЮЩЕГО удачного _cross_lock_acquire() — см. cross_lock_task().
+_PENDING_LOCK_TASK: str | None = None
+_PENDING_LOCK_HINT: Callable[[], str] | None = None
+
+# Имя владельца в файле лока пишем со второго байта: первый заперт самим локом
+# (msvcrt.locking запирает ровно один байт от текущей позиции), и чтение соседним
+# процессом начинается с 1 — запертый байт читать нельзя.
+_LOCK_TASK_OFFSET = 1
+
+
+def cross_lock_task(task: str, hint: Callable[[], str] | None = None) -> None:
+    """Назвать задачу, которая берёт межзадачный лок СЛЕДУЮЩИМ _cross_lock_acquire().
+
+    hint — функция, отдающая строку прогресса («камера 2 из 2, 40 % — прогресс в
+    окне превью»): у сборки прокси превью свой джоб (PXJOB), и его прогресс в
+    чужом отказе нужно назвать словами, а не числом. Отдельная дверь, а не
+    параметр _cross_lock_acquire: часть вызовов лока в тестах подменяется
+    заглушкой без аргументов, и смена сигнатуры ломала бы их молча."""
+    global _PENDING_LOCK_TASK, _PENDING_LOCK_HINT
+    _PENDING_LOCK_TASK = str(task) if task else None
+    _PENDING_LOCK_HINT = hint
+
+
+def cross_lock_owner() -> str | None:
+    """Имя задачи, которая держит лок: своё (в этом процессе) или записанное в
+    файл локом из другой копии интерфейса. None — лок свободен или имя неизвестно
+    (старая версия, авария): отказ тогда скажет «другая задача», как раньше."""
+    if _JOB_LOCK_TASK:
+        return _JOB_LOCK_TASK
+    return _lock_task_from_file()
+
+
+def cross_lock_progress() -> str | None:
+    """Строка прогресса задачи-владельца лока (или None, если она его не даёт).
+
+    Чужой процесс свою подсказку не пишет — там прогресса может не быть вовсе."""
+    hint = _JOB_LOCK_HINT
+    if hint is None:
+        return None
+    try:
+        return hint() or None
+    except ReelsiError: raise
+    except Exception:
+        return None
+
+
+def _write_lock_task(name: str | None) -> None:
+    """Записать (или стереть) имя владельца в файле лока. Отказ читает его в
+    ДРУГОМ процессе — в своём имя и так лежит в памяти. Сбой записи лок не
+    отменяет: имя нужно отказу, а не работе."""
+    fh = _JOB_LOCK_FH
+    if fh is None:
+        return
+    try:
+        fh.seek(0)
+        fh.truncate(0)
+        if name:
+            # Файл открыт в режиме "a" (O_APPEND): запись всегда идёт в КОНЕЦ, seek её
+            # не двигает. Поэтому байт-маркер и имя пишем двумя записями подряд — имя
+            # встаёт со второго байта, а первый остаётся запертым самим локом
+            # (его вторая копия интерфейса не читает, см. _LOCK_TASK_OFFSET).
+            fh.write(b"\n")
+            fh.write(name.encode("utf-8"))
+        fh.flush()
+    except ReelsiError: raise
+    except Exception:
+        pass  # имя владельца — подсказка отказу, а не работа: сбой записи лок не отменяет
+
+
+def _lock_task_from_file() -> str | None:
+    try:
+        with open(JOB_LOCK_PATH, "rb") as f:
+            f.seek(_LOCK_TASK_OFFSET)      # байт 0 заперт владельцем
+            raw = f.read(256)
+    except ReelsiError: raise
+    except Exception:
+        return None
+    name = raw.decode("utf-8", "replace").strip()
+    return name or None
+
 
 def _cross_lock_acquire() -> bool:
-    global _JOB_LOCK_FH
+    global _JOB_LOCK_FH, _JOB_LOCK_TASK, _JOB_LOCK_HINT
+    global _PENDING_LOCK_TASK, _PENDING_LOCK_HINT
     # Раньше здесь стоял короткий путь «лок уже наш (в этом процессе) — значит взяли».
     # Он делал межпроцессный лок НЕВИДИМЫМ внутри процесса: рендер (core/render_job.py)
     # держит его всё время работы, а параллельный job_start нарезки/сборки получал
     # True и стартовал вторую тяжёлую задачу на той же видеокарте.
     # ОС лок не реентерабелен и в одном процессе: второй хэндл на тот же файл
     # получает отказ (замер на Windows: PermissionError), поэтому короткий путь не нужен.
+    task, hint = _PENDING_LOCK_TASK, _PENDING_LOCK_HINT
+    _PENDING_LOCK_TASK = _PENDING_LOCK_HINT = None      # названо — на один захват
     fh = None
     try:
         fh = open(JOB_LOCK_PATH, "a+b")
@@ -274,12 +366,15 @@ def _cross_lock_acquire() -> bool:
                 pass  # закрыть не удалось — файл всё равно не наш, дескриптор освободит GC
         return False
     _JOB_LOCK_FH = fh
+    _JOB_LOCK_TASK, _JOB_LOCK_HINT = task, hint
+    _write_lock_task(task)
     return True
 
 
 def _cross_lock_release() -> None:
-    global _JOB_LOCK_FH
+    global _JOB_LOCK_FH, _JOB_LOCK_TASK, _JOB_LOCK_HINT
     fh, _JOB_LOCK_FH = _JOB_LOCK_FH, None
+    _JOB_LOCK_TASK, _JOB_LOCK_HINT = None, None
     if fh is None:
         return
     try:
@@ -293,6 +388,14 @@ def _cross_lock_release() -> None:
     except ReelsiError: raise
     except Exception:
         pass  # явное снятие блокировки не удалось — ниже fh.close() отпускает её сам
+    try:
+        # Имя владельца стираем ВМЕСТЕ с локом: иначе следующий отказ назвал бы
+        # задачу, которой уже нет (лок-то свободен).
+        fh.seek(0)
+        fh.truncate(0)
+    except ReelsiError: raise
+    except Exception:
+        pass  # файл закрывается ниже — мусорное имя там никому не мешает
     try:
         fh.close()
     except ReelsiError: raise

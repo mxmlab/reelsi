@@ -329,6 +329,7 @@ ADDITIONS = {
     "ERR_video_profile_missing": "First pick a “Video” profile (OpenRouter key and model)",
     "ERR_video_running": "This generation is still running — stop it first",
     "ERR_waveform_failed": "Failed to build the waveform: {err}",
+    "ERR_whisper_gpu_fallback": "A {card} GB card could not fit any Whisper step for {where} ({tried}) in either half precision or int8 — pick a smaller model in the subtitle settings. Last error: {err}",
     "ERR_words_failed": "Failed to load the subtitle words: {err}",
     "ERR_xml_state_failed": "Failed to read the XML state: {err}",
     "ERR_yellow_failed": "Failed to pick the highlight words: {err}",

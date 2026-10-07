@@ -21,6 +21,7 @@
 """
 import json
 import os
+import shutil
 import stat
 import tempfile
 import time
@@ -194,3 +195,27 @@ def quarantine_unreadable(path: str | os.PathLike[str],
         dst = "%s-%d" % (base, n)
     os.replace(path, dst)
     return dst
+
+
+def move_file(src: str, dst: str) -> None:
+    """Переместить файл атомарно (os.replace).
+
+    При ошибке между дисками (OSError) — скопировать shutil.copy2 и удалить
+    исходник. Если удалить исходник не удалось — удалить сделанную копию
+    и пробросить исключение: файл не должен оказаться в двух местах.
+    """
+    try:
+        os.replace(src, dst)
+    except OSError:
+        shutil.copy2(src, dst)
+        try:
+            os.remove(src)
+        except Exception:
+            # Исходник удалить не вышло (на Windows его держит открытый дескриптор):
+            # убираем сделанную копию, чтобы файл не остался в двух местах, и
+            # пробрасываем ошибку наружу — вызывающий решает, что делать с файлом.
+            try:
+                os.remove(dst)
+            except OSError:
+                pass  # копию снести тоже не вышло — исходное исключение важнее
+            raise

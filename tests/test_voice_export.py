@@ -421,7 +421,8 @@ def test_api_export_xml_with_voice(tmp_path, cams):
 
     _wav(tmp_path / f"{out.stem}.voice.wav")
 
-    r = client.get(f"/api/export_xml?path={out}", headers={"Host": "127.0.0.1:5001"})
+    r = client.post("/api/export_xml", json={"path": str(out)},
+                    headers={"Host": "127.0.0.1:5001"})
     assert r.status_code == 200
     xml_data = r.data.decode("utf-8")
     assert "file-voice" in xml_data

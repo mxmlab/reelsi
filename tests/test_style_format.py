@@ -360,6 +360,8 @@ def test_frontend_drag_axis_scales_by_clip_format():
               "// Клип открытого превью в стенде — сам CLIPS (боевой camFrameClip ищет его\n"
               "// по IPV.xml через clipByXml; здесь эта цепочка не проверяется).\n"
               "function camFrameClip(){return CLIPS[cur];}\n"
+              "// Дверь спикера клипа (40-queue.js): формат кадра берётся у ЕГО спикера.\n"
+              "function clipSpeaker(c){return (c&&c.job&&c.job.speaker)||'';}\n"
               "var out={};for(var k=0;k<6;k++){cur=k;"
               "out[k]=[camFrameWH(),camFrameAxisK()];}\n"
               "console.log(JSON.stringify(out));")

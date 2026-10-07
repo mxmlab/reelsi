@@ -38,7 +38,8 @@ from typing import IO, Any
 
 from core import frame
 from core import paths
-from core.app_meta import console_emit, env, http_req, wrap_emit
+from core._pathguard import inside_dir, safe_name
+from core.app_meta import console_emit, env, http_req, unsafe_url_reason, wrap_emit
 from core.applog import get_logger
 from core.fileio import _atomic_write, atomic_json_dump
 from core.umsg import ReelsiError, umsg
@@ -170,7 +171,17 @@ def download(cand: dict[str, Any], dest_dir: str, emit: Any = console_emit) -> s
         raise ReelsiError(umsg("need_folders", "Укажи хотя бы одну папку"))
     sub = os.path.join(os.path.abspath(dest_dir), "stock", prov)
     os.makedirs(sub, exist_ok=True)
-    path = os.path.join(sub, f"{_slug(cand)}-{cand.get('id')}{_ext_of(url, kind)}")
+    # Имя файла собирается из ДАННЫХ ОТВЕТА стока, а не из запроса пользователя:
+    # враждебный или взломанный провайдер подсунул бы id="../../../../tmp/OWNED",
+    # и файл записался бы за пределами базы. `safe_name` чистит имя до склейки, а
+    # `inside_dir` проверяет realpath уже готового пути: одной чистки мало — абсолютное
+    # имя выбрасывает папку из склейки, а символическая ссылка внутри базы уводит файл
+    # наружу при внешне безобидном имени.
+    name = f"{_slug(cand)}-{safe_name(cand.get('id'), 'cand')}{_ext_of(url, kind)}"
+    try:
+        path = inside_dir(sub, name)
+    except ValueError:
+        raise ReelsiError(umsg("stock_bad_candidate", BAD_CANDIDATE_TEXT, provider=prov))
     fresh = not os.path.isfile(path)                    # «уже скачан» — по наличию файла
     if fresh:
         _download_file(url, path)
@@ -396,7 +407,16 @@ def _get_json(req: urllib.request.Request) -> dict[str, Any]:
 def _download_file(url: str, path: str) -> None:
     """Файл к себе (хотлинк запрещён условиями Pixabay). Пишем общей атомарной записью
     ядра: оборванная закачка не должна оставить огрызок под именем готового файла —
-    «уже скачан» здесь проверяется по наличию файла."""
+    «уже скачан» здесь проверяется по наличию файла.
+
+    Адрес приходит в ОТВЕТЕ стока, а не от пользователя: `file:///C:/Windows/win.ini`
+    читал бы локальный файл, `http://127.0.0.1`/`http://169.254.169.254` уводил бы
+    запрос внутрь машины. Проверка — та же `unsafe_url_reason`, что на пути готового
+    ролика (core/aicut/video.py): одна дверь на всех, кто качает по чужому адресу."""
+    reason = unsafe_url_reason(url)
+    if reason:
+        raise ReelsiError(umsg("stock_unsafe_url", f"Сток отдал непригодный адрес: {reason}",
+                               reason=reason))
     with urllib.request.urlopen(http_req(url), timeout=DOWNLOAD_TIMEOUT_S) as r:
         def _write(f: IO[Any]) -> None:
             while True:
@@ -487,9 +507,12 @@ def _int(v: Any) -> int:
 
 def _slug(cand: dict[str, Any]) -> str:
     """Имя файла — как в add_generated: из запроса карточки (латиница), нечитаемое в
-    дефисы. Теги стока сюда не подмешиваем: имя должно быть коротким и узнаваемым."""
+    дефисы. Теги стока сюда не подмешиваем: имя должно быть коротким и узнаваемым.
+    `safe_name` — тот же санитайз, что у id: запрос тоже приходит извне (ИИ-модель
+    собирает его по ответу провайдера), и разделители пути из него недопустимы."""
     base = str(cand.get("query") or "").strip() or str(cand.get("provider") or "stock")
-    return re.sub(r"[^\w]+", "-", base.lower()).strip("-")[:48] or "stock"
+    slug = re.sub(r"[^\w]+", "-", base.lower()).strip("-")[:48]
+    return safe_name(slug, "stock")
 
 
 def _ext_of(url: str, kind: str) -> str:

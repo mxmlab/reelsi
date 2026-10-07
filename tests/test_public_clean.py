@@ -35,6 +35,13 @@ from tests import gitfiles  # noqa: E402
 SPDX = "SPDX-License-Identifier: AGPL-3.0-or-later"
 SPDX_EXT = (".py", ".js", ".jsx", ".ps1", ".sh")
 
+# Сторожа обходят дерево ВМЕСТЕ с неотслеживаемыми файлами (`git ls-files
+# --others`), а самопроверка ниже кладёт в корень временный файл без SPDX.
+# Под `pytest -n auto --dist loadgroup` такие сторожа обязаны идти в ОДНОМ
+# воркере по очереди: иначе сосед видит этот файл (ложное «нет SPDX») или уже
+# не находит его (FileNotFoundError).
+pytestmark = pytest.mark.xdist_group("repo_tree")
+
 
 def _git_files():
     """Отслеживаемые плюс новые файлы, которые попали бы в коммит.

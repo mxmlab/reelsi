@@ -54,6 +54,26 @@ YUV→RGB задан явно (`in_range=tv`, матрица bt709) — swscale 
 write=…`): по ней видно, что именно тормозит. Формат строки — в одном файле на
 обе стороны (`core/webrender/timing.mjs`), разбор — здесь (`_timing_line`).
 
+ЗАВИСШИЙ БРАУЗЕР — ОШИБКА, А НЕ ТИШИНА. Страница рендера отвечает съёмщику по
+протоколу DevTools, и молчащий Chrome раньше останавливал рендер насмерть: съёмщик
+печатал `#ошибка: Runtime.evaluate: браузер не ответил за 120 с`, а задание
+числилось `running` с нулевым процентом, и «Остановить» не помогало — своих детей
+(node, Chrome, ffmpeg) в RJOB никто не регистрировал. Теперь съёмщик печатает метку
+`#timeout <мс>` (STALL_MARK), а `render` по ней гасит СВОИ процессы по PID — тем же
+путём, что при отмене, — и выходит `ReelsiError` с понятным текстом.
+
+БЭКЕНД ANGLE — ПО ПЛАТФОРМЕ (`angle_backend`, ANGLE_BY_OS): `d3d11` на Windows,
+`vulkan` на Linux, `metal` на macOS, переопределение — переменной `REELSI_ANGLE`.
+Жёсткий `d3d11` — заявка на Direct3D 11, которого вне Windows нет: на Linux Chrome
+уходил в программный SwiftShader, и кадр 1080x1920 стоил 400-550 мс при простаивающей
+карте (против 225 мс у владельца).
+
+Прогресс идёт строкой «кадр N/M» и только ею: её печатает `_Progress` (СУММА готовых
+кадров всех кусков), а сырой счётчик куска съёмщик печатает ДРУГОЙ формой
+(`кусок k: кадр a/b`). Две формы одной строки сбивали процент клипа
+(`core/render_job._FRAME_RE` подходил к обеим): сырая строка отставшего куска уводила
+полосу назад.
+
 Скорость. Кадры ролика делятся на куски, и каждый кусок снимает СВОЙ экземпляр Chrome
 (у каждого свой профиль): экземпляров по умолчанию половина ядер, но не больше 4
 (`_default_instances`). Куски стартуют РАЗОМ и кодируют КАЖДЫЙ СВОЙ сегмент во временный
@@ -82,6 +102,7 @@ import argparse
 import json
 import math
 import os
+import platform
 import re
 import shutil
 import struct
@@ -109,6 +130,20 @@ from core.xml2ae.layout import HL_EASE_IN, HL_EASE_OUT   # эталон крив
 CAPTURE = os.path.join(paths.ROOT, "core", "webrender", "capture.mjs")
 HDR = struct.Struct(">I")            # префикс длины кадра: 4 байта, старший вперёд
 DEFAULT_HOST = "127.0.0.1:5001"
+# Бэкенд ANGLE для Chrome съёмщика — ПО ПЛАТФОРМЕ, а не жёстко: `d3d11` (Direct3D 11)
+# существует ТОЛЬКО на Windows. На Linux с ним Chrome уходил в программный SwiftShader —
+# кадр 1080x1920 стоил 400-550 мс при простаивающей карте, — а аппаратная отрисовка там
+# это `vulkan` (нужен файл-описатель Vulkan-ICD, рецепт в docs/PLATFORMS.md); у macOS —
+# `metal`. Платформу называет та же ОС, что и порядок кодеков (core.encoders.OS_ORDER):
+# второй таблицы «какая у нас система» в проекте быть не должно.
+ANGLE_BY_OS: dict[str, str] = {
+    "Windows": "d3d11",
+    "Linux": "vulkan",
+    "Darwin": "metal",
+}
+# Незнакомая ОС (FreeBSD и прочая экзотика) — как encoders.DEFAULT_ORDER: идём самым
+# распространённым случаем, а не выдумываем несуществующий бэкенд.
+DEFAULT_ANGLE = ANGLE_BY_OS["Windows"]
 # ЕДИНИЦЫ. У времени, которое уезжает съёмщику в командной строке, единица стоит и в
 # имени константы, и в имени ключа (`--ready-timeout-ms`): раньше здесь были секунды
 # под ключом без единицы, а capture.mjs читал те же числа как миллисекунды — страница
@@ -130,6 +165,14 @@ CAPTURE_QUALITY = 95
 TIMING_RE = re.compile(
     r"#timing\s+seek=(?P<seek>[0-9.]+)\s+paint=(?P<paint>[0-9.]+)\s+"
     r"shot=(?P<shot>[0-9.]+)\s+write=(?P<write>[0-9.]+)")
+
+# Метка съёмщика «браузер не ответил на вызов протокола» (`#timeout <мс>`, печатает
+# capture.mjs). По ней ГЛАВНЫЙ поток узнаёт, что кадров больше не будет: гасит свои
+# процессы (тем же путём, что при отмене) и закрывает рендер ошибкой. Без неё живой
+# прогон вставал навсегда — задание числилось `running` с нулевым процентом, ошибка
+# лежала в журнале, а ожидание кадров не кончалось: «Остановить» тоже не помогало,
+# потому что своих детей (node, Chrome, ffmpeg) в RJOB никто не регистрировал.
+STALL_MARK = "#timeout "
 
 # Формат картинок, которые вынимаются из ИСХОДНИКА ДО съёмки (см. шапку). JPEG, а не PNG:
 # замер на синтетическом материале 1080x1920 — 150 кадров вынимаются одинаково быстро
@@ -284,6 +327,11 @@ class _Ctx:
     progress: _Progress
     abort: threading.Event                # «какой-то кусок оборвался — свои не доснимаем»
     ff_err: list[str]                     # копилка stderr всех кодировщиков и склейки
+    # «Запомни моего ребёнка»: через неё дети рендера (node-съёмщик и ffmpeg куска)
+    # попадают в RJOB, и «Стоп» (/api/cancel -> render_kill) гасит и их — раньше он
+    # знал только AfterFX/aerender. Chrome рождается у node, поэтому гибнет вместе с
+    # его деревом (Windows: taskkill /T, POSIX: своя группа процессов).
+    on_child: Callable[[Any], None] | None = None
     frame_dir: str = ""                   # папка картинок ТЕКУЩЕГО куска (ставит render)
 
 
@@ -978,8 +1026,28 @@ def _kill_pid(pid: int) -> None:
         pass  # процесса уже нет (или он чужой для этого пользователя) — гасить нечего
 
 
+def angle_backend(system: str | None = None) -> str:
+    """Бэкенд ANGLE съёмщика: по платформе, с переопределением переменной REELSI_ANGLE.
+
+    Жёсткий `d3d11` — это заявка на Direct3D 11, которого вне Windows не существует:
+    на Linux Chrome уходил в программный SwiftShader, и кадр 1080x1920 стоил 400-550 мс
+    при простаивающей карте (см. ANGLE_BY_OS). Переменная — дверь на чужую машину:
+    подходящий бэкенд там бывает свой (`gl` на старом драйвере, `swiftshader` для
+    проверки), и правка кода ради этого не нужна. Задана и не пуста — берём ЕЁ, а не
+    платформу.
+
+    `system` — только для теста: в бою платформу называет `platform.system()`, тот же
+    источник, что у порядка кодеков (`core.encoders.OS_ORDER`).
+    """
+    override = os.environ.get("REELSI_ANGLE", "").strip()
+    if override:
+        return override
+    return ANGLE_BY_OS.get(system or platform.system(), DEFAULT_ANGLE)
+
+
 def _capture_cmd(node: str, url: str, w: int, h: int, fps: float, first: int, count: int,
-                 profile: str, chrome: str | None) -> list[str]:
+                 profile: str, chrome: str | None, chunk: int = 0,
+                 angle: str | None = None) -> list[str]:
     """Командная строка съёмщика. Одна на запуск и на проверку единиц.
 
     Единицы и типы здесь и только здесь: кадр (`--start`), кадры (`--frames`), кадры в
@@ -987,6 +1055,11 @@ def _capture_cmd(node: str, url: str, w: int, h: int, fps: float, first: int, co
     формат кадра с качеством (`--format`/`--jpeg-quality`). Расхождение единиц между
     Python и capture.mjs ловится тестом на РЕАЛЬНОМ разборе съёмщика (`--parse-only`) —
     см. tests/test_webrender.py.
+
+    `--angle` — бэкенд ANGLE по платформе (`angle_backend`): его называет PYTHON, потому
+    что платформу знает он, а в JS её угадывать незачем. `--chunk` — номер куска: он
+    нужен только строке прогресса куска (`кусок N: кадр a/b`), по которой процент клипа
+    больше не считается.
 
     Экземпляров съёмщика на рендер может быть несколько (см. `_frame_chunks`): у
     каждого свой Chrome со своим профилем (одному браузеру профиль занят), но командная
@@ -996,7 +1069,9 @@ def _capture_cmd(node: str, url: str, w: int, h: int, fps: float, first: int, co
     cmd = [node, CAPTURE, "--url", url, "--w", str(w), "--h", str(h),
            "--fps", "%g" % fps, "--start", str(first), "--frames", str(count),
            "--profile", profile, "--ready-timeout-ms", str(READY_TIMEOUT_MS),
-           "--format", CAPTURE_FORMAT, "--jpeg-quality", str(CAPTURE_QUALITY)]
+           "--format", CAPTURE_FORMAT, "--jpeg-quality", str(CAPTURE_QUALITY),
+           "--angle", angle if angle is not None else angle_backend(),
+           "--chunk", str(int(chunk))]
     if chrome:
         cmd += ["--chrome", chrome]
     return cmd
@@ -1052,7 +1127,8 @@ def render(xml: str, out: str, *, start: float | None = None, dur: float | None 
            emit: Any = None, cancel: Callable[[], bool] | None = None,
            chrome: str | None = None, node: str = "node",
            keep_profile: bool = False, instances: int = 0,
-           audio: bool = True, codec: enc.Choice | None = None) -> dict[str, Any]:
+           audio: bool = True, codec: enc.Choice | None = None,
+           on_child: Callable[[Any], None] | None = None) -> dict[str, Any]:
     """Собрать ролик в `out` без After Effects.
 
     `start`/`dur` — кусок ролика в секундах (для проверок); без них рендерится всё.
@@ -1069,6 +1145,10 @@ def render(xml: str, out: str, *, start: float | None = None, dur: float | None 
     `codec` — кодек мастера, выбранный ВЫЗЫВАЮЩИМ (None — выбрать здесь, как раньше).
     Нужен тому, кто по кодеку решает, брать ли замок видеокарты (`core.gpulock`):
     второго выбора кодека — а значит и второго ответа «NVENC или нет» — быть не должно.
+    `on_child` — «запомни моего ребёнка»: рендер отдаёт сюда КАЖДЫЙ запущенный процесс
+    (node-съёмщика, ffmpeg куска, склейку), и владелец состояния кладёт их в RJOB —
+    оттуда их берёт «Стоп» (`core.render_job.render_kill`). Chrome гибнет вместе с
+    деревом своего node, поэтому отдельно его регистрировать не надо.
     Возвращает словарь: ok, out, frames, fps, w, h, cancelled, audio.
     """
     em = wrap_emit(emit)
@@ -1143,7 +1223,7 @@ def render(xml: str, out: str, *, start: float | None = None, dur: float | None 
     # видно только теги (и то не всегда: у части кодеков их пишет сам битстрим).
     em("цвет: {range} диапазон, матрица {matrix}, первичные и передача {trc}",
        range=enc.COLOR_RANGE, matrix=enc.COLOR_MATRIX, trc=enc.COLOR_TRC)
-    state: dict[str, Any] = {"chrome_pids": [], "tail": []}
+    state: dict[str, Any] = {"chrome_pids": [], "tail": [], "stalled": ""}
     # stderr ВСЕХ кодировщиков и склейки читается потоком: полная труба встала бы, а
     # причина падения ищется в её хвосте.
     ff_err: list[str] = []
@@ -1155,7 +1235,8 @@ def render(xml: str, out: str, *, start: float | None = None, dur: float | None 
     progress = _Progress(count, em)
     ctx = _Ctx(url=url, w=w, h=h, fps=fps, work=work, codec_args=list(codec.args),
                color_args=list(color_args), chrome=chrome, node=node, cancel=cancel,
-               state=state, emit=em, progress=progress, abort=abort, ff_err=ff_err)
+               state=state, emit=em, progress=progress, abort=abort, ff_err=ff_err,
+               on_child=on_child)
     written = 0
     cancelled = False
     failed: BaseException | None = None
@@ -1179,6 +1260,13 @@ def render(xml: str, out: str, *, start: float | None = None, dur: float | None 
         while any(job.pump is not None and job.pump.is_alive() for job in jobs):
             if cancel is not None and cancel():
                 raise _Cancelled()
+            # ЗАВИСШИЙ БРАУЗЕР — это ОШИБКА рендера, а не тишина: съёмщик напечатал
+            # `#timeout` (вызов протокола не ответил), и кадров больше не будет. Ждать их
+            # бессмысленно, а задание оставалось `running` с нулевым процентом навсегда.
+            # Выходим исключением: уборка (`finally`) погасит свои процессы по PID — тем
+            # же путём, что при отмене, включая Chrome.
+            if state["stalled"]:
+                raise _stall_error(state)
             time.sleep(0.1)
         for job in jobs:
             if job.pump is not None:
@@ -1203,6 +1291,10 @@ def render(xml: str, out: str, *, start: float | None = None, dur: float | None 
                                    code=rc_ff, err=tail))
         if rc_cap != 0:
             tail = _tail_text(state["tail"])
+            # Зависание — своя причина: «съёмщик упал» не говорит, что браузер молчал и
+            # кадров не будет вовсе (тут съёмщик успел выйти сам, уже погасив свой Chrome).
+            if state["stalled"]:
+                raise _stall_error(state, rc_cap)
             raise ReelsiError(umsg("webrender_capture_failed",
                                    f"Съёмщик кадров упал (код {rc_cap}): {tail}",
                                    code=rc_cap, err=tail))
@@ -1215,6 +1307,8 @@ def render(xml: str, out: str, *, start: float | None = None, dur: float | None 
         _write_concat_list(list_path, segs)
         concat = subprocess.Popen(_concat_cmd(list_path, video),
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if on_child is not None:
+            on_child(concat)      # склейка — тоже ребёнок рендера: её гасит «Стоп»
         concat_started = True
         concat_err = threading.Thread(target=_read_lines, args=(concat.stderr, ff_err),
                                       daemon=True)
@@ -1431,6 +1525,10 @@ def _pump_stderr(proc: subprocess.Popen[bytes], state: dict[str, Any],
     `#timing` — в лог как есть (по ней видно, на что уходит время), но не в хвост
     диагностики: она приходит на КАЖДЫЕ 30 кадров и вытеснила бы из хвоста причину
     падения.
+
+    `#timeout` — браузер не ответил на вызов протокола: метка ложится в `state`, и
+    главный поток рендера по ней гасит свои процессы и выходит ошибкой (см. render),
+    а не ждёт кадров, которых уже не будет.
     """
     pid_mark = "#chrome-pid "
     if proc.stderr is None:
@@ -1446,6 +1544,15 @@ def _pump_stderr(proc: subprocess.Popen[bytes], state: dict[str, Any],
                 state["chrome_pids"].append(int(line[len(pid_mark):].strip()))
             except ValueError:
                 pass  # не наш формат — гасим тогда только съёмщик
+            continue
+        if line.startswith(STALL_MARK):
+            # Метка + причина рядом: метка говорит «кадров больше не будет», причина —
+            # что именно случилось. В хвост диагностики не кладём (её место там, где
+            # разбирают коды возврата), но в лог — обязательно: по ней человек видит,
+            # что рендер встал, а не «идёт долго».
+            state["stalled"] = line[len(STALL_MARK):].strip() or "браузер не ответил"
+            emit("⚠ съёмщик кадров: браузер не ответил (таймаут {why} мс) — "
+                 "гашу свои процессы", why=line[len(STALL_MARK):].strip())
             continue
         if line.startswith("#ready ") or line.startswith("#done "):
             continue                       # служебные метки съёмщика — не в лог
@@ -1491,6 +1598,28 @@ def _tail_text(lines: list[str], limit: int = 8) -> str:
     return "\n".join(lines[-limit:])
 
 
+def _stall_error(state: dict[str, Any], code: int = 1) -> ReelsiError:
+    """Понятная ошибка «браузер не ответил»: съёмщик сообщил о зависании (`#timeout`).
+
+    Одна на оба пути — главный поток заметил метку и съёмщик успел выйти сам: иначе в
+    журнале осталось бы «Съёмщик кадров упал (код 1)» без единого слова о том, что
+    браузер молчал, а кадров не будет вовсе. Метка съёмщика — миллисекунды
+    (`#timeout 120000`), в текст идёт «за 120 с»: по числу в мс человек время не читает.
+    Код ошибки — прежний (`webrender_capture_failed`): пользователю важно ЧТО случилось,
+    а не новая строка в словаре переводов.
+    """
+    raw = str(state.get("stalled") or "").strip()
+    why = "браузер не ответил на вызов протокола"
+    if raw:
+        try:
+            why = "браузер не ответил за %g с" % (float(raw) / 1000.0)
+        except ValueError:
+            why = f"браузер не ответил ({raw})"
+    return ReelsiError(umsg("webrender_capture_failed",
+                            f"Съёмщик кадров завис: {why} — рендер остановлен, "
+                            "свои процессы погашены", code=code, err=why))
+
+
 def _segment_cmd(seg: str, codec_args: list[str], color_args: list[str],
                  fps: float) -> list[str]:
     """Командная строка кодировщика ОДНОГО куска: кадры съёмщика -> сегмент.
@@ -1527,8 +1656,14 @@ def _start_chunk(ctx: _Ctx, k: int, first: int, count: int, seg: str) -> _ChunkJ
     url = _chunk_url(ctx.url, ctx.frame_dir, first, count)
     cap = subprocess.Popen(
         _capture_cmd(ctx.node, url, ctx.w, ctx.h, ctx.fps, first, count, profile,
-                     ctx.chrome),
+                     ctx.chrome, chunk=k),
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, **task_popen_kwargs())
+    # Ребёнок рендера — в список вызывающего (RJOB): «Стоп» гасит этим списком, и без
+    # регистрации «Остановить» на встроенном рендере не гасило НИЧЕГО (render_kill знал
+    # только про AfterFX/aerender). Регистрируем сразу после запуска, а не после старта
+    # потока кадров: отмена между этими двумя строками оставила бы процесс висеть.
+    if ctx.on_child is not None:
+        ctx.on_child(cap)
     cap_err = threading.Thread(target=_pump_stderr, args=(cap, ctx.state, ctx.emit),
                                daemon=True)
     cap_err.start()
@@ -1539,6 +1674,8 @@ def _start_chunk(ctx: _Ctx, k: int, first: int, count: int, seg: str) -> _ChunkJ
     ff = subprocess.Popen(_segment_cmd(seg, ctx.codec_args, ctx.color_args, ctx.fps),
                           stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                           stderr=subprocess.PIPE)
+    if ctx.on_child is not None:
+        ctx.on_child(ff)
     ff_err = threading.Thread(target=_read_lines, args=(ff.stderr, ctx.ff_err), daemon=True)
     ff_err.start()
     job = _ChunkJob(first=first, count=count, seg=seg, cap=cap, ff=ff,

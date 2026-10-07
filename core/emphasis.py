@@ -582,7 +582,10 @@ def load_emo_model() -> Any:
     if importlib.util.find_spec("gigaam") is None:
         raise RuntimeError("пакет gigaam не установлен — головы emo нет")
     import gigaam
-    return gigaam.load_model("emo")
+    from core.gigaam_cache import gigaam_dir
+    # download_root: головы GigaAM (emo в том числе) качаются в ту же папку, что и
+    # нарезка — она одна на приложение, а не `~/.cache/gigaam` у пакета.
+    return gigaam.load_model("emo", download_root=gigaam_dir())
 
 
 def release_emo(model: Any) -> None:

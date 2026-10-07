@@ -231,6 +231,12 @@ def test_gen_subs_success_creates_words_sidecar(
     }
     atomic_json_dump(str(proj_file), proj_data)
 
+    # Звук камеры gen_subs достаёт ffmpeg'ом (core.sync.extract_audio) — 100 байт
+    # нулей для него не видео, поэтому подменяем ровно извлечение: роут проверяет
+    # запись сайдкара, а не декодирование.
+    from core import sync as _sync
+    monkeypatch.setattr(_sync, "extract_audio", lambda src, dst, **kw: dst)
+
     # librosa подменяется целиком модулем-пустышкой: на CI (Linux) пакет не установлен,
     # а monkeypatch.setattr("librosa.load", ...) требует существующий модуль.
     fake_librosa = types.ModuleType("librosa")

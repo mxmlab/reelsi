@@ -113,7 +113,10 @@ FUNCS85 = (
     "ipvNow", "ipvNowFrame", "ipvSeekTo", "ipvLeadTime", "ipvVideoTo",
     "ipvPlanWH", "ipvSubRawWidth", "ipvSubFullW",
     "ipvSubRawWAt", "ipvSubsBgAt", "ipvSubsInvalidate", "ipvSubs", "ipvTopLine",
-    "ipvCaption", "ipvShade", "ipvIntroChild", "ipvCamChild", "ipvCamShift",
+    # Тень AE (Drop Shadow) в CSS: одна дверь на всё превью, зовут её и ipvSubs, и
+    # ipvInsPlace, и ipvIntro — без неё в снятых кадрах тени бы не было вовсе.
+    "aeShadowCss",
+    "ipvCaption", "ipvDisc", "ipvShade", "ipvIntroChild", "ipvCamChild", "ipvCamShift",
     "ipvCamMatrix", "ipvLmSmooth", "ipvLumetriTone", "ipvLumetriTable", "ipvLumetriFilter",
     # Кадр камеры вынесен в ipvFrameGeom/ipvDrawFrame (одна отрисовка на превью и слой рото):
     # ipvCamPaint только готовит холст и зовёт их, поэтому тела нужны стенду тоже.
@@ -439,7 +442,10 @@ var document={
 var window={devicePixelRatio:1,document:document,addEventListener:function(){}};
 function requestAnimationFrame(cb){return setTimeout(function(){cb(0);},0);}
 // --- заглушки того, что к отрисовке кадра не относится (музыка, дублёры, таймлайн, панели) ---
-function musicSync(){}function spareIdle(){}function camIdle(){}function itlEnsure(){}
+// Заглушка музыки названа по БОЕВОЙ двери предпросмотра (`musicElSync` в
+// 85-inserts-view.js): имя musicSync занято в 95-styles.js (сброс закреплённого трека
+// клипа), и стенд, оставшийся на старом имени, ронял отрисовку кадра ReferenceError'ом.
+function musicElSync(){}function spareIdle(){}function camIdle(){}function itlEnsure(){}
 function aewHighlight(){}function vgDuck(){}function introMarkPlaying(){}
 function uiLog(){}function toast(){}function lutApply(ci,v){return v;}function lutKS(){return [1,1];}
 // Переводчик: строки интерфейса стенду не нужны, ключ равен тексту (как в русском UI).
@@ -2426,10 +2432,15 @@ def test_capture_runs_a_whole_render_and_exits_zero(tmp_path):
     # АППАРАТНАЯ ОТРИСОВКА: кадр — самая дорогая часть съёмки, и собирать его
     # процессором незачем, когда кодирует всё равно видеокарта. `--disable-gpu` тут
     # стоял раньше; вместе с ним уходит и программный путь Chrome, если карты нет, —
-    # `--enable-unsafe-swiftshader` оставляет его запасным.
-    for flag in ("--enable-gpu", "--use-angle=d3d11", "--ignore-gpu-blocklist",
-                 "--enable-unsafe-swiftshader"):
+    # `--enable-unsafe-swiftshader` оставляет его запасным. Бэкенд ANGLE — НЕ константа:
+    # его называет Python по платформе (ключ `--angle`), и жёсткий `d3d11` уводил Linux
+    # в программный SwiftShader (tests/test_webrender_fixes.py).
+    import core.webrender as wr
+
+    for flag in ("--enable-gpu", "--ignore-gpu-blocklist", "--enable-unsafe-swiftshader"):
         assert flag in flags, f"нет флага аппаратной отрисовки {flag}: {flat}"
+    assert "--use-angle=%s" % wr.angle_backend() in flags, \
+        f"нет флага ANGLE для этой платформы: {flat}"
     assert "--disable-gpu" not in flags, \
         f"аппаратная отрисовка снова выключена: {flat}"
     feats = next((f.split("=", 1)[1] for f in flags if f.startswith("--disable-features=")), "")
@@ -2456,12 +2467,20 @@ def test_gpu_fallback_switch_is_honoured(tmp_path, monkeypatch):
     assert "REELSI_CAPTURE_NO_GPU" in src, "нет двери возврата на программную отрисовку"
     # Флаги собираются ОДНИМ выражением: без карты — прежний `--disable-gpu`, с картой —
     # разрешение аппаратной отрисовки. Проверяем на самом файле, не поднимая браузер.
-    m = re.search(r"REELSI_CAPTURE_NO_GPU \? \[('--disable-gpu')\] : \[(.*?)\]", src, re.S)
+    # Хвост ветки берётся по её ПОСЛЕДНЕМУ флагу: бэкенд ANGLE теперь подставляется
+    # ключом (`...(ANGLE ? ['--use-angle=' + ANGLE] : [])`), и прежняя регулярка
+    # обрывалась на первой `]` — внутри подстановки.
+    m = re.search(r"REELSI_CAPTURE_NO_GPU \? \[('--disable-gpu')\] : \[(.*?"
+                  r"--enable-unsafe-swiftshader')", src, re.S)
     assert m, "сборка флагов графики изменилась — проверять нечего"
     assert "--disable-gpu" in m.group(1)
-    for flag in ("--enable-gpu", "--use-angle=d3d11", "--ignore-gpu-blocklist",
-                 "--enable-unsafe-swiftshader"):
-        assert flag in m.group(2), f"в аппаратной ветке нет {flag}: {m.group(2)}"
+    branch = m.group(2)
+    for flag in ("'--enable-gpu'", "'--ignore-gpu-blocklist'",
+                 "'--enable-unsafe-swiftshader'"):
+        assert flag in branch, f"в аппаратной ветке нет {flag}: {branch}"
+    # Бэкенд ANGLE — из ключа `--angle`, а не жёсткой константой: платформу называет
+    # Python (см. `core.webrender.angle_backend`), и `d3d11` вне Windows не существует.
+    assert "'--use-angle=' + ANGLE" in branch, branch
 
 
 def test_gpu_report_goes_to_the_log():

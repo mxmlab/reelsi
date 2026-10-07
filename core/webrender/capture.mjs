@@ -19,7 +19,14 @@
 //                           «браузер не ответил»: кадр — самая дорогая часть съёмки,
 //                           и по этой строке видно, досталась рендеру карта или нет.
 //     #ready <w>x<h>@<fps>
-//     кадр <i>/<n>
+//     #timeout <мс>       — вызов протокола не ответил за это время: браузер завис.
+//                           По этой метке Python гасит СВОИ процессы и закрывает рендер
+//                           ошибкой, а не ждёт кадров, которых уже не будет.
+//     кусок <k>: кадр <i>/<n>   — счётчик ЭТОГО куска. Форма нарочно другая, чем у
+//                           суммарной строки «кадр <N>/<M>» (core.webrender._Progress):
+//                           процент клипа считает core/render_job по одной форме, и
+//                           сырой счётчик куска его больше не сбивает.
+//     кадр <N>/<M>        — готовые кадры ВСЕГО ролика (сумма по всем кускам)
 //     #done <n>
 //     #timing seek=… paint=… shot=… write=… (мс, среднее)  — каждые TIMING_EVERY кадров
 //
@@ -31,19 +38,30 @@
 // Запуск (обычно его делает core/webrender.py):
 //   node core/webrender/capture.mjs --url http://127.0.0.1:5001/render?... \
 //        --w 1080 --h 1920 --fps 60 --start 300 --frames 180 --profile <папка> \
-//        --ready-timeout-ms 180000 --format jpeg --jpeg-quality 95
+//        --ready-timeout-ms 180000 --format jpeg --jpeg-quality 95 \
+//        --angle d3d11 --chunk 2
+//
+// БЭКЕНД ANGLE (`--angle`) называет PYTHON, а не эта программа. Так и должно быть:
+// платформу он уже знает (`platform.system()`, рядом с порядком кодеков в
+// core/encoders), а угадывание здесь по `process.platform` разошлось бы с ним молча.
+// У ANGLE бэкенды не переносимые: `d3d11` (Direct3D 11) существует ТОЛЬКО на Windows,
+// у Linux это `vulkan` (или `gl`), у macOS — `metal`. Жёсткий `d3d11` на Linux не
+// «игнорировался с запасным путём»: Chrome уходил в программный SwiftShader, и кадр
+// 1080x1920 стоил 400-550 мс при простаивающей карте. Ключа нет — бэкенд не называем
+// вовсе и оставляем выбор браузеру (своё умолчание платформы лучше чужой догадки).
 //
 // ЕДИНИЦЫ В ИМЕНИ КЛЮЧА. Единица расходилась молча: Python слал секунды (180), а
 // здесь они читались как миллисекунды — и страница объявлялась неготовой через
 // 180 мс. Поэтому у времени в ключе стоит единица, и рядом — своя проверка:
 //   --start   кадр (целое),     --frames  кадров (целое),
-//   --fps     кадров в секунду, --ready-timeout-ms  миллисекунды (единственное время здесь).
+//   --fps     кадров в секунду, --ready-timeout-ms  миллисекунды (единственное время здесь),
+//   --chunk   номер куска (целое, только для строки прогресса).
 // Разбор ключей сверяет Python и съёмщик тест: tests/test_webrender.py, `--parse-only`.
 //
 // `--parse-only` печатает разобранные значения одним JSON в stdout и выходит, не
 // трогая ни Chrome, ни сеть, — им проверяется, что единицы и типы сторон сошлись.
 
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import net from 'node:net';
 import { TIMING_EVERY, timingLine } from './timing.mjs';
@@ -82,12 +100,15 @@ const FPS = num(args.fps, 60);
 const START = num(args.start, 0);         // кадр: целое, но дробное принимаем и округляем
 const FRAMES = num(args.frames, 0);       // кадров: целое
 const PROFILE = String(args.profile || '');
+const CHUNK = num(args.chunk, 0);         // номер куска: только для строки прогресса
 const READY_MS = num(args['ready-timeout-ms'], 180000);   // ЕДИНСТВЕННОЕ время в мс
 // Формат снимка: только те, что принимает Page.captureScreenshot и умеет ffmpeg на
 // входе (`mjpeg` для jpeg, `png` для png — см. core/webrender.py).
 const FORMATS = { jpeg: 'jpeg', png: 'png' };
 const FORMAT = String(args.format === undefined || args.format === true ? 'jpeg' : args.format);
 const JPEG_Q = num(args['jpeg-quality'], 95);             // качество JPEG, 0–100
+// Бэкенд ANGLE: его называет Python (см. шапку). Пусто — не называем вовсе.
+const ANGLE = String(args.angle === undefined || args.angle === true ? '' : args.angle).trim();
 
 const err = (line) => process.stderr.write(line + '\n');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -128,10 +149,12 @@ if (args['parse-only'] === true) {
     fps: FPS,
     start: START,
     frames: FRAMES,
+    chunk: CHUNK,
     profile: PROFILE,
     readyTimeoutMs: READY_MS,
     format: FORMAT,
     jpegQuality: JPEG_Q,
+    angle: ANGLE,
     timingEvery: TIMING_EVERY,
     chrome: args.chrome === true || args.chrome === undefined ? null : String(args.chrome),
   }) + '\n');
@@ -170,30 +193,59 @@ function freePort() {
 }
 
 let chrome = null;
+// Chrome запущен в СВОЕЙ группе процессов (см. launchChrome): без этого дерево не
+// погасить — `google-chrome` это обёртка-скрипт, и SIGKILL родителю оставляет жить сам
+// браузер и всех его детей (живой прогон: после рендера в контейнере осталось 155
+// процессов Chrome, из них 112 зомби).
+let chromeGrouped = false;
 
 function killChrome() {
   // Только гашение — БЕЗ process.exit. Выход отсюда шёл ровно посередине уборки:
   // успешный прогон завершался кодом, выставленным ДО того, как станет известен
   // результат, а хвост stdout при этом не был дописан (на медленном диске последние
   // кадры могли не доехать). Код выхода теперь выставляет завершение main (см. низ).
-  if (chrome && chrome.pid && chrome.exitCode === null) {
+  //
+  // Путь ОДИН на нормальное завершение и на отмену: и `main`, и `stop` зовут эту
+  // функцию, поэтому «Стоп» и честно доснятый кусок убирают браузер одинаково.
+  //
+  // ЖДЁМ КОНЦА УБОРКИ, а не «выстрелил и забыл». На Windows одного SIGKILL родителю
+  // мало: сам Chrome и его дети живут дальше, и дерево добирает `taskkill /T` — но
+  // запущенный без ожидания, он оставался ЗА спиной вышедшего съёмщика. Дальше решал
+  // уже планировщик Windows: под нагрузкой параллельного прогона (десятки процессов
+  // разом) `taskkill` опаздывал, и проверка «ребёнок Chrome погашен» видела живой
+  // процесс — тест падал не на дефекте, а на том, что уборка ещё шла. Теперь завершение
+  // съёмщика означает, что дерева уже нет: это тот же порядок, что у `_kill_pid`
+  // (core.webrender) для гашения из Python — там `taskkill` тоже ожидается.
+  return new Promise((resolve) => {
+    if (!(chrome && chrome.pid && chrome.exitCode === null)) return resolve();
     try { chrome.kill('SIGKILL'); } catch { /* уже мёртв — гасить нечего */ }
     if (process.platform === 'win32') {
-      // На Windows SIGKILL родителю не всегда снимает самого браузера — добираем деревом
-      // по PID (НЕ по имени: чужой Chrome на машине трогать нельзя).
+      // Дерево — по PID (НЕ по имени: чужой Chrome на машине трогать нельзя).
+      // execFile, а не spawn с stdio ignore: он зовёт callback по завершении процесса,
+      // и только после него съёмщик считается погасившим браузер.
       try {
-        spawn('taskkill', ['/F', '/T', '/PID', String(chrome.pid)], { stdio: 'ignore' });
-      } catch { /* процесса уже нет */ }
+        execFile('taskkill', ['/F', '/T', '/PID', String(chrome.pid)], () => resolve());
+      } catch {
+        resolve();                 // процесса уже нет
+      }
+      return;
     }
-  }
+    if (chromeGrouped) {
+      // POSIX: своя группа — дерево снимается ОДНИМ сигналом группе, ровно как это
+      // делает core.jobstate.kill_tree для процессов заданий.
+      try { process.kill(-chrome.pid, 'SIGKILL'); } catch { /* группы уже нет */ }
+    }
+    resolve();
+  });
 }
 
 let stopping = false;
 function stop(code) {
   if (stopping) return;
   stopping = true;
-  killChrome();
-  flushStdout().finally(() => process.exit(code));
+  // Гашение и слив — ДО выхода: иначе код возврата выставлялся бы раньше уборки
+  // (ровно так и терялся хвост stdout, см. выше).
+  killChrome().then(() => flushStdout()).finally(() => process.exit(code));
 }
 process.on('SIGTERM', () => stop(143));
 process.on('SIGINT', () => stop(130));
@@ -211,7 +263,10 @@ async function launchChrome(port, exe) {
   // Что именно досталось рендеру, съёмщик печатает одной строкой `#gpu` (см. reportGpu):
   // по логу видно, аппаратная отрисовка или запасная.
   //
-  // `--use-angle=d3d11` — ANGLE поверх Direct3D 11 (Windows); `--ignore-gpu-blocklist` —
+  // `--use-angle=<бэкенд>` — ANGLE поверх своего графического API: `d3d11` — Direct3D 11
+  // (Windows), `vulkan`/`gl` — Linux, `metal` — macOS. Бэкенд называет Python ключом
+  // `--angle` (см. шапку), здесь он только подставляется: жёсткий `d3d11` на Linux
+  // уводил Chrome в программный SwiftShader. `--ignore-gpu-blocklist` —
   // не прятать карту из-за формального несоответствия списку (в headless он особенно
   // строг). `--enable-gpu` оставлен нарочно: у части сборок это единственный способ
   // поднять GPU-процесс без окна. `REELSI_CAPTURE_NO_GPU=1` возвращает прежний
@@ -235,7 +290,7 @@ async function launchChrome(port, exe) {
     '--headless=new',
     ...(process.env.REELSI_CAPTURE_NO_GPU ? ['--disable-gpu'] : [
       '--enable-gpu',
-      '--use-angle=d3d11',
+      ...(ANGLE ? ['--use-angle=' + ANGLE] : []),
       '--ignore-gpu-blocklist',
       '--enable-unsafe-swiftshader',
     ]),
@@ -277,7 +332,13 @@ async function launchChrome(port, exe) {
   // stderr — НАСЛЕДУЕТСЯ, а не в трубу: труба на дочерний процесс это лишняя точка
   // отказа (в ограниченном окружении такой spawn падает EPERM), а фильтровать шум
   // браузера нечем — его и так видно одной-двумя строками при старте.
-  const proc = spawn(argv[0], argv.slice(1), { stdio: ['ignore', 'ignore', 'inherit'] });
+  // СВОЯ ГРУППА (POSIX, `detached`): браузер — обёртка-скрипт со своими детьми, и
+  // снять дерево иначе нечем (см. killChrome). На Windows группу заменяет `taskkill /T`,
+  // и `detached` там ничего не даёт.
+  const grouped = process.platform !== 'win32';
+  const proc = spawn(argv[0], argv.slice(1), { stdio: ['ignore', 'ignore', 'inherit'],
+    detached: grouped });
+  chromeGrouped = grouped;
   err(`#chrome-pid ${proc.pid}`);
   return proc;
 }
@@ -380,6 +441,11 @@ class CDP {
     return new Promise((res, rej) => {
       const timer = setTimeout(() => {
         this.waits.delete(id);
+        // Метка `#timeout` (формат — в шапке) ДО текста причины: по ней Python узнаёт,
+        // что кадров больше не будет, гасит СВОИ процессы и закрывает рендер ошибкой.
+        // Без неё задание оставалось `running` с нулевым процентом: съёмщик печатал
+        // ошибку, а главный поток Python ждал кадры, которых уже не будет.
+        err(`#timeout ${CALL_TIMEOUT_MS}`);
         rej(new Error(`${method}: браузер не ответил за ${CALL_TIMEOUT_MS / 1000} с`));
       }, CALL_TIMEOUT_MS);
       this.waits.set(id, { res, rej, timer });
@@ -540,7 +606,12 @@ async function main() {
     await writeFrame(Buffer.from(shot.data, 'base64'));
     stats.write += performance.now() - tWrite;
     stats.frames++;
-    err(`кадр ${i + 1}/${FRAMES}`);
+    // Строка СВОЕГО куска, а не «кадр N/M» ролика: суммарную строку печатает
+    // core/webrender._Progress, и процент клипа (core/render_job._FRAME_RE) обязан
+    // считать только её — иначе отставший кусок уводил процент назад. Номер куска
+    // (`--chunk`) называет Python: здесь его взять неоткуда, а «кусок 0» у всех
+    // экземпляров сразу не различил бы их в логе.
+    err(`кусок ${CHUNK}: кадр ${i + 1}/${FRAMES}`);
     if (stats.frames % TIMING_EVERY === 0) {
       err(timingLine(stats));
       resetStats(stats);
@@ -549,7 +620,7 @@ async function main() {
   if (stats.frames > 0) err(timingLine(stats));    // хвост, не кратный TIMING_EVERY
   err(`#done ${FRAMES}`);
   cdp.close();
-  killChrome();
+  await killChrome();           // дерево браузера погашено (см. killChrome)
   await flushStdout();          // хвост stdout дописан — мёртвый Chrome уже не держит цикл
 }
 
@@ -557,11 +628,10 @@ async function main() {
 // «готово», ни «упало» ещё не известно, а уборка (гашение Chrome и слив stdout) идёт
 // ДО него — иначе последние кадры могли остаться в буфере, а код выхода соврать.
 main().then(() => {
-  killChrome();
-  flushStdout().finally(() => process.exit(0));
+  killChrome().then(() => flushStdout()).finally(() => process.exit(0));
 }).catch(async (e) => {
   err('#ошибка: ' + (e && e.message ? e.message : e));
-  killChrome();
+  try { await killChrome(); } catch { /* уже мёртв */ }
   try { await flushStdout(); } catch { /* труба уже закрыта */ }
   process.exit(1);
 });

@@ -7,7 +7,7 @@
 * `POST /api/omnicut_cuts` — журнал нарезки `<stem>.cuts.json`;
 * `POST /api/editor_load`  — блоки нарезки для окна-редактора (сайдкар или реконструкция);
 * `POST /api/aicut_preview`— виртуальный EDL для предпросмотра в браузере;
-* `POST /api/scanxml`      — список .xml в папке.
+* `POST /api/scanxml`      — список .xml в папке + вставки клипов с диска (сайдкар/.jsx).
 
 Фикстуры: копии эталонов `timeline_nosubs.xml` (2 камеры, без субтитров) и
 `timeline_subs.xml.gz` (253 слова-субтитра) — эталоны не перегенерируются. Всё пишется
@@ -233,7 +233,8 @@ def test_scanxml_finds_only_xml_in_folder(client, tmp_path):
 def test_scanxml_empty_folder(client, tmp_path):
     empty = tmp_path / "empty"
     empty.mkdir()
-    assert _post(client, "/api/scanxml", {"dir": str(empty)}) == {"ok": True, "paths": []}
+    assert _post(client, "/api/scanxml", {"dir": str(empty)}) == {
+        "ok": True, "paths": [], "inserts": {}, "speakers": {}}
 
 
 @pytest.mark.parametrize("payload", [{}, {"dir": ""}, {"dir": "C:/нет-такой-папки"}])
@@ -250,6 +251,37 @@ def test_scanxml_file_instead_of_folder(client, tmp_path):
     f.write_text("x", encoding="utf-8")
     d = _post(client, "/api/scanxml", {"dir": str(f)})
     assert d.get("ok") is not True and d["err"] == "no_folder"
+
+
+def test_scanxml_returns_inserts_and_speaker(client, tmp_path):
+    """Клип возвращается с вставками с диска и спикером прогона.
+
+    Раньше роут отдавал только XML, и «Из папки результата» возвращала клипы с
+    пустыми вставками — готовая разметка терялась. Теперь вставки собираются из
+    сайдкара `.inserts.json` (разметка) и `.jsx` (файл и геометрия), а спикер — из
+    `.project.json`.
+    """
+    out = tmp_path / "out"
+    out.mkdir()
+    xml = out / "01_C1381.xml"
+    xml.write_text("<x/>", encoding="utf-8")
+    (out / "01_C1381.inserts.json").write_text(json.dumps({"inserts": [
+        {"phrase": "ФЛАКОН", "type": "photo", "start_sec": 6.0, "duration_sec": 2.5,
+         "query": "pill bottle", "prompt": "Флакон", "mosaic": False}]}), encoding="utf-8")
+    (out / "01_C1381.jsx").write_text(
+        'var INSERTS=[{"t":"photo","media":"C:/ins/pill.png","start":6.0,"end":8.5,'
+        '"x":0,"y":0,"sc":100,"sin":0,"mw":100,"mh":100,"mosaic":false}];', encoding="utf-8")
+    (out / "01_C1381.project.json").write_text(
+        json.dumps({"speaker": "Джаггер"}), encoding="utf-8")
+
+    d = _post(client, "/api/scanxml", {"dir": str(out)})
+    assert d["paths"] == [str(xml)]
+    ins = d["inserts"][str(xml)]
+    assert len(ins) == 1
+    assert ins[0]["media"] == "C:/ins/pill.png"      # файл — из .jsx
+    assert ins[0]["phrase"] == "ФЛАКОН"              # разметка — из сайдкара
+    assert ins[0]["start_sec"] == 6.0 and ins[0]["duration_sec"] == 2.5
+    assert d["speakers"][str(xml)] == "Джаггер"
 
 
 # --------------------------------------------------------------------------- #

@@ -17,8 +17,17 @@ let ED={xml:'',blocks:[],fps:60,cam:'',dur:0,peaks:[],pps:80,sel:-1,play:false,r
   // Поля плеера для дорожки голоса (60-preview.js:vt*): `cams` ставит openPreview —
   // дорожка и живой хост берут файл камеры 1 через vtCam1(P); `voicePanel` — id панели
   // «Голос» этого плеера, по ней vtFx берёт ЖИВЫЕ ручки на экране, а vtNote пишет статус.
-  cams:null,voicePanel:'pvvoice'};
+  cams:null,voicePanel:'pvvoice',
+  // Промах видео-дублёра на стыке: дорожку голоса держим закрытой, пока живое видео не
+  // доедет seek'ом до места прыжка. `vtOpen` — идёт такое ожидание, `vtTimer` — его
+  // страховка, `vtEl`/`vtOn` — на каком элементе и каким слушателем ждём (см. edJump).
+  vtOpen:false,vtTimer:0,vtEl:null,vtOn:null};
 const EDRULER=18;                                   // высота линейки, css px
+// Мутационный выключатель к тесту `test_voice_spare.py`: с ним `edJump` снова зовёт
+// `vtSpareTake` БЕЗУСЛОВНО — ровно то, что было до правки «голос следует за решением
+// видео». Живёт в модуле, а не на плеере: плеер — боевое состояние, и лишнего поля в нём
+// быть не должно. Выключен по умолчанию, в браузере никто его не ставит.
+let EDMUTVOICE=0;
 async function edOpen(){const xml=PV.xml||(curEdit>=0?CLIPS[curEdit].xml:'')||ED.xml;if(!xml)return;ED.xml=xml;
   const info=$('edtime');info.textContent=t('загрузка…');
   try{const d=await (await fetch('/api/editor_load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml})})).json();
@@ -111,15 +120,34 @@ function edWords(){
 // место клика сразу, без ожидания следующего кадра.
 function edSeek(s){ED.cs=Math.max(0,Math.min(ED.dur,s));
   pvVideoTo(ED.cs);
+  // Перемотка снимает и ожидание по промаху видео-дублёра: плейхед уже в другом месте, и
+  // открыть гейт по чужому `seeked` значило бы вернуть голос на покинутый стык.
+  if(ED.vtOpen)edVoiceSeekOff();
+  // Разбег дорожки голоса снимается на перемотке там же, где его снимает pvVideoTo камере
+  // (spareIdle): разбег готовился под конец ПРЕЖНЕГО блока, а плейхед уже в другом месте.
+  // Прицел снимаем вместе с разбегом: vtSpareCtl взводит дублёра по `vspAt` каждый кадр,
+  // и оставленный прицел вернул бы разогнанный дублёр на покинутый стык.
+  if(typeof vtSpareIdle==='function'){vtSpareIdle(ED);vtSpareAt(ED,null);}
   if(typeof vtOf==='function')vtTick(ED,ED.cs);   // звук — на то же место и сразу, не ждём кадра
   edDraw();edUI();}
 function edToggle(){ED.play?edPause():edPlay();}
 function edPlay(){const v=PV.vids&&PV.vids[0];if(!v){toast(t('нет видео камеры 1'));return;}
+  // Граф Web Audio будим ЗДЕСЬ и одной дверью на все плееры (audioWake): браузер держит
+  // AudioContext в `suspended`, пока не было живого жеста, а звук камеры после
+  // createMediaElementSource идёт ТОЛЬКО через граф — приостановленный даёт ровно
+  // «видео играет, звука нет, ошибок нет». Зовём из обработчика нажатия, как и положено.
+  if(typeof audioWake==='function')audioWake();
+  // Строка «Firefox не читает звук этих камер» — одна на все плееры (pvAudioLimit):
+  // без неё молчание исходника читается как поломка.
+  if(typeof pvAudioLimit==='function')pvAudioLimit($('pvstage'),ED);
   // Голос клипа в прошлый раз не посчитался — «Играть» обязан попробовать снова: причина
   // (нет окружения RoFormer, занятый сервер) могла уйти, а vtPrep зовут только правки ручек.
   if(typeof vtOf==='function'&&vtOf(ED).failed){vtOf(ED).failed=false;vtPrep(ED);}
   if(!ED.raw&&edBlockAt(ED.cs)<0){const nb=ED.blocks.find(b=>b.s0>=ED.cs)||ED.blocks[0];if(!nb)return;ED.cs=nb.s0;}
   ED.play=true;$('edplay').innerHTML=ico('pause');
+  // Пуск снимает ожидание по промаху: голос включается здесь же, и оставленный гейт
+  // держал бы его немым до чужого события.
+  if(ED.vtOpen)edVoiceSeekOff();
   spareIdle(PV);                                    // дублёр общий с показом кадра — начинаем с чистого листа
   pvVideoTo(ED.cs);
   v.muted=false;v.volume=MEDIA_VOL;v.style.opacity='1';v.style.zIndex='2';PV.vids.forEach((o,i)=>{if(i)o.style.zIndex='1';});
@@ -135,21 +163,129 @@ function edPause(){const was=ED.play;ED.play=false;const b=$('edplay');if(b)b.in
 // одно: живой <video> в редакторе красит не camVisual, а мы сами.
 function edTake(at){if(!bufTake(PV,spareLead(PV),at))return false;
   const v=PV.vids[0];v.muted=false;v.volume=MEDIA_VOL;v.style.opacity='1';v.style.zIndex='2';return true;}
-// Прыжок через вырезанное: картинка — дублёром или seek'ом, звук — тем же местом и СРАЗУ
-// (не ждём следующего кадра): на вырезанном обработанный голос обязан молчать вместе с
-// картинкой, а не доигрывать удалённый кусок.
+// Прыжок через вырезанное: картинка — дублёром или seek'ом, а голос следует ФАКТИЧЕСКОМУ
+// решению картинки на ЭТОМ стыке, а не своему.
+//
+// Раньше дорожка голоса подменялась дублёром ВСЕГДА, а картинка при промахе видео-дублёра
+// ещё ехала seek'ом. Голос оказывался на новом месте мгновенно, картинка — через задержку
+// декодера: это и есть «звук спешит» (замер архитектора: 15 точек > 45 мс, p95 91 мс).
+// Теперь голос идёт за видео: нет дублёра на камерах клипа — нет переезда картинки, значит
+// нет и подмены голоса. Дублёр отказал или его нет вовсе — глушим и ждём `seeked` живого
+// видео (страховка 300 мс), и только тогда включаем голос, выровняв его по картинке.
+// Без этой ветки картинка вставала бы seek'ом, а «мягкий» промах (дублёр есть, но не
+// долез) увёл бы оба потока на прыжок мимо `edTake` — и голос снова обогнал бы картинку.
 function edJump(v,at){let out=v;
-  if(edTake(at))out=PV.vids[0];   // дублёр успел — подмена элементом
-  else{try{v.currentTime=at;}catch(e){}}   // не вышла — старый путь: seek на месте
+  const spare=spareLead(PV);
+  if(!spare){
+    // Дублёров камер у плеера нет вовсе: прыгать нечем, и голос не подменяем тоже.
+    try{v.currentTime=at;}catch(e){}
+    if(typeof vtSpareIdle==='function')vtSpareIdle(ED);
+    if(typeof vtSpareAt==='function')vtSpareAt(ED,null);
+    // Порядок важен: сначала голос в тишину, и только потом кадр дорожки. Наоборот — и
+    // vtTick своим vtGate(P,true) вернул бы звук камеры, пока дорожка ещё звучит.
+    edVoiceSeekWait(v,at);
+    if(typeof vtOf==='function')vtTick(ED,at);
+    return out;}
+  const take=(typeof edTake==='function')&&edTake(at);
+  if(take)out=PV.vids[0];          // дублёр успел — подмена элементом, звук туда же
+  else try{v.currentTime=at;}catch(e){}   // не вышла — старый путь: seek на месте
+  if(take||EDMUTVOICE){
+    // Стык взят дублёром: дорожка проходит его своим и в ЭТОМ ЖЕ кадре. Пока живой
+    // <audio> догонял бы перемоткой (а после неё он играет с задержкой 100–200 мс),
+    // подменённый уже стоит на нужном кадре. Сначала кадр (vtTick получает прицел и
+    // вживляет источник дублёра), потом подмена.
+    if(typeof vtOf==='function')vtTick(ED,at);
+    if(typeof vtOf==='function'&&typeof vtSpareTake==='function')vtSpareTake(ED,at);
+    return out;}
+  // Промах видео: дублёра голоса снимаем ДО кадра — vtSpareCtl взводит его по прицелу и
+  // в следующем же тике подменил бы его сам, а голос на этом стыке подменять нечем.
+  if(typeof vtSpareIdle==='function')vtSpareIdle(ED);
+  if(typeof vtSpareAt==='function')vtSpareAt(ED,null);
+  edVoiceSeekWait(v,at);
   if(typeof vtOf==='function')vtTick(ED,at);
   return out;}
+// Промах видео-дублёра: голос молчит, пока картинка не встанет на место seek'ом.
+//
+// Глушим гейтом (vtGate) и паузой, а не одним muted: пока картинка едет, дорожка камеры 1
+// обязана молчать вместе с голосом, иначе на стыке слышен сырой голос камеры. Позицию
+// ставим сразу — это не перемотка в эфире (дорожка уже на паузе), а подготовка места.
+//
+// Ждём только РЕАЛЬНУЮ перемотку: `currentTime` присвоен, но декодер попал в буфер и
+// `seeking` не поднялся — события `seeked` не будет вовсе, и ждать его значило бы держать
+// голос немым всю страховку. Тогда закрываемся здесь же и в том же кадре.
+function edVoiceSeekWait(v,at){
+  edVoiceSeekOff();                            // прежнее ожидание (повторный прыжок) — прочь
+  const live=(typeof vtOf==='function'&&vtOf(ED).el)||null;
+  // Гейт ставим тому плееру, чей `vids` и есть картинка (в бою это vtMuteHost): у самого
+  // редактора своих `vids` нет, и `vtGate(ED,…)` не заглушил бы НИЧЕГО — пока картинка
+  // едет seek'ом, на стыке зазвучал бы сырой голос камеры. `typeof` — для стендов.
+  const host=(typeof vtMuteHost==='function')?vtMuteHost(ED):ED;
+  if(typeof vtGate==='function')vtGate(host,false);
+  if(live){live.pause();
+    const want=Math.max(0,at);
+    if(Math.abs(live.currentTime-want)>0.005){try{live.currentTime=want;}catch(e){}}}
+  ED.vtAt=at;                                  // куда целились: страховка, если позиция не встала
+  const video=v||(PV.vids&&PV.vids[0])||null;
+  ED.vtOpen=true;ED.vtEl=video;
+  if(!video||!video.seeking){edVoiceSeekClose(at,video);return;}
+  const onSeeked=()=>edVoiceSeekClose(at,video);
+  // Ссылку на слушатель храним: без неё removeEventListener не найдёт его, и на каждом
+  // промахе на видео оседал бы ещё один живой обработчик.
+  ED.vtOn={fn:onSeeked};
+  ED.vtTimer=setTimeout(onSeeked,300);   // страховка: событие могло потеряться
+  // В node таймер держит процесс живым после прогона стенда; в браузере unref нет.
+  if(ED.vtTimer&&typeof ED.vtTimer.unref==='function')ED.vtTimer.unref();
+  video.addEventListener('seeked',onSeeked,{once:true});}
+// Конец ожидания: голос обратно, и его позиция выровнена по ЖИВОМУ видео в этот момент —
+// ровно этого не хватало, когда звук «спешил»: он стоял на месте прыжка, а картинка ещё
+// подъезжала. Часы — currentTime живого видео (`at` — только запасной путь, если элемент
+// уже сменился: в бою это ШАГ КАДРА при 60 к/с, на порядок меньше порога заметности).
+function edVoiceSeekClose(at,video){
+  if(!ED.vtOpen)return;
+  edVoiceSeekOff();
+  const st=(typeof vtOf==='function')?vtOf(ED):null,el=st&&st.el;
+  if(!el)return;
+  const want=(video&&isFinite(+video.currentTime))?(+video.currentTime):((at==null)?0:at);
+  if(Math.abs(el.currentTime-Math.max(0,want))>0.005){try{el.currentTime=Math.max(0,want);}catch(e){}}
+  if(typeof vtGate==='function')vtGate(ED,true);
+  if(typeof vtPlaying==='function'&&!vtPlaying(ED))return;   // на паузе дорожка замирает вместе с картинкой
+  el.play().catch(()=>{});}
+// Снять ожидание не трогая дорожку: таймер, слушатель и отметки. Нужна там, где решение
+// принято другое — новый прыжок, перемотка, пуск: открыть гейт по чужому `seeked` значило
+// бы вернуть голос на покинутый стык.
+function edVoiceSeekOff(){
+  if(ED.vtTimer){clearTimeout(ED.vtTimer);ED.vtTimer=0;}
+  const video=ED.vtEl;
+  if(video&&ED.vtOn&&ED.vtOn.fn&&video.removeEventListener)
+    video.removeEventListener('seeked',ED.vtOn.fn);
+  ED.vtOn=null;ED.vtOpen=false;ED.vtEl=null;ED.vtAt=null;}
 function edArm(){if(ED.raw||!ED.play)return;const i=edBlockAt(ED.cs);if(i<0)return;
   const b=ED.blocks[i],nb=ED.blocks[i+1];
   // Стыка впереди больше нет (последний блок или правка свела блоки вплотную) — дублёра
   // гасим. Раньше просто выходили, и разогнанный под исчезнувший стык дублёр доигрывал
   // фоном: лишний декод 4K рядом с живым — ровно тот ресурс, из-за которого стыки и дёргались.
-  if(!nb||nb.s0-b.s1<=0.06){bufIdle(spareLead(PV));return;}
-  bufArm(PV,spareLead(PV),nb.s0);bufRoll(spareLead(PV),b.s1-ED.cs);}   // блоки правки — цель пересчитываем каждый тик
+  // Прицел голоса снимаем вместе с разбегом: vtSpareCtl взводит дублёра по `vspAt` каждый
+  // кадр, и оставленный прицел вернул бы его на исчезнувший стык.
+  if(!nb||nb.s0-b.s1<=0.06){bufIdle(spareLead(PV));vtSpareIdle(ED);vtSpareAt(ED,null);return;}
+  // Сколько РЕАЛЬНОГО времени осталось до прыжка. Мера одна на оба дублёра: и видео, и
+  // голос обязаны прийти на позицию ПОСЛЕ стыка ровно к прыжку — не раньше и не позже.
+  const left=b.s1-ED.cs;
+  // Прицел и разгон дорожки голоса — на ED, НЕ на PV: дорожка редактора живёт на ED
+  // (vtOf(ED); edJump зовёт vtSpareTake(ED,at)), а на PV её дублёр не разгонялся вовсе —
+  // замер архитектора: на КАЖДОМ из четырёх прыжков `paused:true, currentTime:0,
+  // rolling:false`, удачных подмен 0 из 4. Видео-дублёр остаётся на PV: видео редактора —
+  // это PV.vids, и edTake/edJump берут его там же.
+  vtSpareAt(ED,nb.s0);   // прицел дорожки голоса: у редактора это блоки правки, а не EDL
+  if(left>VT_ARM-PV_PREROLL)bufIdle(spareLead(PV));   // до стыка ещё далеко
+  else bufArm(PV,spareLead(PV),nb.s0);            // блоки правки — цель пересчитываем каждый тик
+  vtSpareArm(ED);
+  // Левое время vtSpareRoll считает как «прицел − tm». Прицел голоса — НАЧАЛО следующего
+  // блока (nb.s0), а прыжок редактор делает на КОНЦЕ текущего (b.s1): между ними вырезанный
+  // зазор. Отсчёт от прицела даёт левое время с лишним зазором — дублёр пускается позже
+  // нужного и на стыке отстаёт ровно на зазор, подмена срывается в запасной seek (это и
+  // есть отставание голоса, от которого уходим: p95 48 мс, две точки > 125 мс). Отсчёт
+  // ведём от реального времени до прыжка — `nb.s0-left` и есть нужное vtSpareRoll «tm».
+  if(left<=VT_ARM-PV_PREROLL){bufRoll(spareLead(PV),left);vtSpareRoll(ED,nb.s0-left);}}
 function edTick(){if(!ED.play)return;let v=PV.vids[0];ED.cs=v.currentTime;
   // seek ТОЛЬКО при реальном вырезанном зазоре (>60мс): микро-seek на смежном стыке (после ✂)
   // флашит декодер (readyState 4→1) и воспроизведение залипает на месте правки
@@ -163,6 +299,7 @@ function edTick(){if(!ED.play)return;let v=PV.vids[0];ED.cs=v.currentTime;
         if(nb.s0>ED.cs+0.06){v=edJump(v,nb.s0);ED.cs=nb.s0;}}}}
   else if(ED.cs>=ED.dur-0.05){edPause();}
   if(typeof vtOf==='function')vtTick(ED,ED.cs);   // дорожка обработанного голоса идёт за плейхедом
+  if(typeof pvAudioLimit==='function')pvAudioLimit($('pvstage'),ED);   // строка про звук Firefox — по факту игры
   edArm();
   edDraw();edUI();ED.raf=requestAnimationFrame(edTick);}
 // Что под курсором: БЛИЖАЙШИЙ край блока или плейхед. Раньше цикл брал первый край,
@@ -311,9 +448,43 @@ async function markupOne(i){if(uiBusyGuard())return;const c=CLIPS[i];progOpen({t
     else progDone(t('Остановлено'),true);}   // список не закрываем сами: у окна есть «Закрыть»
   finally{uiBusySet(false);}
 }
-// «Разметить всё» — ПОФАЗНО (все субтитры → все жёлтые → все вставки), а не по клипу:
-// Whisper и 27b не влезают в VRAM вместе, по-клипово было 2 свопа моделей НА КЛИП,
-// пофазно — 1 своп на весь набор. UICANCEL (кнопка «Остановить») рвёт цикл между шагами.
+// Конвейер разметки: правило зависимостей шагов от локальности моделей.
+function markupPlan(phases){
+  const p=phases||[];
+  const hasSubs=p.includes('subs');
+  const hasYellow=p.includes('yellow');
+  const hasInserts=p.includes('inserts');
+  const cfg=(typeof AICFG!=='undefined'&&AICFG)||{};
+  const loc=cfg.step_local||{};
+  const mod=cfg.step_profiles||{};
+  const yellowLocal=Boolean(loc.yellow);
+  const insertsLocal=Boolean(loc.inserts);
+  const yellowModel=mod.yellow||'';
+  const insertsModel=mod.inserts||'';
+  const diffModels=(yellowModel!==insertsModel);
+  // Локальные шаги ждут окончания всех субтитров (VRAM).
+  // Если оба шага локальные и модели разные — вставки ждут окончания всех жёлтых.
+  const yellowWaitAllSubs=hasSubs&&yellowLocal;
+  const insertsWaitAllSubs=hasSubs&&insertsLocal;
+  const insertsWaitAllYellow=hasYellow&&hasInserts&&yellowLocal&&insertsLocal&&diffModels;
+  return {
+    phases:p,
+    hasSubs,
+    hasYellow,
+    hasInserts,
+    yellowLocal,
+    insertsLocal,
+    yellowModel,
+    insertsModel,
+    diffModels,
+    yellowWaitAllSubs,
+    insertsWaitAllSubs,
+    insertsWaitAllYellow,
+  };
+}
+// «Разметить всё» — конвейер, локальные шаги — пофазно из-за VRAM.
+// Облачные шаги стартуют сразу по готовности субтитров клипа.
+// UICANCEL (кнопка «Остановить») рвёт цикл между шагами.
 async function markupAll(){if(uiBusyGuard())return;const subeng=val('subengine')||'whisper';const list=selClips();if(!list.length){toast(t('Нет клипов'));return;}
   progOpen({title:t('Разметка')});uiBusySet(true);
   // «Разметить всё» молча пропускает уже готовое, как раньше: вопрос о
@@ -326,85 +497,192 @@ async function markupPhase(phase){if(uiBusyGuard())return;const subeng=val('sube
   progOpen({title:t('Разметка')});uiBusySet(true);
   try{await markupAllRun(subeng,list,[phase],true);}finally{uiBusySet(false);}}
 async function markupAllRun(subeng,list,phases,ask){
+  // Одна фабрика на обе очереди разметки — ЛОКАЛЬНО: стенды вырезают из файла
+  // только markupAllRun и падают на ReferenceError, будь она уровнем файла.
+  // Методы объявлены свойствами (`push:function(item){…}`), а не сокращённой
+  // записью: в сокращённой сторож tests/test_ui_js_calls.py видит вызовы
+  // несуществующих `push`/`close`.
+  const makeAsyncQueue=function(){
+    const q=[];const waiters=[];let closed=false;
+    return {
+      push:function(item){if(closed)return;if(waiters.length)waiters.shift()(item);else q.push(item);},
+      close:function(){closed=true;while(waiters.length)waiters.shift()(null);},
+      next:function(){if(q.length)return Promise.resolve(q.shift());if(closed)return Promise.resolve(null);return new Promise(r=>waiters.push(r));}
+    };
+  };
   if(typeof AICFG==='undefined'||!AICFG){try{await loadAIProfiles();}catch(e){}}
   const batch='mk'+Date.now().toString(36);
   const N=list.length,fail=new Set();
+  const failSubs=new Set();
   // Свой список роликов в окне прогресса: серверного задания у разметки нет, и до этого
   // в списке висели строки ПРОШЛОЙ нарезки вместо того, что размечается сейчас.
   localQStart(list.map(c=>c.name));
+  const _poolRunner=typeof runPool==='function'?runPool:async(items,n,fn)=>{
+    const isQ=typeof items.next==='function';
+    const count=Math.max(1,Math.min(16,Math.floor(n)||1));
+    let idx=0;const workers=[];
+    for(let w=0;w<count;w++){
+      workers.push((async()=>{
+        while(true){
+          if(typeof UICANCEL!=='undefined'&&UICANCEL)break;
+          let item;
+          if(isQ){item=await items.next();if(item==null)break;}
+          else{if(idx>=items.length)break;item=items[idx++];}
+          await fn(item,idx);
+        }
+      })());
+    }
+    await Promise.all(workers);
+  };
+  const yellowQueue=makeAsyncQueue();
+  const insertsQueue=makeAsyncQueue();
   try{
     for(let i=0;i<N;i++){const c=list[i];       // свежие статусы (что пропускать)
       try{const st=await (await fetch('/api/xml_state',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml:c.xml})})).json();
         if(st.error)throw errText(st);c.status={subs:st.subs,colored:st.colored,ncams:st.ncams};}
       catch(e){uiLog('✗ '+c.name+': '+e);fail.add(c);localQSet(c.name,'error',''+e);}}
     const P=phases.length;
-    // Пул параллельной обработки используется ТОЛЬКО для ИИ-фаз (yellow, inserts): субтитры
-    // считаются на GPU строго по одному (общий лок джоба, VRAM). При step_concurrency=1
-    // пул не создаётся (pool<=1) и сохраняется прежнее последовательное поведение со sleep(300).
-    const phase=async(no,title,dep,has,call,pool)=>{
-      // Перезапись спрашивается ТОЛЬКО при явном запуске одной фазы (ask=true, кнопки
-      // «Субтитры/Жёлтые/Вставки»). «Разметить всё» (ask=false) молча пропускает готовое,
-      // как раньше — без единого вопроса: уже сделано = пропуск.
-      // «Да» (force) — фаза считается заново у ВСЕХ, пропуск по «уже есть» не действует;
-      // зависимость (нет субтитров) остаётся. «Нет» — готовые пропускаются, как обычно.
+    const plan=(typeof markupPlan==='function'?markupPlan:(ph=>({
+      hasSubs:(ph||[]).includes('subs'),hasYellow:(ph||[]).includes('yellow'),hasInserts:(ph||[]).includes('inserts'),
+      yellowWaitAllSubs:(ph||[]).includes('subs')&&Boolean(typeof AICFG!=='undefined'&&AICFG&&AICFG.step_local&&AICFG.step_local.yellow),
+      insertsWaitAllSubs:(ph||[]).includes('subs')&&Boolean(typeof AICFG!=='undefined'&&AICFG&&AICFG.step_local&&AICFG.step_local.inserts),
+      insertsWaitAllYellow:(ph||[]).includes('yellow')&&(ph||[]).includes('inserts')&&Boolean(typeof AICFG!=='undefined'&&AICFG&&AICFG.step_local&&AICFG.step_local.yellow)&&Boolean(typeof AICFG!=='undefined'&&AICFG&&AICFG.step_local&&AICFG.step_local.inserts)&&(((typeof AICFG!=='undefined'&&AICFG&&AICFG.step_profiles&&AICFG.step_profiles.yellow)||'')!==((typeof AICFG!=='undefined'&&AICFG&&AICFG.step_profiles&&AICFG.step_profiles.inserts)||''))
+    })))(phases);
+
+    let donePairs=0;
+    const totalPairs=N*P;
+    const clipDonePhases={};
+    const pushedYellow=new Set();
+    const pushedInserts=new Set();
+
+    const onSubsReady=(c)=>{
+      if(!fail.has(c)&&!failSubs.has(c)&&c.status&&c.status.subs>0){
+        if(plan.hasYellow&&!plan.yellowWaitAllSubs&&!pushedYellow.has(c.name)){
+          pushedYellow.add(c.name);yellowQueue.push(c);
+        }
+        if(plan.hasInserts&&!plan.insertsWaitAllSubs&&!pushedInserts.has(c.name)){
+          pushedInserts.add(c.name);insertsQueue.push(c);
+        }
+      }
+    };
+
+    const checkClipDone=(c,no)=>{
+      if(!clipDonePhases[c.name])clipDonePhases[c.name]=new Set();
+      clipDonePhases[c.name].add(no);
+      if(phases.every((p,idx)=>clipDonePhases[c.name].has(idx+1))){
+        if(!fail.has(c)&&(c.status&&c.status.subs>0)){
+          localQSet(c.name,'done',qClipSum(c));
+        }
+      }
+    };
+
+    const phase=async(no,title,dep,has,call,pool,stepName)=>{
       const already=ask?list.filter(c=>!fail.has(c)&&has(c)):[];
       const force=ask&&already.length&&await askConfirm(t('Уже размечено у {n}: {names}.\nФаза «{title}» будет пересчитана заново. Продолжить?',{n:already.length,names:already.map(c=>c.name).join(', '),title:title}));
-      if(pool>1){
-        const todo=list.filter(c=>!fail.has(c)&&!dep(c)&&(force||!has(c)));
-        let done=0;const inWork=new Set();
-        const phaseTitle=t('Разметка {n}/{P} — {title}',{n:no,P:P,title:title});
-        await runPool(todo,pool,async c=>{
-          inWork.add(c.name);
-          // В шапку — заголовок фазы и «готово из скольких»; имена роликов в работе там
-          // не нужны, они и так в строках списка (форма — в 55-progress.js).
-          progQueue(phaseTitle,done,N);
-          uiLog('▸ '+c.name+' — '+title+'…');
-          try{await call(c);localQSet(c.name,no===P?'done':'wait',qClipSum(c));}
-          catch(e){localQSet(c.name,'error',''+e);toast(title+' · '+c.name+': '+e);uiLog(t('  ОШИБКА: ')+e);fail.add(c);}
-          inWork.delete(c.name);done++;
-          progStep(title,(no-1)/P+done/N/P);
-          renderClips2();saveState();
-        });
-        // Пропущенные («уже есть» / нет субтитров) пул не берёт вовсе — их строки остались бы
-        // «в очереди» до конца прогона. Ставим им итог сразу, без запуска фазы.
-        list.forEach(c=>{if(fail.has(c)||todo.includes(c))return;
-          if(dep(c))localQSet(c.name,'wait',t('нет субтитров'));
-          else localQSet(c.name,no===P?'done':'wait',qClipSum(c));});
-      }else{
+      if(stepName==='subs'){
         for(let i=0;i<N;i++){if(UICANCEL)return;const c=list[i];
-          if(fail.has(c))continue;
-          if(dep(c)){localQSet(c.name,'wait',t('нет субтитров'));continue;}
-          // Проверка результата — из clip: c.status/inserts обновляются в call(c), поэтому
-          // итог берём из них, а не из счётчиков фазы.
-          if(!force&&has(c)){localQSet(c.name,no===P?'done':'wait',qClipSum(c));continue;}   // «уже есть» — итог без запуска
-          // Контекст очереди — отдельно от этапа: заголовок фазы и «готово из N» держатся,
-          // пока идёт клип, а что считается прямо сейчас — говорит progStep (и код события
-          // из хвоста лога в aiPost).
+          if(fail.has(c)){donePairs++;checkClipDone(c,no);continue;}
+          if(dep(c)){localQSet(c.name,'wait',t('нет субтитров'));donePairs++;checkClipDone(c,no);continue;}
+          if(!force&&has(c)){localQSet(c.name,no===P?'done':'wait',qClipSum(c));donePairs++;checkClipDone(c,no);onSubsReady(c);continue;}
           progQueue(t('Разметка {n}/{P} — {title}',{n:no,P:P,title:title}),i,N);
           progStep(title,(no-1)/P+i/N/P);
           uiLog('▸ '+c.name+' — '+title+'…');
-          try{await call(c);localQSet(c.name,no===P?'done':'wait',qClipSum(c));}
+          try{await call(c);if(!fail.has(c))localQSet(c.name,no===P?'done':'wait',qClipSum(c));onSubsReady(c);}
+          catch(e){localQSet(c.name,'error',''+e);toast(title+' · '+c.name+': '+e);uiLog(t('  ОШИБКА: ')+e);fail.add(c);failSubs.add(c);}
+          donePairs++;checkClipDone(c,no);
+          renderClips2();saveState();
+        }
+      }else{
+        const isYellow=(stepName==='yellow');
+        const q=isYellow?yellowQueue:insertsQueue;
+        const pushed=isYellow?pushedYellow:pushedInserts;
+        const waitAllSubs=isYellow?plan.yellowWaitAllSubs:plan.insertsWaitAllSubs;
+        if(waitAllSubs){
+          await subsPromise;
+          if(!isYellow&&plan.insertsWaitAllYellow){
+            await yellowPromise;
+          }
+          for(const c of list){
+            if(!failSubs.has(c)&&c.status&&c.status.subs>0&&!pushed.has(c.name)){
+              pushed.add(c.name);q.push(c);
+            }
+          }
+          q.close();
+        }
+        await _poolRunner(q,pool,async(c,idx)=>{
+          if(typeof UICANCEL!=='undefined'&&UICANCEL)return;
+          if(failSubs.has(c)){donePairs++;checkClipDone(c,no);return;}
+          if(dep(c)){localQSet(c.name,'wait',t('нет субтитров'));donePairs++;checkClipDone(c,no);return;}
+          if(!force&&has(c)){if(!fail.has(c))localQSet(c.name,no===P?'done':'wait',qClipSum(c));donePairs++;checkClipDone(c,no);return;}
+          progQueue(t('Разметка {n}/{P} — {title}',{n:no,P:P,title:title}),donePairs,totalPairs);
+          progStep(title,(no-1)/P+donePairs/totalPairs);
+          uiLog('▸ '+c.name+' — '+title+'…');
+          try{await call(c);if(!fail.has(c))localQSet(c.name,no===P?'done':'wait',qClipSum(c));}
           catch(e){localQSet(c.name,'error',''+e);toast(title+' · '+c.name+': '+e);uiLog(t('  ОШИБКА: ')+e);fail.add(c);}
-          renderClips2();saveState();await sleep(300);}}};
-    const subLbl=engLabel(subeng);
-    if(phases.includes('subs'))await phase(phases.indexOf('subs')+1,t('субтитры (')+subLbl+')',()=>false,c=>c.status.subs>0,async c=>{
-      localQSet(c.name,'subs','');
-      const d=await (await fetch('/api/gen_subs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml:c.xml,subengine:subeng})})).json();
-      if(d.error)throw errText(d);c.status.subs=d.subs;uiLog(t('  субтитры: ')+d.subs+subSkipped(d));});
-    if(phases.includes('yellow'))await phase(phases.indexOf('yellow')+1,t('жёлтые (ИИ)'),c=>!(c.status.subs>0),c=>c.status.colored>0,async c=>{
-      localQSet(c.name,'yellow','');
-      const d=await aiPost('/api/ai_yellow',{xml:c.xml,batch},t('жёлтые (ИИ)'));
-      if(d.error)throw errText(d);c.status.colored=(d.colored||d.yellow||[]).length;uiLog(t('  жёлтых: ')+c.status.colored);
-      clearHl(c);if(curAE>=0&&CLIPS[curAE]===c)loadWordsFor(c.xml);},aiStepConc('yellow'));
-    if(phases.includes('inserts'))await phase(phases.indexOf('inserts')+1,t('вставки (ИИ)'),c=>!(c.status.subs>0),c=>(c.inserts||[]).length>0,async c=>{
-      localQSet(c.name,'inserts','');
-      const d=await aiPost('/api/ai_inserts',{xml:c.xml,batch,rejected:c.ins_rejected||[],speaker:val('speaker')||undefined},t('вставки (ИИ)'));
-      if(d.error)throw errText(d);c.inserts=(d.inserts||[]).map(x=>({...x,media:''}));c.insTarget=Math.max(d.insTarget||0,c.inserts.length);insLog(d);uiLog(t('  вставок: ')+c.inserts.length);
-      localQSet(c.name,'files','');   // подбор файлов из базы (+ генерация по галке) — отдельный этап, не «вставки (ИИ)»
-      uiLog(t('  файлы:')+(await insAfterAI(c)||' —'));},aiStepConc('inserts'));   // база + (по галке) генерация
+          donePairs++;checkClipDone(c,no);
+          renderClips2();saveState();
+        });
+      }
+    };
+
+    // Клипы с уже готовыми субтитрами сразу доступны облачным шагам
+    for(const c of list){
+      if(!fail.has(c)&&c.status&&c.status.subs>0){
+        if(plan.hasYellow&&!plan.yellowWaitAllSubs&&!pushedYellow.has(c.name)){
+          pushedYellow.add(c.name);yellowQueue.push(c);
+        }
+        if(plan.hasInserts&&!plan.insertsWaitAllSubs&&!pushedInserts.has(c.name)){
+          pushedInserts.add(c.name);insertsQueue.push(c);
+        }
+      }
+    }
+    if(!plan.hasSubs){
+      for(const c of list){
+        if(plan.hasYellow&&!pushedYellow.has(c.name)){pushedYellow.add(c.name);yellowQueue.push(c);}
+        if(plan.hasInserts&&!pushedInserts.has(c.name)){pushedInserts.add(c.name);insertsQueue.push(c);}
+      }
+      yellowQueue.close();
+      insertsQueue.close();
+    }
+
+    const subLbl=typeof engLabel==='function'?engLabel(subeng):subeng;
+    let subsPromise=Promise.resolve();
+    let yellowPromise=Promise.resolve();
+    let insertsPromise=Promise.resolve();
+
+    if(phases.includes('subs')){
+      subsPromise=phase(phases.indexOf('subs')+1,t('субтитры (')+subLbl+')',()=>false,c=>c.status.subs>0,async c=>{
+        localQSet(c.name,'subs','');
+        const d=await (await fetch('/api/gen_subs',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml:c.xml,subengine:subeng})})).json();
+        if(d.error)throw errText(d);c.status.subs=d.subs;uiLog(t('  субтитры: ')+d.subs+(typeof subSkipped==='function'?subSkipped(d):''));},1,'subs');
+    }
+    subsPromise.then(()=>{
+      if(plan.hasYellow&&!plan.yellowWaitAllSubs)yellowQueue.close();
+      if(plan.hasInserts&&!plan.insertsWaitAllSubs)insertsQueue.close();
+    });
+
+    if(phases.includes('yellow')){
+      yellowPromise=phase(phases.indexOf('yellow')+1,t('жёлтые (ИИ)'),c=>!(c.status.subs>0),c=>c.status.colored>0,async c=>{
+        localQSet(c.name,'yellow','');
+        const d=await aiPost('/api/ai_yellow',{xml:c.xml,batch},t('жёлтые (ИИ)'));
+        if(d.error)throw errText(d);c.status.colored=(d.colored||d.yellow||[]).length;uiLog(t('  жёлтых: ')+c.status.colored);
+        if(typeof clearHl==='function')clearHl(c);if(curAE>=0&&CLIPS[curAE]===c)loadWordsFor(c.xml);},aiStepConc('yellow'),'yellow');
+    }
+
+    if(phases.includes('inserts')){
+      insertsPromise=phase(phases.indexOf('inserts')+1,t('вставки (ИИ)'),c=>!(c.status.subs>0),c=>(c.inserts||[]).length>0,async c=>{
+        localQSet(c.name,'inserts','');
+        const d=await aiPost('/api/ai_inserts',{xml:c.xml,batch,rejected:c.ins_rejected||[],speaker:clipSpeaker(c)||undefined},t('вставки (ИИ)'));
+        if(d.error)throw errText(d);c.inserts=(d.inserts||[]).map(x=>({...x,media:''}));c.insTarget=Math.max(d.insTarget||0,c.inserts.length);if(typeof insLog==='function')insLog(d);uiLog(t('  вставок: ')+c.inserts.length);
+        if(!fail.has(c))localQSet(c.name,'files','');
+        uiLog(t('  файлы:')+((typeof insAfterAI==='function'&&await insAfterAI(c))||' —'));},aiStepConc('inserts'),'inserts');
+    }
+
+    await Promise.all([subsPromise,yellowPromise,insertsPromise]);
+
     const ok=N-fail.size;
     renderClips2();saveState();
-    if(UICANCEL)progDone(t('Остановлено — без ошибок: {n} из {m}',{n:ok,m:N}),true);
+    if(typeof UICANCEL!=='undefined'&&UICANCEL)progDone(t('Остановлено — без ошибок: {n} из {m}',{n:ok,m:N}),true);
     else if(ok===N)progDone(t('Размечено клипов: ')+ok);
     else progDone(t('Размечено {n} из {m} — см. логи/сообщения',{n:ok,m:N}),true);
   }finally{localQEnd();}
@@ -441,22 +719,47 @@ async function markupClip(c){const xml=c.xml;const subeng=val('subengine')||'whi
       c.status.subs=d.subs;uiLog(t('  субтитры: ')+d.subs+subSkipped(d));await sleep(700);}
     else uiLog(t('  субтитры уже есть ({n}) — пропуск',{n:st.subs}));
     if(stop())return false;
-    // 2. жёлтые — при ошибке НЕ идём дальше молча (частая причина: LM Studio не успел свапнуть модель)
-    if(!(c.status.colored>0)){localQSet(c.name,'yellow','');progStep(t('жёлтые слова (ИИ)…'));uiLog(t('  жёлтые (ИИ)…'));
-      const d=await aiPost('/api/ai_yellow',{xml},t('жёлтые (ИИ)'));
-      if(d.error){toast(t('жёлтые: ')+errText(d));uiLog(t('  жёлтые: ОШИБКА — ')+d.error);localQSet(c.name,'error',''+d.error);return false;}
-      c.status.colored=(d.colored||d.yellow||[]).length;uiLog(t('  жёлтых: ')+c.status.colored);
-      clearHl(c);if(curAE>=0&&CLIPS[curAE]===c)loadWordsFor(c.xml);await sleep(700);}
-    else uiLog(t('  жёлтые уже есть ({n}) — пропуск',{n:c.status.colored}));
-    if(stop())return false;
-    // 3. вставки (если уже есть — не перегенерируем, выбранные файлы не теряем)
-    if(!(c.inserts||[]).length){localQSet(c.name,'inserts','');progStep(t('вставки (ИИ)…'));uiLog(t('  вставки (ИИ)…'));
-      const d=await aiPost('/api/ai_inserts',{xml,rejected:c.ins_rejected||[],speaker:val('speaker')||undefined},t('вставки (ИИ)'));
-      if(d.error){toast(t('вставки: ')+errText(d));uiLog(t('  вставки: ОШИБКА — ')+d.error);localQSet(c.name,'error',''+d.error);return false;}
-      c.inserts=(d.inserts||[]).map(x=>({...x,media:''}));c.insTarget=Math.max(d.insTarget||0,c.inserts.length);insLog(d);uiLog(t('  вставок: ')+c.inserts.length);
-      localQSet(c.name,'files','');   // подбор файлов из базы (+ генерация по галке) — отдельный этап
-      uiLog(t('  файлы:')+(await insAfterAI(c)||' —'));}   // база + (по галке) генерация
-    else uiLog(t('  вставки уже есть ({n}) — пропуск',{n:c.inserts.length}));
+
+    // 2. жёлтые и вставки: параллельно по Promise.all или пофазно (если оба локальные и разные модели)
+    const plan=(typeof markupPlan==='function'?markupPlan:(ph=>({insertsWaitAllYellow:false})))(['yellow','inserts']);
+    let yellowOk=true;
+    let insertsOk=true;
+
+    const doYellow=async()=>{
+      if(!(c.status.colored>0)){localQSet(c.name,'yellow','');progStep(t('жёлтые слова (ИИ)…'));uiLog(t('  жёлтые (ИИ)…'));
+        try{
+          const d=await aiPost('/api/ai_yellow',{xml},t('жёлтые (ИИ)'));
+          if(d.error)throw errText(d);
+          c.status.colored=(d.colored||d.yellow||[]).length;uiLog(t('  жёлтых: ')+c.status.colored);
+          clearHl(c);if(curAE>=0&&CLIPS[curAE]===c)loadWordsFor(c.xml);await sleep(700);
+        }catch(e){
+          toast(t('жёлтые: ')+e);uiLog(t('  жёлтые: ОШИБКА — ')+e);localQSet(c.name,'error',''+e);yellowOk=false;
+        }
+      }else uiLog(t('  жёлтые уже есть ({n}) — пропуск',{n:c.status.colored}));
+    };
+
+    const doInserts=async()=>{
+      if(!(c.inserts||[]).length){localQSet(c.name,'inserts','');progStep(t('вставки (ИИ)…'));uiLog(t('  вставки (ИИ)…'));
+        try{
+          const d=await aiPost('/api/ai_inserts',{xml,rejected:c.ins_rejected||[],speaker:clipSpeaker(c)||undefined},t('вставки (ИИ)'));
+          if(d.error)throw errText(d);
+          c.inserts=(d.inserts||[]).map(x=>({...x,media:''}));c.insTarget=Math.max(d.insTarget||0,c.inserts.length);insLog(d);uiLog(t('  вставок: ')+c.inserts.length);
+          localQSet(c.name,'files','');
+          uiLog(t('  файлы:')+(await insAfterAI(c)||' —'));
+        }catch(e){
+          toast(t('вставки: ')+e);uiLog(t('  вставки: ОШИБКА — ')+e);localQSet(c.name,'error',''+e);insertsOk=false;
+        }
+      }else uiLog(t('  вставки уже есть ({n}) — пропуск',{n:c.inserts.length}));
+    };
+
+    if(plan.insertsWaitAllYellow){
+      await doYellow();
+      if(stop())return false;
+      await doInserts();
+    }else{
+      await Promise.all([doYellow(),doInserts()]);
+    }
+    if(!yellowOk||!insertsOk)return false;
     localQSet(c.name,'done',qClipSum(c));
     return true;
   }finally{if(own)localQEnd();}}
@@ -466,17 +769,27 @@ function sleep(ms){return new Promise(r=>setTimeout(r,ms));}
 // и вторая копия зажима разошлась бы с первой. AICFG может быть ещё не загружен — тогда 1.
 function aiStepConc(s){const c=(typeof AICFG!=='undefined'&&AICFG)||{};return Math.max(1,Math.min(16,(c.step_concurrency||{})[s]||1));}
 async function runPool(items,n,fn){
-  if(!items||!items.length)return;
-  const count=Math.max(1,Math.min(items.length,Math.floor(n)||1));
+  if(!items)return;
+  const isQ=typeof items.next==='function';
+  if(!isQ&&!items.length)return;
+  const count=Math.max(1,Math.min(isQ?16:items.length,Math.floor(n)||1));
   let idx=0;
   const workers=[];
   for(let w=0;w<count;w++){
     workers.push((async()=>{
       while(true){
         if(typeof UICANCEL!=='undefined'&&UICANCEL)break;
-        const i=idx++;
-        if(i>=items.length)break;
-        await fn(items[i],i);
+        let item,i;
+        if(isQ){
+          item=await items.next();
+          if(item===null||item===undefined)break;
+          i=idx++;
+        }else{
+          i=idx++;
+          if(i>=items.length)break;
+          item=items[i];
+        }
+        await fn(item,i);
       }
     })());
   }

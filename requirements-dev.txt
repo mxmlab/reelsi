@@ -4,14 +4,22 @@
 #   python -m pytest reelsi/tests -q
 #   ruff check .
 
-# golden contract tests
-pytest>=8.0
+# golden contract tests; an upper bound, not just a floor: a new major changes
+# collection and plugin APIs, and the build goes red for no reason
+pytest>=9.1,<10
 # per-test timeout to prevent hanging test runs across Windows and Linux
-pytest-timeout>=2.3
+pytest-timeout>=2.4,<3
 # test coverage measurement and CI coverage ratchet
-pytest-cov>=5
-# linter; same rule set as in CI (ruff.toml)
-ruff>=0.6
+pytest-cov>=7.1,<8
+# parallel test run in CI (`pytest -n auto`): the suite takes ~20 min serial,
+# and the job timeout is 25
+pytest-xdist>=3.6,<4
+# PyYAML for .pre-commit-config.yaml and the CI config tests: without it CI
+# silently skips them (tests/test_precommit.py, tests/test_ci_timeouts.py)
+pyyaml>=6,<7
+# linter; same rule set as in CI (ruff.toml). EXACT version: a new rule set turns
+# the build red on findings that were not there before — update deliberately
+ruff==0.16.1
 # static type check on the CORE BOUNDARY: the strict module list lives in
 # [tool.mypy] pyproject.toml, the ratchet in tests/test_typing_ratchet.py.
 # Pinned by minor: a new major changes the rules and fails the build for no reason

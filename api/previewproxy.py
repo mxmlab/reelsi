@@ -22,18 +22,40 @@ static/app/60-preview.js) и печётся своей дверью `/api/voicef
 import os, threading
 from typing import Any
 from flask import Response, jsonify, request
-from ._core import (bp, jstr, log_entry, umsg_err, _cross_lock_acquire, _cross_lock_release,
+from ._core import (bp, emit as general_emit, jstr, lock_owner_text, log_entry, umsg_err,
+                    _cross_lock_acquire, _cross_lock_release, cross_lock_task,
                     sysexit_text)
 from core.umsg import ReelsiError, umsg
 
 PXJOB: dict[str, Any] = {"running": False, "done": False, "log": [], "cur": "", "i": 0, "n": 0, "pct": 0}
 PXLOCK = threading.Lock()
 
+# Имя задачи для отказа «уже идёт» (см. _core.lock_owner_text): по нему человек
+# понимает, что видеокарту держит сборка прокси, а не нарезка, и где смотреть прогресс.
+PROXY_TASK = "сборка прокси превью"
+
 
 def _emit(line: str, /, **vars: Any) -> None:
     with PXLOCK:
         entry = log_entry(line, vars)
         PXJOB["log"].append(entry)
+    # Та же строка — в общий лог задания (его читает /api/status и панель «Логи»):
+    # сообщение отказа посылает человека именно туда, а раньше сборщик писал только
+    # в свой PXJOB, и в «Логах» было пусто. Сборка прокси идёт под межзадачным
+    # локом, то есть одновременно с нарезкой/сборкой не бывает — перетирать нечего.
+    general_emit(line, **vars)
+
+
+def _proxy_hint() -> str:
+    """Строка прогресса сборки для ЧУЖОГО отказа: «камера 2 из 2, 40 % — …».
+
+    Данные уже есть в PXJOB (i/n текущего файла и процент сборки): по ним отказ
+    нарезки говорит, чего именно ждать."""
+    with PXLOCK:
+        i, n, pct = PXJOB["i"], PXJOB["n"], PXJOB["pct"]
+    if not n:
+        return "готовлю план камер — прогресс в окне превью и в Логах"
+    return f"камера {i} из {n}, {pct} % — прогресс в окне превью и в Логах"
 
 
 def _pct(value: float) -> None:
@@ -192,14 +214,22 @@ def api_preview_proxy() -> Response:
         # Два одновременных запроса (два таба) не должны запустить ДВА сборщика в один
         # детерминированный dst (pv_<sha1>.part.mp4): перемешанные потоки кадров уехали
         # бы в кэш насовсем. Проверка И пометка «running» — под одним PXLOCK, поток — после.
+        want_build = False
         with PXLOCK:
             busy = PXJOB["running"]
             if d.get("build") and not busy and any(not ok for (_s, _d, ok) in todo):
-                if not _cross_lock_acquire():
-                    raise ReelsiError(umsg("busy", "Уже выполняется"))
-                PXJOB.update(running=True, done=False, log=[], i=0, n=0, cur="", pct=0)
-                busy = True
-                start = True
+                want_build = True
+                # Имя и подсказка прогресса — ДО захвата: отказ соседней задачи
+                # (нарезка/сборка) назовёт сборку прокси и её «камера i из n, pct %».
+                cross_lock_task(PROXY_TASK, _proxy_hint)
+                if _cross_lock_acquire():
+                    PXJOB.update(running=True, done=False, log=[], i=0, n=0, cur="", pct=0)
+                    busy = True
+                    start = True
+        # Отказ строим ВНЕ PXLOCK: lock_owner_text спрашивает подсказку прогресса,
+        # а та берёт PXLOCK сама — под ним это был бы само-дедлок.
+        if want_build and not start:
+            raise ReelsiError(umsg("busy", lock_owner_text("Уже выполняется")))
         if start:
             try:
                 threading.Thread(target=_run_preview_proxy,

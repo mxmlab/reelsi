@@ -11,10 +11,15 @@ VST3-плагинов. Результат запекается в WAV ДО After
 ИИ-шумодав (`denoise.on`) ИЛИ в цепочке есть включённый плагин VST (`voice_fx_on`).
 Включена — работает ВЕЗДЕ и ВЕСЬ: файл нарезки подменяет `analysis_wav` в
 `apply_cut_fx` (голос после ВСЕЙ цепочки — шумодав и VST-плагины), рядом с XML
-ложится запечённый `<стем>.voice.wav`
+ложится запечённый `<стем>.voice.<key8>.wav`
 (`ensure_final_voice`), на который ссылаются собранные проект AE
 (`final_voice_for_build`), Premiere XML (`core/xmlbuild`), `.drp`
-(`api/build.py`), черновой рендер (`core/draftrender`) и все превью. Отдельных
+(`api/build.py`), черновой рендер (`core/draftrender`) и все превью. Имя версии
+лежит в сайдкаре `.voice.json`, и читатели ходят за ним в резолвер
+`final_voice_path`: под постоянным именем трек приходилось бы ЗАМЕНЯТЬ на месте,
+а на Windows замена падает, если старый файл кто-то держит открытым (плеер
+превью, отдача `/api/media`, открытый проект AE/Premiere) — новый звук не
+появлялся, и это было молча. Отдельных
 решений «для нарезки» и «в итоговый трек» больше нет: галки `cut`/`final` в
 профиле остались только как ЗЕРКАЛО этого правила (старые профили с
 `cut`/`final=false` читаются миграцией и обработку не выключают).
@@ -55,6 +60,7 @@ Python не лезет (`core/voicefx_sep`): нет его — нет тольк
 from __future__ import annotations
 import base64
 import binascii
+import glob
 import hashlib
 import json
 import os
@@ -1168,16 +1174,84 @@ def apply_cut_fx(wav0: str, cam1: str, speaker: Any,
 
 
 def final_voice_path(xml_path: str) -> str:
-    """`<стем>.voice.wav` — итоговый голос РЯДОМ с XML.
+    """Итоговый голос клипа РЯДОМ с XML — имя версии из сайдкара, иначе легаси.
 
     Рядом с XML, а не в `_voicefx`: на этот файл ссылается собранный проект AE,
     а кеш запечённых треков чистят (это кеш) — проект остался бы без голоса.
+
+    ОДНА дверь для всех читателей: имя собирается здесь, а не у каждого своего.
+    Имя версионное (`<стем>.voice.<key8>.wav`), и лежит оно в сайдкаре
+    `.voice.json` полем `"file"`: под постоянным именем трек приходилось бы
+    ЗАМЕНЯТЬ на месте, а на Windows замена падает, если старый файл кто-то держит
+    открытым (плеер превью играет именно его, `/api/media` отдаёт его же,
+    открытый проект AE/Premiere держит его сам). Сбой был молчаливым: новый звук
+    не появлялся, а в логе оставалась одна строка.
+
+    Имя берётся ТОЛЬКО если файл на месте: сайдкар мог пережить убранный файл, и
+    отдавать читателю мёртвый путь нельзя. Нет сайдкара, нет поля или файла — старое
+    `<стем>.voice.wav`: клипы, запечённые до версионных имён, читаются как читались.
     """
+    saved = json_load_soft(_final_meta_path(xml_path))
+    name = saved.get("file") if isinstance(saved, dict) else None
+    if isinstance(name, str) and name:
+        # basename: сайдкар — обычный JSON рядом с XML, а уходить по чужому пути из
+        # него читатель не должен (тот же приём, что у списка прожжённых LUT).
+        dst = os.path.join(os.path.dirname(xml_path), os.path.basename(name))
+        if os.path.isfile(dst):
+            return dst
+    return _legacy_final_voice_path(xml_path)
+
+
+def _legacy_final_voice_path(xml_path: str) -> str:
+    """Старое имя итогового голоса `<стем>.voice.wav` — только для совместимости."""
     return os.path.splitext(xml_path)[0] + ".voice.wav"
 
 
+def _versioned_final_voice_path(xml_path: str, key: str) -> str:
+    """Версионное имя итогового голоса: `<стем>.voice.<key8>.wav` рядом с XML.
+
+    `key8` — первые 8 символов ключа кеша (`final_voice_key`): сменили настройки —
+    другое имя, и новый трек ложится РЯДОМ со старым, а не поверх него. Старый
+    файл никто не держит «на запись», поэтому занятость его чужой рукой больше не
+    ломает запекание.
+    """
+    return os.path.splitext(xml_path)[0] + ".voice." + key[:8] + ".wav"
+
+
+def _final_voice_files(xml_path: str) -> list[str]:
+    """Все версии итогового голоса клипа на диске (легаси и версионные).
+
+    Шаблон экранируется (`glob.escape`): стем — это имя файла пользователя, и
+    квадратная скобка в нём иначе превратила бы обход в поиск совсем не того.
+    """
+    stem = glob.escape(os.path.splitext(xml_path)[0])
+    found = glob.glob(stem + ".voice*.wav")
+    legacy = _legacy_final_voice_path(xml_path)
+    if legacy not in found:
+        found.append(legacy)
+    return found
+
+
+def _prune_final_voice(xml_path: str, keep: str) -> None:
+    """Убрать ПРОЧИЕ версии итогового голоса клипа (занятую пропустить молча).
+
+    Копии копятся на каждую смену настроек, а час стерео — это десятки мегабайт
+    рядом с XML: держать их все нельзя. Удаление best-effort — занятый файл
+    (плеер, отдача `/media`, открытый проект) удалится в следующий раз; из-за него
+    запекание падать не должно, оно и было сломано ровно этим.
+    """
+    keep_name = os.path.normcase(os.path.basename(keep))
+    for path in _final_voice_files(xml_path):
+        if os.path.normcase(os.path.basename(path)) == keep_name:
+            continue
+        try:
+            os.remove(path)
+        except OSError:
+            pass                      # занят читателем — уберём в следующий раз
+
+
 def _final_meta_path(xml_path: str) -> str:
-    """Сайдкар итогового голоса: ключ кеша, из которого он запечён, и исходник."""
+    """Сайдкар итогового голоса: ключ кеша, из которого он запечён, файл и исходник."""
     return os.path.splitext(xml_path)[0] + ".voice.json"
 
 
@@ -1193,16 +1267,17 @@ def final_voice_key(cam1: str, fx: Any) -> str:
 def final_voice_ready(xml_path: str, cam1: str, fx: Any) -> bool:
     """Итоговый голос запечён ИМЕННО под эти настройки?
 
-    Сверка тем же ключом, что у `ensure_final_voice`: файл рядом с XML плюс
-    сайдкар `.voice.json` с ключом кеша. Файл без сайдкара (или с чужим ключом) —
-    «не готов»: он собран под другие настройки, и подхватывать его нельзя.
+    Сверка тем же ключом, что у `ensure_final_voice`: сайдкар `.voice.json` с ключом
+    кеша плюс ФАЙЛ, на который сайдкар указывает (резолвер `final_voice_path`).
+    Ключ без файла (или чужой ключ) — «не готов»: трек собран под другие настройки
+    либо уже убран, и подхватывать его нельзя.
     """
     if not cam1:
         return False
-    dst = final_voice_path(xml_path)
     saved = json_load_soft(_final_meta_path(xml_path))
-    return (os.path.isfile(dst) and isinstance(saved, dict)
-            and saved.get("key") == final_voice_key(cam1, fx))
+    if not isinstance(saved, dict) or saved.get("key") != final_voice_key(cam1, fx):
+        return False
+    return os.path.isfile(final_voice_path(xml_path))
 
 
 def clip_final_fx(xml_path: str) -> dict[str, Any] | None:
@@ -1257,7 +1332,7 @@ def clip_cam1(xml_path: str) -> str:
 
 
 def clip_voice_wav(xml_path: str, emit: Callable[..., Any] = console_emit) -> str:
-    """`<стем>.voice.wav` клипа для ЧТЕНИЯ или пустая строка — одна дверь читателей.
+    """Итоговый голос клипа для ЧТЕНИЯ или пустая строка — одна дверь читателей.
 
     Читатели (Premiere XML — `core/xmlbuild`, `.drp` — `api/build.py`, черновой
     рендер — `core/draftrender`) не решают сами, нужен ли обработанный голос: они
@@ -1286,17 +1361,20 @@ def clip_voice_wav(xml_path: str, emit: Callable[..., Any] = console_emit) -> st
 
 
 def clear_final_voice(xml_path: str) -> bool:
-    """Убрать запечённый голос клипа (`<стем>.voice.wav` и сайдкар) — обработка выключена.
+    """Убрать запечённый голос клипа (ВСЕ версии `<стем>.voice*.wav` и сайдкар).
 
-    Файлы наши (их писал `ensure_final_voice`), и, оставшись на диске, они бы
-    продолжали звучать в превью и уезжать в XML: «выключил шумодав — звук
-    исходный» иначе не выполнить. Кеш обработки (`_voicefx`) не трогаем — включили
-    обратно, трек вернётся из него без повторного счёта.
+    Обработка выключена — файлы наши (их писал `ensure_final_voice`), и, оставшись
+    на диске, они бы продолжали звучать в превью и уезжать в XML: «выключил
+    шумодав — звук исходный» иначе не выполнить. Версий бывает несколько (имя
+    меняется вместе с настройками), поэтому убираются ВСЕ, а не та, что назвал
+    резолвер: иначе прошлые запечённые треки остались бы рядом с XML навсегда.
+    Кеш обработки (`_voicefx`) не трогаем — включили обратно, трек вернётся из
+    него без повторного счёта.
 
     True — что-то убрали.
     """
     gone = False
-    for path in (final_voice_path(xml_path), _final_meta_path(xml_path)):
+    for path in _final_voice_files(xml_path) + [_final_meta_path(xml_path)]:
         try:
             os.remove(path)
             gone = True
@@ -1315,17 +1393,46 @@ def clear_final_voice(xml_path: str) -> bool:
 def restore_cache_from_final(cache: str, final: str) -> bool:
     """Вернуть трек в кеш из итогового файла рядом с XML; True — вернули.
 
-    Кеш обработки — именно кеш, его чистят, а `<стем>.voice.wav` рядом с XML
-    остаётся: на него ссылается собранный проект AE. Превью играет НЕИЗМЕНЯЕМЫЙ
-    файл кеша (`cache_path`), и его пропажа не должна ни отдавать браузеру мёртвый
-    URL, ни запускать счёт заново на минуты: итоговый файл — та же самая запись,
-    `ensure_final_voice` скопировал её из этого же ключа. Копия байт-в-байт.
+    Кеш обработки — именно кеш, его чистят, а итоговый `<стем>.voice.<key8>.wav`
+    рядом с XML остаётся: на него ссылается собранный проект AE. Превью играет
+    НЕИЗМЕНЯЕМЫЙ файл кеша (`cache_path`), и его пропажа не должна ни отдавать
+    браузеру мёртвый URL, ни запускать счёт заново на минуты: итоговый файл — та же
+    самая запись, `ensure_final_voice` скопировал её из этого же ключа. Копия
+    байт-в-байт.
     """
     if os.path.isfile(cache) or not os.path.isfile(final):
         return False
     os.makedirs(os.path.dirname(cache), exist_ok=True)
     _copy_atomic(final, cache)
     return True
+
+
+# Замки запекания итогового голоса по клипу: один счёт на клип, остальные ждут.
+# Своя пара (замок клипа + общий на словарь), как у замков дорожки выше.
+_FINAL_LOCKS: dict[str, threading.Lock] = {}
+_FINAL_LOCKS_GUARD = threading.Lock()
+
+
+def _final_lock(xml_path: str) -> threading.Lock:
+    """Замок запекания ЭТОГО клипа (по realpath; создаётся при первой просьбе)."""
+    try:
+        key = os.path.normcase(os.path.realpath(xml_path))
+    except OSError:
+        key = os.path.normcase(os.path.abspath(xml_path))
+    with _FINAL_LOCKS_GUARD:
+        lock = _FINAL_LOCKS.get(key)
+        if lock is None:
+            lock = _FINAL_LOCKS[key] = threading.Lock()
+        return lock
+
+
+def _sync_xml_voice(xml_path: str, voice: str) -> None:
+    """Подменить аудиодорожку клипа в XML на путь голоса — сбой не валит запекание."""
+    try:
+        from core import xmlbuild
+        xmlbuild.sync_xml_voice(xml_path, voice=voice)
+    except Exception:
+        pass  # сбой синхронизации XML не должен ломать отдачу запечённого голоса
 
 
 def ensure_final_voice(xml_path: str, cam1: str, fx: Any,
@@ -1335,45 +1442,71 @@ def ensure_final_voice(xml_path: str, cam1: str, fx: Any,
                        pid_of: Callable[[int], None] | None = None) -> tuple[str, str]:
     """Запечь голос клипа; вернуть ОБЕ его копии: (рядом с XML, в кеше обработки).
 
-    Две копии — не удобство, а лечение живого дефекта. Превью играло
-    `<стем>.voice.wav` — файл под ОДНИМ И ТЕМ ЖЕ именем, который перезаписывался на
-    каждую смену настроек: браузер отдавал старый трек из кеша и склеивал куски
-    РАЗНЫХ версий («сменил ручку — а звук прежний»), а на Windows замена файла,
-    открытого сервером на отдачу, ещё и может не пройти. Поэтому превью берёт путь
-    В КЕШЕ (`cache_path`: имя по содержимому настроек, файл не перезаписывается), а
-    `<стем>.voice.wav` остаётся тем же файлом для AE/DRP/XML/черновика — читатели
-    ходят в него, как ходили.
+    Две копии — не удобство, а лечение живого дефекта. Превью играло файл рядом с
+    XML — файл под ОДНИМ И ТЕМ ЖЕ именем, который перезаписывался на каждую смену
+    настроек: браузер отдавал старый трек из кеша и склеивал куски РАЗНЫХ версий
+    («сменил ручку — а звук прежний»), а на Windows замена файла, открытого
+    сервером на отдачу (или чужим плеером), ещё и НЕ ПРОХОДИЛА: `os.replace` падал
+    `PermissionError`, новый голос не появлялся вовсе, и это было молча. Поэтому
+    превью играет НЕИЗМЕНЯЕМУЮ копию в кеше (`cache_path`: имя по содержимому
+    настроек), а рядом с XML ложится ВЕРСИОННЫЙ файл
+    `<стем>.voice.<key8>.wav` — имя меняется вместе с настройками, старый файл
+    никто не трогает, и занятость его чужой рукой больше ничего не ломает.
 
-    Копия, а не ссылка: `<стем>.voice.wav` читает After Effects, и файл обязан
-    пережить чистку `_voicefx` (это кеш). Ключ кеша лежит рядом в `.voice.json`:
-    тот же ключ — файл уже запечён, второй раз не копируем (час стерео — это
-    гигабайты и минуты); файл кеша тогда на месте по определению ключа.
+    Копия, а не ссылка: файл рядом с XML читает After Effects, и он обязан
+    пережить чистку `_voicefx` (это кеш). Ключ кеша и имя файла лежат рядом в
+    `.voice.json`: тот же ключ — файл уже запечён, второй раз не копируем (час
+    стерео — это гигабайты и минуты); файл кеша тогда на месте по определению ключа.
+    Прочие версии голоса этого клипа убираются best-effort (`_prune_final_voice`).
+
+    Счёт на клип ОДИН: заказов на один и тот же клип бывает два разом (превью шага 3
+    и повторное нажатие), и второй ждёт замок клипа, а после него видит готовый
+    файл (`final_voice_ready`) — считать заново нечего. Без замка оба успевали
+    начать счёт и второй падал на занятом файле, хотя первый уже записал верный.
 
     `progress(i, n)` — ход счёта шумодава (у RoFormer он свой): по нему превью
     показывает, что работа идёт, а не «прокси 0 %». `cancelled` и `pid_of` — та же
     отмена: «Стоп» снимает счёт по PID, а не ждёт его конца.
     """
-    dst = final_voice_path(xml_path)
     if final_voice_ready(xml_path, cam1, fx):
         # Ключ тот же — файл кеша на месте ПО ОПРЕДЕЛЕНИЮ ключа: не рендерим и не ищем.
-        try:
-            from core import xmlbuild
-            xmlbuild.sync_xml_voice(xml_path, voice=dst)
-        except Exception:
-            pass  # сбой синхронизации XML не должен ломать отдачу запечённого голоса
-        return dst, cache_path(cam1, fx)
-    cache = render_cached(cam1, fx, emit=emit, progress=progress,
-                          cancelled=cancelled, pid_of=pid_of)
-    _copy_atomic(cache, dst)
-    atomic_json_dump(_final_meta_path(xml_path),
-                     {"key": final_voice_key(cam1, fx), "src": cam1}, indent=1)
-    emit("голос: итоговый трек запечён ({path})", path=dst)
-    try:
-        from core import xmlbuild
-        xmlbuild.sync_xml_voice(xml_path, voice=dst)
-    except Exception:
-        pass  # сбой синхронизации XML не должен ломать запекание голоса
-    return dst, cache
+        return _ready_final_voice(xml_path, cam1, fx)
+    with _final_lock(xml_path):
+        # Соперник по этому клипу мог всё запечь, пока мы ждали замок: тогда готовое
+        # берём как есть — второй счёт на тот же ключ был бы платой ни за что.
+        if final_voice_ready(xml_path, cam1, fx):
+            return _ready_final_voice(xml_path, cam1, fx)
+        key = final_voice_key(cam1, fx)
+        cache = render_cached(cam1, fx, emit=emit, progress=progress,
+                              cancelled=cancelled, pid_of=pid_of)
+        dst = _versioned_final_voice_path(xml_path, key)
+        if not os.path.isfile(dst):
+            # Файл ЭТОЙ версии на месте (имя — ключ настроек) — не переписываем: его
+            # может держать плеер превью, а содержимое в нём ровно то же (запекание
+            # кешируется тем же ключом). Так «потеряли сайдкар» чинится без замены
+            # занятого файла — тем самым сбоем, ради которого имя и стало версионным.
+            _copy_atomic(cache, dst)
+        # Сайдкар — ПОСЛЕ появления файла: читатель, увидевший имя раньше файла,
+        # получил бы мёртвый путь (резолвер отдаёт имя, только если файл на месте).
+        atomic_json_dump(_final_meta_path(xml_path),
+                         {"key": key, "src": cam1, "file": os.path.basename(dst)}, indent=1)
+        _prune_final_voice(xml_path, keep=dst)
+        emit("голос: итоговый трек запечён ({path})", path=dst)
+        _sync_xml_voice(xml_path, dst)
+        return dst, cache
+
+
+def _ready_final_voice(xml_path: str, cam1: str, fx: Any) -> tuple[str, str]:
+    """Уже запечённый голос клипа: (рядом с XML, в кеше) — без счёта и копирования.
+
+    Заодно best-effort приборка прочих версий (`_prune_final_voice`): прошлую
+    версию мог держать плеер, и тогда её не убрали — «удалится в следующий раз»
+    и есть этот заход.
+    """
+    dst = final_voice_path(xml_path)
+    _sync_xml_voice(xml_path, dst)
+    _prune_final_voice(xml_path, keep=dst)
+    return dst, cache_path(cam1, fx)
 
 
 def final_voice_for_build(xml_path: str, cam1: str,
@@ -1384,7 +1517,10 @@ def final_voice_for_build(xml_path: str, cam1: str,
     правила — None: сборка идёт со звуком камеры, как раньше.
 
     Любая ошибка — предупреждение и None: голос это надстройка, из-за него проект
-    AE не должен остаться несобранным.
+    AE не должен остаться несобранным. Саму строку этой ошибки читает сборка
+    (`api/build.py`, `VOICE_FAIL_MARK`): по ней клип с включённой обработкой, но без
+    подключённого голоса, попадает в ИТОГ сборки предупреждением с причиной, а не
+    уезжает молча со звуком камеры.
     """
     if not cam1:
         return None
@@ -1773,6 +1909,71 @@ def _edit_job(path: str, name: str, fx: Any, index: int, frag: str, device: str)
             "index": index if 0 <= index < len(chain) else -1, "device": device}
 
 
+def system_output_devices() -> dict[str, Any]:
+    """Список устройств вывода БЕЗ pedalboard — для запасного пути.
+
+    «Какие устройства есть» — вопрос звуковой системы, а не плагинов, и раньше он
+    падал ровно потому, что список собирал pedalboard (`core/voicefx_audio`). Без
+    пакета панель голоса оставалась без выбора устройства вовсе, хотя выбрать
+    «По умолчанию» можно и без него.
+
+    На Windows имена читаются из реестра (MMDevices\\Render) — это тот же список,
+    что показывает системный микшер, и лишних пакетов он не требует. Системное
+    устройство так не назвать (реестр не говорит, какое из них выбрано), поэтому
+    `default` пуст: пустое значение значит «как в системе», и это здесь правда.
+    На прочих платформах перечислять нечем — пустой список БЕЗ ошибки: причину
+    назовёт вызывающий.
+    """
+    if os.name != "nt":
+        return {"devices": [], "default": ""}
+    return {"devices": _win_output_devices(), "default": ""}
+
+
+def _win_output_devices() -> list[str]:
+    """Имена устройств вывода Windows из реестра диспетчера звука.
+
+    Модуль и его функции берутся через `getattr`, а не обычным обращением: строгий
+    `mypy` разбирает этот файл и под `--platform linux` (кросс-проверка CI), где у
+    `winreg` нет ни `OpenKey`, ни `HKEY_LOCAL_MACHINE`, и обычные обращения дали бы
+    ошибки в чужом окружении. Зовётся только на Windows (см. `system_output_devices`).
+
+    `importlib`, а не `import winreg`: обычный import под платформой linux в mypy —
+    «не найден модуль», и это тоже упало бы в чужом окружении.
+    """
+    import importlib
+    try:
+        winreg = importlib.import_module("winreg")
+    except ImportError:
+        return []
+    # Поимённые локальные: `Any` — то, что `getattr` вернул из модуля без стубов.
+    hkey_const: Any = getattr(winreg, "HKEY_LOCAL_MACHINE", None)
+    open_key: Any = getattr(winreg, "OpenKey", None)
+    enum_key: Any = getattr(winreg, "EnumKey", None)
+    query_info: Any = getattr(winreg, "QueryInfoKey", None)
+    query_val: Any = getattr(winreg, "QueryValueEx", None)
+    if hkey_const is None or open_key is None or enum_key is None \
+            or query_info is None or query_val is None:
+        return []
+    base = r"SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render"
+    names: list[str] = []
+    try:
+        with open_key(hkey_const, base) as root:
+            for i in range(query_info(root)[0]):
+                try:
+                    guid = enum_key(root, i)
+                    ep = os.path.join(base, guid, "Properties")
+                    with open_key(hkey_const, ep) as props:
+                        name = str(query_val(
+                            props, "{a45c254e-df1c-4efd-8020-67d146a850e0},2")[0])
+                except OSError:
+                    continue
+                if name and name not in names:
+                    names.append(name)
+    except OSError:
+        return []
+    return names
+
+
 def output_devices(refresh: bool = False) -> dict[str, Any]:
     """Устройства вывода звука для живого прослушивания: {devices, default}.
 
@@ -1783,22 +1984,66 @@ def output_devices(refresh: bool = False) -> dict[str, Any]:
     поверх JUCE и тянет в процесс нативный код с фоновыми потоками — в сервере
     интерфейса этому делать нечего (та же причина, что у списка плагинов).
 
-    Ошибка (нет pedalboard, аудиосистемы нет вовсе) НЕ глотается: вызывающий сам
-    решает, показать её или просто оставить «По умолчанию». Окно плагина от неё
-    не зависит — без звука оно открывается.
+    БЕЗ pedalboard список всё равно отдаётся — запасным путём (реестр Windows,
+    `system_output_devices`), а не ошибкой про плагины: устройства вывода — это
+    звуковая система, и включать их в одну судьбу с VST3 нельзя. Почему список
+    пуст или неполон, знает `devices_reason()` — отдельной дверью, а не полем
+    ответа: контракт `{devices, default}` у этого роута был и остаётся.
     """
     global _DEVICES_CACHE
     if _DEVICES_CACHE is not None and not refresh:
-        return {"devices": list(_DEVICES_CACHE["devices"]), "default": _DEVICES_CACHE["default"]}
+        return {"devices": list(_DEVICES_CACHE["devices"]),
+                "default": _DEVICES_CACHE["default"]}
     what = "Устройства вывода"
-    run = _run_child(module_cmd("voicefx_audio", "--devices"),
-                     what, DEVICES_TIMEOUT, None)
-    _raise_child(run, what)
-    data = run.answer()
-    names = [str(n) for n in (data.get("devices") or [])]
-    default = str(data.get("default") or "")
+    try:
+        run = _run_child(module_cmd("voicefx_audio", "--devices"),
+                         what, DEVICES_TIMEOUT, None)
+        _raise_child(run, what)
+        data = run.answer()
+        names = [str(n) for n in (data.get("devices") or [])]
+        default = str(data.get("default") or "")
+    except ReelsiError as e:
+        if e.code != "vst_unavailable":
+            raise
+        # Пакета нет — но устройства перечисляются и без него: звук камеры и
+        # «По умолчанию» обязаны работать у человека без плагинов.
+        names, default = _devices_without_plugins()
     _DEVICES_CACHE = {"devices": names, "default": default}
     return {"devices": list(names), "default": default}
+
+
+# Причина, по которой список устройств отдан запасным путём (пусто — обычный путь).
+# Модульная переменная, а не поле ответа `output_devices`: поле меняло бы контракт
+# роута `{devices, default}`, а причина нужна ровно одному вызывающему — панели.
+_DEVICES_REASON = ""
+
+
+def devices_reason(refresh: bool = False) -> str:
+    """Почему список устройств может быть неполон (`''` — обычный путь).
+
+    Без pedalboard устройства перечисляет звуковая система, и человеку надо
+    сказать, что именно он теряет; при живом пакете причина пуста.
+    """
+    if _DEVICES_CACHE is None or refresh:
+        output_devices(refresh)
+    return _DEVICES_REASON
+
+
+def _devices_without_plugins() -> tuple[list[str], str]:
+    """Запасной путь списка устройств: (устройства, умолчание).
+
+    Заодно ставит `_DEVICES_REASON` — то, ЧТО именно человек теряет без пакета:
+    с ним панель говорит «плагины недоступны», а не молчит про пустой список.
+    """
+    global _DEVICES_REASON
+    whose = system_output_devices()
+    names = [str(n) for n in whose["devices"]]
+    default = str(whose["default"] or "")
+    # Текст переводится по ключу целиком (`t(d.reason)` на фронте), поэтому он один и
+    # без подстановок: подробность ошибки уже сказана выше самим исключением.
+    _DEVICES_REASON = ("Нет пакета pedalboard — плагины VST3 недоступны, устройства "
+                       "вывода показаны звуковой системой: pip install pedalboard")
+    return names, default
 
 
 def edit_plugin(path: str, name: str = "", state_b64: str = "", *,
@@ -1907,6 +2152,8 @@ class EditorSession:
     events_seen: int = 0              # сколько строк файла событий уже разобрано
     window: bool = False              # окно плагина открыто прямо сейчас
     state_seen: bytes = b""           # состояние, уже отданное на запись профиля
+    states: list[dict[str, str]] = field(default_factory=list)   # последний dump_states
+    states_seq: int = 0               # сколько событий `states` уже разобрано
     open_path: str = ""               # плагин, чьё окно открывали (путь, не индекс)
     last_poll: float = 0.0            # когда страница в последний раз спрашивала о хосте
     stopped: bool = False             # хост снят НАМИ (`live_stop`), а не ушёл сам
@@ -1925,6 +2172,21 @@ STATE_POLL = 0.2
 # закрыли без «погасить» (крах, F5 в неудачный момент) — хост, играющий в пустую комнату
 # и держащий плагины (а у некоторых это ядра процессора), сам снимается по этому молчанию.
 HOST_IDLE_TTL = 180.0
+# Сколько ждём событие `states` (состояния ВСЕХ плагинов) перед гашением хоста. Число
+# маленькое нарочно: гашение идёт на закрытии превью и на смене клипа, и ждать там
+# долго нельзя. Замер: хост отвечает на `dump_states` за единицы миллисекунд, 2 с —
+# потолок на «хост уже мёртв, а команда ушла в закрытую трубу».
+DUMP_STATES_WAIT = 2.0
+
+
+def _b64(raw: bytes) -> str:
+    """Состояние плагина в том виде, в каком оно лежит в профиле спикера.
+
+    Одна дверь на все места, где состояние едет base64 (события хоста `state` и
+    `states`, чтение файла состояния): разъехавшиеся кодировки дали бы профиль,
+    который `normalize_fx` молча выбросил бы как мусор.
+    """
+    return base64.b64encode(raw).decode("ascii")
 
 
 def _session_new(work: str, proc: subprocess.Popen[Any], **kw: Any) -> EditorSession:
@@ -2020,6 +2282,55 @@ def live_chain(session: EditorSession, fx: Any) -> bool:
     return sent
 
 
+def live_dump_request(session: EditorSession) -> int:
+    """Попросить хост отдать состояния всех плагинов; вернуть «до» — метку разбора.
+
+    Метка (сколько событий `states` уже разобрано) нужна ожиданию: файл событий
+    общий и растёт, и без неё легко принять за ответ СТАРОЕ событие.
+    """
+    before = session.states_seq
+    session.states = []
+    live_command(session, {"cmd": "dump_states"})
+    return before
+
+
+def live_dump_wait(session: EditorSession, before: int,
+                   timeout: float = DUMP_STATES_WAIT) -> list[dict[str, str]]:
+    """Дождаться события `states` после метки `before`; нет его — пустой список.
+
+    Ждём недолго: окно могло закрыться между командой и обработкой, а хост — уйти
+    сам. Пустой ответ — это честное «отдать нечего», и профиль по нему не пишется.
+    """
+    deadline = time.time() + max(0.0, float(timeout))
+    step = 0.02
+    while time.time() < deadline:
+        live_events(session)
+        if session.states_seq > before:
+            return list(session.states)
+        if session.proc.poll() is not None:
+            break                      # хост ушёл — ждать больше нечего
+        time.sleep(step)
+        step = min(0.1, step * 2)      # первый ответ близко, дальше ждём реже
+    live_events(session)               # последний взгляд: событие могло приехать на исходе
+    return list(session.states) if session.states_seq > before else []
+
+
+def live_dump_states(session: EditorSession, timeout: float = DUMP_STATES_WAIT
+                     ) -> list[dict[str, str]]:
+    """Забрать состояние ВСЕХ загруженных плагинов у живого хоста.
+
+    Состояние знает ТОЛЬКО процесс хоста, и до этой двери оно уезжало в профиль
+    спикера лишь по закрытию окна. А хост гасят и по другим поводам (закрыли
+    превью, сменили клип, ушли с шага), причём иногда — с открытым окном: там
+    `live_stop` снимает процесс по PID, и накрученное в окне пропадало. Поэтому
+    перед гашением хост обязан отдать ВСЁ, что у него загружено.
+
+    Команда `dump_states`, ответ — событие `states` в файле событий (`live_events`
+    его разбирает). Отдаём разобранное как есть: запись профиля делает сервер.
+    """
+    return live_dump_wait(session, live_dump_request(session), timeout)
+
+
 def live_open_editor(session: EditorSession, index: int, path: str = "") -> bool:
     """Открыть окно плагина в УЖЕ ИГРАЮЩЕМ хосте — панель того же звука.
 
@@ -2044,13 +2355,20 @@ def live_open_editor(session: EditorSession, index: int, path: str = "") -> bool
     return sent
 
 
-def live_stop(session: EditorSession) -> bool:
+def live_stop(session: EditorSession,
+              stop_hook: Callable[[EditorSession, list[dict[str, str]]], None] | None = None
+              ) -> bool:
     """Погасить живой хост по PID: превью закрыли, клип сменили, плагины выключили.
 
     Обычная команда `stop` тут не годится: она гасит ЗВУК, но процесс остаётся жив
     (он ещё пригодится — окно могло быть открыто), и «после закрытия превью не
     осталось ни одного процесса» превратилось бы в «остался висеть». Гасим дерево
     по PID процесса хоста (`_kill`), чужой PID не трогаем: он наш от начала до конца.
+
+    ПЕРЕД гашением хост отдаёт состояние ВСЕХ загруженных плагинов (`dump_states`), и
+    `stop_hook` (сервер) пишет их в профиль спикера. Без этого гашение при открытом
+    окне теряло бы накрученное: состояние знает только процесс хоста, а снятие по PID
+    ответа уже не даёт. Хук зовётся ПОКА сессия жива (процесс ещё не снят).
     """
     if session.proc.poll() is not None:
         live_finish(session, session.state, session.proc.returncode)
@@ -2059,6 +2377,14 @@ def live_stop(session: EditorSession) -> bool:
     # ненулевой код — наша работа, а не падение плагина (иначе в лог уедет «состояние
     # не сохранено», хотя хост просто закрыли вместе с превью).
     session.stopped = True
+    # СНАЧАЛА состояние ВСЕХ загруженных плагинов, потом гашение. Окно могло быть
+    # открыто (закрыли превью, сменили клип, ушли с шага) — состояние знает только
+    # процесс хоста, и, сняв его по PID без `dump_states`, мы потеряли бы всё, что
+    # человек накрутил в окнах. Ждём событие недолго (см. DUMP_STATES_WAIT): хост
+    # может быть уже мёртв, и это не повод не гасить.
+    dumped = live_dump_states(session, DUMP_STATES_WAIT)
+    if dumped and stop_hook is not None:
+        stop_hook(session, dumped)
     try:
         _kill(session.proc, "живой звук")
     except Exception as e:                        # noqa: BLE001 — хост важнее отчётности
@@ -2106,6 +2432,26 @@ def live_events(session: EditorSession) -> None:
             # Иначе она глушит свой голос «потому что звучит хост» и человек слышит тишину.
             session.audio_error = str(data.get("reason") or "звука нет")
             session.track_ready = False
+        elif name == "states":
+            # Состояния ВСЕХ загруженных плагинов — по команде `dump_states` (её шлют
+            # ПЕРЕД гашением хоста). Разбираем и складываем как есть: запись профиля
+            # делает сервер (`_save_live`), ему пути плагинов и нужны.
+            plugins = data.get("plugins")
+            rows: list[dict[str, str]] = []
+            for it in (plugins if isinstance(plugins, list) else []):
+                if not isinstance(it, dict):
+                    continue
+                path = str(it.get("path") or "")
+                state = str(it.get("state_b64") or "")
+                if not path or not state:
+                    continue
+                try:
+                    base64.b64decode(state, validate=True)
+                except (binascii.Error, ValueError):
+                    continue                      # битый base64 в профиль не уезжает
+                rows.append({"path": path, "state_b64": state})
+            session.states = rows
+            session.states_seq += 1
         elif name == "editor_open":
             session.window = True
         elif name in ("editor_closed", "editor_failed"):
@@ -2277,6 +2623,11 @@ def _prepare_track(session: EditorSession, keep_pos: bool = False) -> None:
 
     `keep_pos` — замена дорожки в уже играющем хосте (сменили настройки шумодава):
     место и паузу хост сохраняет, стартовую позицию не подставляем.
+
+    ВХОД хост выбирает сам и всегда в одну сторону — к дорожке шумодава: посчитана
+    (или считается) — играет ОНА, потому что в итог уедет именно она; сырой звук
+    остаётся только тем, кому играть больше нечего (кеша нет — пока RoFormer
+    считает, человеку нужно слышать голос, а не тишину).
     """
     try:
         if not session.src or not os.path.isfile(session.src):
@@ -2287,29 +2638,44 @@ def _prepare_track(session: EditorSession, keep_pos: bool = False) -> None:
         dn_path = denoise_cache_path(session.src, dn)
         has_cache = os.path.isfile(dn_path) if dn_path else False
         is_preview = (session.index < 0)
-        if is_preview and not keep_pos and dn.get("on") and not has_cache:
-            # Хост превью: дорожки шумодава в кеше нет — СНАЧАЛА отдать хосту сырой звук камеры
-            # (тот же путь, что denoise_track при выключенном шумодаве: извлечение ffmpeg с кешем)
-            raw_track = denoise_track(session.src, dict(dn, on=False), emit=console_emit)
+        # ВХОД ХОСТА — дорожка шумодава, если она включена И уже посчитана: хост обязан
+        # играть тот же голос, что уйдёт в итог, а не сырой звук камеры. Сырому звуку
+        # остаётся ровно один случай — считать нечего было (кеша нет): тогда он играет
+        # СРАЗУ (человеку есть что слушать, пока идёт шумодав), а на дорожку хост
+        # пересаживается командой `track`, когда она появится.
+        if not is_preview or keep_pos or not dn.get("on") or has_cache:
+            track = denoise_track(session.src, dn, emit=console_emit)
+            if normalize_fx(session.fx)["denoise"] != dn:
+                # Пока считалось, настройки шумодава сменили ещё раз: эта дорожка уже
+                # чужая, а свежую отдаст поток, запущенный той сменой. Отдай мы её — она
+                # затёрла бы более новую.
+                return
             session.track_ready = True
-            session.track_input = "raw"
-            if not live_track(session, raw_track, session.start):
+            session.track_input = "denoised" if dn.get("on") else "raw"
+            # `keep_pos` — замена на ходу: хост остаётся на своём месте (`live_track` без `at`).
+            if not live_track(session, track, None if keep_pos else session.start):
+                # Хост ушёл, пока трек считался: файл-указатель всё равно пишем —
+                # он наш, и по нему трек подхватит следующий процесс хоста.
                 if session.track_file:
                     atomic_json_dump(session.track_file,
-                                     {"track": raw_track, "at": float(session.start)}, indent=1)
+                                     {"track": track, "at": float(session.start)}, indent=1)
+            return
+        # Хост превью, дорожки шумодава в кеше нет — СНАЧАЛА отдать хосту сырой звук
+        # камеры (тот же путь, что denoise_track при выключенном шумодаве: извлечение
+        # ffmpeg с кешем), а готовую дорожку досчитать следом и пересадить хост на неё.
+        raw_track = denoise_track(session.src, dict(dn, on=False), emit=console_emit)
+        session.track_ready = True
+        session.track_input = "raw"
+        if not live_track(session, raw_track, session.start):
+            if session.track_file:
+                atomic_json_dump(session.track_file,
+                                 {"track": raw_track, "at": float(session.start)}, indent=1)
         track = denoise_track(session.src, dn, emit=console_emit)
         if normalize_fx(session.fx)["denoise"] != dn:
-            # Пока считалось, настройки шумодава сменили ещё раз: эта дорожка уже
-            # чужая, а свежую отдаст поток, запущенный той сменой. Отдай мы её — она
-            # затёрла бы более новую.
             return
         session.track_ready = True
         session.track_input = "denoised" if dn.get("on") else "raw"
-        # `keep_pos` — замена на ходу: хост остаётся на своём месте (`live_track` без `at`).
-        replace_pos = keep_pos or (is_preview and bool(dn.get("on")) and not has_cache)
-        if not live_track(session, track, None if replace_pos else session.start):
-            # Хост ушёл, пока трек считался: файл-указатель всё равно пишем —
-            # он наш, и по нему трек подхватит следующий процесс хоста.
+        if not live_track(session, track, None):
             if session.track_file:
                 atomic_json_dump(session.track_file,
                                  {"track": track, "at": float(session.start)}, indent=1)

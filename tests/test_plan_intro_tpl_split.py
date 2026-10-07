@@ -387,8 +387,8 @@ def test_intro_tpl_comp_shadow_styled_and_default(xml_subs, tmp_path):
     introCompShadow по камере группы."""
     _p, plain, _i = _check(xml_subs, intro=GLITCH_BIG, splits=GLITCH_BIG_SPLITS)
     assert plain.comp_shadow == "dropShadow(iL, 68);" and plain.comp_shadow_fn == ""
-    style = {"intro_comp_shadow_fill": [1, 0, 0], "intro_comp_shadow_op": 50,
-             "intro_comp_shadow2_fill": [0, 1, 0], "intro_comp_shadow2_op": 80}
+    style = {"intro_comp_shadow_fill": [1, 0, 0], "intro_comp_shadow_opacity": 50,
+             "intro_comp_shadow2_fill": [0, 1, 0], "intro_comp_shadow2_opacity": 80}
     _p, tp, _i = _check(xml_subs, style=style, intro=GLITCH_BIG, splits=GLITCH_BIG_SPLITS)
     assert tp.comp_shadow == "introCompShadow(iL, INTRO_ON2[gI]);"
     assert "function introCompShadow" in tp.comp_shadow_fn

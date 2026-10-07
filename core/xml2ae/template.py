@@ -331,7 +331,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
 %(voice_wav)s    var VOICE_DB=%(voice_db)g;                    // базовая громкость голоса (камера 1); цензура ныряет отсюда в −100
     var AUDIO_FADE=%(audio_fade)g;                // сек: микро-фейд громкости на краях каждого аудио-клипа (0 = выкл)
     var RISER=%(riser)s;                          // интро-SFX (ризер) или ""
-    var DISCLAIMER=%(disclaimer)s, DISC_END=%(disc_end)g, DISC_SIZE=%(disc_size)s, DISC_Y=%(disc_y)d%(disc_lead_decl)s;
+    var DISCLAIMER=%(disclaimer)s, DISC_END=%(disc_end)g, DISC_SIZE=%(disc_size)s, DISC_Y=%(disc_y)d%(disc_lead_decl)s%(disc_x_decl)s;
 
     app.beginUndoGroup("Reelsi build");
     // Лог сборки. Файл .aelog.txt заводит ХВОСТ, а ошибки бывают раньше него —
@@ -429,7 +429,7 @@ AE_FULL = r"""// SPDX-License-Identifier: AGPL-3.0-or-later
         try{setFont(dd, FONT);}catch(e){} dd.fontSize=DISC_SIZE; dd.fillColor=[1,1,1]; dd.applyFill=true;
         try{dd.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}
         %(disc_lead_js)sdsp.setValue(dd);
-        dl.property("ADBE Transform Group").property("ADBE Position").setValue([W/2, DISC_Y]);
+        dl.property("ADBE Transform Group").property("ADBE Position").setValue([%(disc_x_js)s, DISC_Y]);
         var dop=dl.property("ADBE Transform Group").property("ADBE Opacity");
         dop.setValueAtTime(Math.max(0,DISC_END-0.35), 100); dop.setValueAtTime(DISC_END, 0); easePair(dop);
         dl.outPoint=DISC_END;

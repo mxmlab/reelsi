@@ -43,9 +43,19 @@ def client():
 @pytest.mark.parametrize("host", ["localhost:5001", "127.0.0.1:5001", "127.0.0.1",
                                   "localhost", "LOCALHOST:5001", "[::1]:5001"])
 def test_local_hosts_allowed(client, host):
-    """Обычная работа не должна пострадать: и localhost, и 127.0.0.1, и IPv6."""
+    """Обычная работа не должна пострадать: и localhost, и 127.0.0.1, и IPv6.
+
+    Порт 5001 — свой: его знает и `PORT` webui (умолчание), и тестовый стенд."""
     r = client.get("/api/media?path=", headers={"Host": host})
     assert r.status_code != 403, f"{host} заблокирован, а это нормальный клиент"
+
+
+def test_host_with_foreign_port_rejected(client):
+    """Локальное имя, но ЧУЖОЙ порт — не наш сервер: у нас дверь одна."""
+    r = client.get("/api/media?path=x", headers={"Host": "127.0.0.1:5999"})
+    assert r.status_code == 403
+    r = client.get("/api/media?path=x", headers={"Host": "localhost:8080"})
+    assert r.status_code == 403
 
 
 @pytest.mark.parametrize("host", ["evil.example.com", "evil.example.com:5001",
@@ -135,7 +145,8 @@ def test_export_routes_use_the_same_guard(client, tmp_path, monkeypatch):
     точно так же. Проверка одна на всех — иначе она разъедется по копиям."""
     conf = tmp_path / "rclone.conf"
     conf.write_text("[gd]\ntoken = СЕКРЕТ\n", encoding="utf-8")
-    r = client.get(f"/api/export_xml?path={conf}", headers={"Host": "127.0.0.1:5001"})
+    r = client.post("/api/export_xml", json={"path": str(conf)},
+                    headers={"Host": "127.0.0.1:5001"})
     assert r.status_code == 403
 
 
@@ -144,6 +155,7 @@ def test_host_helper_rejects_empty():
     assert not api._host_is_local("")
     assert not api._host_is_local(None)
     assert api._host_is_local("127.0.0.1:5001")
+    assert not api._host_is_local("127.0.0.1:5999")     # чужой порт — не наш сервер
 
 
 # --------------------------------------------------------------------------- #
@@ -153,7 +165,7 @@ def test_host_helper_rejects_empty():
 # открытая страница может отправить «простой» POST (без preflight) на /api/cancel
 # или любой эндпоинт, терпящий пустое тело, — и он выполнится. Браузер сам ставит
 # Sec-Fetch-Site, а form/fetch из чужого origin несёт Origin.
-_LOCAL = {"Host": "127.0.0.1:5001"}
+_LOCAL = {"Host": "127.0.0.1"}
 
 
 @pytest.fixture(autouse=True)

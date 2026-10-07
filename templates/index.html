@@ -107,6 +107,7 @@
   <div class="card">
     <h2><span class="k">◆</span>Клипы <span class="i" data-t="Готовые нарезки. Правка = предпросмотр + редактор нарезки. Можно дозалить внешние XML (скачал, поправил в другой программе, залил обратно). «Из папки результата» подхватывает все .xml из папки выхода — выручает, если список пропал (другой браузер, чистка localStorage).">!</span>
       <span class="grow"></span>
+      <button class="sm" onclick="openTrash()"><span data-ic="trash"></span> Корзина</button>
       <button class="sm" onclick="scanOutdir()"><span data-ic="dl"></span> Из папки результата</button>
       <button class="sm" onclick="addExternal()"><span data-ic="plus"></span> Добавить XML…</button>
       <button class="icon" id="delSel1" data-delsel onclick="delSelClips()" disabled aria-label="Удалить выбранные клипы" data-t="Удалить отмеченные галочками клипы — убрать из списка или стереть с диска файлы нарезки. Без отмеченных кнопка не работает."><span data-ic="trash"></span></button>
@@ -223,19 +224,42 @@
         <div style="align-self:center"><label class="chk" style="display:flex;gap:7px;align-items:center;margin:0"><input type="checkbox" id="censor" checked onchange="captureAE()"> Цензурить аудио</label></div>
       </div>
       <div class="row" style="margin-top:12px">
-        <div><label for="musicmode">Музыка (−20 dB)</label><select id="musicmode" onchange="musicUI();captureAE()">
-          <option value="random" selected>случайно из скачанных</option>
-          <option value="url">ссылка YouTube</option><option value="file">файл</option></select></div>
-        <div class="grow" id="musicinbox"><label id="musicinlbl">Ссылка YouTube</label><input id="aemusic" style="width:100%" placeholder="https://youtube.com/..." onchange="captureAE()"></div>
-        <button class="sm" id="musicpick" onclick="pickMusic()" style="display:none">Выбрать…</button>
-      </div>
-      <div class="row" style="margin-top:8px">
         <div class="grow"><label for="aeoutdir">Папка для .jsx</label><input id="aeoutdir" style="width:100%" oninput="aeDirSync(this)" onchange="aeDirCommit(this)"><span class="hint" id="aeoutdirnote" style="display:block;margin-top:4px"></span></div>
         <button class="sm" onclick="pickdir('aeoutdir')">Выбрать…</button>
-        <div class="grow"><label for="aemusicdir">Папка для музыки</label><input id="aemusicdir" style="width:100%" oninput="saveState()"></div>
-        <button class="sm" onclick="pickdir('aemusicdir')">Выбрать…</button>
       </div>
     </details>
+    <!-- Музыка КЛИПА: режим и папка — из стиля (там же, где громкость music_db), у клипа
+         только переопределение. Выбранный при «случайно» трек виден именем файла — раньше
+         он выбирался в момент сборки и нигде не показывался, а сменить его было нельзя.
+         Этот блок — единственная дверь музыки клипа: прежние общие поля шага 3
+         (musicmode/aemusic/aemusicdir) убраны, чтобы значение не жило в двух местах. -->
+    <div class="sect">Музыка</div>
+    <div class="row" style="margin-top:8px;align-items:center">
+      <div><label for="musicown">Музыка клипа</label><select id="musicown" onchange="musicOwnChanged(this.value)">
+        <option value="style">как в стиле</option>
+        <option value="own">свой трек</option></select></div>
+      <span class="grow"></span>
+      <span id="musictrack" class="mono" style="font-size:12px"></span>
+      <button class="sm" id="musicreroll" onclick="musicReroll()" style="display:none" data-t="Выбрать другой трек из папки музыки: прежний исключается, поэтому трек гарантированно сменится.">Другой трек</button>
+    </div>
+    <div id="musicovr" style="display:none">
+      <div class="row" style="margin-top:8px;align-items:center">
+        <div><label for="musicmode">Какой трек</label><select id="musicmode" onchange="musicOverrideEdit()">
+          <option value="off">без музыки</option>
+          <option value="random">случайно из папки</option>
+          <option value="file">файл</option>
+          <option value="url">ссылка YouTube</option></select></div>
+        <button class="sm" onclick="pickMusic()">Файл…</button>
+      </div>
+      <div class="row" style="margin-top:8px;align-items:center">
+        <div class="grow"><label for="musicsrc">Файл или ссылка <span class="i" data-t="Путь к файлу трека или ссылка YouTube. Ссылку скачивает кнопка «Скачать» — до этого сборка качала её молча и только в момент сборки. Скачанный файл попадает в папку музыки и может быть выбран режимом «случайно».">!</span></label><input id="musicsrc" style="width:100%" onchange="musicOverrideEdit()"></div>
+        <button class="sm" id="musicdl" onclick="musicDownload()">Скачать</button>
+      </div>
+      <div class="row" style="margin-top:8px;align-items:center">
+        <div class="grow"><label for="musicdir">Папка треков (стиль) <span class="i" data-t="Папка, из которой берётся трек в режиме «случайно». Это настройка СТИЛЯ, а не клипа: правка видна у всех клипов на этом стиле. Пусто — папка music рядом с проектом.">!</span></label><input id="musicdir" style="width:100%" onchange="musicDirChanged()"></div>
+        <button class="sm" onclick="pickdir('musicdir')">Выбрать…</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -367,6 +391,7 @@
           <div class="pvstage" id="ipvstage">
             <div id="ipvtopline" class="ipvtopline" style="display:none"><div class="pvtl_track"></div><div class="pvtl_prog"></div></div>
             <div id="ipvcaption" class="ipvcaption" data-noi18n style="display:none"><div class="pvcap_inner"></div><span class="pvcap_text"></span></div>
+            <div id="ipvdisc" class="ipvdisc" data-noi18n style="display:none"><span class="pvdis_text"></span></div>
             <div id="ipvintro" class="ipvintro" data-noi18n></div>
             <div id="ipvins" class="ipvins"></div>
             <div id="ipvsub" class="pvsub" data-noi18n></div>
@@ -397,7 +422,8 @@
               <button class="sm" onclick="insAdd('video')" data-t="Видео-вставка вручную — встанет на месте плейхеда предпросмотра (на весь кадр, играет весь свой хрон)."><span data-ic="plus"></span> видео</button>
               <span id="insres" class="ok"></span>
               <span class="grow"></span>
-              <button class="sm" id="insUndoBtn" onclick="insUndo()" disabled aria-label="Вернуть удалённую вставку" data-t="Вернуть последнюю удалённую вставку"><span data-ic="undo"></span></button>
+              <button class="sm" id="insUndoBtn" onclick="insUndo()" disabled aria-label="Отменить правку вставок" data-t="Отменить последнюю правку вставок (Ctrl+Z)"><span data-ic="undo"></span></button>
+              <button class="sm" id="insRedoBtn" onclick="insRedo()" disabled aria-label="Повторить правку вставок" data-t="Повторить отменённую правку вставок (Ctrl+Shift+Z или Ctrl+Y)"><span data-ic="refresh"></span></button>
             </div>
             <div id="insHost" class="inshostscroll"></div>
           </div>
@@ -738,10 +764,10 @@
     <div class="mbody" style="display:flex;flex-direction:column;gap:10px">
       <div id="delClipName" data-noi18n style="font-size:13px;word-break:break-all;color:var(--tx);max-height:120px;overflow-y:auto"></div>
       <div id="delClipInitial" style="display:flex;flex-direction:column;gap:10px">
-        <div class="muted" style="font-size:12px;line-height:1.5">Убрать клип только из списка интерфейса или удалить XML и все сопутствующие файлы нарезки с диска? Исходное видео не затрагивается.</div>
+        <div class="muted" style="font-size:12px;line-height:1.5">Убрать клип только из списка интерфейса или отправить XML и все сопутствующие файлы нарезки в корзину (можно вернуть)? Исходное видео не затрагивается.</div>
         <div class="row" style="gap:8px">
           <button class="primary" style="flex:1" onclick="delClipListOnly()">Убрать из списка</button>
-          <button class="primary" style="flex:1" onclick="delClipDiskPrepare()">Удалить с диска…</button>
+          <button class="primary" style="flex:1" onclick="delClipDiskPrepare()">В корзину (можно вернуть)…</button>
         </div>
       </div>
       <div id="delClipConfirm" style="display:none;flex-direction:column;gap:10px">
@@ -750,9 +776,20 @@
         <div id="delClipList" style="max-height:160px;overflow-y:auto;background:var(--bg2);border:1px solid var(--bd);border-radius:var(--r);padding:8px;font-size:11px;font-family:ui-monospace,monospace;color:var(--mut);line-height:1.6;display:flex;flex-direction:column;gap:2px"></div>
         <div class="row" style="gap:8px">
           <button class="sm" style="flex:1" onclick="delClipDiskBack()">Назад</button>
-          <button class="primary" id="delClipDiskConfirmBtn" style="flex:1" onclick="delClipDiskExecute()">Удалить с диска</button>
+          <button class="primary" id="delClipDiskConfirmBtn" style="flex:1" onclick="delClipDiskExecute()">В корзину (можно вернуть)</button>
         </div>
       </div>
+    </div>
+  </div>
+</div>
+
+<div class="backdrop" id="mbTrash" onclick="closeIfBack(event,'mbTrash')">
+  <div class="modal" style="max-width:700px" role="dialog" aria-modal="true" aria-label="Корзина">
+    <div class="mhead"><span class="t">Корзина</span>
+      <span class="grow"></span>
+      <button class="icon" data-close aria-label="Закрыть" data-t="Закрыть" onclick="closeModal('mbTrash')"><span data-ic="x"></span></button></div>
+    <div class="mbody" style="display:flex;flex-direction:column;gap:10px">
+      <div id="trashList" style="max-height:360px;overflow-y:auto;background:var(--bg2);border:1px solid var(--bd);border-radius:var(--r);padding:8px;font-size:12px;line-height:1.5;display:flex;flex-direction:column;gap:6px"></div>
     </div>
   </div>
 </div>

@@ -39,6 +39,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
 INSERTS_JS = os.path.join(ROOT, "static", "app", "80-inserts.js")
+QUEUE_JS = os.path.join(ROOT, "static", "app", "40-queue.js")
 node = pytest.mark.skipif(not shutil.which("node"),
                           reason="контракт фронта требует node в PATH")
 
@@ -107,7 +108,10 @@ const calls=(url)=>CALLS.filter(c=>c.url===url);
 def _run(scenario, source=None):
     """Стенд + тела боевых функций + сценарий; сценарий печатает JSON последней строкой."""
     src = source if source is not None else _read(INSERTS_JS)
-    code = STAND + "\n".join(_func(src, n) for n in FUNCS) + "\n" + scenario
+    # clipSpeaker живёт в 40-queue.js: карточка берёт спикера КЛИПА (а не общий выбор
+    # шага 1) через него, и стенду нужна та же боевая функция, а не её копия.
+    clip = _func(_read(QUEUE_JS), "clipSpeaker")
+    code = STAND + clip + "\n" + "\n".join(_func(src, n) for n in FUNCS) + "\n" + scenario
     p = subprocess.run(["node", "-e", code], capture_output=True, text=True,
                        encoding="utf-8-sig", errors="replace", timeout=60)
     assert p.returncode == 0, p.stderr.strip()[:600]

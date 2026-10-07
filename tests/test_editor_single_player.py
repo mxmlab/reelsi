@@ -52,12 +52,21 @@ node = pytest.mark.skipif(not shutil.which("node"), reason="стенд треб�
 EDITOR_FUNCS = ("edOpen", "edResize", "edTotal", "edBlockAt", "edCutTime", "edSrcOf", "edCutOf",
                 "edS2X", "edX2S", "edUI",
                 "edRaw", "edInCut", "edWords", "edSeek", "edToggle", "edPlay", "edPause",
-                "edTake", "edJump", "edArm", "edTick", "edBind")
+                "edTake", "edJump", "edVoiceSeekWait", "edVoiceSeekClose", "edVoiceSeekOff",
+                "edArm", "edTick", "edBind")
 PREVIEW_FUNCS = ("openPreview", "pvVideoTo", "pvWordAt", "pvSegAt", "bufMake", "bufIdle",
-                 "bufArm", "bufRoll", "bufTake",
+                 "bufSilent", "bufArm", "bufRoll", "bufTake",
                  "bufSwap", "spareLead", "spareIdle", "spareStop", "spareSwap", "spareRollAt",
+                 # Дублёр дорожки голоса: стык блока ведёт edArm/edJump, и гашение
+                 # камерного разбега (spareStop) проходит ту же дверь, что и голос.
+                 # `vtOf` здесь НЕ вырезаем: у стенда своя дверь дорожки (ниже), и
+                 # боевая затирала бы её — тогда `vtOf(ED).el` остался бы пустым.
+                 "vtSpareOf", "vtSpareLive", "vtSpareIdle", "vtSpareStop", "vtSpareAt", "vtSpareArm",
+                 "vtSpareRoll", "vtSpareTake", "vtSpareSwap", "vtSpareCtl",
+                 "voicePrime",
                  "camVisual", "camIdle", "camApply", "camTrack", "camDeltas", "camBufs",
                  "vtPlaying", "vtSrcAt", "vtNow", "vtAudioCam", "vtGate", "vtTick",
+                 "vtSeek", "vtRate", "vtSeekAt",
                  "vtIsPv", "vtIsEd", "vtMuteHost",
                  "pvSrc", "MEDIA_VOL")
 
@@ -81,6 +90,12 @@ def _bodies() -> str:
     preview = PREVIEW_JS.read_text(encoding="utf-8")
     editor = EDITOR_JS.read_text(encoding="utf-8")
     out = []
+    # Пороги синхрона дорожки — ИЗ ФАЙЛА: свои копии в стенде разъезжались бы с
+    # боевыми молча (перемотка становится скоростью — на этом и попались).
+    for name in ("VT_SOFT", "VT_DRIFT", "VT_RATE", "VT_QUIET", "VT_POLL"):
+        m = re.search(r"^const %s=.*$" % name, preview, re.M)
+        assert m is not None, f"в 60-preview.js нет const {name}"
+        out.append(m.group(0))
     for name in PREVIEW_FUNCS:
         if name == "MEDIA_VOL":
             continue                      # это переменная, а не функция — объявим в стенде
@@ -136,6 +151,9 @@ function $(id){return BY_ID[id]||null;}
 globalThis.devicePixelRatio=1;
 // Состояние страницы, к которому обращаются боевые функции
 let MEDIA_VOL=1;
+// Выключатель мутационного теста (test_voice_spare.py): без него вырезанный `edJump`
+// спотыкался бы о необъявленное имя. В бою он всегда 0.
+let EDMUTVOICE=0;
 const CALLS=[];                     // что плеер сказал дорожке голоса и живому окну
 const LOGS=[];
 function uiLog(m){LOGS.push(String(m));}
@@ -154,7 +172,8 @@ function clipLabel(c){return (c&&(c.label||c.name))||'';}
 // Дорожка обработанного голоса и живой хост плагинов: их двери подменяем счётчиками —
 // проверяем, ЧЕМ плеер их зовёт, а не то, как они внутри играют звук.
 let VTTICK=[],LIVE=[];
-function vtOf(P){if(!P.vt)P.vt={on:true,el:new El('audio'),path:'C:/v.wav'};return P.vt;}
+function vtOf(P){if(!P.vt)P.vt={on:true,el:new El('audio'),path:'C:/v.wav',
+  vsp:null,vspAt:null};return P.vt;}
 function vtTick(P,tm){VTTICK.push([P,+tm]);realVtTick(P,tm);}   // кто позван — проверяет тест
 function vtPause(P){CALLS.push(['pause',P]);}
 function vtLiveOn(){return false;}                    // окно плагина в стенде закрыто
@@ -230,7 +249,7 @@ function requestAnimationFrame(){return 1;}
 function cancelAnimationFrame(){}
 const EDRULER=18;   // высота линейки, css px (как в 70-editor.js)
 const PV_PREROLL=0.35,PV_SWAP_LO=-0.12,PV_SWAP_HI=0.5;   // окна дублёра (как в 60-preview.js)
-const VT_DRIFT=0.15;                                     // допуск подводки звука (60-preview.js)
+const VT_SWAP_LO=-0.06,VT_SWAP_HI=0.25;   // допуск подмены дорожки голоса (как в 60-preview.js)
 """ + _bodies() + r"""
 
 // ---- один прогон «открыли клип и играем» ----------------------------------------

@@ -36,12 +36,12 @@ function patchSubStyleSoon(sw, sr){
   _inspSubPatchTimer=setTimeout(async ()=>{
     _inspSubPatchTimer=null;
     const c=(curAE>=0&&CLIPS[curAE])?CLIPS[curAE]:null;
-    const j=c?c.job:null;
-    if(!j||!j.speaker){
+    const spkKey=c?clipSpeaker(c):'';
+    if(!spkKey){
       uiLog(t('настройки сабов не сохранены в файл: у клипа нет тега спикера'));
       return;
     }
-    const spk=(typeof SPEAKERS!=='undefined')?SPEAKERS[j.speaker]:null;
+    const spk=(typeof SPEAKERS!=='undefined')?SPEAKERS[spkKey]:null;
     if(!spk||!spk.style){
       uiLog(t('настройки сабов не сохранены в файл: у спикера не задан стиль'));
       return;
@@ -132,7 +132,7 @@ function subrowHighlight(tm){
 }
 function openInsertsFor(i){if(i==null||i<0||!CLIPS[i]){toast(t('Выбери клип'));return;}
   curIns=i;IPVMODE='clips';
-  INS_UNDO=null;insUndoUI();   // undo живёт в рамках сеанса окна — чужой клип/переоткрытие сбрасывает снимок
+  insEnsureUids(CLIPS[i]);insHistReset(CLIPS[i]);   // uid карточек + история правок — в рамках сеанса окна
   if(curAE!==i||AEXML!==CLIPS[i].xml)selectAE(i);
   $('mbInserts').querySelector('.modal').classList.remove('aemode');
   $('mbInsTitle').textContent=t('Вставки');
@@ -147,7 +147,7 @@ function openInsertsFor(i){if(i==null||i<0||!CLIPS[i]){toast(t('Выбери к�
 function openAEPreview(){if(curAE<0){toast(t('Выбери клип'));return;}captureAE();
   ensureJobs();                                   // подтянуть вставки, добавленные на шаге 2 ПОСЛЕ выбора клипа
   INS=(CLIPS[curAE].job.ins||[]).map(x=>({...x}));renderIns();
-  IPVMODE='ae';curIns=-1;INS_UNDO=null;insUndoUI();
+  IPVMODE='ae';curIns=-1;insHistReset(CLIPS[curAE]);   // история правок вставок — своя на клип
   $('mbInserts').querySelector('.modal').classList.add('aemode');
   $('mbInsTitle').textContent=t('Предпросмотр AE — вставки · интро · слова');
   $('insres').textContent='';$('insname').textContent=CLIPS[curAE].name||'';
@@ -346,7 +346,7 @@ function syncClipLists(){renderClips2();renderClips3();}   // теги «вст�
 // записывался в другой, открытый к тому моменту.
 async function aiInsertsRun(){if(curIns<0)return;const c=CLIPS[curIns];const xml=c.xml;const el=$('insres');
   el.className='muted';el.textContent=t('подбираю…');uiLog(t('вставки (ИИ) для ')+c.name+t('…'));
-  try{const d=await aiFetch('/api/ai_inserts',{xml,rejected:c.ins_rejected||[],speaker:val('speaker')||undefined},'insStop','insres');
+  try{const d=await aiFetch('/api/ai_inserts',{xml,rejected:c.ins_rejected||[],speaker:clipSpeaker(c)||undefined},'insStop','insres');
     if(d.error){el.className='err';el.textContent='⚠ '+errText(d);uiLog(t('  ОШИБКА: ')+d.error);return;}
     c.inserts=(d.inserts||[]).map(x=>({...x,media:''}));insLog(d);
     c.insTarget=Math.max(d.insTarget||0,c.inserts.length);   // цель «добрать» приезжает с бэкенда (от длины ролика), а не зашита в JS
@@ -357,10 +357,11 @@ async function aiInsertsRun(){if(curIns<0)return;const c=CLIPS[curIns];const xml
     renderInsHost();syncClipLists();saveState();
   }catch(e){if(aiAborted(e)){el.className='muted';el.textContent=t('⏹ остановлено');return;}
     el.className='err';el.textContent='⚠ '+e;}}
-// Цель по числу вставок для текущего спикера: photo + video из профиля (дефолт 10 + 3 = 13).
-function spkInsTarget(){
+// Цель по числу вставок — для спикера КЛИПА (photo + video из его профиля; дефолт
+// 10 + 3 = 13). Клип без тега спикера общей квоты не получает: у него профиля нет.
+function spkInsTarget(c){
   if(typeof SPEAKERS==='undefined')return 13;
-  const p=SPEAKERS[val('speaker')];
+  const p=SPEAKERS[clipSpeaker(c)];
   if(!p||!p.inserts)return 13;
   const ph=(p.inserts.photo!=null&&!isNaN(parseInt(p.inserts.photo,10)))?parseInt(p.inserts.photo,10):10;
   const vid=(p.inserts.video!=null&&!isNaN(parseInt(p.inserts.video,10)))?parseInt(p.inserts.video,10):3;
@@ -369,13 +370,13 @@ function spkInsTarget(){
 }
 // добрать недостающие: сгенерить (target - текущих) НОВЫХ, не повторяя оставленные (тайминги/темы)
 async function aiInsertsMore(){if(curIns<0)return;const c=CLIPS[curIns];const cur=c.inserts||[];
-  // цель — из профиля текущего спикера; пересчитывается заново, чтобы правка в профиле действовала сразу
-  const target=spkInsTarget();const need=Math.max(0,target-cur.length);
+  // цель — из профиля спикера ЭТОГО клипа; пересчитывается заново, чтобы правка в профиле действовала сразу
+  const target=spkInsTarget(c);const need=Math.max(0,target-cur.length);
   const el=$('insres');
   if(need<=0){el.className='muted';el.textContent=t('ничего добирать — удали лишние карточки сначала');return;}
   el.className='muted';el.textContent=t('добираю {n}…',{n:need});uiLog(t('добор вставок ({n}) для {m}…',{n:need,m:c.name}));
   const avoid=cur.map(x=>({start_sec:x.start_sec,type:x.type,query:x.query||''}));
-  try{const d=await aiFetch('/api/ai_inserts',{xml:c.xml,count:need,avoid,rejected:c.ins_rejected||[],speaker:val('speaker')||undefined},'insStop','insres');
+  try{const d=await aiFetch('/api/ai_inserts',{xml:c.xml,count:need,avoid,rejected:c.ins_rejected||[],speaker:clipSpeaker(c)||undefined},'insStop','insres');
     if(d.error){el.className='err';el.textContent='⚠ '+errText(d);uiLog(t('  ОШИБКА: ')+d.error);return;}
     insLog(d);
     const fresh=(d.inserts||[]).map(x=>({...x,media:''}))
@@ -413,7 +414,7 @@ async function insToggleType(i){const c=CLIPS[curIns];if(!c||!c.inserts)return;c
   x.stockOpts=null;x.libOpts=null;x.stockShown=false;x.libShown=false;   // старые варианты — про прежний тип
   if(x.libAuto&&x.media&&insKind(x.media)!==x.type){x.media='';x.libAuto=false;}   // автофайл — под прежний тип
   renderInsHost();   // бейдж и карточка — сразу, до сетевых запросов: клик не выглядит «зависшим»
-  const spkKey=(c.job&&c.job.speaker)||(val('speaker')||'').trim()||undefined;
+  const spkKey=clipSpeaker(c)||undefined;
   if(stockWas)await insStockFor(i);          // открытые панели переискиваем и оставляем открытыми
   if(libWas)await insLibFor(i);
   const auto=illCfg().auto!==false;          // автоподбор для пустой вставки — как при правке запроса
@@ -424,34 +425,98 @@ async function insToggleType(i){const c=CLIPS[curIns];if(!c||!c.inserts)return;c
 // повторная разметка/«заново» передаст это модели («юзер удалил — не предлагай похожее»).
 // В базу вставок при этом НЕ лезем: «эта вставка тут не нужна» — не то же самое, что
 // «эта картинка не подходит под запрос» (см. insClearMedia).
-// Перед мутацией делаем снимок для одноуровневого undo (insUndo): копию вставки, её
-// индекс и ТОЧНОЕ ins_rejected ДО того, как сюда допишется брак. Undo вернёт как было.
 function insDel(i){const c=CLIPS[curIns];if(!c||!c.inserts)return;const x=c.inserts[i];
-  INS_UNDO={xml:c.xml,idx:i,item:JSON.parse(JSON.stringify(x)),
-    rejected:c.ins_rejected===undefined?null:JSON.parse(JSON.stringify(c.ins_rejected))};
   if(x&&(x.query||'').trim())
     c.ins_rejected=((c.ins_rejected||[]).concat([{type:x.type,start_sec:x.start_sec,query:x.query||''}])).slice(-30);
-  c.inserts.splice(i,1);renderInsHost();syncClipLists();saveState();insUndoUI();}
-let INS_UNDO=null;   // снимок последнего insDel: {xml, idx, item, rejected} — между F5 не хранится
-function insUndoUI(){const b=$('insUndoBtn');if(b)b.disabled=!INS_UNDO;}
+  c.inserts.splice(i,1);renderInsHost();syncClipLists();saveState();}
+// ---- история правок вставок: многошаговая отмена и повтор ЛЮБОЙ правки ----
+// Одна дверь на всё: снимок состояния вставок клипа {inserts, ins_rejected, insTarget,
+// job_ins}. Пишет в историю ровно одна функция — insHistTouch: сравнивает сериализованный
+// текущий снимок с последним записанным, и её зовёт saveState (99-boot.js). Перечислять
+// двери (удаление, выбор файла, тайминг, драг, маска, масштаб, стиль, отбраковка) не надо:
+// любая правка доходит до saveState — и попадает в историю. Стек на клип (по xml): открыт
+// один клип, а смена клипа в окне историю сбрасывает (insHistReset).
+const INS_HIST={},INS_HIST_LAST={},INS_HIST_MAX=100;
+let INS_HIST_APPLY=false;   // идёт применение снимка: saveState в историю не пишет
+function insHistFor(xml){return INS_HIST[xml]||(INS_HIST[xml]={undo:[],redo:[]});}
+// genBusy/_typeBusy — мгновенные флаги (их не пишет и stateObj): в снимке они дали бы
+// «шаг истории» на каждое мерцание кнопки и залипшую «…» после отката.
+function insHistState(c){return {
+  inserts:(c.inserts||[]).map(x=>{const xx={...x};delete xx.genBusy;delete xx._typeBusy;return xx;}),
+  ins_rejected:c.ins_rejected===undefined?null:c.ins_rejected,
+  insTarget:c.insTarget===undefined?null:c.insTarget,
+  job_ins:(c.job&&c.job.ins)||[]};}
+// Клип, чьи вставки сейчас правят: открыто окно вставок шага 2 (curIns) или превью
+// шага 3 (curAE + открытое превью). Другое окно/шаг — истории не касается.
+function insHistClip(){
+  if(INS_HIST_APPLY)return null;
+  const mb=(typeof $==='function')?$('mbInserts'):null;
+  if(!mb||!mb.classList||!mb.classList.contains('on'))return null;
+  if(IPVMODE==='ae')return (curAE>=0&&CLIPS[curAE])?CLIPS[curAE]:null;
+  return (curIns>=0&&CLIPS[curIns])?CLIPS[curIns]:null;}
+function insHistTouch(c){
+  if(INS_HIST_APPLY)return;
+  c=c||insHistClip();
+  if(!c||!c.xml)return;
+  const s=JSON.stringify(insHistState(c));
+  const last=INS_HIST_LAST[c.xml];
+  INS_HIST_LAST[c.xml]=s;
+  if(last===undefined||last===s)return;      // базы ещё нет или ничего не изменилось
+  const h=insHistFor(c.xml);
+  h.undo.push(last);                         // прежнее состояние — в стек отмены
+  if(h.undo.length>INS_HIST_MAX)h.undo.shift();
+  h.redo.length=0;                           // новая правка убивает повтор
+  insUndoUI();}
+// Сброс истории при открытии окна/смене клипа: база — то, что было на экране.
+function insHistReset(c){
+  if(!c||!c.xml)return;
+  INS_HIST[c.xml]={undo:[],redo:[]};
+  INS_HIST_LAST[c.xml]=JSON.stringify(insHistState(c));
+  insUndoUI();}
+function insUndoUI(){
+  const c=insHistClip();
+  const h=(c&&c.xml)?INS_HIST[c.xml]:null;
+  const b=$('insUndoBtn');if(b)b.disabled=!(h&&h.undo.length);
+  const rb=$('insRedoBtn');if(rb)rb.disabled=!(h&&h.redo.length);}
+// Применение снимка: вернуть поля клипу, перерисовать тем же путём, что правку
+// (ipvAfterEdit), и сохранить БЕЗ записи в историю — иначе откат сам стал бы шагом.
+function insHistApply(c,state){
+  if(!c||!state)return;
+  c.inserts=JSON.parse(JSON.stringify(state.inserts||[]));
+  if(state.ins_rejected==null)delete c.ins_rejected;else c.ins_rejected=JSON.parse(JSON.stringify(state.ins_rejected));
+  if(state.insTarget==null)delete c.insTarget;else c.insTarget=state.insTarget;
+  if(c.job)c.job.ins=JSON.parse(JSON.stringify(state.job_ins||[]));
+  insEnsureUids(c);
+  // Открытая панель шага 3 рисует INS — вернуть её из восстановленного задания, иначе на
+  // экране останется отменённый список (renderIns читает глобальный INS, а не задание).
+  if(IPVMODE==='ae'&&curAE>=0&&CLIPS[curAE]===c&&typeof INS!=='undefined')
+    INS=((c.job&&c.job.ins)||[]).map(x=>({...x}));
+  INS_HIST_APPLY=true;
+  try{ipvAfterEdit();}finally{INS_HIST_APPLY=false;}
+  INS_HIST_LAST[c.xml]=JSON.stringify(insHistState(c));
+  insUndoUI();}
 function insUndo(){
-  const u=INS_UNDO;if(!u)return;
-  // Клип ищем ПО XML, а не по индексу: за время от удаления до отката список мог
-  // перестроиться (клипы удаляются, curIns меняется) — индекс бы указывал на чужого.
-  const c=CLIPS.find(v=>v&&v.xml===u.xml);
-  if(!c){INS_UNDO=null;insUndoUI();return;}
-  if(!Array.isArray(c.inserts))c.inserts=[];
-  c.inserts.splice(Math.min(u.idx,c.inserts.length),0,u.item);
-  if(u.rejected===null)delete c.ins_rejected; else c.ins_rejected=u.rejected;
-  if(curIns>=0&&CLIPS[curIns]===c)renderInsHost();
-  syncClipLists();saveState();INS_UNDO=null;insUndoUI();
-  uiLog(t('вставка возвращена: {i} ({n})',{i:u.idx+1,n:c.name}));}
+  const c=insHistClip();if(!c||!c.xml)return;
+  const h=insHistFor(c.xml);if(!h.undo.length)return;
+  const prev=h.undo.pop();
+  h.redo.push(JSON.stringify(insHistState(c)));      // текущее — в стек повтора
+  if(h.redo.length>INS_HIST_MAX)h.redo.shift();
+  insHistApply(c,JSON.parse(prev));                  // внутри: LAST и обновление кнопок
+  uiLog(t('вставки: правка отменена'));}
+function insRedo(){
+  const c=insHistClip();if(!c||!c.xml)return;
+  const h=insHistFor(c.xml);if(!h.redo.length)return;
+  const next=h.redo.pop();
+  h.undo.push(JSON.stringify(insHistState(c)));
+  if(h.undo.length>INS_HIST_MAX)h.undo.shift();
+  insHistApply(c,JSON.parse(next));
+  uiLog(t('вставки: правка повторена'));}
 // Две кнопки генерации — по одной на личную приписку из профиля спикера («1» и «2»).
 // У фото и видео конфиги разные, но смысл одинаков: цифра — не декор, а выбор слота;
 // сама приписка видна в тултипе и финальный промпт собирает сервер.
 function insGenBtns(i,x){
   const c=(curIns>=0&&CLIPS[curIns])?CLIPS[curIns]:null;
-  const spkKey=(c&&c.job&&c.job.speaker)||(val('speaker')||'').trim()||'';
+  const spkKey=clipSpeaker(c);
   const video=x.type==='video',ips=video?videoPrompts(spkKey):imgPrompts(spkKey);
   // у вставки с галкой «на подложке» кнопки 1/2 шлют слоты pa/pb: в тултипе
   // должна быть видна ТА приписка, которая реально уйдёт в генерацию
@@ -609,7 +674,7 @@ async function insGenVideo(i,slot){if(curIns<0)return;const c=CLIPS[curIns],x=c&
   const actualSlot=(slot==='b'?'b':'a'),target=insVideoTarget(c,x);
   // Mark before fetch: F5 между отправкой POST и ответом всё равно знает карточку.
   x.video_job='pending';x.video_slot=actualSlot;x.genBusy=true;saveState();renderInsHost();
-  const speaker=(c&&c.job&&c.job.speaker)||(val('speaker')||'').trim()||undefined;
+  const speaker=clipSpeaker(c)||undefined;
   logReset();progOpen({title:t('Генерация видео')});
   progUpdate(null,t('отправляю запрос…'));
   try{await videoStart({query:x.query,slot:(slot==='b'?'b':'a'),speaker:speaker,
@@ -679,7 +744,7 @@ async function insLibFill(arr,speaker){
       insSetMedia(x,opts[0].path);insApplyCrop(x,opts[0]);x.libAuto=true;n++;}});
   return n;}
 async function insLibAuto(c){
-  const spkKey=(c&&c.job&&c.job.speaker)||(val('speaker')||'').trim()||undefined;
+  const spkKey=clipSpeaker(c)||undefined;
   const n=await insLibFill((c.inserts||[]).filter(x=>!x.media),spkKey);
   if(n)uiLog(t('база вставок: автоподобрано {n} файлов',{n:n}));
   return n;}
@@ -691,7 +756,7 @@ async function insQuery(i,v){if(curIns<0)return;const x=CLIPS[curIns].inserts[i]
   if(q===(x.query||''))return;
   x.query=q;x.libOpts=null;x.stockOpts=null;x.libShown=false;x.stockShown=false;   // старые варианты — не про этот запрос
   const auto=illCfg().auto!==false;
-  const spkKey=(CLIPS[curIns]&&CLIPS[curIns].job&&CLIPS[curIns].job.speaker)||(val('speaker')||'').trim()||undefined;
+  const spkKey=clipSpeaker(CLIPS[curIns])||undefined;
   if(auto&&x.libAuto){x.media='';x.libAuto=false;}   // старый автофайл был под старое описание
   if(q&&!x.media&&auto)await insLibFill([x],spkKey); // ...и сразу ищем под новое
   renderInsHost();syncClipLists();saveState();
@@ -725,7 +790,7 @@ async function insLibFor(i){const x=CLIPS[curIns].inserts[i];if(!x)return;
   if(x.libShown){x.libShown=false;renderInsHost();return;}
   if(!x.libOpts){const q=(x.query||'').trim()||((x.media||'').replace(/^.*[\\\/]/,''));
     if(!q){toast(t('У вставки нет запроса — нечем искать'));return;}
-    const spkKey=(CLIPS[curIns]&&CLIPS[curIns].job&&CLIPS[curIns].job.speaker)||(val('speaker')||'').trim()||undefined;
+    const spkKey=clipSpeaker(CLIPS[curIns])||undefined;
     try{const d=await (await fetch('/api/insertlib_match',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({queries:[{q,type:insWant(x)}],k:8,speaker:spkKey||undefined})})).json();   // тип — как в автоподборе
       x.libOpts=(d.results&&d.results[0])||[];}catch(e){x.libOpts=[];}}
@@ -750,7 +815,7 @@ function insStockRow(x,i){const opts=x.stockOpts||[];
 // вертикаль нужен вертикальный кадр, в квадрат — квадратный, иначе вставка
 // приезжает обрезанной по краям. Спикер — у СВОЕГО клипа (как LUT и рамка камеры).
 function insClipFormat(c){
-  const spk=(c&&c.job&&c.job.speaker)||'';
+  const spk=clipSpeaker(c);
   const p=(spk&&typeof SPEAKERS!=='undefined'&&SPEAKERS[spk])||null;
   return (p&&p.format)||'';}
 async function insStockFor(i){const x=CLIPS[curIns].inserts[i];if(!x)return;

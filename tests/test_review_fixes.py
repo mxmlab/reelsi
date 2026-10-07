@@ -82,6 +82,10 @@ def test_cli_help_dedupe_once(mod):
     assert count == 1, f"Ожидался --no-dedupe ровно 1 раз в options, получено {count}:\n{opts}"
 
 
+# Дерево читается вместе с неотслеживаемыми файлами (`gitfiles.git_files`), поэтому
+# под `pytest -n auto --dist loadgroup` тест идёт в одном воркере с остальными
+# сторожами дерева — самопроверка `test_public_clean` кладёт в корень временный файл.
+@pytest.mark.xdist_group("repo_tree")
 def test_public_files_have_no_dangling_links():
     """Опубликованные файлы (вне .publicignore и исключений) не содержат имён непубликуемых путей."""
     path = os.path.join(ROOT, public_slice.IGNORE_FILE)

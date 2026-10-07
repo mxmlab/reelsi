@@ -25,10 +25,12 @@ Reelsi is a local editing assistant for talking-head video. AI cuts footage by c
 Tested only on Windows 11 with an NVIDIA GPU and Adobe After Effects / Premiere Pro. Other platforms are untested; porting notes: [docs/PLATFORMS.md](docs/PLATFORMS.md).
 
 - Python 3.10 and ffmpeg in PATH.
+- A Chromium-based browser (Chrome, Edge, Brave and the like) is recommended for the preview. In Firefox the source audio of camera files with PCM tracks is not decoded at all — the preview stays silent until it switches to the preview proxy.
 - NVIDIA GPU with CUDA support.
 - Adobe After Effects for project assembly and rendering.
 - LM Studio locally or an API key for a cloud LLM provider.
 - Optional tools: `rclone` (Google Drive downloads), `yt-dlp` (music).
+- Optional Python packages from `requirements-optional.txt` come one by one: every one enables exactly one feature and everything else keeps working (`pedalboard` — live monitoring through VST3 plug-ins and the output device list; `gigaam` — word-level cuts; `silero-vad`, `rembg`, `anthropic`, `yt-dlp`). `python doctor.py` names what is missing and what turns off without it.
 - Subtitle templates use SF Pro; rebuild them for another font via `python tools/harvest_good.py "path/to/reference.xml"`.
 
 ## Installation
@@ -61,6 +63,8 @@ pip install -e .
 # with optional dependencies:
 pip install -e ".[optional]"
 ```
+
+Dependency versions in `requirements.txt` carry an upper bound. Leave it in place: a fresh major release can break the subtitle step on a clean install — librosa 1.0 dropped its `audioread` fallback, and PyAV 19 removed an argument that faster-whisper 1.2 still passes, so PyAV is pinned below 19. If `pip check` or the subtitle step reports a version conflict, reinstall with the pinned versions rather than unpinning.
 
 Verify your environment with `python doctor.py` (or `reelsi-doctor`), which checks installed tools, GPU acceleration, and missing components.
 
@@ -119,9 +123,17 @@ Run test suite and linters locally (CI validates the same checks):
 
 ```bash
 python -m pytest tests -q
+python -m pytest tests -q -n auto --dist loadgroup -m "not perf"   # as in CI
 ruff check .
 mypy
 ```
+
+The second form is what CI runs: `-n auto` (pytest-xdist) spreads the suite over
+workers, `--dist loadgroup` keeps the tests that start a real Chrome
+(`xdist_group("chrome")`) inside one worker — several browsers at once measure
+geometry unreliably — and `-m "not perf"` leaves out the time-budget tests, which
+measure the runner rather than the code (they run locally). Keep the two flags
+together: without the group the Chrome tests scatter over workers.
 
 ## License
 

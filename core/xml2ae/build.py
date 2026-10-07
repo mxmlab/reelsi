@@ -47,8 +47,9 @@ from .plan_camera import CameraInputs, plan_camera
 # Выражения плашки и подписи переехали в plan_decor.py вместе с кодом, который их зовёт,
 # но остаются контрактом сборки: их берут снаружи по-прежнему из build — второй копии нет,
 # это те же объекты.
-from .plan_decor import (DecorInputs, _caption_bg_size_expr,  # noqa: F401
-                         _sub_bg_expr, plan_decor)
+from .plan_decor import (SH_SUB_DIR, SH_SUB_DIST, SH_SUB_OP, SH_SUB_SOFT,  # noqa: F401
+                         DecorInputs, _caption_bg_size_expr, _sub_bg_expr, plan_decor,
+                         shadows_plan)
 from .plan_inserts import (InsertTimingInputs, InsertsInputs, plan_insert_timings,
                            plan_inserts)
 from .plan_intro import IntroInputs, _g_at, _grp_big_i, intro_hl_words, plan_intro
@@ -159,8 +160,11 @@ def _intro_fit_ds(lines: list[dict[str, Any]], ts: float, te: float, ds: float, 
     «большое слово + зазор + стопка», и автофит обязан мерить именно его. None (группа
     без большой строки) — прежний максимум по строкам.
 
-    fit_w — доля ширины кадра (0…1), под которую подгоняем; None — INTRO_FIT_W (дефолт
-    ПРИВЯЗАННОГО интро).
+    fit_w — доля ширины кадра (0…1), под которую подгоняем. Ручка у КАЖДОЙ камеры своя
+    (`intro_margin`/`intro_margin2`, доля = 1 − 2·margin/100), поэтому сюда приходит уже
+    выбранное по камере группы число: выбирает его plan_intro — там же, где выбирается
+    камера группы, и второй копии правила нет. None — запасная доля INTRO_FIT_W (0.92):
+    так зовут автофит прямые вызовы без стиля.
 
     both_ways — интро откреплено от камеры (intro_cam=False): увеличивать
     его некому (зум Камеры 1 в расчёт не входит, cam_keys пуст), поэтому группа садится
@@ -168,11 +172,11 @@ def _intro_fit_ds(lines: list[dict[str, Any]], ts: float, te: float, ds: float, 
     растягивал зум. Привязанное (both_ways=False) по-прежнему только ужимается: потолок
     ему задаёт ручной gs, а ширину — зум камеры.
 
-    fit_max — «Потолок увеличения интро, %», проценты (100…1000):
-    ds = min(fit, fit_max) у откреплённого интро. Режется только УВЕЛИЧЕНИЕ: ужатие
-    длинной строки потолком не ограничивается (fit < 100 при любом потолке ≥ 100).
-    None — потолка нет (привязанное интро ручку не читает вовсе). Без потолка одно
-    короткое слово раздувалось до 667–819 % (≈780 px высотой)."""
+    fit_max — «Масштаб интро, %», потолок увеличения ЭТОЙ камеры (intro_fit_max | intro_fit_max2),
+    проценты (100…1000): ds = min(fit, fit_max) у откреплённого интро. Режется только
+    УВЕЛИЧЕНИЕ: ужатие длинной строки потолком не ограничивается (fit < 100 при любом
+    потолке ≥ 100). None — потолка нет: так зовут привязанное интро (ручку оно не читает
+    вовсе), и без потолка одно короткое слово раздувалось до 667–819 % (≈780 px высотой)."""
     if not lines:
         return ds
     linew = 0.0
@@ -893,13 +897,15 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
     # (родителе прекомпа) и множит СМЕЩЕНИЕ ребёнка и его размер, а собственный сдвиг
     # нула (intro_y/intro_y2) не трогает. Поэтому G входит в базу (-INTRO_BASE_Y+iDy),
     # а intro_y/intro_y2 — плоским слагаемым. 100% = дефолт: y не меняется ни на сотую.
-    # Доля ширины кадра для автофита ОТКРЕПЛЁННОГО интро (ручка intro_fit_w).
-    # Привязанное считается по константе INTRO_FIT_W: его ширину задаёт зум камеры.
-    # Потолок увеличения того же откреплённого интро (ручка intro_fit_max):
-    # без него одно короткое слово растягивалось до 667–819 % кадра. Привязанное ручку
-    # не читает — там потолок задаёт ручной gs, а ширину зум камеры.
-    # Числа G/fit_w/fit_max/intro_cam уже посчитаны в структуре (stv.intro_scale_k,
-    # stv.fit_w, stv.fit_max, stv.intro_cam) — их читают и plan_intro, и подстановки.
+    # Доля ширины кадра для автофита (ручка «Отступ от краёв» СВОЕЙ камеры,
+    # intro_margin/intro_margin2: доля = 1 − 2·margin/100). Правило одно на оба режима:
+    # откреплённое интро подгоняется в обе стороны с потолком увеличения своей камеры
+    # (intro_fit_max/intro_fit_max2), привязанное — только ужимается той же долей (шире
+    # его держит зум камеры). Какое из чисел камеры взять, решает plan_intro — там же,
+    # где выбирается камера группы (второй копии выбора нет).
+    # Числа G/fit_w/fit_w2/fit_max/fit_max2/intro_cam/intro_cam2 уже посчитаны в структуре
+    # (stv.intro_scale_k, stv.fit_w, stv.fit_w2, stv.fit_max, stv.fit_max2, stv.intro_cam,
+    # stv.intro_cam2) — их читает plan_intro.
     # Открепление интро от Камеры 1: галка «интро едет с камерой» снята —
     # нулы «интро» и «интро на кам2» (и затемнение под интро) НЕ привязываются к нулу
     # Камеры 1, а идут по уже существующей ветке else: позиция в координатах кадра.
@@ -970,7 +976,10 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
     # Подпись кадра перенесена в plan_decor.py (capVal.resetCharStyle(); capVal.resetParagraphStyle();).
     _decor = plan_decor(DecorInputs(
         meta=meta, fps=_fps0, inserts=inserts_plan, subs=_subs,
-        caption=caption, disclaimer=disclaimer, font_ps=font_ps, style=stv))
+        caption=caption, disclaimer=disclaimer, font_ps=font_ps, style=stv,
+        # Хвостовая копия превью: галка уже вместе с «текст не пуст» — тем же условием
+        # живёт концевой блок шаблона (disc_end_on), второй копии правила нет.
+        disc_sec=disc_sec, disc_end_on=disc_end_on))
     # Затемнение под интро (масштабирование KF): единственный источник чисел —
     # этот план, из него их берут и шаблон (.jsx), и предпросмотр. Выключенная галка = None:
     # подстановка в шаблоне пустая, .jsx не меняется ни на байт (golden). Координаты — в
@@ -1141,6 +1150,12 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         "intro_comp_shadow": {"dir": stv.intro_comp_shadow_dir,
                               "dist": stv.intro_comp_shadow_dist,
                               "soft": stv.intro_comp_shadow_soft},
+        # Тени AE (Drop Shadow) для превью: субтитры, вставки и плашка под субтитрами.
+        # Числа — те же, что уезжают подстановками в .jsx (считает plan_decor.shadows_plan):
+        # превью переводит их в CSS своей единственной дверью aeShadowCss, своих чисел
+        # тени у фронта нет. op255 — шкала AE 0..255 (в .jsx проценты ручки умножаются
+        # на 255/100), color — [r,g,b] 0..1, как у остальных цветов плана.
+        "shadows": shadows_plan(),
         "back_scale": stv.back_scale,
         "back_step": stv.back_step,
         # Шаг от заднего плана к обычной строке для предпросмотра: None —
@@ -1219,6 +1234,11 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         plan["top_line"] = _decor.top_line_plan
     if _decor.caption_plan:
         plan["caption"] = _decor.caption_plan
+    # Дисклеймер: строки, шрифт, кегль, положение и время хвостовой копии — те же числа,
+    # что уехали подстановками в .jsx, вторым чтением ключей стиля превью не живёт.
+    # Текста нет (пустая строка = скрыт) — ключа нет вовсе.
+    if _decor.disclaimer_plan:
+        plan["disclaimer"] = _decor.disclaimer_plan
     # ---- Подстановки шаблона интро вынесены в plan_intro_tpl.py (этап 5) ----
     # Готовые строки JS: цвета текста, тень слов/строк и прекомпа, раскладка строк (задний
     # план, якорь «first», «большое слева»), эффекты появления (глитч/Deep Glow/Tritone/
@@ -1468,7 +1488,9 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         # ширину кадра кегль — «42.85». DISC_LEAD — только при зазоре строк в стиле.
         disc_end=disc_sec, disc_size=("%g" % _decor.disc_size),
         disc_lead_decl=_decor.disc_lead_decl, disc_lead_js=_decor.disc_lead_js,
-        disc_y=int(meta["h"] * 0.764),
+        # Положение дисклеймера считает plan_decor (ручки disc_y/disc_dx): прежнее
+        # int(H·0.764) при умолчаниях даёт ровно то же число, .jsx прежний байт в байт.
+        disc_y=_decor.disc_y, disc_x_decl=_decor.disc_x_decl, disc_x_js=_decor.disc_x_js,
         # Размытие на старте: Adjustment Layer поверх всего + Gaussian Blur,
         # ключи start_blur -> 0 за start_blur_dur. Выключено (start_blur=0) — пусто.
         start_blur=stv.start_blur,
@@ -1502,8 +1524,9 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
                      "\n    try{dd.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}"
                      + _decor.disc_lead_js_tail +
                      "\n    dsp.setValue(dd);"
-                     "\n    dle.property(\"ADBE Transform Group\").property(\"ADBE Position\").setValue([W/2, DISC_Y]);"
-                     "\n    dle.inPoint=DUR;"
+                     "\n    dle.property(\"ADBE Transform Group\").property(\"ADBE Position\").setValue([%s, DISC_Y]);"
+                     % _decor.disc_x_js
+                     + "\n    dle.inPoint=DUR;"
                      "\n    var dop=dle.property(\"ADBE Transform Group\").property(\"ADBE Opacity\");"
                      "\n    dop.setValueAtTime(DUR+DISC_END-0.35, 100); dop.setValueAtTime(DUR+DISC_END, 0);"
                      "\n    dle.outPoint=DUR+DISC_END;"
@@ -1527,7 +1550,9 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         # (golden_geometry.jsx). Считает его layout: выражения циклов и объявление
         # берутся из одного места.
         hl_size_decl=hl_size_decl(stv.hl_size_k),
-        sh_op=68, sh_dir=181, sh_dist=5, sh_soft=44,
+        # Тень слов субтитров: числа — из plan_decor (SH_SUB_*) и оттуда же в план
+        # (plan["shadows"]["sub"]), поэтому у .jsx и превью одна и та же тень.
+        sh_op=SH_SUB_OP, sh_dir=SH_SUB_DIR, sh_dist=SH_SUB_DIST, sh_soft=SH_SUB_SOFT,
         ins_fx=_js(stv.insert_fx),
         # Радиус скругления маски фотовставки — ОДНО число на .jsx и план (превью):
         # раньше оно стояло константой в шаблоне, и у превью радиуса не было вовсе.

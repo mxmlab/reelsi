@@ -250,6 +250,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": true,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
@@ -786,6 +792,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": true,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
@@ -903,6 +915,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": true,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
@@ -1056,6 +1074,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": true,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
@@ -1176,6 +1200,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": true,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
@@ -1294,6 +1324,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": false,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
@@ -1452,6 +1488,12 @@
    "step_concurrency_override": {
     "cut": 2
    },
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": false,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
@@ -1577,6 +1619,12 @@
    "step_concurrency_override": {
     "cut": 2,
     "yellow": 3
+   },
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": false,
+    "yellow": true
    },
    "step_profiles": {
     "cut": "Основной",
@@ -1738,6 +1786,12 @@
    "step_concurrency_override": {
     "yellow": 3
    },
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": false,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
@@ -1861,6 +1915,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": false,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
@@ -1980,6 +2040,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -2116,6 +2182,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -2236,6 +2308,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -2405,6 +2483,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -2543,6 +2627,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -2665,6 +2755,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -2821,6 +2917,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -2944,6 +3046,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -3101,6 +3209,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -3244,6 +3358,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -3369,6 +3489,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -3494,6 +3620,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -3619,6 +3751,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -3744,6 +3882,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -3870,6 +4014,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -3996,6 +4146,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -4141,6 +4297,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -4269,6 +4431,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -4397,6 +4565,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -4544,6 +4718,12 @@
     "yellow": 4
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
@@ -4655,8 +4835,8 @@
      "api_key": "•••4444",
      "base_url": "http://localhost:9999/v1",
      "headers": {
-      "X-Baz": "qux",
-      "X-Foo": "bar"
+      "X-Baz": "•••qux",
+      "X-Foo": "•••bar"
      },
      "model": "gpt-4o",
      "provider": "openai"
@@ -4694,6 +4874,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": false,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Новый",
     "inserts": "Новый",
@@ -4848,6 +5034,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": false,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Новый",
     "inserts": "Новый",
@@ -5076,6 +5268,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": false,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Новый",
     "inserts": "Новый",
@@ -5227,6 +5425,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": false,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Новый 2",
     "inserts": "Новый 2",
@@ -5371,6 +5575,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": false,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Новый 2",
     "inserts": "Новый 2",
@@ -5515,6 +5725,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": false,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Новый 2",
     "inserts": "Новый 2",
@@ -5666,6 +5882,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": false,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Новый 2",
     "inserts": "Новый 2",
@@ -5817,6 +6039,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": false,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Новый 2",
     "inserts": "Новый 2",
@@ -6035,6 +6263,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": false,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Новый 2",
     "inserts": "Новый 2",
@@ -6190,6 +6424,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": false,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
@@ -6316,6 +6556,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": false,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
@@ -6430,6 +6676,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": true,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
@@ -6529,6 +6781,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": true,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
@@ -6815,6 +7073,12 @@
     "yellow": 1
    },
    "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": true,
+    "yellow": true
+   },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",

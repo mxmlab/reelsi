@@ -356,8 +356,8 @@ def text_width(ps_name: str | None, text: str, size_px: float) -> Any:
     """Ширина строки (px) тем шрифтом, что увидит After Effects. None,
     если шрифт не найден — автофит для этой группы НЕ применяется (ужать по неизвестной
     ширине хуже, чем не ужать). Сумма горизонтальных advance'ов по cmap, делённая на
-    unitsPerEm и умноженная на size_px. Кернинг игнорируем: он даёт единицы процентов,
-    а запас INTRO_FIT_W это 8%."""
+    unitsPerEm и умноженная на size_px. Кернинг игнорируем: он даёт единицы процентов —
+    у интро запас задаёт ручка «Отступ от краёв» (по умолчанию 4 % с каждой стороны)."""
     rec = next((r for r in list_fonts() if r["ps"] == ps_name), None)
     if not rec or not rec.get("file"):
         return None

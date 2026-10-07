@@ -11,8 +11,10 @@ let curAE=-1;
 // Чей клип СЕЙЧАС загружен в панель AE (селектом clips3 → selectAE). Пустая строка =
 // панель с дефолтами, ничьи данные. Без этого признака captureAE стирал разметку — см. там.
 let AEXML='';
+// music_override — «свой трек» у клипа (null = как в стиле), music_pick — закреплённый
+// случайный трек: оба поля живут на клипе, а не в общих полях шага 3 (см. musicClipUI).
 function defJob(){return {highlights:[],hl_breaks:[],hl_count:[],hl_joins:[],hlxml:'',introRows:[],intromode:'word',
-  music:'',music_random:true,exposure:0,style:null,styleKey:null,censor:true,ins:[]};}
+  music_override:null,music_pick:'',music_sig:'',exposure:0,style:null,styleKey:null,censor:true,ins:[]};}
 // normInsPath объявлена в 85-inserts-view.js (грузится раньше) — один общий источник для
 // ensureJobs, applyInsMoved и драга в предпросмотре: «та же вставка» ищется одинаково.
 function ensureJobs(){CLIPS.forEach(c=>{if(!c.job)c.job=defJob();
@@ -25,7 +27,17 @@ function ensureJobs(){CLIPS.forEach(c=>{if(!c.job)c.job=defJob();
   // на подложке kx/ky, масштаб sc, форма маски mw/mh, старт куска в файле sin), едет из
   // неё же — иначе правка по предпросмотру никуда не доезжала и молча терялась.
   const old=Array.isArray(c.job.ins)?c.job.ins:[];
-  const tw={};old.forEach(x=>{const k=normInsPath(x.media);if(k&&!tw[k])tw[k]={style:x.style,scale:x.scale,sin:x.sin,noexit:x.noexit,x:x.x,y:x.y,kx:x.kx,ky:x.ky};});
+  // Ручные AE-подстройки (стиль/scale/sin/noexit/x/y/kx/ky) переносим по СТАБИЛЬНОМУ id
+  // карточки — cid. Раньше ключом был путь файла, и у трёх вставок с одним фото все три
+  // получали подстройки первой. Путь остаётся запасным ключом для ЛЕГАСИ-записей без cid,
+  // и каждая такая запись достаётся ровно одному совпадению (не всем дублям сразу).
+  insEnsureUids(c);
+  const tw={},legacy=[];
+  old.forEach(x=>{if(!x)return;
+    const v={style:x.style,scale:x.scale,sin:x.sin,noexit:x.noexit,x:x.x,y:x.y,kx:x.kx,ky:x.ky};
+    if(x.cid){if(!tw[x.cid])tw[x.cid]=v;return;}
+    const k=normInsPath(x.media);if(k)legacy.push({k,v});});
+  const legacyUsed=new Set();
   // Вставки, добавленные РУКАМИ на шаге 3 (кнопка «＋ вставка»), в c.inserts не попадают —
   // пересборка списка их молча убивала на каждом заходе в шаг. Признак ручной = нет src2.
   const manual=old.filter(x=>!x.src2&&(x.media||'').trim());
@@ -33,15 +45,19 @@ function ensureJobs(){CLIPS.forEach(c=>{if(!c.job)c.job=defJob();
   // автоподбор не нашёл файл) раньше молча выпадали из AE-списка на каждом заходе в шаг 3:
   // запрос в c.inserts есть, а «Вставки» на шаге 3 пустые — «ИИ вставки удалились».
   // Теперь такие карточки едут как РУЧНЫЕ вставки (src2=1) с query: на шаге 3 видно, что
-  // вставка на месте («файл не выбран»), файл можно добрать кнопкой «Выбрать…», а idx —
+  // вставка на месте («файл не выбран»), файл можно добрать кнопкой «Выбрать…», а cid —
   // обратная ссылка на карточку шага 2, чтобы выбранный файл пережил пересборку.
   const src2Cards=[];
   (c.inserts||[]).forEach((x,i)=>{if((x.query||'').trim()&&!(x.media||'').trim())src2Cards.push(
-    {media:'',src2:1,idx:i,start_s:(+x.start_sec||0),start_f:0,
+    {media:'',src2:1,cid:x.uid||'',idx:i,start_s:(+x.start_sec||0),start_f:0,
       dur_s:(+x.duration_sec||2),dur_f:0,type:'photo',query:(x.query||'').trim()});});
   // секунды как есть (start_s дробный, start_f=0): сервер понимает float,
   // а пересчёт в кадры с хардкодом fps=60 врал на не-60fps XML
-  c.job.ins=(c.inserts||[]).filter(x=>(x.media||'').trim()).map(x=>{const was=tw[normInsPath(x.media)]||{};
+  c.job.ins=(c.inserts||[]).filter(x=>(x.media||'').trim()).map(x=>{
+    let was=tw[x.uid];
+    if(!was){const k=normInsPath(x.media);
+      for(let li=0;li<legacy.length;li++){if(legacyUsed.has(li))continue;
+        if(legacy[li].k===k){legacyUsed.add(li);was=legacy[li].v;break;}}}
     return cardToIns(x,was);});
   c.job.ins=c.job.ins.concat(src2Cards).concat(manual);
   c.job.ins.sort((a,b)=>((a.start_s||0)+(a.start_f||0)/60)-((b.start_s||0)+(b.start_f||0)/60));});}
@@ -64,14 +80,12 @@ function selectAE(i){if(curAE>=0&&curAE!==i)captureAE();curAE=i;const c=CLIPS[i]
   // gx/gy/gs — геометрия группы: живёт на головной строке, таскаем со строкой
   INTRO=(j.introRows||[]).map(r=>({count:r.count,color:r.color||'white',fill:r.fill||null,anim:(r.anim==='count'?'':(r.anim||'')),fx:r.fx||'',dec:parseInt(r.dec)||0,is_count:!!(r.is_count||r.anim==='count'),cnt_words:(Array.isArray(r.cnt_words)?r.cnt_words.slice():null),break:!!r.break,from:(r.from!=null?r.from:null),gx:r.gx||0,gy:r.gy||0,gs:r.gs||100,accent:!!r.accent,back:!!r.back,big:!!r.big}));INTRO_PICK=-1;
   $('aeexposure').value=j.exposure||0;$('censor').checked=j.censor!==false;
-  const mm=$('musicmode');if(mm)mm.value=j.music_random?'random':(j.music?(/^https?:/i.test(j.music)?'url':'file'):'random');
-  $('aemusic').value=j.music||'';musicUI();
   // стиль: сперва по ключу задания, иначе — узнаём шаблон по содержимому (старые задания,
   // и «кастом», совпадающий с шаблоном 1в1: незачем открывать простыню настроек)
   let sk=(j.styleKey&&j.styleKey!=='__custom__'&&STYLES[j.styleKey])?j.styleKey:styleKeyFor(j.style);
   if(sk){$('style').value=sk;if($('style'))$('style').dataset.prev=sk;onStyleChange();}
   else if(j.style){CURSTYLE=stMigrateCamZoom(stMigrateIntroCam2(stMigrateCam2Zoom(stMigrateIntroPos2(j.style))));ensureCustomOption();$('style').value='__custom__';if($('style'))$('style').dataset.prev='__custom__';onStyleChange();}
-  else{const p=j.speaker&&SPEAKERS&&SPEAKERS[j.speaker];
+  else{const ks=clipSpeaker(c);const p=ks&&SPEAKERS&&SPEAKERS[ks];
     if(p&&p.style&&STYLES[p.style]){
       j.styleKey=p.style;
       $('style').value=p.style;
@@ -83,6 +97,12 @@ function selectAE(i){if(curAE>=0&&curAE!==i)captureAE();curAE=i;const c=CLIPS[i]
       if($('style'))$('style').dataset.prev=$('style').value;
       onStyleChange();}}
   const im=$('intromode');if(im)im.value=j.intromode||'word';   // после onStyleChange: reflectStyle ставит режим из стиля
+  // Музыка клипа — ПОСЛЕ стиля: режим и папка читаются из CURSTYLE, а его ставит
+  // onStyleChange выше. Показ блока идёт из данных (job + стиль), не из полей DOM.
+  // Сначала сбрасываем закреплённый трек, если сменились режим/папка, потом — если у
+  // клипа режим «случайно» и трека ещё нет — выбираем его СИДОМ ПО ПУТИ XML: тем же,
+  // каким выбирала сборка раньше, поэтому музыка старых клипов не меняется.
+  musicSync(c);musicClipUI();musicPickEnsure(c);
   rotoSync();renderClips3();renderAeDirField();loadWordsFor(c.xml);saveState();
   if($('st_name'))$('st_name').value='';   // вышли из редактора шаблона — см. captureAE (templateEdit)
 }
@@ -103,7 +123,6 @@ function captureAE(){if(curAE<0)return;const c=CLIPS[curAE];if(!c){curAE=-1;retu
   j.highlights=(HLXML===c.xml)?[...HL]:[];j.hl_breaks=(HLXML===c.xml)?[...BRK]:[];j.hl_count=(HLXML===c.xml)?[...CNT]:[];j.hl_joins=(HLXML===c.xml)?[...JNS]:[];j.hlxml=HLXML;
   j.introRows=INTRO.map(r=>({count:r.count,color:r.color||'white',fill:r.fill||null,anim:r.anim||'',fx:r.fx||'',dec:parseInt(r.dec)||0,is_count:!!r.is_count,cnt_words:(Array.isArray(r.cnt_words)?r.cnt_words.slice():null),break:!!r.break,from:(r.from!=null?r.from:null),gx:r.gx||0,gy:r.gy||0,gs:r.gs||100,accent:!!r.accent,back:!!r.back,big:!!r.big}));j.intromode=val('intromode');
   j.exposure=parseFloat(val('aeexposure'))||0;j.censor=$('censor').checked;
-  j.music_random=(val('musicmode')==='random');j.music=j.music_random?'':val('aemusic').trim();
   // Копия стиля живёт в задании ТОЛЬКО у безымянного кастома: у именованного стиля
   // источник — файл стиля, его читает сборка (styles.resolve по имени). Копия в задании
   // и была причиной рассинхрона: правка стиля до клипа не доезжала.
@@ -128,9 +147,44 @@ function styleForJob(j){
   const k=j&&j.styleKey;
   if(k&&k!=='__custom__'&&k!=='__edit__'&&typeof STYLES!=='undefined'&&STYLES[k])return k;
   return (j&&j.style)||null;}
+// ================= музыка клипа: тройка полей для сборки и плана =================
+// Папка музыки клипа — ВСЯ лестница здесь, одной дверью (musicPickDir): папка
+// переопределения клипа, иначе папка стиля, иначе прежнее общее значение `aemusicdir`
+// из сохранённого состояния, иначе <папка проекта>\music (поле `base`). Папки XML в
+// лестнице НЕТ: клип, чей XML лежит в подпапке нарезки, искал треки рядом с собой —
+// `repro_big/music` вместо папки проекта — и ролик собирался БЕЗ музыки, хотя у
+// владельца в папке проекта лежит 21 трек (регрессия 2026-10-06: до переезда музыки
+// в стиль дефолтом была именно папка проекта).
+// Это же значение уходит в сборку как music_dir (musicJobFields) и в тело плана сцены:
+// второй копии правила быть не должно, иначе превью искало бы треки не там, где сборка,
+// поэтому jobsMusicDir (95-styles.js) просто зовёт эту же функцию.
+//
+// Функции живут рядом с jobForBuild, а не в предпросмотре (85-inserts-view.js): их зовут
+// ОБА запроса — сборка и тело плана сцены, — и одна из них не должна зависеть от того,
+// загружен ли файл предпросмотра (стенды интерфейса грузят не все файлы сразу).
+function musicPickDir(c){const m=effMusic(c);
+  if(m.mode==='off')return '';      // музыки нет — папка не нужна, хвост не выдумываем
+  const j=(c&&c.job)||{};const ov=j.music_override;
+  if(ov&&ov.dir)return ov.dir;      // папка переопределения клипа — старшая ступень
+  if(m.dir)return m.dir;            // папка стиля (music_dir)
+  // Прежнее общее значение: поля в интерфейсе нет — значение живёт в памяти (AEMUSICDIR,
+  // 99-boot.js) и в сохранённом состоянии. У владельца там рабочая папка с треками.
+  const legacy=(typeof AEMUSICDIR!=='undefined'&&AEMUSICDIR)?String(AEMUSICDIR).trim():'';
+  if(legacy)return legacy;
+  const base=(val('base')||'').trim().replace(/[\\\/]+$/,'');
+  return base?(base+'\\music'):'music';}
+// `music_random` — ровно «режим random И трек ещё не закреплён»: сборка тогда выберет его
+// сама (ytmusic.random_track, сид — путь XML), а пустой music в остальных режимах честно
+// означает «музыки нет» либо «скачать ссылку». Закреплённый файл уезжает как music —
+// второго независимого выбора нет, и превью с .jsx играют один и тот же файл.
+function musicJobFields(c){const m=effMusic(c);
+  return {music:(m.mode==='file'||m.mode==='random')?m.src:'',
+    music_random:!!(m.mode==='random'&&!m.src),
+    music_dir:musicPickDir(c)};}
 function jobForBuild(c){const j=c.job||defJob();
-  return {xml:c.xml,music:j.music_random?'':(j.music||''),music_random:!!j.music_random,music_dir:val('aemusicdir').trim(),
-    // Папка для .jsx — из тега спикера; пусто = глобальное поле на шаге 3.
+  return {xml:c.xml,...musicJobFields(c),
+    // Папка для .jsx — из тега спикера (лестница jsxdir → outdir → папка XML); пусто =
+    // глобальное поле на шаге 3.
     outdir:effOutdir(c)||'',
     highlights:j.highlights||[],hl_breaks:j.hl_breaks||[],hl_count:j.hl_count||[],hl_joins:j.hl_joins||[],inserts:(j.ins||[]).filter(r=>(r.media||'').trim()),
     intro:[],intro_remove:[],intro_splits:[],introRows:j.introRows||[],intro_mode:j.intromode||'word',
@@ -158,16 +212,32 @@ async function startBuild(jobs,mode,outdir){const el=$('aeres');el.className='mu
 async function pollBuild(){pollJob(pollBuild,t('Сборка .jsx'),0.3,d=>{const res=d.results||[];const el=$('aeres');
     uiBusySet(false);
     applyInsMoved(d.insmoved);   // вставки переехали в базу — чиним пути у себя
-    if(res.length){el.className='ok';el.textContent=res.map(p=>p.replace(/^.*[\\\/]/,'')).join('  ·  ');
-      progDone((UICANCEL?t('Остановлено — собрано '):t('Готово: '))+res.length+t(' .jsx'),!!UICANCEL);}
-    else if(UICANCEL){el.className='muted';el.textContent=t('Остановлено');progDone(t('Остановлено'),true);}
-    else{el.className='err';el.textContent=t('⚠ Ничего не собралось — смотри Логи');
-      progDone(t('Ошибка — смотри Логи'),true);}});}
+    // Итог сборки — не только список .jsx. Падения клипов И предупреждения (обработка
+    // голоса включена, а голос не подключён — проект уехал со звуком камеры) обязаны
+    // быть видны ЗДЕСЬ и в конце прогона, а не только строкой в логе: молчаливый откат
+    // на звук камеры и был тем дефектом, ради которого это всё.
+    const bad=d.failed||[],warn=bad.filter(f=>f&&f.warn),err=bad.filter(f=>!(f&&f.warn));
+    const fmt=arr=>arr.map(f=>f.name+' — '+(f.reason||'?').slice(0,90)).join(' · ');
+    err.forEach(f=>uiLog(t('✗ не собрался {name}: {reason}',{name:f.name,reason:f.reason||t('см. логи')})));
+    warn.forEach(f=>uiLog(t('⚠ голос без обработки — {name}: {reason}',{name:f.name,reason:f.reason||t('см. логи')})));
+    let msg=res.length?((UICANCEL?t('Остановлено — собрано '):t('Готово: '))+res.length+t(' .jsx'))
+      :(UICANCEL?t('Остановлено'):t('Ошибка — смотри Логи'));
+    // Подпись начинается с человеческого слова, а не с «⚠»: движок подписи (progHuman,
+    // 55-progress.js) служебные маркеры в шапку не пускает, и строка стала бы пустой.
+    if(warn.length)msg+=t(' · голос без обработки ({n}): {list}',{n:warn.length,list:fmt(warn)});
+    if(err.length)msg+=t(' · не собрались ({n}): {list}',{n:err.length,list:fmt(err)});
+    if(res.length){el.className='ok';el.textContent=res.map(p=>p.replace(/^.*[\\\/]/,'')).join('  ·  ');}
+    else if(UICANCEL){el.className='muted';el.textContent=t('Остановлено');}
+    else{el.className='err';el.textContent=t('⚠ Ничего не собралось — смотри Логи');}
+    progDone(msg,!!UICANCEL||bad.length>0);
+    // «Готово» вместе с «голос без обработки» — это не готово: тост конца говорит об
+    // этом прямо, и он же виден, когда окно прогресса свернули в чип.
+    if(warn.length)toast(t('⚠ голос без обработки ({n}): {list}',{n:warn.length,list:fmt(warn)}));});}
 
 async function tojsx(){if(uiBusyGuard())return;if(curAE<0){toast(t('Выбери клип'));return;}captureAE();const c=CLIPS[curAE];const xml=c.xml;
   const ir=introResolve();const j=c.job;
-  const body={xml,music:j.music_random?'':(j.music||''),music_random:!!j.music_random,music_dir:val('aemusicdir').trim(),
-    outdir:effOutdir(c)||'',          // папка клипа — из тега спикера
+  const body={xml,...musicJobFields(c),
+    outdir:effOutdir(c)||'',          // папка клипа — лестница профиля спикера
     highlights:(HLXML===xml)?[...HL]:[],hl_breaks:(HLXML===xml)?[...BRK]:[],hl_count:(HLXML===xml)?[...CNT]:[],hl_joins:(HLXML===xml)?[...JNS]:[],inserts:INS.filter(r=>(r.media||'').trim()),
     intro:ir.lines,intro_remove:ir.remove,intro_splits:ir.splits,intro_mode:val('intromode'),
     censor:$('censor').checked,cams:clipNcams(c),exposure:parseFloat(val('aeexposure'))||0,
@@ -212,7 +282,14 @@ async function startRender(){if(uiBusyGuard())return;const jobs=await collectJob
   // рендер-пути, решение 2026-09-11): радио multimode на рендер не влияет — оно
   // только для ручной сборки «Собрать набор».
   const engine=rendEngine();
-  const body={jobs,outdir:buildOutdir(),render_dir:val('aerenderdir').trim()||AERENDER,engine};
+  // Папка рендера — та же лестница, что у .jsx, но без папки XML: у набора из одного
+  // спикера берётся его renderdir, иначе общая AERENDER (дефолт exp от сервера). Одного
+  // открытого клипа здесь мало — рендерится НАБОР (collectJobs), и папка обязана быть
+  // от него, а не от того, кто случайно открыт в панели.
+  const rsel=selClips();
+  const rspk=new Set(rsel.map(x=>clipSpeaker(x)).filter(Boolean));
+  const rdir=(rspk.size===1)?(effRenderdir(rsel[0])||''):((AERENDER||'').trim());
+  const body={jobs,outdir:buildOutdir(),render_dir:rdir||AERENDER,engine};
   const el=$('aeresrend');if(el){el.className='muted';el.textContent=t('рендер…');}
   RENDERSEEN=0;RENDERENGINE=engine;
   let d;try{d=await (await fetch('/api/render_run',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -296,7 +373,7 @@ async function collectJobs(){if(curAE>=0)captureAE();if(!CLIPS.length){toast(t('
     const jb=jobForBuild(c);jb.intro=ir.lines;jb.intro_remove=ir.remove;jb.intro_splits=ir.splits;jobs.push(jb);}
   return jobs;}
 // outdir набора — по набору целиком: один спикер = его папка, иначе общая (AEGLOBAL).
-function buildOutdir(){const sel=selClips();const spks=new Set(sel.map(c=>(c.job||{}).speaker||'').filter(Boolean));
+function buildOutdir(){const sel=selClips();const spks=new Set(sel.map(c=>clipSpeaker(c)).filter(Boolean));
   return (spks.size===1)?effOutdir(sel[0])||AEGLOBAL:AEGLOBAL;}
 async function buildMulti(){if(uiBusyGuard())return;const jobs=await collectJobs();if(jobs===null)return;
   const mode=document.querySelector('input[name=multimode]:checked').value;

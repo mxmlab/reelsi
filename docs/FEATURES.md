@@ -213,13 +213,23 @@ processing on); on steps 2–3 the same panel sits with the inserts preview.
 **How:** 1. Turn on the **AI denoiser** in the speaker profile and/or add VST3 plug-ins.
 2. Open the preview — the processed voice track plays in the player. 3. Turn the denoiser
 and plug-in knobs by ear; **Configure** opens the plug-in window.
-**Settings:** the chain runs "denoiser first, then plug-ins", like a track in a DAW. While
-the denoiser is being computed (or is off), the plug-ins play LIVE over the camera sound —
-the frame says so; once it is ready the host swaps the track for the cleaned one at the
-same position. Baking `<stem>.voice.wav` with plug-ins happens only on output (AE, XML,
-Resolve, draft render), and changing plug-ins or their knobs never recomputes the denoiser
-(it is computed once and cached). A plug-in that fails to load is skipped, and its name and
-reason are shown in the panel.
+**Settings:** the chain runs "denoiser first, then plug-ins", like a track in a DAW. The live
+host exists only while a plug-in window is open ("turn the knobs and listen"): close the
+windows and the host hands the state of EVERY plug-in back to the speaker profile, the voice is
+re-baked, and all three steps play that one baked track — the very track that goes to AE. While
+the denoiser is being computed (or is off), the plug-ins play LIVE over the camera sound — the
+frame says so; once it is ready the host swaps the track for the cleaned one at the same
+position. The baked voice is a versioned file (`<stem>.voice.<key8>.wav` with a `.voice.json`
+sidecar), so replacing it never fails on Windows while the preview, `/api/media` or an open
+AE/Premiere project holds the old one; a failed bake is not silent — the preview shows a toast
+and a "voice without processing" line, and the build warns with the reason. Changing plug-ins or
+their knobs never recomputes the denoiser (it is computed once and cached). A plug-in that
+fails to load is skipped, and its name and reason are shown in the panel.
+**The voice track across cuts** is carried by an `<audio>` double that repeats the picture's
+decision at every seam (the picture doubled → the voice does too; the picture seeked → the voice
+waits for `seeked`), and drift is killed with speed (±6 %), not with a seek. The rule that holds
+it: a double always plays the very same file as the live track, so the previous clip's voice can
+never sound on the next seam.
 **Volume sliders** — **Volume** in the panel (the clip style's `voice_db`, the same value
 as the **Voice** slider on steps 2–3) and the listening volume in the player row both act
 on the live plug-in sound as well: the host's volume is the speaker's voice volume (dB)
@@ -230,9 +240,23 @@ preview takes the host down.
 **The cut** listens to the voice after the WHOLE speaker chain: the denoiser (when on) and
 the enabled plug-ins — through the same code as the output. If a plug-in fails, the cut
 falls back to the denoise track and then to the raw sound.
+**Preview sound, the graph and the browser.** The preview wakes the Web Audio graph through
+ONE door (`audioWake`) from the click handler of every player, and it puts the camera sound
+into the graph only when there is something to process (a processed voice track, the live
+plug-in host, or a voice volume other than 0). A speaker without processing therefore plays the
+camera audio directly and does not depend on the browser's audio state. Firefox does not decode
+PCM (`pcm_s16be`) inside an MP4 at all, unlike Chromium; while the preview plays the source,
+the player says so in its own row — "Firefox cannot read the sound of these cameras — the sound
+will appear with the proxy" — from a fact (`<video>.mozHasAudio === false` after 1.5 s of
+playback), and the row goes away by itself once the video proxy (with an aac track) is playing.
+There is NO separate audio proxy: the one that used to exist played on top of the camera sound
+in Chromium and was removed. The recommended browser is Chromium-based (Chrome, Edge, Brave).
+VST3 support comes from the optional `pedalboard` package; without it the voice panel still
+works, there are simply no plug-ins, the camera audio plays as is, and the output device list
+comes from the sound system with a printed reason.
 **Limitations / price:** an NVIDIA card and the denoiser model are required; the plug-in
 window floats above the other windows while the sound plays.
-**Code:** `core/voicefx.py`, `core/voicefx_editor.py`
+**Code:** `core/voicefx.py`, `core/voicefx_editor.py`, `static/app/60-preview.js`
 
 ### Camera layout
 
@@ -282,11 +306,12 @@ checkbox: all three lists are redrawn on every pick, so the checkbox a person wa
 with is put back into its own list afterwards — Tab, Space and a Shift range taken from the
 keyboard go on walking the list in order; a focus that stood elsewhere is not moved. The trash
 button **Delete the selected clips** in the list header (disabled while nothing is ticked) opens
-the same dialog as the cross on a clip row: **Remove from the list** or **Delete from disk…**; the second one
-shows the combined list of cut files with their sizes and then erases them together with
-every sidecar. The source camera video is never touched, and one failing clip does not stop
-the others. The list lives in browser state and in a server mirror, so it survives a reload
-and a browser change.
+the same dialog as the cross on a clip row: **Remove from the list** or **To trash (can be restored)…**; the second one
+shows the combined list of cut files with their sizes and then safely moves them into the `_reelsi_trash/`
+folder alongside the XML. Deleted clips can be restored at any time via the **Recycle Bin** modal.
+The source camera video is never touched, and one failing clip does not stop the others.
+Clip work is continuously saved to `<stem>.clip.json` on disk, allowing full state recovery
+(including intro, style, speaker, and inserts) even if the browser cache is wiped.
 **Limitations / price:** nothing ticked here does NOT mean "all", unlike the build: there is
 nothing to delete, so the button stays disabled.
 **Code:** `templates/index.html:112`, `static/app/40-queue.js:592`,
@@ -472,6 +497,25 @@ one.
 **Settings:** the video caption is a style block with its own font, size, casing, colours and a
 background plate.
 **Code:** `templates/index.html:426`, `api/editor.py:47`, `static/app/80-inserts.js:198`
+
+### Disclaimer: text, scale and position
+
+**Where:** style › **Text** tab › the **Disclaimer** layer, knobs in the **Transform** group;
+the disclaimer itself shows in the clip preview at the bottom of the frame.
+**How:** 1. Switch the layer on and type the text (empty means the default text). 2. Adjust
+**Scale, %** and **Position by height, % of frame**. 3. Need a sideways shift — **Horizontal
+shift, px**. 4. The **Repeat at the end** tick puts a copy at the end of the clip.
+**Settings:** **Scale, %** (30…300, default 100) multiplies the fitted size: the size itself
+shrinks to fit the frame width, so a narrow font does not inflate the disclaimer.
+**Position by height, % of frame** (default 76.4) is the baseline of the first line, exactly
+like the Position of a text layer in After Effects. **Horizontal shift, px** is measured from
+the centre of the frame. **Disclaimer line gap, px** sets the line step from glyph outlines.
+**Limitations / cost:** the preview draws the disclaimer with the same numbers the `.jsx` gets
+— size, position, line step, the opacity fade (100 until the end of the show minus 0.35 s,
+then linear to zero) and the glow; the picture matches the build, but curves and fonts in
+motion still need a render to be judged. The end copy extends the comp by 1.35 s.
+**Code:** `core/xml2ae/plan_decor.py:446`, `static/app/85-inserts-view.js:1431`,
+`core/styles.py:245`
 
 ## Step 3 — After Effects
 
@@ -731,13 +775,18 @@ scale, %**, **Line spacing, %**, the big-word fields, **Intro horizontal positio
 **Intro anchor, camera 1**; **Camera 2** holds **Intro on cam2 Y** and **Intro anchor,
 camera 2**. **intro moves with camera** keeps the intro on the camera 1 null, so it inherits
 the zoom, the frame offset and head tracking; cleared, the intro and the shade under it stand
-still in the frame and the group is fitted to **Intro width, %** of the frame (`intro_fit_w`,
-92) — grown and shrunk alike, while the attached one is only shrunk; a group whose scale was
-set by hand is left alone either way. The growth of a detached group is capped by **Intro max
-scale, %** (`intro_fit_max`, 250): without the cap one short word blew up to 667–819 % of the
-frame, while shrinking is not limited. Both fields are shown only for the detached intro — an
-attached group takes its width from the camera zoom. After the fit the group is lowered by its
-actual top, the big word included, and never rises above the safe line of the frame
+still in the frame and the group is fitted to the frame width — grown and shrunk alike, while
+the attached one is only shrunk; a group whose scale was set by hand is left alone either way.
+
+**Edge margin and scale are per camera.** **Edge margin, %** (`intro_margin` / `intro_margin2`,
+0 to 30, 4 by default) is the gap on EACH side of the frame, and the width share comes out of it
+as `1 − 2·margin/100`; **Intro scale cap, %** (`intro_fit_max` / `intro_fit_max2`, 100 to 1000,
+250) is the ceiling of the GROWTH — without it one short word blew up to 667–819 % of the frame,
+while shrinking is not limited. Both knobs are always visible: a group that lands on a cutaway
+takes the `*2` keys, decided in one place (`plan_intro`). Before, the width and the cap were one
+value for both cameras, and an attached intro was shrunk to a constant, so one phrase came out
+at different sizes on camera 1 and camera 2. After the fit the group is lowered by its actual
+top, the big word included, and never rises above the safe line of the frame
 (`INTRO_SAFE_TOP`, 285 px of 1920): before the fix the lowering was counted before the fit, so
 the top of a large detached group climbed as high as 164 px where the line is 285.
 **Line spacing, %** multiplies the distance between the intro rows.
@@ -758,6 +807,18 @@ touched — it holds to the end as before. An appearance that cannot finish befo
 starts is compressed, but not shorter than 0.1 s. **Intro fade-out, s** (`intro_fade`) is
 about something else: it moves the start of the fade, not the moment the group disappears.
 
+**The intro precomp shadow opacity is a percent.** **Shadow opacity, camera 1, %**
+(`intro_comp_shadow_opacity`) and **camera 2, %** (`intro_comp_shadow2_opacity`) run 0 to 100,
+where 100 % is the shadow at full strength. The knobs were labelled "Transparency" with a `%`
+sign while holding AE's RAW 0..255 value: picking "50 %" gave 20 %, and the default 68 (27 %)
+read as "68 %" and looked like "the shadow does nothing". The percent is converted in one place
+(`core/xml2ae/plan_style.py`, `opacity*255/100`), and both the `.jsx` and the preview take the
+number from there. Old styles migrate on read as `op/255*100` (68 → 26.7, 31 → 12.2,
+255 → 100), so already-built clips keep their shadow; the personal style files are not
+rewritten, and for default values the built `.jsx` is byte-for-byte the old one. The shadow
+colour (**Shadow fill**, `intro_comp_shadow_fill`), its offset and its softness sit next to it,
+in the same groups.
+
 **Big on the left.** That checkbox in an intro row puts the row — one word or several — on
 the left in a large size, and the other rows of the group stack to its right, left-aligned.
 The big word stands on the baseline of the last stacked row, and its height is measured from
@@ -769,8 +830,13 @@ big word stays big.
 **Gap to big word, px** (`intro_big_gap`, 40) is the distance between the big word and the
 stack; **Stack line spacing, %** (`intro_big_step`, 80) is the step of the stacked rows and
 does not depend on the general line spacing. The layout is computed once, and the preview and
-After Effects take the same numbers. If several rows of a group are ticked, the big one is
-the first of them; a group of one row has no big word. A clip without such a row builds
+After Effects take the same numbers. **The top of such a group stays put:** it used to hold on
+to the baseline when shrunk and sat lower than the neighbouring groups (the owner saw it as
+"the group is lower than the rest"); now the top of the block matches the top the same group
+would have in the ordinary layout (`layout.intro_big_top_shift`, taken from the topmost row).
+Such a group stays smaller by its geometry — it is a horizontal block in the same width — and
+smaller edge margins are what make it larger. If several rows of a group are ticked, the big
+one is the first of them; a group of one row has no big word. A clip without such a row builds
 byte-for-byte as before.
 **Code:** `core/xml2ae/layout.py:322`, `core/xml2ae/layout.py:166`,
 `core/styles.py:232`, `core/style_schema.py:479`, `core/style_schema.py:577`,
@@ -805,6 +871,25 @@ button warns about that.
 on step 3 does not write back into the profile.
 **Code:** `core/speakers.py:32`, `static/app/95-styles.js:228`,
 `static/app/90-ae.js:114`
+
+### `.jsx` and render folders per speaker
+
+**Where:** step 1 › speaker selector and the speaker profile dialog (**.jsx folder**,
+**Render output folder**); the **Folders and parameters** card on step 3.
+**How:** 1. Set the `.jsx` folder in the speaker profile. 2. Tag the clips with that
+speaker. 3. Build: every clip goes into its own speaker's folder. The caption under the
+field says which rung of the ladder the folder came from.
+**Settings:** the folder of a tagged clip is looked up in one ladder — the profile's
+`.jsx folder`, then the profile's **result folder** (the cut folder of the same speaker),
+then the folder of the clip's own XML. The shared **`.jsx folder`** field on step 3 is used
+only by clips without a speaker tag. The render folder follows the same ladder without the
+XML rung: the profile's **Render output folder**, otherwise the shared field (the server's
+`exp` default). Editing the field on a clip with a tag writes into that speaker's profile
+after confirmation.
+**Limitations / price:** a clip tagged with a speaker no longer falls back to the shared
+field, so the folder of one speaker can never leak into another's clips.
+**Code:** `static/app/95-styles.js:99`, `static/app/90-ae.js:240`,
+`api/build.py:84`
 
 ### Layer order
 
@@ -858,15 +943,26 @@ photo and intro layers below roto to bring the person in front of them.
 
 ### Music
 
-**Where:** step 3 › **Folders and parameters** › **More — brightness, music, censoring, folders** › **Music (−20 dB)**.
-**How:** 1. Choose **random from downloads**, **YouTube link** or **file**. 2. For a link,
-paste the URL. 3. For a file, press **Browse…**.
-**Settings:** the music folder for downloads is set next to it. The level lives in the
-style's **Sound** tab.
-**Limitations / price:** a YouTube link requires `yt-dlp`; a random track picks one file
-from the music folder at build time.
-**Code:** `templates/index.html:223`, `core/ytmusic.py:10`, `core/ytmusic.py:34`,
-`api/files.py:471`
+**Where:** step 3 › **Folders and parameters** › the **Music** block under **More —
+brightness, music, censoring, folders**.
+**How:** 1. Choose **as in the style** or **own track**. 2. For your own track pick what
+to use: **no music**, **random from the folder**, **file** or **YouTube link**. 3. For a
+file press **File…**, for a link paste the URL and press **Download**. 4. In random mode
+the chosen track is shown by file name next to the block — press **Another track** to pick
+a different one.
+**Settings:** the music mode, the tracks folder and the track itself are keys of the style
+(next to the level on the **Sound** tab), so every style carries its own music, and the
+clip only overrides it. The shared folder field is empty by default, which means the
+`music` folder next to the project. The picked random track is stored on the clip and both
+the preview and the build play exactly that file: there is no second independent pick. The
+level lives in the style's **Sound** tab.
+**Limitations / price:** a YouTube link requires `yt-dlp`; the link is downloaded by the
+**Download** button, and until then the build would download it itself at build time.
+Changing the mode or the folder drops the pinned track and picks a new one. A random track
+is picked deterministically from the clip's XML path, so the same clip keeps the same track
+across rebuilds.
+**Code:** `core/styles.py:242`, `core/style_schema.py:2725`, `core/ytmusic.py:17`,
+`api/files.py:582`, `static/app/95-styles.js:1979`
 
 ### Scene preview in the browser
 

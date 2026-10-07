@@ -70,6 +70,9 @@ class StyleValues:
     disclaimer: Any          # st.get: None — стиль молчит, "" — скрыть дисклеймер
     disclaimer_end: Any      # галка «копия дисклеймера в конце ролика»
     disc_gap: Any            # зазор строк дисклеймера, px; None — интервал авто
+    disc_scale: float        # масштаб дисклеймера, % (множитель подобранного кегля)
+    disc_y: float            # положение блока по высоте, % кадра (базовая линия 1-й строки)
+    disc_dx: float           # сдвиг дисклеймера по горизонтали от центра кадра, px
     intro_riser: Any         # st.get: None — галка как в kwarg, иначе стиль сильнее
     intro_riser_file: Any    # свой файл ризера; None = ассет по умолчанию
     # --- шрифты и регистры (сырые значения: лесенку «пусто = как базовый» собирает
@@ -165,8 +168,10 @@ class StyleValues:
     intro_y2: Any
     intro_cam: bool                        # «интро едет с камерой» (камера 1)
     intro_cam2: bool                       # то же для нула «интро на кам2» (камера 2)
-    fit_w: float                           # бывшее _fit_w: intro_fit_w/100 (доля кадра, MI)
-    fit_max: float                         # бывшее _fit_max: потолок увеличения
+    fit_w: float                           # камера 1: 1 − 2·intro_margin/100 (доля ширины кадра)
+    fit_w2: float                          # камера 2: то же из intro_margin2
+    fit_max: float                         # камера 1: потолок увеличения (intro_fit_max), %
+    fit_max2: float                        # камера 2: свой потолок (intro_fit_max2), %
     # Межстрочный интервал интро: ОДИН множитель k на оба места — шаги строк
     # и центровку блока в Python (intro_line_ys, _intro_i_dy) и var LINE_STEP в шаблоне.
     # 100 = прежние 160 px: подстановка печатает ровно «160», .jsx прежний (golden).
@@ -239,12 +244,15 @@ class StyleValues:
     dg_with_glow: bool                     # бывшее _dg_with_glow: Deep Glow вместе со свечением
     # Тень ПРЕКОМПА интро: у камеры 1 и камеры 2 свои цвет/непрозрачность
     # (ключи стиля intro_comp_shadow*). Направление/дистанция/мягкость — общие у обеих
-    # камер. Дефолты — прежняя белая тень dropShadow(iL, 68) с 135/0/287:
-    # при всех семи дефолтах .jsx остаётся прежним байт в байт (golden).
+    # камер. Непрозрачность приходит из стиля В ПРОЦЕНТАХ (0..100) и переводится здесь
+    # в сырые 0..255 AE — это ЕДИНСТВЕННОЕ место пересчёта, второй копии формулы нет
+    # ни в шаблоне, ни в превью (превью читает готовое число из плана). Дефолт 26.7 %
+    # даёт 68.1 из 255: шаблон считает это прежней подстановкой dropShadow(iL, 68)
+    # по допуску (см. plan_intro_tpl), и .jsx остаётся прежним байт в байт (golden).
     intro_comp_shadow_fill: list
-    intro_comp_shadow_op: float
+    intro_comp_shadow_op: float            # …непрозрачность в 0..255, посчитана из процентов
     intro_comp_shadow2_fill: list
-    intro_comp_shadow2_op: float
+    intro_comp_shadow2_op: float           # …то же для камеры 2
     intro_comp_shadow_dir: float
     intro_comp_shadow_dist: float
     intro_comp_shadow_soft: float
@@ -404,7 +412,13 @@ def read_style(st: Mapping[str, Any], w: Any = None, h: Any = None) -> StyleValu
     if w is not None and h is not None:
         st = style_geometry.scale_style(st, w, h)
     _back_step_after = _sv(st, "back_step_after")
-    _fit = _sv_or(st, "intro_fit_w")
+    # Доля ширины кадра для автофита интро: ручки «Отступ от краёв» у КАЖДОЙ камеры
+    # (intro_margin/intro_margin2, % с каждой стороны), доля = 1 − 2·margin/100.
+    # Одно правило на оба режима: и привязанное (только ужатие), и откреплённое
+    # (в обе стороны). Сторож диапазона — сама формула: margin 30 % даёт 40 % ширины,
+    # margin 0 — всю ширину кадра.
+    _fit1 = 1.0 - 2.0 * float(_sv(st, "intro_margin")) / 100.0
+    _fit2 = 1.0 - 2.0 * float(_sv(st, "intro_margin2")) / 100.0
     _plate_path = str(_sv_or(st, "insert_plate_file") or "").strip()
     _plate_scale = float(_sv_or(st, "insert_plate_scale")) or 100.0
     _insert_anim = (_sv_or(st, "insert_anim")).strip()
@@ -414,6 +428,13 @@ def read_style(st: Mapping[str, Any], w: Any = None, h: Any = None) -> StyleValu
         disclaimer=st.get("disclaimer"),
         disclaimer_end=st.get("disclaimer_end"),
         disc_gap=st.get("disc_gap"),
+        # Ручки дисклеймера: пусто/ноль — «не задано», запас из styles.BASE. Ноль у
+        # disc_dx и disc_scale — ЗАДАННЫЕ значения, но оба совпадают с запасом BASE
+        # (0 и 100), поэтому _sv_or здесь ничего не меняет; у disc_y ноль осмыслен
+        # (прижать к верху кадра) — значит _sv, а не _sv_or.
+        disc_scale=float(_sv_or(st, "disc_scale")),
+        disc_y=float(_sv(st, "disc_y")),
+        disc_dx=float(_sv_or(st, "disc_dx")),
         intro_riser=st.get("intro_riser"),
         intro_riser_file=st.get("intro_riser_file"),
         # --- шрифты и регистры (сырые: лесенку собирает scene_plan) ---
@@ -512,8 +533,10 @@ def read_style(st: Mapping[str, Any], w: Any = None, h: Any = None) -> StyleValu
         # Ручка камеры 2: чтение своё (ключ мог прийти из старого стиля только миграцией,
         # см. styles.migrate_intro_cam2) — второго чтения intro_cam на неё нет.
         intro_cam2=bool(_sv(st, "intro_cam2")),
-        fit_w=float(_fit) / 100.0,
+        fit_w=_fit1,
+        fit_w2=_fit2,
         fit_max=float(_sv_or(st, "intro_fit_max")),
+        fit_max2=float(_sv_or(st, "intro_fit_max2")),
         line_step_k=float(_sv(st, "intro_line_step")) / 100.0,
         big_step_k=float(_sv(st, "intro_big_step")) / 100.0,
         back_step=float(_sv(st, "back_step")),
@@ -557,9 +580,12 @@ def read_style(st: Mapping[str, Any], w: Any = None, h: Any = None) -> StyleValu
         intro_word_glow_int=float(_sv(st, "intro_word_glow_int")),
         dg_with_glow=bool(_sv(st, "intro_dg_with_glow")),
         intro_comp_shadow_fill=[float(v) for v in (_sv_or(st, "intro_comp_shadow_fill"))],
-        intro_comp_shadow_op=float(_sv(st, "intro_comp_shadow_op")),
+        # round до десятых — та же точность, что у ручки (миграция считает проценты так же):
+        # 68/255*100 = 26.666… -> 26.7, а обратно 26.7*255/100 = 68.085, и это ровно тот
+        # дефолт, который шаблон узнаёт по допуску 0.05.
+        intro_comp_shadow_op=round(float(_sv(st, "intro_comp_shadow_opacity")) * 255 / 100, 1),
         intro_comp_shadow2_fill=[float(v) for v in (_sv_or(st, "intro_comp_shadow2_fill"))],
-        intro_comp_shadow2_op=float(_sv(st, "intro_comp_shadow2_op")),
+        intro_comp_shadow2_op=round(float(_sv(st, "intro_comp_shadow2_opacity")) * 255 / 100, 1),
         intro_comp_shadow_dir=float(_sv(st, "intro_comp_shadow_dir")),
         intro_comp_shadow_dist=float(_sv(st, "intro_comp_shadow_dist")),
         intro_comp_shadow_soft=float(_sv(st, "intro_comp_shadow_soft")),

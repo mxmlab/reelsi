@@ -54,6 +54,7 @@ async function loadSpeakers(){let d;
 // профиле, видел там нужный путь, а сборка уезжала в другую папку и молчала об этом
 // (жалоба 2026-08-11). Профиль — источник правды; поле его показывает, а подпись под
 // полем говорит, откуда значение. Разовая другая папка живёт до перезагрузки.
+// Общий выбор: новая нарезка/профиль, не клип.
 function applySpeakerDirs(){const p=SPEAKERS[val('speaker')];if(!p)return;
   const set=(id,v)=>{const el=$(id);if(el&&v&&!samePath(el.value,v))el.value=v;};
   set('ai_outdir',(p.outdir||'').trim());
@@ -68,6 +69,7 @@ function applySpeakerDirs(){const p=SPEAKERS[val('speaker')];if(!p)return;
   // только имена — нарезка уходила читать чужую папку (жалоба 2026-08-20).
   for(let k=0;k<nCams();k++)camDirApply(k,'');}
 // Карандаш правит ВЫБРАННОГО: без выбора править нечего, и кнопка гаснет, а не молчит.
+// Общий выбор: новая нарезка/профиль, не клип — карандаш ведёт в ПРОФИЛЬ спикера.
 function spkEditUI(){const b=$('spkedit');if(b)b.disabled=!SPEAKERS[val('speaker')];}
 // Папка из профиля не перетирает молча то, что юзер вписал руками: пусто или папка
 // другого спикера — ставим сразу, своё — спрашиваем. Правило одно на обе папки
@@ -80,6 +82,7 @@ function spkEditUI(){const b=$('spkedit');if(b)b.disabled=!SPEAKERS[val('speaker
 function samePath(a,b){
   const n=s=>(s||'').trim().replace(/[\\/]+/g,'/').replace(/\/+$/,'').toLowerCase();
   return n(a)===n(b);}
+// Общий выбор: новая нарезка/профиль, не клип — ставим папку выбранного в селекторе.
 async function spkDir(id,key,ask){const p=SPEAKERS[val('speaker')]||{};
   const want=(p[key]||'').trim();
   // Глобальная папка .jsx живёт в AEGLOBAL, а не в поле: у клипа с тегом поле
@@ -93,29 +96,49 @@ async function spkDir(id,key,ask){const p=SPEAKERS[val('speaker')]||{};
   if(!cur||await askConfirm(ask+want)){
     if(id==='aeoutdir'){AEGLOBAL=want;renderAeDirField();}
     else{$(id).value=want;}}}
-// Папка для .jsx КЛИПА: тег спикера определяет её у клипа, и каждый
-// собирается в свою; без тега или у спикера без jsxdir — null (в сборку уйдёт
-// глобальное поле). Профиль — источник, поле интерфейса его показывает.
-function effOutdir(c){const j=c&&c.job,spk=(j&&j.speaker)?SPEAKERS[j.speaker]:null;
-  return (spk&&(spk.jsxdir||'').trim())?spk.jsxdir.trim():null;}
+// Папка XML клипа: рядом со «своим XML» — это последняя ступень лестницы папок
+// (см. effOutdir/effRenderdir). Разбор строкой, а не через path: у браузера нет
+// файловой системы, а папка нужна ДО сборки — по ней собирается payload задания.
+function xmlDirOf(xml){const s=(xml||'').replace(/[\\/]+$/,'');
+  const i=Math.max(s.lastIndexOf('\\'),s.lastIndexOf('/'));
+  return i>0?s.slice(0,i):'';}
+// Папка для .jsx КЛИПА — ЛЕСТНИЦА (жалоба 2026-08-11): клип со спикером → jsxdir его
+// профиля → папка нарезки того же спикера (outdir) → папка XML клипа. Общее поле
+// (AEGLOBAL) сюда не входит вовсе: оно для клипа БЕЗ тега.
+//
+// Раньше здесь было только jsxdir, иначе null. Профиль спикера без jsxdir (у одного
+// из профилей он пустой) ронял клип на общее поле, а его переписывал КАЖДЫЙ выбор спикера
+// (applySpeakerDirs, setClipSpeaker) — и клипы одного спикера собирались в папку
+// последнего выбранного. Владелец искал готовый .jsx не в той папке.
+// Тот же порядок, что у сервера: api/build.py собирает каждый клип в присланную папку,
+// пустая = рядом со своим XML, — второй лестницы на бэкенде не заводится.
+function effOutdir(c){const k=clipSpeaker(c),spk=k?SPEAKERS[k]:null;
+  if(spk){
+    const d=(spk.jsxdir||'').trim();if(d)return d;
+    const o=(spk.outdir||'').trim();if(o)return o;
+  }
+  return xmlDirOf(c&&c.xml)||null;}
+// Папка вывода рендера клипа — та же лестница, но БЕЗ папки XML: у рендера последняя
+// ступень — общий AERENDER (дефолт exp от сервера), папки «рядом с XML» у него нет.
+function effRenderdir(c){const k=clipSpeaker(c),spk=k?SPEAKERS[k]:null;
+  if(spk){const d=(spk.renderdir||'').trim();if(d)return d;}
+  return (AERENDER||'').trim()||null;}
 function openClipSpeaker(){if(curAE<0||!CLIPS[curAE])return null;
-  const k=(CLIPS[curAE].job||{}).speaker;return k?SPEAKERS[k]||null:null;}
+  const k=clipSpeaker(CLIPS[curAE]);return k?SPEAKERS[k]||null:null;}
 function setAeDir(v){$('aeoutdir').value=v||'';$('aeoutdir3').value=v||'';jsxDirNote();saveState();}
 // Поле показывает то, что сейчас действительно уходит в сборку: у клипа с тегом —
 // папку его профиля (пусто = глобальная), у клипа без тега — глобальную. Вызывается,
 // когда меняется тег открытого клипа, глобальный спикер или восстановленное состояние.
 function renderAeDirField(){const sp=openClipSpeaker();
-  if(sp)setAeDir((sp.jsxdir||'').trim()||AEGLOBAL);
+  if(sp)setAeDir(effOutdir(CLIPS[curAE])||AEGLOBAL);
   else{$('aeoutdir').value=AEGLOBAL;$('aeoutdir3').value=AEGLOBAL;jsxDirNote();saveState();}
   renderRenderDirField();}
 // Папка вывода рендера: та же схема «профиль спикера / глобальная / дефолт exp».
 // Дефолт приходит с сервера (/api/render_status.default_dir) — один источник:
 // «exp рядом с репозиторием» не копируется в JS.
-function renderRenderDirField(){const sp=openClipSpeaker();
-  const v=sp?(sp.renderdir||'').trim():'';
-  const cur=v||AERENDER;
+function renderRenderDirField(){const cur=effRenderdir(curAE>=0?CLIPS[curAE]:null)||'';
   if($('aerenderdir'))$('aerenderdir').value=cur;
-  if(cur)renderDirNote();}
+  renderDirNote();}
 // Одна папка для .jsx — ДВА поля (шаг 1 и дубль у кнопки сборки на шаге 3), а значение
 // одно: правка любого поля видна в обоих. Отдельной переменной нет — источник один.
 // Сохранение на каждый ввод: поля папок были голыми инпутами,
@@ -147,19 +170,26 @@ async function saveSpeakerJsxdir(sp,dir){
   SPEAKERS[d.key]=data;
   setAeDir(data.jsxdir);
   uiLog(t('папка спикера «{n}» обновлена: ')+data.jsxdir);}
-// Подпись «откуда папка»: у клипа с тегом — его профиль; без тега — профиль
-// глобального спикера или ручная (пункт 2). Раньше человек видел путь
-// и не знал, его это значение или подставленное.
-function jsxDirNote(){const sp=openClipSpeaker();
+// Подпись «откуда папка»: лестница effOutdir проговаривается ЦЕЛИКОМ, иначе человек
+// видит путь и не знает, чей он — профиль спикера это, папка нарезки или папка XML.
+// Раньше подпись знала только два случая («папка спикера» / «задана вручную») и на
+// клипе спикера без jsxdir молчала, хотя папка бралась уже не из поля.
+// Общий выбор: новая нарезка/профиль, не клип — ветка клипа без тега (openClipSpeaker).
+function jsxDirNote(){
+  const c=(curAE>=0)?CLIPS[curAE]:null;
+  const sp=(typeof openClipSpeaker==='function')?openClipSpeaker():null;
   let note='';
   if(sp){
-    note=t('папка спикера «{n}» — правка сохранится в его профиле',{n:sp.label||''});
+    const jd=(sp.jsxdir||'').trim(),od=(sp.outdir||'').trim(),xd=xmlDirOf(c&&c.xml);
+    if(jd)note=t('папка спикера «{n}» — правка сохранится в его профиле',{n:sp.label||''});
+    else if(od)note=t('папка нарезки спикера «{n}» (jsxdir в профиле пуст)',{n:sp.label||''});
+    else if(xd)note=t('папка XML клипа — у спикера «{n}» не заданы ни jsxdir, ни папка нарезки',{n:sp.label||''});
   }else{
     const p=(SPEAKERS[val('speaker')]||{}).jsxdir||'';
     const v=AEGLOBAL;
     note=(p&&v&&samePath(p,v))?t('папка спикера «{n}»',{n:(SPEAKERS[val('speaker')]||{}).label||''}):(v?t('задана вручную'):'');
   }
-  ['aeoutdirnote','aeoutdir3note'].forEach(id=>{const el=$(id);if(el)el.textContent=note;});}
+  ['aeoutdirnote','aeoutdir3note'].forEach(id=>{const e=$(id);if(e)e.textContent=note;});}
 // Папка вывода рендера — как jsxdir: правка поля синхронится в AERENDER (клип без
 // тега) и «закрепляется» в профиль спикера по blur/выбору (renderDirCommit).
 function renderDirSync(el){const sp=openClipSpeaker();
@@ -181,11 +211,16 @@ async function saveSpeakerRenderdir(sp,dir){
   SPEAKERS[d.key]=data;
   if($('aerenderdir'))$('aerenderdir').value=data.renderdir||'';
   uiLog(t('папка спикера «{n}» обновлена: ')+data.renderdir);}
-function renderDirNote(){const sp=openClipSpeaker();
-  const el=$('aerenderdirnote');if(!el)return;
+// Та же лестница у папки рендера — и та же честная подпись.
+// Общий выбор: новая нарезка/профиль, не клип — ветка клипа без тега (openClipSpeaker).
+function renderDirNote(){const el=$('aerenderdirnote');if(!el)return;
+  const sp=openClipSpeaker();
   let note='';
-  if(sp)note=t('папка спикера «{n}» — правка сохранится в его профиле',{n:sp.label||''});
-  else{const p=(SPEAKERS[val('speaker')]||{}).renderdir||'';
+  if(sp){
+    const rd=(sp.renderdir||'').trim();
+    if(rd)note=t('папка спикера «{n}» — правка сохранится в его профиле',{n:sp.label||''});
+    else note=t('общая папка вывода рендера — у спикера «{n}» renderdir не задан',{n:sp.label||''});
+  }else{const p=(SPEAKERS[val('speaker')]||{}).renderdir||'';
     const v=AERENDER;
     note=(p&&v&&samePath(p,v))?t('папка спикера «{n}»',{n:(SPEAKERS[val('speaker')]||{}).label||''}):(v?t('задана вручную'):'');}
   el.textContent=note;}
@@ -194,6 +229,7 @@ function renderDirNote(){const sp=openClipSpeaker();
 // (CAMFROM === 'user'), не перетираем без подтверждения. После подстановки перечитываем
 // файлы камеры — иначе селекты останутся от старой папки.
 async function camDirApply(k,ask){
+  // Общий выбор: новая нарезка/профиль, не клип — папки камер из ПРОФИЛЯ спикера.
   const p=SPEAKERS[val('speaker')]||{};
   const want=((p.camdirs||[])[k]||'').trim();
   if(!want||samePath(want,CAMDIRS[k]||''))return;
@@ -204,12 +240,14 @@ async function camDirApply(k,ask){
 // Ручная смена папки камеры при выбранном спикере — правка его профиля: спрашиваем
 // «сохранить?» (как aeDirCommit). Отказ — папка стоит на эту сессию, профиль не тронут.
 async function camDirCommit(k){
+  // Общий выбор: новая нарезка/профиль, не клип — правка идёт в ПРОФИЛЬ спикера.
   const p=SPEAKERS[val('speaker')];if(!p)return;
   const cur=(CAMDIRS[k]||'').trim(),want=((p.camdirs||[])[k]||'').trim();
   if(!cur||samePath(cur,want))return;
   if(await askConfirm(t('Папка камеры {n} этого спикера — из его профиля. Сохранить новую папку в профиль? Это повлияет на все его будущие клипы.',{n:k+1})))
     saveSpeakerCamdirs(k,cur);}
 async function saveSpeakerCamdirs(k,dir){
+  // Общий выбор: новая нарезка/профиль, не клип — сохраняем профиль выбранного спикера.
   const sp=JSON.parse(JSON.stringify(SPEAKERS[val('speaker')]));
   const cds=(sp.camdirs||[]).slice();cds[k]=dir;sp.camdirs=cds;
   let d;
@@ -247,6 +285,7 @@ function spkLutFill(lut){
 // остальных полей окна (иначе кнопка сохраняла бы профиль за спиной у юзера).
 function lutClear(k){const el=$('spk_lut'+k);if(el){el.value='';el.focus();}}
 // Смена спикера подставляет ЕГО папки и стиль.
+// Общий выбор: новая нарезка/профиль, не клип — это обработчик селектора шага 1.
 async function onSpeakerChange(){const p=SPEAKERS[val('speaker')];
   if(p){
     await spkDir('ai_outdir','outdir',t('Папка результата задана вручную. Поставить папку спикера?\n'));
@@ -262,7 +301,7 @@ async function onSpeakerChange(){const p=SPEAKERS[val('speaker')];
     // переименовали или удалили) раньше молча игнорировался — и клип собирался чужим.
     // Клип с тегом живёт СВОИМ стилем: смена глобального спикера на шаге 1
     // не переписывает стиль открытого клипа — он принадлежит тегу, а не глобальному спикеру.
-    const openTag=(curAE>=0&&CLIPS[curAE]&&(CLIPS[curAE].job||{}).speaker)||'';
+    const openTag=(curAE>=0&&CLIPS[curAE])?clipSpeaker(CLIPS[curAE]):'';
     if(!openTag&&p.style&&st){
       if(STYLES[p.style]){if(st.value!==p.style){st.value=p.style;await onStyleChange();}}
       else{toast(t('Стиль «{n}» из профиля не найден — оставлен текущий',{n:p.style}));
@@ -461,12 +500,14 @@ function voiceFxLive(fx){
 function voiceFxOn(host){
   const dn=vfxEl(host,'dn_on');if(dn&&dn.checked)return true;
   return Array.from(host.querySelectorAll('[data-vfx="vst_on"]')).some(c=>c.checked);}
-// ЖИВОЙ ХОСТ клипа — этим живёт звук превью. Пока открыто превью и в цепочке есть
-// включённые плагины, голос клипа играет ПРОЦЕСС ХОСТА (трек через цепочку
-// вживую, вровень с картинкой), а окно плагина — лишь его панель: открыл/закрыл,
-// звук не рвётся. Состояние живёт на странице (VOICEFXLIVE), потому что о нём
-// знают двое: панель «Голос» поднимает хост и открывает окна, а плеер спрашивает
-// перед каждым кадром. В профиле этого нет: хост живёт только здесь и только сейчас.
+// ЖИВОЙ ХОСТ клипа — этим живёт звук превью, и только пока открыто окно плагина. Окно
+// открыто: голос клипа играет ПРОЦЕСС ХОСТА (трек после шумодава через цепочку вживую),
+// и человек крутит ручки и слышит их сразу. Все окна закрыты — хост настройки отдал,
+// голос перепекается, и превью играет запечённую дорожку: отдельный процесс к картинке
+// точнее 0,4 с не подогнать, а с включёнными VST превью из-за этого лагало.
+// Состояние живёт на странице (VOICEFXLIVE), потому что о нём знают двое: панель
+// «Голос» поднимает хост и открывает окна, а плеер спрашивает перед каждым кадром.
+// В профиле этого нет: хост живёт только здесь и только сейчас.
 //
 // Три вопроса — три ответа, и все нужны:
 //   * `voiceFxHostOn` — хост поднят (процесс жив), но звучит ли он, ещё неизвестно;
@@ -476,8 +517,9 @@ function voiceFxOn(host){
 //     булевым, а незаданный считается готовым (так стенды, ставящие только sid/running);
 //     `audio_error` — «звук хоста не идёт» (устройство не приняло частоту, поток
 //     отвалился): тогда глушить свой голос НЕЛЬЗЯ, иначе человек слышит тишину;
-//   * `voiceFxWindowOn` — окно плагина открыто прямо сейчас (пока оно открыто, свои
-//     ручки панели не записываем: состояние вот-вот отдаст окно).
+//   * `voiceFxWindowOn` — окно плагина открыто прямо сейчас. Это и есть решение «звук
+//     вживую или запечённый» (60-preview.js:vtHostLive); пока окно открыто, свои ручки
+//     панели не записываем: состояние вот-вот отдаст окно.
 let VOICEFXLIVE=null;
 function voiceFxHostOn(){return !!(VOICEFXLIVE&&VOICEFXLIVE.running);}
 function voiceFxLiveOn(){return !!(VOICEFXLIVE&&VOICEFXLIVE.running&&!VOICEFXLIVE.audio_error&&VOICEFXLIVE.track_ready!==false);}
@@ -772,6 +814,10 @@ async function fxDeviceFill(host){
   try{d=await (await fetch('/api/voicefx_devices')).json();}
   catch(e){uiLog('voicefx_devices: '+e);return;}
   if(d.error){uiLog('voicefx_devices: '+errText(d));return;}
+  // Список отдан БЕЗ ошибки, но с причиной (нет pedalboard — устройства
+  // перечисляет звуковая система): причина обязана быть ВИДНА, а не только в логе.
+  // Пустой список без неё читается как «устройств нет» и отправляет чинить звук.
+  if(d.reason)uiLog('voicefx_devices: '+t(d.reason));
   ((d&&d.devices)||[]).forEach(n=>{const o=document.createElement('option');
     o.value=n;o.textContent=n;sel.appendChild(o);});
   // Выбранное устройство могло исчезнуть (наушники выдернули): оставляем
@@ -875,19 +921,20 @@ function voiceFxSepWatch(host){
       voiceFxHostSync(fx,{force:true});}
     pvVoiceTune();},VFXSEP_POLL);}
 // Окно плагина открывает СЕРВЕР (отдельным процессом: JUCE требует главный поток) — и
-// это ПАНЕЛЬ уже звучащего живого хоста клипа (core/voicefx_editor --live), а не
-// отдельный процесс со своим звуком. Модель как в Ableton/DaVinci: плагин — вставка на
-// дорожке, голос превью ВСЕГДА идёт через него вживую, окно лишь показывает его ручки.
+// это ПАНЕЛЬ живого хоста клипа (core/voicefx_editor --live), а не отдельный процесс со
+// своим звуком. Модель как в Ableton/DaVinci: плагин — вставка на дорожке, и ПОКА ОКНО
+// ОТКРЫТО, голос превью идёт через него вживую, а окно показывает его ручки.
 // Открыл и закрыл окно — звук не рвётся; добавил, убрал, включил, переставил плагин —
 // цепочка перестраивается на лету (команда `chain`), а нейро-шумодав при этом НЕ
 // считается заново: дорожка шумодава лежит в кеше отдельно от плагинов.
 //
-// Хост поднимается при открытии превью клипа (vtPrep → voiceFxHostSync), пока в цепочке
-// есть включённые плагины, и гаснет, когда превью закрыли, открыли другой клип или
-// плагины выключили. Позицию хосту задаёт плеер теми же командами, что и у себя
-// (play/seek/pause — 60-preview.js:vtLiveUpdate). Настройки сохраняются САМИ: закрыл
-// окно — состояние плагина уехало в профиль спикера (сервер, api/voicefx.py:_save_live),
-// а панель забирает его опросом. Отдельной кнопки «Сохранить у спикера» нет.
+// Хост поднимается, когда открывают окно плагина (`vstFxEdit` → `voiceFxHostSync` с
+// `window: true`), проходит через ту же дверь при правках ручек, а гаснет, когда окон не
+// осталось, превью закрыли или клип сменили. Закрытие окна и гашение начинаются с
+// `dump_states`: хост отдаёт состояние КАЖДОГО загруженного плагина, сервер пишет их в
+// профиль спикера, и только потом процесс снимается по PID — иначе накрученное в окне
+// пропало бы (`voiceFxHostStop` → `voiceFxHostDump`). Позицию хосту задаёт плеер теми же
+// командами, что и у себя (play/seek/pause — 60-preview.js:vtLiveUpdate).
 //   VFXHOST.key   — что хост знает о цепочке (по нему решаем, слать ли `chain`);
 //   VFXHOST.seq   — счётчик «поколений»: погашенный хост не оживает от запоздавшего ответа;
 //   VFXHOST.row   — строка цепочки, чьё окно открыли (туда вернётся состояние плагина);
@@ -994,8 +1041,14 @@ function voiceFxHostPoll(){
       if(row&&row.isConnected)row.dataset.state=d.state;
       toast(t('Настройки плагина сохранены'));}
     if(was.window&&!d.window){
-      // Окно закрыто: если плагинов больше нет в звуке, хост можно погасить.
-      const host=$('pvvoice');voiceFxHostSync(host?voiceFxRead(host):null,{player:P});}
+      // Закрыли ПОСЛЕДНЕЕ окно плагина: живой звук больше не нужен, и правило одно —
+      // настройки всех плагинов уезжают в профиль, хост гаснет, а плееры заказывают
+      // ИТОГОВЫЙ голос (он печётся с плагинами) и играют его копию из кеша. Хост,
+      // оставленный играть «на всякий случай», и был причиной лагов превью: его не
+      // подогнать к картинке точнее 0,4 с.
+      const host=$('pvvoice');
+      voiceFxHostSync(host?voiceFxRead(host):null,{player:P});
+      if(P&&typeof vtPrep==='function')vtPrep(P);}
     voiceFxHostPoll(P);},500);}
 // Что не так с хостом — словами в панель: плагин не загрузился (с ИМЕНЕМ) или звук
 // хоста не идёт (устройство не приняло частоту, поток отвалился). Строка одна и
@@ -1049,6 +1102,11 @@ function voiceFxLiveGain(){
 // Погасить хост: превью закрыли, клип сменили, плагины выключили. Процесс снимает сервер
 // по PID (api/voicefx.py:api_voicefx_host_stop). Своё состояние чистим сразу, не дожидаясь
 // ответа: запоздавший ответ погашенного хоста (`seq`) уже не оживит.
+//
+// ПЕРЕД гашением сервер забирает у хоста состояние ВСЕХ загруженных плагинов
+// (`dump_states`) и пишет его в профиль спикера — окно могло быть открыто, а состояние
+// знает только процесс хоста. Своё ожидание события (`states`) кончается раньше, чем
+// уезжает запрос: гасить хост всё равно надо, а состояние к этому моменту уже у нас.
 async function voiceFxHostStop(){
   clearTimeout(VFXHOST.timer);VFXHOST.timer=0;
   const L=VOICEFXLIVE;
@@ -1061,6 +1119,30 @@ async function voiceFxHostStop(){
   if(typeof CPV!=='undefined'&&CPV.vt)vtTick(CPV,typeof cpvNow==='function'?cpvNow():(typeof vtNow==='function'?vtNow(CPV):0));
   if(!L||!L.sid)return;
   await voiceFxHostPost('/api/voicefx_host_stop',{sid:L.sid,xml:L.xml||''});}
+// Состояние ВСЕХ плагинов у живого хоста — до гашения. Сервер сам шлёт хосту
+// `dump_states`, ждёт событие `states` и пишет профиль; фронту состояния нужны, чтобы
+// разложить их по строкам цепочки (иначе следующая правка ручки затрёт накрученное).
+async function voiceFxHostDump(P){
+  const L=VOICEFXLIVE;
+  if(!L||!L.sid)return null;
+  const d=await voiceFxHostPost('/api/voicefx_live',{sid:L.sid,cmd:'dump_states'});
+  const list=(d&&Array.isArray(d.states))?d.states:[];
+  voiceFxStatesApply(list);
+  // Разбудить ждущего (60-preview.js:vtStatesWait): состояния мы уже взяли, и ждать
+  // ему больше нечего. Ответа сервера о событии `states` тут не бывает — оно ушло в
+  // файл событий хоста, и его разобрал сам сервер.
+  if(P&&P.vt&&P.vt.statesWait)P.vt.statesWait(list);
+  return list.length?list:null;}
+// Разложить состояния по строкам цепочки: строка ищется ПО ПУТИ (индексы панели и
+// хоста разъезжаются, если плагин не загрузился) — та же дверь, что у закрытия окна.
+function voiceFxStatesApply(list){
+  const rows=(typeof document!=='undefined'&&document.querySelectorAll)
+    ?Array.from(document.querySelectorAll('[data-vst]')):[];
+  (Array.isArray(list)?list:[]).forEach(it=>{
+    const path=String((it&&it.path)||''),state=String((it&&it.state_b64)||'');
+    if(!path||!state)return;
+    const row=rows.find(r=>r.dataset&&r.dataset.path===path);
+    if(row)row.dataset.state=state;});}
 // Страницу закрыли или перезагрузили — хост гасим маячком: fetch на выгрузке не
 // гарантирован, а без этого процесс висел бы до конца работы сервера (его добьёт и
 // молчание опроса, но через минуты).
@@ -1094,7 +1176,7 @@ async function vstFxEdit(el){
 function pvVoicePanel(){
   const host=$('pvvoice');if(!host)return;
   const c=(typeof ED!=='undefined'&&ED.xml&&typeof clipByXml==='function')?clipByXml(ED.xml):null;
-  const key=(c&&c.job&&c.job.speaker)||'';
+  const key=clipSpeaker(c);
   VOICEFXSPK=key;
   const prof=key?(SPEAKERS[key]||null):null;
   const lbl=$('pvvoicespk');if(lbl)lbl.textContent=prof?(prof.label||key):'';
@@ -1254,7 +1336,7 @@ async function saveSpeaker(){
   if(SPKEDIT&&d.key!==SPKEDIT){
     // Клипы помнят спикера, которым резали (job.speaker) — без правки они остались бы
     // на старом, уже несуществующем имени, и следующая нарезка шла бы чужим профилем
-    CLIPS.forEach(c=>{if(c.job&&c.job.speaker===SPKEDIT)c.job.speaker=d.key;});
+    CLIPS.forEach(c=>{if(clipSpeaker(c)===SPKEDIT)c.job.speaker=d.key;});
     try{await fetch('/api/delspeaker',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({name:SPKEDIT})});}
     catch(e){uiLog(t('старый профиль ')+SPKEDIT+t(' не удалён: ')+e);}}
@@ -1649,7 +1731,12 @@ function renderStyleInfo(){const el=$('styleinfo');if(!el)return;
     +styleSpeakerNote();}
 // Стиль привязан к спикеру, но менять его тут можно свободно — поэтому пишем и чей он,
 // и что стояло у спикера по умолчанию, если стиль от профиля увели.
-function styleSpeakerNote(){const sp=(typeof SPEAKERS!=='undefined')?SPEAKERS[val('speaker')]:null;
+// Открыт клип (шаг 3) — панель показывает стиль ЭТОГО клипа, и подпись говорит о его
+// спикере (иначе у клипа спикера Б панель называла бы стиль спикера А из общего выбора).
+// Клипа нет (шаг 1) — общий селектор: это новая нарезка и профиль спикера.
+function styleSpeakerNote(){
+  const c=(curAE>=0&&typeof CLIPS!=='undefined'&&CLIPS[curAE])?CLIPS[curAE]:null;
+  const sp=(typeof SPEAKERS!=='undefined')?SPEAKERS[c?clipSpeaker(c):val('speaker')]:null;
   if(!sp||!sp.style)return '';
   return (val('style')===sp.style)
     ? t(' · стиль спикера «{n}»',{n:sp.label||''})
@@ -1939,17 +2026,177 @@ async function saveStyleTo(name){
 async function pickdir(id){try{const d=await (await fetch('/api/pickdir')).json();if(d.path){$(id).value=d.path;
   if(id==='aeoutdir'||id==='aeoutdir3')aeDirCommit($(id));      // выбранное — закрепить (у тега: в профиль спикера)
   else if(id==='aerenderdir')renderDirCommit($(id));
+  // Папка треков — ключ СТИЛЯ (music_dir), поэтому выбранную нативным диалогом папку
+  // доводит та же дверь, что и ручной ввод: saveState() тут сохранил бы поле, а не стиль.
+  else if(id==='musicdir')musicDirChanged();
   else saveState();}}
   catch(e){toast(t('Не открылся выбор папки — сервер не ответил'));uiLog(t('pickdir: ')+e);}}
 // Выбор таблицы LUT (.cube) для камеры спикера — как pickdir, только файл и с
 // фильтром .cube: таблицу кладут рядом с исходниками, и в общей папке её не найти.
 async function pickcube(id){try{const d=await (await fetch('/api/pickcube')).json();if(d.path){$(id).value=d.path;}}
   catch(e){toast(t('Не открылся выбор файла — сервер не ответил'));uiLog(t('pickcube: ')+e);}}
-function musicUI(){const m=val('musicmode');const ib=$('musicinbox');if(ib)ib.style.display=(m==='random')?'none':'';
-  const pk=$('musicpick');if(pk)pk.style.display=(m==='file')?'':'none';const lb=$('musicinlbl');if(lb)lb.textContent=(m==='file')?t('Путь к файлу'):t('Ссылка YouTube');
-  const inp=$('aemusic');if(inp)inp.placeholder=(m==='file')?'…\\music\\track.m4a':'https://youtube.com/...';}
-async function pickMusic(){try{const d=await (await fetch('/api/pickaudio')).json();if(d.path){$('aemusic').value=d.path;captureAE();}}
+
+// ================= музыка клипа (шаг 3) =================
+// Музыка — свойство СТИЛЯ (music_mode/music_dir/music_src рядом с music_db), а у клипа
+// есть ПЕРЕОПРЕДЕЛЕНИЕ (job.music_override = null | {mode,src}) и ЗАКРЕПЛЁННЫЙ трек
+// режима «случайно» (job.music_pick). Здесь только интерфейс и правила выбора; сами
+// ключи пишет сборка (jobForBuild) и читает план сцены.
+//
+// Папка треков клипа — ОДНА дверь на всех: musicPickDir (90-ae.js) со всей лестницей
+// (переопределение клипа → папка стиля → прежнее `aemusicdir` → <папка проекта>\music).
+// Здесь только имя для мест, которые зовут папку про музыку клипа («Другой трек»,
+// «Скачать»): своей копии лестницы тут нет — разъехавшись, превью искало бы треки не
+// там, где сборка.
+function jobsMusicDir(c){return musicPickDir(c);}
+// Эффективная музыка клипа: переопределение клипа важнее стиля, всё остальное — из стиля.
+// Одна дверь на показ блока, на сборку и на план сцены: второй копии «откуда берётся
+// трек» быть не должно — разъехавшись, превью и .jsx играли бы разные файлы.
+function effMusic(c){const j=(c&&c.job)||{};const ov=j.music_override;
+  const st=(typeof CURSTYLE!=='undefined'&&CURSTYLE)||{};
+  const mode=ov?ov.mode:(st.music_mode||'off');
+  if(mode==='off')return {mode:'off',src:'',dir:''};
+  if(mode==='file'||mode==='url'){
+    const src=ov?ov.src:(st.music_src||'');
+    return {mode,src:src||'',dir:(st.music_dir||'').trim()};}
+  return {mode:'random',src:(j.music_pick||''),dir:(st.music_dir||'').trim()};}
+// Трек клипа — ровно то, что уедет в сборку: у «file» — путь, у «url» и «off» — ничего,
+// у «random» — закреплённый job.music_pick (сборка НЕ перевыбирает: второй выбор дал бы
+// другое звучание, чем играло превью).
+function musicTrack(c){const m=effMusic(c);return (m.mode==='file'||m.mode==='random')?m.src:'';}
+function musicTrackName(p){return p?String(p).replace(/^.*[\\\/]/,''):'';}
+// Папка треков — настройка СТИЛЯ (рядом с music_db), поэтому правка поля идёт в
+// CURSTYLE: у клипов на этом стиле папка одна и та же, а «свой трек» клипа её не
+// копирует (см. musicOverrideEdit).
+function musicDirChanged(){if(typeof CURSTYLE==='undefined'||!CURSTYLE)return;
+  const el=$('musicdir');CURSTYLE.music_dir=el?el.value.trim():'';
+  const c=(curAE>=0)?CLIPS[curAE]:null;if(c)musicSync(c);
+  if(typeof stEdit==='function')stEdit();   // папка музыки — ключ стиля
+  if(typeof saveState==='function')saveState();
+  musicClipUI();if(typeof ipvPlanSoon==='function')ipvPlanSoon();}
+// Смена папки или режима — прежний закреплённый трек больше не наш: сбрасываем и
+// перевыбираем. Иначе клип остался бы со случайным треком из ПРОШЛОЙ папки.
+// Папка в подписи — ТА ЖЕ, что уходит в выбор трека (musicPickDir со всей лестницей
+// до <папки проекта>\music): сравнивай здесь одну только папку стиля, и подпись не
+// совпала бы с той, которую поставил musicPickEnsure, — трек сбрасывался бы на каждом показе.
+// Пустая подпись (клип заведён раньше) не сбрасывает уже закреплённый трек: он выбран
+// той же лестницей, и терять его незачем.
+function musicSync(c){if(!c)return;const j=c.job;if(!j)return;const m=effMusic(c);
+  const sig=m.mode+'|'+musicPickDir(c);
+  if(!j.music_sig){j.music_sig=sig;return;}
+  if(j.music_sig!==sig){j.music_sig=sig;j.music_pick='';}}
+// Показ панели музыки у открытого клипа. Значения читаются из данных (job/CURSTYLE),
+// а не из полей DOM: тех полей больше нет — они переехали в стиль, и одна копия
+// значения меньше.
+function musicClipUI(){const host=$('musictrack');if(!host)return;
+  const c=(curAE>=0)?CLIPS[curAE]:null;
+  if(!c){host.textContent='';return;}
+  musicSync(c);                 // папка/режим сменились — старый «случайный» трек не наш
+  const j=c.job||{};const own=!!(j.music_override&&j.music_override.mode);
+  const m=effMusic(c);
+  const sel=$('musicown');if(sel)sel.value=own?'own':'style';
+  const box=$('musicovr');if(box)box.style.display=own?'':'none';
+  const md=$('musicmode');if(md)md.value=own?(j.music_override.mode||'random'):m.mode;
+  // Папка треков и ссылка — настройки СТИЛЯ: поле показывает их и правит их же.
+  const dir=$('musicdir');if(dir)dir.value=(typeof CURSTYLE!=='undefined'&&CURSTYLE&&CURSTYLE.music_dir)||'';
+  const src=$('musicsrc');if(src)src.value=own?((j.music_override||{}).src||'')
+    :((typeof CURSTYLE!=='undefined'&&CURSTYLE&&CURSTYLE.music_src)||'');
+  const rs=(own&&m.mode==='random');
+  const rr=$('musicreroll');if(rr)rr.style.display=rs?'':'none';
+  let label='';
+  if(m.mode==='off')label=t('музыки нет');
+  else if(m.mode==='random')label=m.src?musicTrackName(m.src):t('трек ещё не выбран');
+  else if(m.mode==='url')label=m.src?t('скачается при сборке: {n}',{n:m.src}):t('ссылка не задана');
+  else label=m.src?musicTrackName(m.src):t('файл не выбран');
+  host.textContent=label;}
+// Кнопка «Другой трек»: новый сид + исключение текущего — детерминированный выбор
+// обязан уметь выбирать ЗАНОВО (иначе кнопка возвращала бы тот же файл и выглядела
+// сломанной). Пока трек не выбран и не пришёл ответ, кнопка заблокирована.
+let MUSIC_REROLL_BUSY=false;
+async function musicReroll(){
+  if(MUSIC_REROLL_BUSY)return;
+  const c=(curAE>=0)?CLIPS[curAE]:null;if(!c)return;const j=c.job;if(!j)return;
+  const dir=jobsMusicDir(c),cur=musicTrack(c);
+  MUSIC_REROLL_BUSY=true;const b=$('musicreroll');if(b)b.disabled=true;
+  let d=null;
+  try{d=await (await fetch('/api/music_random',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({dir,seed:c.xml,exclude:cur})})).json();}catch(e){d=null;}
+  if(d&&d.path){
+    if(d.path===cur){   // в папке один трек — исключать нечего; пробуем другим сидом
+      try{d=await (await fetch('/api/music_random',{method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({dir,seed:Date.now()})})).json();}catch(e){d=null;}
+    }
+    if(d&&d.path)j.music_pick=d.path;
+  }
+  MUSIC_REROLL_BUSY=false;if(b)b.disabled=false;
+  if(!d||!d.path)toast(t('Нет треков в папке музыки — проверь папку'));
+  if(typeof saveState==='function')saveState();
+  musicClipUI();if(typeof ipvPlanSoon==='function')ipvPlanSoon();}
+// Смена «как в стиле / свой трек»: выбор «как в стиле» очищает переопределение
+// (музыка снова из стиля), выбор «свой трек» заводит его по режиму стиля.
+function musicOwnChanged(v){
+  const c=(curAE>=0)?CLIPS[curAE]:null;if(!c)return;const j=c.job=c.job||{};
+  if(v==='own'){const st=(typeof CURSTYLE!=='undefined'&&CURSTYLE)||{};
+    j.music_override={mode:st.music_mode||'random',src:(st.music_src||'')};}
+  else{j.music_override=null;j.music_pick='';j.music_sig='';}
+  if(typeof saveState==='function')saveState();
+  musicClipUI();if(typeof ipvPlanSoon==='function')ipvPlanSoon();}
+// Режим/ссылка своего трека. Папку берём ИЗ СТИЛЯ (CURSTYLE.music_dir), а не из поля
+// блока: поле показывает папку стиля и правит её же, и второе хранилище на клипе
+// разъехалось бы со стилем при первой же смене папки у соседнего клипа.
+// Смена режима сбрасывает закреплённый «случайный» трек: в новом режиме он не наш.
+function musicOverrideEdit(){
+  const c=(curAE>=0)?CLIPS[curAE]:null;if(!c)return;
+  const ownSel=$('musicown');if(ownSel&&ownSel.value!=='own')return;   // правка полей скрытого блока
+  const j=c.job=c.job||{};
+  const md=$('musicmode'),dir=$('musicdir'),src=$('musicsrc');
+  if(dir&&typeof CURSTYLE!=='undefined'&&CURSTYLE)CURSTYLE.music_dir=dir.value.trim();
+  j.music_override={mode:(md&&md.value)||'random',src:src?src.value.trim():''};
+  j.music_pick='';j.music_sig='';
+  if(typeof saveState==='function')saveState();
+  if(typeof stEdit==='function')stEdit();   // папка — ключ стиля: доводим стиль до конца
+  musicClipUI();if(typeof ipvPlanSoon==='function')ipvPlanSoon();}
+// Скачивание трека по ссылке: до этой кнопки ссылка скачивалась ТОЛЬКО на сборке —
+// проверить, что по ней есть что скачать, было нечем. Папка — папка музыки клипа,
+// скачанный файл сразу попадает в пул «случайно».
+async function musicDownload(){
+  const c=(curAE>=0)?CLIPS[curAE]:null;
+  const s=$('musicsrc');const url=s?s.value.trim():'';
+  if(!url){toast(t('Сначала вставь ссылку YouTube'));return;}
+  const b=$('musicdl');if(b)b.disabled=true;
+  if(typeof toast==='function')toast(t('Скачиваю трек…'));
+  let d=null;
+  try{d=await (await fetch('/api/music_fetch',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({url,dir:c?jobsMusicDir(c):''})})).json();}catch(e){d=null;}
+  if(b)b.disabled=false;
+  if(!d||!d.ok||!d.path){toast(t('Не скачалось')+': '+((d&&errText(d))||t('сервер не ответил на запрос')));return;}
+  if(s)s.value=d.path;
+  if(c){const j=c.job=c.job||{};j.music_override=j.music_override||{mode:'file'};
+    if(j.music_override.mode==='url')j.music_override.mode='file';
+    j.music_override.src=d.path;j.music_pick='';}
+  if(typeof saveState==='function')saveState();
+  musicClipUI();if(typeof ipvPlanSoon==='function')ipvPlanSoon();}
+// Выбор файла трека для СВОЕГО трека клипа (не путать с pickdir: это файл).
+async function pickMusic(){
+  try{const d=await (await fetch('/api/pickaudio')).json();
+    if(d.path){const s=$('musicsrc');if(s)s.value=d.path;musicOverrideEdit();}}
   catch(e){toast(t('Не открылся выбор файла — сервер не ответил'));uiLog(t('pickaudio: ')+e);}}
+// Добор закреплённого трека при открытии клипа: режим «случайно», а трека ещё нет —
+// берём его тем же сидом, что берёт сборка (путь XML), и ЗАПОМИНАЕМ на клипе. Пока
+// запоминания не было, трек выбирался в момент сборки и нигде не показывался; теперь
+// он виден именем файла, а «Другой трек» выбирает заново (musicReroll).
+// Гонка ответов: клип могли переоткрыть, пока шёл запрос, — пишем только в тот клип,
+// который всё ещё открыт (та же защита, что у loadWordsFor по WORDSREQ).
+async function musicPickEnsure(c){if(!c)return;const m=effMusic(c);
+  if(m.mode!=='random'||m.src)return;
+  const j=c.job||{};const dir=musicPickDir(c);
+  let d=null;
+  try{d=await (await fetch('/api/music_random',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({dir,seed:c.xml})})).json();}catch(e){d=null;}
+  if(!d||!d.path)return;
+  if(CLIPS[curAE]!==c)return;     // панель уже принадлежит другому клипу
+  j.music_pick=d.path;j.music_sig=m.mode+'|'+dir;
+  if(typeof saveState==='function')saveState();
+  musicClipUI();if(typeof ipvPlanSoon==='function')ipvPlanSoon();}
 
 // ================= ASR-движки (кто слушает звук) =================
 // Список приходит с сервера (/api/asr_engines = asr_backends.engines()): встроенные

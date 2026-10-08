@@ -43,6 +43,12 @@ faster-whisper>=1.0,<2
 av>=12,<19
 # Qwen2.5-Omni; if Omni fails to load, install from git:
 #   pip install git+https://github.com/huggingface/transformers
+# The upper bound is deliberately still <5: at import transformers 5.x calls
+# torch.accelerator (utils/import_utils.py, get_device_type), which appeared only in
+# torch 2.6, while install.ps1/install.sh and both READMEs install torch 2.5.1 - with
+# it every Auto* import fails, so breath/falign/ctc_asr/omni_asr all die at once.
+# Until torch moves, the six pip-audit advisories against 4.x are excluded one by one
+# in .github/workflows/ci.yml, each with the code path we never call.
 transformers>=4.46,<5
 accelerate>=1.0
 huggingface-hub>=0.26

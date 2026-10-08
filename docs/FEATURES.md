@@ -709,7 +709,7 @@ segment, and the track is keyed at every sample, 10 per second, linearly). Track
 GPU and the matting model (downloaded on first use, as for rotoscope); if it fails, the build
 continues without tracking and says so in the log.
 **Code:** `core/headtrack.py:201`, `core/xml2ae/layout.py:1156`,
-`core/xml2ae/build.py:1756`
+`core/xml2ae/precompute.py:63`
 
 ### Colour (Lumetri)
 

@@ -12,28 +12,18 @@ from core.app_meta import console_emit, wrap_emit
 from core.applog import get_logger
 from core import fonts as _fonts
 from core import frame as _frame
-from core import emphasis as _emphasis
 from core import lutbake
 from core import voicefx
 from core.fileio import atomic_text_write
 
-from .jsutil import _fill_js, _jd, _js, _js_multiline, _r
-from .layout import (DEFAULT_DISCLAIMER, EASE_DEFAULT, HL_DUR, HL_EASE_IN, HL_EASE_OUT,
-                     INS_MASK_R,
-                     INTRO_F_DUR, INTRO_FIT_W, INTRO_LINE_STEP, INTRO_SCALE,
-                     SHADE_BLUR, SHADE_DY, SHADE_H, SHADE_OX, SHADE_OY, SHADE_SCALE,
-                     SHADE_W, SHADE_X,
-                     SUB_GLITCH_BLUR, SUB_GLITCH_DUR, SUB_GLITCH_END_KEYS,
-                     SUB_GLITCH_OP_KEYS,
+from .jsutil import _jd, _js
+from .layout import (DEFAULT_DISCLAIMER, HL_DUR, INTRO_F_DUR, INTRO_FIT_W, INTRO_SCALE,
                      cover_sweep,
-                     css_blur_px,
                      _cam_change_frames,
-                     _ins_box,
                      _ins_scale,
                      _media_dims,
                      _px_k,
-                     _zoom_max,
-                     hl_size_decl)
+                     _zoom_max)
 from . import precompute
 from .parse import Cancelled, parse_full
 # Числа огибающей звука глитча переехали в plan_audio.py (этап 4 распила scene_plan), но
@@ -50,65 +40,34 @@ from .plan_camera import CameraInputs, plan_camera
 from .plan_decor import (SH_SUB_DIR, SH_SUB_DIST, SH_SUB_OP, SH_SUB_SOFT,  # noqa: F401
                          DecorInputs, _caption_bg_size_expr, _sub_bg_expr, plan_decor,
                          shadows_plan)
+from .plan_emph import EmphInputs, plan_emph
 from .plan_inserts import (InsertTimingInputs, InsertsInputs, plan_insert_timings,
                            plan_inserts)
-from .plan_intro import IntroInputs, _g_at, _grp_big_i, intro_hl_words, plan_intro
+from .plan_intro import IntroInputs, _g_at, _grp_big_i, plan_intro
 from .plan_intro_tpl import IntroTplInputs, plan_intro_tpl
+from .plan_lumetri import LumetriInputs, plan_lumetri
+# LUMETRI_PARAMS переехала в plan_ae.py вместе с кодом, который её зовёт, но остаётся
+# контрактом сборки: её берут снаружи (tests/test_lumetri.py) по-прежнему из build —
+# второй копии таблицы нет, это тот же объект.
+from .plan_ae import LUMETRI_PARAMS, AeInputs, plan_ae, plate_tokens  # noqa: F401
+from .plan_frame import FrameInputs, apply_frame, plan_frame
+from .plan_scene import INTRO_ANIMS, SceneInputs, plan_scene
+from .plan_shade import ShadeInputs, plan_shade
 # Стиль читается ОДИН раз: структура и её чтение уехали в plan_style.py.
 # _sv/_sv_or остаются контрактом сборки: их берут снаружи (tests/test_build_style_defaults.py,
 # сторожа распила) по-прежнему из build — второй копии обёрток нет, это те же объекты.
-from .plan_style import StyleValues, _sv, _sv_or, read_style  # noqa: F401
+# TRITONE_MAX_LUM/_tritone_on переехали в plan_style.py вместе с кодом, который их
+# зовёт, но остаются контрактом сборки: их берут снаружи (tests/test_deepglow_glow.py,
+# tests/test_tritone_bright.py) по-прежнему из build — второй копии формулы нет, это те же
+# объекты.
+from .plan_style import (StyleValues, TRITONE_MAX_LUM, _sv, _sv_or,  # noqa: F401
+                         _tritone_on, read_style)
 from .plan_subs import SubsInputs, plan_subs
 from .plan_words import WordsInputs, plan_words
-from .template import AE_FULL, VOICE_CLIP_DECL, VOICE_SRC_DECL, VOICE_WAV_DECL
+from .template import AE_FULL
 from core.umsg import ReelsiError
 
 log = get_logger(__name__)
-
-# Цвет камер через Lumetri: ключ плана -> matchName эффекта в AE и подпись
-# для лога. Номера сняты архитектором с живого AE 26.2 по свойствам эффекта (ADBE Lumetri),
-# диапазоны ползунков — в core/style_schema.py. Порядок = порядок setValue в .jsx.
-LUMETRI_PARAMS = (
-    ("exposure", "ADBE Lumetri-0011", "Exposure"),
-    ("contrast", "ADBE Lumetri-0012", "Contrast"),
-    ("highlights", "ADBE Lumetri-0013", "Highlights"),
-    ("shadows", "ADBE Lumetri-0014", "Shadows"),
-    ("whites", "ADBE Lumetri-0015", "Whites"),
-    ("blacks", "ADBE Lumetri-0016", "Blacks"),
-    ("temp", "ADBE Lumetri-0007", "Temperature"),
-    ("tint", "ADBE Lumetri-0008", "Tint"),
-    ("sat", "ADBE Lumetri-0020", "Saturation"),
-)
-
-
-# Tritone выбеливает яркие цвета: при яркости цвета мидтонов (Rec.709,
-# 0.2126R+0.7152G+0.0722B по значениям 0–1) выше порога не ставим. Замер 2026-09-18:
-# жёлтый интро Джаггера 0.91, жёлтый по умолчанию 0.87 — выкл; голубой 0.61,
-# оранжевый 0.57, красный 0.24 — вкл.
-# Механика: Tritone красит по яркости — цвет мидтонов уезжает на букву, Highlights
-# остаётся белым. Свечение выталкивает букву почти в белое, и она попадает в Highlights
-# вместо мидтонов. Свечение (Glo2) при этом не трогаем.
-TRITONE_MAX_LUM = 0.7
-
-
-def _tritone_on(rgb: Any) -> bool:
-    """Ставить ли ADBE Tritone для цвета мидтонов rgb ([r,g,b] 0..1; None — дефолтный жёлтый).
-
-    Порог и почему он есть — в комментарии к TRITONE_MAX_LUM. Дефолт None повторяет
-    подстановку _fill_js(None): тот же жёлтый, что и при пустом hl_fill в стиле."""
-    r = list(rgb or [1, 0.9176, 0])[:3]
-    while len(r) < 3:
-        r.append(0.0)
-    return (0.2126 * r[0] + 0.7152 * r[1] + 0.0722 * r[2]) <= TRITONE_MAX_LUM
-
-
-def _fps_js(fps: float | int) -> str:
-    """Частота для строки `FPS=` в шаблоне. В шаблоне стояло `%d`, и NTSC-частота
-    29.97 усекалась до 29 — кадры XML делились бы на 29, то есть на 3.2% быстрее
-    реального времени. Целая частота печатается ровно как раньше (`60`, эталон .jsx
-    не меняется), дробная — числом с 6 знаками после запятой (`29.97003`)."""
-    f = float(fps)
-    return ("%d" % f) if f.is_integer() else str(round(f, 6))
 
 
 def _accent_word(w: Any, case: str) -> str:
@@ -316,38 +275,10 @@ DEEP_GLOW2_GLITCH = [
 ]
 
 
-# Параметры анимаций интро (глитч, раскрытие): сборка .jsx берёт числа
-# из этого словаря, а план сцены (scene_plan) передаёт их в превью браузера.
-# Единый источник истины — вторая копия в JS не заводится.
-INTRO_ANIMS: dict[str, Any] = {
-    # f_dur — сколько играет появление обычной строки интро (F_DUR .jsx): фейд, масштаб,
-    # up/left/right, РАСКРЫТИЕ и счётчик без своей анимации. Лежит здесь, потому что это
-    # число той же таблицы: его читает превью (план несёт его как intro_anims.f_dur) —
-    # своей копии у JS нет.
-    "f_dur": INTRO_F_DUR,
-    "glitch": {
-        # Числа — из layout (SUB_GLITCH_*): ими же играет пресет появления субтитров
-        # «глитч». Один источник на интро и на субтитры: вторая копия разошлась бы
-        # молча, а разъехавшийся глитч виден только рендером.
-        "dur": SUB_GLITCH_DUR,
-        # сила Gaussian Blur на слое слова глитча (было 6.8, пользователь 2026-09-11: вдвое слабее)
-        "blur": SUB_GLITCH_BLUR,
-        "end_keys": [list(k) for k in SUB_GLITCH_END_KEYS],
-        "op_keys": [list(k) for k in SUB_GLITCH_OP_KEYS],
-    },
-    "reveal": {
-        # Длительность раскрытия — F_DUR .jsx (INTRO_F_DUR), а не длительность глитча:
-        # ключи блюра, Scale слоя и Percent Offset селектора в introAnimFX стоят на
-        # t0+F_DUR*SQ. Иначе поле читало бы превью и открывало слово позже AE.
-        "dur": INTRO_F_DUR,
-        "blur": 26.8,
-        "scale": 0.7,
-        "scale_3d": [11, 11, 91.66667],
-        "shape": 2,
-        "smoothness": 100,
-        "ease": [10, 95],
-    },
-}
+# Параметры анимаций интро (глитч, раскрытие) уехали в plan_scene.py вместе со словарём
+# плана (INTRO_ANIMS, там же и `SUB_GLITCH_*`), но остаются контрактом сборки: их берут
+# снаружи (tests/test_intro_last_hold.py, tests/test_plan_intro_tpl_split.py) по-прежнему
+# из build — второй копии таблицы нет, это тот же объект (импорт в начале модуля).
 
 
 def _intro_appear_dur(anim: str | None, count: bool = False) -> float:
@@ -363,64 +294,6 @@ def _intro_appear_dur(anim: str | None, count: bool = False) -> float:
     if count:
         return float(HL_DUR)
     return float(INTRO_F_DUR)
-
-
-def _lumetri_decl(lum: dict[str, float] | None, lum2: dict[str, float] | None = None) -> str:
-    """Объявление LUMETRI / LUMETRI2 и функций applyLumetri / applyLumetri2 для .jsx.
-
-    Один эффект ADBE Lumetri на слой, значения — по matchName из LUMETRI_PARAMS;
-    ошибки уходят в _LOG (пустых catch нет: иначе неверный цвет ищут в AE вслепую).
-    При выключенной галке стиля (lum = None, lum2 = None) подстановка пустая — .jsx побайтово
-    прежний (golden держит).
-    """
-    if not lum and not lum2:
-        return ""
-    # Начинается без ведущего \n и кончается \n: подстановка стоит в НАЧАЛЕ строки
-    # шаблона (перед `var ROTO=`) — при выключенной галке строка шаблона не меняется.
-    js: list[str] = []
-    if lum:
-        js.extend([
-            "    // Цвет камер через Lumetri: значения из стиля, exposure уже",
-            "\n    // включает экспозицию клипа. Один эффект на слой — как в панели Lumetri в AE.",
-            "\n    var LUMETRI = {%s};"
-            % ", ".join('%s: %g' % (k, lum[k]) for k, _mn, _lb in LUMETRI_PARAMS),
-            "\n    function applyLumetri(L){",
-            "\n        try{",
-            "\n            var lc = L.property(\"ADBE Effect Parade\").addProperty(\"ADBE Lumetri\");",
-        ])
-        for _key, _mn, _label in LUMETRI_PARAMS:
-            js.append("\n            try{ lc.property(\"%s\").setValue(LUMETRI.%s); }"
-                      "catch(e){ _LOG(\"Lumetri %s: \" + e); }" % (_mn, _key, _label))
-        js.append("\n        }catch(e){ _LOG(\"Lumetri на слое: \" + e); }")
-        js.append("\n    }\n")
-    if lum2:
-        prefix = "" if not lum else "    // Цвет Камеры 2 через Lumetri (разомкнутая цепочка связи).\n"
-        js.extend([
-            prefix + "    var LUMETRI2 = {%s};"
-            % ", ".join('%s: %g' % (k, lum2[k]) for k, _mn, _lb in LUMETRI_PARAMS),
-            "\n    function applyLumetri2(L){",
-            "\n        try{",
-            "\n            var lc = L.property(\"ADBE Effect Parade\").addProperty(\"ADBE Lumetri\");",
-        ])
-        for _key, _mn, _label in LUMETRI_PARAMS:
-            js.append("\n            try{ lc.property(\"%s\").setValue(LUMETRI2.%s); }"
-                      "catch(e){ _LOG(\"Lumetri2 %s: \" + e); }" % (_mn, _key, _label))
-        js.append("\n        }catch(e){ _LOG(\"Lumetri2 на слое: \" + e); }")
-        js.append("\n    }\n")
-    return "".join(js)
-
-
-# Клипы камер: покадровая экспозиция (EXPOSURE) ИЛИ весь Lumetri из стиля — ровно в том
-# же месте шаблона, что и раньше. Значения по умолчанию — прежний текст .jsx байт в байт.
-LUMETRI_CAM_OFF = (
-    "if (EXPOSURE!=0){ try{ var lc=lay.property(\"ADBE Effect Parade\").addProperty(\"ADBE Lumetri\");  // яркость на все камеры\n"
-    "                try{ lc.property(\"ADBE Lumetri-0011\").setValue(EXPOSURE); }catch(e){} }catch(e){} }")
-LUMETRI_CAM_ON = "applyLumetri(lay);"
-# Рото-копии камер — то же самое, но своей строкой шаблона (без внешнего try).
-LUMETRI_ROTO_OFF = (
-    "if (EXPOSURE!=0){ try{ var lc=cc.property(\"ADBE Effect Parade\").addProperty(\"ADBE Lumetri\");\n"
-    "                lc.property(\"ADBE Lumetri-0011\").setValue(EXPOSURE); }catch(e){} }")
-LUMETRI_ROTO_ON = "applyLumetri(cc);"
 
 
 def _speaker_frames(xml_path: str) -> dict[str, dict[str, float]]:
@@ -478,33 +351,14 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
             raise Cancelled()
 
     _ckpt("разбор XML")
-    # Кадр ролика — ДО разбора XML: формат из профиля спикера главнее того, что лежит
-    # в XML, но ТОЛЬКО когда задан в профиле явно (`core/frame.ensure_frame`). Формат
-    # выбирают в профиле, а XML пишется нарезкой, и между этими событиями формат мог
-    # поменяться: тогда XML пересобирается в новый кадр тем же путём, что «Сохранить»
-    # в редакторе нарезки, — и только если разошлись ПРОПОРЦИИ (XML 2160×3840 при
-    # формате 9:16 не трогаем: тот же формат, просто крупнее). Здесь, а не в роуте, —
-    # потому что сюда приходят ВСЕ сборки: сборка .jsx, превью шага 3 (`/api/scene`),
-    # черновик (`virtual_edl`) и набор. Профиля нет или формат в нём не задан — кадр
-    # берётся из самого XML, как раньше.
+    # ---- Кадр ролика и диагностика камер вынесены в plan_frame.py (остаток распила) ----
+    # Формат из профиля спикера главнее XML (core/frame.ensure_frame): XML пересобирается
+    # в новый кадр ДО разбора, если разошлись пропорции. Сюда приходят ВСЕ сборки: .jsx,
+    # превью шага 3 (/api/scene), черновик (virtual_edl) и набор. Ошибка «нет камер» —
+    # ValueError, а не SystemExit (вызывающие ловят только Exception).
     _fw, _fh = _frame.ensure_frame(xml_path, emit=emit)
     meta, cams, subs, xml_inserts = parse_full(xml_path, ncams=ncams)
-    # Кадр плана — кадр ролика (формат, заданный явно), даже если XML пересобрать не
-    # удалось (битый сайдкар, нет исходников под рукой): показать и собрать ролик в
-    # заказанном формате честнее, чем в том, что осталось в XML. Premiere при этом
-    # покажет XML, и о расхождении в логе уже сказано предупреждением `ensure_frame`.
-    if (_fw, _fh) != (int(meta["w"]), int(meta["h"])):
-        emit("⚠ формат кадра: XML в {ow}×{oh}, а ролик собирается в {nw}×{nh} — "
-             "пересобери XML в редакторе нарезки", ow=meta["w"], oh=meta["h"], nw=_fw, nh=_fh)
-        meta["w"], meta["h"] = int(_fw), int(_fh)
-    if not cams:
-        # ValueError, а НЕ SystemExit: вызывающие ловят только Exception, поэтому
-        # SystemExit пролетал сквозь них — /api/to_ae отдавал 500-HTML вместо {error},
-        # а фоновая сборка молча писала «Сборка завершена» с пустым results.
-        raise ValueError("Не нашёл видеодорожки с камерами в XML.")
-    for _ci, _c in enumerate(cams):                 # диагностика 1-кам «нет названий нулов»: пустой путь
-        if not (_c.get("path") or "").strip():
-            emit("⚠ Камера {cam} без пути к файлу (нул создастся пустым — проверь XML).", cam=_ci + 1)
+    apply_frame(_fw, _fh, meta, cams, emit)
     _fp = meta["fps"]
     # Множитель пиксельных констант раскладки под кадр ролика (layout._px_k: min(W, H)/1080,
     # то же правило, что у вида «size» стиля): им живут карточка вставки, её блюр и вылет,
@@ -625,46 +479,30 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
     # на подложке» — галка у самой вставки (поле plate). Файла в стиле нет — подложки нет
     # ни у кого: подстановки шаблона пустые и .jsx побайтово прежний (golden).
     _any_plate = bool(stv.plate_path) and any(x.get("plate") for x in inserts)
-    # Цвет камер через Lumetri: девять значений стиля одной дверью — их
-    # читают и .jsx (LUMETRI), и превью (plan["lumetri"]), второй копии нет. Экспозиция
-    # клипа (kwarg exposure с шага AE) ПРИБАВЛЯЕТСЯ к стилевой: раньше её нёс EXPOSURE
-    # ровно на тех же слоях. Выключенная галка — None: подстановки шаблона прежние, .jsx
-    # побайтово как раньше (golden). Ключи читаются ЯВНО (не склейкой "lm_"+k): сторож
-    # схемы (test_r11_li_every_knob) ищет ручку в коде по её имени — теперь в plan_style.py.
-    lumetri = None
-    if stv.lm_on:
-        lumetri = {
-            "exposure": stv.lm_exposure + float(exposure or 0),
-            "contrast": stv.lm_contrast,
-            "highlights": stv.lm_highlights,
-            "shadows": stv.lm_shadows,
-            "whites": stv.lm_whites,
-            "blacks": stv.lm_blacks,
-            "temp": stv.lm_temp,
-            "tint": stv.lm_tint,
-            "sat": stv.lm_sat,
-        }
-    lumetri2 = None
-    if not stv.lm2_link and stv.lm2_on:
-        lumetri2 = {
-            "exposure": stv.lm2_exposure + float(exposure or 0),
-            "contrast": stv.lm2_contrast,
-            "highlights": stv.lm2_highlights,
-            "shadows": stv.lm2_shadows,
-            "whites": stv.lm2_whites,
-            "blacks": stv.lm2_blacks,
-            "temp": stv.lm2_temp,
-            "tint": stv.lm2_tint,
-            "sat": stv.lm2_sat,
-        }
+    # ---- Цвет камер через Lumetri вынесен в plan_lumetri.py (остаток распила) ----
+    # Девять значений стиля одной дверью: их читают и .jsx (LUMETRI / applyLumetri),
+    # и превью (`plan["lumetri"]`), второй копии правил нет. Экспозиция клипа (kwarg
+    # exposure с шага AE) прибавляется к стилевой там же; ключи читаются ЯВНО — сторож
+    # схемы (test_r11_li_every_knob) ищет ручку в коде по её имени.
+    _lm = plan_lumetri(LumetriInputs(style=stv, exposure=exposure))
+    lumetri, lumetri2 = _lm.lum, _lm.lum2
     # Цвет мидтонов жёлтой строки — тот самый, что уезжает в подстановку _yellow_expr:
     # своя подстановка intro_hl_fill перебивает hl_fill. Яркость у него ОДНА на двоих
     # по ней не ставится ни Tritone (выбеливает букву), ни Deep Glow
     # (к свечению строки добавляется второе свечение). Второй копии формулы нет — только
-    # _tritone_on, читающая TRITONE_MAX_LUM. Цвета в стиле нет вовсе — _tritone_on(None)
-    # повторяет подстановку _fill_js(None): тот же стоковый жёлтый styles.BASE (0.87).
-    _yellow_rgb = stv.intro_hl_fill if stv.intro_hl_fill is not None else stv.hl_fill
-    _yellow_dark = _tritone_on(_yellow_rgb)
+    # _tritone_on, читающая TRITONE_MAX_LUM (обе переехали в plan_style.py вместе с кодом,
+    # который их зовёт). Цвета в стиле нет вовсе — _tritone_on(None) повторяет подстановку
+    # _fill_js(None): тот же стоковый жёлтый styles.BASE (0.87).
+    _yellow_dark = _tritone_on(stv.intro_hl_fill if stv.intro_hl_fill is not None
+                               else stv.hl_fill)
+    # ---- Затемнение под интро вынесено в plan_shade.py (остаток распила) ----
+    # Числа слоя-фигуры (класс ключа intro_shade): их же читает предпросмотр
+    # (`plan["shade"]`), а подстановку шаблона собирает plan_intro_tpl.shade_js по ЭТИМ
+    # числам — второй копии формул и текста нет. Считается до plan_intro: числа затемнения
+    # уезжают и в расчёт интро (подстановка шаблона), а от групп интро не зависят вовсе.
+    # Выключенная галка — ключа в плане нет, подстановка пустая, .jsx прежний байт в байт
+    # (golden).
+    shade_plan = plan_shade(ShadeInputs(style=stv, px=_px)).numbers
     # Регистр и цвет базовых субтитров: регистр применяется в scene_plan к
     # ГОТОВОМУ тексту (и .jsx, и превью читают его — второй копии правила нет), цвет
     # уезжает в план для превью и в шаблон как параметр FILL. Дефолты upper/белый —
@@ -718,35 +556,14 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
     # нарезки): файл лежит рядом с XML, и его играют и превью, и проект AE. Пусто —
     # голос не обработан, звук идёт с камеры, как раньше.
     voice_wav = voicefx.final_voice_for_build(xml_path, (cams[0].get("path") or ""), emit=emit)
-    # ---- Сила жёлтых (core/emphasis.py) ----
-    # Наезд хайлайта в режиме «только сильные жёлтые» ставится не на каждую фразу, а на
-    # самые сильные (см. `plan_camera` и `layout._take_zoom_segment_keys`), и силы
-    # приходят из сайдкара `<стем>.emph.json`. Читает его ОДНА дверь — здесь: сборка
-    # .jsx, превью (`/api/scene`) и черновик видят одни и те же числа. Сайдкар считает
-    # предрасчёт (`precompute.emphasis_precompute`) при сборке и в конце шага ИИ-жёлтых;
-    # план сцены только читает и о непосчитанном честно пишет в лог — второго расчёта
-    # силы в сборке нет.
-    _emp_src = (cams[0].get("path") if cams else "") or ""
-    # Нумер слов — как у ПЛАНА: `subs` здесь уже без слов интро (их вынул `plan_words`),
-    # а `hl` — та же разметка после переиндексации. Слова интро продолжают ряд
-    # (`len(subs) + j`) — ровно так же их нумерует `plan_camera._yellow_need`, и тем же
-    # нумером пишет сайдкар предрасчёт (`precompute.emphasis_precompute`, он зовёт
-    # `plan_words` — одну дверь переиндексации, второй копии правила нет).
-    # Времена слов интро берутся из ПОЛНОГО списка (`censor_source`): `intro_remove` —
-    # индексы исходного списка ролика, до вырезания слов интро.
-    _emp_words = _emphasis.word_refs(subs, meta["fps"])
-    _emp_intro = intro_hl_words(intro, intro_splits, intro_remove, censor_source)
-    _emp_idx = [int(k) for k in hl] + [len(subs) + j for j in range(len(_emp_intro))]
-    # Способ оценки силы (`hl_zoom_strength`) выбирает ПЛАН, и он же решает, какую
-    # компоненту сайдкара взять (обе лежат рядом). Предрасчёт читает тот же ключ —
-    # иначе в режиме «по голосу» он бы грузил модель эмоций впустую.
-    _emph = _emphasis.read_emphasis(xml_path, _emp_words, _emp_intro, hl, _emp_src, idx=_emp_idx,
-                                    mode=stv.hl_zoom_strength)
-    if not _emph.valid:
-        emit("  · сила жёлтых не посчитана — наезд на каждую фразу хайлайта (как раньше)")
-    elif _emph.uncomputed:
-        emit("  · сила жёлтых не посчитана для {n} слов — наезд на каждую фразу "
-             "(жёлтые правили после расчёта)", n=len(_emph.uncomputed))
+    # ---- Сила жёлтых вынесена в plan_emph.py (остаток распила scene_plan) ----
+    # Сайдкар `<стем>.emph.json` (core/emphasis.py) читает ОДНА дверь: сборка .jsx,
+    # превью (`/api/scene`) и черновик видят одни и те же числа. Нумерация слов — та же,
+    # что у плана, и текст сообщений о непосчитанном не менялся.
+    _emph = plan_emph(EmphInputs(
+        cams=cams, subs=subs, hl=hl, intro=intro, intro_splits=intro_splits,
+        intro_remove=intro_remove, censor_source=censor_source,
+        xml_path=xml_path, meta=meta, style=stv, emit=emit)).emph
     _au = plan_audio(AudioInputs(
         intro_groups=_intro_groups, any_glitch=_any_glitch, inserts=inserts,
         subs=subs, hl=hl, cam_change_sec=_cam_change_sec, fps=_fps0,
@@ -769,58 +586,27 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
     trans_plan = _trans_plan(trans, _au.trans_in)
     music_path = _au.music_path
     censor_js = _au.censor_js
-    audio, glitch_sfx = _au.audio, _au.glitch_sfx
+    glitch_sfx = _au.glitch_sfx
     pop_place, pop_tail = _au.pop_place, _au.pop_tail
     wsfx_place, wsfx_tail = _au.wsfx_place, _au.wsfx_tail
     riser_place, riser_tail = _au.riser_place, _au.riser_tail
     trans_place, trans_tail = _au.trans_place, _au.trans_tail
     voice_db, audio_fade = _au.voice_db, _au.audio_fade
-    cams_plan = []
-    for ci, c in enumerate(cams):
-        cams_plan.append({"ci": ci, "path": c["path"] or "", "name": c["name"],
-                          "clips": [[s, e, i, o, bool(en), _r(sc)]
-                                    for s, e, i, o, en, sc in c["clips"]]})
-    # ---- рамка кадра камер (поле `frame` профиля спикера) ----
-    # Спикер — из сайдкара рядом с XML: тем же путём его берут формат кадра
-    # (core/frame.output_frame_size), LUT и обработка голоса. Размер исходника ведает
-    # только After Effects, поэтому долями рамки уезжает и готовая геометрия:
-    # сдвиг слоя в px кадра (core/frame.frame_shift — единственный зажим рамки)
-    # и множитель масштаба. Клип, рото-копия и Basic Motion в Premiere берут ОДНИ
-    # И ТЕ ЖЕ числа отсюда, второй копии формулы нет.
-    _frames = _speaker_frames(xml_path)
-    for _fr_ent, _fr_cam in zip(cams_plan, cams):
-        _fr = _frame.frame_of(_frames, _fr_ent["ci"] + 1)
-        if _frame.is_frame_default(_fr):
-            continue                     # камера без правок — ключа нет (golden прежний)
-        _dims = _media_dims(_fr_cam.get("path") or "")
-        _dx, _dy = (_frame.frame_shift(_fr, _dims[0], _dims[1], meta["w"], meta["h"])
-                    if _dims else (0.0, 0.0))
-        _fr_ent["frame"] = {"x": _fr["x"], "y": _fr["y"], "zoom": _fr["zoom"],
-                            "dx": _dx, "dy": _dy}
-    cams_js = _jd([{"path": c["path"], "name": c["name"], "clips": c["clips"],
-                    **({"frame": c["frame"]} if "frame" in c else {})} for c in cams_plan])
-    # Подстановки шаблона под рамку. Ни одной рамки в ролике — все три пустые, и .jsx
-    # остаётся прежним, кроме строки масштаба клипов (она перешла на fitS у всех камер).
-    # Числа сдвига считает Python (core/frame.frame_shift), ExtendScript только применяет:
-    # размера исходника план не знает, а масштаб слоя AE считает сам (fitS).
-    cam_frame_pos = roto_frame_scale = roto_frame_pos = ""
-    if any("frame" in c for c in cams_plan):
-        cam_frame_pos = (
-            "            // рамка кадра: сдвиг исходника — в МИРОВЫХ координатах композиции\n"
-            "            // и ДО привязки к нулу: AE при присвоении parent сохраняет мировое\n"
-            "            // положение слоя, а числа рамки посчитаны от центра кадра\n"
-            "            if (track.frame) try{ lay.property(\"ADBE Transform Group\")\n"
-            "                .property(\"ADBE Position\").setValue([W/2+track.frame.dx, H/2+track.frame.dy]); }catch(e){}\n")
-        roto_frame_scale = (
-            "\n            // рамка кадра своей камеры: у рото-копии тот же масштаб, что у клипа\n"
-            "            var rfr = CAM[ci] && CAM[ci].frame;\n"
-            "            if (rfr) rsc = rfit*rfr.zoom/100*(ci==0?CAM1_FIT/100:1);")
-        roto_frame_pos = (
-            "\n            // и тот же сдвиг: копия обязана лежать пиксель-в-пиксель с кадром камеры\n"
-            "            if (rfr) try{ cc.property(\"ADBE Transform Group\").property(\"ADBE Position\")\n"
-            "                .setValue([rfr.dx,rfr.dy]); }catch(e){}\n"
-            "            if (rfr) try{ mk.property(\"ADBE Transform Group\").property(\"ADBE Position\")\n"
-            "                .setValue([rfr.dx,rfr.dy]); }catch(e){}")
+    # ---- Камеры плана и рамка кадра вынесены в plan_frame.py (остаток распила) ----
+    # Словари камер плана (`plan["cams"]`), готовые подстановки шаблона CAM и три строки
+    # рамки кадра спикера. Клип, рото-копия и Basic Motion в Premiere берут ОДНИ и те же
+    # числа рамки из одного места — второй копии формулы нет. Имена ниже — ровно те, что
+    # читает остальной scene_plan: перенос построчный, порядок операций не менялся.
+    # `_media_dims` — дверью из build (как у вставок): размеры исходника читает она, а
+    # не своя ссылка модуля — подмена `build._media_dims` в тестах обязана работать.
+    _fr = plan_frame(FrameInputs(cams=cams, meta=meta, xml_path=xml_path,
+                                 media_dims=_media_dims))
+    cams_plan = _fr.cams_plan
+    cams_js = _fr.cams_js
+    cam_frame_pos, roto_frame_scale, roto_frame_pos = (_fr.cam_frame_pos,
+                                                       _fr.roto_frame_scale,
+                                                       _fr.roto_frame_pos)
+
     # ---- Блок субтитров вынесен в plan_subs.py (этап 1 распила scene_plan) ----
     # Слова -> строки -> стопка подряд жёлтых -> появление жёлтых -> данные циклов
     # SUBS/SUB_ROWS/SUB_STACK. Имена ниже — ровно те, что читает остальной код scene_plan:
@@ -833,7 +619,7 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         # Общие с другими блоками правила остаются в build.py:
         # регистр слова и разбор числа-счётчика — свои у каждого блока копии не заводятся.
         accent_word=_accent_word, parse_count=_parse_intro_count))
-    subs_plan, subs_js, sub_loop = _subs.subs, _subs.subs_js, _subs.sub_loop
+    subs_js, sub_loop = _subs.subs_js, _subs.sub_loop
     hl_row_decl, hl_blur_decl = _subs.hl_row_decl, _subs.hl_blur_decl
     hl_blur_fn, hl_short_fn, hl_blur_on = _subs.hl_blur_fn, _subs.hl_short_fn, _subs.hl_blur_on
     sub_scale, _hl_dur = _subs.sub_scale, _subs.hl_dur
@@ -863,7 +649,6 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
     cam1_scale, holds = _cam.cam1_scale, _cam.holds
     cam1scale_js, cam1_ease_js = _cam.cam1scale_js, _cam.cam1_ease_js
     cam1holds_js = _cam.cam1holds_js
-    roto_plan, zoom_plan = _cam.roto, _cam.zoom
     cam1_cx, cam1_cy = _cam.cam1_cx, _cam.cam1_cy
     cam1_anchor = _cam.cam1_anchor
     cam2_js = _cam.cam2_js
@@ -893,52 +678,6 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
     # (иначе плейсхолдеры шаблона пусты и .jsx не меняется ни на байт, golden).
     _accent_color_used = any(x.get("color") == "accent" for g in _intro_groups for x in g)
     _custom_color_used = any(x.get("color") == "custom" for g in _intro_groups for x in g)
-    # Общий масштаб интро (intro_scale): в AE он висит на нуле «интро»
-    # (родителе прекомпа) и множит СМЕЩЕНИЕ ребёнка и его размер, а собственный сдвиг
-    # нула (intro_y/intro_y2) не трогает. Поэтому G входит в базу (-INTRO_BASE_Y+iDy),
-    # а intro_y/intro_y2 — плоским слагаемым. 100% = дефолт: y не меняется ни на сотую.
-    # Доля ширины кадра для автофита (ручка «Отступ от краёв» СВОЕЙ камеры,
-    # intro_margin/intro_margin2: доля = 1 − 2·margin/100). Правило одно на оба режима:
-    # откреплённое интро подгоняется в обе стороны с потолком увеличения своей камеры
-    # (intro_fit_max/intro_fit_max2), привязанное — только ужимается той же долей (шире
-    # его держит зум камеры). Какое из чисел камеры взять, решает plan_intro — там же,
-    # где выбирается камера группы (второй копии выбора нет).
-    # Числа G/fit_w/fit_w2/fit_max/fit_max2/intro_cam/intro_cam2 уже посчитаны в структуре
-    # (stv.intro_scale_k, stv.fit_w, stv.fit_w2, stv.fit_max, stv.fit_max2, stv.intro_cam,
-    # stv.intro_cam2) — их читает plan_intro.
-    # Открепление интро от Камеры 1: галка «интро едет с камерой» снята —
-    # нулы «интро» и «интро на кам2» (и затемнение под интро) НЕ привязываются к нулу
-    # Камеры 1, а идут по уже существующей ветке else: позиция в координатах кадра.
-    # Подстановки пустые при дефолтном True — .jsx остаётся прежним байт в байт (golden),
-    # объявление INTRO_CAM появляется только при False (иначе читать нечего).
-    if not stv.intro_cam:
-        _intro_cam_decl = (
-            "    var INTRO_CAM=false;  // стиль «интро едет с камерой» снят: нулы интро и затемнение\n"
-            "                          // стоят в координатах кадра, а не на нуле Камеры 1\n"
-        )
-        _intro_cam_cond = " && INTRO_CAM"
-        _intro_cam_shade_cmt = (
-            "    // галка «интро едет с камерой» снята: затемнение открепляется вместе\n"
-            "    // с интро — та же ветка else, координаты кадра\n"
-        )
-    else:
-        _intro_cam_decl = ""
-        _intro_cam_cond = ""
-        _intro_cam_shade_cmt = ""
-    # Интро на кам2 при активной Камере 2 и СВОЕЙ галке «интро едет с камерой» (intro_cam2) —
-    # ребёнок нула КАМЕРЫ 2 (тот же зум с её точкой наезда, что у кадра перебивки). Нул камеры 1
-    # ему не родитель никогда: её зум прячется на перебивке. Позиция — в системе родителя, как у
-    # ребёнка нула Камеры 1 (x, INTRO_Y2). Камера 2 неактивна или галка кам2 снята — подстановка
-    # пустая: нул остаётся в координатах кадра (строка шаблона), и ни зум, ни сдвиг, ни поворот
-    # Камеры 2 на него не действуют. Строка идёт ПОСЛЕ cam2_js: там объявлен cam2null.
-    if stv.intro_cam2 and _cam.cam2_active:
-        _intro2_cam2_js = (
-            "\n    // интро на кам2 едет с зумом Камеры 2 (не Камеры 1)\n"
-            "    if(cam2null && introNull2){ introNull2.parent=cam2null;\n"
-            "        introNull2.property(\"ADBE Transform Group\").property(\"ADBE Position\")"
-            ".setValue([" + ("%g" % float(stv.intro_x) if stv.intro_x else "0") + ",INTRO_Y2]); }")
-    else:
-        _intro2_cam2_js = ""
     # ---- Расчёт интро вынесен в plan_intro.py (этап 2 распила scene_plan) ----
     # Окна групп, автофит и ширина блока, безопасная зона, раскладка строк и «большое
     # слева», затухание к субтитру, сжатие появления, камера группы, тень
@@ -963,7 +702,12 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         cam1_scale=cam1_scale, holds=holds,
         # Свой зум Камеры 2 (пусто, если она неактивна): автофит интро, выпавшего на
         # перебивку, считает по нему, а не по зумам Камеры 1.
-        cam2_scale=_cam.cam2_scale, cam2_holds=_cam.cam2_holds))
+        cam2_scale=_cam.cam2_scale, cam2_holds=_cam.cam2_holds,
+        # Камера 2 активна: по ней plan_intro_tpl решает, привязывать ли нул «интро на кам2»
+        # к нулу Камеры 2 — второй копии правила нет.
+        cam2_active=_cam.cam2_active,
+        # Числа затемнения под интро (plan_shade) — по ним собирается подстановка шаблона.
+        shade_plan=shade_plan))
     _accent_used = _intro.accent_used
 
     # ---- Оформление кадра вынесено в plan_decor.py (остаток распила scene_plan) ----
@@ -980,265 +724,28 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         # Хвостовая копия превью: галка уже вместе с «текст не пуст» — тем же условием
         # живёт концевой блок шаблона (disc_end_on), второй копии правила нет.
         disc_sec=disc_sec, disc_end_on=disc_end_on))
-    # Затемнение под интро (масштабирование KF): единственный источник чисел —
-    # этот план, из него их берут и шаблон (.jsx), и предпросмотр. Выключенная галка = None:
-    # подстановка в шаблоне пустая, .jsx не меняется ни на байт (golden). Координаты — в
-    # системе нула «Камера 1» (та же, в которой стоит нул «интро»: [0, INTRO_Y], template.py).
-    # k — множитель пиксельных констант кадра (`_px` = min(W, H)/1080): затемнение снято
-    # с композиций шириной 1080 и растёт вместе с короткой стороной кадра — тем же правилом,
-    # что карточка вставки и числа стиля. Раньше здесь стояло своё k = W/1080, и в 16:9
-    # (1920×1080) затемнение росло в 1.78 раза, хотя текст интро — нет.
-    # stv.intro_scale_k (intro_scale / 100, бывшее _G) —
-    # масштаб нула интро: затемнение висит на нуле «Камера 1», поэтому его scale и сдвиг
-    # SHADE_DY от intro_y масштабируются на него вслед за размером и положением текста интро.
-    shade_plan = None
-    if bool(stv.intro_shade):
-        k = _px
-        shade_plan = {
-            "x": _r(SHADE_X * k), "y": _r(float(stv.intro_y) + SHADE_DY * k * stv.intro_scale_k),
-            "scale": _r(SHADE_SCALE * stv.intro_scale_k), "w": _r(SHADE_W * k), "h": _r(SHADE_H * k),
-            "ox": _r(SHADE_OX * k), "oy": _r(SHADE_OY * k), "blur": _r(SHADE_BLUR * k),
-            "op": stv.intro_shade_op,
-        }
-    # JS слоя затемнения: собирается ТОЛЬКО при включённой галке — при выключенной
-    # подстановка пустая, и .jsx остаётся прежним байт в байт (golden). Слой — фигура
-    # (прямоугольник с чёрной заливкой) с Box Blur; числа берутся из INTRO_SHADE, то есть
-    # из плана: второй копии формул нет ни в ExtendScript, ни в превью.
-    _intro_shade_js = ""
-    if shade_plan is not None:
-        _intro_shade_js = (
-            "\n    // ---- затемнение под интро: фигура + Box Blur, числа из плана ----\n"
-            "    var INTRO_SHADE=" + _jd(shade_plan) + ";\n"
-            "    var shadeLayer = main.layers.addShape();\n"
-            '    shadeLayer.name = "Затемнение интро";\n'
-            "    shadeLayer.inPoint = 0; shadeLayer.outPoint = DUR;\n"
-            '    var shadeRoot = shadeLayer.property("ADBE Root Vectors Group");\n'
-            '    var shadeGrp = shadeRoot.addProperty("ADBE Vector Group");\n'
-            '    var shadeCtx = shadeGrp.property("ADBE Vectors Group");\n'
-            '    try{ shadeCtx.addProperty("ADBE Vector Shape - Rect").property("ADBE Vector Rect Size")'
-            '.setValue([INTRO_SHADE.w, INTRO_SHADE.h]); }catch(e){}\n'
-            "    // заливка через _fill_js: одна проверенная форма для всех заливок (3 компонента в AE)\n"
-            '    try{ shadeCtx.addProperty("ADBE Vector Graphic - Fill").property("ADBE Vector Fill Color")'
-            '.setValue(' + _fill_js([0, 0, 0]) + '); }catch(e){}\n'
-            '    try{ shadeGrp.property("ADBE Vector Transform Group").property("ADBE Vector Position")'
-            '.setValue([INTRO_SHADE.ox, INTRO_SHADE.oy]); }catch(e){}\n'
-            "    // обводку не добавляем: в amdi1.aep её нет\n"
-            "    var shadeBlur = null;\n"
-            '    try{ shadeBlur = shadeLayer.property("ADBE Effect Parade").addProperty("ADBE Box Blur2"); }catch(e){}\n'
-            "    if (shadeBlur){\n"
-            "        var shadeRad = false;\n"
-            '        try{ shadeBlur.property("Blur Radius").setValue(INTRO_SHADE.blur); shadeRad = true; }catch(e){}\n'
-            "        // запасное имя параметра радиуса: в локализованном AE «Blur Radius» не найдётся\n"
-            '        if (!shadeRad){ try{ shadeBlur.property("ADBE Box Blur2-0001").setValue(INTRO_SHADE.blur); }catch(e){} }\n'
-            "    }\n"
-            '    try{ shadeLayer.property("ADBE Transform Group").property("ADBE Opacity")'
-            '.setValue(INTRO_SHADE.op); }catch(e){}\n'
-            "    // порядок как у рото: сначала parent, ПОТОМ позиция и масштаб — AE при привязке\n"
-            "    // пересчитывает локальную позицию ребёнка под трансформ нула\n"
-            + _intro_cam_shade_cmt +
-            "    if (cam1null" + _intro_cam_cond + "){ shadeLayer.parent=cam1null;\n"
-            '        try{ shadeLayer.property("ADBE Transform Group").property("ADBE Position")'
-            '.setValue([INTRO_SHADE.x, INTRO_SHADE.y]); }catch(e){}\n'
-            '        try{ shadeLayer.property("ADBE Transform Group").property("ADBE Scale")'
-            '.setValue([INTRO_SHADE.scale, INTRO_SHADE.scale]); }catch(e){}\n'
-            "    } else {\n"
-            '        try{ shadeLayer.property("ADBE Transform Group").property("ADBE Position")'
-            '.setValue([W/2+INTRO_SHADE.x, H/2+INTRO_SHADE.y]); }catch(e){}\n'
-            '        try{ shadeLayer.property("ADBE Transform Group").property("ADBE Scale")'
-            '.setValue([INTRO_SHADE.scale, INTRO_SHADE.scale]); }catch(e){}\n'
-            "    }\n"
-        )
     # Слежение за головой (`follow_keys`) и `plan["zoom"]` — из plan_camera.py: кэш
     # `<стем>.head.json` читается там же одной дверью с ключами зума (fit уже внутри них).
 
-    plan = {
-        "fps": meta["fps"], "w": meta["w"], "h": meta["h"], "name": meta["name"],
-        "dur": meta["dur"] / meta["fps"],
-        "cams": cams_plan,
-        # Камера 1: holds = тип интерполяции каждого ключа (1=HOLD, 0=BEZIER); keys = [кадр, %], опц. mode (drift);
-        # ease = [in, out] на каждый ключ; fit = 100 — заполнение кадра уже
-        # в ключах, поле оставлено ради превью: оно множит fit на ключ;
-        # cx/cy — точка наезда в долях кадра: при наезде неподвижна она,
-        # превью рисует её же как transformOrigin и центр масштабирования
-        "zoom": zoom_plan,
-        "intro": _intro.intro,
-        # затемнение под интро: None при выключенной галке, иначе готовые
-        # числа слоя-фигуры (x/y/scale/w/h/ox/oy/blur/op) — их же рисует предпросмотр
-        "shade": shade_plan,
-        # общий масштаб интро, в процентах как в стиле: превью множит на него
-        # положение и размер блока; поля групп (dx/dy/ds/y) читает оно же — не переименовывать
-        "intro_scale": float(stv.intro_scale),
-        # интро едет с камерой: False — нулы интро и затемнение НЕ привязаны
-        # к нулу Камеры 1. Числом из плана живёт предпросмотр (ipvIntroChild): при False
-        # блок идёт в координатах кадра без зума/сдвига/слежения — второй копии правила нет.
-        "intro_cam": stv.intro_cam,
-        # то же для камеры 2: False — нул «интро на кам2» стоит в координатах кадра, и
-        # превью (ipvIntroChild по on2) считает ту же ветку. Своя галка, не общая с
-        # камерой 1: у стилей без ключа её значение дала миграция (styles.migrate_intro_cam2).
-        "intro_cam2": stv.intro_cam2,
-        # параметры анимаций интро: превью анимирует теми же числами,
-        # что AE — вторая копия не заводится. f_dur — длительность появления строки
-        # (F_DUR .jsx: ею играют ключи блюра, Scale слоя, Percent Offset селектора и
-        # фейд): её читает превью, своей копии числа у него нет.
-        "intro_anims": {
-            "f_dur": INTRO_ANIMS["f_dur"],
-            "glitch": {
-                "dur": INTRO_ANIMS["glitch"]["dur"],
-                "blur": INTRO_ANIMS["glitch"]["blur"],
-                "end_keys": [list(k) for k in INTRO_ANIMS["glitch"]["end_keys"]],
-                "op_keys": [list(k) for k in INTRO_ANIMS["glitch"]["op_keys"]],
-            },
-            "reveal": {
-                "dur": INTRO_ANIMS["reveal"]["dur"],
-                "blur": INTRO_ANIMS["reveal"]["blur"],
-                # Раскрытие рисуется блюром CSS на слове, а число шаблона — «Blurriness»
-                # Gaussian Blur в AE: превью нужна сигма того же размытия, иначе буквы
-                # выходят вчетверо мягче собранных (число переводит layout.css_blur_px).
-                "blur_css": css_blur_px(INTRO_ANIMS["reveal"]["blur"]),
-                "scale": INTRO_ANIMS["reveal"]["scale"],
-                "scale_3d": list(INTRO_ANIMS["reveal"]["scale_3d"]),
-                "shape": INTRO_ANIMS["reveal"]["shape"],
-                "smoothness": INTRO_ANIMS["reveal"]["smoothness"],
-                "ease": list(INTRO_ANIMS["reveal"]["ease"]),
-            },
-        },
-        "inserts": inserts_plan,
-        # Переход видеовставок (Quick 2): файл, сдвиг TR_IN и размер исходника — те же
-        # числа, что уехали в .jsx подстановками trans/tr_in. Превью рисует ИМИ слой
-        # перехода: он начинается за TR_IN до стыка (tl.startTime=cut-TR_IN в шаблоне),
-        # поэтому вход вставки виден РАНЬШЕ её start — как в AE. Нет видеовставок или
-        # файла — поля нет вовсе, и превью не заводит ни элемента, ни правила.
-        "trans": trans_plan,
-        # Коробка карточки фотовставки (ширина, высоты Кам1/Кам2 и отношение сторон маски)
-        # в пикселях кадра ролика: её читает превью — своей копии чисел (1030/528/2.2) у
-        # него больше нет, в 4K-кадре она расходилась с собранной карточкой вдвое.
-        # Считает layout._ins_box тем же правилом, что и геометрия вставок.
-        "ins_box": _ins_box(meta["w"], meta["h"]),
-        "layer_order": list(stv.layer_order),
-        # Цвет камер через Lumetri: None при выключенной галке, иначе девять
-        # значений стиля (exposure уже с экспозицией клипа). Их же читает превью —
-        # второй копии правил нет: .jsx и предпросмотр берут один plan["lumetri"].
-        "lumetri": lumetri,
-        "subs": subs_plan,
-        "sub_hide": _decor.sub_hide,
-        # цвет базовых субтитров: [r,g,b] 0..1, превью красит тем же,
-        # что AE — вторая копия не заводится. Жёлтые по-прежнему берут hl_fill.
-        "sub_fill": list(stv.sub_fill) if stv.sub_fill else [1, 1, 1],
-        # цвет выделения субтитров: [r,g,b] 0..1, превью красит тем же,
-        # что AE — вторая копия не заводится.
-        "hl_fill": list(stv.hl_fill) if stv.hl_fill else [1, 0.9176, 0],
-        # цвета интро для предпросмотра:
-        "hl_fill3": list(stv.hl_fill3) if stv.hl_fill3 else [0.6863, 0.1216, 0.1216],
-        "intro_fill": list(stv.intro_fill) if stv.intro_fill else None,
-        "intro_hl_fill": list(stv.intro_hl_fill) if stv.intro_hl_fill else None,
-        # Тень и свечение слов интро для предпросмотра: те же галки и числа,
-        # что уехали в подстановки шаблона, — превью рисует по ним (ipvIntro), второго
-        # чтения ключей стиля во фронте нет, как у цветов выше. Цвет/прозрачность тени
-        # прекомпа у каждой группы свои и лежат в plan.intro[].shadow, а общие для обеих
-        # камер направление/дистанция/мягкость — здесь.
-        "intro_word_fx": {
-            "shadow_all": intro_shadow_on,
-            "shadow_glitch": stv.intro_glitch_shadow, "shadow_back": stv.intro_back_shadow,
-            "glow_glitch": stv.intro_glitch_glow, "glow_fx": stv.intro_fx_glow,
-            # Свечение жёлтого хайлайта и слоя прекомпа (задание «glowfix») — те же галки,
-            # что уехали в подстановки шаблона: превью гасит их по плану, второго чтения
-            # ключей стиля во фронте нет.
-            "glow_hl": stv.intro_hl_glow, "glow_comp": stv.intro_comp_glow,
-            "glow_thr": stv.intro_word_glow_thr, "glow_rad": stv.intro_word_glow_rad,
-            "glow_int": stv.intro_word_glow_int,
-        },
-        "intro_comp_shadow": {"dir": stv.intro_comp_shadow_dir,
-                              "dist": stv.intro_comp_shadow_dist,
-                              "soft": stv.intro_comp_shadow_soft},
-        # Тени AE (Drop Shadow) для превью: субтитры, вставки и плашка под субтитрами.
-        # Числа — те же, что уезжают подстановками в .jsx (считает plan_decor.shadows_plan):
-        # превью переводит их в CSS своей единственной дверью aeShadowCss, своих чисел
-        # тени у фронта нет. op255 — шкала AE 0..255 (в .jsx проценты ручки умножаются
-        # на 255/100), color — [r,g,b] 0..1, как у остальных цветов плана.
-        "shadows": shadows_plan(),
-        "back_scale": stv.back_scale,
-        "back_step": stv.back_step,
-        # Шаг от заднего плана к обычной строке для предпросмотра: None —
-        # ключа в стиле нет, раскладка взяла back_step (превью читает готовые ys).
-        "back_step_after": stv.back_step_after,
-        # Разметка рото: готовые фрагменты из plan_camera.py — маски по ним
-        # делает to_ae_full, предпросмотр читает их же для полосы «здесь рото».
-        "roto": roto_plan,
-        # Звук плана: словарь собирается там же, где считаются его числа —
-        # plan_audio.py. Голос, музыка, окна цензуры и события SFX — из одного места,
-        # второй копии у .jsx и предпросмотра нет.
-        "audio": audio,
-        # стопка субтитров и кегль — для отрисовки в предпросмотре (тот же источник, что _ae)
-        # intro_fsize — кегль интро (до ужатия строк, доработка ZL): превью рисует им
-        # интро, fsize (ужатым) — субтитры; в режиме по слову числа равны.
-        "posy": _posy, "hl_step": _hl_step, "hl_rise": _hl_rise, "fsize": _fsize,
-        # Анимация жёлтых в строках для предпросмотра: время появления — у
-        # самого слова (words[].t0), остальные числа — плоскими полями рядом с hl_rise/
-        # hl_step: превью не заводит своей копии ни одного числа. hl_dur — то же 0.35 с,
-        # что литералом HL_DUR в шаблоне, hl_row_anim — режим (word/row).
-        "hl_dur": _hl_dur, "hl_row_anim": stv.hl_row_anim,
-        "hl_blur": hl_blur_on, "hl_blur_amt": stv.hl_blur_amt,
-        # Тот же блюр, переведённый в пиксели CSS: превью рисует размытие фильтром
-        # браузера, а «Blurriness» AE и сигма blur() — разные числа (layout.css_blur_px).
-        # Число считается ОДИН раз здесь: своей копии перевода у превью нет, а .jsx
-        # по-прежнему получает само значение стиля — AE читает его как «Blurriness».
-        "hl_blur_css": css_blur_px(stv.hl_blur_amt),
-        # Кегль жёлтого слова: множитель базового (ручка hl_size_k). Превью рисует
-        # жёлтый спан тем же кеглем, что .jsx ставит слово, — своей копии числа нет.
-        "hl_size_k": _subs.hl_size_k,
-        # Тонкое начертание пресета «начертание» (sub_anim_font): по нему превью
-        # ступенит шрифт слова в той же середине появления, что .jsx (поле anim слова).
-        "sub_anim_font": _subs.sub_anim_font,
-        # Шрифты субтитров: те же PostScript-имена, что уезжают в .jsx (FONT/HL_FONT,
-        # лесенка стиля — sub_font, выделение — hl_font). Превью берёт их ОТСЮДА, а не из
-        # своей копии стиля: страница рендера получает тело сборки, где стиль может быть
-        # и ИМЕНЕМ (строкой) — тогда CURSTYLE это строка, и субтитры рисовались запасным
-        # шрифтом, хотя .jsx собрал заказанный (замер: «КУБИК» 344 px против 284 в AE).
-        "sub_font": font_ps, "sub_hl_font": hl_font_ps,
-        "intro_fsize": _fsize_base,
-        # масштаб слоя прекомпа субтитров: превью рисует transform: scale()
-        # с origin в posy — то же число, что уходит в Scale в .jsx
-        "sub_scale": sub_scale,
-        # тень субтитров: выключается при sub_bg
-        "sub_shadow": _decor.sub_shadow,
-        # размытие на старте: превью рисует CSS-фильтр с той же кривой;
-        # 0 = выключено, план тогда несёт ноль и превью фильтр не вешает
-        "start_blur": stv.start_blur, "start_blur_dur": stv.start_blur_dur,
-        # точка покоя cam2-вставки (уезжает в стиль insert_c2_x/y, долями кадра)
-        "ins_c2x": round(meta["w"] * stv.insert_c2_x),
-        "ins_c2y": round(meta["h"] * stv.insert_c2_y),
-        # сдвиг интро по горизонтали, px (пара к intro_y)
-        "intro_x": round(float(stv.intro_x)),
-    }
-    if not stv.lm2_link:
-        plan["lumetri2"] = lumetri2
-    if _decor.sub_bg_plan:
-        plan["sub_bg"] = _decor.sub_bg_plan
-    # Подложка слова (класс Б каталога): числа фигуры — превью ставит ею ОДИН элемент
-    # за текущим словом; момент слова лежит в самом слове плана (поле wbg). Выключена —
-    # поля нет вовсе, и превью не заводит ни элемента, ни правила.
-    if _subs.sub_wbg_plan:
-        plan["sub_wbg"] = _subs.sub_wbg_plan
-    # Заливка текста градиентом: два цвета и угол — те же числа, что уехали в .jsx
-    # (эффект ADBE Ramp на слое слова); превью рисует их background-clip:text.
-    # Имя поля — sub_grad, а не sub_fill: sub_fill в плане уже занят цветом субтитров.
-    if _grad_on:
-        plan["sub_grad"] = {"mode": "gradient", "from": list(stv.sub_grad_from),
-                            "to": list(stv.sub_grad_to), "angle": stv.sub_grad_angle}
-    # Свечение текста: сила, радиус и цвет — те же числа, что у Glo2 в .jsx; превью
-    # приближает свечение цветной тенью (CSS-аналога Glo2 нет).
-    if _glow_on:
-        plan["sub_glow"] = {"amt": stv.sub_glow_amt, "rad": stv.sub_glow_rad,
-                            "fill": list(stv.sub_glow_fill), "yellow": bool(stv.sub_glow_yellow)}
-    if _decor.top_line_plan:
-        plan["top_line"] = _decor.top_line_plan
-    if _decor.caption_plan:
-        plan["caption"] = _decor.caption_plan
-    # Дисклеймер: строки, шрифт, кегль, положение и время хвостовой копии — те же числа,
-    # что уехали подстановками в .jsx, вторым чтением ключей стиля превью не живёт.
-    # Текста нет (пустая строка = скрыт) — ключа нет вовсе.
-    if _decor.disclaimer_plan:
-        plan["disclaimer"] = _decor.disclaimer_plan
+    # ---- Сборка словаря плана вынесена в plan_scene.py (остаток распила) ----
+    # Поля-исключения (sub_step, sub_bg, sub_wbg, градиент и свечение текста, top_line,
+    # caption, disclaimer) модуль дописывает сам — тем же порядком и по тем же галкам,
+    # что были здесь: при дефолтах ключа нет вовсе (.jsx и план прежние, golden).
+    plan = plan_scene(SceneInputs(
+        meta=meta, frame=_fr, ins=_ip, au=_au, cam=_cam, subs=_subs, decor=_decor,
+        intro=_intro, style=stv, trans_plan=trans_plan, lumetri=lumetri,
+        fsize=_fsize, fsize_base=_fsize_base, sub_scale=sub_scale,
+        font_ps=font_ps, hl_font_ps=hl_font_ps,
+        posy=_posy, hl_step=_hl_step, hl_rise=_hl_rise, hl_dur=_hl_dur,
+        hl_blur_on=hl_blur_on, intro_shadow_on=intro_shadow_on,
+        grad_on=_grad_on, glow_on=_glow_on, shade_plan=shade_plan,
+        # Число Lumetri Камеры 2 кладётся в план только при разомкнутой связи камер
+        # (lm2_link) — при связанной цепочке ключа нет вовсе, как и раньше.
+        lm2_link=stv.lm2_link, lumetri2=lumetri2,
+        sub_wbg_plan=_subs.sub_wbg_plan, sub_bg_plan=_decor.sub_bg_plan,
+        top_line_plan=_decor.top_line_plan, caption_plan=_decor.caption_plan,
+        disclaimer_plan=_decor.disclaimer_plan,
+        sub_step=_sub_step, sub_words_per_row=stv.sub_words_per_row)).plan
     # ---- Подстановки шаблона интро вынесены в plan_intro_tpl.py (этап 5) ----
     # Готовые строки JS: цвета текста, тень слов/строк и прекомпа, раскладка строк (задний
     # план, якорь «first», «большое слева»), эффекты появления (глитч/Deep Glow/Tritone/
@@ -1266,385 +773,46 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         style=stv,
         # Таблицы и правило счётчика остаются в build.py: второй копии нет.
         anims=INTRO_ANIMS, deep_glow=DEEP_GLOW2_GLITCH,
-        has_valid_count=_has_valid_count))
-    # Служебное для сборки: готовые токены шаблона (не входят в контракт плана).
-    # Подстановки камеры (cam1_moved/anchor/rot/рото-позиции, CAM1_FOLLOW) собраны в
-    # plan_camera.py — здесь они только разложены по ключам, второй копии формул нет.
-    plan["_ae"] = dict(
-        w=meta["w"], h=meta["h"], fps=_fps_js(meta["fps"]), dur=meta["dur"] / meta["fps"],
-        name=_js(meta["name"]), cams=cams_js, subs=subs_js, cam1scale=cam1scale_js,
-        cam1_ease=cam1_ease_js,
-        cam1holds=cam1holds_js,
-        # Слои клипа и рото кам1 заполняют кадр ровно: их прежний масштаб
-        # переехал в ключи зума нула, иначе фит растил бы кадр вокруг СВОЕГО центра.
-        cam1_fit=100.0,
-        cam1_follow_decl=cam1_follow_decl,
-        cam1_follow_js=cam1_follow_js,
-        cam2_follow_decl=cam2_follow_decl,
-        cam2_follow_js=cam2_follow_js,
-        intro_scale=float(stv.intro_scale), intro_y=float(stv.intro_y),
-        intro_y2=float(stv.intro_y2), intro_on2=_jd(_intro.on2),
-        # Открепление интро от Камеры 1: объявление INTRO_CAM и добавка
-        # «&& INTRO_CAM» к условию привязки. При дефолтном True обе подстановки пустые —
-        # .jsx прежний байт в байт (golden).
-        intro_cam_decl=_intro_cam_decl,
-        intro_cam_cond=_intro_cam_cond,
-        # Подъём интро над видеовставкой: все подстановки пустые, когда front выключен.
-        intro_front_decl=_itpl.front_decl,
-        intro_front_arr_decl=_itpl.front_arr_decl,
-        intro_front_route=_itpl.front_route,
-        intro_front_raise=_itpl.front_raise,
-        # Подъём интро над рото по положению: подстановки непустые только
-        # при галке стиля и группе в нижней половине кадра, иначе .jsx прежний (golden).
-        intro_above_roto_decl=_itpl.above_roto_decl,
-        intro_above_roto_arr_decl=_itpl.above_roto_arr_decl,
-        intro_above_roto_route=_itpl.above_roto_route,
-        intro_above_roto_raise=_itpl.above_roto_raise,
-        # Y базовых линий строк интро: непусто при строках заднего плана
-        # или якоре «first», иначе пусто — .jsx прежний байт в байт (golden).
-        intro_ly_decl=_itpl.ly_decl,
-        # Точка масштабирования прекомпа интро (intro_scale_anchor): при дефолтном "comp"
-        # все три подстановки пустые — .jsx прежний байт в байт (golden). Числа (Y якоря и
-        # компенсация Position) считает plan_intro, шаблон только применяет.
-        intro_anchor_decl=_itpl.anchor_decl,
-        intro_anchor_dy_js=_itpl.anchor_dy_js,
-        intro_anchor_set=_itpl.anchor_set,
-        # Большая строка: массивы INTRO_LX/INTRO_LK и куски шаблона для неё.
-        # Нет большой строки ни в одной группе — все подстановки пустые (golden).
-        intro_lx_decl=_itpl.lx_decl,
-        intro_big_fn=_itpl.big_fn,
-        intro_big_qi_vars=_itpl.big_qi_vars,
-        intro_big_line_pos=_itpl.big_line_pos,
-        intro_big_word_x=_itpl.big_word_x,
-        sub_hide=_jd(_decor.sub_hide),
-        sub_comp_name=_js(_decor.sub_comp_name),
-        # готовые iDy каждой группы: шаблон больше не считает опускание
-        # под INTRO_SAFE_TOP сам — берёт число, как берёт INS_C2_Y. Превью читает то же
-        # из plan.intro[].y, поэтому база интро живёт в одном месте.
-        intro_idy=_jd(_intro.idy),
-        # Длительность фейд-аута прекомпов интро
-        intro_fade=stv.intro_fade,
-        # Межстрочный шаг строк интро в пикселях: 160 × intro_line_step/100.
-        # При дефолтных 100% %g печатает ровно «160» — .jsx прежний байт в байт (golden).
-        # Число строк и центровку блока считает Python (intro_line_ys) — второго шага нет.
-        intro_line_step_px=INTRO_LINE_STEP * stv.line_step_k,
-        # Окна фейд-аута прекомпов с глитчем (ПРАВКА 3/4): подстановки непустые только
-        # при глитче в ролике, иначе .jsx прежний (golden).
-        intro_fx_decl=_intro.fx_decl,
-        intro_fx_out=_intro.fx_out,
-        # Группы, гаснущие к появлению субтитра: окно [начало затухания,
-        # конец слоя] на группу; пусто, когда таких групп нет — .jsx прежний (golden).
-        intro_sub_fx_decl=_intro.sub_fx_decl,
-        intro_sub_fx_out=_intro.sub_fx_out,
-        # Множители длительности появления слов: массив INTRO_SQ и его
-        # читалка introSQ. Нет сжатых слов — подстановки пусты (golden).
-        intro_sq_decl=_intro.sq_decl,
-        intro_sq_fn=_intro.sq_fn,
-        # Затемнение под интро: непусто только при галке стиля, иначе .jsx
-        # прежний байт в байт (golden). Слой создаётся сразу после камер — значит выше
-        # клипов камер, а всё добавленное позже (вставки, интро, рото, субтитры, нулы)
-        # встаёт выше него; блок LAYER_ORDER группы не трогает.
-        intro_shade_js=_intro_shade_js,
-        # Макет спикера: точка наезда Камеры 1 и точка покоя вставок Кам2,
-        # сдвиг интро по X. Дефолты пустые подстановки — .jsx прежний (golden).
-        # Камера 1: якорь и позиция нула считаются от точки наезда (cx/cy доли кадра).
-        # При дефолте 0.5/0.5 это ровно то, что AE ставит сам, — кода нет вовсе.
-        # Сами строки (якорь, позиции и повороты рото) собраны в plan_camera.py.
-        cam1_cx=cam1_cx, cam1_cy=cam1_cy,
-        cam1_anchor=cam1_anchor,
-        cam2_js=cam2_js,
-        intro2_cam2_js=_intro2_cam2_js,
-        roto_pos_cc=roto_pos_cc,
-        roto_pos_mk=roto_pos_mk,
-        cam1_rot_decl=cam1_rot_decl,
-        cam1_rot_cam=cam1_rot_cam,
-        cam2_rot_decl=cam2_rot_decl,
-        cam2_rot_cam=cam2_rot_cam,
-        roto_rot_cc=roto_rot_cc,
-        roto_rot_mk=roto_rot_mk,
-        # Рамка кадра камеры: сдвиг слоя клипа, масштаб и сдвиг рото-копии с маской.
-        # Без рамок ни в одной камере все три пустые — .jsx прежний (golden), кроме
-        # строки масштаба клипов: она одна на все камеры (fitS × zoom рамки).
-        cam_frame_pos=cam_frame_pos,
-        roto_frame_scale=roto_frame_scale,
+        has_valid_count=_has_valid_count,
+        # Камера 2 активна и числа затемнения под интро: по ним собираются подстановки
+        # шаблона (нул «интро на кам2» и слой затемнения) — своих чисел у модуля нет.
+        cam2_active=_cam.cam2_active, shade=shade_plan))
+    # ---- Готовые токены шаблона вынесены в plan_ae.py (остаток распила) ----
+    # `plan["_ae"]` — не контракт плана: его читает to_ae_full (подстановки AE_FULL),
+    # предпросмотр туда не заглядывает. Имена ключей и текст подстановок прежние.
+    # Подложка фото-вставок дописывается ПОСЛЕ: её подстановок нет в общем словаре.
+    plan["_ae"] = plan_ae(AeInputs(
+        meta=meta, plan=plan,
+        cam=_cam, au=_au, subs=_subs, ins=_ip, intro=_intro, itpl=_itpl, decor=_decor,
+        style=stv, cams_js=cams_js, subs_js=subs_js, sub_loop=sub_loop,
+        cam1scale_js=cam1scale_js, cam1_ease_js=cam1_ease_js, cam1holds_js=cam1holds_js,
+        cam1_cx=cam1_cx, cam1_cy=cam1_cy, cam1_anchor=cam1_anchor, cam2_js=cam2_js,
+        roto_pos_cc=roto_pos_cc, roto_pos_mk=roto_pos_mk,
+        cam1_rot_decl=cam1_rot_decl, cam1_rot_cam=cam1_rot_cam,
+        cam2_rot_decl=cam2_rot_decl, cam2_rot_cam=cam2_rot_cam,
+        roto_rot_cc=roto_rot_cc, roto_rot_mk=roto_rot_mk,
+        cam1_follow_decl=cam1_follow_decl, cam1_follow_js=cam1_follow_js,
+        cam2_follow_decl=cam2_follow_decl, cam2_follow_js=cam2_follow_js,
+        cam_frame_pos=cam_frame_pos, roto_frame_scale=roto_frame_scale,
         roto_frame_pos=roto_frame_pos,
-        # вставки Кам2: точка покоя по X и Y в px (в стиле insert_c2_x/y, долями кадра).
-        # Дефолт 0.5/0.172 — X остаётся W/2, Y как INS_C2_Y_FR*H: объявление INS_C2_X
-        # и подстановка в позицию пустые, .jsx прежний (golden).
-        ins_c2x=plan["ins_c2x"], ins_c2y=plan["ins_c2y"],
-        ins_c2x_decl=(", INS_C2_X=%d" % plan["ins_c2x"] if stv.insert_c2_x != 0.5 else ""),
-        ins_c2x_pos=("INS_C2_X" if stv.insert_c2_x != 0.5 else "W/2"),
-        # интро: сдвиг по X (px), дефолт 0 — подстановка «0» даёт прежнюю строку [0,INTRO_Y]
-        intro_x_js=("%g" % float(stv.intro_x) if stv.intro_x else "0"),
-        intro_x_p=("+%g" % float(stv.intro_x) if stv.intro_x else ""),
-        music=_js(music_path) if music_path else '""', music_db=music_db,
-        # Громкость голоса и микро-фейд клипов посчитаны в plan_audio.py:
-        # те же числа уехали в plan["audio"], второй копии чтения стиля нет.
-        voice_db=voice_db, audio_fade=audio_fade,
-        # Обработанный голос камеры 1: объявление VOICE_WAV, импорт WAV и аудиослой
-        # клипа; voice_lay — на кого ложатся громкость, фейды и цензура. Голос не
-        # обработан — все четыре подстановки прежние (пусто и "lay"), .jsx байт в
-        # байт прежний (golden).
-        voice_wav=(VOICE_WAV_DECL % _js(voice_wav)) if voice_wav else "",
-        voice_src=(VOICE_SRC_DECL if voice_wav else ""),
-        voice_clip=(VOICE_CLIP_DECL if voice_wav else ""),
-        voice_lay=("vl" if voice_wav else "lay"),
-        riser=_js(riser) if riser else '""',
-        pop=_js(pop) if pop else '""', censor=censor_js, intro_groups=_intro.groups_js,
-        # Звуки с обрезкой/точкой удара/громкостью: дефолты = прежние
-        # JS-строки, .jsx не меняется (golden). При заданных ключах — готовые фрагменты.
-        pop_place=pop_place, pop_tail=pop_tail,
-        glitch_sfx=glitch_sfx,
-        wsfx_place=wsfx_place, wsfx_tail=wsfx_tail,
-        riser_place=riser_place, riser_tail=riser_tail,
-        trans_place=trans_place, trans_tail=trans_tail,
-        intro_font=_js(intro_font_ps), intro_hl_font=_js(intro_hl_font_ps),
-        intro_mode=_js(intro_mode or "word"),
-        # Акцентный шрифт интро: если ни одна строка не отмечена галкой
-        # или accent_font пуст — все три подстановки пустые и .jsx прежний (golden).
-        accent_params=(",af" if _accent_used else ""),
-        accent_font_pick=('(af||(col=="yellow"?INTRO_HL_FONT:INTRO_FONT))' if _accent_used
-                          else '(col=="yellow"?INTRO_HL_FONT:INTRO_FONT)'),
-        accent_call=(",ln.accent_font" if _accent_used else ""),
-        # Цвета текста интро (новые ключи стиля): hl_fill3 (color=="accent"), свой
-        # intro_fill/intro_hl_fill и цвет строки color=="custom" (fill_call, ln.fill).
-        # Дефолты — все подстановки пустые/прежние, .jsx не меняется ни на байт (golden).
-        hlfill3_decl=_itpl.hlfill3_decl,
-        intro_fill_decl=_itpl.fill_decl,
-        fill_params=_itpl.fill_params,
-        fill_call=_itpl.fill_call,
-        intro_fill_pick=_itpl.fill_pick,
-        # Тень на каждом слове интро (intro_shadow): выключено — пустые подстановки.
-        intro_shadow_decl=_itpl.shadow_decl,
-        intro_word_shadow_fn=_itpl.word_shadow_fn,
-        intro_word_shadow_line=_itpl.word_shadow_line,
-        intro_word_shadow_word=_itpl.word_shadow_word,
-        intro_anim_fx_fn=_itpl.anim_fx_fn,
-        dg_on=_dg_on,
-        dg_report="",
-        intro_hl_glow_fn=_itpl.hl_glow_fn,
-        intro_group_flags=_itpl.group_flags,
-        intro_line_anim=_itpl.line_anim,
-        intro_word_anim=_itpl.word_anim,
-        intro_comp_glow=_itpl.comp_glow,
-        # Тень прекомпа интро: дефолты — ровно прежняя строка dropShadow(iL, 68)
-        # и пустое объявление (golden); иначе — функция introCompShadow + вызов по камере.
-        intro_comp_shadow=_itpl.comp_shadow,
-        intro_comp_shadow_fn=_itpl.comp_shadow_fn,
-        intro_line_layout=_itpl.line_layout,
-        intro_back_scale_fn=_itpl.back_scale_fn,
-        intro_back_scale_line=_itpl.back_scale_line,
-        intro_back_scale_line_w=_itpl.back_scale_line_w,
-        intro_back_scale_tmp=_itpl.back_scale_tmp,
-        intro_back_scale_word=_itpl.back_scale_word,
-        intro_back_scale_wpx=_itpl.back_scale_wpx,
-        intro_glow=stv.intro_glow,
-        exposure=float(exposure or 0), roto="[]",
-        # Цвет камер через Lumetri: при выключенной галке подстановки несут
-        # ровно прежний текст шаблона и пустое объявление — .jsx побайтово как раньше
-        # (golden). При включённой: LUMETRI / LUMETRI2 + applyLumetri / applyLumetri2 вместо
-        # покадровой экспозиции на клипах камер и их рото-копиях.
-        lumetri_decl=_lumetri_decl(lumetri, lumetri2),
-        lumetri_cam=(
-            (LUMETRI_CAM_ON if lumetri else LUMETRI_CAM_OFF)
-            if stv.lm2_link else (
-                LUMETRI_CAM_OFF if (not lumetri and not lumetri2) else
-                ("if (isSecond){\n"
-                 "                %s\n"
-                 "            }else{\n"
-                 "                %s\n"
-                 "            }" % ("applyLumetri2(lay);" if lumetri2 else LUMETRI_CAM_OFF,
-                                    LUMETRI_CAM_ON if lumetri else LUMETRI_CAM_OFF))
-            )
-        ),
-        lumetri_roto=(
-            (LUMETRI_ROTO_ON if lumetri else LUMETRI_ROTO_OFF)
-            if stv.lm2_link else (
-                LUMETRI_ROTO_OFF if (not lumetri and not lumetri2) else
-                ("if (ci==1){\n"
-                 "                %s\n"
-                 "            }else{\n"
-                 "                %s\n"
-                 "            }" % ("applyLumetri2(cc);" if lumetri2 else LUMETRI_ROTO_OFF,
-                                    LUMETRI_ROTO_ON if lumetri else LUMETRI_ROTO_OFF))
-            )
-        ),
-        inserts=inserts_js, trans=_js(trans) if trans else '""',
-        trans_sfx=_js(trans_sfx) if trans_sfx else '""',
-        # Сдвиги перехода: те же числа, что считают события звука в плане (plan_audio:
-        # TR_IN/TR_SFX_LEAD). Подстановка печатает их %g — .jsx остаётся прежним байт
-        # в байт (0.386/0.083), а число теперь одно на шаблон и на план.
-        tr_in=_au.trans_in, tr_sfx_lead=_au.trans_sfx_lead,
-        hl_rise=_hl_rise, hl_step=_hl_step, hl_dur=_hl_dur,
-        hl_ease_out=HL_EASE_OUT, hl_ease_in=HL_EASE_IN,
-        # Жёлтые в строке, блюр появления и длительность появления короткого
-        # жёлтого: при дефолтах все подстановки пусты — .jsx прежний байт в
-        # байт (golden).
         hl_row_decl=hl_row_decl, hl_blur_decl=hl_blur_decl, hl_blur_fn=hl_blur_fn,
         hl_short_fn=hl_short_fn,
-        ease_default=EASE_DEFAULT,
-        disclaimer=_js_multiline(disclaimer) if disclaimer else '""',
-        # Кегль дисклеймера строкой: целое 47 печатается ровно «47» (было %d), ужатый под
-        # ширину кадра кегль — «42.85». DISC_LEAD — только при зазоре строк в стиле.
-        disc_end=disc_sec, disc_size=("%g" % _decor.disc_size),
-        disc_lead_decl=_decor.disc_lead_decl, disc_lead_js=_decor.disc_lead_js,
-        # Положение дисклеймера считает plan_decor (ручки disc_y/disc_dx): прежнее
-        # int(H·0.764) при умолчаниях даёт ровно то же число, .jsx прежний байт в байт.
-        disc_y=_decor.disc_y, disc_x_decl=_decor.disc_x_decl, disc_x_js=_decor.disc_x_js,
-        # Размытие на старте: Adjustment Layer поверх всего + Gaussian Blur,
-        # ключи start_blur -> 0 за start_blur_dur. Выключено (start_blur=0) — пусто.
-        start_blur=stv.start_blur,
-        blur_js=("" if stv.start_blur <= 0 else
-                 "\n    // размытие на старте: Adjustment Layer поверх всего,"
-                 "\n    // Gaussian Blur %(sb)g -> 0 за %(sd)g c" % {"sb": stv.start_blur,
-                                                                "sd": stv.start_blur_dur}
-                 # addAdjustmentLayer в API After Effects НЕТ (есть add/addNull/addSolid/
-                 # addText/addCamera/addLight/addShape) — корректирующий слой это солид с
-                 # флагом adjustmentLayer. И matchName эффекта — «ADBE Gaussian Blur 2»,
-                 # с пробелом: он снят с живого проекта (sample1.inspect.json). Оба промаха
-                 # роняют сборку в AE, а node --check их не видит — синтаксис-то верный.
-                 + "\n    var sbl=main.layers.addSolid([1,1,1], \"Размытие на старте\", W, H, 1);"
-                   "\n    sbl.adjustmentLayer=true;"
-                   "\n    var sbe=sbl.property(\"ADBE Effect Parade\").addProperty(\"ADBE Gaussian Blur 2\");"
-                   # -0003 это Repeat Edge Pixels: в AE галка включена по умолчанию и портит края текста
-                   "\n    sbe.property(\"ADBE Gaussian Blur 2-0003\").setValue(0);   // Repeat Edge Pixels = 0"
-                   "\n    sbe.property(\"ADBE Gaussian Blur 2-0001\").setValueAtTime(0, %(sb)g);"
-                   "\n    sbe.property(\"ADBE Gaussian Blur 2-0001\").setValueAtTime(%(sd)g, 0);"
-                   "\n    try{ sbl.moveToBeginning(); }catch(e){}"
-                   % {"sb": stv.start_blur, "sd": stv.start_blur_dur}),
-        # Хвостовой дисклеймер: копия головного на конец контента, держится
-        # 1 с, гаснет за 0.35 — та же раскладка ключей, что у головного, со сдвигом.
-        # Выключено (нет галки или текст пуст) — пусто; композиция не удлиняется.
-        disc_end_js=("" if not disc_end_on else
-                     "\n    // дисклеймер в конце: копия головного на конец контента"
-                     "\n    var dle=main.layers.addText(DISCLAIMER);"
-                     "\n    var dsp=dle.property(\"ADBE Text Properties\").property(\"ADBE Text Document\");"
-                     "\n    var dd=dsp.value; dd.resetCharStyle(); dd.resetParagraphStyle(); dd.text=DISCLAIMER;"
-                     "\n    try{setFont(dd, FONT);}catch(e){} dd.fontSize=DISC_SIZE; dd.fillColor=[1,1,1]; dd.applyFill=true;"
-                     "\n    try{dd.justification=ParagraphJustification.CENTER_JUSTIFY;}catch(e){}"
-                     + _decor.disc_lead_js_tail +
-                     "\n    dsp.setValue(dd);"
-                     "\n    dle.property(\"ADBE Transform Group\").property(\"ADBE Position\").setValue([%s, DISC_Y]);"
-                     % _decor.disc_x_js
-                     + "\n    dle.inPoint=DUR;"
-                     "\n    var dop=dle.property(\"ADBE Transform Group\").property(\"ADBE Opacity\");"
-                     "\n    dop.setValueAtTime(DUR+DISC_END-0.35, 100); dop.setValueAtTime(DUR+DISC_END, 0);"
-                     "\n    dle.outPoint=DUR+DISC_END;"
-                     "\n    try{ var gg=dle.property(\"ADBE Effect Parade\").addProperty(\"ADBE Glo2\");"
-                     "\n         try{gg.property(\"Glow Radius\").setValue(42);}catch(e){} }catch(e){}"
-                     "\n    try{ dle.moveToBeginning(); }catch(e){}"),
-        # композицию удлиняем ровно на длительность хвостового дисклеймера, иначе слой
-        # окажется за краем и человек его не увидит; выключено — пустая подстановка
-        comp_dur=("+%.4g" % disc_sec) if disc_end_on else "",
-        fsize=_fsize,
-        # Кегль текста интро в шаблоне (доработка ZL): при ужатых строках субтитров introDoc
-        # обязан ставить СВОЙ кегль, а не FONT_SIZE. Кегли равны (режим по слову) —
-        # подстановка ровно "FONT_SIZE", и .jsx прежний байт в байт (golden).
-        intro_fsize_js=("FONT_SIZE" if _fsize_base == _fsize else str(_fsize_base)),
-        posy=_posy,
-        font=_js(font_ps), hl_font=_js(hl_font_ps), hlfill=_fill_js(stv.hl_fill),
-        fill=_fill_js(stv.sub_fill if stv.sub_fill else [1, 1, 1]),
-        hl_bold=("true" if stv.hl_bold else "false"),
-        # Кегль жёлтого слова: множитель hl_size_k. При 1.0 подстановка пуста, а кегль
-        # в циклах субтитров остаётся прежним FONT_SIZE — .jsx прежний байт в байт
-        # (golden_geometry.jsx). Считает его layout: выражения циклов и объявление
-        # берутся из одного места.
-        hl_size_decl=hl_size_decl(stv.hl_size_k),
-        # Тень слов субтитров: числа — из plan_decor (SH_SUB_*) и оттуда же в план
-        # (plan["shadows"]["sub"]), поэтому у .jsx и превью одна и та же тень.
-        sh_op=SH_SUB_OP, sh_dir=SH_SUB_DIR, sh_dist=SH_SUB_DIST, sh_soft=SH_SUB_SOFT,
-        ins_fx=_js(stv.insert_fx),
-        # Радиус скругления маски фотовставки — ОДНО число на .jsx и план (превью):
-        # раньше оно стояло константой в шаблоне, и у превью радиуса не было вовсе.
-        # При 60 подстановка даёт ровно прежний текст шаблона — .jsx прежний байт в байт
-        # (golden_geometry.jsx).
-        ins_mask_r=("%g" % INS_MASK_R),
-        # Задание FC: «none»-вставки без анимации и без эффектов. Подстановки при
-        # дефолтах (zoom/card/white) дают ровно прежний текст шаблона — .jsx не меняется
-        # (golden); при none — пусто: ни вызова insFX, ни маски, ни wiggle.
-        insfx_cam1=("insFX(L,\"cam1\");" if stv.insert_fx != "none" else ""),
-        insfx_cam2=("insFX(L,\"cam2\");" if stv.insert_fx != "none" else ""),
-        ins_wiggle=(
-            "try{ L.property(\"ADBE Transform Group\").property(\"ADBE Position\").expression=\"wiggle(1,15)\"; }catch(e){}  // лёгкое дрожание"
-            if stv.insert_anim != "none" else ""),
-        ins_mask=(
-            "if (INS_FX!=\"white\"){                          // маска-скругление только у нового вида\n"
-            "            var ph=H; try{ if(pit.width&&pit.height) ph=pit.height*(W/pit.width); }catch(e){}   // высота фото в прекомпе (тянуто под ширину)\n"
-            "            var mh=ph, mw=W;\n"
-            "            // квадратная карточка: режем по меньшей стороне. Ультравайд (артерия, схемы) в квадрат\n"
-            "            // не лезет — теряется смысл картинки, такие оставляем целиком по ширине.\n"
-            "            if (mh>0 && W/mh <= INS_MASK_SQUARE_AR){ var side=Math.min(W, mh); mw=side; mh=side; }\n"
-            "            // ручная правка формы карточки (поля «Маска Ш/В» в UI, % от авто): авторасчёт\n"
-            "            // квадратит всё подряд, а у половины картинок предмет в квадрат не помещается.\n"
-            "            // Больше самого фото маску не растягиваем — за его краем в прекомпе пусто.\n"
-            "            mw = Math.max(20, Math.min(W,  mw*(ins.mw||100)/100));\n"
-            "            mh = Math.max(20, Math.min(ph, mh*(ins.mh||100)/100));\n"
-            "            roundMask(L, (W-mw)/2, Math.max(0,(H-mh)/2), (W+mw)/2, Math.min(H,(H+mh)/2), INS_MASK_R); }"
-            if stv.insert_fx != "none" else ""),
-        ins_c1on2_x=stv.insert_c1on2_x,
-        ins_c1on2_y=stv.insert_c1on2_y,
-        # Подложка фото-вставок: дефолты — ровно тот текст, что был в шаблоне,
-        # поэтому без единой вставки с галкой .jsx побайтово прежний (golden). Вставка с
-        # галкой переопределяет их ниже — там же и объяснение формул.
-        ins_plate_decl="",
-        ins_plate_layer="",
-        ins_photo_pos="[W/2, H/2]",
-        ins_photo_scale="[_f*100,_f*100]",
-        sub_loop=sub_loop,
-        # Появление БАЗОВЫХ слов (пресет sub_anim): объявление чисел и функция
-        # subAnimKeys. У выключенного пресета обе подстановки пусты — .jsx прежний
-        # байт в байт (golden). Считает их layout: ключи плана и .jsx берутся из
-        # одного места, второй копии кривых нет.
-        sa_decl=_subs.sub_anim_decl,
-        sa_fn=_subs.sub_anim_fn,
-        # Градиент текста и свечение (класс Б каталога): функции эффектов — ОДНИ на
-        # сборку, в циклах слов стоят только их вызовы. Выключено — пусто (golden).
-        sub_fx_fn=(_subs.sub_fill_fn + _subs.sub_glow_fn),
-        # Подложка слова: создание ОДНОГО шейп-слоя до цикла слов и хвост (окна показа
-        # и кривые) после него. Выключена галкой — обе подстановки пусты (golden).
-        sub_wbg_js=_subs.sub_wbg_js,
-        sub_wbg_tail=_subs.sub_wbg_tail,
-        sub_shadow_js=_decor.sub_shadow_js,
-        sub_bg_js=_decor.sub_bg_js,
-        layer_order=_jd(list(stv.layer_order)),
-        sub_bg_null_anchor=("    nullAnchor = bgLayer;\n" if _decor.sub_bg_on else ""),
-        sub_scale_js=_decor.sub_scale_js,
-        top_line_js=_decor.top_line_js,
-        caption_js=_decor.caption_js)
-    if stv.sub_words_per_row > 1:
-        plan["sub_step"] = _sub_step
+        posy=_posy, hl_rise=_hl_rise, hl_step=_hl_step, hl_dur=_hl_dur,
+        fsize=_fsize, fsize_base=_fsize_base, inserts_js=inserts_js,
+        fps=_fps0, exposure=exposure, music_db=music_db, voice_wav=voice_wav,
+        voice_db=voice_db, audio_fade=audio_fade, riser=riser, pop=pop,
+        censor_js=censor_js, music_path=music_path, trans=trans, trans_sfx=trans_sfx,
+        intro_font_ps=intro_font_ps, intro_hl_font_ps=intro_hl_font_ps,
+        intro_mode=intro_mode, font_ps=font_ps, hl_font_ps=hl_font_ps,
+        disclaimer=disclaimer, disc_sec=disc_sec, disc_end_on=disc_end_on,
+        lumetri=lumetri, lumetri2=lumetri2, dg_on=_dg_on, accent_used=_accent_used,
+        any_plate=_any_plate,
+        pop_place=pop_place, pop_tail=pop_tail, glitch_sfx=glitch_sfx,
+        wsfx_place=wsfx_place, wsfx_tail=wsfx_tail,
+        riser_place=riser_place, riser_tail=riser_tail,
+        trans_place=trans_place, trans_tail=trans_tail)).tokens
     if _any_plate:
-        # Подложка фото-вставок. Подстановки непустые ТОЛЬКО когда файл в стиле
-        # задан и хоть у одной вставки есть галка — иначе .jsx побайтово прежний (golden).
-        # Путь подложки уезжает в .jsx ОДИН раз (INS_PLATE в шапке), а решение «этой вставке
-        # подложку» шаблон принимает по полю ins.plate: у остальных вставок прекомп, маска и
-        # формулы те же, что были. Слой плашки добавляется ПЕРВЫМ (фото встанет поверх неё),
-        # один импорт на весь .jsx (imp дедуплицирует). Масштаб фото и сдвиг внутри прекомпа
-        # посчитал Python (_ins_plate): в .jsx едут готовые ins.ps/px/py, своих формул
-        # шаблон не держит.
-        plan["_ae"]["ins_plate_decl"] = (
-            "    var INS_PLATE = %s;   // подложка вставок с галкой «на подложке»: путь или пусто\n"
-            % _js(stv.plate_path))
-        plan["_ae"]["ins_plate_layer"] = (
-            "        // подложка: слой ПЕРВЫМ в прекомпе, только у вставок с галкой «на подложке»\n"
-            "        if(ins.plate && INS_PLATE){ var plateItem=imp(INS_PLATE);\n"
-            "            if(plateItem){ toBin(plateItem,\"Вставки\");\n"
-            "                var plateL=pc.layers.add(plateItem);\n"
-            "                try{ plateL.property(\"ADBE Transform Group\").property(\"ADBE Position\").setValue([W/2,H/2]);\n"
-            "                    var plateW=plateItem.width; if(plateW){ var plateF=W/plateW;\n"
-            "                        plateL.property(\"ADBE Transform Group\").property(\"ADBE Scale\").setValue([plateF*100,plateF*100]); } }catch(e){} } }\n"
-            "        ")
-        plan["_ae"]["ins_photo_pos"] = (
-            "(ins.plate&&INS_PLATE)?[W/2+ins.px, H/2+ins.py]:[W/2, H/2]")
-        plan["_ae"]["ins_photo_scale"] = (
-            "(ins.plate&&INS_PLATE)?[(ins.ps||100),(ins.ps||100)]:[_f*100,_f*100]")
-        # маска-скругление — только НЕ на подложке; у остальных вставок она остаётся
-        if plan["_ae"]["ins_mask"]:
-            plan["_ae"]["ins_mask"] = (
-                "if (!(ins.plate && INS_PLATE)) {\n"
-                + "\n".join(("    " + _ln) if _ln.strip() else _ln
-                            for _ln in plan["_ae"]["ins_mask"].split("\n"))
-                + "\n        }")
+        plan["_ae"].update(plate_tokens(_any_plate, stv.plate_path, plan["_ae"]))
     return plan
 
 

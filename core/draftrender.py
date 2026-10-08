@@ -929,7 +929,10 @@ def render_draft(xml_path: str, out_mp4: str | None = None, height: int = 720, f
         c = ["ffmpeg", "-y", "-v", "error"]
         for p in paths:
             c += ["-i", p]
-        c += ["-filter_complex_script", script, "-map", "[vout]"]
+        # Опция графа — по версии ffmpeg: в 7.1 имя `-filter_complex_script` устарело
+        # (см. encoders.filter_graph_args), а черновик и микс звука должны звать одну
+        # и ту же сборку одинаково.
+        c += encoders.filter_graph_args(script) + ["-map", "[vout]"]
         if audio:
             c += ["-map", "[aout]"]
         c += codec + ["-c:a", "aac", "-b:a", "128k", out_mp4]

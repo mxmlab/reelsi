@@ -13,8 +13,14 @@
 {error: "…", err: "file_not_found", err_vars: {"path": …}}, а фронт показывает
 перевод по коду (ERR_file_not_found в словаре) с подстановкой переменных.
 
-__str__ отдаёт русский текст: CLI (`python -m core.aicut`), логи и старый код,
-который делает `str(e)`, видят сообщение как раньше.
+__str__ и `.text` отдают русский текст С ПОДСТАВЛЕННЫМИ переменными: CLI
+(`python -m core.aicut`), логи и старый код, который делает `str(e)`, видят
+причину, а не шаблон. Пока подстановки не было, в логе, в консоли и в ответе
+API лежало «Звук не собрался (код {code}): {err}» — ровно то, что случилось при
+падении ffmpeg на сборочном сервере Windows: причину пришлось искать заново.
+Сам `.msg` при этом остаётся ШАБЛОНОМ: по нему фронт берёт перевод
+(ERR_<код> в static/i18n) и подставляет те же переменные у себя — переводить
+уже подставленную строку нечем.
 
 ПОЧЕМУ СВОЙ КЛАСС, А НЕ SystemExit (внешнее ревью 2026-09-22).
 Каналом пользовательских ошибок был `raise SystemExit(umsg(…))` — около 250 мест.
@@ -26,29 +32,65 @@ SystemExit — наследник BaseException, а не Exception: его мо�
 так же, как раньше проходил SystemExit. Видят её и поток задания, и обработчик
 ошибок Flask, и командная строка.
 """
+import string
 import sys
 from typing import Any, NoReturn
 
+# Поля подстановки шаблона: `{err}`, `{path}` и `{dep:.0f}`. Ровно тот же вид,
+# что разбирает `t()` фронтенда (static/app/00-core.js): без него строка
+# «код {code}» выглядела бы как «код 1» без причины.
+_FORMATTER = string.Formatter()
+
+
+def format_text(msg: str, vars: dict[str, Any]) -> str:
+    """Русский текст с подставленными переменными; без них — шаблон как есть.
+
+    Ничего не бросает: сообщение об ошибке — не место для исключения. Кривой
+    шаблон (`{` без пары, позиционное поле `{0}`), неизвестный формат или
+    отсутствующая переменная оставляют текст ШАБЛОНОМ — как было до этой правки.
+    Значения приводятся к строке: формат вроде `{code:.0f}` на числе рассчитан,
+    а уронить показ причины из-за него нельзя.
+    """
+    if not vars:
+        return msg
+    values = {k: str(v) for k, v in vars.items()}
+    try:
+        # parse даёт поля и позиционные ({}), и именованные ({err}): позиционные
+        # недостижимы — umsg зовут только с именованными, — но проверить их всё
+        # равно надо, иначе format упадёт мимо нашей проверки.
+        for _literal, field, _spec, _conv in _FORMATTER.parse(msg):
+            if field is not None and field != "" and field not in values:
+                return msg
+        return msg.format(**values)
+    except (IndexError, KeyError, ValueError):
+        return msg                      # шаблон битый — показываем как есть
+
 
 class UMsg:
-    """Пользовательское сообщение: русский текст + код перевода (+переменные)."""
+    """Пользовательское сообщение: русский текст + код перевода (+переменные).
+
+    `msg` — ШАБЛОН (его переводит фронт по коду), `text` — он же с подставленными
+    переменными (его видит человек в логе, в консоли и в `str(e)`).
+    """
 
     def __init__(self, code: str, msg: str, vars: dict[str, Any] | None = None) -> None:
         self.code = code
         self.msg = msg
         self.vars = vars or {}
+        self.text = format_text(msg, self.vars)
 
     def __str__(self) -> str:
-        return self.msg
+        return self.text
 
 
 class ReelsiError(Exception):
     """Пользовательская ошибка: `umsg(…)` с кодом перевода ЛИБО готовая строка.
 
-    `str(e)` — русский текст, ровно как печатал `SystemExit(umsg(…))`. У экземпляра
-    доступны `code` и `vars` для перевода (у строки код пустой), а в `args[0]`
-    лежит исходный аргумент — по нему `api._core.umsg_err` разбирает и ReelsiError,
-    и оставшиеся SystemExit одним и тем же кодом.
+    `str(e)` — русский текст с подставленной причиной, ровно как печатал
+    `SystemExit(umsg(…))`. У экземпляра доступны `code` и `vars` для перевода
+    (у строки код пустой), а в `args[0]` лежит исходный аргумент — по нему
+    `api._core.umsg_err` разбирает и ReelsiError, и оставшиеся SystemExit одним
+    и тем же кодом.
     """
 
     def __init__(self, msg: str | UMsg) -> None:
@@ -56,7 +98,7 @@ class ReelsiError(Exception):
         self.umsg: UMsg | None = msg if isinstance(msg, UMsg) else None
         self.code: str | None = self.umsg.code if self.umsg is not None else None
         self.vars: dict[str, Any] = dict(self.umsg.vars) if self.umsg is not None else {}
-        self.text: str = self.umsg.msg if self.umsg is not None else str(msg)
+        self.text: str = self.umsg.text if self.umsg is not None else str(msg)
 
     def __str__(self) -> str:
         return self.text

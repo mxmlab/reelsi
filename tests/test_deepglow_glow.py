@@ -347,10 +347,16 @@ def test_7_яркость_считается_той_же_функцией_и_п�
     assert _tritone_on(None) is False
     assert _tritone_on(styles.BASE["hl_fill"]) is False
 
-    src = io.open(os.path.join(ROOT, "core", "xml2ae", "build.py"), encoding="utf-8").read()
-    assert src.count("0.2126 *") == 1, "формула яркости Rec.709 размножилась в build.py"
-    assert src.count("0.7152 *") == 1, "формула яркости Rec.709 размножилась в build.py"
-    assert src.count("0.0722 *") == 1, "формула яркости Rec.709 размножилась в build.py"
+    # Формула Rec.709 живёт в plan_style.py: туда переехали TRITONE_MAX_LUM и `_tritone_on`
+    # распилом scene_plan, а build берёт их оттуда (это те же объекты). Значит, в plan_style
+    # она ровно одна, а в build — её нет вовсе: второй копии формулы не завелось.
+    style_src = io.open(os.path.join(ROOT, "core", "xml2ae", "plan_style.py"),
+                        encoding="utf-8").read()
+    build_src = io.open(os.path.join(ROOT, "core", "xml2ae", "build.py"),
+                        encoding="utf-8").read()
+    for token in ("0.2126 *", "0.7152 *", "0.0722 *"):
+        assert style_src.count(token) == 1, f"формула яркости Rec.709 размножилась: {token}"
+        assert build_src.count(token) == 0, f"вторая копия формулы Rec.709 в build.py: {token}"
 
 
 def test_8_стоковый_жёлтый_deep_glow_не_ставится(xml_subs, tmp_path):

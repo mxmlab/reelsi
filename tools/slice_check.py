@@ -16,8 +16,10 @@ r"""Прогон публичного среза через весь CI, а не
 pytest; ruff; mypy (конфигурация берётся из `pyproject.toml` среза); jsx
 (`node --check` по ExtendScript и по `static/app/*.js`); smoke (`compileall` и
 `--help` точек входа); requirements (разбор требований pip'ом и чтение их в
-системной кодировке); gitleaks (только дерево среза); linux (тесты на Linux в docker с
---init по ssh). Каждый шаг печатает имя и итог, в конце — сводная таблица.
+системной кодировке); pip-audit (уязвимые зависимости; аргументы, включая
+`--ignore-vuln`, берутся из строки джобы `scan` в `ci.yml` среза); gitleaks (только
+дерево среза); linux (тесты на Linux в docker с --init по ssh). Каждый шаг печатает
+имя и итог, в конце — сводная таблица.
 Код возврата ненулевой, если хоть один шаг провален или не прогонялся без явного
 флага пропуска; провал самих тестов отдаёт их собственный код.
 
@@ -30,10 +32,15 @@ pytest; ruff; mypy (конфигурация берётся из `pyproject.toml
 прогону внутри набора места нет — под `-n auto` он дольше таймаута pytest, а
 thread-таймаут роняет воркер целиком.
 
-Чего здесь нет по сравнению с CI и почему: pip-audit (тянет сеть и базу
-уязвимостей), история публичного репозитория у gitleaks (сканируется только
-дерево среза — историю смотрит джоба `scan`), `reelsi --help` из установленного
-пакета (нужна `pip install -e .`).
+Чего здесь нет по сравнению с CI и почему: история публичного репозитория у
+gitleaks (сканируется только дерево среза — историю смотрит джоба `scan`),
+`reelsi --help` из установленного пакета (нужна `pip install -e .`).
+
+Шаг `pip-audit` ходит в сеть за базой уязвимостей и требует установленного
+пакета: нет пакета или нет сети — шаг «НЕ ПРОГОНЯЛСЯ» с причиной, а не молчаливый
+пропуск. Команда берётся из строки джобы `scan` (`extract_ci_pip_audit_args`), а
+не собирается здесь заново: разъехавшийся список исключений — это либо красный CI
+после зелёного среза, либо тихо пропущенная уязвимость.
 
 Правила отбора файлов НЕ дублируются: `.publicignore` читается и разбирается
 функциями `tools/public_slice.py` (`IGNORE_FILE`, `parse_ignore`, `is_ignored`).
@@ -122,6 +129,14 @@ DEFAULT_LINUX_IMAGE = "reelsi-ci:py310"
 REQUIREMENTS_FILES = ("requirements.txt", "requirements-optional.txt", "requirements-dev.txt")
 COMPILE_PATHS = ("api", "core", "tools", "tests", "webui.py", "reelsi.py", "doctor.py")
 CLI_HELP = (("reelsi.py",), ("-m", "core.omni_cut"), ("-m", "core.gigaam_cut"))
+# Аргументы шага pip-audit (в т. ч. список `--ignore-vuln`) берутся из строки джобы
+# `scan`, а не держатся копией здесь: список исключений меняется вместе с
+# уязвимостями, и копия разъехалась бы с CI — либо красный CI после зелёного среза,
+# либо тихо пропущенная уязвимость. Сторож — tests/test_ci_scan.py.
+CI_WORKFLOW = os.path.join(".github", "workflows", "ci.yml")
+PIP_AUDIT_REQUIREMENTS = "requirements.txt"
+PIP_AUDIT_NO_NETWORK_REASON = ("нет сети: база уязвимостей недоступна, "
+                               "зависимости не проверены")
 
 # Состояния шага. «Не прогонялся» красит код возврата наравне с FAIL: молча
 # пропущенная проверка — это ровно та щель, из-за которой скрипт и переписан.
@@ -130,7 +145,8 @@ FAIL = "FAIL"
 NOTRUN = "НЕ ПРОГОНЯЛСЯ"
 SKIP = "ПРОПУЩЕН"
 
-STEP_NAMES = ("pytest", "ruff", "mypy", "jsx", "smoke", "requirements", "gitleaks", "linux")
+STEP_NAMES = ("pytest", "ruff", "mypy", "jsx", "smoke", "requirements", "pip-audit",
+              "gitleaks", "linux")
 
 STEP_HINTS = {
     "pytest": "python -m pytest tests -q -n auto --dist loadgroup -m \"not perf\" (без xdist — без -n)",
@@ -139,6 +155,7 @@ STEP_HINTS = {
     "jsx": "node --check по ExtendScript и static/app/*.js",
     "smoke": "compileall и --help точек входа",
     "requirements": "pip install --dry-run по requirements*.txt и чтение их в системной кодировке",
+    "pip-audit": "pip-audit -r requirements.txt с исключениями из строки джобы scan в ci.yml",
     "gitleaks": "gitleaks dir --redact -c .gitleaks.toml",
     "linux": "pytest в docker с --init по ssh на Linux-хосте",
 }
@@ -600,6 +617,95 @@ def step_requirements(tree: str) -> StepResult:
     return StepResult("requirements", OK)
 
 
+def _parse_ci_pip_audit_args_text(text: str) -> str | None:
+    """Извлекает аргументы после 'pip-audit -r requirements.txt' в шаге джобы scan."""
+    in_jobs = False
+    in_scan_job = False
+
+    for raw_line in text.splitlines():
+        if raw_line and not raw_line.startswith(" ") and not raw_line.startswith("#"):
+            in_jobs = (raw_line.rstrip() == "jobs:")
+            in_scan_job = False
+            continue
+
+        if not in_jobs:
+            continue
+
+        # Заголовок джобы: ровно 2 пробела ("  scan:")
+        m_job = re.match(r"^ {2}([a-zA-Z0-9_-]+):\s*$", raw_line)
+        if m_job:
+            in_scan_job = (m_job.group(1) == "scan")
+            continue
+
+        if not in_scan_job:
+            continue
+
+        # Строка шага: `pip-audit -r requirements.txt` и, если есть, аргументы за ней.
+        m_run = re.search(r"^\s*pip-audit\s+-r\s+" + re.escape(PIP_AUDIT_REQUIREMENTS)
+                          + r"(?:\s+(.*))?$", raw_line)
+        if m_run:
+            return (m_run.group(1) or "").strip()
+
+    return None
+
+
+def extract_ci_pip_audit_args(tree: str) -> tuple[str | None, str]:
+    """Аргументы pip-audit из шага джобы `scan` в .github/workflows/ci.yml среза.
+
+    Строка разбирается текстом, а не YAML: аргументы (список `--ignore-vuln`) — ровно
+    то, что правят руками, а yaml в окружении среза может и не стоять. Заодно
+    проверяется, что строка вообще есть: без неё шаг не «молча зелёный», а провал.
+    """
+    ci_file = os.path.join(tree, *CI_WORKFLOW.split(os.sep))
+    if not os.path.isfile(ci_file):
+        return None, f"в срезе не найден файл {CI_WORKFLOW}"
+    try:
+        with open(ci_file, encoding="utf-8") as f:
+            text = f.read()
+    except OSError as e:
+        return None, f"ошибка чтения {ci_file}: {e}"
+
+    args = _parse_ci_pip_audit_args_text(text)
+    if args is None:
+        return None, (f"в {CI_WORKFLOW} не найдена строка "
+                      f"'pip-audit -r {PIP_AUDIT_REQUIREMENTS} ...' в джобе scan")
+    return args, ""
+
+
+def pip_audit_command(ci_args: str = "") -> list[str]:
+    """Команда шага pip-audit: интерпретатор скрипта, модуль и аргументы из ci.yml.
+
+    В CI это консольный `pip-audit` после `pip install pip-audit`, здесь — `python -m
+    pip_audit` тем же интерпретатором, что запущен сам скрипт (как ruff и mypy).
+    Пакета нет — «No module named pip_audit», и шаг честно уходит в «не прогонялся».
+    """
+    args = [sys.executable, "-m", "pip_audit", "-r", PIP_AUDIT_REQUIREMENTS]
+    if ci_args:
+        args += shlex.split(ci_args)
+    return args
+
+
+def step_pip_audit(tree: str) -> StepResult:
+    """`pip-audit -r requirements.txt` с исключениями из ci.yml — джоба `scan`.
+
+    Исключения здесь не дублируются: строка читается из `ci.yml` среза, а разбор
+    «за что исключение» живёт комментариями рядом с ней. Без пакета или без сети шаг
+    «не прогонялся» с причиной: молча зелёный аудит — это ровно та щель, из-за
+    которой такой шаг и заводится.
+    """
+    ci_args, err = extract_ci_pip_audit_args(tree)
+    if ci_args is None:
+        return StepResult("pip-audit", FAIL, err)
+
+    res = run_command(pip_audit_command(ci_args), tree)
+    output = _output_of(res)
+    parsed = _tool_result("pip-audit", res, f"pip-audit -r {PIP_AUDIT_REQUIREMENTS}")
+    if parsed.status != OK and _no_network(output):
+        return StepResult("pip-audit", NOTRUN, PIP_AUDIT_NO_NETWORK_REASON,
+                          code=res.returncode, output=output)
+    return parsed
+
+
 def resolve_gitleaks(explicit: str | None = None) -> tuple[str | None, str]:
     """Путь к бинарнику gitleaks и причина, если его нет.
 
@@ -787,6 +893,7 @@ def _step_calls(gitleaks_path: str | None = None,
         "jsx": step_jsx,
         "smoke": step_smoke,
         "requirements": step_requirements,
+        "pip-audit": step_pip_audit,
         "gitleaks": partial(step_gitleaks, gitleaks_path=gitleaks_path),
         "linux": partial(step_linux, host=linux_ssh, image=linux_image),
     }
@@ -879,7 +986,7 @@ def main(argv: list[str] | None = None, root: str | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Прогон публичного среза (tools/public_slice.py) через проверки CI "
                     "во временном каталоге: pytest, ruff, mypy, node --check, compileall "
-                    "с --help, разбор requirements и gitleaks."
+                    "с --help, разбор requirements, аудит уязвимостей и gitleaks."
     )
     parser.add_argument("--ref", default="HEAD", help="Коммит-источник среза (по умолчанию HEAD)")
     parser.add_argument("--keep", action="store_true", help="Оставить каталог среза на диске (для разбора падений)")

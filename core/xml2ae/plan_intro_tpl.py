@@ -15,7 +15,10 @@ MT), звук. Этап 5 выносит сюда ТЕКСТОВЫЕ ПОДСТ�
 * маршрутизацию слоёв интро — подъём над видеовставкой (front) и над рото по положению;
 * эффекты появления — функцию `introAnimFX` (глитч, Deep Glow 2, Tritone, свечение строки),
   её вызовы на строке и на слове, свечение жёлтого хайлайта и свечение прекомпа;
-* тень прекомпа интро — своя у камеры 1 и камеры 2.
+* тень прекомпа интро — своя у камеры 1 и камеры 2;
+* открепление интро от Камеры 1 (`intro_cam`) — объявление INTRO_CAM и добавка
+  «&& INTRO_CAM» к условию привязки;
+* затемнение под интро — числа слоя-фигуры и готовый JS слоя (Box Blur).
 
 Перенос ПОСТРОЧНЫЙ: поведение, числа, порядок операций и ТЕКСТ подстановок не менялись ни
 на байт (проверяется эталоном fixtures/golden_geometry.jsx и побайтовым сравнением
@@ -33,7 +36,7 @@ MT), звук. Этап 5 выносит сюда ТЕКСТОВЫЕ ПОДСТ�
 """
 import json
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 from .jsutil import _fill_js, _jd
 from .plan_intro import IntroPlan
@@ -86,6 +89,68 @@ class IntroTplInputs:
     deep_glow: list
     # Правило счётчика из build.py: есть ли в строке валидное число-счётчик.
     has_valid_count: Callable[[dict], bool]
+    # Камера 2 активна (plan_camera.cam2_active): по ней решается, привязывать ли нул
+    # «интро на кам2» к нулу Камеры 2 — второй копии правила нет.
+    cam2_active: bool = False
+    # Числа затемнения под интро (plan_shade.numbers; None — галка снята). JS слоя
+    # собирается по ним, второй формулы ни у шаблона, ни у превью нет. Поле названо
+    # `shade` (не `shade_plan`): имя `shade_plan` в модуле занято функцией `shade_js`,
+    # и одноимённое поле затирало переданные числа.
+    shade: Any = None
+
+
+def shade_js(shade_plan: Any, cam_shade_cmt: str, cam_cond: str) -> str:
+    """JS слоя затемнения под интро по готовым числам плана (пусто при галке снятой).
+
+    Слой — фигура (прямоугольник с чёрной заливкой) с Box Blur; числа берутся из
+    INTRO_SHADE, то есть из плана: второй копии формул нет ни в ExtendScript, ни в превью.
+    `cam_shade_cmt` и `cam_cond` — подстановки открепления интро от Камеры 1
+    (`intro_cam`): галка снята — затемнение открепляется вместе с интро.
+    """
+    if shade_plan is None:
+        return ""
+    return (
+        "\n    // ---- затемнение под интро: фигура + Box Blur, числа из плана ----\n"
+        "    var INTRO_SHADE=" + _jd(shade_plan) + ";\n"
+        "    var shadeLayer = main.layers.addShape();\n"
+        '    shadeLayer.name = "Затемнение интро";\n'
+        "    shadeLayer.inPoint = 0; shadeLayer.outPoint = DUR;\n"
+        '    var shadeRoot = shadeLayer.property("ADBE Root Vectors Group");\n'
+        '    var shadeGrp = shadeRoot.addProperty("ADBE Vector Group");\n'
+        '    var shadeCtx = shadeGrp.property("ADBE Vectors Group");\n'
+        '    try{ shadeCtx.addProperty("ADBE Vector Shape - Rect").property("ADBE Vector Rect Size")'
+        '.setValue([INTRO_SHADE.w, INTRO_SHADE.h]); }catch(e){}\n'
+        "    // заливка через _fill_js: одна проверенная форма для всех заливок (3 компонента в AE)\n"
+        '    try{ shadeCtx.addProperty("ADBE Vector Graphic - Fill").property("ADBE Vector Fill Color")'
+        '.setValue(' + _fill_js([0, 0, 0]) + '); }catch(e){}\n'
+        '    try{ shadeGrp.property("ADBE Vector Transform Group").property("ADBE Vector Position")'
+        '.setValue([INTRO_SHADE.ox, INTRO_SHADE.oy]); }catch(e){}\n'
+        "    // обводку не добавляем: в amdi1.aep её нет\n"
+        "    var shadeBlur = null;\n"
+        '    try{ shadeBlur = shadeLayer.property("ADBE Effect Parade").addProperty("ADBE Box Blur2"); }catch(e){}\n'
+        "    if (shadeBlur){\n"
+        "        var shadeRad = false;\n"
+        '        try{ shadeBlur.property("Blur Radius").setValue(INTRO_SHADE.blur); shadeRad = true; }catch(e){}\n'
+        "        // запасное имя параметра радиуса: в локализованном AE «Blur Radius» не найдётся\n"
+        '        if (!shadeRad){ try{ shadeBlur.property("ADBE Box Blur2-0001").setValue(INTRO_SHADE.blur); }catch(e){} }\n'
+        "    }\n"
+        '    try{ shadeLayer.property("ADBE Transform Group").property("ADBE Opacity")'
+        '.setValue(INTRO_SHADE.op); }catch(e){}\n'
+        "    // порядок как у рото: сначала parent, ПОТОМ позиция и масштаб — AE при привязке\n"
+        "    // пересчитывает локальную позицию ребёнка под трансформ нула\n"
+        + cam_shade_cmt +
+        "    if (cam1null" + cam_cond + "){ shadeLayer.parent=cam1null;\n"
+        '        try{ shadeLayer.property("ADBE Transform Group").property("ADBE Position")'
+        '.setValue([INTRO_SHADE.x, INTRO_SHADE.y]); }catch(e){}\n'
+        '        try{ shadeLayer.property("ADBE Transform Group").property("ADBE Scale")'
+        '.setValue([INTRO_SHADE.scale, INTRO_SHADE.scale]); }catch(e){}\n'
+        "    } else {\n"
+        '        try{ shadeLayer.property("ADBE Transform Group").property("ADBE Position")'
+        '.setValue([W/2+INTRO_SHADE.x, H/2+INTRO_SHADE.y]); }catch(e){}\n'
+        '        try{ shadeLayer.property("ADBE Transform Group").property("ADBE Scale")'
+        '.setValue([INTRO_SHADE.scale, INTRO_SHADE.scale]); }catch(e){}\n'
+        "    }\n"
+    )
 
 
 @dataclass(frozen=True)
@@ -145,6 +210,16 @@ class IntroTpl:
     # Тень прекомпа: готовая строка вызова и (при не-дефолте) её функция.
     comp_shadow: str
     comp_shadow_fn: str
+    # Открепление интро от Камеры 1 (intro_cam=False): объявление INTRO_CAM и добавка
+    # «&& INTRO_CAM» к условию привязки нулов интро и затемнения. При дефолтном True
+    # обе пустые — .jsx прежний байт в байт (golden).
+    cam_decl: str
+    cam_cond: str
+    # Интро на кам2 при активной Камере 2 и её галке: строка привязки нула «интро на кам2»
+    # к нулу Камеры 2 (пусто, когда камера неактивна или галка снята).
+    intro2_cam2_js: str
+    # Затемнение под интро: готовый JS слоя-фигуры (Box Blur), пусто при выключенной галке.
+    shade_js: str
 
 
 def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
@@ -905,6 +980,49 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
                intro_comp_shadow_dir, intro_comp_shadow_dist, intro_comp_shadow_soft)
         )
 
+    # Камера 2 активна (plan_camera.cam2_active) — по ней решается, привязывать ли нул
+    # «интро на кам2» к нулу Камеры 2: второй копии правила нет.
+    cam2_active = inp.cam2_active
+    # Открепление интро от Камеры 1: галка «интро едет с камерой» снята —
+    # нулы «интро» и «интро на кам2» (и затемнение под интро) НЕ привязываются к нулу
+    # Камеры 1, а идут по уже существующей ветке else: позиция в координатах кадра.
+    # Подстановки пустые при дефолтном True — .jsx остаётся прежним байт в байт (golden),
+    # объявление INTRO_CAM появляется только при False (иначе читать нечего).
+    if not style.intro_cam:
+        _intro_cam_decl = (
+            "    var INTRO_CAM=false;  // стиль «интро едет с камерой» снят: нулы интро и затемнение\n"
+            "                          // стоят в координатах кадра, а не на нуле Камеры 1\n"
+        )
+        _intro_cam_cond = " && INTRO_CAM"
+        _intro_cam_shade_cmt = (
+            "    // галка «интро едет с камерой» снята: затемнение открепляется вместе\n"
+            "    // с интро — та же ветка else, координаты кадра\n"
+        )
+    else:
+        _intro_cam_decl = ""
+        _intro_cam_cond = ""
+        _intro_cam_shade_cmt = ""
+    # Интро на кам2 при активной Камере 2 и СВОЕЙ галке «интро едет с камерой» (intro_cam2) —
+    # ребёнок нула КАМЕРЫ 2 (тот же зум с её точкой наезда, что у кадра перебивки). Нул камеры 1
+    # ему не родитель никогда: её зум прячется на перебивке. Позиция — в системе родителя, как у
+    # ребёнка нула Камеры 1 (x, INTRO_Y2). Камера 2 неактивна или галка кам2 снята — подстановка
+    # пустая: нул остаётся в координатах кадра (строка шаблона), и ни зум, ни сдвиг, ни поворот
+    # Камеры 2 на него не действуют. Строка идёт ПОСЛЕ cam2_js: там объявлен cam2null.
+    if style.intro_cam2 and cam2_active:
+        _intro2_cam2_js = (
+            "\n    // интро на кам2 едет с зумом Камеры 2 (не Камеры 1)\n"
+            "    if(cam2null && introNull2){ introNull2.parent=cam2null;\n"
+            "        introNull2.property(\"ADBE Transform Group\").property(\"ADBE Position\")"
+            ".setValue([" + ("%g" % float(style.intro_x) if style.intro_x else "0") + ",INTRO_Y2]); }")
+    else:
+        _intro2_cam2_js = ""
+    # Затемнение под интро (ключ стиля intro_shade): числа слоя-фигуры считает отдельная
+    # дверь `plan_shade` (её же читает план), а JS слоя собирается ТОЛЬКО при включённой
+    # галке — при выключенной подстановка пустая, и .jsx остаётся прежним байт в байт
+    # (golden). Числа берутся из INTRO_SHADE, то есть из плана: второй копии формул нет
+    # ни в ExtendScript, ни в превью.
+    _intro_shade_js = shade_js(inp.shade, _intro_cam_shade_cmt, _intro_cam_cond)
+
     return IntroTpl(
         hlfill3_decl=_hlfill3_decl,
         fill_decl=_intro_fill_decl,
@@ -947,4 +1065,8 @@ def plan_intro_tpl(inp: IntroTplInputs) -> IntroTpl:
         comp_glow=_intro_comp_glow,
         comp_shadow=_intro_comp_shadow,
         comp_shadow_fn=_intro_comp_shadow_fn,
+        cam_decl=_intro_cam_decl,
+        cam_cond=_intro_cam_cond,
+        intro2_cam2_js=_intro2_cam2_js,
+        shade_js=_intro_shade_js,
     )

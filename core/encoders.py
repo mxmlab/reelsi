@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import platform
+import re
 import subprocess
 import threading
 from dataclasses import dataclass
@@ -318,6 +319,75 @@ def probe(family: str, purpose: str = "draft", refresh: bool = False) -> bool:
     return ok
 
 
+# --------------------------------------------------------------------------- #
+# Как ffmpeg читает граф фильтров: опция зависит от ЕГО версии
+# --------------------------------------------------------------------------- #
+# Граф уезжает файлом: он длинный и в командной строке Windows упирался бы в её
+# потолок. Имя опции сменилось — `ffmpeg -filter_complex_script FILE` на
+# `ffmpeg -/filter_complex FILE` (ffmpeg 7.1, 2024): первое читалось как обычная
+# опция командной строки, второе отдаёт имя файла СВОЕЙ опцией-модификатором «-/».
+# Старое имя на новых сборках ещё принимается, но по нему печатается
+# предупреждение, а в будущей версии его уберут; на старых сборках (Linux CI:
+# apt ffmpeg 6.x) второго варианта нет вовсе. Поэтому опция ВЫБИРАЕТСЯ по версии,
+# а не берётся одна на все машины.
+#
+# Версия спрашивается у ffmpeg (`ffmpeg -version`) и помнится на процесс: это
+# единственный способ узнать её надёжно, а микс зовут в цикле по роликам.
+GRAPH_OPT_MIN_VERSION = (7, 1)
+# Версия этого ffmpeg: пустой список — «ещё не спрашивали», иначе [(мажор, минор)]
+# либо [None] («спросили, узнать не вышло»). Список, а не одно значение: `None` —
+# это тоже ответ, и помнить его надо, иначе каждый микс поднимал бы процесс.
+_VERSION_CACHE: list[tuple[int, int] | None] = []
+
+
+def _parse_version(text: str) -> tuple[int, int] | None:
+    """Версия ffmpeg из его вывода: `(7, 1)` для «ffmpeg version 7.1.1-full_build».
+
+    Строка версии бывает с суффиксом (`7.1.1-...`, `6.1.1-3ubuntu1`, `N-116059-g...`):
+    берём первые два числа. Не разобрали (чужой вывод, пустая строка) — None:
+    вызывающий тогда отвечает веткой для старых сборок, самую совместимую.
+    """
+    m = re.search(r"\b(\d+)\.(\d+)", text or "")
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def ffmpeg_version(refresh: bool = False) -> tuple[int, int] | None:
+    """Версия ffmpeg на этой машине: `(мажор, минор)`; None — не узнать.
+
+    Запуск процесса стоит десятки миллисекунд, а опция нужна на каждый микс —
+    поэтому ответ помнится на процесс. `refresh=True` — спросить заново (так
+    делает диагностика, когда ffmpeg уже ответил ошибкой).
+    """
+    with _LOCK:
+        if _VERSION_CACHE and not refresh:
+            return _VERSION_CACHE[0]
+    try:
+        r = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True,
+                           encoding="utf-8", errors="replace", timeout=PROBE_TIMEOUT)
+        parsed = _parse_version(r.stdout or "")
+    except ReelsiError:
+        raise
+    except Exception:
+        parsed = None                   # ffmpeg не найден или не ответил — не повод падать
+    with _LOCK:
+        _VERSION_CACHE[:] = [parsed]
+    return parsed
+
+
+def filter_graph_args(script: str) -> list[str]:
+    """Аргументы ffmpeg для графа фильтров из файла — по версии этого ffmpeg.
+
+    `-/filter_complex FILE` — начиная с ffmpeg 7.1 (старое имя там устарело),
+    `-filter_complex_script FILE` — на 6.x и ниже (там нового имени ещё нет).
+    Версию не узнать — берём старое имя: так работает и ffmpeg 6.x, и новые
+    сборки, которые его ещё принимают.
+    """
+    version = ffmpeg_version()
+    if version is not None and version >= GRAPH_OPT_MIN_VERSION:
+        return ["-/filter_complex", script]
+    return ["-filter_complex_script", script]
+
+
 def auto_order() -> tuple[str, ...]:
     """Порядок перебора семейств для «авто» на ЭТОЙ машине."""
     return OS_ORDER.get(platform.system(), DEFAULT_ORDER)
@@ -430,10 +500,16 @@ def auto_family(purpose: str = "master") -> str:
 
 
 def reset_cache() -> None:
-    """Забыть пробы и списки доступного: сменилось железо/драйвер или так просят тесты."""
+    """Забыть пробы, списки доступного и версию ffmpeg: сменилось железо/драйвер
+    или так просят тесты.
+
+    Версия спрашивается у ТОЙ ЖЕ машины, что и пробы кодека, и помнится так же —
+    на процесс: тест, подменивший `ffmpeg -version`, обязан увидеть подменённое, а
+    не ответ соседнего теста."""
     with _LOCK:
         _PROBE_CACHE.clear()
         _AVAILABLE.clear()
+        _VERSION_CACHE.clear()
 
 
 __all__ = ["ARGS", "CODECS", "COLOR_FILTER", "COLOR_MATRIX", "COLOR_PRIMARIES",
@@ -443,4 +519,5 @@ __all__ = ["ARGS", "CODECS", "COLOR_FILTER", "COLOR_MATRIX", "COLOR_PRIMARIES",
            "MASTER_CODECS", "OS_ORDER", "PROBE_FRAME", "PROBE_TIMEOUT", "PURPOSES",
            "SETTINGS", "VUI_ARGS", "VUI_BSF", "Choice", "auto_family", "auto_order",
            "available", "cached_available", "codec_args", "codec_name", "color_args",
-           "color_filter", "family_of", "pick", "probe", "reset_cache", "uses_nvidia"]
+           "color_filter", "family_of", "ffmpeg_version", "filter_graph_args", "pick",
+           "probe", "reset_cache", "uses_nvidia"]

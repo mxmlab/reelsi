@@ -65,6 +65,7 @@ import subprocess
 from typing import Any, Callable, Sequence
 
 from core.app_meta import wrap_emit
+from core.encoders import filter_graph_args
 from core.fileio import atomic_text_write
 from core.jobstate import task_popen_kwargs
 from core.umsg import ReelsiError, umsg
@@ -368,18 +369,20 @@ def mix_command(plan: dict[str, Any], video: str, out: str, *, start: float = 0.
                 dur: float = 0.0) -> list[str]:
     """Командная строка микса: входы по порядку графа, затем видео, затем склейка.
 
-    Граф уезжает ФАЙЛОМ (`-filter_complex_script`): он длинный, и в командной строке
-    упирался бы в её потолок. Видео уходит в итог БЕЗ перекодирования (`-c:v copy`):
-    его уже собрал рендер кадров, второй раз кодировать его незачем.
+    Граф уезжает ФАЙЛОМ (опция выбирается по версии ffmpeg — `encoders.filter_graph_args`):
+    он длинный, и в командной строке упирался бы в её потолок. Имя опции сменилось в
+    ffmpeg 7.1, а на 6.x нового имени ещё нет, — одна константа на все машины не годится.
+    Видео уходит в итог БЕЗ перекодирования (`-c:v copy`): его уже собрал рендер кадров,
+    второй раз кодировать его незачем.
     """
     _graph, inputs = build_graph(plan, start=start, dur=dur)
     cmd = ["ffmpeg", "-y", "-v", "error"]
     for p in inputs:
         cmd += ["-i", p]
-    cmd += ["-i", video, "-filter_complex_script", _graph_path(out),
-            "-map", "%d:v:0" % len(inputs), "-map", "[aout]",
-            "-c:v", "copy", "-c:a", "aac", "-b:a", AUDIO_BITRATE,
-            "-ar", str(SAMPLE_RATE), "-ac", str(CHANNELS), "-shortest", out]
+    cmd += ["-i", video] + filter_graph_args(_graph_path(out)) + \
+        ["-map", "%d:v:0" % len(inputs), "-map", "[aout]",
+         "-c:v", "copy", "-c:a", "aac", "-b:a", AUDIO_BITRATE,
+         "-ar", str(SAMPLE_RATE), "-ac", str(CHANNELS), "-shortest", out]
     return cmd
 
 

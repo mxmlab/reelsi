@@ -14,6 +14,10 @@ r"""Сторож CI: torch ставится в чистом окружении, 
    один коммит, и проверка секретов вырождается в пустую.
 4. `.gitleaks.toml` не глушит правило generic-api-key целиком: исключения — только по
    путям трёх файлов с разобранными ложными срабатываниями.
+5. У pip-audit шесть исключений (`--ignore-vuln`) на уязвимости transformers 4.x:
+   список закрытый и поимённый, у каждого ID есть строка-причина рядом, а шаг
+   `pip-audit` в `tools/slice_check.py` повторяет ту же строку — иначе срез зелёный,
+   а CI красный (или наоборот, уязвимость пропущена молча).
 
 ci.yml читаем текстом: yaml в тестовой джобе CI не ставится, а проверяем мы ровно те
 строки, которые правят руками.
@@ -22,11 +26,27 @@ ci.yml читаем текстом: yaml в тестовой джобе CI не 
 """
 import os
 import re
+import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 CI_YML = os.path.join(ROOT, ".github", "workflows", "ci.yml")
 GITLEAKS_TOML = os.path.join(ROOT, ".gitleaks.toml")
+
+# Исключения pip-audit: шесть уязвимостей transformers 4.x, чей код в дереве не
+# вызывается (разбор по каждой — в ci.yml рядом со строкой). Перейти на 5.x нельзя:
+# transformers 5.x зовёт на импорте torch.accelerator, а он есть только в torch 2.6,
+# тогда как install.ps1/install.sh и оба README ставят torch 2.5.1. Список закрытый:
+# седьмое исключение — осознанная правка этого теста с причиной, а не тихий пропуск.
+PIP_AUDIT_IGNORES = (
+    "PYSEC-2025-217",
+    "PYSEC-2026-2288",
+    "PYSEC-2026-2289",
+    "PYSEC-2026-2290",
+    "PYSEC-2026-3929",
+    "PYSEC-2026-4174",
+)
+PIP_AUDIT_LINE_PREFIX = "pip-audit -r requirements.txt"
 
 
 def _read(path):
@@ -134,4 +154,70 @@ def test_gitleaks_конфиг_не_глушит_правило_целиком()
     assert not wildcards, (
         "исключение с `*` накрывает не только ложные срабатывания — правило мертво:\n"
         + "\n".join(wildcards)
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 5. pip-audit: исключения уязвимостей — поимённо, с причиной и те же в slice_check
+# --------------------------------------------------------------------------- #
+
+
+def _pip_audit_line():
+    """Строка запуска pip-audit в джобе scan (её же повторяет шаг slice_check)."""
+    block = _job_block(_read(CI_YML), "scan")
+    lines = [line.strip() for line in block if line.strip().startswith("pip-audit -r")]
+    assert len(lines) == 1, f"в джобе scan не ровно одна строка pip-audit: {lines}"
+    return lines[0]
+
+
+def _load_slice_check():
+    """`tools/slice_check.py` импортом: сравниваем его команду со строкой ci.yml."""
+    tools_dir = os.path.join(ROOT, "tools")
+    if tools_dir not in sys.path:
+        sys.path.insert(0, tools_dir)
+    import slice_check
+
+    return slice_check
+
+
+def test_исключения_pip_audit_перечислены_поимённо_и_с_причиной():
+    """У каждого `--ignore-vuln` — свой ID и строка-причина рядом со строкой запуска.
+
+    Исключение без причины — это «шаг зелёный, потому что мы перестали смотреть».
+    Список закрытый: правка набора исключений правит и этот тест.
+    """
+    block = _job_block(_read(CI_YML), "scan")
+    line = _pip_audit_line()
+
+    found = tuple(re.findall(r"--ignore-vuln\s+(\S+)", line))
+    assert found == PIP_AUDIT_IGNORES, (
+        "набор исключений pip-audit изменился: ожидался "
+        f"{PIP_AUDIT_IGNORES}, в ci.yml {found}. Новый ID — не молчаливая правка "
+        "списка, а причина рядом и такая же правка этого теста"
+    )
+
+    comments = [line for line in block if line.strip().startswith("#")]
+    for vuln in found:
+        assert any(vuln in comment for comment in comments), (
+            f"у {vuln} нет строки-причины в джобе scan: не сказано, почему уязвимый "
+            "код в дереве не вызывается"
+        )
+
+
+def test_шаг_pip_audit_в_slice_check_повторяет_строку_ci():
+    """`tools/slice_check.py` шлёт в pip-audit ровно аргументы из строки ci.yml.
+
+    Своя копия списка исключений в slice_check — это либо красный CI после зелёного
+    среза, либо тихо пропущенная уязвимость (шаг среза проверял бы не то, что CI).
+    """
+    sc = _load_slice_check()
+
+    args, err = sc.extract_ci_pip_audit_args(ROOT)
+    assert err == "", err
+    assert args, "в строке ci.yml нет аргументов pip-audit"
+
+    cmd = sc.pip_audit_command(args)
+    assert cmd[1:5] == ["-m", "pip_audit", "-r", "requirements.txt"], cmd
+    assert cmd[5:] == args.split(), (
+        f"аргументы из ci.yml не дошли до команды slice_check: {cmd}"
     )

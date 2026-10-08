@@ -82,12 +82,17 @@ def umsg_err(e: BaseException) -> dict[str, Any]:
     одним текстом. SystemExit понимается наравне: он ещё живёт в чужих вызовах и
     настоящих выходах процесса, а ответ пользователю у них один и тот же.
 
+    `error` — текст с УЖЕ подставленными переменными (`UMsg.text`): русский показ
+    идёт этим полем, и шаблон `«…(код {code})»` в нём видели как есть. Перевод
+    фронт берёт по `err`/`err_vars` и подставляет их сам — подставленный `error`
+    ему не мешает (LANG=ru словарь не читает вовсе).
+
     Flask тут не нужен: это словарь. Роут отдаёт его через `jsonify(**umsg_err(e))`,
     а поток задания берёт из него текст (`sysexit_text`)."""
     a = _umsg_of(e)
     if a is not None:
         safe_vars = _json_safe(a.vars) if a.vars else {}
-        return {"error": a.msg, "err": a.code, "err_vars": safe_vars}
+        return {"error": a.text, "err": a.code, "err_vars": safe_vars}
     return {"error": str(e), "err": None, "err_vars": None}
 
 

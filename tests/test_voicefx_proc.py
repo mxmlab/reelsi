@@ -27,9 +27,11 @@ DLL: один падает обращением к памяти, другой (u
 """
 import ast
 import base64
+import ctypes
 import json
 import os
 import queue
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -42,7 +44,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 sys.path.insert(0, str(ROOT))
 
-from core import voicefx  # noqa: E402
+from core import paths, voicefx  # noqa: E402
 from core.umsg import ReelsiError  # noqa: E402
 
 # Функции, которые ОТКРЫВАЮТ DLL плагина: имена файлов внутри (scan), загрузка
@@ -307,6 +309,52 @@ def test_list_vst3_sends_plugins_to_child_process(tmp_path, monkeypatch):
     assert sorted(paths) == sorted([str(tmp_path / "a.vst3"), str(tmp_path / "Shell.vst3")])
 
 
+def test_short_8_3_plugin_dir_is_not_thrown_away(tmp_path, monkeypatch):
+    """Короткая 8.3-форма каталога плагинов не выкидывает его из списка.
+
+    `tempfile.gettempdir()` на сборочном сервере Windows отдаёт короткую форму
+    (`C:\\Users\\RUNNER~1\\…`), а каталог теста приходит длинной
+    (`C:\\Users\\runneradmin\\…`). Это один каталог, но `commonpath` на такой паре
+    говорит «не внутри», и сторож подменял его заведомо пустым: список плагинов
+    выходил ПУСТЫМ, хотя плагин на месте. Проверяется сторож (tests/conftest.py) и
+    ключ кеша (`core/voicefx_scan.file_key` зовёт `realpath`): оба обязаны
+    сравнивать пути в одной форме.
+
+    Каталог создаётся СВОЙ, в системном временном, и подделывается только ответ
+    `gettempdir` — настоящие каталоги плагинов не читаются (дочерний процесс
+    подменён заглушкой, как у соседних тестов).
+    """
+    if os.name != "nt":                            # 8.3 — только Windows
+        pytest.skip("короткие имена 8.3 есть только на Windows")
+    long_dir = os.path.join(paths.real(tempfile.gettempdir()), "reelsi_8_3_plugin_dir")
+    os.makedirs(long_dir, exist_ok=True)
+    try:
+        (Path(long_dir) / "a.vst3").write_bytes(b"bundle")
+        calls: list[Any] = []
+        monkeypatch.setattr(voicefx, "_run_child", _ok_child(calls, lambda path: ["a"]))
+        monkeypatch.setenv("REELSI_VST3_DIRS", long_dir)
+        monkeypatch.setattr(tempfile, "gettempdir", lambda: _short_path(long_dir))
+
+        found = voicefx.list_vst3()
+
+        mine = [p for p in found if paths.real(p["path"]) == paths.real(
+            os.path.join(long_dir, "a.vst3"))]
+        # Непустой список и есть «сторож не ругается»: он подменил бы каталог
+        # заведомо пустым, и плагина в ответе не было бы вовсе.
+        assert mine, ("сторож выкинул каталог в короткой 8.3-форме: список пуст", found)
+        assert os.path.basename(os.path.dirname(mine[0]["path"])) == \
+            os.path.basename(long_dir), mine
+    finally:
+        shutil.rmtree(long_dir, ignore_errors=True)
+
+
+def _short_path(path: str) -> str:
+    """Короткая 8.3-форма пути (`GetShortPathNameW`); нет короткого имени — как есть."""
+    buf = ctypes.create_unicode_buffer(32768)
+    n = ctypes.windll.kernel32.GetShortPathNameW(path, buf, 32768)
+    return buf.value if n else path
+
+
 def test_real_plugin_dirs_are_never_touched(tmp_path, monkeypatch):
     """Сторож каталогов: настоящие VST3 в тестах не ищутся и не читаются.
 
@@ -316,9 +364,9 @@ def test_real_plugin_dirs_are_never_touched(tmp_path, monkeypatch):
     """
     monkeypatch.delenv("REELSI_VST3_DIRS", raising=False)
     monkeypatch.delenv("AUTOCUT_VST3_DIRS", raising=False)
-    tmp = os.path.abspath(tempfile.gettempdir())
+    tmp = paths.real(tempfile.gettempdir())
     for d in voicefx.vst3_dirs():
-        assert os.path.commonpath([os.path.abspath(d), tmp]) == tmp, \
+        assert os.path.commonpath([paths.real(d), tmp]) == tmp, \
             f"сторож отдал настоящий каталог плагинов: {d}"
     calls: list[Any] = []
 

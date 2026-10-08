@@ -238,6 +238,59 @@ def test_ReelsiError_в_потоке_задания_доезжает_до_лог
 
 
 # --------------------------------------------------------------------------- #
+# Текст ошибки: ПРИЧИНА, а не шаблон
+# --------------------------------------------------------------------------- #
+def test_str_vozvrashchaet_podstavlennyy_tekst():
+    """`str(e)` и `.text` — шаблон С ПОДСТАВЛЕННЫМИ переменными.
+
+    До этой правки в лог, консоль и ответ API уезжал сам шаблон
+    («Звук не собрался (код {code}): {err}») — причину падения искали заново.
+    """
+    from core.umsg import ReelsiError, umsg
+
+    e = ReelsiError(umsg("x", "a {n} b", n=5))
+    assert str(e) == "a 5 b", str(e)
+    assert e.text == "a 5 b", e.text
+    # Код и переменные остаются для перевода: по ним фронт берёт ERR_<код>.
+    assert e.code == "x" and e.vars == {"n": 5}, (e.code, e.vars)
+    assert e.umsg is not None and e.umsg.msg == "a {n} b", e.umsg.msg
+    # `str` самого UMsg — тот же подставленный текст: его печатает `cli_error`.
+    assert str(e.umsg) == "a 5 b", str(e.umsg)
+
+
+def test_peremennaya_bez_znacheniya_ostavlyaet_shablon():
+    """Нет переменной — текст остаётся шаблоном, без исключения.
+
+    Сообщение об ошибке — не место для второго падения: `KeyError` из `format`
+    унёс бы саму причину.
+    """
+    from core.umsg import ReelsiError, umsg
+
+    e = ReelsiError(umsg("x", "a {n} b"))
+    assert str(e) == "a {n} b", str(e)
+    # Битый шаблон (незакрытая скобка, позиционное поле) — тоже без исключения:
+    # позиционных полей у umsg не бывает, `{}` в сообщении — это текст, а не дырка.
+    for broken in ("a {n b", "a {} b", "a {0} b"):
+        assert str(ReelsiError(umsg("x", broken, n=1))) == broken, broken
+
+
+def test_umsg_err_otdaet_kod_i_vars_i_podstavlennyy_tekst():
+    """`umsg_err` — код, переменные и текст с подставленной причиной.
+
+    Двойной подстановки нет: `error` — готовый текст, `err_vars` — те же
+    переменные для перевода; подставлять их в `error` второй раз нечего.
+    """
+    from api._core import umsg_err
+    from core.umsg import ReelsiError, umsg
+
+    d = umsg_err(ReelsiError(umsg("webrender_audio_ffmpeg", "Звук не собрался (код {code}): {err}",
+                                  code=1, err="Invalid argument")))
+    assert d["error"] == "Звук не собрался (код 1): Invalid argument", d
+    assert d["err"] == "webrender_audio_ffmpeg", d
+    assert d["err_vars"] == {"code": 1, "err": "Invalid argument"}, d
+
+
+# --------------------------------------------------------------------------- #
 # Командная строка
 # --------------------------------------------------------------------------- #
 # Минимальная секвенция xmeml, которая разбирается, но не даёт камеры: понятный отказ

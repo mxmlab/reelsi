@@ -159,10 +159,32 @@ jobs:
           curl -sL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar xz gitleaks
           ./gitleaks git --redact -v -c .gitleaks.toml .
 
+      # У transformers 4.x шесть уязвимостей, и все шесть — про загрузку НЕДОВЕРЕННЫХ
+      # моделей, конфигов и кода. Уйти на 5.x нельзя: transformers 5.x зовёт на импорте
+      # torch.accelerator (utils/import_utils.py, get_device_type), а он появился только
+      # в torch 2.6 — при этом install.ps1/install.sh и оба README ставят torch 2.5.1,
+      # с которым падает ЛЮБОЙ импорт Auto*-класса (breath, falign, ctc_asr, omni_asr).
+      # Поэтому каждый ID исключается отдельно и с причиной: код, за который он отвечает,
+      # в дереве не вызывается. Список обязан совпадать с шагом pip-audit в
+      # tools/slice_check.py — сторож tests/test_ci_scan.py.
       - name: Audit dependencies (pip-audit)
         run: |
           pip install pip-audit
-          pip-audit -r requirements.txt
+          # PYSEC-2025-217 (фикса нет): десериализация при конвертации чекпоинта X-CLIP —
+          #   конвертации чекпоинтов в дереве нет вовсе, модели только грузятся.
+          # PYSEC-2026-2288 (5.0.0): Trainer._load_rng_state читает rng_state.pth через
+          #   torch.load без weights_only — Trainer не используется (детектор вздохов
+          #   обучается sklearn'ом, tools/train_breath.py).
+          # PYSEC-2026-2289 (5.3.0): вредный config.json с _attn_implementation_internal
+          #   исполняет код через AutoModelForCausalLM.from_pretrained — он не зовётся.
+          # PYSEC-2026-2290 (5.5.0): config.json LightGlue подменяет trust_remote_code в
+          #   AutoModel.from_pretrained — ни LightGlue, ни AutoModel.from_pretrained нет
+          #   (ced-tiny грузится своим классом, на закреплённой ревизии).
+          # PYSEC-2026-3929 (5.10.0): path traversal в save_pretrained через ключи
+          #   chat_template — save_pretrained не вызывается нигде.
+          # PYSEC-2026-4174 (фикса нет): load_custom_generate скачивает чужой модуль ДО
+          #   проверки согласия — custom_generate в generate() не передаётся.
+          pip-audit -r requirements.txt --ignore-vuln PYSEC-2025-217 --ignore-vuln PYSEC-2026-2288 --ignore-vuln PYSEC-2026-2289 --ignore-vuln PYSEC-2026-2290 --ignore-vuln PYSEC-2026-3929 --ignore-vuln PYSEC-2026-4174
 
   smoke:
     if: github.repository == 'mxmlab/reelsi'

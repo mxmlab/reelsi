@@ -14,7 +14,12 @@ ffmpeg здесь НЕ запускается: `subprocess.run` подменяе
 * выбранное семейство, которое не работает, не роняет рендер — предупреждение и авто;
 * недоступное на этой машине видно интерфейсу (`available`), а «Авто» подписано тем,
   что оно реально выберет (`auto`);
-* настройка живёт в ai_config.json (`set_video_encoder`) и читается черновиком.
+* настройка живёт в ai_config.json (`set_video_encoder`) и читается черновиком;
+* имя опции для графа фильтров выбирается по ВЕРСИИ ffmpeg (`ffmpeg -version`):
+  `-filter_complex_script` на 6.x, `-/filter_complex` на 7.1 и выше.
+
+Исключение — `ffmpeg -version`: эту команду зовёт выбор имени опции графа, и в тестах
+она тоже подменяется (или отвечает настоящий ffmpeg — это одна дешёвая команда).
 
 Запуск:  python -m pytest tests/test_encoders.py -q
 """
@@ -451,6 +456,75 @@ def test_segment_command_puts_the_filter_between_input_and_codec():
         assert _has(cmd, flag, value), cmd
 
 
+# --------------------------------------------------------------------------- #
+# Опция графа фильтров: имя зависит от версии ffmpeg
+# --------------------------------------------------------------------------- #
+def _fake_version(monkeypatch: pytest.MonkeyPatch, stdout) -> list:
+    """Подмена `ffmpeg -version`: вывод — строка или список строк ПО ЗАПРОСАМ.
+
+    Список нужен там, где версия спрашивается не один раз: замыкание в цикле
+    поймало бы последнее значение переменной, а не то, что подставляли на этом
+    витке.
+    """
+    cmds: list = []
+    answers = list(stdout) if isinstance(stdout, (list, tuple)) else [stdout]
+
+    def run(cmd, **kw):
+        cmds.append(list(cmd))
+        text = answers[min(len(cmds), len(answers)) - 1]
+        return SimpleNamespace(returncode=0, stdout=text, stderr="")
+
+    monkeypatch.setattr(encoders, "subprocess", SimpleNamespace(run=run))
+    return cmds
+
+
+def _version_text(version: str) -> str:
+    """Первая строка вывода `ffmpeg -version` для названной версии."""
+    return "ffmpeg version %s Copyright (c) 2000-2025 the FFmpeg developers\n" % version
+
+
+def test_graph_option_is_chosen_by_ffmpeg_version(monkeypatch):
+    """6.1 — старое имя опции, 7.1 и 8.1 — новое `-/filter_complex`.
+
+    Имя сменилось в 7.1: на старых сборках (Linux CI: apt ffmpeg 6.x) нового нет
+    вовсе, на новых старое устарело. Одна константа на все машины не годится —
+    выбираем по версии и проверяем ОБЕ стороны границы.
+    """
+    expected = ["-filter_complex_script", "-/filter_complex", "-/filter_complex"]
+    versions = [_version_text(v) for v in ("6.1.1-3ubuntu1", "7.1", "8.1.1-full_build")]
+    cmds = _fake_version(monkeypatch, versions)
+
+    for want, _text in zip(expected, versions):
+        encoders.reset_cache()
+        args = encoders.filter_graph_args("graph.txt")
+        assert args == [want, "graph.txt"], (len(cmds), args)
+    assert len(cmds) == len(versions), cmds       # версия спрашивается на каждый сброс
+
+
+def test_graph_option_version_is_asked_once(monkeypatch):
+    """Версия спрашивается у ffmpeg один раз на процесс: микс зовут в цикле по роликам."""
+    encoders.reset_cache()
+    cmds = _fake_version(monkeypatch, _version_text("7.1"))
+    encoders.filter_graph_args("g.txt")
+    encoders.filter_graph_args("g.txt")
+    assert cmds == [["ffmpeg", "-version"]], cmds
+
+
+def test_graph_option_falls_back_to_the_old_name(monkeypatch):
+    """Версию не узнать (ffmpeg не ответил) — старое имя: оно совместимее нового."""
+    encoders.reset_cache()
+
+    def run(cmd, **kw):
+        raise OSError("ffmpeg не найден")
+
+    monkeypatch.setattr(encoders, "subprocess", SimpleNamespace(run=run))
+    assert encoders.filter_graph_args("g.txt") == ["-filter_complex_script", "g.txt"]
+    assert encoders.ffmpeg_version() is None
+
+
+# --------------------------------------------------------------------------- #
+# 8. Живая проверка цвета: кодирование и копия
+# --------------------------------------------------------------------------- #
 FFMPEG = shutil.which("ffmpeg")
 FFPROBE = shutil.which("ffprobe")
 live_ffmpeg = pytest.mark.skipif(not (FFMPEG and FFPROBE),

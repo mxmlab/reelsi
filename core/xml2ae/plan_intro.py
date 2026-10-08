@@ -103,6 +103,12 @@ class IntroInputs:
     # стиля) и отдаёт сюда ОДНИМ полем: по нему работают и формула окна
     # (layout._intro_group_window), и правило _far ниже — второй копии числа нет.
     intro_last_hold: float
+    # Камера 2 активна (plan_camera.cam2_active) и числа затемнения под интро
+    # (plan_shade.numbers; None — галка снята). Интро их не считает и не читает: это
+    # проброс для plan_intro_tpl, который собирает подстановки шаблона по тем же входам
+    # (нул «интро на кам2» и слой затемнения) — второй копии правила и чисел нет.
+    cam2_active: bool = False
+    shade_plan: Any = None
 
 
 @dataclass(frozen=True)

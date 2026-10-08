@@ -110,9 +110,10 @@ def test_plan_carries_the_subtitle_fonts_the_jsx_gets(xml_subs):
                  [{"words": ["МАКСИМАЛЬНО"], "color": "white"}])
     assert plan["sub_font"] == "FontA", "план не несёт шрифт субтитров"
     assert plan["sub_hl_font"] == "FontB", "план не несёт шрифт выделения"
-    # Те же имена уходят и в .jsx (FONT/HL_FONT): подстановка одна на оба пути.
-    build_src = open(os.path.join(ROOT, "core", "xml2ae", "build.py"), encoding="utf-8").read()
-    assert "font=_js(font_ps), hl_font=_js(hl_font_ps)" in build_src, (
+    # Те же имена уходят и в .jsx (FONT/HL_FONT): подстановка одна на оба пути. Сама
+    # подстановка уехала из build.py в plan_ae.py распилом scene_plan — дверь та же.
+    ae_src = open(os.path.join(ROOT, "core", "xml2ae", "plan_ae.py"), encoding="utf-8").read()
+    assert "font=_js(font_ps), hl_font=_js(hl_font_ps)" in ae_src, (
         "в .jsx шрифты берутся не из font_ps/hl_font_ps — план и сборка разъехались")
     # Стиль без hl_font: выделение падает на базовый шрифт (как FONT в .jsx).
     plan2 = _plan(xml_subs, {"font": "FontA"}, [{"words": ["МАКСИМАЛЬНО"], "color": "white"}])

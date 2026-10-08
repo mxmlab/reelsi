@@ -408,7 +408,15 @@ def isolate_vst3_dirs(monkeypatch, tmp_path):
 
     Проверка на КАЖДОМ вызове, а не один раз на входе: переменную тесты ставят
     уже в теле теста (monkeypatch.setenv), то есть после входа в фикстуру.
+
+    Форму пути берём `paths.real` с ОБЕИХ сторон: `tempfile.gettempdir()` на
+    сборочном сервере Windows отдаёт короткую 8.3-форму (`C:\\Users\\RUNNER~1\\…`),
+    а `tmp_path` — длинную (`C:\\Users\\runneradmin\\…`). Это один и тот же
+    каталог, но `commonpath` на такой паре говорит «не внутри», и временный
+    каталог теста подменялся заведомо пустым — список плагинов выходил пустым
+    на ровном месте.
     """
+    from core import paths
     from core import voicefx
     # Настоящая функция — в замыкании: monkeypatch ниже заменит её же атрибут
     # модуля, и без снимка вызывать было бы нечего.
@@ -424,10 +432,10 @@ def isolate_vst3_dirs(monkeypatch, tmp_path):
         НАЙДЕННЫЕ плагины, — но такой тест обязан их подменить, иначе он читает
         чужие DLL (и это то, от чего сторож и заведён).
         """
-        tmp = os.path.abspath(tempfile.gettempdir())
+        tmp = paths.real(tempfile.gettempdir())
         out: list[str] = []
         for i, d in enumerate(real_dirs()):
-            path = os.path.abspath(d) if d else ""
+            path = paths.real(d) if d else ""
             inside = bool(path) and os.path.commonpath([path, tmp]) == tmp
             if not inside:
                 # Системный каталог: отдаём заведомо пустую папку ВНУТРИ tmp_path,

@@ -7,9 +7,9 @@ r"""Тесты прогона публичного среза через вес�
 заглушкой (`fake_commands`), поиск программ — `fake_tools`. Проверяется то, ради
 чего скрипт и переписан: дерево среза совпадает с деревом коммита, список шагов
 повторяет CI, падение любого шага красит код возврата и печатает `FAIL` с именем
-шага, отсутствие бинарника gitleaks — провал с причиной, а `--no-gitleaks` —
-громкий пропуск при нулевом коде. Фикстура-репозиторий — та же, что в
-tests/test_public_slice.py.
+шага, отсутствие бинарника gitleaks — провал с причиной, отсутствие пакета
+pip-audit — «не прогонялся» с причиной, а `--no-gitleaks` — громкий пропуск при
+нулевом коде. Фикстура-репозиторий — та же, что в tests/test_public_slice.py.
 """
 import hashlib
 import io
@@ -73,8 +73,9 @@ class _FakeCommands:
     """Заглушка `slice_check.run_command`: код возврата по подстроке команды.
 
     Ключ `codes` — подстрока в команде (`"pytest"`, `"ruff"`, `"mypy"`, `"node"`,
-    `"compileall"`, `"pip"`, `"gitleaks"`, `"ssh"`); что не совпало — считается зелёным.
-    Реальные pytest/ruff/mypy/node/pip/gitleaks/ssh в тестах не запускаются.
+    `"compileall"`, `"pip"`, `"pip_audit"`, `"gitleaks"`, `"ssh"`); что не совпало —
+    считается зелёным. Реальные pytest/ruff/mypy/node/pip/pip-audit/gitleaks/ssh в
+    тестах не запускаются.
     """
 
     def __init__(self, codes=None, text="", err=""):
@@ -158,7 +159,13 @@ def repo(tmp_path):
         "      - name: Tests\n"
         "        env:\n"
         "          COVERAGE_FILE: ${{ runner.temp }}/.coverage\n"
-        "        run: python -m pytest tests -q --cov=api --cov=core --cov=tools --cov-report=term:skip-covered --cov-fail-under=73\n",
+        "        run: python -m pytest tests -q --cov=api --cov=core --cov=tools --cov-report=term:skip-covered --cov-fail-under=73\n"
+        "  scan:\n"
+        "    steps:\n"
+        "      - name: Audit dependencies (pip-audit)\n"
+        "        run: |\n"
+        "          pip install pip-audit\n"
+        "          pip-audit -r requirements.txt --ignore-vuln PYSEC-2025-217\n",
         encoding="utf-8",
     )
 
@@ -259,7 +266,8 @@ def test_ref_берёт_названный_коммит(repo, fake_tools, fake_c
 def test_шаги_повторяют_джобы_ci():
     """Список шагов, запускалки и подсказки описывают один и тот же набор."""
     assert slice_check.STEP_NAMES == (
-        "pytest", "ruff", "mypy", "jsx", "smoke", "requirements", "gitleaks", "linux")
+        "pytest", "ruff", "mypy", "jsx", "smoke", "requirements", "pip-audit",
+        "gitleaks", "linux")
     assert list(slice_check._step_calls()) == list(slice_check.STEP_NAMES)
     assert set(slice_check.STEP_HINTS) == set(slice_check.STEP_NAMES)
 
@@ -270,6 +278,7 @@ def test_шаги_повторяют_джобы_ci():
     ("node", "jsx"),
     ("compileall", "smoke"),
     ("pip", "requirements"),
+    ("pip_audit", "pip-audit"),
     ("gitleaks", "gitleaks"),
     ("ssh", "linux"),
 ])
@@ -286,6 +295,79 @@ def test_падение_pytest_отдаёт_его_код(repo, fake_tools, fake
     fake_commands({"pytest": 3})
     assert slice_check.main(["--root", str(repo)]) == 3
     assert "[FAIL] pytest" in capsys.readouterr().out
+
+
+def test_команда_pip_audit_повторяет_строку_ci(repo, fake_tools, fake_commands):
+    """Команда шага pip-audit берётся из строки джобы scan, а не из копии аргументов.
+
+    Копия списка `--ignore-vuln` здесь — это либо красный CI после зелёного среза,
+    либо тихо пропущенная уязвимость, поэтому аргументы читаются из ci.yml среза.
+    """
+    args, err = slice_check.extract_ci_pip_audit_args(str(repo))
+    assert err == ""
+    assert args == "--ignore-vuln PYSEC-2025-217"
+
+    cmd = slice_check.pip_audit_command(args)
+    assert cmd[1:] == ["-m", "pip_audit", "-r", "requirements.txt",
+                       "--ignore-vuln", "PYSEC-2025-217"], cmd
+
+    fake = fake_commands()
+    assert slice_check.main(["--root", str(repo), "--only", "pip-audit"]) == 0
+    calls = fake.calls_with("pip_audit")
+    assert len(calls) == 1, f"шаг pip-audit запускался не один раз: {len(calls)}"
+    assert "-r requirements.txt" in calls[0]["args"]
+    assert "--ignore-vuln PYSEC-2025-217" in calls[0]["args"], (
+        f"до pip-audit не дошли исключения из ci.yml: {calls[0]['args']}"
+    )
+
+
+def test_нет_пакета_pip_audit_это_не_прогонялся(repo, fake_tools, fake_commands, capsys):
+    """Без пакета шаг не провален, а «не прогонялся» — с причиной, а не тишиной."""
+    fake_commands({"pip_audit": 1}, err="No module named pip_audit")
+    assert slice_check.main(["--root", str(repo)]) != 0
+
+    out = capsys.readouterr().out
+    assert "[НЕ ПРОГОНЯЛСЯ] pip-audit" in out, out
+    assert "[FAIL] pip-audit" not in out, "нет пакета — это не провал проверки"
+    assert "не установлено" in out, "причина пропуска не названа"
+
+
+def test_pip_audit_без_сети_не_прогонялся(repo, fake_tools, fake_commands, capsys):
+    """Без сети база уязвимостей недоступна — шаг «не прогонялся», а не зелёный."""
+    fake_commands({"pip_audit": 1},
+                  err="Failed to establish a new connection: [Errno 11001] getaddrinfo failed")
+    assert slice_check.main(["--root", str(repo)]) != 0
+
+    out = capsys.readouterr().out
+    assert "[НЕ ПРОГОНЯЛСЯ] pip-audit" in out, out
+    assert "нет сети" in out, "причина пропуска не названа"
+
+
+def test_нет_строки_pip_audit_в_ci_это_провал(repo, fake_tools, fake_commands, capsys):
+    """Строки pip-audit в ci.yml нет — провал с причиной, а не молчаливо зелёный шаг."""
+    ci_file = repo / ".github" / "workflows" / "ci.yml"
+    ci_file.write_text(
+        "jobs:\n"
+        "  test:\n"
+        "    steps:\n"
+        "      - name: Tests\n"
+        "        run: python -m pytest tests -q\n"
+        "  scan:\n"
+        "    steps:\n"
+        "      - name: Scan history for secrets (gitleaks)\n"
+        "        run: ./gitleaks git\n",
+        encoding="utf-8",
+    )
+    _git(["add", str(ci_file)], cwd=repo, check=True)
+    _git(["commit", "-m", "ci without pip-audit"], cwd=repo, check=True)
+
+    fake = fake_commands()
+    assert slice_check.main(["--root", str(repo)]) != 0
+
+    out = capsys.readouterr().out
+    assert "[FAIL] pip-audit" in out, out
+    assert "не найдена строка" in out
+    assert not fake.calls_with("pip_audit"), "pip-audit всё равно запускался"
 
 
 def test_нет_бинарника_gitleaks_это_провал(repo, fake_commands, monkeypatch, capsys):
@@ -468,7 +550,7 @@ def test_only_гоняет_один_шаг(repo, fake_tools, fake_commands):
     fake = fake_commands({"ruff": 1, "mypy": 1, "gitleaks": 1, "ssh": 1})
     assert slice_check.main(["--root", str(repo), "--only", "pytest"]) == 0
     assert fake.calls_with("pytest"), "pytest не запускался"
-    for other in ("ruff", "mypy", "node", "compileall", "pip", "gitleaks", "ssh"):
+    for other in ("ruff", "mypy", "node", "compileall", "pip", "pip_audit", "gitleaks", "ssh"):
         assert not fake.calls_with(other), f"при --only pytest запускался шаг {other}"
 
 

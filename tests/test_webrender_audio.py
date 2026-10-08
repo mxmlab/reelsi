@@ -37,6 +37,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 
+from core import encoders  # noqa: E402
 from core import webrender_audio as wa  # noqa: E402
 from core.umsg import ReelsiError  # noqa: E402
 
@@ -75,12 +76,15 @@ def _capture(plan, video, out, **kw):
 
     `run` — дверь микса: пишем то, что он передал бы ffmpeg (файл графа и команду), и
     «создаём» выходной файл, иначе микс справедливо ругается на пустой результат.
+    Имя опции графа берётся у `encoders.filter_graph_args`: оно зависит от версии
+    ffmpeg (`-filter_complex_script` до 7.1, `-/filter_complex` начиная с неё), и
+    тест обязан читать файл по ТОЙ ЖЕ опции, что уехала в команду.
     """
     seen = {}
 
     def run(cmd, **kwargs):
         seen["cmd"] = list(cmd)
-        i = cmd.index("-filter_complex_script")
+        i = cmd.index(encoders.filter_graph_args("")[0])
         with open(cmd[i + 1], encoding="utf-8") as f:
             seen["graph"] = f.read()
         open(out, "wb").write(b"mp4")
@@ -389,6 +393,36 @@ def test_live_mix_keeps_levels_windows_and_the_picture(tmp_path):
     out_m = tmp_path / "outm.mp4"
     wa.mix(plan_m, str(pic), str(out_m), emit=lambda *a, **k: None)
     assert _rms_at(str(out_m), 2.05, 2.35) > -60, "музыка ушла вместе с цензурой голоса"
+
+
+@ffmpeg
+def test_live_mix_uses_the_graph_option_of_this_ffmpeg(tmp_path):
+    """Живой ffmpeg: микс идёт с той опцией графа, которую знает ЭТА сборка.
+
+    Имя опции сменилось в ffmpeg 7.1 (`encoders.filter_graph_args`): на сборке с
+    другим именем прежняя константа молча отдала бы код 1, а причина терялась бы в
+    шаблоне сообщения. Проверяются обе половины: имя в команде и то, что с ним
+    микс ДЕЙСТВИТЕЛЬНО собирается.
+    """
+    version = encoders.ffmpeg_version(refresh=True)
+    assert version is not None, "живой ffmpeg не назвал свою версию"
+    voice, pic, out = tmp_path / "voice.wav", tmp_path / "pic.mp4", tmp_path / "out.mp4"
+    _ffmpeg("-y", "-v", "error", "-f", "lavfi", "-i",
+            "sine=frequency=440:duration=1:sample_rate=48000", "-ac", "2", str(voice))
+    _ffmpeg("-y", "-v", "error", "-f", "lavfi", "-i",
+            "color=c=black:s=160x120:d=1:r=30", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            str(pic))
+    plan = {"dur": 1.0, "audio_fade": 0.010,
+            "audio": {"voice_src": str(voice), "voice_db": 0.0, "music_path": "",
+                      "music_db": -20.0, "censor": [], "sfx": [],
+                      "segments": [{"ts": 0.0, "te": 1.0, "src": 0.0}]}}
+
+    got = wa.mix(plan, str(pic), str(out), emit=lambda *a, **k: None)
+
+    assert got and os.path.isfile(str(out)) and os.path.getsize(str(out)) > 0, got
+    flag = encoders.filter_graph_args("")[0]
+    assert flag == ("-/filter_complex" if version >= encoders.GRAPH_OPT_MIN_VERSION
+                    else "-filter_complex_script"), (version, flag)
 
 
 # --------------------------------------------------------------------------- #

@@ -691,7 +691,7 @@ Position текстового слоя в After Effects. **Сдвиг по го�
 обращении, как
 для ротоскопа); если оно не получилось, сборка идёт без слежения и пишет об этом в лог.
 **Code:** `core/headtrack.py:201`, `core/xml2ae/layout.py:1156`,
-`core/xml2ae/build.py:1756`
+`core/xml2ae/precompute.py:63`
 
 ### Цвет (Lumetri)
 

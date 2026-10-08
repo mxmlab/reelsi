@@ -1,5 +1,7 @@
 # Contributor License Agreement
 
+Russian version: [docs/CLA.ru.md](CLA.ru.md) — перевод для справки; юридическую силу имеет английский текст.
+
 By contributing to Reelsi you accept the terms below. Contributions are accepted
 through pull requests, and the CLA is checked automatically by
 [CLA Assistant](https://cla-assistant.io/mxmlab/reelsi) before a pull request can be merged.

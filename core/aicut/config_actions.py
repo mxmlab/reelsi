@@ -25,6 +25,7 @@ from typing import Any
 from core.app_meta import APP_NAME, APP_REFERER, http_req
 from core.umsg import ReelsiError, umsg
 from core import encoders
+from core import device as _device
 
 from . import catalog
 from .config import (GLITCH_GLOW_MODES, OMNI_LOCAL, OMNI_LOCAL_ENGINES, REASONING_LEVELS,
@@ -110,6 +111,26 @@ def set_step_profile(cfg: dict[str, Any], d: dict[str, Any]) -> None:
         sp[step] = name
     else:
         sp.pop(step, None)          # сброс на общий active
+
+
+def set_model_device(cfg: dict[str, Any], d: dict[str, Any]) -> None:
+    """«Где считать модели» (сервис моделей): авто / видеокарта / процессор.
+
+    Настройка МАШИННАЯ, как видеокодек: она про железо этой машины, а не про ролик.
+    Сервис читает её при старте и при каждом запросе клиента (ключ устройства в файле
+    адреса) — смена гасит работающий сервис и поднимает новый, уже на другом
+    устройстве. Значение проверяет `core.device` (`DEVICE_CHOICES`): в конфиг не должно
+    попасть слово, которого `pick_device` не знает, — иначе сервис молча остался бы
+    на прежнем устройстве, а настройка врала бы.
+    """
+    val = _s(d, "value") or _device.DEVICE_AUTO
+    if val not in _device.DEVICE_CHOICES:
+        # Код и текст — ОДНОЙ строкой: словарь перевода ищет `umsg("код"` в исходниках
+        # (tests/test_i18n.py), и перенос вызова на строку выше оставил бы
+        # ERR_model_device_invalid в словаре «висящим без дела».
+        err = umsg("model_device_invalid", "Недопустимое устройство моделей: {value}", value=val)
+        raise ReelsiError(err)
+    cfg["model_device"] = val
 
 
 def set_step_concurrency(cfg: dict[str, Any], d: dict[str, Any]) -> None:
@@ -446,6 +467,7 @@ ACTIONS = {
     "set_reasoning_step": set_reasoning_step,
     "set_step_profile": set_step_profile,
     "set_step_concurrency": set_step_concurrency,
+    "set_model_device": set_model_device,
     "set_active": set_active,
     "set_active_omni": set_active_omni,
     "set_active_cut_asr": set_active_cut_asr,

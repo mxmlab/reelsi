@@ -236,7 +236,101 @@ def test_builtin_failure_is_reported_per_clip(xml_clip, tmp_path, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# 2. Подготовка задания: движок, папка вывода, адрес сервера
+# 2. Сервис моделей выгружается ДО старта рендера — на обоих движках
+# --------------------------------------------------------------------------- #
+def _shutdown_spy(monkeypatch: pytest.MonkeyPatch, calls: list[str],
+                  alive: bool = True) -> None:
+    """Подменить ответ сервиса моделей и записать порядок вызовов."""
+    from core import model_service
+
+    def fake() -> bool:
+        calls.append("shutdown")
+        return alive
+
+    monkeypatch.setattr(model_service, "shutdown", fake)
+
+
+def test_ae_рендер_выгружает_сервис_до_старта(xml_clip, tmp_path, monkeypatch):
+    """AE-путь: `shutdown` сервиса моделей идёт ДО запуска рендера — и после него живых нет.
+
+    Рендеру модели не нужны, а видеопамять нужна ему целиком (на Windows переполнение
+    VRAM вешает машину). Мутации: убрать вызов `model_service_shutdown` из
+    `run_render_job` — сервис уехал бы в рендер живым; позвать его ПОСЛЕ развилки
+    (внутри веток) — для набора из одного клипа порядок всё равно был бы верным, а вот
+    для встроенного движка пришлось бы дублировать вызов, и тест на него это ловит.
+    """
+    job = _job()
+    calls: list[str] = []
+    _shutdown_spy(monkeypatch, calls)
+
+    def single(*a, **k):
+        calls.append("render")
+
+    monkeypatch.setattr(render_job, "run_render_single", single)
+    monkeypatch.setattr(render_job, "run_render_builtin",
+                        lambda *a, **k: calls.append("builtin"))
+
+    render_job.run_render_job(job, [_norm(xml_clip)], None, str(tmp_path))
+    assert calls == ["shutdown", "render"], calls
+    assert "выгружен" in _lines(job), _lines(job)
+
+
+def test_встроенный_рендер_выгружает_сервис_до_старта(xml_clip, tmp_path, monkeypatch):
+    """Встроенный рендер (без AE): `shutdown` тоже ДО старта, и ровно один раз.
+
+    Ровно один раз — потому что `run_render_builtin` гонит клипы ОДНОЙ очередью:
+    второй вызов на клип был бы лишней просьбой к уже погашенному сервису.
+    """
+    job = _job()
+    calls: list[str] = []
+    _shutdown_spy(monkeypatch, calls)
+    import core.webrender as webrender
+
+    def fake_render(xml, out, **kw):
+        calls.append("render")
+        open(out, "wb").write(b"mp4")
+        return {"ok": True, "out": out, "frames": 10, "fps": 60, "w": 1080, "h": 1920}
+
+    monkeypatch.setattr(webrender, "render", fake_render)
+    clips = []
+    for name in ("01_a.xml", "02_b.xml"):
+        p = tmp_path / name
+        shutil.copyfile(xml_clip, p)
+        clips.append(_norm(str(p)))
+
+    render_job.run_render_job(job, clips, None, str(tmp_path), engine="builtin")
+    assert calls == ["shutdown", "render", "render"], calls
+
+
+def test_ошибка_выгрузки_не_отменяет_рендер(xml_clip, tmp_path, monkeypatch):
+    """Ошибка/отказ выгрузки сервиса — строка в журнале, а не провал рендера.
+
+    Сервиса могло не быть вовсе (`shutdown` → False), а чужой процесс мог не
+    отозваться вовсе (исключение). Рендер обязан пойти: карту в худшем случае займёт
+    чужой процесс, и он упадёт сам, с честной причиной.
+    """
+    from core import model_service
+
+    job = _job()
+    calls: list[str] = []
+    _shutdown_spy(monkeypatch, calls, alive=False)
+    monkeypatch.setattr(render_job, "run_render_single",
+                        lambda *a, **k: calls.append("render"))
+    render_job.run_render_job(job, [_norm(xml_clip)], None, str(tmp_path))
+    assert calls == ["shutdown", "render"], calls
+    assert "выгружен" not in _lines(job), "о неудачной выгрузке сказали как об успешной"
+
+    def boom() -> bool:
+        raise OSError("сервис не отвечает")
+
+    monkeypatch.setattr(model_service, "shutdown", boom)
+    job = _job()
+    render_job.run_render_job(job, [_norm(xml_clip)], None, str(tmp_path))
+    assert "не выгрузился" in _lines(job), _lines(job)
+
+
+# --------------------------------------------------------------------------- #
+# 3. Подготовка задания: движок, папка вывода, адрес сервера
 # --------------------------------------------------------------------------- #
 def test_prepare_task_defaults_to_after_effects(tmp_path):
     """Без `engine` — прежний AE-путь, папка вывода создана, подпись журнала прежняя."""
@@ -277,7 +371,7 @@ def test_prepare_task_rejects_an_unknown_engine(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# 3. Роут: выбор движка и его хранение
+# 4. Роут: выбор движка и его хранение
 # --------------------------------------------------------------------------- #
 @pytest.fixture()
 def client(tmp_path):

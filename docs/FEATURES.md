@@ -1077,6 +1077,23 @@ Russian is the source language, so a missing translation simply stays Russian.
 **Code:** `templates/index.html:24`, `static/app/00-core.js:125`,
 `static/app/00-core.js:152`, `tools/i18n_extract.py:1`
 
+### Where models are computed: video card or processor
+
+**Where:** ⚙ → "Cut", the "Where models are computed" field — next to "Clips at once".
+**How:** pick "Auto" (the card if there is one, otherwise the processor), "Video card" or
+"Processor". Under "Clips at once" a grey line shows what was chosen and how many
+recognitions run at once: "models on this machine: video card, slots 4".
+**What it changes:** recognition for cutting, breaths and emotions are computed by the model
+service — one process per machine that keeps the weights in memory and counts in parallel, by
+slots. On the processor it takes no video memory at all: that is how a machine without a card
+works and how the card is freed for a local LLM (LM Studio, Ollama). On the card there are
+more slots, but the card is occupied.
+**Settings:** stored on the server (`ai_config.json`, field `model_device`), not in the
+browser: the service is a separate process. Changing it restarts the service on the next
+request (the old one is stopped, a new one starts — already on the other device).
+**Code:** `templates/index.html:868`, `static/app/10-settings.js:216`,
+`core/model_service.py:1`, `core/device.py:39`, `api/model_svc.py:1`
+
 ### Environment check
 
 **Where:** the command line: `python doctor.py`.

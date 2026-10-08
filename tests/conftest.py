@@ -7,12 +7,14 @@
 job.lock, ai_calls.jsonl, models_dev.json, _videogen), чтобы тесты не писали
 в боевые файлы рабочей копии.
 """
+import contextlib
 import logging
 from logging.handlers import RotatingFileHandler
 import os
 import shutil
 import sys
 import tempfile
+import time
 from typing import Any, Callable, Optional
 
 import pytest
@@ -50,12 +52,89 @@ os.environ["REELSI_JOB_STATE"] = os.path.join(_TEST_LOG_DIR, "job_state.json")
 _TEST_AI_CONFIG = os.path.join(_TEST_LOG_DIR, "ai_config.json")
 os.environ["REELSI_AI_CONFIG"] = _TEST_AI_CONFIG
 
+# Сервис моделей во время тестов не должен читать настоящие веса GigaAM и трогать
+# живую карту. Сервис поднимается отдельным процессом при первом распознавании
+# нарезки, и без подмены он бы грузил веса с диска (4.6–7.2 с на голову) и создавал
+# CUDA-контекст на рабочей машине — то есть тесты нарезки становились бы минутами.
+# Подмена (`REELSI_MODEL_SERVICE_SUBST`) — штатная перемычка самого сервиса:
+# `transcribe_words_whole` ниже отвечает «слов нет», и нарезка идёт запасным путём,
+# как и ждут тесты с подменённым распознаванием.
+_TEST_MSVC_DIR = os.path.join(_TEST_LOG_DIR, "modelsvc")
+os.makedirs(_TEST_MSVC_DIR, exist_ok=True)
+_TEST_MSVC_SUBST = os.path.join(_TEST_MSVC_DIR, "fake_gigaam.py")
+with open(_TEST_MSVC_SUBST, "w", encoding="utf-8") as _f:
+    _f.write(
+        "# -*- coding: utf-8 -*-\n"
+        '"""Заглушка GigaAM для сервиса моделей в тестах (см. tests/conftest.py)."""\n'
+        "\n"
+        "class _Model:\n"
+        "    def transcribe(self, wav, word_timestamps=False):\n"
+        "        return None\n"
+        "\n"
+        "def load_model(head, download_root=None):\n"
+        "    # Голова `emo` — отказом: в сервисе она считается наравне со вздохами, и\n"
+        "    # пустышка без `forward`/`head` дала бы отказ уже ПОСРЕДИ расчёта, а не при\n"
+        "    # загрузке. Отказ на загрузке — честный запасной путь: расчёт силы жёлтых\n"
+        "    # берёт модель в своём процессе, как и до сервиса моделей.\n"
+        "    if head == 'emo':\n"
+        "        raise RuntimeError('весов головы emo в тестах нет')\n"
+        "    return _Model()\n"
+        "\n"
+        "def transcribe_words_whole(wav_path, emit=None, model_name='v3_ctc'):\n"
+        "    return '', []\n"
+    )
+os.environ["REELSI_MODEL_SERVICE_SUBST"] = _TEST_MSVC_SUBST
+# CED-tiny вздохов — вторая подмена, по своему источнику весов (`transformers`):
+# нарезка спрашивает сервис о вздохах, и без подмены он читал бы НАСТОЯЩИЕ веса CED
+# из кеша HuggingFace (на машине владельца они есть) — то есть тесты грузили бы
+# модель на каждой нарезке и на каждой копии интерфейса. Заглушка делает загрузку
+# явным отказом: `preload_breath` возвращает False, и нарезка идёт прежним путём,
+# под файловым замком, — ровно как в CI, где кеша CED нет вовсе.
+_TEST_MSVC_CED = os.path.join(_TEST_MSVC_DIR, "fake_transformers.py")
+with open(_TEST_MSVC_CED, "w", encoding="utf-8") as _f:
+    _f.write(
+        "# -*- coding: utf-8 -*-\n"
+        '"""Заглушка transformers для CED в сервисе моделей (см. tests/conftest.py).\n'
+        "\n"
+        "Весов CED тестам не нужно, а читать их из кеша владельца нельзя: загрузка\n"
+        "здесь — явный отказ, и нарезка уходит на запасной путь.\n"
+        '"""\n'
+        "\n"
+        "\n"
+        "class _NoWeights:\n"
+        "    @classmethod\n"
+        "    def from_pretrained(cls, *args, **kwargs):\n"
+        '        raise RuntimeError("весов CED в тестах нет")\n'
+        "\n"
+        "\n"
+        "AutoFeatureExtractor = _NoWeights\n"
+        "AutoModelForAudioClassification = _NoWeights\n"
+    )
+os.environ["REELSI_MODEL_SERVICE_SUBST_CED"] = _TEST_MSVC_CED
+os.environ["REELSI_MODEL_SERVICE_DEVICE"] = "cpu"
+# Простой тестового сервиса — секунды, а не боевые пять минут. Сервис поднимается
+# НАСТОЯЩИМ процессом (`core.model_service --serve`, путь нарезки), и тест, у
+# которого подменённое распознавание отвечает «слов нет», уходит на запасной путь
+# СРАЗУ, оставляя процесс живым. С боевым простоем такой процесс доживал до конца
+# набора и переживал его: за два полных прогона набиралось 48 живых процессов,
+# державших видеопамять, и владелец гасил их руками. С коротким простоем каждый
+# выходит сам за считанные секунды — это и проверяет сторож внизу.
+os.environ["REELSI_MODEL_SERVICE_IDLE"] = "5"
+
 # Настоящие системные функции отправки сигналов: сторож сигналов подменяет os.kill и os.killpg
 # на уровне каждого теста, а настоящие реализации вызывает через эти ссылки.
 # В тестах сторожа (tests/test_signal_guard.py) их можно подменить заглушками через monkeypatch.
 _real_os_kill: Callable[..., Any] = os.kill
 _real_os_killpg: Optional[Callable[..., Any]] = getattr(os, "killpg", None)
 sys.modules.setdefault("tests.conftest", sys.modules[__name__])
+
+# Процессы сервиса моделей, порождённые ЭТИМ прогоном: заполняет фикстура
+# `_track_model_service_spawns` (единственная дверь запуска — `model_service._spawn`),
+# читает сторож `_model_service_processes_gone` в конце сессии. `_SPAWNED_BY` —
+# имя теста на каждый процесс: нужно только для разбора, когда сторож сработал.
+_SPAWNED_SERVICES: list[Any] = []
+_SPAWNED_BY: list[str] = []
+_CURRENT_TEST: str = ""
 
 
 
@@ -259,7 +338,7 @@ def isolate_state_files(tmp_path, monkeypatch):
         if m and hasattr(m, "AI_LOG_PATH"):
             monkeypatch.setattr(m, "AI_LOG_PATH", str(ai_log))
 
-    for mod_name in ("core.jobstate", "api._core", "api", "api.files"):
+    for mod_name in ("core.jobstate", "api._core", "api", "api.files", "core.model_service"):
         m = sys.modules.get(mod_name)
         if m and hasattr(m, "JOB_LOCK_PATH"):
             monkeypatch.setattr(m, "JOB_LOCK_PATH", str(job_lock))
@@ -524,6 +603,134 @@ def pytest_runtest_teardown(item, nextitem):
         applog.get_logger()
     except Exception:
         pass
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _stop_model_service():
+    """Погасить сервис моделей, поднятый тестами нарезки, в конце сессии.
+
+    Сервис стартует отдельным процессом и живёт до простоя (5 минут) — тестовый
+    прогон короче, и без этой уборки процесс с фальшивыми весами пережил бы тесты.
+    """
+    yield
+    try:
+        from core import model_service
+        model_service.shutdown()
+    except Exception:
+        pass
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _track_model_service_spawns():
+    """Реестр ПРОЦЕССОВ сервиса моделей, порождённых ЭТИМ прогоном (по PID).
+
+    Тесты нарезки поднимают сервис моделей настоящим процессом (`core.model_service
+    --serve`), и в наборе таких процессов оказывалось по одному на тест. Заводились
+    они через ЕДИНСТВЕННУЮ дверь — `model_service._spawn`, — и сторож ниже обязан
+    знать ровно СВОИ процессы: искать их по имени нельзя, рядом работают сервисы
+    других копий интерфейса и чужие ролики, и убить их значило бы уронить чужую
+    работу. Поэтому `_spawn` оборачивается здесь, а не в тестах: обёртка стоит на
+    модуле и видит запуск любого из них, а тест, подменяющий `_spawn` заглушкой
+    (`monkeypatch` вернёт нашу обёртку обратно), просто не порождает процесса.
+    """
+    from core import model_service as _ms
+    real_spawn = _ms._spawn
+
+    def tracked_spawn(*args: Any, **kwargs: Any) -> Any:
+        proc = real_spawn(*args, **kwargs)      # сигнатура боевая: без аргументов
+        _SPAWNED_SERVICES.append(proc)
+        _SPAWNED_BY.append(_CURRENT_TEST)
+        return proc
+
+    _ms._spawn = tracked_spawn
+    try:
+        yield
+    finally:
+        _ms._spawn = real_spawn
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_call(item):
+    """Пометить процессы, порождённые ЭТИМ тестом — по имени теста, для диагноза.
+
+    Сторож внизу валит сессию списком PID, а без имени теста непонятно, чей это
+    процесс: искать по коду пришлось бы весь набор. Стоит копейки: одна строка на
+    тест и одна метка на процесс.
+    """
+    global _CURRENT_TEST
+    previous, _CURRENT_TEST = _CURRENT_TEST, item.nodeid
+    try:
+        yield
+    finally:
+        _CURRENT_TEST = previous
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _model_service_processes_gone(_track_model_service_spawns):
+    """Сторож: после набора в живых не остаётся НИ ОДНОГО своего процесса сервиса.
+
+    Задача сторожа — не убрать за тестами, а не дать дефекту спрятаться: сервис
+    обязан выходить сам (простой — его штатный выход, `shutdown` — просьба), и
+    брошенный процесс живёт до перезагрузки и держит видеопамять, которую просят
+    рендер и AE. Поэтому сперва просим живой сервис завершиться (`shutdown`), затем
+    даём процессам срок исчезнуть и только после этого проверяем. Оставшегося
+    гасим по PID (процессы по имени в проекте не убивают никогда) и валим сессию
+    явной ошибкой: прогон, оставивший процессы сервиса живыми, — красный.
+    """
+    from core import model_service
+
+    def live_spawned() -> list[tuple[int, Any, str]]:
+        """PID, процесс и имя теста для СВОИХ процессов сервиса, что ещё живы.
+
+        Мёртвым считаем и по `Popen.poll()`: тест вправе погасить свой процесс сам
+        (фиксатор профиля в наборе сервиса так и делает), и тогда `_pid_alive` по
+        одному лишь номеру ещё говорит «жив». Заглушка теста (`_kill_started`,
+        «сдавшийся клиент») приходит не `Popen` и живого PID не несёт вовсе;
+        `os.getpid()` — процесс самого pytest, его гасить нечего.
+        """
+        own = os.getpid()
+        out: list[tuple[int, Any, str]] = []
+        for i, proc in enumerate(_SPAWNED_SERVICES):
+            pid = int(getattr(proc, "pid", 0) or 0)
+            if proc.__class__.__module__.split(".")[0] != "subprocess":
+                continue
+            if pid == own or not model_service._pid_alive(pid):
+                continue
+            poll = getattr(proc, "poll", None)
+            if callable(poll) and poll() is not None:
+                continue                     # вышел (своим ходом или погашен фиксатором)
+            out.append((pid, proc, _SPAWNED_BY[i] if i < len(_SPAWNED_BY) else "?"))
+        return out
+
+    yield
+
+    try:
+        model_service.shutdown()        # просьба живому сервису: выйди сам
+    except Exception:
+        pass
+    left: list[tuple[int, Any, str]] = []
+    # Срок — с запасом к тестовому простою (`REELSI_MODEL_SERVICE_IDLE`): сервис
+    # обязан выйти САМ, и сторож даёт ему на это время, а не гасит с ходу.
+    deadline = time.monotonic() + 15.0
+    while True:
+        left = live_spawned()
+        if not left or time.monotonic() >= deadline:
+            break
+        time.sleep(0.1)
+    if not left:
+        return
+
+    for _pid, proc, _test in left:
+        # Гасим тем же, чем и профиль теста, — `Popen.kill()`: `os.kill(pid, 9)`
+        # на Windows отвечает «PermissionError: Access is denied» и процесс живёт.
+        with contextlib.suppress(Exception):
+            proc.kill()
+        with contextlib.suppress(Exception):
+            proc.wait(timeout=10.0)
+    raise AssertionError(
+        "тесты сервиса моделей оставили живые процессы (PID: %s): процесс сервиса "
+        "обязан выходить по простою и по `shutdown`, иначе держит видеопамять"
+        % ", ".join("%d (%s)" % (pid, test) for pid, _proc, test in left))
 
 
 def pytest_sessionfinish(session, exitstatus):

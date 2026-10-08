@@ -6,6 +6,58 @@
 // <script>-тегами (не модулями): один общий скоуп, как было в едином app.js.
 // Порядок важен — объявления функций поднимаются в пределах своего файла.
 
+// ===== один планировщик кадра на циклы превью: rAF + сторож-таймер =====
+// Кадр игры редактора (edTick) и кадр предпросмотра вставок (ipvTick) планировались только
+// через requestAnimationFrame. В скрытой вкладке браузер rAF не вызывает ВООБЩЕ, а <video>
+// продолжает играть сам: перескок через вырезанное не делался ни разу, и в фоне слышно
+// вырезанное (жалоба владельца — «слушаю фоном, играет всё подряд»).
+// Полагаться на document.hidden нельзя: в живом браузере вкладка ушла в фон (и у перекрытого
+// окна, и у встроенных панелей), rAF встал, а «скрыта» браузер не сказал — флаг остался false.
+// Поэтому правильность держит СТОРОЖ: шаг планируется ещё и setTimeout'ом на
+// PV_WATCHDOG_MS; пришёл rAF — сторож снимается и не шагает, не пришёл — шагает сторож.
+// Плеер раскладки камер (cpvTick, 88-cams.js) сюда не входит: он и так подстрахован
+// setInterval, и ломать его нечем.
+const PV_FRAME_MS=20;      // период шага в скрытой вкладке, мс: перескок не позже пары кадров
+const PV_WATCHDOG_MS=60;   // страховка на случай молчащего rAF, мс: шаг не реже ~60 мс
+const PV_FRAMES=[];        // живые циклы кадра {P,fn,on}: их перевзводит смена видимости
+let PV_FRAME_VIS=false;    // слушатель visibilitychange заведён ровно один
+function pvFrameHidden(){return !!(typeof document!=='undefined'&&document.hidden);}
+// Оба вида шага живут в РАЗНЫХ полях плеера: пауза обязана снять их разом, а не тот, о
+// котором помнит вызывающий. После паузы не должен сработать ни rAF, ни таймер.
+function pvFrameStop(P){
+  if(P.raf){cancelAnimationFrame(P.raf);P.raf=0;}
+  if(P.tim){clearTimeout(P.tim);P.tim=0;}}
+// Следующий шаг цикла. Прежний взведённый шаг снимаем ПЕРВЫМ делом: два живых шага — это
+// двойной перескок через вырезанное (шаг пришёл бы дважды на один кадр). Ровно один шаг
+// держит токен P.step: сработавший колбэк снимает чужой (тот же токен) и не шагает.
+// Токен ведёт САМ планировщик, а не поле вызывающего: `++P.step` на пересозданном плеере
+// (IPV при открытии предпросмотра вставок пересобирается литералом, 85-inserts-view.js) дал бы
+// NaN, а `NaN!==NaN` — всегда «шаг чужой»: ни rAF, ни сторож не шагнули бы, и цикл встал бы
+// намертво с первого же открытия. Поля rAF и сторожа (`raf`, `tim`) этой болезнью не страдают:
+// pvFrameStop читает их только на чтение (undefined — это «шага нет»), а заводит их сам
+// планировщик присваиванием.
+function pvFramePlan(P,fn){pvFrameStop(P);
+  P.step=(P.step|0)+1;const step=P.step;   // `|0` гасит и undefined, и прежний NaN
+  // В скрытой вкладке rAF не придёт никогда — не взводим его вовсе: шаг ведёт сторож.
+  if(!pvFrameHidden())P.raf=requestAnimationFrame(()=>{
+    if(P.step!==step)return;P.raf=0;if(P.tim){clearTimeout(P.tim);P.tim=0;}fn();});
+  // Сторож нарочно НЕ снимает rAF: если шаг пришёл им, rAF уже снял сторожа — а снятие rAF
+  // отсюда пустило бы лишний шаг по устаревшему колбэку там, где таймеры зовут пачкой.
+  P.tim=setTimeout(()=>{if(P.step!==step)return;P.tim=0;fn();},PV_WATCHDOG_MS);}
+// Цикл пошёл: помним его, чтобы пережить смену видимости, и планируем первый шаг.
+function pvFrameStart(P,fn){
+  const L=PV_FRAMES.find(x=>x.P===P);
+  if(L){L.fn=fn;L.on=true;}else PV_FRAMES.push({P,fn,on:true});
+  if(!PV_FRAME_VIS&&typeof document!=='undefined'&&document.addEventListener){
+    PV_FRAME_VIS=true;document.addEventListener('visibilitychange',pvFrameReplan);}
+  pvFramePlan(P,fn);}
+// Цикл встал (пауза, конец клипа): снять оба вида шага и забыть цикл — иначе смена
+// видимости воскресила бы остановленную игру.
+function pvFrameOff(P){pvFrameStop(P);const L=PV_FRAMES.find(x=>x.P===P);if(L)L.on=false;}
+// Переключили окно во время игры (alt-tab, другая вкладка): перевзвод снимает прежний шаг
+// и планирует новый — ушли в фон, значит сторожевым таймером, вернулись, значит снова rAF.
+function pvFrameReplan(){for(const L of PV_FRAMES){if(L.on)pvFramePlan(L.P,L.fn);}}
+
 // ================= preview player (ported) =================
 // Плеер шага 1 — РЕДАКТОР НАРЕЗКИ: играет его единственный <video> камеры 1
 // (ED.play/ED.cs), отдельных монтажных кнопок нет вовсе. Здесь живёт общий объект
@@ -347,7 +399,9 @@ async function pvProxyRefresh(){   // прокси дособрались — о
   // Переезд на прокси живому src не присваиваем: смена посреди игры сбрасывает элемент в
   // readyState 0 (чёрный кадр) и сдвигает время (баг). Стоящий плеер переезжает
   // дублёром сразу, играющий — на ближайшем стыке (sparePrime подтянет свежий src сам).
-  for(const P of [PV,IPV,CPV])if(P&&P.vids&&P.vids.length&&!vtPlaying(P))await spareHandover(P);
+  // «Играет» спрашиваем дверью кадра (pvVidsPlaying), а не vtPlaying: у плеера шага 1
+  // играет редактор, и через vtPlaying его живой <video> считался бы стоящим.
+  for(const P of [PV,IPV,CPV])if(P&&P.vids&&P.vids.length&&!pvVidsPlaying(P))await spareHandover(P);
   // Прокси приехал (может, и видео): причина молчания Firefox ушла вместе с src —
   // строку об этом снимаем тем же опросом, что и прогресс.
   for(const [id,P] of [['pvstage',PV],['ipvstage',IPV],['cpvstage',CPV]]){
@@ -519,7 +573,9 @@ function voicePrime(P){
   vLoaded(b.el).then(()=>{if(vtOf(P).vsp===b&&st.on)vtSpareArm(P);});
 }
 async function spareHandover(P){   // стоящий плеер: передача эфира дублёром, а не сменой src у живого
-  if(!P||vtPlaying(P)||P.scrubbing||!(P.vids||[]).length)return;
+  // Судьбу живого <video> решает дверь кадра (pvVidsPlaying), а не поле плеера: у плеера
+  // шага 1 играет редактор, и vtPlaying(PV) отдал бы «стоит» про играющий кадр.
+  if(!P||pvVidsPlaying(P)||P.scrubbing||!(P.vids||[]).length)return;
   const b=spareLead(P);if(!b||!(P.cams&&P.cams[b.slot]&&P.cams[b.slot].path))return;
   const live=P.vids[b.slot];
   const want=pvSrc(P.cams[b.slot].path);
@@ -527,11 +583,11 @@ async function spareHandover(P){   // стоящий плеер: передач�
   if(b.el.src.split(location.origin).pop()!==want){
     b.el.src=want;b.at=null;b.rolling=false;   // смена src сбросила позицию — взводим заново
     await vLoaded(b.el);
-    if(vtPlaying(P)||P.scrubbing||!P.vids[b.slot])return;   // пока грузили, плеер тронули
+    if(pvVidsPlaying(P)||P.scrubbing||!P.vids[b.slot])return;   // пока грузили, плеер тронули
   }
   try{b.el.currentTime=live.currentTime;}catch(e){return;}   // подводим к кадру, что на экране
   await vSeeked(b.el);
-  if(vtPlaying(P)||P.scrubbing||!P.vids[b.slot]||b.el.seeking||b.el.readyState<2)return;
+  if(pvVidsPlaying(P)||P.scrubbing||!P.vids[b.slot]||b.el.seeking||b.el.readyState<2)return;
   bufSwap(P,b);   // кадр к подъёму уже декодирован — чёрного нет
   camVisual(P,P.curCi>=0?P.curCi:0,false);   // обмен сбросил z-index живого в 0 — слой и звук по ракурсу
 }
@@ -859,6 +915,16 @@ function vtAudioCam(P){return (P&&P.audioCi)||0;}
 function vtPlaying(P){
   if(typeof ED!=='undefined'&&P===ED)return !!P.play;
   return !!P.playing;}
+// Играют ли <video> ЭТОГО плеера. Дверь НЕ равна vtPlaying(P), и разница — ровно на
+// объекте кадра шага 1: плеер шага 1 один (редактор ED), а его окно с кадром (PV) играет
+// через ED и «кто играет» про себя не знает — `PV.playing` (>02.10) не ставит никто.
+// Спрашивать в таких местах vtPlaying(PV) значит услышать «стоит» про ИГРАЮЩИЙ кадр:
+// переезд на прокси брал живой <video> из эфира прямо на ходу, дублёр вставал неиграющим
+// и на экране застывал кадр при живой кнопке «пауза». Поэтому «кадр играет» — отдельный
+// вопрос, и у PV на него отвечает редактор.
+function pvVidsPlaying(P){
+  if(typeof PV!=='undefined'&&P===PV)return !!P.playing||!!(typeof ED!=='undefined'&&ED&&ED.play);
+  return vtPlaying(P);}
 // Время монтажа плеера. У шага 3 своя дверь (ipvNow): в рендере без AE время —
 // НОМЕР КАДРА, и общая формула «от currentTime ведущей» там соврала бы. У редактора
 // время тоже своё (исходник, ED.cs) — им и меряем, а не currentTime <video>.

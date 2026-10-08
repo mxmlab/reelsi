@@ -20,6 +20,7 @@ from core import sync
 from core import draftrender
 from core import cutstages
 from core import frame
+from core import model_service
 from core.app_meta import env, wrap_emit
 from core.app_meta import console_emit
 from core.fileio import atomic_json_dump
@@ -29,10 +30,146 @@ from .asr import transcribe_words_for_cut, transcribe_words_whole
 _orig_transcribe_words_whole = transcribe_words_whole
 from .decide import decide_markup
 from .takes import build_cutlog, postprocess
-from .tune import (_cut_breaths, _silence_bounds, apply_speaker, keep_intervals,
-                   refine_keep)
+from .tune import (_cut_breaths, _silence_bounds, apply_speaker, breath_detector_ready,
+                   keep_intervals, refine_keep)
 from core.gpulock import gpu_lock
 from core.umsg import ReelsiError
+
+
+def _reason_of(ex: BaseException) -> str:
+    """Короткая причина сбоя для строки журнала: «Тип: текст» без длинных хвостов.
+
+    Тексты чужих ошибок (Open, CUDA, файловая система) бывают длиннее строки
+    лога, а причина в них — первые слова; многострочные — схлопываем в одну.
+    """
+    text = str(ex).replace("\n", " ").strip()
+    return "%s: %s" % (type(ex).__name__, text[:200]) if text else type(ex).__name__
+
+
+def words_for_cut(
+    wav_path: str, engine: str, emit: Callable[..., Any],
+    fallback: Callable[..., Any] | None = None,
+    model_factory: Callable[[str], tuple[Callable[[], Any], Callable[[Any], None]]] | None = None,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Слова для нарезки: сперва сервис моделей, иначе — здесь, под замком `.gpu`.
+
+    Две дороги, и обе кончаются одним и тем же: `(full_text, words)`.
+
+    1. **Сервис моделей.** Долгоживущий процесс держит веса GigaAM в памяти и
+       считает слоты разом; ролик приходит за словами и файловый замок НЕ берёт —
+       его заменяют слоты сервиса. Так каждая нарезка перестала платить заново за
+       `import torch`, CUDA-контекст и чтение весов (замер: загрузка 4.6–7.2 с
+       против счёта 3–6 с, а ожидание замка — до 123 с из 147 с ролика).
+    2. **Запасной путь.** Сервис не стартовал или упал — считаем ровно как раньше:
+       под `gpu_lock("распознавание")`, с выгрузкой наших моделей LM Studio и
+       локальной загрузкой GigaAM. Одна строка в журнале называет причину, иначе
+       «почему так медленно» и «почему сервиса нет» не различить.
+
+    `fallback` — подменённая функция распознавания (тесты): форма ответа та же,
+    что у `transcribe_words_for_cut`, и она же вызывается на запасном пути.
+    `model_factory` — фабрика «модель + выгрузка» для запасного пути: она грузит
+    GigaAM ОДИН раз на ролик и выгружает в конце, а не по разу на движок.
+    """
+    emit = wrap_emit(emit)
+    words: list[dict[str, Any]] = []
+    reason: str | None = None
+    head = model_service.engine_head(engine)
+
+    if head:
+        # Замок НЕ берём: слоты сервиса делают то же самое, но без ожидания
+        # чужого ролика, а чужой RoFormer сервис переждёт по свободной VRAM.
+        try:
+            got = model_service.transcribe(wav_path, head)
+        except Exception as ex:          # сервис вспомогательный — падать из-за него нельзя
+            reason = _reason_of(ex)
+        else:
+            if got:
+                words = got
+            else:
+                reason = "сервис не ответил словами"
+
+    if not words:
+        if reason:
+            emit("сервис моделей недоступен: {why} — считаю в этом процессе", why=reason)
+        with gpu_lock("распознавание", emit=emit):
+            aicut.unload_ours(emit=emit)                # VRAM под GigaAM / CTC
+            aicut.warn_foreign_models(emit=emit)
+            if fallback is not None:
+                # Подменённая функция (тесты): у неё форма ответа боевой
+                _text, words = fallback(wav_path, emit=emit)
+            else:
+                _text, words = transcribe_words_for_cut(
+                    wav_path, engine=engine, emit=emit, model_factory=model_factory)
+
+    words = [w for w in words if w["w"].strip()]
+    words.sort(key=lambda w: w["start"])
+    return " ".join(w["w"] for w in words), words
+
+
+def gigaam_factory(
+    head: str, emit: Callable[..., Any]
+) -> tuple[Callable[[], Any], Callable[[Any], None]]:
+    """Модель GigaAM и её выгрузка — для ЗАПАСНОГО пути в этом процессе.
+
+    Фабрику зовут один раз на ролик: `asr.words_with_model` первым вызовом отдаёт
+    модель, вторым — выгружает её. Так веса читаются с диска ОДИН раз (раньше их
+    читал и `unload_ours`, и `transcribe_words_for_cut`), а после ролика VRAM
+    освобождается.
+
+    `unload` — освободить веса GigaAM в своём процессе. На этом пути их не
+    грузили (модель читает фабрика и отдаёт `words_with_model`), поэтому выгрузка
+    просто отпускает кеш: правила «держать запас VRAM» требуются и здесь, если
+    что-то успело осесть в памяти.
+    """
+    def model() -> Any:
+        # Локальный импорт нарочно: `gigaam` тянет torch, и импортировать его в
+        # начале ролика (до выбора пути) значило бы платить за это на сервисном пути.
+        import gigaam
+        from core.gigaam_cache import gigaam_dir
+        emit("GigaAM: загрузка {model} (локально, word_timestamps)…", model=head, flush=True)
+        return gigaam.load_model(head, download_root=gigaam_dir())
+
+    def unload(_m: Any) -> None:
+        model_service.unload_models()
+
+    return model, unload
+
+
+
+def _breath_stage(cur_keep: Any, cur_assign: Any, wav_path: str, words: Any, out: str,
+                  emit: Callable[..., Any]) -> tuple[Any, Any, list[Any]]:
+    """Вздохи: CED считает сервис моделей — тогда файловый замок `.gpu` НЕ берём.
+
+    Замок стерёг ровно одно: веса CED-tiny читал КАЖДЫЙ ролик заново в своём
+    процессе. Замер десяти роликов по 120 с звука: 94 с у распознавания через
+    сервис против 64 с, и остаток ожидания (медиана 23 с) — это и были вздохи под
+    общим замком, тогда как сам счёт CED занимал доли секунды. Теперь веса держит
+    сервис и считает их в слотах: одновременный счёт ограничен так же, а ждать
+    чужой ролик не нужно.
+
+    Пока веса читает ЭТОТ процесс, замок обязателен: на Windows переполнение VRAM
+    не даёт честного OOM, оно вешает машину. Поэтому запасной путь — прежний, под
+    `gpu_lock("вздохи")`, и со строкой причины: без неё «почему так медленно» и
+    «почему сервиса нет» не различить.
+
+    Детектор выключен (нет json модели) — сервис не поднимаем вовсе: считать
+    всё равно нечего, а прогрев читал бы веса CED впустую.
+    """
+    emit = wrap_emit(emit)
+    if breath_detector_ready():
+        if model_service.preload_breath():
+            try:
+                return _cut_breaths(cur_keep, cur_assign, wav_path, words, out,
+                                    emit=emit, service=True)
+            except model_service.ServiceUnavailable as ex:
+                emit("сервис моделей отказал на вздохах ({why}) — считаю в этом "
+                     "процессе, под замком видеокарты", why=_reason_of(ex), flush=True)
+        else:
+            emit("сервис моделей недоступен — вздохи считаю в этом процессе, "
+                 "под замком видеокарты", flush=True)
+    with gpu_lock("вздохи", emit=emit):
+        return _cut_breaths(cur_keep, cur_assign, wav_path, words, out,
+                            emit=emit, service=False)
 
 
 def _audio_file_diag(wav_path: str) -> str:
@@ -157,14 +294,17 @@ def _run(wav_path: str, cams: Sequence[str], offsets: Sequence[float], out: str,
         engine = aicut.cut_asr_engine(emit=emit)
 
     # --- Шаг 1-2: GigaAM/CTC целиком -> слова с РОДНЫМИ таймингами (без wav2vec2) ---
+    # Слова просим у сервиса моделей: он держит веса в памяти и считает слоты
+    # разом. Не ответил — считаем здесь, под прежним замком `.gpu` (см.
+    # words_for_cut). Подменённая в тестах функция идёт запасным путём: модель
+    # там не грузится, и разбирать её жизненный цикл нечего.
     emit("== GigaAM whole-file нарезка ==", flush=True)
-    with gpu_lock("распознавание", emit=emit):
-        aicut.unload_ours(emit=emit)                    # VRAM под GigaAM / CTC
-        aicut.warn_foreign_models(emit=emit)
-        if transcribe_words_whole is not _orig_transcribe_words_whole:
-            full_text, words = transcribe_words_whole(wav_path, emit=emit)
-        else:
-            full_text, words = transcribe_words_for_cut(wav_path, engine=engine, emit=emit)
+    if transcribe_words_whole is not _orig_transcribe_words_whole:
+        full_text, words = words_for_cut(wav_path, engine, emit,
+                                         fallback=transcribe_words_whole)
+    else:
+        full_text, words = words_for_cut(wav_path, engine, emit,
+                                         model_factory=lambda head: gigaam_factory(head, emit))
     if not words:
         raise RuntimeError("GigaAM не дал ни одного слова — проверь аудио")
     src_s = (words[-1]["end"] - words[0]["start"]) if words else 0.0
@@ -233,8 +373,7 @@ def _run(wav_path: str, cams: Sequence[str], offsets: Sequence[float], out: str,
             k = cur_keep
             a = cur_assign
         if stages.get("breath", True):
-            with gpu_lock("вздохи", emit=emit):
-                k, a, b_marks = _cut_breaths(k, a, wav_path, words, out, emit=emit)
+            k, a, b_marks = _breath_stage(k, a, wav_path, words, out, emit)
         else:
             b_marks = []
         return k, a, b_marks

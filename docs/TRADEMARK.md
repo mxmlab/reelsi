@@ -1,5 +1,7 @@
 # Trademark policy
 
+Russian version: [docs/TRADEMARK.ru.md](TRADEMARK.ru.md) — перевод для справки; юридическую силу имеет английский текст.
+
 The AGPL-3.0 license covers Reelsi's **source code**. It does not grant any right
 to use the project's **name or logo**. These are two separate things, and this
 document covers the second one.

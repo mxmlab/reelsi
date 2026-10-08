@@ -1,5 +1,7 @@
 # Жёлтые выделения субтитров — спецификация
 
+English version: [docs/HIGHLIGHT_SPEC.en.md](HIGHLIGHT_SPEC.en.md).
+
 Восстановлено из реального проекта (дамп `tools/ae_inspect.jsx` → `1.json`),
 эпизоды сопоставлены по транскриптам (`Reelsi_out/*.words.json`).
 

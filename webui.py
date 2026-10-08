@@ -158,6 +158,29 @@ def _cleanup_on_exit() -> None:
         pass  # рендер не запущен — гасить нечего
 
 
+def _drop_stale_model_service() -> bool:
+    """Погасить сервис моделей ДРУГОЙ ВЕРСИИ, оставшийся от прошлого запуска.
+
+    После обновления кода на машине может жить сервис прежней версии — он держит веса
+    и отвечает старым кодом, пока не выйдет по простою (пять минут). Первый же запрос
+    клипа пошёл бы к нему. Поэтому старт сервера гасит такой сервис (см.
+    `core.model_service.drop_stale`): «поправил, а не работает» больше не ждёт простоя.
+
+    Живой сервис СВОЕЙ версии не трогаем, и новый здесь не заводим: старт интерфейса
+    ничего не считает, а поднятый процесс держал бы видеопамять до простоя. Ошибка
+    (нет прав на файл, чужой процесс не отозвался) — строка в логе сервера, а не
+    отказ запуска интерфейса.
+    """
+    from core import model_service
+    try:
+        return bool(model_service.drop_stale())
+    except ReelsiError:
+        raise
+    except Exception as e:
+        print(f"  сервис моделей: старую версию не погасил ({e})")
+        return False
+
+
 def main() -> None:
     import atexit
     from core.applog import get_logger
@@ -167,6 +190,7 @@ def main() -> None:
     from core import bootstrap
     for _msg in bootstrap.ensure_user_files():
         print(f"  + {_msg}")
+    _drop_stale_model_service()
     port = PORT
     url = f"http://127.0.0.1:{port}"
     print(f"Reelsi Web UI v{APP_VERSION} -> {url}")

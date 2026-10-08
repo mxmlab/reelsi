@@ -104,6 +104,10 @@ def test_pipeline_gpu_lock_order(monkeypatch: pytest.MonkeyPatch, tmp_path: "pyt
         events.append(f"gpu_exit:{label}")
 
     monkeypatch.setattr(pipeline, "gpu_lock", fake_gpu_lock)
+    # Вздохи идут ЛОКАЛЬНЫМ путём, под замком: сервисный маршрут (`_breath_stage`
+    # без замка) проверяется отдельно, в tests/test_model_service.py. Здесь важно
+    # ровно одно — порядок замка вокруг распознавания и вздохов.
+    monkeypatch.setattr(pipeline, "breath_detector_ready", lambda: False)
 
     text = "первый второй третий"
     words = [{"w": w, "start": float(i), "end": float(i + 1), "prob": 0.99, "space_before": i > 0}

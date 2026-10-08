@@ -119,25 +119,65 @@ def _vad_probs(y: Any) -> tuple[Any, float]:
                      for i in range(0, max(0, len(y) - 512), 512)]), 512.0 / SR
 
 
-def _ced(y: Any, spans: list[tuple[float, float]], batch: int = 32) -> Any:
+def read_mono(wav_path: str) -> Any:
+    """Звук файла моно float32 — ОДНА дверь чтения на локальный путь и сервис.
+
+    Читают двое: процесс ролика (признаки и VAD) и сервис моделей (CED по границам
+    окон). Две разные реализации чтения дали бы разные числа на одном и том же
+    файле, и «через сервис == локально» перестало бы быть правдой.
+    """
+    import soundfile as sf
+    y, _ = sf.read(wav_path, dtype="float32")
+    if y.ndim > 1:
+        y = y.mean(1)
+    return y
+
+
+def load_ced() -> Any:
+    """Прочитать веса CED-tiny (фронтенд, модель, устройство) — БЕЗ кеша.
+
+    Общая дверь к весам: ею пользуется и локальный путь (`ced_model`, кеш на
+    процесс), и сервис моделей (кеш у него свой, по имени и ревизии). Ревизия
+    закреплена нарочно: `mispeech/ced-tiny` без неё обновляется молча, и детектор
+    вздохов поехал бы на других весах без единой правки в коде.
+    """
+    import torch  # noqa: F401  (нужен для `.to(dev)`)
+    from transformers import AutoModelForAudioClassification, AutoFeatureExtractor
+    dev = pick_device()
+    fe = AutoFeatureExtractor.from_pretrained(
+        CED_ID, revision=CED_REVISION, trust_remote_code=True)
+    m = AutoModelForAudioClassification.from_pretrained(
+        CED_ID, revision=CED_REVISION, trust_remote_code=True).to(dev).eval()
+    return (fe, m, dev)
+
+
+def ced_model() -> Any:
+    """CED-tiny ЭТОГО процесса: веса читаются один раз и живут до выхода.
+
+    Так и было (`_CED`), и это остаётся запасным путём: на нём веса читает процесс
+    ролика, под файловым замком `.gpu`. Когда CED считает сервис, сюда не заходят
+    вовсе — веса уже в его памяти, а счёт ограничен его слотами.
+    """
+    global _CED
+    if _CED is None:
+        _CED = load_ced()
+    return _CED
+
+
+def ced_probs(y: Any, spans: list[tuple[float, float]], batch: int = 32,
+              ced: Any = None) -> Any:
     """AudioSet-вероятности для каждого участка В ИЗОЛЯЦИИ.
 
     Участок кладём в середину 10с тишины — родная длина модели. Тайлинг (зациклить
     кусок) пробовали: получается периодический гул, и модель слышит «Music».
     Скользящее окно по всему ролику тоже пробовали — соседняя речь забивает окно
     (AUC 0.53). Работает только изоляция.
+
+    Счёта здесь и только здесь: `ced` — уже прочитанные веса (у сервиса свои, у
+    локального пути — `ced_model`), поэтому матрица признаков одна на оба пути.
     """
-    global _CED
     import torch
-    from transformers import AutoModelForAudioClassification, AutoFeatureExtractor
-    if _CED is None:
-        dev = pick_device()
-        fe = AutoFeatureExtractor.from_pretrained(
-            CED_ID, revision=CED_REVISION, trust_remote_code=True)
-        m = AutoModelForAudioClassification.from_pretrained(
-            CED_ID, revision=CED_REVISION, trust_remote_code=True).to(dev).eval()
-        _CED = (fe, m, dev)
-    fe, m, dev = _CED
+    fe, m, dev = ced if ced is not None else ced_model()
     n = int(10.0 * SR)
     out = np.zeros((len(spans), m.config.num_labels), dtype="float32")
     with torch.no_grad():
@@ -155,23 +195,45 @@ def _ced(y: Any, spans: list[tuple[float, float]], batch: int = 32) -> Any:
     return out
 
 
+def _ced(wav_path: str, y: Any, spans: list[tuple[float, float]], batch: int = 32,
+         service: bool = False) -> Any:
+    """AudioSet-вероятности участков: их считает СЕРВИС моделей, если он есть.
+
+    `service=True` — нарезка уже убедилась, что сервис жив и веса CED у него в
+    памяти: тогда веса здесь НЕ читаются и файловый замок `.gpu` не нужен (его
+    заменяют слоты сервиса). Сервис отказал — `ServiceUnavailable` наружу: вздохи
+    считаются заново на запасном пути, под замком, а не молча здесь мимо замка.
+
+    `service=False` (по умолчанию) — прежний локальный путь; `y` уже прочитан, и
+    сервису ехать некуда.
+    """
+    if service:
+        from core import model_service
+        return model_service.breath_probs(wav_path, spans)
+    return ced_probs(y, spans, batch=batch)
+
+
 FEATURES = ["длительность", "хвост", "голова", "громкость_макс", "громкость_ср",
             "вч", "vad_ср", "vad_мин", "vad_макс", "ced_речь", "ced_событие",
             "пауза_до", "пауза_после"]
 
 
 def features(
-    wav_path: str, cands: list[dict[str, Any]], words: list[dict[str, Any]]
+    wav_path: str, cands: list[dict[str, Any]], words: list[dict[str, Any]],
+    service: bool = False
 ) -> tuple[Any, list[tuple[str, float]]]:
-    """Матрица признаков (len(cands) x len(FEATURES)) в порядке FEATURES."""
-    import soundfile as sf
+    """Матрица признаков (len(cands) x len(FEATURES)) в порядке FEATURES.
+
+    `service=True` — CED по участкам считает сервис моделей (`wav_path` уезжает
+    туда целиком): веса он читает один раз на всех, и файловый замок `.gpu` тогда
+    не нужен. Отказал — `ServiceUnavailable` наружу, и вздохи считаются заново на
+    запасном пути.
+    """
     from core import gigaam_cut as G  # ленивый импорт: G импортирует нас
-    y, _ = sf.read(wav_path, dtype="float32")
-    if y.ndim > 1:
-        y = y.mean(1)
+    y = read_mono(wav_path)
     db, hf, floor, hop = G._envelope(wav_path)
     vad, vhop = _vad_probs(y)
-    ced = _ced(y, [(c["t0"], c["t1"]) for c in cands])
+    ced = _ced(wav_path, y, [(c["t0"], c["t1"]) for c in cands], service=service)
     ev = np.array([EVENT_IDS[k] for k in EVENT_IDS])
     X = np.zeros((len(cands), len(FEATURES)), dtype="float32")
     for i, c in enumerate(cands):
@@ -233,12 +295,15 @@ def predict(X: Any, mdl: dict[str, Any]) -> Any:
 
 
 def detect(
-    wav_path: str, keep: Any, words: list[dict[str, Any]], model: dict[str, Any] | None = None, emit: Any = console_emit, path: str | None = None
+    wav_path: str, keep: Any, words: list[dict[str, Any]], model: dict[str, Any] | None = None, emit: Any = console_emit, path: str | None = None,
+    service: bool = False
 ) -> list[dict[str, Any]]:
     """[{t0,t1,p,pos,класс,piece}] — по убыванию вероятности.
 
     path — json модели этого спикера (профиль, поле `breath_model`); model —
-    уже загруженная модель, приоритетнее path."""
+    уже загруженная модель, приоритетнее path. `service=True` — CED считает сервис
+    моделей (см. `features`): тогда веса читает он, а не этот процесс.
+    """
     emit = wrap_emit(emit)
     ok, why = available(path if model is None else None)
     if not ok:
@@ -248,7 +313,7 @@ def detect(
     cands = candidates(keep, words)
     if not cands:
         return []
-    X, cls = features(wav_path, cands, words)
+    X, cls = features(wav_path, cands, words, service=service)
     p = predict(X, mdl)
     isp = FEATURES.index("ced_речь")
     for c, pi, xi, (k, pk) in zip(cands, p, X, cls):

@@ -155,6 +155,7 @@ files = [
     "core/falign_cli.py",
     "core/fonts.py",
     "core/gigaam_cache.py",
+    "core/model_service.py",
     "core/gigaam_cut/__init__.py",
     "core/gigaam_cut/__main__.py",
     "core/gigaam_cut/asr.py",
@@ -200,6 +201,7 @@ files = [
     "tools/verify_ae.py",
     "tools/webui_test.py",
     "tools/route_coverage.py",
+    "tests/test_docs_bilingual.py",
 ]
 
 # disallow_untyped_defs — ровно для строгого списка: публичные функции и методы
@@ -317,6 +319,7 @@ module = [
     "core.falign_cli",
     "core.fonts",
     "core.gigaam_cache",
+    "core.model_service",
     "core.gigaam_cut.__init__",
     "core.gigaam_cut.__main__",
     "core.gigaam_cut.asr",
@@ -362,6 +365,7 @@ module = [
     "tools.verify_ae",
     "tools.webui_test",
     "tools.route_coverage",
+    "tests.test_docs_bilingual",
 ]
 disallow_untyped_defs = true
 

@@ -118,6 +118,7 @@ def test_public_files_have_no_dangling_links():
         "tests/test_public_slice.py", "tests/test_slice_check.py",
         "tests/test_layout.py", "tests/test_docs_links.py",
         "tests/test_docs_freshness.py", "tests/test_docs_drift.py", "tools/wt.ps1",
+        "tests/test_docs_bilingual.py",   # сторож пар документов: обходит docs/, архив исключает по имени
         "tests/test_review_fixes.py", "tests/test_no_task_codes.py",
     }
 

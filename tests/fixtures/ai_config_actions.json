@@ -72,6 +72,7 @@
      "temperature": null
     }
    },
+   "model_device": "auto",
    "presets": {
     "anthropic": {
      "base_url": "https://api.anthropic.com",
@@ -745,6 +746,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -868,6 +870,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -1027,6 +1030,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -1153,6 +1157,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -1277,6 +1282,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -1439,6 +1445,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -1570,6 +1577,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -1737,6 +1745,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -1868,6 +1877,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -1993,6 +2003,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -2135,6 +2146,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -2261,6 +2273,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -2436,6 +2449,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -2580,6 +2594,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -2708,6 +2723,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -2870,6 +2886,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -2999,6 +3016,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -3162,6 +3180,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -3311,6 +3330,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -3442,6 +3462,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -3573,6 +3594,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -3704,6 +3726,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -3835,6 +3858,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": false,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -3967,6 +3991,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -4099,6 +4124,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -4250,6 +4276,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -4384,6 +4411,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -4518,6 +4546,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -4671,6 +4700,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -4817,6 +4847,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -4981,6 +5012,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -5215,6 +5247,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -5372,6 +5405,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -5522,6 +5556,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -5672,6 +5707,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио": {
@@ -5829,6 +5865,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио 2": {
@@ -5980,6 +6017,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио 2": {
@@ -6210,6 +6248,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио 2": {
@@ -6377,6 +6416,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио 2": {
@@ -6515,6 +6555,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Аудио 2": {
@@ -6641,6 +6682,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Основной": {
@@ -6753,6 +6795,7 @@
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
+   "model_device": "auto",
    "ok": true,
    "profiles": {
     "Основной": {
@@ -6851,6 +6894,225 @@
   "config": null
  },
  {
+  "name": "set_model_device: процессор",
+  "method": "POST",
+  "request": {
+   "action": "set_model_device",
+   "value": "cpu"
+  },
+  "status": 200,
+  "json": {
+   "active": "Основной",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "__local__",
+   "active_video": "__off__",
+   "ae_build_workers": "auto",
+   "glitch_glow": "deepglow2",
+   "image_rembg": true,
+   "model_device": "cpu",
+   "ok": true,
+   "profiles": {
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_concurrency": {
+    "cut": 1,
+    "inserts": 1,
+    "intro": 1,
+    "yellow": 1
+   },
+   "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": true,
+    "yellow": true
+   },
+   "step_profiles": {
+    "cut": "Основной",
+    "inserts": "Основной",
+    "intro": "Основной",
+    "yellow": "Основной"
+   },
+   "stock": {
+    "pexels_key": "env:NZ_STOCK_PEXELS",
+    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+   },
+   "video_encoder": "auto",
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Основной",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {},
+   "active_omni": "__local__",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_video": "__off__",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": true,
+   "glitch_glow": "deepglow2",
+   "video_encoder": "auto",
+   "stock": {
+    "pexels_key": "env:NZ_STOCK_PEXELS",
+    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+   },
+   "model_device": "cpu"
+  }
+ },
+ {
+  "name": "set_model_device: недопустимое значение",
+  "method": "POST",
+  "request": {
+   "action": "set_model_device",
+   "value": "supergpu"
+  },
+  "status": 200,
+  "json": {
+   "err": "model_device_invalid",
+   "err_vars": {
+    "value": "supergpu"
+   },
+   "error": "Недопустимое устройство моделей: supergpu"
+  },
+  "config": null
+ },
+ {
+  "name": "set_model_device: пусто — снова авто",
+  "method": "POST",
+  "request": {
+   "action": "set_model_device",
+   "value": ""
+  },
+  "status": 200,
+  "json": {
+   "active": "Основной",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_omni": "__local__",
+   "active_video": "__off__",
+   "ae_build_workers": "auto",
+   "glitch_glow": "deepglow2",
+   "image_rembg": true,
+   "model_device": "auto",
+   "ok": true,
+   "profiles": {
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "step_concurrency": {
+    "cut": 1,
+    "inserts": 1,
+    "intro": 1,
+    "yellow": 1
+   },
+   "step_concurrency_override": {},
+   "step_local": {
+    "cut": true,
+    "inserts": true,
+    "intro": true,
+    "yellow": true
+   },
+   "step_profiles": {
+    "cut": "Основной",
+    "inserts": "Основной",
+    "intro": "Основной",
+    "yellow": "Основной"
+   },
+   "stock": {
+    "pexels_key": "env:NZ_STOCK_PEXELS",
+    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+   },
+   "video_encoder": "auto",
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Основной",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {},
+   "active_omni": "__local__",
+   "active_cut_asr": "gigaam",
+   "active_image": "__off__",
+   "active_video": "__off__",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": true,
+   "glitch_glow": "deepglow2",
+   "video_encoder": "auto",
+   "stock": {
+    "pexels_key": "env:NZ_STOCK_PEXELS",
+    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+   },
+   "model_device": "auto"
+  }
+ },
+ {
   "name": "неизвестное действие",
   "method": "POST",
   "request": {
@@ -6914,6 +7176,7 @@
      "temperature": null
     }
    },
+   "model_device": "auto",
    "presets": {
     "anthropic": {
      "base_url": "https://api.anthropic.com",

@@ -455,8 +455,8 @@ def test_breath_ced_pinned_revision(monkeypatch):
     y = np.zeros(16000, dtype="float32")
     spans = [(0.1, 0.5)]
 
-    # Вызываем _ced
-    breath._ced(y, spans, batch=1)
+    # Вызываем счёт CED: веса читает `load_ced` (одна дверь у локального пути и сервиса)
+    breath.ced_probs(y, spans, batch=1)
 
     assert getattr(breath, "CED_REVISION", None) == expected_rev
     assert len(fe_calls) == 1

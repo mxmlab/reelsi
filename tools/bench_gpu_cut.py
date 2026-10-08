@@ -30,9 +30,35 @@
 путей, ушедший в боевой вызов, ронял распознавание (`TypeError: Invalid file: [...]`).
 Упавший ребёнок отдаёт полный трейсбек, и родитель печатает его целиком.
 
+Режим `--service` — замер «после»: распознавание идёт через сервис моделей
+(`core/model_service`), как в боевой нарезке. Сервис грузит GigaAM ОДИН раз на все
+ролики, дети веса распознавания не читают вовсе (слова приходят от сервиса), а
+вместо файлового замка распознавание ограничено слотами сервиса (`--slots`, по
+умолчанию — по свободной VRAM). Дети подключаются к своему сервису: файл адреса,
+ключ и заявка на старт лежат рядом с `--lock` (одна и та же переменная
+`REELSI_MODEL_SERVICE_STATE` у родителя, детей и сервиса), поэтому боевой сервис
+машины замер не трогает. В таблице тогда видно «ожидание» (слоты) без строк загрузки
+моделей у детей, а подъём сервиса показан один раз — отдельной строкой прогона.
+
+Тот же режим уводит в сервис и ВЗДОХИ с ЭМОЦИЯМИ: CED-tiny и голову `emo` сервис
+держит в памяти, поэтому дети не берут под них файловый замок (иначе замер мерил бы
+ожидание замка вместо боя) и не читают веса заново. Родитель прогревает все три
+источника весов до детей (`--service`), так что чтение моделей остаётся расходом
+прогона, а не первого ролика.
+
+Отличия сервисного режима от прежнего, и все — «как в бою». Подъём сервиса (процесс,
+импорт torch, чтение весов) делает РОДИТЕЛЬ до детей: это расход ПРОГОНА, а не ролика —
+сервис один на машину и живёт между роликами, в бою до пяти минут простоя. В таблице он
+стоит отдельной строкой и в «общее время» не входит; раньше он попадал в «загрузку»
+первого ролика, и при N=2 оба ролика ждали один и тот же старт. И файловый замок
+`gpu_lock("распознавание")` в этом режиме НЕ берётся — боевой `words_for_cut` берёт его
+только на запасном пути, а сервисный путь ограничен слотами; с замком ролики ждали бы
+друг друга и замер мерил бы не бой.
+
 Запуск::
 
     py -3.10 tools/bench_gpu_cut.py --src D:/clips/a.mp4 --sec 120 --n 4
+    py -3.10 tools/bench_gpu_cut.py --src D:/clips/a.mp4 --sec 120 --n 2 --service
     py -3.10 tools/bench_gpu_cut.py --wav a.wav --wav b.wav --n 2 --dry   # без GPU
 """
 from __future__ import annotations
@@ -254,6 +280,16 @@ def _wav_path(wav: Any) -> str:
     return wav
 
 
+def _service_models(args: argparse.Namespace) -> bool:
+    """Вздохи и эмоции считает сервис — тот же признак, что у распознавания.
+
+    `--dry` исключён нарочно: заглушкам сервис не нужен, и прогон обязан мерить тот
+    же путь, что и раньше (с замками). Одна функция на всех: разойдись она у замка,
+    распознавания и счёта — замер показал бы одно, а бой делал другое.
+    """
+    return bool(args.service) and not bool(args.dry)
+
+
 class _DryOps:
     """Заглушки `--dry`: GPU и моделей нет, есть только такие же по форме паузы."""
 
@@ -302,9 +338,36 @@ class _RealOps:
         self._args = args
         self._marks = marks
         self._torch: Any = None
+        # --service: слова просим у сервиса моделей, а не грузим GigaAM в ребёнке.
+        self._svc: Any = None
 
     def prepare(self) -> None:
-        """Импорт torch и подмена загрузчиков таймерами — ДО первого модельного шага."""
+        """Импорт torch и подмена загрузчиков таймерами — ДО первого модельного шага.
+
+        В `--service` общая часть тоже нужна, и не для красоты: вздохи и эмоции
+        считает всё равно ребёнок, а их импорты и загрузки без этого попадали в
+        «счёт» (замер: 6.6 с в строке «вздохи» против 0.7 с у процесса ролика —
+        это был импорт torch и чтение CED, а не счёт). Распознавание при этом идёт
+        через сервис: веса GigaAM ребёнок не читает вовсе.
+        """
+        from core import model_service
+        self._svc = model_service
+        if bool(self._args.service):
+            # Холодный старт сервиса (если его ещё нет) — это тоже загрузка
+            # моделей, и её надо видеть отдельной строкой, а не в «счёте».
+            with self._marks.span("load", "gigaam:сервис"):
+                ok = model_service.ensure_started()
+                if ok:
+                    # Веса головы — та же загрузка, что платит процесс ролика,
+                    # только здесь её платит сервис и один раз на все ролики.
+                    # Прогреваем ЗДЕСЬ: иначе чтение весов упало бы в «счёт»
+                    # первого ролика, и сервисный режим выглядел бы медленнее
+                    # процесса ровно на это время.
+                    ok = model_service.preload(str(self._args.asr_model))
+            if not ok:
+                raise RuntimeError("сервис моделей не стартовал или не прочитал веса — "
+                                   "запусти без --service")
+            self._marks.mark("service_ready")
         with self._marks.span("import", "torch"):
             import torch
         self._marks.mark("torch_ready")
@@ -325,6 +388,14 @@ class _RealOps:
         _trace_attr(AutoModelForAudioClassification, "from_pretrained", self._marks, "ced")
 
     def transcribe(self, wav: str, emit: _Emit) -> _Words:
+        if self._svc is not None and bool(self._args.service):
+            # Как в боевой нарезке: слова отдаёт сервис, torch в ребёнке не нужен.
+            words = self._svc.transcribe(wav, str(self._args.asr_model))
+            if not words:
+                raise RuntimeError("сервис моделей не дал слов — смотри его вывод")
+            return list(words)
+        # Без сервиса — прежний путь: тот же `transcribe_words_whole`, что у
+        # нарезки, с загрузкой весов под таймером (`_trace_attr`).
         from core.gigaam_cut.asr import transcribe_words_whole
         _full, words = transcribe_words_whole(wav, emit=emit,
                                               model_name=str(self._args.asr_model))
@@ -332,40 +403,73 @@ class _RealOps:
 
     def cut_breaths(self, keep: _Keep, wav: str, words: _Words, out: str,
                     emit: _Emit) -> None:
+        """Вздохи: в сервисном режиме CED считает сервис, локально — как раньше.
+
+        Замок берёт `_child_main` (он же его и меряет) — здесь только выбор счёта:
+        с `service=True` веса CED читает сервис, и `_cut_breaths` уходит туда.
+        """
         from core.gigaam_cut.tune import _cut_breaths
-        _cut_breaths(keep, None, wav, words, out, emit=emit)
+        _cut_breaths(keep, None, wav, words, out, emit=emit,
+                     service=_service_models(self._args))
 
     def load_emo(self) -> Any:
+        if _service_models(self._args):
+            return None                 # голову `emo` держит сервис — грузить нечего
         from core import emphasis
-        return emphasis.load_emo_model()
+        # Именно ЛОКАЛЬНАЯ дверь: `load_emo_model` без сервиса сам его заводит
+        # (`preload_emo`), и «замер без сервиса» мерил бы сервисный путь.
+        return emphasis.load_emo_model_local()
 
     def emotion(self, words: _Words, wav: str, limit: int, model: Any,
                 emit: _Emit) -> None:
-        """Эмоция по окнам распознанных слов — как `compute_emphasis`, но без сайдкара."""
+        """Эмоция по окнам распознанных слов — как `compute_emphasis`, но без сайдкара.
+
+        В сервисном режиме окно уезжает в сервис (`model_service.emotion_probs`), и
+        модель этому процессу не нужна вовсе. Числа те же: сервис считает тем же
+        `emphasis.emotion_probs`.
+        """
         import soundfile as sf
         from core import emphasis
         audio, sr = sf.read(wav, dtype="float32")
         if getattr(audio, "ndim", 1) > 1:
             audio = audio.mean(axis=1)
         rate = int(sr)
+        served = _service_models(self._args)
         for word in words[:max(0, limit)]:
             window = emphasis._emo_window(audio, rate,
                                           (float(word["start"]), float(word["end"])), 0.0)
             if window is None:
                 continue
-            emphasis.emotion_score(emphasis.emotion_probs(window, model, rate))
+            probs = (self._svc.emotion_probs(window, rate) if served
+                     else emphasis.emotion_probs(window, model, rate))
+            emphasis.emotion_score(probs)
 
     def release_emo(self, model: Any) -> None:
+        if _service_models(self._args):
+            return None                 # выгрузкой занят простой сервиса
         from core import emphasis
         emphasis.release_emo(model)
 
     def vram_stats(self) -> tuple[int, int]:
+        """Пик памяти процесса в МиБ — в тех же единицах, что подпись в таблице.
+
+        `torch.cuda.max_memory_allocated` отдаёт БАЙТЫ, а печаталось это под
+        подписью «МиБ»: замер показывал 4000000000 вместо 4000. Переводим делением
+        на 1024^2. В сервисном режиме torch в ребёнке есть (вздохи и эмоции
+        считает он), но пик памяти РАСПОЗНАВАНИЯ живёт в процессе сервиса — его и
+        спрашиваем, иначе в отчёте стояли бы нули, будто счёт ничего не занял.
+        """
+        if self._svc is not None and bool(self._args.service):
+            stats = self._svc.vram_stats()
+            return (int((stats or {}).get("max_memory_allocated", 0)),
+                    int((stats or {}).get("max_memory_reserved", 0)))
         torch = self._torch
         if torch is None:
             return (0, 0)
-        allocated = int(torch.cuda.max_memory_allocated())
+        mib = 1024 * 1024
+        allocated = int(torch.cuda.max_memory_allocated()) // mib
         reserved = getattr(torch.cuda, "max_memory_reserved", None)
-        return (allocated, int(reserved()) if callable(reserved) else 0)
+        return (allocated, int(reserved()) // mib if callable(reserved) else 0)
 
 
 # --------------------------------------------------------------------------- #
@@ -381,6 +485,21 @@ def _lock_stage(marks: _Marks, label: str) -> Iterator[None]:
         marks.wait(t_wait, label)
         yield
     marks.mark("lock_release:" + label)
+
+
+@contextlib.contextmanager
+def _maybe_lock_stage(marks: _Marks, label: str, take: bool) -> Iterator[None]:
+    """Замок участка — или ничего, когда работу делает сервис моделей.
+
+    `take=False` — счёт ушёл в сервис, и замок только сериализовал бы детей: в бою
+    его там нет (вздохи и эмоции через сервис идут без `gpu_lock`), и замер с
+    замком мерил бы не то, что увидит человек.
+    """
+    if not take:
+        yield
+        return
+    with _lock_stage(marks, label):
+        yield
 
 
 def _child_wav(value: Any) -> str:
@@ -417,27 +536,42 @@ def _child_main(args: argparse.Namespace) -> int:
         marks.mark("proc_start")
         ops.prepare()
 
-        # 1) Распознавание — как в пайплайне: транскрипция под gpu_lock("распознавание").
-        with _lock_stage(marks, "распознавание"):
+        # 1) Распознавание — как в пайплайне. Локальный путь идёт под
+        #    gpu_lock("распознавание"), а сервисный замок НЕ берёт: его заменяют
+        #    слоты сервиса (`words_for_cut` ходит под `.gpu` только на запасном
+        #    пути). Держать замок и в сервисном режиме значило бы мерить не бой:
+        #    ролики ждали бы друг друга вместо того, чтобы считаться слотами.
+        #    В `--dry` замок остаётся — заглушки карту не делят, и прогон должен
+        #    мерить тот же путь, что и раньше.
+        def _asr() -> _Words:
             with marks.span("compute", "asr"):
-                words = ops.transcribe(wav, _stderr_emit)
+                return ops.transcribe(wav, _stderr_emit)
+
+        if bool(args.dry) or not bool(args.service):
+            with _lock_stage(marks, "распознавание"):
+                words = _asr()
+        else:
+            words = _asr()
         if not words:
             raise RuntimeError("распознавание не дало ни одного слова — проверь --sec "
                                "и источник звука")
         marks.mark("asr_done")
 
-        # 2) Вздохи — под gpu_lock("вздохи"), как в пайплайне. Куски для детектора
+        # 2) Вздохи — под gpu_lock("вздохи"), как в нарезке. Куски для детектора
         #    берём по распознанным словам: подгонка резов по звуку (refine_keep) сюда
-        #    не входит — она не GPU, и мерить в ней нечего.
+        #    не входит — она не GPU, и мерить в ней нечего. В сервисном режиме CED
+        #    считает сервис, и замок НЕ берётся: его заменяют слоты сервиса, ровно как
+        #    у распознавания (боевой `_breath_stage` делает то же самое).
         keep: _Keep = [(float(words[0]["start"]), float(words[-1]["end"]))]
         out_xml = os.path.join(args.work, "bench_clip%d.xml" % index)
-        with _lock_stage(marks, "вздохи"):
+        with _maybe_lock_stage(marks, "вздохи", not _service_models(args)):
             with marks.span("compute", "breaths"):
                 ops.cut_breaths(keep, wav, words, out_xml, _stderr_emit)
         marks.mark("breaths_done")
 
-        # 3) Эмоции: загрузка GigaAM-emo и расчёт на словах (без LLM и сборки).
-        with _lock_stage(marks, "эмоции"):
+        # 3) Эмоции: голова `emo` (в сервисном режиме — его) и расчёт на словах
+        #    (без LLM и сборки). В сервисном режиме замок тоже не нужен.
+        with _maybe_lock_stage(marks, "эмоции", not _service_models(args)):
             model = ops.load_emo()
             try:
                 with marks.span("compute", "emo"):
@@ -481,6 +615,10 @@ class _BenchResult:
     vram_peak_mib: int | None
     vram_samples: int
     dry: bool
+    service: bool
+    # Подъём сервиса моделей: расход ПРОГОНА (один раз на сервис), не ролика.
+    # None — не в сервисном режиме; в таблицу идёт отдельной строкой.
+    service_start_s: float | None
     table: str
     ok: bool
 
@@ -507,6 +645,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
                         help="сколько роликов гнать ОДНОВРЕМЕННО (по умолчанию %(default)s)")
     parser.add_argument("--dry", action="store_true",
                         help="без GPU: модели подменены заглушками (для теста)")
+    parser.add_argument("--service", action="store_true",
+                        help="распознавание — через сервис моделей (как в боевой "
+                             "нарезке): GigaAM живёт в одном процессе, дети его не грузят")
+    parser.add_argument("--slots", type=int, default=None,
+                        help="сколько распознаваний разом у сервиса (по умолчанию — "
+                             "по свободной VRAM); только с --service")
+    parser.add_argument("--idle", type=float, default=None,
+                        help="простой сервиса до завершения, сек (по умолчанию 300)")
     parser.add_argument("--emo-words", type=int, default=DEFAULT_EMO_WORDS,
                         help="на скольких первых словах считать эмоции (по умолчанию %(default)s)")
     parser.add_argument("--asr-model", default=DEFAULT_ASR_MODEL,
@@ -607,7 +753,46 @@ def _child_cmd(python: str, args: argparse.Namespace, index: int, wav: str) -> l
            "--sec", str(args.sec)]
     if args.dry:
         cmd.append("--dry")
+    if args.service:
+        # Режим `--service` — свойство ЗАМЕРА, а не отдельный флаг ребёнка: сервис у
+        # всех детей один, и каждый просит у него слова. Лок сервиса дети получают
+        # переменной `REELSI_JOB_LOCK` (см. `_child_env`), а не аргументом.
+        cmd.append("--service")
     return cmd
+
+
+def _service_env_vars(args: argparse.Namespace) -> dict[str, str]:
+    """Переменные окружения сервиса моделей — одни и те же у родителя и у детей.
+
+    Файл адреса сервиса лежит рядом с локом (`REELSI_JOB_LOCK`), поэтому родитель
+    обязан получить ТОТ ЖЕ лок, что и дети: иначе он поднял бы свой сервис в другом
+    каталоге, а дети завели бы второй.
+
+    Каталог состояния называем и ЯВНО — `REELSI_MODEL_SERVICE_STATE`, путём из
+    ОДНОЙ функции ядра (`state_path_for`). Путь файла адреса читается при импорте
+    ядра, и без явной переменной он зависел бы от того, кто раньше импортировал
+    `core.jobstate`; с ней сервис, родитель и дети стенда идут одним путём, и
+    адрес, ключ и заявка сервиса лежат ровно там, где их ищет клиент.
+    """
+    out: dict[str, str] = {}
+    lock = ""
+    if args.dry:
+        # В --dry карту не занимаем и боевой замок не трогаем: у прогона свой.
+        lock = os.path.join(os.path.abspath(str(args.work)), "job.dry.lock")
+    elif args.lock:
+        lock = os.path.abspath(str(args.lock))
+    if lock:
+        from core import model_service
+        out["REELSI_JOB_LOCK"] = lock
+        out["REELSI_MODEL_SERVICE_STATE"] = model_service.state_path_for(lock)
+    if args.service:
+        # Порт и ключ сервиса лягут рядом с ЭТИМ локом: у замера свой сервис, и
+        # боевой (если он есть) не трогаем — как у изолированного профиля.
+        if args.slots:
+            out["REELSI_MODEL_SERVICE_SLOTS"] = str(int(args.slots))
+        if args.idle:
+            out["REELSI_MODEL_SERVICE_IDLE"] = str(float(args.idle))
+    return out
 
 
 def _child_env(args: argparse.Namespace) -> dict[str, str]:
@@ -618,12 +803,7 @@ def _child_env(args: argparse.Namespace) -> dict[str, str]:
         parts.insert(0, _ROOT)
     env["PYTHONPATH"] = os.pathsep.join(parts)
     env["PYTHONUNBUFFERED"] = "1"
-    if args.dry:
-        # В --dry карту не занимаем и боевой замок не трогаем: у прогона свой.
-        env["REELSI_JOB_LOCK"] = os.path.join(os.path.abspath(str(args.work)),
-                                              "job.dry.lock")
-    elif args.lock:
-        env["REELSI_JOB_LOCK"] = os.path.abspath(str(args.lock))
+    env.update(_service_env_vars(args))
     if not args.dry:
         # Ничего не качать: нет весов — from_pretrained падает с именем модели,
         # а не тянет гигабайты из сети на живой машине.
@@ -631,6 +811,35 @@ def _child_env(args: argparse.Namespace) -> dict[str, str]:
         env["TRANSFORMERS_OFFLINE"] = "1"
         env["HF_HUB_DISABLE_TELEMETRY"] = "1"
     return env
+
+
+def _start_service(args: argparse.Namespace) -> float | None:
+    """Поднять сервис моделей до детей; сколько это заняло — или None, если не вышло.
+
+    Подъём сервиса — расход ПРОГОНА, а не ролика: процесс сервиса один на машину и
+    живёт между роликами (в бою — до пяти минут простоя), а веса он читает один раз
+    на всех. Раньше этот подъём попадал в «загрузку» первого ролика: в N=2 оба
+    ролика ждали один и тот же старт, и сервисный режим выглядел медленнее процесса
+    ровно на него. Теперь он виден отдельной строкой прогона и в «общее время» не
+    входит — как и остальная подготовка родителя (звук, проверка весов).
+
+    Прогреваем ВСЕ три источника весов, которыми пользуется замер: голову
+    распознавания, CED вздохов и голову `emo`. Иначе чтение модели попало бы в
+    «счёт» первого ролика — ровно та ошибка, из-за которой сервисный режим и
+    выглядел хуже процесса на ровном месте.
+    """
+    if not bool(args.service) or bool(args.dry):
+        return None
+    from core import model_service
+    started = time.monotonic()
+    if not model_service.ensure_started():
+        return None
+    for loaded in (model_service.preload(str(args.asr_model)),
+                   model_service.preload_breath(),
+                   model_service.preload_emo()):
+        if not loaded:
+            return None
+    return time.monotonic() - started
 
 
 def _read_lines(stream: IO[str] | None, sink: list[str]) -> None:
@@ -736,6 +945,9 @@ def _format_table(result: _BenchResult) -> str:
                       func([float(r.get("total_s", 0.0)) for r in result.records])))
     out.append("")
     out.append("общее время %d роликов: %.2f с" % (len(result.records), result.wall_s))
+    if result.service_start_s is not None:
+        out.append("подъём сервиса моделей (один раз на прогон, в «общее время» "
+                   "не входит): %.2f с" % result.service_start_s)
     if result.dry:
         out.append("пик VRAM карты: не снимался (--dry)")
     elif result.vram_peak_mib is None:
@@ -747,9 +959,13 @@ def _format_table(result: _BenchResult) -> str:
                  for r in result.records]
     reserved = [int((r.get("vram") or {}).get("max_memory_reserved", 0))
                 for r in result.records]
-    out.append("по процессам: torch.cuda.max_memory_allocated макс %d МиБ, "
+    # В сервисном режиме счётчик снят у СЕРВИСА (у детей torch нет вовсе) —
+    # подпись говорит, чей это процесс, иначе цифра читается как «память ролика».
+    whose = "в процессе сервиса" if result.service else "по процессам"
+    out.append("%s: torch.cuda.max_memory_allocated макс %d МиБ, "
                "max_memory_reserved макс %d МиБ"
-               % (max(allocated) if allocated else 0, max(reserved) if reserved else 0))
+               % (whose, max(allocated) if allocated else 0,
+                  max(reserved) if reserved else 0))
     by_model: dict[str, list[float]] = {}
     for rec in result.records:
         for span in (rec.get("spans") or []):
@@ -783,11 +999,19 @@ def _parent_run(args: argparse.Namespace) -> _BenchResult:
     _force_utf8()
     if int(args.n) < 1:
         raise ValueError("--n должно быть >= 1")
+    # Окружение сервиса ставим ДО работы с ядром: лок и каталог состояния сервиса
+    # считает одна функция ядра (`state_path_for`), и одна и та же переменная
+    # уходит и родителю, и детям — иначе путь сервиса зависел бы от того, кто
+    # раньше импортировал `core.jobstate`.
+    os.environ.update(_service_env_vars(args))
     wavs = _prepare_wavs(args)
     if not wavs:
         raise ValueError("нечего мерить: задай --src (видео) или --wav (готовый звук)")
     if not args.dry:
         _preflight_models(args)
+    service_start_s = _start_service(args)
+    if args.service and service_start_s is None:
+        raise RuntimeError("сервис моделей не поднялся — запусти без --service")
     if args.python:
         python = str(args.python)
     elif args.dry:
@@ -847,8 +1071,9 @@ def _parent_run(args: argparse.Namespace) -> _BenchResult:
                                % (index, rec["error"], _child_dump(rec, collected)))
         records.append(rec)
     result = _BenchResult(records=records, wall_s=wall_s, vram_peak_mib=sampler.peak_mib,
-                          vram_samples=sampler.samples, dry=bool(args.dry), table="",
-                          ok=True)
+                          vram_samples=sampler.samples, dry=bool(args.dry),
+                          service=bool(args.service), service_start_s=service_start_s,
+                          table="", ok=True)
     result.table = _format_table(result)
     sys.stdout.write(result.table + "\n")
     sys.stdout.flush()

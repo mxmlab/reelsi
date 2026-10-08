@@ -1,5 +1,7 @@
 # Платформы: чем заменить CUDA на Mac и AMD
 
+English version: [docs/PLATFORMS.en.md](PLATFORMS.en.md).
+
 Не проверено на живом железе: это заметки о переносе на macOS, AMD и Linux. Проверенная платформа одна — Windows + NVIDIA. Исключение — раздел 8 (встроенный рендер без After Effects): он снят с живого прогона на Linux (Ubuntu 24.04, RTX 3050 Laptop в контейнере).
 
 Reelsi писался под Windows + NVIDIA + Adobe. Вопрос «а на маке пойдёт?» не имеет

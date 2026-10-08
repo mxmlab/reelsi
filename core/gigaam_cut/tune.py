@@ -20,6 +20,7 @@ from typing import Any
 import numpy as np
 import soundfile as sf
 from core import paths
+from core import model_service
 from core.app_meta import console_emit, wrap_emit
 from core.umsg import ReelsiError
 
@@ -488,13 +489,32 @@ def _speech_mask(db: Any, thr: float, hop: float, words: Any, n: int, qrun: int)
     return mask
 
 
-def _cut_breaths(keep: list[tuple[float, float]], assign: list[Any] | None, wav_path: str, words: Any, out: str, emit: Any = console_emit) -> tuple[list[tuple[float, float]], list[Any] | None, list[Any]]:
+def breath_detector_ready() -> bool:
+    """Работает ли детектор вздохов ЗДЕСЬ: пакеты и json модели на месте.
+
+    Нужно нарезке, чтобы не поднимать сервис ради вздохов, которых не будет: без
+    `breath_model.json` (или без silero-vad/transformers) детектор выключен, и
+    прогрев CED в сервисе был бы чтением весов впустую. Спрашиваем той же дверью,
+    что и сам детектор (`breath.available`), а путь к модели спикера берём молча:
+    строку «вздохи: модель спикера …» печатает `detect`, и второй раз она не нужна.
+    """
+    from core import breath
+    ok, _why = breath.available(breath_model_path(lambda *a, **k: None))
+    return ok
+
+
+def _cut_breaths(keep: list[tuple[float, float]], assign: list[Any] | None, wav_path: str, words: Any, out: str, emit: Any = console_emit, service: bool = False) -> tuple[list[tuple[float, float]], list[Any] | None, list[Any]]:
     """Вздохи/«кхе» после подгона резов: уверенные вырезаем, спорные — в сайдкар.
 
     Отдельным шагом, а не внутри refine_keep: тут работают внешние модели (Silero
     + CED), их может не быть в окружении, и падать из-за этого посреди нарезки
     нельзя. `<stem>.breaths.json` читает редактор нарезки и рисует метки — то, что
     модель не уверена, юзер снимает одним кликом.
+
+    `service=True` — CED считает сервис моделей: файловый замок `.gpu` тогда НЕ
+    берётся (его заменяют слоты сервиса), и зовёт этот путь только тот, кто в замке
+    не стоит. Отказ сервиса (`ServiceUnavailable`) наружу не глушится: вызывающий
+    обязан посчитать шаг заново под замком, а не оставить его несделанным.
     """
     if not os.path.isfile(wav_path):
         # Пропажа звука — отказ (пайплайн перевыпустит WAV или завершится), а
@@ -504,8 +524,10 @@ def _cut_breaths(keep: list[tuple[float, float]], assign: list[Any] | None, wav_
     marks: list[Any] = []
     try:
         from core import breath
-        marks = breath.detect(wav_path, keep, words, emit=emit, path=breath_model_path(emit))
+        marks = breath.detect(wav_path, keep, words, emit=emit,
+                              path=breath_model_path(emit), service=service)
     except ReelsiError: raise
+    except model_service.ServiceUnavailable: raise
     except Exception as ex:
         emit("  детектор вздохов не отработал ({err_type}: {err})",
              err_type=type(ex).__name__, err=str(ex), flush=True)

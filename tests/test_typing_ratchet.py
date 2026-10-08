@@ -150,6 +150,7 @@ LOWER_BOUND = (
     "core/falign_cli.py",
     "core/fonts.py",
     "core/gigaam_cache.py",
+    "core/model_service.py",
     "core/gigaam_cut/__init__.py",
     "core/gigaam_cut/__main__.py",
     "core/gigaam_cut/asr.py",
@@ -195,6 +196,7 @@ LOWER_BOUND = (
     "tools/verify_ae.py",
     "tools/webui_test.py",
     "tools/route_coverage.py",
+    "tests/test_docs_bilingual.py",
 )
 
 # Каталоги, которые сканирует сторож писателей .project.json: код, а не тесты

@@ -192,6 +192,40 @@ function fillStepConcurrency(){if(!AICFG)return;
   const cut=$('conc_cut'), mk=$('conc_markup');
   if(cut){cut.value=ov.cut!=null?ov.cut:'';cut.placeholder=(sc.cut!=null?sc.cut:'…');}
   if(mk){mk.value=ov.yellow!=null?ov.yellow:'';mk.placeholder=(sc.yellow!=null?sc.yellow:'…');}}
+// «Где считать модели»: на чём сервис моделей считает распознавание, вздохи и эмоции.
+// Серые цифры под «Роликов одновременно» — это ПОТОЛОК СЛОТОВ этой машины, посчитанный
+// СЕРВЕРОМ тем же кодом, что сервис (GET /api/model_cap): сам сервис для подписи не
+// поднимается и видеопамять не занимает. Пусто под полем — вопроса не задавали (ответа
+// ещё нет или вкладку не открывали): выдумывать число нельзя, его знает только сервер.
+let MODELCAP=null;   // {device:'cuda'|'mps'|'cpu', slots:N, auto:bool, setting:'auto'} | null
+function modelDeviceLabel(d){
+  return d==='cuda'?t('видеокарта'):d==='mps'?t('ускорение Metal'):t('процессор');}
+function fillModelDevice(){if(!AICFG)return;
+  const sel=$('model_device');if(!sel)return;
+  const cur=AICFG.model_device||'auto';
+  sel.value=(cur==='cuda'||cur==='cpu')?cur:'auto';   // чужое/битое — показываем «авто»
+  fillModelSlots();}
+function fillModelSlots(){const el=$('modelslots');if(!el)return;
+  el.textContent=(MODELCAP&&MODELCAP.slots)?t('на этой машине модели: ')+modelDeviceLabel(MODELCAP.device)
+    +t(', слотов ')+MODELCAP.slots:'';}
+async function loadModelCap(){try{
+    const d=await (await fetch('/api/model_cap')).json();
+    MODELCAP=d&&d.ok?d:null;
+  }catch(e){MODELCAP=null;}
+  fillModelSlots();}
+async function setModelDevice(value){
+  let d;
+  try{d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'set_model_device',value})})).json();}
+  catch(e){toast(t('Сервер не ответил: ')+e);fillModelDevice();return;}
+  if(d.error){toast('⚠ '+errText(d));fillModelDevice();return;}
+  AICFG.model_device=d.model_device||value;
+  fillModelDevice();
+  // Потолок слотов у другого устройства ДРУГОЙ: видеокарта считает по свободной
+  // видеопамяти, процессор — по ядрам. Подпись без перезапроса показывала бы прежнее
+  // число, то есть врала бы ровно в тот момент, когда на неё и смотрят.
+  await loadModelCap();
+  toast(t('модели: ')+modelDeviceLabel(value));}
 // Сколько роликов шаг гонит СРАЗУ (сохраняется в ai_config.step_concurrency_override).
 // Разметка — это ТРИ шага (жёлтые, вставки и ИИ-интро): одно число пишем в каждый, иначе
 // половина разметки шла бы по своему числу, а половина — по профилю. Пусто — снять своё число.
@@ -443,7 +477,7 @@ function setVadThreshold(key,val){
   }
 }
 function fillAIProfileSelects(){if(!AICFG)return;
-  fillStepReasoning();fillStepProfiles();fillStepConcurrency();fillCutAsr();
+  fillStepReasoning();fillStepProfiles();fillStepConcurrency();fillModelDevice();fillCutAsr();
   const om=$('omniprofile');
   if(om){const cur=AICFG.active_omni||'__local__';
     const LOCALS=['__local__','__gigaam__'];
@@ -956,6 +990,7 @@ async function openAISettings(tab){
   aiSetTab(tab||'models');   // со страницы приходим сразу на её вкладку
   loadTerms();               // словарь и списки цензуры живут на сервере (файлами рядом
   loadCensor();              // с censor.py) — перечитываем на каждом заходе в настройки
+  loadModelCap();            // потолок слотов сервиса моделей — под «Роликов одновременно»
   openModal('mbAISettings');
   setTimeout(()=>vidSyncCaps(),0);
   aiStatsLoad();             // сводка вызовов — всегда свежая при открытии ⚙

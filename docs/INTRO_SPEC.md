@@ -1,5 +1,7 @@
 # Интро «текст за спиной» — спецификация
 
+English version: [docs/INTRO_SPEC.en.md](INTRO_SPEC.en.md).
+
 Восстановлено из компа C1235 (`2.json`). Реализовано в `core/xml2ae/`
 (`to_ae_full(..., intro=[{text,color}])`) + панель интро в предпросмотре.
 

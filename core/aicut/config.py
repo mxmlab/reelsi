@@ -707,6 +707,20 @@ def cut_asr_engine(emit: Callable[..., Any] | None = None) -> str:
     return "gigaam"
 
 
+def model_device_cfg() -> str:
+    """«Где считать модели» (сервис моделей): `auto` / `cuda` / `cpu`.
+
+    Читает то же поле, что пишет действие `set_model_device`, — но через модуль
+    устройства (`core.device.model_device`), а не своим разбором: слово проверяется
+    в ОДНОМ месте, и «что сохранили» и «что применили» не могут разойтись. Отказ
+    конфига (нет файла, битый JSON) — «авто»: сервис обязан подняться на любой машине.
+    """
+    try:
+        return _device.model_device()
+    except Exception:
+        return _device.DEVICE_AUTO
+
+
 # Свечение жёлтого глитча интро: встроенные эффекты или Deep Glow 2
 GLITCH_GLOW_MODES = ("builtin", "deepglow2")
 

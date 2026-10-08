@@ -36,15 +36,17 @@ os.umask(_UMASK)
 _NEW_FILE_MODE = 0o666 & ~_UMASK
 
 
-def _carry_mode(path: str, tmp: str) -> None:
+def _carry_mode(path: str, tmp: str, new_mode: int | None = None) -> None:
     """Перенести на tmp права (и владельца на POSIX) уже существующего файла.
 
     Файла нет — ставим права нового файла по umask: у mkstemp-файла они 0600, и
-    без этого свежесозданный конфиг не прочитал бы никто, кроме владельца."""
+    без этого свежесозданный конфиг не прочитал бы никто, кроме владельца.
+    `new_mode` — права нового файла, когда умолчания мало: файл с ключом доступа
+    (адрес сервиса моделей) обязан остаться 0600 независимо от umask."""
     try:
         st = os.stat(path)          # os.stat, а не lstat: path уже realpath
     except OSError:
-        os.chmod(tmp, _NEW_FILE_MODE)
+        os.chmod(tmp, _NEW_FILE_MODE if new_mode is None else new_mode)
         return
     os.chmod(tmp, stat.S_IMODE(st.st_mode))
     if os.name == "posix":
@@ -62,7 +64,7 @@ def _carry_mode(path: str, tmp: str) -> None:
 
 def _atomic_write(path: str | os.PathLike[str], write: Callable[[IO[Any]], object],
                   mode: str = "w", encoding: str = "utf-8",
-                  newline: str | None = None) -> None:
+                  newline: str | None = None, file_mode: int | None = None) -> None:
     """Одна точка записи для функций модуля: tmp рядом с целью + fsync + replace.
 
     Имя tmp уникально (mkstemp): два одновременных писателя в один файл не
@@ -71,7 +73,9 @@ def _atomic_write(path: str | os.PathLike[str], write: Callable[[IO[Any]], objec
     бывает). Долговечность переименования при отбое питания — на POSIX через fsync
     каталога, на Windows — журналом NTFS. mode="w" или "wb". Для текстового режима
     newline=None (как у open по умолчанию) — переводы строк не трогаем: вызывающий
-    сам решает, нужен ли ему CRLF."""
+    сам решает, нужен ли ему CRLF. file_mode — права НОВОГО файла, когда обычные
+    (0666 & ~umask) не годятся: файл адреса сервиса моделей хранит `authkey`, и он
+    обязан быть только для владельца."""
     path = os.path.realpath(path)
     d = os.path.dirname(path) or "."
     # Цель только для чтения: прямой open(path, "w") отказал бы, а os.replace молча
@@ -88,7 +92,9 @@ def _atomic_write(path: str | os.PathLike[str], write: Callable[[IO[Any]], objec
             write(f)
             f.flush()
             os.fsync(f.fileno())
-        _carry_mode(path, tmp)
+        # Права: у существующего файла — его собственные (см. _carry_mode), у нового —
+        # либо заданные вызывающим, либо как у open(..., "w").
+        _carry_mode(path, tmp, file_mode)
         os.replace(tmp, path)
     except ReelsiError: raise
     except Exception:
@@ -112,9 +118,16 @@ def _atomic_write(path: str | os.PathLike[str], write: Callable[[IO[Any]], objec
             pass  # fsync каталога не удался — данные уже записаны
 
 
-def atomic_json_dump(path: str | os.PathLike[str], obj: Any, **kw: Any) -> None:
-    """Записать obj в path атомарно (см. _atomic_write)."""
-    _atomic_write(path, lambda f: json.dump(obj, f, ensure_ascii=False, **kw))
+def atomic_json_dump(path: str | os.PathLike[str], obj: Any, *, file_mode: int | None = None,
+                     **kw: Any) -> None:
+    """Записать obj в path атомарно (см. _atomic_write).
+
+    `file_mode` — права НОВОГО файла (обычно берутся по umask). Нужны файлам,
+    которые обязаны быть закрытыми независимо от umask: в адресе сервиса моделей
+    лежит `authkey`, и читать его должен только владелец.
+    """
+    _atomic_write(path, lambda f: json.dump(obj, f, ensure_ascii=False, **kw),
+                  file_mode=file_mode)
 
 
 def atomic_text_write(path: str | os.PathLike[str], text: str, encoding: str = "utf-8",

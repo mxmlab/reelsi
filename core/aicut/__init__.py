@@ -57,6 +57,7 @@ from .config import (   # noqa: F401
                      REASONING_MODELS, STEP_REASONING_DEFAULT, STEP_TITLES,
                      _default_ai_config, _profile_dict, _seed_ai_config,
                      apply_profile_headers, cut_asr_engine, glitch_glow_mode, ae_build_workers_cfg, key_env_name, load_ai_config, model_supports_caching,
+                     model_device_cfg,
                      mask_ai_key, mask_header_value, mask_headers, resolve_header_mask,
                      normalize_base_url, omni_local_engine, parse_headers_text, reason_budget,
                      unmask_ai_key, unmask_header_value, unmask_headers,

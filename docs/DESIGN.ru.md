@@ -1,6 +1,6 @@
-# Reelsi — Style Reference
+# Reelsi — справочник по стилю
 
-Russian version: [docs/DESIGN.ru.md](DESIGN.ru.md).
+English version: [docs/DESIGN.md](DESIGN.md).
 
 > Чертёж, процарапанный в обсидиане: типографика и волосяные границы вырезают
 > светом пространство из чистого чёрного. Плотный инструментальный UI.

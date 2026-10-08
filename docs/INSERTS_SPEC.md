@@ -1,5 +1,7 @@
 # Вставки фото/видео — спецификация
 
+English version: [docs/INSERTS_SPEC.en.md](INSERTS_SPEC.en.md).
+
 Восстановлено из дампа AE-компа **C1221** (`1.json`). Дефолты = средние по 1221.
 Реализовано в `core/xml2ae/build.py` (`to_ae_full(..., inserts=[...])`) + панель вставок в UI.
 

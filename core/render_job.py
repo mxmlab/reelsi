@@ -45,6 +45,7 @@ from core.aerender import (AE_FAST_EXIT_SEC, AE_STALL_KILL_SEC, AE_STALL_WARN_SE
 from core.jobstate import (item_done, item_fail, item_set, items_init, journal_finish,
                            kill_tree, log_entry, pump_stdout, sysexit_text,
                            task_popen_kwargs, _cross_lock_release)
+from core import model_service
 from core.umsg import ReelsiError, umsg
 from core.applog import get_logger
 
@@ -2077,6 +2078,29 @@ def prepare_render_task(engine: str = "", render_dir: str = "", outdir: str = ""
                       host=host, title=_ENGINE_TITLES[eng])
 
 
+def model_service_shutdown(job: RenderJob) -> None:
+    """Выгрузить сервис моделей ПЕРЕД рендером: модели ему не нужны, VRAM нужна ему.
+
+    Рендер — единственный тяжёлый участок, которому сервис не помогает ничем: ни ASR,
+    ни вздохи, ни эмоции в нём не считаются. А видеопамять ему нужна целиком — на
+    Windows переполнение VRAM не даёт честного OOM, оно вешает машину. Поэтому перед
+    стартом рендера сервис гасится, а не ждёт простоя.
+
+    Ошибка выгрузки рендер НЕ роняет: сервиса могло не быть вовсе (`False` — обычное
+    дело), а чужой процесс мог не отозваться. В худшем случае карту займёт чужой
+    сервис, и рендер упадёт сам, с честной причиной, — но не «не запустился, потому
+    что не выгрузился сервис, которого нет». Причина при этом уходит СТРОКОЙ В ЖУРНАЛ
+    рендера: без неё «не выгрузился» было бы не видно нигде.
+    """
+    try:
+        if model_service.shutdown():
+            job.emit("сервис моделей выгружен — видеопамять отдана рендеру")
+    except Exception as e:
+        # Широкий except нарочно: у сервиса десяток своих исключений
+        # (`ServiceUnavailable` — лишь одно из них), и ни одно не повод не рендерить.
+        job.emit("сервис моделей не выгрузился ({err}) — рендер продолжаю", err=str(e))
+
+
 def run_render_job(job: RenderJob, norm: Sequence[dict[str, Any]], outdir: str | None,
                    render_dir: str, engine: str = "ae", host: str = "") -> None:
     """Диспетчер рендера по ДВИЖКУ.
@@ -2086,8 +2110,12 @@ def run_render_job(job: RenderJob, norm: Sequence[dict[str, Any]], outdir: str |
     значение — прежний AE-путь, и он не меняется: набор из ОДНОГО ролика идёт ровно
     как раньше (`run_render_single`), набор из нескольких — ОДИН проект AE и один общий
     Reelsi_all.jsx (решение пользователя 2026-09-11; радио multimode на рендер не влияет).
+
+    Выгрузка сервиса моделей — ЗДЕСЬ, до развилки по движку, и это единственное её
+    место: она нужна обоим движкам (AE и встроенному) и ровно один раз на прогон.
     """
     try:
+        model_service_shutdown(job)
         if not norm:
             job.emit("Набор пуст")
             return

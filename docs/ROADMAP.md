@@ -1,5 +1,7 @@
 # ROADMAP — открытые направления и история решений
 
+English version: [docs/ROADMAP.en.md](ROADMAP.en.md).
+
 ## Ротоскоп — сделано
 Автоматизирован через модуль `core/roto.py` (локальная GPU-модель Robust Video Matting, RVM). Вырезает альфа-маску персонажа для After Effects. Подробности и инварианты — в `docs/ARCHITECTURE.md` (строка `core/roto.py` в таблице модулей и пункты в подводных камнях).
 

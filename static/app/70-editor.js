@@ -12,7 +12,9 @@
 // камеры 1 под плейхедом, оно же время запечённого трека). Блока «Монтаж» со своим
 // плеером и ползунком больше нет: два плеера на одном <video> спорили за currentTime,
 // и клик по таймлайну откатывался назад началом следующего куска монтажа.
-let ED={xml:'',blocks:[],fps:60,cam:'',dur:0,peaks:[],pps:80,sel:-1,play:false,raw:false,raf:0,
+// `step` — токен шага планировщика кадра (60-preview.js:pvFramePlan): по нему сторож-таймер
+// и rAF гасят друг друга, чтобы на кадр пришёлся ровно один шаг.
+let ED={xml:'',blocks:[],fps:60,cam:'',dur:0,peaks:[],pps:80,sel:-1,play:false,raw:false,raf:0,step:0,
   cs:0,drag:null,v0:0,v1:0,hist:[],cuts:[],br:[],brBand:0,
   // Поля плеера для дорожки голоса (60-preview.js:vt*): `cams` ставит openPreview —
   // дорожка и живой хост берут файл камеры 1 через vtCam1(P); `voicePanel` — id панели
@@ -153,9 +155,15 @@ function edPlay(){const v=PV.vids&&PV.vids[0];if(!v){toast(t('нет видео 
   v.muted=false;v.volume=MEDIA_VOL;v.style.opacity='1';v.style.zIndex='2';PV.vids.forEach((o,i)=>{if(i)o.style.zIndex='1';});
   v.play().catch(()=>{});
   vtLivePlay(ED);   // окно плагина открыто — команда «играть» уходит ему, с этого кадра
-  ED.raf=requestAnimationFrame(edTick);}
+  // Следующий кадр планирует ОБЩИЙ помощник кадра (60-preview.js): видимая вкладка — rAF,
+  // скрытая — таймер. В скрытой вкладке rAF не приходит вовсе, и без этого игра в фоне
+  // шла бы без перескока через вырезанное. `typeof` — стенды вырезают по функциям.
+  if(typeof pvFrameStart==='function')pvFrameStart(ED,edTick);}
 function edPause(){const was=ED.play;ED.play=false;const b=$('edplay');if(b)b.innerHTML=ico('play');
-  cancelAnimationFrame(ED.raf);if(PV.vids&&PV.vids[0])PV.vids[0].pause();spareStop(PV);camIdle(PV);
+  // Пауза снимает ОБА вида шага (rAF и таймер) и забывает цикл: иначе смена видимости
+  // вернула бы в фоне уже остановленную игру. `typeof` — стенды вырезают по функциям.
+  if(typeof pvFrameOff==='function')pvFrameOff(ED);
+  if(PV.vids&&PV.vids[0])PV.vids[0].pause();spareStop(PV);camIdle(PV);
   if(was)vtPause(ED);}   // стояли и без нас — дорожку голоса дважды не дёргаем
 // Стык блока в РЕДАКТОРЕ — тот же seek, что был в монтажном плеере, и болит он тут
 // сильнее: по этому таймлайну и делают правки. Дублёр общий с монтажным плеером, цель —
@@ -301,7 +309,10 @@ function edTick(){if(!ED.play)return;let v=PV.vids[0];ED.cs=v.currentTime;
   if(typeof vtOf==='function')vtTick(ED,ED.cs);   // дорожка обработанного голоса идёт за плейхедом
   if(typeof pvAudioLimit==='function')pvAudioLimit($('pvstage'),ED);   // строка про звук Firefox — по факту игры
   edArm();
-  edDraw();edUI();ED.raf=requestAnimationFrame(edTick);}
+  // В скрытой вкладке таймлайна не видно: рисование пропускаем, а перескок (выше), голос
+  // (vtTick) и разбег дублёра (edArm) — нет. Стенд без помощника считает вкладку видимой.
+  if(!(typeof pvFrameHidden==='function'&&pvFrameHidden())){edDraw();edUI();}
+  if(typeof pvFramePlan==='function')pvFramePlan(ED,edTick);}
 // Что под курсором: БЛИЖАЙШИЙ край блока или плейхед. Раньше цикл брал первый край,
 // попавший в допуск, а идёт он слева направо — и на общем зуме (163с на ~1300px) 8px
 // допуска это ЦЕЛАЯ СЕКУНДА исходника. У любой убранной паузы (0.3-0.8с) оба края щели

@@ -28,10 +28,39 @@ if platform.system() == "Darwin":
 
 VALID = ("cuda", "mps", "cpu")
 
+# Настройка «Где считать модели» (сервис моделей): авто / видеокарта / процессор.
+# Значения нарочно те же, что у `pick_device`, а не свои («gpu»/«cpu»): выбор уезжает
+# прямо в него, и второй словарь с переводом одного и того же разошёлся бы молча.
+# `auto` — не устройство, а «реши сам» (cuda, потом mps, потом cpu).
+DEVICE_AUTO = "auto"
+DEVICE_CHOICES = (DEVICE_AUTO,) + VALID
+
+
+def model_device() -> str:
+    """Выбор «Где считать модели» из сервисного конфига (`ai_config.json`).
+
+    Настройка живёт рядом с соседними настройками нарезки (см. `core.aicut.config`),
+    а не в localStorage: сервис — ОТДЕЛЬНЫЙ процесс, и в браузер за ней он не пойдёт.
+    Значение проверяется здесь, а не у вызывающего: битую запись (чужое слово, число)
+    трактуем как «авто», чтобы сервис не остался вовсе без устройства.
+
+    Импорт `core.aicut.config` — ВНУТРИ функции: тот сам импортирует этот модуль
+    (`step_concurrency` считает потолок по карте), и импорт на уровне модуля замкнул бы
+    кольцо. Отказ конфига (нет файла, битый JSON) — тоже «авто».
+    """
+    try:
+        from core.aicut.config import load_ai_config
+        val = load_ai_config().get("model_device")
+    except Exception:
+        return DEVICE_AUTO
+    return val if val in DEVICE_CHOICES else DEVICE_AUTO
+
 
 def pick_device(force: str | None = None) -> str:
     """Явный выбор (аргумент или env) приоритетнее авто. Всегда возвращает строку."""
     d = (force or "").strip().lower()
+    if d == DEVICE_AUTO:
+        d = ""                       # «авто» — это и есть ветка решения ниже
     if d in VALID:
         return d
     try:
@@ -44,6 +73,31 @@ def pick_device(force: str | None = None) -> str:
     except ReelsiError: raise
     except Exception:
         pass  # torch недоступен/без GPU — работаем на CPU
+    return "cpu"
+
+
+def auto_device_without_torch() -> str:
+    """Устройство для «авто» БЕЗ импорта torch: cuda -> mps -> cpu.
+
+    Второй копии решения быть не должно: подпись под настройкой («где считает
+    сервис») и сам сервис обязаны называть ОДНО устройство, иначе интерфейс обещает
+    не то, что будет. `pick_device` отвечает точнее (он спрашивает torch), но в
+    процессе интерфейса torch нет и быть не должно: импорт тянет CUDA и сотни
+    мегабайт контекста. Здесь тот же порядок, но по признакам, видимым без torch:
+
+    - карта NVIDIA видна `nvidia-smi` — «cuda». Проверка идёт на ЛЮБОЙ платформе:
+      имя `nvidia-smi` не содержит имён платформ, и на x86-линуксе с NVIDIA это
+      работает ровно так же (там эта же мера уже запасной ход у `free_vram_mib`);
+    - macOS на arm64 — «mps». Сборка torch под Intel-мак Metal не даёт, а
+      `pick_device` до этой ветки не доходит именно из-за отсутствия ускорения;
+    - всё прочее — «cpu».
+
+    Функция только для «авто»: выбор человека (`cuda`/`cpu`) досюда не доходит.
+    """
+    if nvidia_free_mib() is not None:
+        return "cuda"
+    if platform.system() == "Darwin" and platform.machine().lower() == "arm64":
+        return "mps"
     return "cpu"
 
 
@@ -117,6 +171,17 @@ def _nvidia_smi_free_mib() -> int | None:
         return int((r.stdout or "").strip().splitlines()[0])
     except Exception:
         return None  # нет nvidia-smi / не разобрали вывод — считаем, что меры нет
+
+
+def nvidia_free_mib() -> int | None:
+    """Свободная VRAM ОДНИМ `nvidia-smi`, без torch — для процессов без него.
+
+    Имя публичное нарочно: сервер интерфейса не держит torch вовсе (он нужен только
+    процессам счёта), а подпись «сколько моделей тянет эта машина» посчитать надо.
+    `free_vram_mib` тут не годится: он ПЕРВЫМ делом пробует torch и импортирует его —
+    в UI-процессе это сотни мегабайт и CUDA-контекст на ровном месте.
+    """
+    return _nvidia_smi_free_mib()
 
 
 def free_vram_mib() -> int | None:

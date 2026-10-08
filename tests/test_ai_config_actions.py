@@ -320,6 +320,19 @@ SCENARIOS = [
     {"name": "delete_profile: последний профиль", "method": "POST",
      "body": {"action": "delete_profile", "name": "Основной"}, "expect": "last_profile"},
 
+    # ---- set_model_device ----
+    # «Где считать модели» (⚙ → «Нарезка»): авто / видеокарта / процессор. Настройка
+    # МАШИННАЯ, как видеокодек: сервис моделей читает её при старте и при каждом
+    # запросе клиента. Последний сценарий возвращает «авто», чтобы состояние конфига
+    # вернулось к прежнему (журнал `config` ниже не поехал).
+    {"name": "set_model_device: процессор", "method": "POST",
+     "body": {"action": "set_model_device", "value": "cpu"}},
+    {"name": "set_model_device: недопустимое значение", "method": "POST",
+     "body": {"action": "set_model_device", "value": "supergpu"},
+     "expect": "model_device_invalid"},
+    {"name": "set_model_device: пусто — снова авто", "method": "POST",
+     "body": {"action": "set_model_device", "value": ""}},
+
     # ---- диспетчер ----
     {"name": "неизвестное действие", "method": "POST",
      "body": {"action": "нетакого"}, "expect": "unknown_action"},

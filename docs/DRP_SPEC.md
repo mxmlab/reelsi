@@ -1,5 +1,7 @@
 # Экспорт в DaVinci Resolve — формат `.drp`
 
+English version: [docs/DRP_SPEC.en.md](DRP_SPEC.en.md).
+
 Статус: генерация `.drp` с нуля работает — камеры, нарезка, синхрон, вставки,
 титры, UI. Разобрано на DaVinci Resolve Studio 21.0.3.
 

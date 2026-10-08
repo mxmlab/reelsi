@@ -50,8 +50,12 @@
 каждой стороны). Раньше исходник читался целиком, и память со временем росли с его
 длиной; на длинной записи это и было главной ценой расчёта.
 
-Модель грузится на время расчёта и сразу выгружается: на Windows переполнение VRAM
-не даёт честный OOM, оно вешает машину.
+Модель живёт в СЕРВИСЕ моделей (`core/model_service.py`): он держит голову `emo` в
+памяти и считает окна в слотах, а расчёт шлёт ему окно и получает вероятности
+(`ServiceEmo`). Так каждый расчёт перестал платить за чтение весов и `import torch`
+— раньше `load_emo_model` шёл на каждый расчёт. Сервиса нет — прежний путь: модель
+грузится здесь и сразу выгружается, потому что на Windows переполнение VRAM не даёт
+честный OOM, оно вешает машину.
 
 Когда что считается:
 
@@ -572,11 +576,53 @@ def prosody(audio: Any, sr: int, spans: Sequence[tuple[int, float, float]]
 # --------------------------------------------------------------------------- #
 # Эмоция фразы (GigaAM-Emo)
 # --------------------------------------------------------------------------- #
-def load_emo_model() -> Any:
-    """Модель GigaAM с головой `emo`. Импорт ленивый: без неё модуль импортируется.
+class ServiceEmo:
+    """Голова `emo` в СЕРВИСЕ моделей: счёт идёт там, а не в этом процессе.
 
-    Отдельно проверяем наличие пакета: `ImportError` из `import gigaam` — понятная
-    причина, а не «не посчиталось», и в логе она так и звучит.
+    Раньше каждая сборка читала веса заново (`load_emo_model`), считала и сразу
+    выгружала (`release_emo`) — то есть на каждый расчёт платила за чтение головы.
+    Сервис держит веса в памяти и считает их в слотах, а ролик не платит ни за
+    чтение весов, ни за `import torch`; выгрузкой занят простой сервиса, поэтому
+    `release` у модели из сервиса ничего не делает.
+
+    Отказал сервис посреди расчёта (упал, не прочитал веса) — считаем здесь:
+    `local()` поднимает модель этого процесса ровно один раз. Сила жёлтых — не
+    повод ронять сборку, и «сервиса нет» уже случалось (фаза 1).
+    """
+
+    def __init__(self) -> None:
+        self._local: Any = None
+
+    def probs(self, window: Any, sr: int) -> Mapping[str, float]:
+        """Вероятности эмоций окна: их считает сервис, иначе — своя модель."""
+        from core import model_service
+        try:
+            return model_service.emotion_probs(window, sr)
+        except model_service.ServiceUnavailable as ex:
+            log.warning("сервис моделей отказал на эмоциях (%s) — считаю здесь", ex)
+            return emotion_probs(window, self.local(), sr)
+
+    def local(self) -> Any:
+        """Модель ЭТОГО процесса — поднимается, только если сервис отказал."""
+        if self._local is None:
+            self._local = load_emo_model_local()
+        return self._local
+
+    def release(self) -> None:
+        """Отпустить локальную модель, если она поднималась (веса сервиса — не наши)."""
+        if self._local is not None:
+            local, self._local = self._local, None
+            release_emo(local)
+
+
+def load_emo_model_local() -> Any:
+    """Прочитать голову `emo` в ЭТОМ процессе — без кеша и без сервиса.
+
+    Дверь двух путей: запасного (`load_emo_model`, когда сервиса нет) и самого
+    сервиса моделей, который держит веса у себя. Импорт ленивый: без `gigaam`
+    модуль всё равно импортируется. Отдельно проверяем наличие пакета:
+    `ImportError` из `import gigaam` — понятная причина, а не «не посчиталось», и
+    в логе она так и звучит.
     """
     import importlib.util
     if importlib.util.find_spec("gigaam") is None:
@@ -588,12 +634,34 @@ def load_emo_model() -> Any:
     return gigaam.load_model("emo", download_root=gigaam_dir())
 
 
+def load_emo_model() -> Any:
+    """Модель эмоций: голова `emo` в СЕРВИСЕ моделей, если он отвечает.
+
+    Возвращает либо обёртку сервиса (`ServiceEmo`), либо настоящую модель этого
+    процесса. Форма ответа одна: `emotion_probs` узнаёт обёртку и зовёт сервис,
+    поэтому у вызывающего (`compute_emphasis`) ветки нет вовсе.
+
+    Сервиса нет (не стартовал, весов у него нет) — прежний путь: веса здесь, и
+    `release_emo` отпускает их сразу после расчёта.
+    """
+    from core import model_service
+    if model_service.preload_emo():
+        return ServiceEmo()
+    log.info("сервис моделей недоступен — голова emo грузится в этом процессе")
+    return load_emo_model_local()
+
+
 def release_emo(model: Any) -> None:
     """Выгрузить модель эмфазы из видеопамяти.
 
     На Windows переполнение VRAM не даёт честный OOM — оно вешает машину, поэтому
-    модель отпускается СРАЗУ после расчёта (как RVM в `core.roto.release`).
+    модель отпускается СРАЗУ после расчёта (как RVM в `core.roto.release`). Модель
+    из сервиса отпускать нечем: её веса живут в сервисе, выгрузкой занят его
+    простой; у обёртки отпускается только её собственная, запасная модель.
     """
+    if isinstance(model, ServiceEmo):
+        model.release()
+        return
     try:
         del model
     except Exception:
@@ -604,6 +672,10 @@ def release_emo(model: Any) -> None:
 
 def emotion_probs(window: Any, model: Any, sr: int) -> Mapping[str, float]:
     """Вероятности эмоций ОКНА ЗВУКА: {angry, sad, neutral, positive}.
+
+    `model` — либо настоящая голова `emo`, либо `ServiceEmo` (веса живут в сервисе):
+    во втором случае окно уезжает туда, а имена эмоций и формула остаются прежними —
+    их считает этот же код на стороне сервиса.
 
     `get_probs` у GigaAM-Emo принимает ПУТЬ к файлу: внутри `prepare_wav` ->
     `load_audio` -> ffmpeg, а окно здесь — уже прочитанный массив. Отдать массив в
@@ -617,6 +689,8 @@ def emotion_probs(window: Any, model: Any, sr: int) -> Mapping[str, float]:
     `sr` — частота окна: звук читается `librosa.load(..., sr=...)` в частоте проекта
     (обычно 22050), а модель ждёт 16 кГц.
     """
+    if isinstance(model, ServiceEmo):
+        return model.probs(window, sr)
     import numpy as np
     import torch
     import torch.nn.functional as F
@@ -848,8 +922,10 @@ def compute_emphasis(inp: EmphasisInputs) -> dict[int, float]:
 
     Звук читается ОКНАМИ вокруг жёлтых слов (`audio_windows`), а не исходником целиком.
     Заглушки для тестов: `inp.audio_for` (звук целиком) и `inp.audio_window` (окно),
-    `load_emo_model`/`emotion_probs` — модель эмоции, `prosody` — признаки. Тяжёлое
-    (модель) грузится ЗДЕСЬ и выгружается в finally.
+    `load_emo_model`/`emotion_probs` — модель эмоции, `prosody` — признаки. Модель
+    берётся у сервиса (`load_emo_model` отдаёт `ServiceEmo`), и `release_emo` у неё
+    ничего не отпускает — выгрузкой занят простой сервиса; если сервиса нет, модель
+    грузится здесь и выгружается в finally, как раньше.
 
     Тон и RMS окна считаются ОДИН раз на всё объединённое окно (`_merge_windows` ->
     `prosody` -> `tone_track`), а не на каждое слово: пословный `yin` (а до него `pyin`)

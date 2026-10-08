@@ -13,7 +13,9 @@
 //   'clips' — вставки шага 2 (CLIPS[curIns].inserts, поля start_sec/duration_sec);
 //   'ae'    — AE-вставки шага 3 (INS, поля start_s+start_f/dur_s+dur_f) + оверлей ИНТРО.
 let IPV={vids:[],bufs:[],scrubbing:false,scrubT:0,
-  segs:[],audio:[],words:[],dur:0,contentDur:0,fps:60,aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,playing:false,raf:0,xml:'',cur:-1,intro:[],introCur:-1,plan:null,insShift:null,insVids:new Map(),dims:new Map(),roto:[]};
+  // `step` — токен шага планировщика кадра (60-preview.js:pvFramePlan): по нему сторож-таймер
+  // и rAF гасят друг друга, чтобы на кадр пришёлся ровно один шаг.
+  segs:[],audio:[],words:[],dur:0,contentDur:0,fps:60,aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,playing:false,raf:0,step:0,xml:'',cur:-1,intro:[],introCur:-1,plan:null,insShift:null,insVids:new Map(),dims:new Map(),roto:[]};
 let IPVMODE='clips';
 // нормализация пути вставки (Windows: слеши и регистр) — ОДИН источник для ensureJobs,
 // applyInsMoved, сопоставления плана и драга в предпросмотре
@@ -277,7 +279,7 @@ async function ipvOpen(xml){
   const tra=IPV.vt;vtStop(IPV);
   ipvPause();insVidFreeAll();
   IPV={vids:[],bufs:[],scrubbing:false,scrubT:0,
-    segs:[],audio:[],words:[],dur:0,fps:60,aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,defAt:0,stats:{styk:0,swap:0,seek:0,cam:0,stale:0,back:0},playing:false,raf:0,xml:xml||'',cur:-1,intro:[],introCur:-1,plan:null,insShift:null};
+    segs:[],audio:[],words:[],dur:0,fps:60,aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,defAt:0,stats:{styk:0,swap:0,seek:0,cam:0,stale:0,back:0},playing:false,raf:0,step:0,xml:xml||'',cur:-1,intro:[],introCur:-1,plan:null,insShift:null};
   IPV.vt=tra;
   const stage=$('ipvstage');
   pvApplyStageAspect(null, stage);
@@ -398,7 +400,11 @@ function ipvStep(){if(!IPV.playing)return;
   if(typeof vtTick==='function')vtTick(IPV,st.tm);   // дорожка обработанного голоса идёт за монтажом (и глушит звук камеры)
   if(typeof pvAudioLimit==='function')pvAudioLimit($('ipvstage'),IPV);   // строка про звук Firefox — по ходу игры
   ipvUI(st.tm);}
-function ipvTick(){if(!IPV.playing)return;ipvStep();IPV.raf=requestAnimationFrame(ipvTick);}
+// Следующий шаг ведёт ОБЩИЙ планировщик кадра (60-preview.js): видимая вкладка идёт на
+// rAF, скрытая — на таймер. Раньше здесь был только rAF, и в фоне предпросмотр вставок
+// игрался с вырезанным (шаг не приходил вовсе).
+function ipvTick(){if(!IPV.playing)return;ipvStep();
+  if(typeof pvFramePlan==='function')pvFramePlan(IPV,ipvTick);}
 function ipvPlay(){if(!IPV.vids.length)return;IPV.playing=true;$('ipvplay').innerHTML=ico('pause');
   // Граф Web Audio будится ОДНОЙ дверью на все плееры (audioWake) — и из обработчика
   // нажатия, а не побочно через музыку (`musicElSync` в конце): звук камеры идёт только
@@ -408,10 +414,14 @@ function ipvPlay(){if(!IPV.vids.length)return;IPV.playing=true;$('ipvplay').inne
   // ставит и снимает vtTick — здесь она важна в первый кадр, до тика.
   IPV.vids[0].muted=!!IPV.voiceMute;IPV.vids[0].play().catch(()=>{});sparePrime(IPV);ipvApplyVisual(ipvNow(),true);
   if(typeof vtTick==='function')vtTick(IPV,ipvNow());
-  IPV.raf=requestAnimationFrame(ipvTick);
-  clearInterval(IPV.itv);IPV.itv=setInterval(ipvStep,120);musicElSync();}   // страховка: rAF молчит в фоновой вкладке
+  // Шаг ведёт ОДИН планировщик кадра (60-preview.js): страховочный setInterval убран —
+  // скрытую вкладку он больше не закрывает (её ведёт таймер планировщика), а в видимой
+  // складывался с rAF и гнал плейхед быстрее кадра. `typeof` — стенды вырезают по функциям.
+  if(typeof pvFrameStart==='function')pvFrameStart(IPV,ipvTick);
+  musicElSync();}
 function ipvPause(){IPV.playing=false;const b=$('ipvplay');if(b)b.innerHTML=ico('play');
-  cancelAnimationFrame(IPV.raf);clearInterval(IPV.itv);IPV.vids.forEach(v=>v.pause());spareStop(IPV);camIdle(IPV);
+  if(typeof pvFrameOff==='function')pvFrameOff(IPV);   // пауза снимает и rAF, и таймер
+  IPV.vids.forEach(v=>v.pause());spareStop(IPV);camIdle(IPV);
   const ov=$('ipvins');if(ov){const iv=ov.querySelector('video');if(iv)iv.pause();}musicElSync();sfxPause();vtPause(IPV);}
 function ipvToggle(){IPV.playing?ipvPause():ipvPlay();}
 

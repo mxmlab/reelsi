@@ -7,6 +7,7 @@ GigaAM v3-CTC слушает файл целиком и сам отдаёт по
 Здесь же освобождение VRAM.
 """
 from __future__ import annotations
+import itertools
 import re
 from typing import Any
 import numpy as np
@@ -14,6 +15,13 @@ import soundfile as sf
 from .tune import CHUNK, SR
 from core.app_meta import console_emit, wrap_emit
 from core.umsg import ReelsiError
+
+# Счётчик временных окон распознавания. Имя окна складывалось из pid и позиции,
+# чего хватало, пока ролик был один на процесс. В сервисе моделей распознавания
+# идут СЛОТАМИ в ОДНОМ процессе: два окна на одной и той же позиции писались в
+# один файл, одно удаляло его под другим, и второе падало «окно 0s не
+# расшифровалось» — окно терялось молча (поймано тестом слотов).
+_WIN_SEQ = itertools.count()
 
 
 
@@ -50,6 +58,19 @@ def _word(w: Any, t0: float = 0.0) -> dict[str, Any]:
     return d
 
 
+def transcribe_loaded(
+    model: Any, wav_path: str, emit: Any = console_emit
+) -> list[dict[str, Any]]:
+    """Пословные тайминги ГОТОВОЙ моделью GigaAM (веса уже в памяти).
+
+    Общая функция двух путей: локального (`transcribe_words_whole`, где модель
+    грузится и выгружается тут же) и сервиса моделей (`core.model_service`, где
+    модель живёт между роликами). Логика распознавания обязана быть ОДНОЙ:
+    копия разъехалась бы на первой же правке пооконного разбора.
+    """
+    return _transcribe_words_manual(model, wav_path, emit=emit)
+
+
 def transcribe_words_whole(
     wav_path: str, emit: Any = console_emit, model_name: str = "v3_ctc"
 ) -> tuple[str, list[dict[str, Any]]]:
@@ -75,7 +96,7 @@ def transcribe_words_whole(
     # PermissionError из недр пакета вместо понятного отказа (core/gigaam_cache.py).
     model = gigaam.load_model(model_name, download_root=gigaam_dir())
     try:
-        words = _transcribe_words_manual(model, wav_path, emit=emit)
+        words = transcribe_loaded(model, wav_path, emit=emit)
     finally:
         del model
         _free_torch()
@@ -87,15 +108,51 @@ def transcribe_words_whole(
     return full_text, words
 
 
+def words_with_model(
+    wav_path: str, emit: Any, head: str,
+    model_factory: Any = None,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Слова GigaAM целиком: ОДНА модель на ролик, выгрузка после.
+
+    Модель грузится ОДИН раз за ролик и живёт до конца функции: раньше её читали
+    дважды — сперва `aicut.unload_ours` (выгружая чужое под GigaAM), затем
+    `transcribe_words_for_cut` внутри `transcribe_words_whole`. Замер стендом:
+    загрузка моделей 4.6–7.2 с при счёте 3–6 с, то есть веса дороже самого
+    распознавания. Фабрика отдаёт пару «модель + выгрузка»: первая зовётся один
+    раз, вторая — в `finally`, на любом исходе (включая отказ окна внутри).
+
+    `model_factory` — необязательный: тесты и старые вызовы получают обычную
+    загрузку `gigaam.load_model` внутри `transcribe_words_whole`. Распознаёт
+    всегда `transcribe_loaded` — тело логики одно на всех.
+    """
+    if model_factory is None:
+        return transcribe_words_whole(wav_path, emit=emit, model_name=head)
+    make_model, release = model_factory(head)
+    model = make_model()
+    try:
+        words = transcribe_loaded(model, wav_path, emit=emit)
+    finally:
+        release(model)
+    words = [w for w in words if w["w"].strip()]
+    words.sort(key=lambda w: w["start"])
+    full_text = " ".join(w["w"] for w in words)
+    emit("GigaAM whole ({model}): {count} слов (родные тайминги)",
+         model=head, count=len(words), flush=True)
+    return full_text, words
+
+
 def transcribe_words_for_cut(
-    wav_path: str, engine: str = "gigaam", emit: Any = console_emit
+    wav_path: str, engine: str = "gigaam", emit: Any = console_emit,
+    model_factory: Any = None,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Единая точка входа для нарезки: распознавание слов с родными таймингами.
 
     Принимает движок с признаком cut=True из каталога asr_backends (CTC):
-    - gigaam* -> transcribe_words_whole(wav_path, emit=emit, model_name=<голова из поля 'gigaam'>);
+    - gigaam* -> слова по голове из поля 'gigaam' (`words_with_model`);
     - ctc:* -> asr_backends.transcribe_words(wav_path, engine=engine), full_text из слов;
     - движки без cut=True (RNN-T, whisper, omni) -> ValueError с понятным объяснением.
+
+    `model_factory` — как грузить GigaAM на локальном пути (см. `words_with_model`).
 
     Возвращает (full_text, words), где words — [{"w", "start", "end"}].
     """
@@ -108,8 +165,8 @@ def transcribe_words_for_cut(
         )
 
     if meta.get("gigaam"):
-        model_name = meta["gigaam"]
-        return transcribe_words_whole(wav_path, emit=emit, model_name=model_name)
+        return words_with_model(wav_path, emit=emit, head=str(meta["gigaam"]),
+                                model_factory=model_factory)
     else:
         words = asr_backends.transcribe_words(wav_path, engine=meta["id"], emit=emit)
         words = [w for w in (words or []) if (w.get("w") or "").strip()]
@@ -161,7 +218,8 @@ def _transcribe_words_manual(
             s1 = n
         if s1 - pos < int(0.5 * sr):
             break
-        tmp = os.path.join(tempfile.gettempdir(), "_gc_win_%d_%d.wav" % (os.getpid(), pos))
+        tmp = os.path.join(tempfile.gettempdir(),
+                           "_gc_win_%d_%d_%d.wav" % (os.getpid(), pos, next(_WIN_SEQ)))
         try:
             sf.write(tmp, a[pos:s1], sr, subtype="PCM_16")
             r = model.transcribe(tmp, word_timestamps=True)

@@ -93,6 +93,17 @@ CHILD_MARKER = "BENCH_GPU_CUT_JSON="
 # (упал до обработчика или снят по таймауту) — по хвосту видно причину.
 CHILD_TAIL_LINES = 40
 
+# Ровно те ключи, которыми замер уводит сервис моделей к себе (см.
+# `_service_env_vars`). Список нужен не для чтения, а чтобы вернуть окружение
+# процесса как было: ключ, которого до замера НЕ было, после замера обязан
+# исчезнуть, а не остаться с чужим путём.
+_SERVICE_ENV_KEYS = (
+    "REELSI_JOB_LOCK",
+    "REELSI_MODEL_SERVICE_STATE",
+    "REELSI_MODEL_SERVICE_SLOTS",
+    "REELSI_MODEL_SERVICE_IDLE",
+)
+
 DEFAULT_SEC = 120.0
 DEFAULT_EMO_WORDS = 20
 DEFAULT_ASR_MODEL = "v3_ctc"
@@ -795,6 +806,30 @@ def _service_env_vars(args: argparse.Namespace) -> dict[str, str]:
     return out
 
 
+@contextlib.contextmanager
+def _service_env(args: argparse.Namespace) -> Iterator[None]:
+    """Окружение сервиса — на время замера и с возвратом прежнего.
+
+    `run_bench` зовут В ПРОЦЕССЕ (тесты), и запись в `os.environ` без возврата
+    оставляла чужому коду в том же процессе лок и каталог сервиса замера: тесты
+    сервиса, шедшие следом в воркере, читали адрес там, где их сервис его не
+    писал, и «подменный модуль GigaAM ещё не загружен» падало на ровном месте.
+    Локально это не воспроизводилось: тесты по воркерам `-n auto` раскладывались
+    иначе. Отсюда запоминаем и возвращаем РОВНО те ключи, что ставит замер
+    (`_SERVICE_ENV_KEYS`): чужие переменные процесса не трогаем вовсе.
+    """
+    prev = {key: os.environ.get(key) for key in _SERVICE_ENV_KEYS}
+    os.environ.update(_service_env_vars(args))
+    try:
+        yield
+    finally:
+        for key, value in prev.items():
+            if value is None:
+                os.environ.pop(key, None)   # ключа до замера не было — не создаём
+            else:
+                os.environ[key] = value     # был — вернуть ровно прежнее значение
+
+
 def _child_env(args: argparse.Namespace) -> dict[str, str]:
     """Окружение детей: корень в PYTHONPATH, свой лок, запрет на скачивание весов."""
     env = dict(os.environ)
@@ -995,15 +1030,15 @@ def _child_dump(rec: dict[str, Any] | None, collected: list[str]) -> str:
 
 
 def _parent_run(args: argparse.Namespace) -> _BenchResult:
-    """Родитель: звук, K детей разом, снятие VRAM, таблица."""
+    """Родитель: звук, K детей разом, снятие VRAM, таблица.
+
+    Окружение сервиса ставит вызывающий (`run_bench`) — на время замера и с
+    возвратом прежнего: переменные обязаны быть видны и ядру, и детям, но НЕ
+    обязаны переживать сам вызов.
+    """
     _force_utf8()
     if int(args.n) < 1:
         raise ValueError("--n должно быть >= 1")
-    # Окружение сервиса ставим ДО работы с ядром: лок и каталог состояния сервиса
-    # считает одна функция ядра (`state_path_for`), и одна и та же переменная
-    # уходит и родителю, и детям — иначе путь сервиса зависел бы от того, кто
-    # раньше импортировал `core.jobstate`.
-    os.environ.update(_service_env_vars(args))
     wavs = _prepare_wavs(args)
     if not wavs:
         raise ValueError("нечего мерить: задай --src (видео) или --wav (готовый звук)")
@@ -1081,8 +1116,18 @@ def _parent_run(args: argparse.Namespace) -> _BenchResult:
 
 
 def run_bench(argv: Sequence[str]) -> _BenchResult:
-    """Прогнать стенд по аргументам и напечатать таблицу (для тестов и вызовов из кода)."""
-    return _parent_run(_parse_args(list(argv)))
+    """Прогнать стенд по аргументам и напечатать таблицу (для тестов и вызовов из кода).
+
+    Окружение сервиса ставится на время прогона: лок и каталог состояния считает
+    одна функция ядра (`state_path_for`), и ОДНА И ТА ЖЕ переменная уходит и
+    родителю, и детям — иначе путь сервиса зависел бы от того, кто раньше
+    импортировал `core.jobstate`. По выходу `os.environ` возвращается как был:
+    вызывающий живёт в своём процессе и чужого лока с каталогом сервиса видеть не
+    должен. У CLI свой процесс, и там возврат не виден никому.
+    """
+    args = _parse_args(list(argv))
+    with _service_env(args):
+        return _parent_run(args)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

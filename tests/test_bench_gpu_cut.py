@@ -16,9 +16,13 @@ JSON-строки, метки времени идут по возрастани�
 """
 from __future__ import annotations
 
+import os
 import sys
 import wave
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
@@ -26,6 +30,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tools.bench_gpu_cut import (  # noqa: E402
+    _SERVICE_ENV_KEYS,
     _child_main,
     _parse_args,
     _parse_record,
@@ -111,6 +116,122 @@ def test_dry_путь_звука_ребёнку_строкой(tmp_path):
         assert record["error"] is None, record["error"]
         assert isinstance(record["wav"], str), record["wav"]
         assert record["wav"] == str(wav)
+
+
+@pytest.mark.parametrize("before", [True, False], ids=["ключи_были", "ключей_не_было"])
+def test_стенд_возвращает_окружение_процесса(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, before: bool
+) -> None:
+    """`run_bench(["--dry", …])` возвращает `os.environ` как было — по ВСЕМ ключам сервиса.
+
+    Мутация: убрать возврат (оставить `os.environ.update` насовсем) — тест
+    краснеет. Именно так текло в CI: `run_bench(["--dry", …])` шёл в процессе
+    pytest, и следом тесты сервиса в том же воркере читали чужой лок и чужой
+    каталог состояния («подменный модуль GigaAM ещё не загружен»), а
+    `_child_env` видел в `os.environ` переменную от прошлого теста.
+
+    Проверяем ОБА случая: ключ был (вернуть ровно прежнее значение, а не снять) и
+    ключа не было (снять, а не оставить чужой путь). Значения-отметки чужие
+    нарочно: совпади они со свежими — тест прошёл бы и без возврата.
+    """
+    # Свой звук: без него замер падает раньше, чем доходит до окружения.
+    wav = _silent_wav(tmp_path / "a.wav")
+    marks = {key: os.path.join(str(tmp_path), "чужой-" + key) for key in _SERVICE_ENV_KEYS}
+    for key, value in marks.items():
+        if before:
+            monkeypatch.setenv(key, value)
+        else:
+            monkeypatch.delenv(key, raising=False)
+    env_before = {key: os.environ.get(key) for key in _SERVICE_ENV_KEYS}
+
+    result = run_bench(["--dry", "--n", "1", "--wav", str(wav),
+                        "--work", str(tmp_path / "work")])
+
+    assert result.ok
+    assert {key: os.environ.get(key) for key in _SERVICE_ENV_KEYS} == env_before, (
+        "замер оставил в окружении процесса свои переменные сервиса — "
+        "следующий тест в этом воркере пойдёт в чужой сервис"
+    )
+
+
+@pytest.mark.parametrize("before", [True, False], ids=["ключи_были", "ключей_не_было"])
+def test_окружение_сервиса_возвращается_и_со_слотами(
+    monkeypatch: pytest.MonkeyPatch, before: bool
+) -> None:
+    """`_service_env` возвращает и слоты с простоем — ключи, которых `--dry` сам не ставит.
+
+    Слоты и простой замер ставит только в сервисном режиме (`--service`), а тот без
+    карты не поднять: подменяем саму выдачу переменных и сторожим РАЗНИЦУ «до/после»
+    по всем четырём ключам. Мутация: возвращать только лок и каталог состояния —
+    `REELSI_MODEL_SERVICE_SLOTS` остался бы с чужим потолком.
+    """
+    from tools import bench_gpu_cut as bench
+
+    fresh = {key: "свой-" + key for key in _SERVICE_ENV_KEYS}
+    for key in _SERVICE_ENV_KEYS:
+        if before:
+            monkeypatch.setenv(key, "чужой-" + key)
+        else:
+            monkeypatch.delenv(key, raising=False)
+    env_before = {key: os.environ.get(key) for key in _SERVICE_ENV_KEYS}
+    monkeypatch.setattr(bench, "_service_env_vars", lambda args: dict(fresh))
+
+    args = bench._parse_args(["--wav", "a.wav", "--n", "1", "--service",
+                              "--slots", "2", "--idle", "30", "--lock", "C:/tmp/bench.lock"])
+    with bench._service_env(args):
+        assert {key: os.environ.get(key) for key in _SERVICE_ENV_KEYS} == fresh, (
+            "на время замера окружение обязано быть сервисным"
+        )
+
+    assert {key: os.environ.get(key) for key in _SERVICE_ENV_KEYS} == env_before, (
+        "после замера окружение процесса обязано вернуться как было"
+    )
+
+
+def test_стенд_дети_и_родитель_видят_один_лок_сервиса(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Пока идёт замер, дети получают ТОТ ЖЕ лок и каталог сервиса, что родитель.
+
+    Возврат окружения не должен развести родителя и детей: лок и каталог состояния
+    считает одна функция ядра, и одна и та же переменная обязана уйти обоим —
+    иначе родитель поднял бы сервис в одном каталоге, а дети завели бы второй.
+    Проверяем на САМОМ вызове: перехватываем `env`, с которым стартует ребёнок, и
+    сверяем с `os.environ` родителя В ЭТОТ момент (а не после возврата).
+    """
+    import subprocess
+
+    wav = _silent_wav(tmp_path / "a.wav")
+    seen: list[tuple[dict[str, str], dict[str, str | None]]] = []
+    real_popen = subprocess.Popen
+
+    def spy(*args: Any, **kwargs: Any) -> Any:
+        env = kwargs.get("env")
+        if isinstance(env, dict):
+            # Окружение родителя В ЭТОТ момент, а не после возврата: возврат
+            # окружения и после него обязан быть чистым — это проверяет соседний
+            # тест, а здесь важен миг старта ребёнка.
+            own = {key: os.environ.get(key) for key in _SERVICE_ENV_KEYS}
+            seen.append((dict(env), own))
+        return real_popen(*args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", spy)
+
+    result = run_bench(["--dry", "--n", "1", "--wav", str(wav),
+                        "--work", str(tmp_path / "work")])
+
+    assert result.ok
+    assert len(seen) == 1, "ребёнок не стартовал — проверять нечего"
+    child, own = seen[0]
+    # Лок прогона — свой, в рабочей папке стенда: `--dry` боевой замок не трогает.
+    assert child.get("REELSI_JOB_LOCK") == os.path.join(
+        str(tmp_path / "work"), "job.dry.lock"), child
+    # Во время замера родитель видит РОВНО то же, что уходит детям.
+    for key in _SERVICE_ENV_KEYS:
+        assert child.get(key) == own[key], (
+            "ребёнок и родитель разошлись по %s: родитель поднял бы сервис в одном "
+            "каталоге, а дети завели бы второй" % key
+        )
 
 
 def test_падение_ребёнка_отдаёт_полный_трейсбек(tmp_path, capsys):

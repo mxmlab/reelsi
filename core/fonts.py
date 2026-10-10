@@ -117,6 +117,7 @@ def _names(tt: Any, path: str) -> list[dict[str, Any]]:
     try:
         nm = tt["name"]
     except Exception:
+        # нет таблицы имён — шрифт не разобрать, в список он просто не попадёт (не ошибка)
         return []
     fam = nm.getDebugName(16) or nm.getDebugName(1)   # 16 = типографская семья, иначе 1
     sub = nm.getDebugName(17) or nm.getDebugName(2)   # 17 = типографское начертание, иначе 2
@@ -131,6 +132,7 @@ def _names(tt: Any, path: str) -> list[dict[str, Any]]:
         os2 = tt.get("OS/2")
     except ReelsiError: raise
     except Exception:
+        # нет таблицы OS/2 — вес и начертание берём из имени шрифта (ниже): норма для части шрифтов
         os2 = None
 
     head = None
@@ -138,6 +140,7 @@ def _names(tt: Any, path: str) -> list[dict[str, Any]]:
         head = tt.get("head")
     except ReelsiError: raise
     except Exception:
+        # нет таблицы head — None: дальше вызывающий код обходится без неё
         head = None
 
     fb_w, fb_st, fb_it = _parse_fallback_style(f"{sub or ''} {ps or ''}")
@@ -169,6 +172,7 @@ def _names(tt: Any, path: str) -> list[dict[str, Any]]:
         fvar = tt.get("fvar")
     except ReelsiError: raise
     except Exception:
+        # нет таблицы fvar — статический шрифт, не вариативный: это норма
         fvar = None
     if fvar is None:
         return [{
@@ -226,6 +230,7 @@ def _read_file(path: str) -> list[dict[str, Any]]:
     try:
         from fontTools.ttLib import TTFont, TTCollection
     except Exception:
+        # fontTools не установлен — файл не разобрать, список пуст; остальное приложение от этого не падает
         return out
     try:
         if path.lower().endswith(".ttc"):
@@ -282,6 +287,7 @@ def _glyph_set(file: str, coords: Any) -> Any:
                    tt.getBestCmap())
         except ReelsiError: raise
         except Exception:
+            # шрифт не открылся — None (док-строка: «шрифта нет в системе»); кэшируем, чтобы не открывать снова
             ent = None
         _GS_CACHE[key] = ent
     return ent
@@ -303,6 +309,7 @@ def _glyph_bounds(file: str, coords: Any, gn: str) -> Any:
                 b = pen.bounds
             except ReelsiError: raise
             except Exception:
+                # глиф не нарисовался (битый контур) — границ нет, как у пробела: None
                 b = None
         _GB_CACHE[key] = b
     return _GB_CACHE[key]
@@ -345,6 +352,7 @@ def ink_extent(ps_name: str | None, text: str, size_px: float) -> Any:
             desc = -y_min if desc is None or -y_min > desc else desc
     except ReelsiError: raise
     except Exception:
+        # контуры не посчитались — None: вызывающий трактует как «чернил нет», без точной геометрии
         return None
     if asc is None:                          # чернил нет вовсе (одни пробелы)
         asc = desc = 0.0
@@ -375,6 +383,7 @@ def text_width(ps_name: str | None, text: str, size_px: float) -> Any:
             total += gs[gn].width
     except ReelsiError: raise
     except Exception:
+        # ширина не посчиталась — None (нет шрифта — нет ширины): вызывающий решает, что делать
         return None
     return total * float(size_px) / upm
 

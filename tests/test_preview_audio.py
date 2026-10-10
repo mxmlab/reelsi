@@ -399,13 +399,14 @@ def test_edPlay_and_ipvPlay_wake_the_graph(tmp_path):
 
 @node
 def test_camera_is_not_forced_into_the_graph(tmp_path):
-    """Плеер шага 1 заявляет <video> на граф (иначе звук обработанного голоса уехал
-    бы мимо регулятора), но НЕ подключает его на месте: у спикера без обработки звук
-    играет напрямую, а подключение к графу живёт в одной двери (`voiceGraphWire`)."""
+    """Камера шага 1 в граф не идёт вовсе: её <video> немые, звук шага 1 играет буфер
+    редактора (блок `ea*`). Подключение к графу у остальных плееров живёт в одной двери
+    (`voiceGraphWire`), а заявка (`voiceWiring`) элемент на месте не подключает."""
     prev = _read(PREVIEW_JS)
     assert "__wired" in prev, "пропал признак «источник уже создан»"
     open_src = _func_src(prev, "openPreview")
-    assert "voiceWiring(v)" in open_src, "камера не заявлена на граф вовсе"
+    assert "voiceWiring(v)" not in open_src, (
+        "камера шага 1 заявлена на граф: `createMediaElementSource` необратим, а звука у неё нет")
     assert "createMediaElementSource" not in open_src, (
         "камера подключается к графу прямо в openPreview — обязана лениво")
 
@@ -747,15 +748,19 @@ console.log('OK: Firefox row goes away with the source');
 
 @node
 def test_firefox_row_is_shared_by_all_players(tmp_path):
-    """Строку зовут ВСЕ три плеера (шаг 1 — редактор, шаг 3 — вставки, раскладка
-    камер) и общий опрос прокси: одна функция на все — иначе у одного плеера причина
-    называлась бы, у другого нет. И живёт она в ОБЩЕМ контейнере прогресса, рядом со
-    строкой голоса."""
+    """Строку зовут плееры, у которых звучит <video> (шаг 3 — вставки, раскладка камер),
+    и общий опрос прокси: одна функция на все — иначе у одного плеера причина называлась
+    бы, у другого нет. Шаг 1 её НЕ зовёт: его <video> немые, звук там — буфер редактора
+    из WAV (`/api/preview_audio`), и молчание исходника в Firefox к нему не относится.
+    Живёт строка в ОБЩЕМ контейнере прогресса, рядом со строкой голоса."""
     prev, ed, view, cams = (_read(PREVIEW_JS), _read(EDITOR_JS),
                             _read(VIEW_JS), _read(CAMJS))
-    for src, marker in ((ed, "edTick"), (ed, "edPlay"), (view, "ipvStep"), (view, "ipvOpen"),
+    for src, marker in ((view, "ipvStep"), (view, "ipvOpen"),
                         (cams, "cpvStep"), (prev, "pvProxyRefresh")):
         assert "pvAudioLimit(" in _func_src(src, marker), f"{marker} не зовёт строку про Firefox"
+    for marker in ("edTick", "edPlay"):
+        assert "pvAudioLimit(" not in _func_src(ed, marker), (
+            f"{marker} зовёт строку про звук Firefox, а <video> шага 1 немые")
     res = _fx_stand(tmp_path, "fx_audio_row_players.js", _FX_TIMER + """
 PV=player([video('cam1.mp4',false)]);
 ED=PV;

@@ -20,8 +20,10 @@
    итогового голоса: иначе он вернётся из кеша посчитанным под прежние настройки;
 4. пока печётся — играет ПРЕДЫДУЩАЯ запечённая дорожка (`st.path` не пуст), а не звук
    камеры;
-5. синхрон дорожки: расхождение 0,1 с гасится СКОРОСТЬЮ (`playbackRate`, `currentTime`
-   не трогается), 0,5 с — перемоткой; прыжок через вырез ставит позицию сразу.
+5. синхрон дорожки превью шага 3: расхождение 0,1 с гасится СКОРОСТЬЮ (`playbackRate`,
+   `currentTime` не трогается), 0,5 с — перемоткой; на паузе позиция ставится сразу.
+   У шага 1 дорожки-элемента нет вовсе: голос там играет буфер Web Audio (блок `ea*`,
+   tests/test_editor_single_player.py), и готовый трек уходит в него (`eaVoice`).
 
 Питоновская часть — в конце файла: хост отдаёт состояние ВСЕХ плагинов на
 `dump_states`, `live_stop` забирает его ПЕРЕД гашением, вход хоста — дорожка шумодава.
@@ -65,7 +67,7 @@ PREVIEW_FUNCS = ("vtOf", "vtCam1", "vtSrcAt", "vtNow", "vtAudioCam", "vtPlaying"
                  "vtIsPv", "vtIsEd", "vtMuteHost", "vtStage", "vtHostLive", "vtLivePrep",
                  "vtStatesWait", "vtStatesTake", "vtHostDown", "vtPrep", "vtVoiceShow",
                  "vtVoiceWatch", "vtVoiceTake", "vtVoiceUse", "vtUse", "vtTick",
-                 "vtVoiceLine", "vtVoiceStop", "vtSeek", "vtRate", "vtSeekAt")
+                 "vtVoiceLine", "vtVoiceStop", "vtSeek", "vtRate")
 
 
 def _func_src(src: str, name: str) -> str:
@@ -134,6 +136,10 @@ let VOICEFXSPK='Мясников';
 function fxDeviceGet(){return '';}
 function voiceFxHostNotes(){}
 function voiceFxHostPoll(){}
+// Звук редактора шага 1 (блок `ea*`): готовый трек плеера шага 1 уходит в его буфер.
+const EAV=[];
+function eaVoice(p){EAV.push(p);}
+function eaGain(){}
 let ED,IPV,CPV;
 // Что стенд увидел со стороны сервера: заказы запекания, команды живому хосту и
 // подъём хоста. «Хост синхронизировали» здесь — это запрос `/api/voicefx_host`
@@ -243,7 +249,7 @@ VOICEFXLIVE={live};
     bakes:VFX_DUMPED.bakes||[], synced:VFX_DUMPED.synced,
     dumps:VFX_DUMPED.dumps||0, stopped:VFX_DUMPED.stopped||0,
     path:P.vt.path, fin:P.vt.fin, on:P.vt.on,
-    el:(P.vt.el?P.vt.el.src:'')}}));
+    el:(P.vt.el?P.vt.el.src:''), eav:EAV}}));
 }})();
 """
 
@@ -267,7 +273,10 @@ def test_plugins_on_without_a_window_bake_the_final_voice(tmp_path: Path) -> Non
     assert res["synced"] == 0, "живой хост синхронизировали без открытого окна"
     assert res["dumps"] == 0 and res["stopped"] == 0, res
     assert res["on"] is True and res["fin"] is True, res
-    assert res["el"].startswith("/api/media?path="), res["el"]
+    # Шаг 1: итоговый голос уходит в буфер редактора, а не в <audio>.
+    # Первый заход: прежний голос снят (None), потом готовый итоговый — в буфер.
+    assert res["eav"] == [None, "C:/cache/final.wav"], res
+    assert res["el"] == "", "у плеера шага 1 завёлся <audio> голоса: %s" % res
 
 
 @node
@@ -308,7 +317,7 @@ def test_closing_the_window_dumps_states_then_bakes_the_final_voice(tmp_path: Pa
     assert res["bakes"][0].get("final") is True, res["bakes"][0]
     assert res["synced"] == 0, "хост синхронизировали, хотя окна уже нет"
     assert res["on"] is True and res["fin"] is True, res
-    assert res["el"].startswith("/api/media?path="), res["el"]
+    assert res["eav"] and res["eav"][-1] == "C:/cache/final.wav", res
 
 
 @node
@@ -359,15 +368,13 @@ def _tick_body(drift: float, playing: bool = True) -> str:
     """Кадр плеера с заданным расхождением звука и картинки.
 
     `drift` — насколько дорожка ОТСТАЁТ от картинки (положительное — надо догнать).
-    Позиция дорожки у редактора — его же исходное время (`ED.cs` = 5), поэтому
-    расхождение задаётся прямо относительно 5-й секунды.
+    Плеер по EDL (превью шага 3): монтаж 5 с = исходник 105 с (кусок `src:100`), поэтому
+    расхождение задаётся относительно 105-й секунды исходника.
     """
     return """
 const P=P_();
-// Плеер шага 1 — редактор: он и держит дорожку голоса, и решает, играем ли (`ED.play`).
-ED=P;
-P.playing=%s;P.play=%s;P.cs=5;  // играем и стоим на 5-й секунде исходника
-P.vids=[new El('video')];      // камера: её глушит гейт, пока звучит дорожка
+P.playing=%s;P.play=%s;        // играем (у шага 3 это P.playing)
+P.vids=[new El('video')];P.vids[0]._ct=5+100;   // камера на 5-й секунде монтажа
 P.vt={on:true,el:null,path:'C:/cache/dn.wav',fin:false,seq:0,timer:0,poll:0,want:'',
   note:'',vtq:false,vtend:false,live:null,dn:JSON.stringify(%s.denoise),wantDn:'',
   wantFinal:false,warn:'',statesWait:null};
@@ -381,7 +388,7 @@ console.log(JSON.stringify({rate:el.playbackRate,ct:el.currentTime,
   muted:P.vids[0].muted}));
 """ % ("true" if playing else "false", "true" if playing else "false",
        json.dumps(FX, ensure_ascii=False),
-       "5", json.dumps(drift), "true" if playing else "false")
+       "105", json.dumps(drift), "true" if playing else "false")
 
 
 @node
@@ -396,7 +403,7 @@ def test_small_drift_is_fixed_by_rate(tmp_path: Path) -> None:
     assert res["rate"] > 1.0, "отстающую дорожку не разогнали: %s" % res
     assert abs(res["rate"] - 1.06) < 1e-9, res["rate"]
     assert res["seeks"] == 0, "перемотали там, где хватало скорости: %s" % res
-    assert res["ct"] == 4.9, "кадр тронул currentTime: %s" % res
+    assert res["ct"] == 104.9, "кадр тронул currentTime: %s" % res
     # Звук камеры заглушен, пока играет дорожка: иначе слышно два голоса разом.
     assert res["muted"] is True, "звук камеры не заглушен под дорожкой: %s" % res
 
@@ -406,43 +413,34 @@ def test_big_drift_is_fixed_by_seek(tmp_path: Path) -> None:
     """Расхождение 0,5 с → перемотка (скоростью такое не догнать)."""
     res = _run_node(tmp_path, _tick_body(0.5))
 
-    assert res["seeksDone"] == [5], "дорожку не перемотали на место: %s" % res
+    assert res["seeksDone"] == [105], "дорожку не перемотали на место: %s" % res
     assert res["rate"] == 1, "перемотка оставила скорость задранной: %s" % res
 
 
 @node
-def test_pause_and_cut_jump_place_the_track_exactly(tmp_path: Path) -> None:
-    """Пауза и прыжок через вырез ставят дорожку РОВНО, без ожидания порога.
+def test_pause_places_the_track_exactly(tmp_path: Path) -> None:
+    """Пауза ставит дорожку РОВНО, без ожидания порога: подъезжать на паузе некуда.
 
-    На паузе подъезжать некуда: звук обязан стоять там, где картинка. А прыжок через
-    вырез — это не дрейф, а другое место исходника: `edJump` уже прыгнул, и голос
-    обязан прыгнуть вместе с ним сразу, иначе доигрывал бы удалённый кусок.
+    (Прыжок через вырез у шага 1 больше не дело дорожки: звук там — очередь блоков в
+    буфере Web Audio, tests/test_editor_single_player.py.)
     """
     body = """
-const P=P_();
-ED=P;P.cs=5;                   // плеер шага 1, стоим на 5-й секунде исходника
-P.vids=[new El('video')];
+const P=P_();                  // плеер по EDL (шаг 3), стоим на 5-й секунде монтажа
+P.vids=[new El('video')];P.vids[0]._ct=105;
 P.vt={on:true,el:null,path:'C:/cache/dn.wav',fin:false,seq:0,timer:0,poll:0,want:'',
   note:'',vtq:false,vtend:false,live:null,dn:JSON.stringify(%s.denoise),wantDn:'',
   wantFinal:false,warn:'',statesWait:null};
 const el=new El('audio');P.vt.el=el;el.readyState=4;
 // Пауза: расхождение 0,2 с скоростью гасить нельзя — стоим ровно на месте
-el.currentTime=4.8;el.seeks.length=0;el.paused=true;el.playbackRate=1.06;
+el.currentTime=104.8;el.seeks.length=0;el.paused=true;el.playbackRate=1.06;
 vtTick(P,5);
 const onPause={rate:el.playbackRate,ct:el.currentTime,seeks:el.seeks.slice()};
-// Прыжок через вырез: позиция ставится сразу и точно
-el.seeks.length=0;el.currentTime=300;el.playbackRate=1;
-const done=vtSeekAt(P,5);
-const onCut={done:done,rate:el.playbackRate,ct:el.currentTime,seeks:el.seeks.slice()};
-console.log(JSON.stringify({onPause:onPause,onCut:onCut}));
+console.log(JSON.stringify({onPause:onPause}));
 """ % json.dumps(FX, ensure_ascii=False)
     res = _run_node(tmp_path, body)
 
-    assert res["onPause"]["ct"] == 5, "на паузе дорожка стоит не на месте: %s" % res
+    assert res["onPause"]["ct"] == 105, "на паузе дорожка стоит не на месте: %s" % res
     assert res["onPause"]["rate"] == 1, "на паузе скорость осталась задранной: %s" % res
-    assert res["onCut"]["done"] is True and res["onCut"]["ct"] == 5, \
-        "прыжок через вырез не поставил позицию сразу: %s" % res
-    assert res["onCut"]["rate"] == 1, res["onCut"]
 
 
 # --------------------------------------------------------------------------- #

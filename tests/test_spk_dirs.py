@@ -13,7 +13,9 @@
 
     jsxdir профиля спикера -> outdir профиля (папка нарезки того же спикера) -> папка XML
 
-Общее поле в лестницу не входит вовсе: оно только для клипа БЕЗ тега. Та же лестница
+Отдельного поля в интерфейсе нет вовсе: общего значения, которое могло бы переписаться,
+больше не существует, а клип без тега кладёт .jsx рядом со своим XML — ровно то, что
+api/build.py делает с пустым outdir. Та же лестница
 у папки рендера (`effRenderdir`), но без последней ступени: у рендера «рядом с XML»
 нет, дефолт — общий `AERENDER` от сервера.
 
@@ -87,7 +89,7 @@ function openClipSpeaker(){
 def _run(tmp_path, name, funcs, body, speakers_js):
     src = _src()
     script = (STUBS + "\nconst SPEAKERS=" + json.dumps(speakers_js, ensure_ascii=False) + ";\n"
-              + "const CLIPS=[];let curAE=-1;let AEGLOBAL='',AERENDER='';\n"
+              + "const CLIPS=[];let curAE=-1;let AERENDER='';\n"
               + "\n".join(_func(src, f) for f in funcs) + "\n"
               + body)
     path = str(tmp_path / name)
@@ -111,13 +113,12 @@ FUNCS = ["xmlDirOf", "effOutdir", "effRenderdir"]
 
 @node
 def test_jsx_folder_ladder_per_speaker(tmp_path):
-    """Лестница папок .jsx: jsxdir -> outdir спикера -> папка XML; без тега — общее поле.
+    """Лестница папок .jsx: jsxdir -> outdir спикера -> папка XML; поля в интерфейсе нет.
 
     Главное здесь — клип спикера Б: у него jsxdir пуст, и раньше он уезжал в общее поле
     (то есть в папку ПОСЛЕДНЕГО выбранного спикера). Теперь — в свою папку нарезки.
     """
     out = _run(tmp_path, "spk_ladder.js", FUNCS, r"""
-AEGLOBAL='C:/out/A';            // общее поле стоит на папке спикера А — как после его выбора
 const A={xml:'C:/cut/A/01.xml',job:{speaker:'a'}};
 const B={xml:'C:/cut/B/02.xml',job:{speaker:'b'}};
 const C={xml:'C:/cut/C/03.xml',job:{speaker:'c'}};
@@ -138,27 +139,25 @@ console.log(JSON.stringify({a:effOutdir(A),b:effOutdir(B),c:effOutdir(C),n:effOu
 
 
 @node
-def test_switching_speaker_does_not_move_the_clip(tmp_path):
-    """Выбор ДРУГОГО спикера не двигает папку клипа: общее поле в лестницу не входит.
+def test_jsx_folder_depends_only_on_the_clips_own_speaker(tmp_path):
+    """Папка клипа зависит ТОЛЬКО от профиля его спикера: общего поля нет.
 
     Это и была жалоба: нарезал спикера 1, выбрал спикера 2, собрал спикера 1 — .jsx
-    спикера 1 уехали в папку спикера 2. Лестница читает ТОЛЬКО профиль спикера клипа.
+    спикера 1 уехали в папку спикера 2. Общего поля (`AEGLOBAL`) в интерфейсе больше нет
+    вовсе: переписывать папку чужих клипов нечем.
     """
     out = _run(tmp_path, "spk_switch.js", FUNCS, r"""
 const B={xml:'C:/cut/B/02.xml',job:{speaker:'b'}};
 const N={xml:'C:/cut/N/04.xml',job:{}};
-const beforeB=effOutdir(B), beforeN=effOutdir(N), globBefore=AEGLOBAL;
-AEGLOBAL='C:/out/A';            // выбрали спикера А — общее поле переписалось
-const afterB=effOutdir(B), afterN=effOutdir(N);
-AEGLOBAL='C:/out/C';            // выбрали спикера В
-const lastB=effOutdir(B), lastN=effOutdir(N);
-console.log(JSON.stringify({beforeB,beforeN,afterB,afterN,lastB,lastN,globBefore}));
+const first={b:effOutdir(B),n:effOutdir(N)};
+const again={b:effOutdir(B),n:effOutdir(N)};
+console.log(JSON.stringify({first,again,keys:Object.keys(globalThis)
+  .filter(k=>k==='AEGLOBAL')}));
 """, SPEAKERS)
-    assert out["beforeB"] == out["afterB"] == out["lastB"] == "C:/cut/B", (
-        "папка клипа спикера Б поехала за выбранным спикером: %r / %r / %r"
-        % (out["beforeB"], out["afterB"], out["lastB"]))
-    assert out["beforeN"] == out["afterN"] == "C:/cut/N", (
-        "папка клипа без тега не должна зависеть от выбора спикера: %r" % out["afterN"])
+    assert out["first"] == {"b": "C:/cut/B", "n": "C:/cut/N"}, out["first"]
+    assert out["again"] == out["first"], (
+        "папка клипа поехала от повторного чтения: %r" % out["again"])
+    assert out["keys"] == [], "общее поле папки .jsx (AEGLOBAL) вернулось в интерфейс"
 
 
 @node
@@ -184,32 +183,55 @@ console.log(JSON.stringify({a:effRenderdir(A),b:effRenderdir(B),c:effRenderdir(C
 
 
 @node
-def test_note_says_where_the_folder_came_from(tmp_path):
-    """Подпись под полем называет ступень лестницы, а не молчит.
+def test_render_folder_note_says_where_the_folder_came_from(tmp_path):
+    """Подпись под папкой рендера называет ступень лестницы, а не молчит.
 
-    Раньше подпись знала два случая, и на клипе спикера без jsxdir (а папка уже бралась
-    из outdir или XML) человек видел путь и не знал, чей он.
+    Раньше подпись знала два случая, и на клипе спикера без renderdir (а папка уже
+    бралась из общего `AERENDER`) человек видел путь и не знал, чей он.
     """
-    out = _run(tmp_path, "spk_note.js", FUNCS + ["jsxDirNote"], r"""
-CLIPS.push({xml:'C:/cut/B/02.xml',job:{speaker:'b'}});
+    out = _run(tmp_path, "spk_note.js", FUNCS + ["renderDirNote", "openClipSpeaker"], r"""
+CLIPS.push({xml:'C:/cut/B/02.xml',job:{speaker:'a'}});
 curAE=0;
-jsxDirNote();
-const note=$('aeoutdirnote')?$('aeoutdirnote').textContent:'';
-console.log(JSON.stringify({note}));
+AERENDER='C:/exp';
+renderDirNote();
+const own=$('aerenderdirnote').textContent;
+CLIPS[0].job={speaker:'b'};
+renderDirNote();
+const shared=$('aerenderdirnote').textContent;
+console.log(JSON.stringify({own,shared}));
 """, SPEAKERS)
-    assert "нарезк" in out["note"], (
-        "подпись не говорит, что папка взята из папки нарезки спикера: %r" % out["note"])
+    assert "профил" in out["own"], (
+        "подпись не говорит, что папка рендера из профиля спикера: %r" % out["own"])
+    assert "renderdir" in out["shared"], (
+        "подпись не говорит, что у спикера renderdir не задан: %r" % out["shared"])
 
 
-def test_html_has_the_per_clip_music_block_once():
-    """Разметка блока музыки клипа: три поля и «Другой трек», каждое — ровно один раз.
+def test_html_has_no_step3_music_brightness_and_jsx_folder_fields():
+    """Нижний блок шага 3 убран: ни папки .jsx, ни яркости, ни музыки/цензуры клипа.
 
-    Проба на дубли: значение музыки больше не живёт в общих полях шага 3, и второй
-    набор полей завёл бы второе хранилище, которое разъедется с первым.
+    Музыка и цензура переехали в панель стиля (группа «Аудио», строится по схеме),
+    яркость убрана совсем (Lumetri настраивается стилем), папку .jsx задаёт профиль
+    спикера. Вернувшееся поле завело бы ВТОРОЕ хранилище значения — ровно то, от чего
+    уходили.
     """
+    from core import style_schema
+
     html = io.open(HTML, encoding="utf-8").read()
-    for el_id in ("musicown", "musicovr", "musictrack", "musicreroll",
+    for el_id in ("aeoutdir", "aeoutdir3", "aeexposure", "censor",
+                  "musicown", "musicovr", "musictrack", "musicreroll",
                   "musicmode", "musicsrc", "musicdir", "musicdl"):
-        assert html.count('id="%s"' % el_id) == 1, "поля %s нет или оно не одно" % el_id
-    for gone in ("aemusic", "aemusicdir", "musicinbox", "musicinlbl", "musicpick"):
-        assert 'id="%s"' % gone not in html, "старое общее поле музыки %s вернулось" % gone
+        assert 'id="%s"' % el_id not in html, "поле %s вернулось на шаг 3" % el_id
+
+    keys = set()
+
+    def walk(items):
+        for it in items:
+            if it.get("type") == "group":
+                walk(it.get("items", []))
+            elif it.get("type") == "field":
+                keys.add(it["key"])
+
+    for layer in style_schema.LAYERS:
+        walk(layer.get("items", []))
+    for key in ("music_mode", "music_dir", "music_src", "censor"):
+        assert key in keys, "ручка %s не заведена в панели стиля" % key

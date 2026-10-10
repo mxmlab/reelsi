@@ -190,6 +190,14 @@ def test_inserts_schema_puts_prompt_before_query():
     assert set(req) == set(props)                 # схема strict: required == все поля
 
 
+def test_inserts_prompt_forbids_numbers_in_stock_query():
+    """Замер 2026-10-09 (18 запросов владельца): число или метка в query («250 mark») сток
+    принимает за тег и отдаёт чужую картинку — мотоциклы вместо шприца. Правило про числа
+    в промпте обязано остаться, иначе модель снова начнёт копировать дозы из текста."""
+    assert "БЕЗ чисел" in aicut.INSERTS_SYSTEM
+    assert "«250 mg»" in aicut.INSERTS_SYSTEM
+
+
 def test_markup_prompts_have_dynamic_insert_and_yellow_contracts(tmp_path, monkeypatch):
     """Квоты живут в user prompt, а жёлтые не получают искусственный бюджет."""
     words = [(i, f"word{i}", float(i), float(i + 1)) for i in range(70)]

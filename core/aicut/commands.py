@@ -14,9 +14,14 @@ from .config import reason_budget, step_profile, step_reasoning
 from .llm import _ask_json
 from .prompts import (INSERTS_SCHEMA, INSERTS_SYSTEM, INTRO_SCHEMA, INTRO_SYSTEM,
                       YELLOW_SCHEMA, YELLOW_SYSTEM)
-from core.app_meta import console_emit
+from core.app_meta import console_emit, env
 from core.fileio import atomic_json_dump
+from core import paths
+from core import styles as _styles
+from core.applog import get_logger
 from core.umsg import ReelsiError
+
+log = get_logger(__name__)
 
 
 def _words_from_xml(xml_path: str) -> list[tuple[int, str, float, float]]:
@@ -233,25 +238,36 @@ def _quota_val(v: Any, default: int) -> int:
     return default
 
 
+def _speaker_profile(speaker: Any = None) -> dict[str, Any] | None:
+    """Профиль спикера словарём: сам dict, профиль по ключу/label или None.
+
+    Одна дверь для всего, что читает настройки спикера в подборе вставок (квота и
+    выключатель вставок по названиям): иначе «квоту прочитали одним способом, выключатель другим»
+    разъезжается ровно на битом профиле.
+    """
+    if not speaker:
+        return None
+    if isinstance(speaker, dict):
+        return speaker
+    if not isinstance(speaker, str):
+        return None
+    try:
+        from core import speakers
+        prof = speakers.load(speaker)
+    except ReelsiError: raise
+    except Exception:
+        # битый профиль не роняет подбор: дефолт 10+3 лучше, чем упавший шаг 2
+        return None
+    return prof if isinstance(prof, dict) else None
+
+
 def ins_quota(speaker: Any = None) -> tuple[int, int]:
     """Квота вставок (фото, видео) для спикера: из профиля или дефолт (10, 3).
 
     speaker — ключ, label или dict (профиль целиком или словарь inserts).
     """
-    if not speaker:
-        return INS_PHOTO, INS_VIDEO
-    prof: Any = None
-    if isinstance(speaker, dict):
-        prof = speaker
-    elif isinstance(speaker, str):
-        try:
-            from core import speakers
-            prof = speakers.load(speaker)
-        except ReelsiError: raise
-        except Exception:
-            # битый профиль не роняет подбор: дефолт 10+3 лучше, чем упавший шаг 2
-            prof = None
-    if not isinstance(prof, dict):
+    prof = _speaker_profile(speaker)
+    if not prof:
         return INS_PHOTO, INS_VIDEO
 
     raw_ins = prof.get("inserts") if "inserts" in prof else prof
@@ -264,6 +280,26 @@ def ins_quota(speaker: Any = None) -> tuple[int, int]:
     if ph + vid < 1:
         return INS_PHOTO, INS_VIDEO
     return ph, vid
+
+
+def named_inserts_on(speaker: Any = None) -> bool:
+    """Включены ли вставки по названиям у спикера: поле named_inserts профиля, дефолт ВКЛ.
+
+    Выключатель живёт в профиле спикера («Вставки по названиям»), и профиль, как у квоты,
+    берётся у ТОГО ЖЕ спикера: клип спрашивает свой. Поля нет — включено: профиль без
+    правок не должен менять поведение, а мусор в поле (строка, число) читается как
+    «не выключали». Профили, сохранённые до переименования, держат старое поле
+    drug_inserts — читаем его, если нового нет.
+    """
+    prof = _speaker_profile(speaker)
+    if not prof:
+        return True
+    for key in ("named_inserts", "drug_inserts"):
+        val = prof.get(key)
+        if isinstance(val, bool):
+            return val
+    return True
+
 
 
 # Зона конца — как зона начала: числом, а не словами. Доля 6% длины в интервале
@@ -328,6 +364,20 @@ def _apply_zones(ins: list[dict[str, Any]], dur: float, occupied: Sequence[float
     return kept
 
 
+def _spread_quota(items: list[dict[str, Any]], quota: int) -> list[dict[str, Any]]:
+    """Обрезка ОДНОГО типа до квоты: начало, середина и конец покрытия сохраняются,
+    лишнее убирается равномерно по хронометражу."""
+    if len(items) <= quota:
+        return items
+    if quota <= 0:
+        return []
+    if quota == 1:
+        return [items[len(items) // 2]]
+    # Сохраняем начало и конец покрытия, а избыток выбираем равномерно.
+    n = len(items) - 1
+    return [items[round(i * n / (quota - 1))] for i in range(quota)]
+
+
 def _cap_by_quota(ins: list[dict[str, Any]], photo_quota: int, video_quota: int) -> list[dict[str, Any]]:
     """Детерминированная обрезка типов до квот ЭТОГО вызова.
 
@@ -341,19 +391,254 @@ def _cap_by_quota(ins: list[dict[str, Any]], photo_quota: int, video_quota: int)
     videos = sorted((x for x in ins if x.get("type") == "video"),
                     key=lambda x: float(x.get("start_sec", 0) or 0))
 
-    def spread(items: list[dict[str, Any]], quota: int) -> list[dict[str, Any]]:
-        if len(items) <= quota:
-            return items
-        if quota <= 0:
-            return []
-        if quota == 1:
-            return [items[len(items) // 2]]
-        # Сохраняем начало и конец покрытия, а избыток выбираем равномерно.
-        n = len(items) - 1
-        return [items[round(i * n / (quota - 1))] for i in range(quota)]
-
-    return sorted(spread(photos, photo_quota) + spread(videos, video_quota),
+    return sorted(_spread_quota(photos, photo_quota) + _spread_quota(videos, video_quota),
                   key=lambda x: float(x.get("start_sec", 0) or 0))
+
+
+def _start_sec(x: dict[str, Any]) -> float:
+    """Старт вставки числом (для сортировок и сравнений)."""
+    return float(x.get("start_sec", 0) or 0)
+
+
+def _weakest_ai_index(ai: list[dict[str, Any]], others: Sequence[dict[str, Any]]) -> int:
+    """Индекс самой слабой ИИ-фото-вставки в `ai` (соседей считаем и по `others`).
+
+    «Силы» вставки модель не размечает, поэтому слабость — плотность: у какой ближайший
+    сосед ближе всех, тот момент и так уже покрыт, и потерять её дешевле всего. При равном
+    зазоре уходит ПОЗДНЯЯ, затем — правая в списке (детерминированно, без случайности).
+    """
+    pool = list(ai) + list(others)
+    best_i, best_key = 0, None
+    for i, it in enumerate(ai):
+        t = _start_sec(it)
+        gap = min((abs(t - _start_sec(o)) for j, o in enumerate(pool) if j != i), default=1e9)
+        key = (gap, -t, -i)
+        if best_key is None or key < best_key:
+            best_i, best_key = i, key
+    return best_i
+
+
+def _is_named(x: dict[str, Any]) -> bool:
+    """Вставка по названию (auto='named'). 'drug' — метка тех же вставок, сохранённых до переименования."""
+    return x.get("auto") in ("named", "drug")
+
+
+def _cap_with_named(ins: list[dict[str, Any]], photo_quota: int, video_quota: int) -> list[dict[str, Any]]:
+    """Финальная обрезка типов, где вставки по названиям в приоритете.
+
+    Вставки по названиям входят в ТУ ЖЕ квоту фото, но не вытесняются ею: если фото стало
+    больше квоты, первыми уходят самые слабые ИИ-вставки (см. _weakest_ai_index) — вставка
+    поставлена по названному в речи слову, и её место в ролике не выдумано. Их больше самой
+    квоты — режем равномерно, как обычные фото (_spread_quota): квота всё равно жёсткая.
+    Видео режется как раньше.
+    """
+    photos = sorted((x for x in ins if x.get("type") != "video"), key=_start_sec)
+    named = [x for x in photos if _is_named(x)]
+    ai = [x for x in photos if not _is_named(x)]
+    while len(ai) + len(named) > photo_quota and ai:
+        ai.pop(_weakest_ai_index(ai, named))
+    if len(named) > photo_quota:
+        named = _spread_quota(named, photo_quota)
+    videos = sorted((x for x in ins if x.get("type") == "video"), key=_start_sec)
+    return sorted(ai + named + _spread_quota(videos, video_quota), key=_start_sec)
+
+
+def _sim_words(q1: Any, q2: Any) -> float:
+    """Похожесть двух query по словам: пересечение / объединение (0, если пусто)."""
+    a = set(re.findall(r"[а-яёa-z]+", (q1 or "").lower()))
+    b = set(re.findall(r"[а-яёa-z]+", (q2 or "").lower()))
+    return (len(a & b) / len(a | b)) if a and b else 0.0
+
+
+def _rejected_hit(rejected: Sequence[dict[str, Any]], it: dict[str, Any]) -> dict[str, Any] | None:
+    """Первая удалённая юзером правка, на которую похожа вставка: тот же тип (видео/фото),
+    старт в ±2 с и пересечение слов query ≥ 60 %. Промпт мягкий, код жёсткий."""
+    t = _start_sec(it)
+    return next((r for r in rejected
+                 if (r.get("type") == "video") == (it.get("type") == "video")
+                 and abs(_start_sec(r) - t) <= 2.0
+                 and _sim_words(r.get("query"), it.get("query")) >= 0.6), None)
+
+
+# ---------- вставки по названиям ----------
+# Личный словарь `named_inserts.json` (лежит в корне репозитория, в гит не попадает; пример
+# с нейтральными словами — data/named_inserts.example.json). Владелец ставит вставку там,
+# где в речи назван предмет, руками: картинка в базе есть, а подбор «по смыслу фразы» такие
+# вставки делает вскользь или не делает вовсе. Поэтому тут ДЕТЕРМИНИРОВАННЫЙ проход по
+# словам ролика ПОСЛЕ ответа модели: слово из словаря -> картинка из базы вставок ->
+# фото-вставка на момент слова. Словаря нет — проход молча выключен: ни ошибки, ни строки
+# в логе на каждый ролик.
+NAMED_INSERTS_PATH = env("NAMED_INSERTS") or paths.root("named_inserts.json")
+NAMED_GAP_SEC = 4.0       # ближе этого к уже стоящей вставке название не встаёт
+NAMED_SAME_SEC = 20.0     # одно название — не чаще раза в это окно (повторы не плодят вставок)
+NAMED_STEM_MIN = 3        # короче основы название в словаре не берём вовсе
+NAMED_PHOTO_DUR = 2.5     # длительность фото-вставки по умолчанию (та же, что у ИИ-фото)
+
+_NAMED_CACHE: dict[str, Any] = {"mtime": None, "cfg": None}
+
+
+def _str_list(v: Any) -> list[str]:
+    """Список строк из JSON: не список — пусто, мусорные элементы — мимо."""
+    if not isinstance(v, list):
+        return []
+    return [s.strip() for s in v if isinstance(s, str) and s.strip()]
+
+
+def _named_config() -> dict[str, Any]:
+    """Личный словарь названий, разобранный: aliases, secondary, prefer, avoid.
+
+    Формат — в data/named_inserts.example.json. Каноническое имя -> формы названия в речи
+    и в базе; `_prefer` — слова картинки, без которых она не годится; `_avoid` — сюжетные
+    слова, которые портят картинку (штраф); `secondary` — вторичные формы (эфиры и т.п.),
+    картинку по ним ищут только тогда, когда по основным названиям совпадений нет.
+    Ключи с «_» — служебные, именем предмета они не бывают. Читается по mtime. Файла нет,
+    JSON битый или запись кривая — пустой словарь, молча: шаг вставок из-за словаря не
+    падает, названий просто не будет.
+    """
+    empty: dict[str, Any] = {"aliases": {}, "secondary": {}, "prefer": [], "avoid": []}
+    try:
+        mtime: int = os.stat(NAMED_INSERTS_PATH).st_mtime_ns
+    except OSError:
+        return empty
+    if _NAMED_CACHE.get("mtime") == mtime and isinstance(_NAMED_CACHE.get("cfg"), dict):
+        return cast(dict[str, Any], _NAMED_CACHE["cfg"])
+    raw: Any = None
+    try:
+        with open(NAMED_INSERTS_PATH, encoding="utf-8") as fh:
+            raw = json.load(fh)
+    except (OSError, ValueError):
+        raw = None
+    cfg: dict[str, Any] = empty
+    if isinstance(raw, dict):
+        aliases: dict[str, list[str]] = {}
+        for name, forms in raw.items():
+            if not isinstance(name, str) or name.startswith("_") or not name.strip():
+                continue
+            if isinstance(forms, list):
+                aliases[name.strip()] = _str_list(forms)
+        sec: dict[str, list[str]] = {}
+        s_raw = raw.get("secondary")
+        if isinstance(s_raw, dict):
+            for name, forms in s_raw.items():
+                if isinstance(name, str) and name.strip() and isinstance(forms, list):
+                    sec[name.strip()] = _str_list(forms)
+        cfg = {"aliases": aliases, "secondary": sec,
+               "prefer": _str_list(raw.get("_prefer")), "avoid": _str_list(raw.get("_avoid"))}
+    _NAMED_CACHE["mtime"], _NAMED_CACHE["cfg"] = mtime, cfg
+    return cfg
+
+
+def _named_index(cfg: dict[str, Any]) -> dict[tuple[str, ...], str]:
+    """Индекс словаря: последовательность ОСНОВ названия -> каноническое имя.
+
+    Ключ — кортеж основ, поэтому одна таблица ловит и односложные названия, и формы из
+    нескольких слов («гормон роста»): поиск идёт окном по ленте слов ролика. Форма с основой
+    короче NAMED_STEM_MIN в ключ не попадает — короткие куски речи слишком общие.
+    """
+    from core import insertlib
+    idx: dict[tuple[str, ...], str] = {}
+    secondary: dict[str, list[str]] = cfg["secondary"]
+    for name, forms in cfg["aliases"].items():
+        # вторичные формы (эфиры и т.п.) тоже называют предмет в речи; разница — в find_named
+        for form in [name, *forms, *secondary.get(name, [])]:
+            stems = tuple(insertlib.word_stem(t) for t in insertlib.stem_tokens(form))
+            if not stems or any(len(s) < NAMED_STEM_MIN for s in stems) or all(s.isdigit() for s in stems):
+                continue
+            idx.setdefault(stems, name)
+    return idx
+
+
+def _named_mentions(words: Sequence[tuple[int, str, float, float]],
+                    index: dict[tuple[str, ...], str]) -> list[tuple[float, str, str]]:
+    """Упоминания названий в словах ролика: (старт слова, каноническое имя, как сказано).
+
+    Слова ролика выкладываются в ОДНУ ленту основ, и по ней скользит окно: форма из
+    нескольких слов собирается из соседних слов, односложная ловится на одном слове.
+    Название сравнивается по ОСНОВЕ (insertlib.word_stem), поэтому падежные формы —
+    одно и то же слово, а «тренер» — не «трен» (чужой корень не склеивается).
+    """
+    from core import insertlib
+    flat: list[tuple[str, int]] = []                 # (основа, позиция слова в ленте)
+    for pos, (_k, w, _s, _e) in enumerate(words):
+        for tok in insertlib.stem_tokens(w):
+            flat.append((insertlib.word_stem(tok), pos))
+    out: list[tuple[float, str, str]] = []
+    for n in sorted({len(k) for k in index}):
+        for i in range(len(flat) - n + 1):
+            name = index.get(tuple(flat[i + j][0] for j in range(n)))
+            if not name:
+                continue
+            p0, p1 = flat[i][1], flat[i + n - 1][1]
+            out.append((float(words[p0][2]), name,
+                        " ".join(words[q][1] for q in range(p0, p1 + 1))))
+    out.sort(key=lambda m: m[0])
+    return out
+
+
+def _named_inserts(ins: list[dict[str, Any]], words: Sequence[tuple[int, str, float, float]],
+                   dur: float, speaker: Any = None,
+                   rejected: Sequence[dict[str, Any]] | None = None,
+                   emit: Callable[..., Any] = console_emit
+                   ) -> tuple[list[dict[str, Any]], list[str]]:
+    """Детерминированный проход по словарю: название в речи -> фото-вставка с картинкой.
+
+    Возвращает (вставки, строки лога «по названиям: …»). Вставка встаёт ровно на слово-
+    упоминание, с уже заполненным `media` (фронт её больше не ищет) и пометкой
+    `auto='named'` — по ней видно, откуда вставка, и по ней же она не вытесняется квотой.
+    Правила: картинка обязана быть в базе вставок (иначе вставки нет, а в лог идёт
+    «картинки нет» — факт про базу); ближе NAMED_GAP_SEC к уже стоящей вставке не встаём —
+    показанный момент не дублируем; одно название не чаще раза в NAMED_SAME_SEC; запретные
+    зоны начала/конца и память удалённых правок — как у обычных фото-вставок.
+    Выключатель — поле named_inserts профиля спикера (дефолт ВКЛ).
+    """
+    if not named_inserts_on(speaker):
+        return list(ins), []
+    cfg = _named_config()
+    index = _named_index(cfg)
+    if not index:
+        return list(ins), []
+    from core import insertlib
+    aliases: dict[str, list[str]] = cfg["aliases"]
+    secondary: dict[str, list[str]] = cfg["secondary"]
+    fresh: list[dict[str, Any]] = []
+    note_by_id: dict[int, tuple[float, str]] = {}
+    notes: list[tuple[float, str]] = []
+    taken = [_start_sec(x) for x in ins]
+    placed: dict[str, float] = {}
+    no_pic: set[str] = set()
+    for t, name, said in _named_mentions(words, index):
+        if any(abs(t - s) < NAMED_GAP_SEC for s in taken):
+            continue
+        last = placed.get(name)
+        if last is not None and t - last < NAMED_SAME_SEC:
+            continue
+        hit = insertlib.find_named([name, *aliases.get(name, [])], secondary=secondary.get(name, []),
+                                   prefer=cfg["prefer"], avoid=cfg["avoid"])
+        if not hit:
+            if name not in no_pic:
+                no_pic.add(name)
+                notes.append((t, f"{name} — картинки нет"))
+            continue
+        path = str(hit["path"])
+        it: dict[str, Any] = {"type": "photo", "start_sec": round(t, 2),
+                              "duration_sec": NAMED_PHOTO_DUR, "phrase": said,
+                              "query": name, "media": path, "auto": "named"}
+        if rejected and _rejected_hit(rejected, it):
+            continue                    # юзер удалил такую вставку — не возвращаем её заново
+        note_by_id[id(it)] = (t, f"{name} {t:.1f} с (картинка {os.path.basename(path)})")
+        placed[name] = t
+        taken.append(t)
+        fresh.append(it)
+    if not fresh:
+        return list(ins), [text for _t, text in sorted(notes)]
+    # Запретные зоны, мин. зазор и хвост ролика — тем же кодом, что у ИИ-вставок: правило
+    # одно на всех. Отсеянное название не попадает и в лог (вставки нет — и строки нет).
+    merged = _apply_zones(list(ins) + fresh, dur, (), emit=emit)
+    for x in merged:
+        note = note_by_id.get(id(x))
+        if note:
+            notes.append(note)
+    return merged, [text for _t, text in sorted(notes)]
 
 
 def cmd_inserts(xml_path: str, system: str | None = None, dry: bool = False, model: str | None = None, url: str | None = None, emit: Callable[..., Any] = console_emit,
@@ -491,17 +776,9 @@ def cmd_inserts(xml_path: str, system: str | None = None, dry: bool = False, mod
     # Раньше отсев шёл по сырому таймингу модели: удалённая вставка со снапом на 12.0с
     # против сырых 14.5с давала Δ=2.5 > 2.0 — фильтр промахивался, и она возвращалась.
     if rejected:
-        def _sim(q1: Any, q2: Any) -> float:
-            a = set(re.findall(r"[а-яёa-z]+", (q1 or "").lower()))
-            b = set(re.findall(r"[а-яёa-z]+", (q2 or "").lower()))
-            return (len(a & b) / len(a | b)) if a and b else 0.0
         kept_ins = []
         for it in ins:
-            hit = next((r for r in rejected
-                        if (r.get("type") == "video") == (it.get("type") == "video")
-                        and abs(float(r.get("start_sec", 0) or 0) - float(it.get("start_sec", 0) or 0)) <= 2.0
-                        and _sim(r.get("query"), it.get("query")) >= 0.6), None)
-            if hit:
+            if _rejected_hit(rejected, it):
                 emit("  память правок: убрал повтор удалённого — ~{sec:.0f}с «{query}»",
                      sec=float(it.get('start_sec', 0)), query=str(it.get('query', ''))[:40])
             else:
@@ -564,8 +841,17 @@ def cmd_inserts(xml_path: str, system: str | None = None, dry: bool = False, mod
                 emit("  ! добор окна не удался: {err_type}: {err}", err_type=type(e).__name__, err=e)
                 extra2 = []
             ins = sorted(ins + extra2[:need2], key=lambda x: float(x.get("start_sec", 0) or 0))
-    # Финальная страховка полного набора: не больше общей и типовых квот.
-    ins = _cap_by_quota(ins, ph_total, vid_total)
+    # 8) по названиям: слово из личного словаря получает фото-вставку с его картинкой из
+    # базы — детерминированно и ПОСЛЕ ответа модели (она такие вставки делает вскользь).
+    # Только в полном наборе: в доборе (count) вставки уже посчитаны этим же вызовом, и
+    # второй проход продублировал бы их.
+    if not count:
+        ins, named_notes = _named_inserts(ins, words, dur, speaker, rejected=rejected, emit=emit)
+        if named_notes:
+            emit("по названиям: {list}", list=", ".join(named_notes))
+    # Финальная страховка полного набора: не больше общей и типовых квот. Вставки по названиям
+    # в эту квоту входят, но вытесняют ИИ-вставки (см. _cap_with_named).
+    ins = _cap_with_named(ins, ph_total, vid_total)
     out = os.path.splitext(xml_path)[0] + ".inserts.json"
     if not count:                                   # полный набор -> обновляем сайдкар; добор -> нет
         atomic_json_dump(out, {"inserts": ins}, indent=1)
@@ -648,11 +934,16 @@ def _busy_windows_from_free(words: Sequence[tuple[int, str, float, float]], free
 
 
 INTRO_ROW_MAX_CHARS = 9       # длиннее — строка не влезает по ширине, рвём по словам
-# Лимит переноса ДЛЯ ХУКА — отдельный, потому что порог 9 режет ровно то, что юзер
-# собирает руками: на ручном эталоне (38 .jsx, правила интро, поправка
-# 2026-08-14) медиана строки хука 8 символов, p90 13, max 16. Акценты остаются на 9:
-# там 89 % строк в одно слово, порог с эталоном совпадает.
-INTRO_HOOK_ROW_MAX_CHARS = 14
+# Лимит переноса ДЛЯ ХУКА — ручка стиля «длина строки интро» (ключ intro_row_max, core/
+# styles.py, дефолт 20). Замер владельца по 48 роликам: его строки хука доходят до ~20
+# символов, когда фраза — одно смысловое целое («ни в коем случае»); прежние 14 рвали их
+# по буквам. Константа — дефолт для вызовов без стиля; cmd_intro берёт число из стиля клипа.
+INTRO_HOOK_ROW_MAX_CHARS = int(_styles.BASE["intro_row_max"])
+# Порог СКЛЕЙКИ служебного слова с первым словом следующей строки (_intro_defunc). Своя
+# константа, а не ручка стиля: замер владельца (52 ролика) — при 20 склейка тянет лишнее
+# («ЕСЛИ ВЫ» -> «ЕСЛИ ВЫ НА», «ПОТОМУ ЧТО» -> «ПОТОМУ ЧТО НАМ»), совпадение падает
+# с 79 % до 73 %; при 14 потерь нет.
+INTRO_DEFUNC_MAX_CHARS = 14
 
 # Служебные слова: предлоги, союзы, частицы, местоимения — верхним регистром, как слова
 # приходят из XML. ОДИН список на весь модуль: им же считается доля строк хука,
@@ -682,10 +973,15 @@ INTRO_FUNC_WORDS = frozenset({
 
 def _split_words(ws: Sequence[str], limit: int = INTRO_ROW_MAX_CHARS) -> list[list[str]]:
     """Перенос по словам: список слов, который длиннее limit символов, режем на две
-    части по ближайшей к середине границе слов (и так рекурсивно). Возвращает список
-    кусков (списков слов). Одно слово не режем — переносим целиком. Среди кандидатов
-    точка переноса, оставляющая служебное слово (INTRO_FUNC_WORDS) последним в куске,
-    штрафуется и берётся только если других нет."""
+    части по границе слов (и так рекурсивно). Возвращает список кусков (списков слов).
+    Одно слово не режем — переносим целиком.
+
+    Цена разреза (2026-10-09): разрез сразу ПОСЛЕ слова из INTRO_PREFIX_WORDS («не»,
+    предлог, указательное) запрещён, как и кусок, который остаётся из одного такого
+    слова: «НЕ» обязано стоять в одной строке со СЛЕДУЮЩИМ словом. После прочего
+    служебного слова (INTRO_FUNC_WORDS) разрез штрафуется и берётся только если
+    без штрафа нельзя. Среди равных — ближайший к середине. Если допустимых разрезов
+    нет — строку не режем: строка длиннее limit лучше отрыва. Сравнение — через upper()."""
     out, stack = [], [list(ws)]
     while stack:
         cur = stack.pop(0)
@@ -693,24 +989,30 @@ def _split_words(ws: Sequence[str], limit: int = INTRO_ROW_MAX_CHARS) -> list[li
             out.append(cur)
             continue
         half = len(" ".join(cur)) / 2.0            # режем там, где половина символов
-        best, acc, bestd, best_bad = 1, 0, None, False
+        best, acc, bestkey = None, 0, None
         for j in range(len(cur) - 1):
             acc += len(cur[j]) + 1
-            d = abs(acc - half)
-            bad = cur[j] in INTRO_FUNC_WORDS       # кусок останется БЕЗ своего слова
-            if (bestd is None or (not bad and best_bad)
-                    or (bad == best_bad and d < bestd)):
-                best, bestd, best_bad = j + 1, d, bad
+            up = cur[j].upper()
+            if up in INTRO_PREFIX_WORDS:           # «не»/предлог остался бы без своего слова
+                continue
+            if j == len(cur) - 2 and cur[-1].upper() in INTRO_PREFIX_WORDS:
+                continue                           # правый кусок стал бы одним таким словом
+            penalty = 1 if up in INTRO_FUNC_WORDS else 0
+            key = (penalty, abs(acc - half))
+            if bestkey is None or key < bestkey:
+                best, bestkey = j + 1, key
+        if best is None:                           # допустимого разреза нет — строку не режем
+            out.append(cur)
+            continue
         stack = [cur[:best], cur[best:]] + stack
     return out
 
 
 def _wrap_intro_rows(rows: list[dict[str, Any]], words: Sequence[tuple[int, str, float, float]], limit: int = INTRO_HOOK_ROW_MAX_CHARS) -> list[dict[str, Any]]:
     """Перенос длинных строк интро: каждую строку режем по словам на куски ≤ limit.
-    Лимит по умолчанию — хуковый 14 (см. INTRO_HOOK_ROW_MAX_CHARS): строка хука у юзера
-    бывает до 16 символов, и порог 9 резал её пополам. Первый кусок наследует break
-    строки, продолжения получают break=False — тот же контракт, что у акцентов в
-    _place_mids."""
+    limit — ручка стиля intro_row_max (см. INTRO_HOOK_ROW_MAX_CHARS); строки короче
+    ручки не трогаются. Первый кусок наследует break строки, продолжения получают
+    break=False — тот же контракт, что у акцентов в _place_mids."""
     out, k = [], 0
     for r in rows:
         n = r["count"]
@@ -774,10 +1076,15 @@ def _intro_defunc(rows: list[dict[str, Any]], words: Sequence[tuple[int, str, fl
     Модель поняла «до 14 символов» как цель и рвёт фразу где попало: «СТАВЯТ / ПО»,
     «ДЛЯ / ПРОФЕССИОНАЛЬНЫХ». _split_words такие строки не чинит — они короче лимита
     и в перенос не попадают. Здесь: строка, кончающаяся служебным словом, тащит
-    ПЕРВОЕ слово следующей строки назад (пока не упрётся в потолок 14 символов или
-    не перестанет кончаться служебным словом). Пустые строки выкидываются; границы
+    ПЕРВОЕ слово следующей строки назад (пока не упрётся в потолок INTRO_DEFUNC_MAX_CHARS
+    или не перестанет кончаться служебным словом). Пустые строки выкидываются; границы
     прекомпов модель ставит ненадёжно (прекомп на «ЖЕ», «ПО»), поэтому разбиение
-    доверяется _hook_breaks, который вызывается следом."""
+    доверяется _hook_breaks, который вызывается следом.
+
+    Порог склейки НЕ зависит от ручки стиля (см. INTRO_DEFUNC_MAX_CHARS).
+    Из ЦВЕТНОЙ строки слово не тянем: жёлтая/accent строка — смысловой пик, и перенос её
+    первого слова наверх снимает цвет всей строки (опустевшая строка удаляется). Отрыв
+    «не»/предлога перед цветной строкой закрывает _intro_fix_prefix."""
     out, k = [], 0
     for r in rows:
         n = max(1, r.get("count") or 1)
@@ -796,7 +1103,9 @@ def _intro_defunc(rows: list[dict[str, Any]], words: Sequence[tuple[int, str, fl
                 continue
             if cur["w"][-1] not in INTRO_FUNC_WORDS:
                 continue
-            if len(" ".join(cur["w"] + [nxt["w"][0]])) > INTRO_HOOK_ROW_MAX_CHARS:
+            if nxt.get("color") in ("yellow", "accent"):
+                continue                       # цветной строке слово не отрываем
+            if len(" ".join(cur["w"] + [nxt["w"][0]])) > INTRO_DEFUNC_MAX_CHARS:
                 continue
             cur["w"].append(nxt["w"][0])
             nxt["w"] = nxt["w"][1:]
@@ -815,7 +1124,8 @@ def _intro_defunc(rows: list[dict[str, Any]], words: Sequence[tuple[int, str, fl
 
 
 # Слова, которые не должны отрываться от следующего слова: «не», «ни», предлоги,
-# указательные/определительные — переезжают в начало цветной строки (задание 02.10.2026).
+# указательные/определительные. «НЕ»/«НИ» переезжают в начало СЛЕДУЮЩЕЙ строки всегда, прочие —
+# только если следующая строка цветная или back (правило владельца 2026-10-09, _intro_fix_prefix).
 INTRO_PREFIX_WORDS = frozenset({
     "НЕ", "НИ",
     # предлоги (закрытый список из задания)
@@ -829,12 +1139,12 @@ INTRO_PREFIX_WORDS = frozenset({
 def _intro_fix_prefix(rows: list[dict[str, Any]], words: Sequence[tuple[int, str, float, float]]) -> list[dict[str, Any]]:
     """«Не»/предлог/указательное не отрываются от слова (02.10.2026).
 
-    Если цветная строка (yellow/accent) или строка с back начинается со слова,
-    а ПЕРЕД ним стоит «не»/«ни» или предлог/указательное из INTRO_PREFIX_WORDS —
-    слово переезжает из предыдущей белой строки в начало цветной (count ±1).
-    Строка из одного предлога («О», «НА») — склеивается со следующей строкой.
-    Пустые строки удаляются. Для хука (intro_rows) — по count,
-    для mid_groups — используй _intro_fix_prefix_mids (по полю from).
+    Строка кончается «НЕ» или «НИ» — слово переезжает в начало СЛЕДУЮЩЕЙ строки при любом
+    её цвете («ТАК НЕ / ДЕЛАТЬ» -> «ТАК / НЕ ДЕЛАТЬ»). Прочие слова INTRO_PREFIX_WORDS
+    (предлоги, указательные) переезжают только в цветную (yellow/accent) или back-строку:
+    перед белой «ЕСЛИ ВЫ НА / КУРСЕ» владелец оставляет как есть. Строка из ОДНОГО
+    служебного слова склеивается со следующей. Пустые строки удаляются. Для хука
+    (intro_rows) — по count; для mid_groups это делает _place_mids (по полю from).
     """
     # Развернуть rows в список слов
     out, k = [], 0
@@ -856,12 +1166,13 @@ def _intro_fix_prefix(rows: list[dict[str, Any]], words: Sequence[tuple[int, str
             prev = out[i - 1]
             if not prev["w"] or not cur["w"]:
                 continue
-            # Правило: цветная/accent/back строка перед которой в белой строке стоит
-            # предлог — перетаскиваем
-            is_target = (cur.get("color") in ("yellow", "accent") or cur.get("back"))
-            if not is_target:
+            last = prev["w"][-1].upper()
+            if last not in INTRO_PREFIX_WORDS:
                 continue
-            if prev["w"][-1].upper() not in INTRO_PREFIX_WORDS:
+            # «НЕ»/«НИ» — всегда, при любом цвете следующей строки; предлоги и указательные —
+            # только перед цветной/back-строкой (перед белой «ЕСЛИ ВЫ НА / КУРСЕ» не трогаем)
+            if last not in ("НЕ", "НИ") and not (
+                    cur.get("color") in ("yellow", "accent") or cur.get("back")):
                 continue
             # Перетащить последнее слово из предыдущей строки
             cur["w"].insert(0, prev["w"].pop())
@@ -897,27 +1208,6 @@ def _intro_fix_prefix(rows: list[dict[str, Any]], words: Sequence[tuple[int, str
     if res:
         res[0]["break"] = True             # первая строка — голова хука по определению
     return res
-
-
-def _intro_fix_prefix_mids(mids: list[dict[str, Any]], words: Sequence[tuple[int, str, float, float]]) -> list[dict[str, Any]]:
-    """Аналог _intro_fix_prefix для mid_groups: работает по полю from.
-
-    Если акцент/жёлтый начинается со слова, а перед ним (words[from-1]) стоит
-    предлог/«не» — сдвигаем from на −1, count на +1.
-    """
-    for m in mids:
-        f = m.get("from")
-        if f is None or f <= 0:
-            continue
-        c = m.get("count", 1)
-        color = m.get("color")
-        if color not in ("yellow", "accent"):
-            continue
-        prev_word = words[f - 1][1].upper() if f - 1 < len(words) else ""
-        if prev_word in INTRO_PREFIX_WORDS:
-            m["from"] = f - 1
-            m["count"] = c + 1
-    return mids
 
 
 def _hook_breaks(rows: list[dict[str, Any]], words: Sequence[tuple[int, str, float, float]]) -> list[dict[str, Any]]:
@@ -973,12 +1263,30 @@ def _place_mids(groups: list[tuple[Any, ...]], words: Sequence[tuple[int, str, f
     занят, текста за спиной не видно) или наезжает на предыдущий акцент. Всё, что
     выброшено, пишем в лог: молчаливый `continue` скрывал главную потерю разметки."""
     mids, last_end = [], -1e9
-    for item in sorted(groups, key=lambda x: x[0]):
+    pending = []
+    for item in groups:
         f, c, color = item[0], item[1], item[2]
         has_back = len(item) > 3
         back = bool(item[3]) if has_back else False
         if f < intro_len or f + c > len(words):        # не лезем в интро и за край
             continue
+        # «не»/предлог/указательное не отрываются от своего слова — ДО вставок и разреза
+        # (2026-10-09). Правило одно для всех цветов (решение владельца 2026-10-09).
+        # Начало: перед группой слова из INTRO_PREFIX_WORDS переезжают в неё, цепочкой
+        # («НИ В КОЕМ СЛУЧАЕ» — группа «КОЕМ СЛУЧАЕ» начинается с «НИ»). Конец: группа,
+        # кончающаяся таким словом, добирает следующее; если добирать нечего (конец
+        # ролика) — служебное слово снимается с конца.
+        while f - 1 >= intro_len and words[f - 1][1].upper() in INTRO_PREFIX_WORDS:
+            f, c = f - 1, c + 1
+        while c > 0 and f + c < len(words) and words[f + c - 1][1].upper() in INTRO_PREFIX_WORDS:
+            c += 1                                 # добрать следующее слово
+        while c > 0 and words[f + c - 1][1].upper() in INTRO_PREFIX_WORDS:
+            c -= 1                                 # ролик кончился: снять служебное с конца
+        if c == 0:
+            continue
+        pending.append((f, c, color, back, has_back))
+    # порядок — уже по скорректированным началам: сдвиг «не» назад мог поставить группу раньше
+    for f, c, color, back, has_back in sorted(pending, key=lambda x: x[0]):
         t, t_end = words[f][2], words[f + c - 1][3]
         if any(a < t_end and t < b for a, b in busy):  # акцент только ТАМ, ГДЕ ВСТАВОК НЕТ
             emit("  акцент с «{word}» ({sec:.0f}с) отброшен: перекрыт вставкой",
@@ -999,6 +1307,110 @@ def _place_mids(groups: list[tuple[Any, ...]], words: Sequence[tuple[int, str, f
                 row["back"] = back
             mids.append(row)
     return mids
+
+
+# Слово-призыв («напишите мне слово «консультация»…») — то, что зритель должен унести с
+# конца ролика. Промпт просит ставить на него последний акцент, но модель этого не
+# гарантирует: призыв мог оказаться перекрыт или уступить хвост акцентов. Поэтому гарантия в коде.
+INTRO_CALL_TAIL = 0.15        # хвост ролика, где ищем призыв: доля слов…
+INTRO_CALL_TAIL_MIN = 30      # …но не меньше стольких слов
+INTRO_CALL_MAX_WORDS = 3      # кавычки длиннее — цитата, а не призыв: не трогаем
+# Открывающая кавычка -> допустимые закрывающие. ASCII-кавычка закрывается сама собой.
+_QUOTE_OPEN: dict[str, tuple[str, ...]] = {"«": ("»",), "„": ("“", "”"), "“": ("”",), '"': ('"',)}
+_QUOTE_TRIM = '«»„“”"' + ".,!?:; "
+# Метка в INTRO_SYSTEM вместо числа длины строки хука: cmd_intro подставляет ручку стиля
+# (intro_row_max). Не str.format — в промпте есть фигурные скобки JSON.
+INTRO_ROW_MAX_TOKEN = "<ROW_MAX>"
+
+
+def _quote_spans(words: Sequence[tuple[int, str, float, float]]) -> list[tuple[int, int]]:
+    """Пары кавычек в ленте: [(a, b), …] — индекс слова с открывающей кавычкой и индекс
+    слова с закрывающей. Кавычки могут стоять на соседних словах или внутри одного."""
+    out: list[tuple[int, int]] = []
+    start = 0
+    closers: tuple[str, ...] = ()
+    for i, w in enumerate(words):
+        for ch in str(w[1]):
+            if closers:
+                if ch in closers:
+                    out.append((start, i))
+                    closers = ()
+            elif ch in _QUOTE_OPEN:
+                start, closers = i, _QUOTE_OPEN[ch]
+    return out
+
+
+def _call_span(words: Sequence[tuple[int, str, float, float]]) -> tuple[int, int] | None:
+    """Слово-призыв: (a, b) — первое и последнее слово ПОСЛЕДНЕЙ пары кавычек, если она
+    кончается в хвосте ролика (последние 15 % слов, не меньше 30) и не длиннее трёх слов.
+    Иначе None: кавычек в хвосте нет — решает промпт."""
+    n = len(words)
+    if not n:
+        return None
+    tail = min(n, max(INTRO_CALL_TAIL_MIN, math.ceil(n * INTRO_CALL_TAIL)))
+    lo = n - tail
+    spans = [s for s in _quote_spans(words) if s[1] >= lo]
+    if not spans:
+        return None
+    a, b = spans[-1]
+    if a < lo or b - a + 1 > INTRO_CALL_MAX_WORDS:
+        return None
+    return a, b
+
+
+def _mid_groups(mids: Sequence[dict[str, Any]]) -> list[tuple[int, int, int, int]]:
+    """Акценты посреди ролика по группам: [(i0, i1, f, count), …] — строки mids[i0:i1]
+    одной группы (голова с break и её продолжения), f — первое слово, count — слов в группе."""
+    out: list[list[int]] = []
+    for i, r in enumerate(mids):
+        n = int(r.get("count") or 0)
+        if r.get("break") or not out:
+            f = r.get("from")
+            out.append([i, i + 1, 0 if f is None else int(f), n])
+        else:
+            out[-1][1] = i + 1
+            out[-1][3] += n
+    return [(g[0], g[1], g[2], g[3]) for g in out]
+
+
+def _place_call_word(mids: list[dict[str, Any]], words: Sequence[tuple[int, str, float, float]], intro_len: int,
+                     busy: Sequence[tuple[float, float]],
+                     emit: Callable[..., Any] = console_emit) -> list[dict[str, Any]]:
+    """Слово-призыв — последний акцент ролика. mids — строки после _place_mids.
+
+    Призыв в интро или под вставкой не трогаем, пишем в лог. Иначе: если акцент уже
+    покрывает призыв целиком — все акценты после него удаляем. Если нет — удаляем акценты,
+    которые кончаются позже призыва минус зазор INTRO_MID_GAP (то есть идут после него или
+    налезают на его зазор), и ставим группу из слов в кавычках: жёлтую, без заднего плана.
+    Оформление (anim/fx) ставится позже тем же кодом, что у прочих акцентов."""
+    span = _call_span(words)
+    if span is None:
+        return mids
+    a, b = span
+    word = " ".join(str(w[1]).strip(_QUOTE_TRIM) for w in words[a:b + 1]).strip()
+    t0, t1 = words[a][2], words[b][3]
+    if a < intro_len:
+        emit("  призыв «{word}» в интро — акцент не ставлю", word=word)
+        return mids
+    if any(s < t1 and t0 < e for s, e in busy):
+        emit("  призыв «{word}» перекрыт вставкой", word=word)
+        return mids
+    groups = _mid_groups(mids)
+    cover = [g for g in groups if g[2] <= a and g[2] + g[3] - 1 >= b]
+    if cover:
+        emit("  призыв: «{word}» — последний акцент", word=word)
+        return mids[:cover[-1][1]]
+    keep = 0                                   # группы идут по времени: с первой задетой — хвост
+    for i0, i1, f, cnt in groups:
+        if words[min(f + cnt - 1, len(words) - 1)][3] > t0 - INTRO_MID_GAP:
+            break
+        keep = i1
+    rows = []
+    for ci, chunk in enumerate(_split_words([str(w[1]) for w in words[a:b + 1]])):
+        rows.append({"from": (a if ci == 0 else None), "count": len(chunk),
+                     "color": "yellow", "break": ci == 0, "back": False})
+    emit("  призыв: «{word}» — последний акцент", word=word)
+    return mids[:keep] + rows
 
 
 def _intro_look(color: Any, back: Any, nwords: int,
@@ -1035,14 +1447,30 @@ def _intro_look(color: Any, back: Any, nwords: int,
     return ("", "")
 
 
+def _intro_row_max(style: Any = None) -> int:
+    """Ручка стиля «длина строки интро» (intro_row_max) для переноса длинных строк хука.
+
+    style — имя пресета, dict стиля или None (тогда BASE). Читается тем же resolve, что и
+    сборка; битое число в стиле — дефолт BASE.
+    """
+    try:
+        return int(_styles.resolve(style)["intro_row_max"])
+    except (TypeError, ValueError):
+        return INTRO_HOOK_ROW_MAX_CHARS
+
+
 def cmd_intro(xml_path: str, system: str | None = None, dry: bool = False, model: str | None = None, url: str | None = None, emit: Callable[..., Any] = console_emit,
-              inserts: list[dict[str, Any]] | None = None) -> Any:
+              inserts: list[dict[str, Any]] | None = None, style: Any = None) -> Any:
     """ИИ-разметка интро (строки первых слов) + акценты-группы посреди ролика.
     inserts — уже выбранные вставки ({start_sec,duration_sec}); если не переданы,
     подхватываем сайдкар <stem>.inserts.json. Нужны, чтобы акценты вставали ТАМ,
     ГДЕ ВСТАВОК НЕТ.
+    style — стиль КЛИПА (имя, dict или None = BASE): из него длина строки хука
+    (intro_row_max) — ею режутся длинные строки переносом.
     Возвращает {intro_rows:[{count,color,break,back,anim,fx}],
                 mid_groups:[{from,count,color,break,back,anim,fx}]}."""
+    row_max = _intro_row_max(style)
+    intro_sys = (system or INTRO_SYSTEM).replace(INTRO_ROW_MAX_TOKEN, str(row_max))
     words = _words_from_xml(xml_path)
     dur = words[-1][3] if words else 0
     if inserts is None:
@@ -1050,7 +1478,11 @@ def cmd_intro(xml_path: str, system: str | None = None, dry: bool = False, model
         try:
             inserts = json.load(open(side, encoding="utf-8")).get("inserts") or []
         except ReelsiError: raise
-        except Exception:
+        except Exception as e:
+            # сайдкара нет — норма (вставок не было); битый — акценты пойдут без учёта вставок,
+            # поэтому пишем в журнал, а не молча
+            if os.path.exists(side):
+                log.warning("сайдкар вставок не прочитан (%s) — акценты интро без учёта вставок", e)
             inserts = []
     # Цель считается ПО СВОБОДНЫМ ОКНАМ, а не по длине ролика: смысл текста за спиной —
     # занять места, где вставок нет. Квота на каждое окно уходит в задание числом — в
@@ -1067,13 +1499,13 @@ def cmd_intro(xml_path: str, system: str | None = None, dry: bool = False, model
     if hint:
         user += "\n\nКАРТА РОЛИКА (для выбора мест под акценты):\n" + hint
     if dry:
-        emit((system or INTRO_SYSTEM) + "\n---\n" + user); return None
+        emit(intro_sys + "\n---\n" + user); return None
     _t0 = time.time()
     _lvl = step_reasoning("intro")
     # Размышления растут с числом слов: плоские 6000 + 8000 не хватило на ролике
     # в 280 слов (13997 из 14000 ушло на размышления, ответ оборвался четыре раза
     # подряд); множитель 20 даёт на таком ролике 11600 базы (~19600 при medium).
-    data = _ask_json(system or INTRO_SYSTEM, user, INTRO_SCHEMA,
+    data = _ask_json(intro_sys, user, INTRO_SCHEMA,
                      model=model, url=url,
                      max_tokens=reason_budget(6000 + len(words) * 20, _lvl),
                      emit=emit, reasoning=_lvl, profile=step_profile("intro"),
@@ -1120,7 +1552,7 @@ def cmd_intro(xml_path: str, system: str | None = None, dry: bool = False, model
         rows = _intro_fix_prefix(rows, words)          # «не»/предлог не отрываются от слова
         if len(rows) != n1:
             emit("  перенос предлогов: {before} -> {after} строк", before=n1, after=len(rows))
-        nrows = _wrap_intro_rows(rows, words)
+        nrows = _wrap_intro_rows(rows, words, row_max)
         if len(nrows) != len(rows):
             emit("  перенос строк интро: {before} -> {after}", before=len(rows), after=len(nrows))
         rows = nrows
@@ -1140,8 +1572,8 @@ def cmd_intro(xml_path: str, system: str | None = None, dry: bool = False, model
                            color, bool(g.get("back"))))
         except (TypeError, ValueError, OverflowError):
             continue
-    mids = _place_mids(groups, words, intro_len, busy, emit=emit)
-    mids = _intro_fix_prefix_mids(mids, words)         # «не»/предлог при акценте
+    mids = _place_mids(groups, words, intro_len, busy, emit=emit)   # «не»/предлог — внутри
+    mids = _place_call_word(mids, words, intro_len, busy, emit=emit)   # призыв — последним акцентом
     # Оформление по группам: позиция строки и размер группы определяют анимацию.
     # Группа — строки между break (одна анимация на группу, где правило не говорит иного).
     for batch in (rows, mids):

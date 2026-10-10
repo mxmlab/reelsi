@@ -196,7 +196,7 @@ def check_and_fix(wav_path: str, keep: Sequence[Any], emit: Callable[..., Any] =
         import soundfile as sf
         total_dur = sf.info(wav_path).duration
     except ReelsiError: raise
-    except Exception:
+    except Exception:  # soundfile не прочёл длину wav — берём конец последнего отрезка: нужна только граница, не точная длина
         total_dur = max(e for _s, e in keep) + 1.0
     whisper = engine.startswith("whisper")
     report: dict[str, Any] = {"fixed": [], "left": [], "words": 0, "engine": engine}

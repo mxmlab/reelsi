@@ -75,6 +75,12 @@ a one-word query (a noun + a qualifier is needed). Ones that slipped through any
 (there is nothing to translate with), but shown in the log next to the Russian
 caption: "⚠ a stubby query "cup" (~34с) — intended in Russian: …".
 
+The same `query` goes to a stock as the search string, so for a stock the prompt asks not for a full
+translation of the caption but for the object and one or two visible features in English, without
+numbers, doses or labels. Measured: "syringe with small 250 mark" on Pixabay gave motorcycles. The short
+variant of the query (`simplify_query` in `core/stock.py`) is not switched on: on the owner's 18 queries
+it was no better and lost the object.
+
 ## Forbidden zones in AI selection — the insert is deleted, not moved
 `aicut._apply_zones()`. After `_snap_to_phrase()` the insert's timing is tied to the quoted
 phrase, so **it must not be moved at all** — it can only be dropped entirely.
@@ -280,6 +286,73 @@ and on deletion the window shrank and the buttons changed place. Now:
 
 The frame's tests are geometry in Chrome: one height at 2 and 30 inserts, no page
 scrolling, the timeline inside the window; step 3 is checked against the CSS bench with a tolerance of ±2 px.
+
+## Stock — the order of the providers and why
+
+When there is no suitable file in the library or in generation, the frame is taken from a stock
+(`core/stock.py`). The order of the search is **Pexels → Unsplash → Pixabay → Openverse → Coverr**.
+It is a priority, not the alphabet, and it was measured on 30 of the owner's queries: Pexels and
+Unsplash almost always give 3–4 relevant frames out of 4; Pixabay pulls other tags on hard queries,
+and in the old order it filled the gap after Pexels with the weakest frames; Openverse is mostly
+junk. A shortfall from Pexels is topped up by Unsplash before Pixabay. A refusal from Unsplash for
+its demo limit (429 or 403) does not fail the search: it goes on to the next stock. Coverr (video)
+stays behind the flag `REELSI_STOCK_COVERR` until a live key has been checked. The key fields in ⚙
+and in `docs/STOCK_PROVIDERS.en.md` are in the same order.
+
+A stock key goes only with the request to its API, never with the download of a file. Search answers
+are cached (Pexels and Pixabay allow it, about 24 h), and the file is always downloaded to our own
+disk: Pixabay forbids hotlinking. The downloaded file goes into `stock/<stock>/` of the library, next to
+`<file>.license.json` with the stock, the id, the author, the link, the licence and the date.
+Openverse keeps only the licences that allow commercial use and modification. Unsplash requires the
+download to be reported with a request to `links.download_location`.
+
+## Inserts by name — the personal dictionary `named_inserts.json`
+
+A word from a personal dictionary, spoken in the speech, puts its picture from the insert library on
+the screen. The dictionary is `named_inserts.json` in the repository root; it is in `.gitignore` and
+does not go into git. The example with neutral words is `data/named_inserts.example.json`: copy it to
+`named_inserts.json` and fill it with your own words. With no file the mechanism is silently off: no
+error and no line in the log for each clip.
+
+The format: the key is the canonical name of the object, the value is the forms it is called by in
+speech and in the library; the endings are matched by the word stem. Service keys begin with `_`:
+
+- `_prefer` — words the picture must contain: a library entry without one of them is not used; `коробк*`
+  matches by the start of the word, without `*` the word must match whole;
+- `_avoid` — words that spoil a picture (a story, a defect); they give a penalty when choosing;
+- `secondary` — secondary forms (a brand's older names, a variant spelling): pictures are searched by
+  them only when the main names find nothing in the library.
+
+The pass is deterministic over the words of the clip, after the model's answer (`core/aicut/commands.py`):
+
+- a word from the dictionary → a library entry → a photo insert at the moment of the word, 2.5 s long by default;
+- the name is not placed closer than 4 s (`NAMED_GAP_SEC`) to an insert already there; one name is used
+  at most once in a 20 s window (`NAMED_SAME_SEC`); a stem shorter than 3 characters is not taken from the
+  dictionary (`NAMED_STEM_MIN`);
+- the choice of the entry (`core/insertlib.py`, `find_named`): a main name beats a secondary one; a name in
+  the FILE NAME beats one that is only in the description; fewer `_avoid` words is better; a shorter file
+  name is better; then the order in the library. If no entry has a required `_prefer` word, there is no
+  insert by name, and the log says "no picture".
+
+Inserts by name are counted in the speaker's photo quota, but the quota does not push them out: if the
+photos exceed the quota, the weakest AI inserts go first. The switch is the speaker profile checkbox
+"Inserts by name" (key `named_inserts`, on by default). The old key `drug_inserts` is read as a fallback,
+and old inserts with `auto=drug` are understood as `auto=named`.
+
+## The background of a photo insert — the cut-out model
+
+A photo insert from a stock, or a generated one, gets its object without the background through rembg when
+background cut-out is on (`core/stock.py`, `_strip_bg`). The model is chosen in ⚙ → "Generation" →
+"Background removal model" (the key `rembg_model` in `ai_config.json`):
+
+- `u2net` — the default, fast (about 0.7 s per picture);
+- `birefnet-general` — cleaner edges of hair and small objects, about 8 s on a processor; on the first use it
+  downloads a model of about 1 GB into the rembg folder.
+
+Measured on 12 pictures of the library: BiRefNet is better on 3 (it leaves no piece of background), worse on 1,
+and there is less translucent haze in 9 of 12. The cut-out in the cache is marked with its model (`REMBG_TAG`
+in `core/insertlib.py`): after a change of model the picture is recomputed, and an old cache without the mark
+counts as made by u2net.
 
 ## Tuning
 All the numbers are in the JSX STYLE block: `INS_ENTER/INS_EXIT/INS_BLUR/INS_POP`,

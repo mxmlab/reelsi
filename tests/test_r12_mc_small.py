@@ -33,6 +33,7 @@ import api  # noqa: E402
 import core.aicut.config  # noqa: E402
 from api._core import _never_serve  # noqa: E402
 from api.files import ALLOWED_MEDIA_EXTS, ALLOWED_WAVE_EXTS  # noqa: E402
+import api.files as files_api  # noqa: E402
 
 H = {"Host": "127.0.0.1:5001"}
 SECRET = "sk-fake-secret-waveform-0123456789"
@@ -99,7 +100,8 @@ def test_waveform_audio_still_works(client, tmp_path, fake_librosa):
     assert d["ok"] is True and d["pps"] == 80 and d["dur"] == 2.0
     assert len(d["peaks"]) == 160              # 2 секунды по 80 пиков
     assert fake_librosa == [str(audio)]
-    assert (tmp_path / "clip.wav.peaks80.json").is_file()
+    assert os.path.isfile(files_api.peaks_cache_path(str(audio), 80)), "кэш пиков не в служебной папке"
+    assert not [n for n in os.listdir(tmp_path) if n.startswith("clip.wav.peaks")], "рядом с медиа кэш пиков"
 
     r2 = client.get(f"/api/waveform?path={audio}&pps=80", headers=H)
     assert r2.status_code == 200 and r2.get_json()["ok"] is True

@@ -24,7 +24,8 @@ def _sidecar_yellow(xml_path: str) -> list[int]:
     try:
         d = json.load(open(p, encoding="utf-8"))
     except ReelsiError: raise
-    except Exception:
+    except Exception as e:
+        log.warning("Сайдкар жёлтых меток не прочитан, метки пустые: %s", e)
         return []
     # канонический формат (aicut/set_yellow) — {"yellow": [..]}; старый set_yellow писал
     # голый список [..] — принимаем оба, иначе существующие сайдкары молча отваливались
@@ -33,7 +34,8 @@ def _sidecar_yellow(xml_path: str) -> list[int]:
     try:
         return [int(i) for i in (d.get("yellow") or [])]
     except ReelsiError: raise
-    except Exception:
+    except Exception as e:
+        log.warning("Жёлтые метки в сайдкаре не разобраны, метки пустые: %s", e)
         return []
 
 
@@ -47,7 +49,8 @@ def _sidecar_caption(xml_path: str) -> str:
     try:
         d = json.load(open(p, encoding="utf-8"))
     except ReelsiError: raise
-    except Exception:
+    except Exception as e:
+        log.warning("Сайдкар подписи не прочитан, подпись пустая: %s", e)
         return ""
     if isinstance(d, dict):
         return str(d.get("text") or "").strip()
@@ -294,6 +297,7 @@ def api_editor_save() -> Response:
         try:
             proj_path = sidecar_path(xml, ".project.json")
             from core import align
+            from core import cut_subs
             from core import xmlbuild
             from core import xml2ae
             p = _ensure_project(xml)                      # сайдкар или реконструкция из XML
@@ -305,13 +309,36 @@ def api_editor_save() -> Response:
             # Было sub_words=None — пересборка молча стирала субтитр-графику и жёлтые.
             old_keep = [(float(s), float(e)) for s, e in (p.get("keep") or [])]
             _meta, _pcams, subs, _ins = xml2ae.parse_full(xml)
-            sub_words = ([{"w": w, "start": int(s), "end": int(e)} for (s, e, w) in subs]
+            xml_words = ([{"w": w, "start": int(s), "end": int(e)} for (s, e, w) in subs]
                          if subs else None)
-            yellow = xml2ae.auto_highlights(xml).get("yellow", [])
-            # Частоты РАЗНЫЕ: старые кадры — частота проекта (входной XML), новые — 60
-            # (столько пишет build). Одна частота уводила слова на чужое время.
-            sub_words, yellow = _reproject_subs(sub_words, yellow, old_keep, segs, fps,
-                                                xmlbuild.FPS)
+            yellow_old = xml2ae.auto_highlights(xml).get("yellow", [])
+            note = ""
+            stale = False
+            from_source = bool(p.get("text_subs"))
+            yellow: list[int]
+            if from_source:
+                # Субтитры второго прохода текста (core/cut_subs.py): слова ТЕКУЩЕГО XML — с
+                # ручными правками и удалениями — для оставшихся отрезков, слова исходника —
+                # только для отрезков, которых в старом монтаже не было.
+                src = cut_subs.load_source_words(xml)
+                added = align.subtract_ranges(segs, old_keep)
+                if src is None and any(float(e) > float(s) for s, e in added):
+                    # Достроить вернувшийся кусок не из чего: субтитры в XML устарели. Снимаем
+                    # их: xml_state даст subs=0, и шаг «Субтитры» сделает их с нуля, а не
+                    # пропустит как «уже есть». Флаг снимаем, чтобы правка не вернула их.
+                    stale = True
+                    sub_words, yellow = None, []
+                    p.pop("text_subs", None)
+                    note = ("Слов исходника для этой нарезки нет — субтитры сняты из XML как "
+                            "устаревшие; шаг «Субтитры» сделает их заново")
+                else:
+                    sub_words, yellow = cut_subs.subs_after_edit(
+                        xml_words, yellow_old, old_keep, segs, src or [], fps)
+            else:
+                # Частоты РАЗНЫЕ: старые кадры — частота проекта (входной XML), новые — 60
+                # (столько пишет build). Одна частота уводила слова на чужое время.
+                sub_words, yellow = _reproject_subs(xml_words, yellow_old, old_keep, segs, fps,
+                                                    xmlbuild.FPS)
             assign = align.assign_for_project(p, segs, N)
             try:
                 info = xmlbuild.build(cams, segs, offsets, xml, assign=assign,
@@ -320,8 +347,13 @@ def api_editor_save() -> Response:
                 # Пустой монтаж (убрали все блоки): build файл не тронул — отдаём отказ
                 # роута с текстом гарда КАК ЕСТЬ, а не «SystemExit: …».
                 raise ReelsiError(umsg("editor_save_failed", str(e), err=str(e)))
-            from core import xml2ae
-            xml2ae.write_srt_for(xml)
+            if stale:
+                cut_subs.clear_sidecars(xml)
+            elif from_source:
+                # .words.json и .srt — по НОВОМУ таймлайну, как у первой нарезки
+                cut_subs.write_sidecars(xml, sub_words)
+            else:
+                xml2ae.write_srt_for(xml)
             if yellow:
                 xml2ae.write_highlights(xml, yellow)     # вернуть жёлтые (цвет в XML)
             # память правок: что юзер ВЕРНУЛ (не было в прошлом keep) и что УДАЛИЛ — при
@@ -331,7 +363,8 @@ def api_editor_save() -> Response:
                     om_path = sidecar_path(xml, ".omni.json")
                     om = json.load(open(om_path, encoding="utf-8")) if os.path.isfile(om_path) else []
                 except ReelsiError: raise
-                except Exception:
+                except Exception as e:
+                    log.warning("Память правок (.omni.json) не прочитана, подсказка следующей нарезке без неё: %s", e)
                     om = []
 
                 def _mark(rng_list: Sequence[Sequence[float]]) -> list[dict[str, Any]]:
@@ -357,7 +390,8 @@ def api_editor_save() -> Response:
             p["keep"] = [[round(s, 3), round(e, 3)] for s, e in segs]
             p.pop("assign", None)                         # блоки изменились -> ручная раскладка камер устарела
             write_project(proj_path, p)
-            return jsonify(ok=True, segs=len(segs), dur=round(info.get("total_s", 0), 1))
+            return jsonify(ok=True, segs=len(segs), dur=round(info.get("total_s", 0), 1),
+                           note=note)
         except ReelsiError: raise
         except Exception as e:
             raise ReelsiError(umsg("editor_save_failed", f"{type(e).__name__}: {e}",
@@ -657,6 +691,10 @@ def api_clear_subs() -> Response:
             except (ReelsiError, SystemExit) as e:
                 # Пустой монтаж: build файл не тронул — текст гарда отдаём как есть.
                 raise ReelsiError(umsg("clear_subs_failed", str(e), err=str(e)))
+            # Субтитры сняты вручную: флаг «от исходника» снимаем, иначе следующая правка
+            # блоков вернула бы их из .srcwords.json (см. core/cut_subs.py).
+            if p.pop("text_subs", None):
+                write_project(sidecar_path(xml, ".project.json"), p)
             try:
                 os.remove(sidecar_path(xml, ".yellow.json"))
             except OSError:

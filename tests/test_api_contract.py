@@ -475,8 +475,8 @@ def test_ai_intro_контракт(client, xml_file, monkeypatch, no_model, quie
     mids = [{"text": "Акцент", "start": 12.0, "end": 13.0}]
     inserts = [{"type": "photo", "start_sec": 7.0, "query": "cat"}]
 
-    def fake_intro(xml_path, model=None, emit=None, inserts=None):
-        seen.update(xml_path=xml_path, model=model, inserts=inserts)
+    def fake_intro(xml_path, model=None, emit=None, inserts=None, style=None):
+        seen.update(xml_path=xml_path, model=model, inserts=inserts, style=style)
         emit("размечаю интро…")
         emit("акцентов: {count}", count=len(mids))
         return {"intro_rows": rows, "mid_groups": mids}
@@ -485,13 +485,16 @@ def test_ai_intro_контракт(client, xml_file, monkeypatch, no_model, quie
     # проверка до вызова: чужой неотпущенный ИИ-вызов заставит _ai_begin ждать 25с
     assert api._core.AI_ACTIVE == 0, "предыдущий тест не отпустил AI_ACTIVE"
 
+    style = {"intro_row_max": 9}
     d = _post(client, "/api/ai_intro", {"xml": xml_file, "model": "test-model",
-                                        "inserts": inserts})
+                                        "inserts": inserts, "style": style})
 
     assert d["ok"] is True, d
     assert d["intro_rows"] == rows and d["mid_groups"] == mids
     assert d["log"] == ["размечаю интро…", "акцентов: 1"]
-    assert seen == {"xml_path": xml_file, "model": "test-model", "inserts": inserts}
+    # стиль КЛИПА уходит в cmd_intro как есть: из него длина строки и чередование
+    assert seen == {"xml_path": xml_file, "model": "test-model", "inserts": inserts,
+                    "style": style}
     assert [line for line, _v in quiet_emit] == ["размечаю интро…", "акцентов: {count}"]
     assert quiet_emit[1][1] == {"count": 1}
     assert no_model == [1], "после успешного вызова модель обязана выгружаться"
@@ -505,14 +508,33 @@ def test_ai_intro_inserts_не_список_не_передаётся(client, xm
     from core import aicut
     seen = {}
 
-    def fake_intro(xml_path, model=None, emit=None, inserts=None):
+    def fake_intro(xml_path, model=None, emit=None, inserts=None, style=None):
         seen["inserts"] = inserts
+        seen["style"] = style
         return {"intro_rows": [], "mid_groups": []}
 
     monkeypatch.setattr(aicut, "cmd_intro", fake_intro)
     for payload in ("мусор", 123, {"a": 1}, None):
         _post(client, "/api/ai_intro", {"xml": xml_file, "inserts": payload})
         assert seen["inserts"] is None, payload
+    assert api._core.AI_ACTIVE == 0
+
+
+def test_ai_intro_style_не_строка_и_не_словарь_не_уходит(client, xml_file, monkeypatch,
+                                                         no_model, quiet_emit):
+    """`style` из тела — имя пресета или словарь стиля; любой другой мусор даёт None,
+    и интро считается по BASE (ручки стиля), а не падает."""
+    from core import aicut
+    seen = []
+
+    def fake_intro(xml_path, model=None, emit=None, inserts=None, style=None):
+        seen.append(style)
+        return {"intro_rows": [], "mid_groups": []}
+
+    monkeypatch.setattr(aicut, "cmd_intro", fake_intro)
+    for payload in ("", 7, ["stA"], None, "Стиль А"):
+        _post(client, "/api/ai_intro", {"xml": xml_file, "style": payload})
+    assert seen == [None, None, None, None, "Стиль А"], seen
     assert api._core.AI_ACTIVE == 0
 
 

@@ -16,6 +16,11 @@
 «скрыта» браузер не говорит. Одной ветки по флагу мало: шаг обязан приходить по сторожу
 независимо от видимости. Инвариант — пока плеер играет, шаг идёт не реже ~PV_WATCHDOG_MS.
 
+С 2026-10-09 звук шага 1 играет очередь буфера Web Audio (блок `ea*`), поставленная
+заранее: вырез в ней пропущен, и в фоне звук режется верно без единого кадра. Кадры (и
+сторож) ведут картинку и плейхед: картинка обязана прыгнуть через вырез к звуку не позже
+одного шага сторожа. Поэтому у редактора проверяется и очередь звука (`audioCut`), и прыжок.
+
 Что проверяется (в браузере это место слышно, а не видно, и ломается молча):
 
 1. rAF НЕ приходит, а `document.hidden=false` (случай из живого браузера), время идёт:
@@ -67,8 +72,14 @@ node = pytest.mark.skipif(not shutil.which("node"), reason="стенд треб�
 FRAME_CONSTS = ("PV_FRAME_MS", "PV_WATCHDOG_MS", "PV_FRAMES", "PV_FRAME_VIS")
 FRAME_FUNCS = ("pvFrameHidden", "pvFrameStop", "pvFramePlan", "pvFrameStart",
                "pvFrameOff", "pvFrameReplan")
-# Двери цикла редактора: пуск/пауза, часы (edTick) и прыжок через вырез.
-EDITOR_FUNCS = ("edPlay", "edPause", "edTick", "edJump", "edBlockAt")
+# Двери цикла редактора: пуск/пауза, часы (edTick), картинка за звуком (edFollow) и прыжок.
+EDITOR_FUNCS = ("edPlay", "edPause", "edSeek", "edTick", "edFollow", "edJump", "edVideoSeek",
+                "edBlockAt")
+EDITOR_DECLS = ("ED_V_SOFT", "ED_V_HARD", "ED_V_RATE")
+# Звук редактора (60-preview.js, блок `ea*`): очередь блоков и часы — боевые тела.
+EA_FUNCS = ("eaBuf", "eaSig", "eaPlan", "eaNow", "eaStop", "eaStart", "eaClock", "eaSync",
+            "eaGain", "dbToGain")
+EA_DECLS = ("EA_LEAD", "EA_FADE")
 # Двери цикла предпросмотра вставок: свой шаг идёт через общий pvStep.
 VIEW_FUNCS = ("ipvStep", "ipvTick", "ipvPlay", "ipvPause")
 PREVIEW_FUNCS = ("pvStep",)
@@ -107,7 +118,11 @@ def _bodies() -> str:
     preview = PREVIEW_JS.read_text(encoding="utf-8")
     editor = EDITOR_JS.read_text(encoding="utf-8")
     view = VIEW_JS.read_text(encoding="utf-8")
-    return "\n".join([_decl(preview, c) for c in FRAME_CONSTS]
+    a = preview.index("let EA={")                 # литерал на две строки — до `};`
+    return "\n".join([_decl(preview, c) for c in FRAME_CONSTS + EA_DECLS]
+                     + [preview[a:preview.index("};", a) + 2]]
+                     + [_decl(editor, c) for c in EDITOR_DECLS]
+                     + [_func_src(preview, n) for n in EA_FUNCS]
                      + [_func_src(preview, n) for n in FRAME_FUNCS]
                      + [_func_src(preview, n) for n in PREVIEW_FUNCS]
                      + [_func_src(editor, n) for n in EDITOR_FUNCS]
@@ -195,7 +210,20 @@ function advance(ms){let left=+ms||0,guard=0;
   }}
 // ---- состояние плееров (поля ровно как в бою) ---------------------------------------
 let MEDIA_VOL=1;
-let EDMUTVOICE=0;
+// Web Audio стенда: часы контекста — те же виртуальные часы NOW. В скрытой вкладке они
+// идут как в бою (контекст звучит), и очередь звука, поставленная заранее, отыгрывает
+// стыки без единого кадра.
+const SRCS=[];
+class FNode{constructor(){this.out=[];this.gain={value:1,setValueAtTime(){},linearRampToValueAtTime(){}};
+    this.buffer=null;this.started=null;this.stopped=false;}
+  connect(n){this.out.push(n);return n;}disconnect(){this.out=[];}
+  start(w,o,d){this.started={when:w,off:o,dur:d};}stop(){this.stopped=true;}}
+const AUDIO={state:'running',outputLatency:0,get currentTime(){return NOW/1000;},
+  destination:new FNode(),createGain(){return new FNode();},
+  createBufferSource(){const n=new FNode();SRCS.push(n);return n;}};
+function audioGraph(){}
+let CURSTYLE={};
+function vtLiveOn(){return false;}
 let VTTICK=[];        // дорожка обработанного голоса: кто позвал и куда — считает и ШАГИ
 let ARMS=0;           // разбег дублёра: edArm зовётся каждым кадром игры
 let DRAWS=0;          // рисование таймлайна: в скрытой вкладке его можно пропустить
@@ -229,16 +257,14 @@ function ipvUI(){}
 function ipvNow(){return 0;}
 function musicElSync(){}
 function sfxPause(){}
-function edVoiceSeekWait(){}   // ожидание промаха дублёра: не предмет этого стенда
 // Плеер шага 1: редактор (ED) и общий объект кадра (PV) — часы и прыжок живут на них.
 const CAM=new El('video');CAM.src='C:/cam1.mp4';
 let ED={xml:'C:/out/01_clip.xml',blocks:[{s0:0,s1:2},{s0:5,s1:7}],fps:60,cam:'C:/cam1.mp4',dur:7,
   peaks:[],pps:80,sel:-1,play:false,raw:false,raf:0,step:0,tim:0,cs:0,drag:null,v0:0,v1:7,hist:[],cuts:[],
-  br:[],brBand:0,cams:null,voicePanel:'pvvoice',
-  vtOpen:false,vtTimer:0,vtEl:null,vtOn:null};
+  br:[],brBand:0,cams:null,voicePanel:'pvvoice',seekLead:0.12};
 let PV={vids:[CAM],bufs:[],cams:[{path:'C:/cam1.mp4',name:'A'}],segs:[],audio:[],words:[],dur:7,
   aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,scrubbing:false,scrubT:0,raf:0,tim:0,xml:'',
-  voicePanel:'pvvoice'};
+  voicePanel:'pvvoice',silent:true};
 // Предпросмотр вставок (IPV): два куска EDL с вырезом 2..5 исходника — прыжок есть.
 const IV=new El('video');IV.src='C:/cam1.mp4';
 let IPV={vids:[IV],bufs:[],scrubbing:false,scrubT:0,
@@ -256,12 +282,16 @@ function resetCounters(){VTTICK=[];ARMS=0;DRAWS=0;}
 // на PV_WATCHDOG_MS не сработал бы от того, что его просто «покрутили».
 function tickFrames(v,n){const d=PV_STAND_FRAME_MS/1000;
   for(let i=0;i<n;i++){v.currentTime=v.currentTime+d;advance(PV_STAND_FRAME_MS);}}
-// Время, которое НЕ должно было прозвучать: вырезанный зазор 2..5 исходника.
+// Время, которое НЕ должно было показаться: вырезанный зазор 2..5 исходника.
 function inCut(log){return log.filter(x=>x>2.05&&x<4.95);}
+// Сколько узлов очереди звука задевают вырез 2..5: звук в фоне ведёт ОНА, а не кадры.
+function audioCut(){return SRCS.filter(n=>n.started&&!n.stopped)
+  .filter(n=>n.started.off<4.95&&n.started.off+n.started.dur>2.05).length;}
 function report(name,extra){console.log(JSON.stringify(Object.assign({name:name},extra)));}
 """ + _bodies() + r"""
 
 
+EA.raw={duration:7};       // звук камеры 1 декодирован (в бою — eaOpen при открытии клипа)
 function edFrames(n){tickFrames(CAM,n);}
 """
 
@@ -299,7 +329,7 @@ def test_hidden_tab_jumps_over_the_cut_by_timer() -> None:
   const rafAfterPlay=RAFS.size;           // скрытая вкладка: rAF не взведён вовсе
   CAM.seekLog.length=0;
   edFrames(13);                           // видео играет само, шаг приходит таймером
-  report('jump',{cs:ED.cs,at:CAM.currentTime,seekLog:CAM.seekLog,
+  report('jump',{audioCut:audioCut(),cs:ED.cs,at:CAM.currentTime,seekLog:CAM.seekLog,
     inCut:inCut(CAM.seekLog),rafAfterPlay:rafAfterPlay,rafEnd:RAFS.size,
     arms:ARMS,ticks:VTTICK.length,tickIsEd:VTTICK.every(x=>x[0]===ED),
     draws:DRAWS,playing:!!ED.play});
@@ -312,10 +342,14 @@ def test_hidden_tab_jumps_over_the_cut_by_timer() -> None:
     # Шаг зовёт голос сам, и прыжок через вырез зовёт его ещё раз — отсюда «не меньше».
     assert out["ticks"] >= out["arms"] and out["tickIsEd"] is True, (
         f"голос не ведётся кадром игры в скрытой вкладке: {out}")
-    assert 5 in out["seekLog"], f"перескока на 5 через вырез не было: {out['seekLog']}"
-    assert out["inCut"] == [], (
+    assert out["audioCut"] == 0, f"очередь звука задевает вырез 2…5: {out}"
+    assert any(5 <= x < 5.3 for x in out["seekLog"]), (
+        f"картинка не прыгнула через вырез к звуку: {out['seekLog']}")
+    assert all(x < 2.12 for x in out["inCut"]), (
         f"в фоне проиграно вырезанное (время {out['inCut']} из зазора 2…5): {out['seekLog']}")
-    assert abs(out["cs"] - out["at"]) < 2e-2, (
+    # Картинка рядом со звуком: после перемотки она стоит с упреждением (ED.seekLead) —
+    # пока декодер доезжает, звук уходит вперёд; дальше её подтягивает скорость.
+    assert abs(out["cs"] - out["at"]) < 0.2, (
         f"плейхед разошёлся с живым <video>: {out}")
     assert out["draws"] == 0, (
         "в скрытой вкладке таймлайн рисуется на каждом шаге — это лишняя работа фона")
@@ -345,7 +379,7 @@ def test_visibility_change_mid_play_keeps_one_live_cycle() -> None:
   visibility(false);                      // вернулись в окно
   resetCounters();
   flushRaf();                             // один кадр видимой вкладки
-  report('vis',{rafVisible:rafVisible,rafAfterHide:rafAfterHide,timAfterHide:timAfterHide,
+  report('vis',{audioCut:audioCut(),rafVisible:rafVisible,rafAfterHide:rafAfterHide,timAfterHide:timAfterHide,
     jumped:jumped,jumpedTo:jumpedTo,steps:ARMS,ticks:VTTICK.length,rafNow:RAFS.size,
     timNow:TIMERS.size,inCut:inCut(seekLog)});
 })();
@@ -355,9 +389,10 @@ def test_visibility_change_mid_play_keeps_one_live_cycle() -> None:
         f"уход в фон не перевёл шаг с rAF на таймер: {out}")
     # Перескок на 5: сторож сработал в фоне и довёл плейхед до живого 5 (прыжок внутри
     # шага, а не «оставить на паузе») — и шаг при этом РОВНО один.
-    assert out["jumped"] >= 5 and out["jumpedTo"] >= 5 and not out["inCut"], (
+    assert out["audioCut"] == 0, f"очередь звука задевает вырез 2…5: {out}"
+    assert out["jumped"] >= 5 and out["jumpedTo"] >= 5 and all(x < 2.12 for x in out["inCut"]), (
         f"в скрытой вкладке перескок через вырез не сработал: {out}")
-    assert abs(out["jumped"] - out["jumpedTo"]) < 2e-2, (
+    assert abs(out["jumped"] - out["jumpedTo"]) < 0.2, (
         f"плейхед разошёлся с живым <video>: {out}")
     assert out["steps"] == 1, (
         f"после ухода в фон живой не один шаг за кадр, а {out['steps']}: {out}")
@@ -462,7 +497,7 @@ def test_dead_raf_with_visible_flag_still_jumps() -> None:
   const hiddenAtPlay=!!document.hidden,rafAfterPlay=RAFS.size,timAfterPlay=TIMERS.size;
   CAM.seekLog.length=0;
   tickFrames(CAM,10);                     // кадров rAF нет: шаг приходит только сторожем
-  report('deadraf',{hiddenAtPlay:hiddenAtPlay,cs:ED.cs,at:CAM.currentTime,
+  report('deadraf',{audioCut:audioCut(),hiddenAtPlay:hiddenAtPlay,cs:ED.cs,at:CAM.currentTime,
     seekLog:CAM.seekLog,inCut:inCut(CAM.seekLog),rafAfterPlay:rafAfterPlay,
     timAfterPlay:timAfterPlay,arms:ARMS,ticks:VTTICK.length,
     tickIsEd:VTTICK.every(x=>x[0]===ED),playing:!!ED.play});
@@ -476,10 +511,12 @@ def test_dead_raf_with_visible_flag_still_jumps() -> None:
         f"сторож не повёл шаг при молчащем rAF: {out['arms']} шагов за 160 мс")
     assert out["ticks"] >= out["arms"] and out["tickIsEd"] is True, (
         f"голос не ведётся кадром игры при молчащем rAF: {out}")
-    assert 5 in out["seekLog"], f"перескока на 5 через вырез не было: {out['seekLog']}"
-    assert out["inCut"] == [], (
+    assert out["audioCut"] == 0, f"очередь звука задевает вырез 2…5: {out}"
+    assert any(5 <= x < 5.3 for x in out["seekLog"]), (
+        f"картинка не прыгнула через вырез к звуку: {out['seekLog']}")
+    assert all(x < 2.12 for x in out["inCut"]), (
         f"проиграно вырезанное (время {out['inCut']} из зазора 2…5): {out['seekLog']}")
-    assert abs(out["cs"] - out["at"]) < 2e-2, f"плейхед разошёлся с живым <video>: {out}"
+    assert abs(out["cs"] - out["at"]) < 0.2, f"плейхед разошёлся с живым <video>: {out}"
 
 
 # --------------------------------------------------------------------------- #
@@ -530,10 +567,10 @@ def test_raf_dies_mid_play_without_visibility_event() -> None:
   edPlay();
   tickFrames(CAM,3);                      // rAF шёл: кадры ведёт он
   const beforeArms=ARMS;
-  ED.cs=1.0;CAM.currentTime=1.9;          // плейхед у самого выреза 2…5, rAF встал
+  edSeek(1.9);CAM.currentTime=1.9;        // плейхед у самого выреза 2…5, rAF встал
   CAM.seekLog.length=0;
   tickFrames(CAM,10);                     // rAF мёртв, события видимости НЕ было
-  report('died',{beforeArms:beforeArms,hidden:!!document.hidden,cs:ED.cs,at:CAM.currentTime,
+  report('died',{audioCut:audioCut(),beforeArms:beforeArms,hidden:!!document.hidden,cs:ED.cs,at:CAM.currentTime,
     seekLog:CAM.seekLog,inCut:inCut(CAM.seekLog),arms:ARMS,rafNow:RAFS.size,
     playing:!!ED.play});
 })();
@@ -543,8 +580,10 @@ def test_raf_dies_mid_play_without_visibility_event() -> None:
     assert out["playing"] is True, f"игра прервалась сама: {out}"
     assert out["arms"] > out["beforeArms"], (
         f"после смерти rAF сторож не подхватил шаг: {out['arms']} шагов")
-    assert 5 in out["seekLog"], f"перескока на 5 через вырез не было: {out['seekLog']}"
-    assert out["inCut"] == [], (
+    assert out["audioCut"] == 0, f"очередь звука задевает вырез 2…5: {out}"
+    assert any(5 <= x < 5.3 for x in out["seekLog"]), (
+        f"картинка не прыгнула через вырез к звуку: {out['seekLog']}")
+    assert all(x < 2.12 for x in out["inCut"]), (
         f"проиграно вырезанное (время {out['inCut']} из зазора 2…5): {out['seekLog']}")
 
 

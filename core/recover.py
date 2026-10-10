@@ -23,12 +23,16 @@ import json
 import os
 from typing import Any
 
+from core.applog import get_logger
+
+log = get_logger(__name__)
+
 
 def _load_json(path: str) -> Any:
     try:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
-    except Exception:
+    except Exception:  # файла может не быть (сайдкар пишется не всегда) — штатно; битый — None, восстановление идёт по остальному
         return None
 
 
@@ -36,7 +40,7 @@ def _load_text(path: str) -> str:
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             return f.read()
-    except Exception:
+    except Exception:  # нет текста (.jsx не записан или не читается) — пусто: вставки тогда берутся из разметки
         return ""
 
 
@@ -91,7 +95,10 @@ def read_jsx_inserts(xml_path: str) -> list[dict[str, Any]]:
         return []
     try:
         arr = json.loads(raw)
-    except Exception:
+    except Exception as e:
+        # Битый массив в .jsx: геометрия и файлы вставок не вернутся, разметка из сайдкара останется.
+        log.warning("INSERTS в .jsx не разобран (%s): вставки вернутся только по разметке",
+                    type(e).__name__)
         return []
     return [x for x in arr if isinstance(x, dict)] if isinstance(arr, list) else []
 

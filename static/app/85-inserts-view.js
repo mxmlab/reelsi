@@ -88,8 +88,11 @@ function ipvPlanBody(){
     hl_joins:(HLXML===xml)?[...JNS]:[],
     inserts:insList,
     intro:ir.lines,intro_remove:ir.remove,intro_splits:ir.splits,
-    intro_mode:val('intromode')||'word',censor:$('censor')?$('censor').checked:true,
-    cams:clipNcams(c),exposure:parseFloat(val('aeexposure'))||0,
+    intro_mode:val('intromode')||'word',
+    // Цензура — ключ СТИЛЯ клипа (clipCensor): у клипов разных стилей она своя, и
+    // решения клипа у неё нет. Яркости тут больше нет вовсе: exposure убран из сборки.
+    censor:(typeof clipCensor==='function')?clipCensor(c):true,
+    cams:clipNcams(c),
     roto: (CURSTYLE && CURSTYLE.roto != null) ? !!CURSTYLE.roto : (typeof STSCHEMA !== 'undefined' && STSCHEMA && STSCHEMA.base ? !!STSCHEMA.base.roto : false),
     roto_bottom: (CURSTYLE && CURSTYLE.roto_bottom != null) ? CURSTYLE.roto_bottom : (typeof STSCHEMA !== 'undefined' && STSCHEMA && STSCHEMA.base ? STSCHEMA.base.roto_bottom : 0),
     style:CURSTYLE};}

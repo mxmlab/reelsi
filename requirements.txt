@@ -9,9 +9,16 @@
 #
 # IMPORTANT: torch is installed SEPARATELY and FIRST - pick the build for your
 # GPU at https://pytorch.org/get-started/locally/ . torch is intentionally
-# unpinned: PyPI ships a CPU build, and everything GPU-bound
-# (Omni, GigaAM, roto, forced-align) would run tens of times slower. Tested:
-#   pip install torch==2.5.1 torchaudio==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+# unpinned here: PyPI ships a CPU build, and everything GPU-bound
+# (Omni, GigaAM, roto, forced-align) would run tens of times slower. Tested pair:
+#   pip install torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu126
+# torchaudio must match torch exactly (it is a C++ extension built per torch). The pair
+# is 2.8.0 and not newer on purpose: torchaudio 2.9+ moves torchaudio.load onto torchcodec
+# (a package we do not ship - load() raises ImportError without it), and torchaudio 2.11
+# is the last release, with no build for torch 2.13. torchaudio.forced_align is deprecated
+# and slated for removal in later torchaudio releases - revisit when that happens.
+# Once torch and torchaudio are installed, the unpinned torchaudio line below is satisfied
+# by the installed build and pip does not upgrade it.
 #
 # Everything else carries an UPPER bound on the major version: a bare `>=` lets
 # pip install a fresh release that breaks the subtitle step on a clean install
@@ -43,13 +50,11 @@ faster-whisper>=1.0,<2
 av>=12,<19
 # Qwen2.5-Omni; if Omni fails to load, install from git:
 #   pip install git+https://github.com/huggingface/transformers
-# The upper bound is deliberately still <5: at import transformers 5.x calls
-# torch.accelerator (utils/import_utils.py, get_device_type), which appeared only in
-# torch 2.6, while install.ps1/install.sh and both READMEs install torch 2.5.1 - with
-# it every Auto* import fails, so breath/falign/ctc_asr/omni_asr all die at once.
-# Until torch moves, the six pip-audit advisories against 4.x are excluded one by one
-# in .github/workflows/ci.yml, each with the code path we never call.
-transformers>=4.46,<5
+# 5.x needs torch >= 2.6 at import (utils/import_utils.py calls torch.accelerator).
+# Floor 5.10.1: the youngest 5.x with no pip-audit advisories (5.9.0 has PYSEC-2026-3929).
+# Note: transformers 5.10.1 itself is clean, but the torch 2.8.0 pair above has 8 advisories
+# in pip-audit (fixed in torch 2.9-2.13); that trade-off is recorded in CHANGELOG.
+transformers>=5.10.1,<6
 accelerate>=1.0
 huggingface-hub>=0.26
 # audio/video preprocessing for Qwen2.5-Omni

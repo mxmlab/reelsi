@@ -290,3 +290,42 @@ def test_roto_js_cancelled_propagates(tmp_path, monkeypatch):
     kw = {"roto": True, "base": str(tmp_path)}
     with pytest.raises(Cancelled):
         _roto_js(plan, str(tmp_path / "test.xml"), kw, emit=lambda *a, **k: None, cancel=lambda: False)
+
+
+def test_roto_probe_refuses_unreadable_video(tmp_path, monkeypatch):
+    """_probe: ffprobe не запустился/не ответил — отказ с понятным текстом, а не заглушка 0×0."""
+    video = str(tmp_path / "cam.mp4")
+
+    def boom(*a, **k):
+        raise FileNotFoundError("ffprobe")
+
+    monkeypatch.setattr(roto.subprocess, "run", boom)
+    with pytest.raises(ReelsiError) as ei:
+        roto._probe(video)
+    assert ei.value.code == "roto_probe_failed"
+    assert "не удалось прочитать видео камеры для рото" in str(ei.value)
+    assert video in str(ei.value)
+
+
+def test_roto_probe_refuses_stream_without_size(tmp_path, monkeypatch):
+    """ffprobe ответил, но размеров нет (не видео): 0×0 дальше не пойдёт — тоже отказ."""
+    video = str(tmp_path / "cam.mp4")
+
+    class _Out:
+        stdout = "r_frame_rate=25/1\n"
+
+    monkeypatch.setattr(roto.subprocess, "run", lambda *a, **k: _Out())
+    with pytest.raises(ReelsiError) as ei:
+        roto._probe(video)
+    assert ei.value.code == "roto_probe_no_video"
+
+
+def test_roto_probe_reads_size_and_fps(tmp_path, monkeypatch):
+    """Обычный путь не изменился: размеры и частота из ffprobe."""
+    video = str(tmp_path / "cam.mp4")
+
+    class _Out:
+        stdout = "width=1920\nheight=1080\nr_frame_rate=50/1\n"
+
+    monkeypatch.setattr(roto.subprocess, "run", lambda *a, **k: _Out())
+    assert roto._probe(video) == (1920, 1080, 50.0, "50/1")

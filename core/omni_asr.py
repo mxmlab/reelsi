@@ -151,7 +151,7 @@ def ensure_weights(repo: str, emit: Any = console_emit, retries: int = 8) -> str
             try:
                 holder["path"] = snapshot_download(repo, max_workers=4)
             except ReelsiError: raise
-            except Exception as e:
+            except Exception as e:  # ошибка не теряется: уходит в holder["err"] и печатается строкой «обрыв скачивания»
                 holder["err"] = e
         th = threading.Thread(target=_dl, daemon=True)
         th.start()

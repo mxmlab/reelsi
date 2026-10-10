@@ -200,6 +200,7 @@ ADDITIONS = {
     "ERR_no_response": "No response from {who} ({url}): {err}. Check that the server is running / your URL and internet in ⚙ settings",
     "ERR_no_task_id": "The provider returned no id/polling_url: {resp}",
     "ERR_output_cut": "The provider cut the response at its own output limit ({tokens} tokens). Lower the reasoning level on this step or pick a model with a larger output.",
+    "ERR_preview_audio_failed": "Camera audio could not be extracted: {name}",
     "ERR_preview_plan_failed": "Failed to build the preview proxy plan: {err}",
     "ERR_provider_code": "Provider returned {code}: {detail}",
     "ERR_provider_error": "Provider returned an error: {txt}",

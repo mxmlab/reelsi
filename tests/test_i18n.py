@@ -97,6 +97,40 @@ def test_js_keys_exist_in_dictionary(en):
     assert not missing, f"t('…') без перевода: {missing[:5]}"
 
 
+def test_schema_placeholders_are_translated(en):
+    """Плейсхолдер ручки панели стиля — такая же показываемая строка, как подпись.
+
+    Поля панели строит схема (`core/style_schema.py`), а текст плейсхолдера ставит
+    сама панель (`t(item.placeholder)`), в разметке index.html его нет — значит,
+    экстрактор разметки его не видит вовсе. Русский плейсхолдер молча оставался
+    русским на английском интерфейсе: так и прожило «путь к файлу или ссылка
+    YouTube» у поля музыки. Латинские плейсхолдеры (имена шрифтов, имена файлов
+    звуков) — образцы значений, их переводить не нужно.
+    """
+    from core import style_schema
+
+    def fields(items):
+        for it in items:
+            if it.get("type") == "group":
+                yield from fields(it.get("items", []))
+            elif it.get("type") == "field":
+                yield it
+
+    cyr = re.compile(r"[А-Яа-яЁё]")
+    missing = []
+    checked = 0
+    for layer in style_schema.LAYERS:
+        for f in fields(layer.get("items", [])):
+            ph = f.get("placeholder")
+            if not ph or not cyr.search(ph):
+                continue
+            checked += 1
+            if ph not in en:
+                missing.append("%s: %r" % (f.get("key"), ph))
+    assert checked, "в схеме не осталось русских плейсхолдеров — проверка ослепла"
+    assert not missing, "плейсхолдеры схемы без перевода: " + ", ".join(missing)
+
+
 def test_dictionary_is_embedded_not_fetched():
     """Словарь встраивается в страницу. Через fetch была гонка: строки камер и
     статуса успевали отрисоваться раньше загрузки и оставались русскими, а обход

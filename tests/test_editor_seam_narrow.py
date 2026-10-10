@@ -1,32 +1,14 @@
 # -*- coding: utf-8 -*-
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""Узкий вырез: голос НЕ подменяется раньше прыжка картинки.
+"""Дублёр дорожки голоса: подмена в окне стыка и инвариант источника (превью шага 3).
 
-Баг (воспроизведён в браузере на копии клипа владельца): стыки с вырезом < 0,25 с
-подменяли запечённую дорожку голоса РАНЬШЕ, чем картинка прыгала через вырез, после
-чего звук отставал от картинки на 107–176 мс и догонял скоростью. Метки вызовов:
-`vtSpareTake` в `vtSpareCtl` шли ДО `edJump`.
+Первый баг этого файла (голос редактора шага 1 подменялся раньше прыжка картинки через
+узкий вырез) ушёл вместе с машиной: шаг 1 больше не играет голос элементом <audio>, звук
+там — буфер Web Audio с очередью блоков (60-preview.js, блок `ea*`;
+tests/test_editor_audio_clock.py). Здесь осталось то, что живёт у превью шага 3:
 
-Причина: окно подмены в `vtSpareCtl` считалось от ПРИЦЕЛА (`vspAt`). У редактора
-прицел — начало СЛЕДУЮЩЕГО блока правки (`edArm` ставит `nb.s0`), а прыжок картинка
-делает на КОНЦЕ текущего блока (`b.s1`). Между ними и есть вырезанный зазор, поэтому
-на вырезе уже `VT_SWAP_HI` окно открывалось до прыжка — голос переезжал на `nb.s0`,
-пока картинка ещё доигрывала блок. Дальше подмена на самом прыжке срывалась в
-перемотку живого `<audio>`, а она и даёт задержку 100–200 мс.
-
-Решение: окно подмены — от ТОЧКИ ПРЫЖКА. Стык редактора подменяет `edJump` (он же и
-прыгает, и зовёт `vtSpareTake`), поэтому ранней подмены в `vtSpareCtl` у редактора
-нет. Плееры по EDL (шаг 3) не тронуты: у них прицел и есть точка стыка.
-
-Стенд гоняет БОЕВЫЕ функции под node с фейковыми `<audio>`/`<video>` (образец —
-tests/test_voice_spare.py). Проверяется:
-
-1. редактор: узкий вырез, плейхед в окне `VT_SWAP_HI` до конца блока, дублёр взведён
-   и стоит на стыке — `vtSpareCtl` НЕ подменяет; на `edJump` — подменяет;
-2. плеер шага 3 (не редактор, прицел из EDL): прицел в пределах окна — подмена как
-   была: здесь прицел и есть точка стыка;
-3. мутация: вернуть раннюю подмену редактору — первый тест обязан покраснеть.
+1. плеер по EDL: прицел в пределах окна `VT_SWAP_HI` — подмена в том же кадре.
 
 Второй баг того же узла (воспроизведён в браузере на копиях двух клипов владельца):
 дублёр дорожки голоса оставался от ПРЕДЫДУЩЕГО клипа. Открыли клип 1 (трек A), поиграли,
@@ -43,12 +25,12 @@ tests/test_voice_spare.py). Проверяется:
 
 Стенд гоняет боевые функции под node, поэтому проверки продолжаются:
 
-4. живой трек сменил src — `vtSpareOf` отдаёт дублёра с НОВЫМ src и `armed=false`;
-5. дублёр от прежнего трека — `vtSpareTake` = false и живого не трогает (он прежний);
-6. то же у видео-дублёра камеры: свежий клип даёт свежий источник, подмена не приносит
+2. живой трек сменил src — `vtSpareOf` отдаёт дублёра с НОВЫМ src и `armed=false`;
+3. дублёр от прежнего трека — `vtSpareTake` = false и живого не трогает (он прежний);
+4. то же у видео-дублёра камеры: свежий клип даёт свежий источник, подмена не приносит
    на стык кадр чужого клипа;
-7. мутации: вернуть `if(st.vsp)return st.vsp;` без сверки и убрать сверку из
-   `vtSpareTake` — тесты 4 и 5 обязаны покраснеть.
+5. мутации: вернуть `if(st.vsp)return st.vsp;` без сверки и убрать сверку из
+   `vtSpareTake` — тесты 2 и 3 обязаны покраснеть.
 
 Запуск:  py -3.10 -m pytest tests/test_editor_seam_narrow.py -q
 """
@@ -82,13 +64,10 @@ PREVIEW_FUNCS = ("bufMake", "bufIdle", "bufSilent", "bufArm", "bufRoll", "bufTak
                  "vtSpareAt", "vtSpareArm", "vtSpareRoll", "vtSpareTake", "vtSpareSwap",
                  "vtSpareCtl", "vtPause", "vtSeek", "vtRate", "vtTick")
 # Константы порогов — тоже из файла: свои копии в стенде разъезжались бы с боевыми молча.
-CONSTS = ("PV_PREROLL", "PV_SWAP_LO", "PV_SWAP_HI", "VT_SWAP_LO", "VT_SWAP_HI", "VT_ARM",
+CONSTS = ("PV_PREROLL", "PV_SWAP_LO", "PV_SWAP_HI", "VT_SWAP_LO", "VT_SWAP_HI",
           "VT_SOFT", "VT_DRIFT", "VT_RATE", "MEDIA_VOL")
-# Двери редактора шага 1 (70-editor.js): стык блоков — его, прицел дорожки голоса ставит
-# edArm, прыжок делает edJump и он же зовёт vtSpareTake. edVoiceSeek* — ожидание промаха,
-# которое edJump заводит, когда подмена не вышла.
-EDITOR_FUNCS = ("edBlockAt", "edArm", "edSeek", "edTake", "edJump",
-                "edVoiceSeekWait", "edVoiceSeekClose", "edVoiceSeekOff")
+# Из редактора — только поиск блока: стенд проверяет машину дублёра, а не стык редактора.
+EDITOR_FUNCS = ("edBlockAt",)
 
 
 def _func_src(src: str, name: str) -> str:
@@ -117,7 +96,6 @@ def _bodies() -> str:
     preview = PREVIEW_JS.read_text(encoding="utf-8")
     editor = EDITOR_JS.read_text(encoding="utf-8")
     return "\n".join([_const(preview, c) for c in CONSTS]
-                     + [_const(editor, "EDMUTVOICE")]   # выключатель мутации — из файла
                      + [_func_src(preview, n) for n in PREVIEW_FUNCS]
                      + [_func_src(editor, n) for n in EDITOR_FUNCS])
 
@@ -162,8 +140,6 @@ function vLoaded(){return Promise.resolve();}   // источник дублёр
 function pvVideoTo(){}                          // перемотка кадра: у стенда её роль у edSeek
 function edDraw(){}
 function edUI(){}
-function edRaw(){return false;}
-function edInCut(){return false;}
 function vtLiveOn(){return false;}              // окно плагинов закрыто: играет дорожка
 function vtLiveUpdate(){return false;}
 function vtLivePause(){}
@@ -197,14 +173,12 @@ function clearTimeout(id){if(id&&TIMERS[id-1])TIMERS[id-1].fn=null;}
 const document={createElement:tag=>new El(tag)};
 """
 
-# Стенд редактора шага 1: часы и дорожка голоса — на ED, камера и её дублёр — на PV.
-# Блоки правки: [0,4] и [4.15,10]. Вырез 0,15 с, как у узких стыков владельца.
-# Вырез нарочно узкий (< VT_SWAP_HI): ровно на таких окно подмены открывалось раньше
-# прыжка. На вырезах 0,2–0,5 с расхождения не было — там окно открывается позже.
+# Стенд плеера с дорожкой голоса: камера и её дублёр — на PV, дорожка — на ED (время
+# исходника у него лежит в `cs`). Машина дублёра голоса общая у плееров, имя тут не
+# решает ничего: проверяется инвариант источника, а не стык редактора (его машины больше нет).
 EDITOR_STAND = r"""
 const cam=new El('video');cam.src='C:/cam1.mp4';cam._ct=0;
-// Дублёр ведущей камеры уже стоит на первом стыке: edJump обязан быть не «без дублёра»,
-// иначе он сразу ушёл бы в ветку с перемоткой и подмены голоса не сделал.
+// Дублёр ведущей камеры уже стоит на первом стыке — как у играющего плеера.
 const spareCam=new El('video');spareCam.src='C:/cam1.mp4';spareCam.readyState=4;spareCam.muted=true;
 spareCam._ct=4-0.05;   // в допуске VT_SWAP_LO/HI к 4.0 — подмена видео обязана выйти
 const live=new El('audio');live.src='/api/media?path=C:/cache/final.wav';live._ct=0;
@@ -220,7 +194,7 @@ ED={xml:'C:/out/01_clip.xml',blocks:[{s0:0,s1:4},{s0:4.15,s1:10}],fps:60,cam:'C:
 const b0=ED.blocks[0],nb=ED.blocks[1],dt=1/60;
 // Дублёр дорожки голоса заводим сразу: у стенда дорожка уже играет (st.on и st.el
 // заполнены), а без разбега vsp остаётся null — `vtOf` достраивает состояние только
-// целиком, у готового плеера его не трогает. В бою это делает первый же edArm.
+// целиком, у готового плеера его не трогает. В бою это делает первый же кадр с прицелом.
 vtSpareAt(ED,b0.s1);vtSpareArm(ED);
 """
 
@@ -240,102 +214,7 @@ def _run_node(tmp_path: Path, body: str, name: str = "seamnarrow.js") -> Any:
 
 
 # --------------------------------------------------------------------------- #
-# 1. редактор: узкий вырез — подмена ТОЛЬКО на прыжке
-# --------------------------------------------------------------------------- #
-def test_the_editor_voice_waits_for_the_jump_on_a_narrow_cut(tmp_path: Path) -> None:
-    """Узкий вырез: в окне подмены до конца блока голос не переезжает, на прыжке — переезжает.
-
-    Плейхед стоит в 0,15 с от конца блока — то есть внутри `VT_SWAP_HI` до прицела
-    (`nb.s0`), и раньше окно открывалось именно от прицела. Дублёр здесь взведён и стоит
-    ровно на стыке, как он и бывает в бою к этому моменту: будь подмена разрешена, она бы
-    СОСТОЯЛАСЬ, и голос оказался бы на `nb.s0` за 0,15 с до картинки.
-    """
-    res = _run_node(tmp_path, EDITOR_STAND + """
-const bt=b0.s1-0.15;                        // 0.15 с до конца блока: окно подмены открыто
-live._ct=bt;cam._ct=bt;ED.cs=bt;
-let frames=0;
-for(let i=0;i<9;i++){                       // 0.15 с кадров при 60 к/с
-  cam._ct+=dt;ED.cs+=dt;
-  vtTick(ED,ED.cs);                         // кадр: внутри vtSpareCtl
-  if(vtOf(ED).vsp.armed){                   // дублёр взведён — и уже стоит на стыке
-    vtOf(ED).vsp.el._ct=nb.s0;vtOf(ED).vsp.rolling=true;}
-  frames++;}
-// Время прыжка картинки — конец блока; картинка приходит к нему ровно сейчас.
-const jt=b0.s1;
-const before={cs:ED.cs,voiceEl:vtOf(ED).el,voiceCt:live.currentTime,seeks:live.seeks.length,
-  armed:vtOf(ED).vsp?vtOf(ED).vsp.at:null,cue:vtOf(ED).vspAt,
-  cut:Math.round((nb.s0-b0.s1)*1000)/1000};
-// Картинка прыгает через вырез — дверью редактора, как в бою.
-cam._ct=jt;
-edJump(cam,jt);
-ED.cs=jt;
-console.log(JSON.stringify({frames:frames,csBefore:before.cs,
-  voiceIsEarly:(before.voiceEl===live),voiceCtEarly:before.voiceCt,seeksEarly:before.seeks,
-  armedEarly:before.armed,cue:before.cue,afterCt:vtOf(ED).el.currentTime,
-  liveSeeks:live.seeks.length,cut:before.cut,win:VT_SWAP_HI,lo:VT_SWAP_LO,hi:VT_SWAP_HI,
-  jumpAt:jt}));
-""")
-
-    assert res["frames"] == 9, res
-    # Главное: до прыжка подмены НЕ было — по позиции живого <audio> это видно прямо.
-    assert res["voiceIsEarly"] is True, \
-        "живой дорожкой до прыжка стал дублёр: %s" % res
-    assert abs(res["voiceCtEarly"] - (res["jumpAt"] - 0.15)) < 1e-3, \
-        "голос уехал на стык, пока картинка ещё доигрывала блок: %s" % res
-    assert res["seeksEarly"] == 0, \
-        "живой <audio> перемотали до прыжка: %s" % res
-    # Дублёр взведён на точку прыжка и уже стоит на ней: подмена на прыжке возможна,
-    # то есть стенд воспроизводит узкий стык, а не «подмена не вышла по неготовности».
-    assert abs(res["armedEarly"] - res["jumpAt"]) < 1e-3, \
-        "дублёр взведён не на точку прыжка — проверять нечего: %s" % res
-    assert abs(res["cue"] - res["jumpAt"]) < 1e-3 and res["cut"] < res["win"], res
-    # На прыжке картинка через вырез проходит — дверью редактора, как в бою, — и голос
-    # уходит вместе с ней: у живого <audio> прибавилась перемотка. До прыжка её не было
-    # вовсе, а здесь она есть — значит подмена на стыке сработала, а не «ничего не вышло».
-    assert res["afterCt"] == res["jumpAt"] and res["liveSeeks"] > res["seeksEarly"], \
-        "на прыжке голос не ушёл за картинкой: %s" % res
-
-
-def test_the_voice_stays_live_through_every_frame_before_the_jump(tmp_path: Path) -> None:
-    """Пока картинка доигрывает блок, живой голос стоит на месте — кадр за кадром.
-
-    Тот же стык, но без ручной подмены: если кадр трогает голос в окне подмены, это
-    видно по позиции живого `<audio>` — она обязана остаться там, где играет картинка
-    (её и ведёт плейхед), а не уехать на начало следующего блока.
-    """
-    res = _run_node(tmp_path, EDITOR_STAND + """
-const bt=b0.s1-0.15;
-live._ct=bt;cam._ct=bt;ED.cs=bt;
-const el=live;                              // живой голос до всякой подмены
-let firstMove=null;
-for(let i=0;i<9;i++){
-  cam._ct+=dt;ED.cs+=dt;
-  vtTick(ED,ED.cs);
-  if(firstMove==null&&vtOf(ED).el!==el)
-    firstMove={cs:ED.cs,ct:vtOf(ED).el.currentTime};}
-const sp=vtOf(ED).vsp;
-console.log(JSON.stringify({liveIsLive:(vtOf(ED).el===el),liveCt:live.currentTime,
-  startedAt:bt,seeked:live.seeks.length,firstMove:firstMove,csAfter:ED.cs,
-  spareArmedAt:sp?sp.at:null,jumpAt:b0.s1,cut:nb.s0-b0.s1}));
-""")
-
-    assert res["liveIsLive"] is True, \
-        "до прыжка картинки живой голос сменился дублёром: %s" % res
-    assert res["seeked"] == 0, \
-        "кадр перемотал живой голос до прыжка: %s" % res
-    assert res["firstMove"] is None, \
-        "голос переехал до прыжка: %s" % res
-    # Живой голос кадр не трогал: он остался ровно там, где его поставили, — на
-    # картинке, которая всё это время доигрывала блок.
-    assert res["liveCt"] == res["startedAt"], \
-        "кадр увёл живой голос с места картинки: %s" % res
-    assert res["csAfter"] > res["jumpAt"] - 2 / 60, \
-        "плейхед не дошёл до конца блока — проверять нечего: %s" % res
-    assert abs(res["spareArmedAt"] - res["jumpAt"]) < 1e-9, res
-
-
-# --------------------------------------------------------------------------- #
-# 3. плеер шага 3: прицел и есть точка стыка — подмена как была
+# 1. плеер шага 3: прицел и есть точка стыка — подмена в окне
 # --------------------------------------------------------------------------- #
 def test_the_edl_player_still_swaps_inside_the_window(tmp_path: Path) -> None:
     """Плеер по EDL (не редактор): прицел в пределах окна — подмена в том же кадре.
@@ -373,53 +252,7 @@ console.log(JSON.stringify({isEd:vtIsEd(P),seg:seg.at,swapped:(spare.el===live),
 
 
 # --------------------------------------------------------------------------- #
-# 4. мутация: ранняя подмена редактору — первый тест обязан покраснеть
-# --------------------------------------------------------------------------- #
-def test_the_early_swap_mutation_turns_the_narrow_cut_test_red(tmp_path: Path) -> None:
-    """Мутация: вернуть раннюю подмену редактору — голос обязан переехать до прыжка.
-
-    Возвращаем ровно прежнее правило: окно подмены считается от прицела и для
-    редактора тоже. На узком вырезе это подмена на 0,15 с раньше картинки — здесь она
-    видна и по позиции живого `<audio>`, и по тому, что она вообще состоялась.
-    """
-    res = _run_node(tmp_path, EDITOR_STAND + """
-const bt=b0.s1-0.15;
-live._ct=bt;cam._ct=bt;ED.cs=bt;
-const el=live;
-// Прежнее правило: ранняя подмена без исключения для редактора.
-vtSpareCtl=function(P,at,tm){
-  const vsp=vtOf(P).vsp;
-  vtSpareArm(P);
-  const cue=vtOf(P).vspAt;
-  if(cue!=null&&Math.abs(cue-at)<=VT_SWAP_HI)vtSpareTake(P,cue);
-  vtSpareRoll(P,tm);};
-let movedEarly=null;
-for(let i=0;i<9;i++){
-  cam._ct+=dt;ED.cs+=dt;
-  const cs=ED.cs;
-  vtTick(ED,cs);
-  // Голос ОБОГНАЛ картинку: он стоит впереди плейхеда, который ещё доигрывает блок.
-  // Это и есть баг владельца — «не совпадает звук с картинкой, дальше расход».
-  const lead=vtOf(ED).el.currentTime-cs;
-  if(movedEarly==null&&lead>0.1)movedEarly={cs:cs,lead:lead,ct:vtOf(ED).el.currentTime};
-  if(vtOf(ED).vsp.armed){                  // дублёр готов выйти в эфир
-    vtOf(ED).vsp.el._ct=nb.s0;vtOf(ED).vsp.rolling=true;}}
-console.log(JSON.stringify({movedEarly:movedEarly,wasLiveCt:bt,cut:b0.s1,cue:nb.s0,
-  liveIsSpare:(vtOf(ED).el!==el),lastCt:vtOf(ED).el.currentTime,seeks:live.seeks.length}));
-""")
-
-    # Мутация воспроизводит ровно баг: голос ушёл вперёд — на прицел — пока картинка
-    # ещё доигрывала блок, то есть подмена случилась раньше прыжка.
-    assert res["movedEarly"] is not None, \
-        "мутация не увела голос до прыжка картинки — сторож проверяет не то: %s" % res
-    assert res["cut"] - res["movedEarly"]["cs"] > 0.01, \
-        "мутация подменила голос уже после прыжка: %s" % res
-    assert res["movedEarly"]["lead"] > 0.1, \
-        "мутация не дала голосу обогнать картинку — проверять нечего: %s" % res
-
-
-# --------------------------------------------------------------------------- #
-# 5. инвариант источника: дублёр всегда играет файл ЖИВОЙ дорожки
+# 2. инвариант источника: дублёр всегда играет файл ЖИВОЙ дорожки
 # --------------------------------------------------------------------------- #
 def test_the_voice_spare_takes_the_new_track_when_the_live_source_changes(
         tmp_path: Path) -> None:

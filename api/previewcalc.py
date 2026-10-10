@@ -153,6 +153,30 @@ def _run_preview_calc(job: dict[str, Any]) -> None:
                 PCJOB.update(running=False, done=True, cur="", stage="")
 
 
+def _calc_wanted(job: dict[str, Any]) -> bool:
+    """Есть ли что считать: рото или слежение за головой, которые сборка применит к клипу.
+
+    Одно решение на обе двери: `wanted` быстрой двери и отказ `build=true` (ошибка
+    `calc_nothing`). Рото — из нормализованного тела (`job["roto"]`, его ставит
+    `_norm_build_jobs` из стиля клипа). Слежение — те же флаги стиля, что читает
+    `core/xml2ae/precompute.py`: `read_style` от `_styles.resolve`, второй копии чтения нет.
+    Слежение за Камерой 2 — только при двух камерах в XML: без второй `plan_camera` её не
+    ставит (то же правило, что там), и кнопка предлагала бы работу, которой не будет.
+    """
+    from core import frame as _frame
+    from core import styles as _styles
+    from core.xml2ae.parse import parse_full
+    from core.xml2ae.plan_style import read_style
+    xml_path = job["xml_path"]
+    stv = read_style(_styles.resolve(job.get("style")), *_frame.output_frame_size(xml_path))
+    if job.get("roto") or bool(stv.cam1_head_follow):
+        return True
+    if bool(stv.cam2_head_follow):
+        _meta, cams, _subs, _ins = parse_full(xml_path, ncams=job.get("ncams"))
+        return len(cams) > 1 and bool(cams[1].get("path"))
+    return False
+
+
 @bp.route("/api/preview_calc", methods=["POST"])
 def api_preview_calc() -> Response:
     """Расчёт рото и трекинга для превью. body: как у /api/scene + `build`.
@@ -164,6 +188,9 @@ def api_preview_calc() -> Response:
     Возвращает «что уже посчитано» сразу (по кэшам, без GPU) и `building` — идёт ли
     расчёт. Второй расчёт поверх идущего не запускается: два потока RVM на одной
     видеокарте — это переполнение VRAM, а не ускорение (ответ `building=true`).
+
+    `wanted` — есть ли вообще что считать (см. `_calc_wanted`). При `build=true` и
+    `wanted=false` — ошибка `calc_nothing` ДО лока: ни потока, ни занятой видеокарты.
     """
     d = request.get_json() or {}
     xml = jstr(d, "xml").strip().strip('"')
@@ -177,11 +204,16 @@ def api_preview_calc() -> Response:
             from core import xml2ae
             job = _norm_build_jobs([d])[0]
             job.pop("outdir", None)          # папка .jsx — только для сборки, в план не идёт
+            wanted = _calc_wanted(job)
             ready = xml2ae.precompute.cached_plan(**job)
         except ReelsiError: raise
         except Exception as e:
             raise ReelsiError(umsg("scene_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
+        # Нечего считать: кнопка такого стиля не должна занимать видеокарту и поднимать
+        # поток — проверка стоит ДО лока (раньше расчёт шёл и на пустой полосе, на нуле %).
+        if d.get("build") and not wanted:
+            raise ReelsiError(umsg("calc_nothing", "В стиле клипа выключены и рото, и трекинг головы — считать нечего. Включи их на вкладке «Стиль»"))
         start = False
         with PCLOCK:
             busy = bool(PCJOB["running"])
@@ -209,7 +241,7 @@ def api_preview_calc() -> Response:
                 with PCLOCK:
                     PCJOB["running"] = False
                 raise
-        return jsonify(ok=True, building=busy, **ready)
+        return jsonify(ok=True, building=busy, wanted=wanted, **ready)
     except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 

@@ -233,7 +233,7 @@ _FAKE_MODULE = textwrap.dedent('''\
         """
         if together <= 1:
             return
-        deadline = time.monotonic() + 10.0
+        deadline = time.monotonic() + 30.0
         while time.monotonic() < deadline:
             with _lock:
                 if _in_flight >= together:
@@ -555,6 +555,13 @@ def _clear_settings(ws: dict[str, Any]) -> None:
 PROC_START_TIMEOUT_S = 15.0     # холодный старт сервиса: импорт ядра и torch
 PROC_EXIT_TIMEOUT_S = 8.0       # выход после idle=1 — секунды, не минуты
 PROC_IDLE_S = 1.0               # простой тестового процесса
+# Срок ответа на `ping` для тестов, где клиент говорит с НАСТОЯЩИМ слушателем под
+# нагрузкой. `call` перед каждым запросом шлёт `ping` с сроком `PING_TIMEOUT_S` (3 с).
+# На занятой машине (полный прогон `-n auto`) ответ мог не успеть: клиент решал,
+# что сервиса нет, и заводил новый процесс — счёт шёл уже в нём, а счётчики
+# подмены этого теста не менялись. Срок растянут, утверждения не трогаем: мёртвый
+# порт по-прежнему отказывает сразу (соединение не открывается).
+CLIENT_PING_PATIENCE_S = 30.0
 
 
 def _broken_subst(ws: dict[str, Any]) -> None:
@@ -670,18 +677,20 @@ def test_две_параллельные_транскрипции_грузят_�
     )
 
 
+@pytest.mark.xdist_group("model_service")
 @pytest.mark.parametrize("slots,expected", [(1, 1), (2, 2)])
 def test_слоты_держат_потолок_одновременных(
-    ws: dict[str, Any], slots: int, expected: int
+    ws: dict[str, Any], slots: int, expected: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """`slots` одновременных распознаваний: N=1 — по одному, N=2 — разом.
 
-    Модель-пустышка считает не мгновенно (`configure(wait=0.3)`), а счётчик
+    Модель-пустышка считает не мгновенно (`configure(wait=2.0)`), а счётчик
     `max_concurrent` показывает, сколько моделей считали ОДНОВРЕМЕННО. При одном
     слоте второй запрос семафор не пускает — потолок 1; при двух оба заходят
     внутрь и уплотняются — потолок 2. Мутация: снять семафор — при `slots=1`
     счётчик покажет 2, и тест покраснеет.
     """
+    monkeypatch.setattr(model_service, "PING_TIMEOUT_S", CLIENT_PING_PATIENCE_S)
     service = _server(ws["settings"], slots=slots)
     try:
         _warm_up(ws["wav"])
@@ -689,7 +698,11 @@ def test_слоты_держат_потолок_одновременных(
         # `max_concurrent` меряет семафор, а не расписание потоков. Сломанный
         # семафор не сведёт счётчики — ожидание кончится по сроку, и тест краснеет.
         _reset_fake(together=expected)
-        _fake_state().configure(wait=0.3, together=expected)
+        # Пауза счёта — 2 с: второй клиент приходит с разницей в сотни миллисекунд
+        # (два пинга и два подключения, под нагрузкой — дольше). Короткая пауза
+        # (0.3 с) делала мутацию «снят семафор» при одном слоте невидимой: второй
+        # запрос приходил уже после окончания первого, и счётчик показывал 1.
+        _fake_state().configure(wait=2.0, together=expected)
         got = _transcriptions(ws["wav"], 2)
     finally:
         _join(service)
@@ -2372,6 +2385,7 @@ def test_вздохи_через_сервис_равны_локальным(ws: 
     )
 
 
+@pytest.mark.xdist_group("model_service")
 def test_эмоции_через_сервис_равны_локальным(ws: dict[str, Any],
                                              monkeypatch: pytest.MonkeyPatch) -> None:
     """Вероятности эмоций через сервис == локальным (подменённая голова `emo`).
@@ -2386,6 +2400,7 @@ def test_эмоции_через_сервис_равны_локальным(ws: 
     _fresh_caches(monkeypatch)
     loader = _fake_emo()
     monkeypatch.setattr("core.emphasis.load_emo_model_local", loader)
+    monkeypatch.setattr(model_service, "PING_TIMEOUT_S", CLIENT_PING_PATIENCE_S)
     window = np.zeros(int(0.8 * 22050), dtype="float32")
     window[200:900] = 0.4
 

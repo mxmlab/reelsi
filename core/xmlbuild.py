@@ -16,8 +16,11 @@ import os, re, urllib.parse, subprocess, json
 import xml.etree.ElementTree as ET
 from typing import Any, Sequence
 from core import fileio, frame, media
+from core.applog import get_logger
 from core.xmltext import xml_text as _esc
 from core.umsg import ReelsiError
+
+log = get_logger(__name__)
 
 FPS = 60
 TICKS_PER_FRAME = 4233600000          # ppro ticks per 60fps frame
@@ -372,6 +375,11 @@ def make_voice_file_elem(voice_path: str, fps: float = FPS) -> ET.Element:
 def sync_xml_voice(xml_path: str, out_path: str | None = None, voice: str | None = None) -> bool:
     """Подменить аудиодорожку камеры 1 в XML на обработанный голос (<stem>.voice.wav)
     или вернуть на file-1, если голос не задан/очищен.
+
+    True — XML в нужном состоянии (записан только что или уже был таким). False — не
+    вышло: файла нет, структура не разобрана, запись упала. Различать «уже так» и
+    «сбой» обязательно: вызывающие проверяют результат и показывают сбой строкой,
+    а «уже так» строкой быть не должно.
     """
     if not os.path.isfile(xml_path):
         return False
@@ -431,9 +439,10 @@ def sync_xml_voice(xml_path: str, out_path: str | None = None, voice: str | None
         if changed or out_path:
             body = ET.tostring(root, encoding="unicode")
             fileio.atomic_text_write(out_path or xml_path, prolog + body, encoding="utf-8")
-            return True
-        return False
-    except Exception:
+        return True
+    except Exception as e:
+        # Не записался XML с голосом: вызывающие результат не проверяют, и дорожка голоса молча останется старой.
+        log.warning("синхронизация голоса с XML не записана (%s)", type(e).__name__)
         return False
 
 

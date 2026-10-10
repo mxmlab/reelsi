@@ -14,9 +14,11 @@ from datetime import datetime, timezone
 import os
 from typing import Any
 
-from core.fileio import atomic_json_dump, json_load_soft, move_file
+from core.applog import get_logger
+from core.fileio import atomic_json_dump, json_load_soft, move_file, quarantine_unreadable
 from core.umsg import ReelsiError, umsg
 
+log = get_logger(__name__)
 TRASH_DIR = "_reelsi_trash"
 
 
@@ -60,6 +62,11 @@ def save_clips(state: dict[str, Any]) -> int:
             "saved_at": now_iso,
             "clip": clip,
         }
+        # Битый снимок (json_load_soft выше отдал None) откладываем, а не затираем: это
+        # единственная копия клипа, из которой восстанавливаются вставки и спикер.
+        bad = quarantine_unreadable(cpath, valid=lambda d: isinstance(d, dict))
+        if bad:
+            log.warning("снимок клипа не прочитан — отложен в %s", bad)
         atomic_json_dump(cpath, payload, indent=1)
         saved_count += 1
 
@@ -291,6 +298,7 @@ def restore_trash(dir_: str, id_: str) -> dict[str, Any]:
             move_file(src_file, orig_from)
             restored.append(orig_from)
         except Exception as e:
+            # не роняем восстановление остальных файлов: ошибка уходит в skipped и видна в ответе
             skipped.append({"path": orig_from, "why": f"ошибка восстановления: {e}"})
 
     # Если все файлы восстановлены (остался только trash.json или пусто) — удаляем папку корзины

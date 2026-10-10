@@ -218,6 +218,8 @@ def loaded_info(url: str | None = None) -> list[dict[str, Any]] | None:
         return [m for m in data.get("data", []) if m.get("state") == "loaded"]
     except ReelsiError: raise
     except Exception:
+        # проба LM Studio: не запущен или не ответил — None = «не знаем», вызывающий решает сам
+        # (это штатное состояние, а не ошибка, поэтому без журнала)
         return None
 
 
@@ -744,6 +746,7 @@ def _ask_openai_impl(prof: dict[str, Any], system: str, user: str, schema: dict[
                 detail = e.read().decode("utf-8", "replace")[:400]
             except ReelsiError: raise
             except Exception:
+                # тело ошибки нужно только для разбора причины (temperature и т.п.); не прочлось — пусто
                 detail = ""
             detail_low = detail.lower()
             if e.code in (400, 422):

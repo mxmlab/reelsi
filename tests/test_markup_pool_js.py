@@ -179,7 +179,9 @@ def test_run_pool_more_workers_than_items(tmp_path: Path) -> None:
 
 def test_batch_in_markup_all_and_absent_in_clip_and_inserts() -> None:
     """5. Регуляркой по тексту 70-editor.js: в markupAllRun оба ИИ-вызова несут batch,
-    а в markupClip batch нет; в static/app/80-inserts.js batch нет."""
+    и в markupClip оба тоже (параллельные жёлтые и вставки одного ролика — одна пачка,
+    иначе begin_call вытесняет первый); в static/app/80-inserts.js batch нет (одиночные
+    вызовы вставок идут не параллельно, отдельной пачки не требуют)."""
     editor_src = EDITOR_JS.read_text(encoding="utf-8")
 
     # Вытаскиваем markupAllRun и markupClip
@@ -200,14 +202,14 @@ def test_batch_in_markup_all_and_absent_in_clip_and_inserts() -> None:
     assert i_all is not None, "aiPost(/api/ai_inserts) не найден в markupAllRun"
     assert re.search(r"\bbatch\b", i_all.group(1)) is not None, "batch отсутствует в вызове ai_inserts в markupAllRun"
 
-    # В markupClip batch нет
+    # В markupClip оба вызова несут batch (одна пачка на запуск, см. docstring)
     y_clip = re.search(r"aiPost\(\s*['\"]/api/ai_yellow['\"]\s*,\s*\{([^}]+)\}", clip_src)
     assert y_clip is not None, "aiPost(/api/ai_yellow) не найден в markupClip"
-    assert re.search(r"\bbatch\b", y_clip.group(1)) is None, "batch обнаружен в вызове ai_yellow в markupClip"
+    assert re.search(r"\bbatch\b", y_clip.group(1)) is not None, "batch отсутствует в вызове ai_yellow в markupClip"
 
     i_clip = re.search(r"aiPost\(\s*['\"]/api/ai_inserts['\"]\s*,\s*\{([^}]+)\}", clip_src)
     assert i_clip is not None, "aiPost(/api/ai_inserts) не найден в markupClip"
-    assert re.search(r"\bbatch\b", i_clip.group(1)) is None, "batch обнаружен в вызове ai_inserts в markupClip"
+    assert re.search(r"\bbatch\b", i_clip.group(1)) is not None, "batch отсутствует в вызове ai_inserts в markupClip"
 
     # В 80-inserts.js batch нет в исполняемом коде (вне комментариев)
     inserts_src = INSERTS_JS.read_text(encoding="utf-8")

@@ -296,7 +296,9 @@ PROXY_GLOB = "pv_*.mp4"          # превью-прокси камер (build_p
 # У них разные имена/префиксы, но одинаковая суть: пересборка декода камеры стоит десятки
 # секунд. Поэтому рутинная авто-очистка перед нарезкой (proxies=False) бережёт оба вида,
 # а явная очистка места кнопкой (proxies=True) удаляет и считает оба.
-PROXY_GLOBS = ("pv_*.mp4", "proxy_*.mp4")
+# 3) `pa_*.wav` — звук камеры для редактора шага 1 (build_preview_audio): тот же кэш по
+#    файлу камеры, поэтому бережётся и считается вместе с прокси.
+PROXY_GLOBS = ("pv_*.mp4", "proxy_*.mp4", "pa_*.wav")
 # Имя файла субтитров черновика — ФИКСИРОВАННОЕ. В фильтрграфе имя идёт сырым
 # (`subtitles=<имя>`), а фильтр разбирается по запятым, `[ ]`, `;`, `:` и кавычкам:
 # стем ролика вида «C1,2[1];x'y» рвал `subtitles`, и черновик не собирался вовсе
@@ -625,6 +627,7 @@ def _src_fps(src: str) -> float:
         return fps
     except ReelsiError: raise
     except Exception:
+        # fps не прочитан (ffprobe нет или файл битый) — 25 как запасной: для черновика точность не нужна
         return 25.0
 
 
@@ -689,6 +692,7 @@ def _rot_key(src: str) -> str:
         return "|rot" if _display_dims(src)[2] else ""
     except ReelsiError: raise
     except Exception:
+        # поворот не определился — без флага «|rot»: проба необязательна, кадр пойдёт как есть
         return ""
 
 
@@ -703,14 +707,24 @@ def _proxy_key(name: str, key: str, tdir: str) -> str:
     return os.path.join(tdir, name + h + ".mp4")
 
 
+def src_file_version(src: str) -> str:
+    """Версия файла-исходника: (путь, mtime, размер). ЕДИНОЕ правило для всех кэшей,
+    которые зависят от содержимого исходника: прокси (черновик, превью, рендер, звук
+    камеры) и пики волны (api/files.py). Переснял файл — все они перестраиваются.
+
+    Второй копии этого правила не заводить: поворот (`_rot_key`) сюда не входит, он
+    нужен только видео-проксям, а у пиков волны его нет."""
+    st = os.stat(src)
+    return f"{os.path.abspath(src)}|{int(st.st_mtime)}|{st.st_size}"
+
+
 def _src_version(src: str) -> str:
-    """Общая часть ключа кэша: файл камеры по (путь, mtime, размер) и его поворот.
+    """Общая часть ключа прокси: версия исходника (`src_file_version`) и его поворот.
 
     Переснял/перекодировал исходник — прокси пересобирается; поворот в ключе — потому
     что прокси, собранные до фикса автоповорота, лежат на боку, а имя у них прежнее.
     """
-    st = os.stat(src)
-    return f"{os.path.abspath(src)}|{int(st.st_mtime)}|{st.st_size}" + _rot_key(src)
+    return src_file_version(src) + _rot_key(src)
 
 
 def preview_path(src: str, height: int, tdir: str) -> str:
@@ -722,6 +736,35 @@ def preview_path(src: str, height: int, tdir: str) -> str:
     в браузере заставлял декодер прогонять до 10 секунд с последнего ключевого кадра.
     Сменили формат — старые прокси обязаны пересобраться, иначе кэш раздавал бы битые."""
     return _proxy_key("pv_", f"{_src_version(src)}|prev{height}:g", tdir)
+
+
+def preview_audio_path(src: str, tdir: str) -> str:
+    """Имя звука камеры для редактора шага 1 (`pa_*.wav`) в _tmp. Ключ — как у прокси
+    (путь, mtime, размер исходника): переснял файл — звук вынимается заново."""
+    import hashlib
+    h = hashlib.sha1(f"{_src_version(src)}|pa48".encode("utf-8")).hexdigest()[:12]
+    return os.path.join(tdir, "pa_" + h + ".wav")
+
+
+def build_preview_audio(src: str, dst: str) -> str | None:
+    """Вынуть звук камеры в WAV (pcm 16 бит, 48 кГц, каналы как есть).
+
+    Редактор шага 1 играет звук не элементом <video>, а буфером Web Audio: блоки правки
+    ставятся в очередь с точностью до сэмпла, и звук на стыках не прыгает перемоткой и не
+    подгоняется скоростью (static/app/60-preview.js, блок `ea*`). Буферу нужен файл, который
+    браузер декодирует целиком и быстро, — WAV. Исходник 4K для этого не годится: гигабайты,
+    и звук у него бывает `pcm_s16be` в MP4, который читают не все браузеры."""
+    tmp = dst + ".part.wav"
+    r = _run_ff(["ffmpeg", "-y", "-v", "error", "-i", src, "-map", "0:a:0", "-vn",
+                 "-c:a", "pcm_s16le", "-ar", "48000", tmp])
+    if r is not None and r.returncode == 0 and os.path.isfile(tmp) and os.path.getsize(tmp) > 0:
+        os.replace(tmp, dst)            # .part -> готово: недописанный не подхватится
+        return dst
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass  # недописанного .part нет — убирать нечего
+    return None
 
 
 # Имя прокси КАДРА РЕНДЕРА без AE (`pv_r…`). Разбирается по имени, а не по числу в
@@ -946,6 +989,7 @@ def render_draft(xml_path: str, out_mp4: str | None = None, height: int = 720, f
             return int((r.stdout or "").strip().splitlines()[0])
         except ReelsiError: raise
         except Exception:
+            # nvidia-smi нет или не ответил — занятость VRAM неизвестна (None); это штатно на машинах без NVIDIA
             return None
 
     hw = None if force_cpu else hw_encoder()

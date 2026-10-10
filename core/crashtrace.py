@@ -109,6 +109,7 @@ def is_pid_alive(pid: int) -> bool:
                 return str(pid) in out
             except ReelsiError: raise
             except Exception:
+                # сторож падения не должен бросать: не смогли проверить — считаем процесс не живым
                 return False
     else:
         try:
@@ -133,6 +134,7 @@ def _parse_iso_datetime(dt_str: Any) -> datetime | None:
         return datetime.fromisoformat(clean)
     except ReelsiError: raise
     except Exception:
+        # битая дата в маркере — None (док-строка: парсинг безопасный, сторож не падает)
         return None
 
 
@@ -278,6 +280,7 @@ def _remove_marker(marker_path: str | None = None, port: Any = None) -> None:
                     os.remove(marker_path)
             except ReelsiError: raise
             except Exception:
+                # маркер не разобран (битый) — удаляем: иначе он висит вечно и каждый запуск его видит
                 os.remove(marker_path)
     except ReelsiError: raise
     except Exception:

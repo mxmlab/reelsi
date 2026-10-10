@@ -31,8 +31,27 @@ ROOT = os.path.dirname(HERE)
 # Каталоги, которые не смотрит ни git (мусор в `.gitignore`), ни обход: кэши,
 # окружения, каталог самого git. Отдельный список нужен, потому что тесты
 # сторожей обезличивания читают файлы, а не только сверяют имена.
-_SKIP_DIRS = {".git", "__pycache__", ".pytest_cache", ".ruff_cache", ".mypy_cache",
-              ".venv", "venv", "node_modules"}
+#
+# `.claude` — рабочие копии подагентов (`.claude/worktrees/agent-*`): это целые
+# параллельные деревья репозитория. Обход, который в них заходит, падает на
+# пропавшем на полпути файле и видит чужие правки как правки тестов. Единственный
+# список на все обходы дерева в tests/ (сторож корня в conftest тоже берёт его).
+SKIP_DIRS = frozenset({".git", ".claude", "__pycache__", ".pytest_cache", ".ruff_cache",
+                       ".mypy_cache", ".venv", "venv", "node_modules"})
+
+
+def walk_repo(root: str = ROOT, skip=frozenset()):
+    """`os.walk` по дереву репозитория с пропуском `SKIP_DIRS` и `skip`.
+
+    Пропуск каталогов делается ДО захода в них: `rglob` и `os.walk` без него
+    заходят в `.claude/worktrees/*` и падают, если параллельная сессия в этот
+    момент переименовала или удалила файл. Ошибки чтения каталогов `os.walk`
+    глотает сам — пропавший каталог не должен ронять сторож.
+    """
+    skip = SKIP_DIRS | frozenset(skip)
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in skip]
+        yield dirpath, dirnames, filenames
 
 
 def _ignore_patterns() -> list[str]:
@@ -74,12 +93,11 @@ def _walk(root: str) -> list[str]:
     """
     pats = _ignore_patterns()
     out: list[str] = []
-    for dirpath, dirnames, filenames in os.walk(root):
+    for dirpath, dirnames, filenames in walk_repo(root):
         rel_dir = os.path.relpath(dirpath, root).replace("\\", "/")
         rel_dir = "" if rel_dir == "." else rel_dir
         dirnames[:] = [d for d in dirnames
-                       if d not in _SKIP_DIRS
-                       and not _matches((rel_dir + "/" + d).lstrip("/"), pats)]
+                       if not _matches((rel_dir + "/" + d).lstrip("/"), pats)]
         for f in filenames:
             rel = (rel_dir + "/" + f).lstrip("/")
             if _matches(rel, pats):

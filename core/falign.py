@@ -13,7 +13,7 @@ Whisper даёт ТЕКСТ, но его тайминги приблизител
 """
 from __future__ import annotations
 import os, re
-from typing import Any
+from typing import Any, cast
 from core.app_meta import console_emit, wrap_emit
 from core.applog import get_logger
 from core.umsg import ReelsiError
@@ -40,6 +40,7 @@ def _resolve(device: str) -> str:
         return pick_device()
     except ReelsiError: raise
     except Exception:
+        # torch или выбор устройства не сработали — CPU: медленнее, но выравнивание работает
         return "cpu"
 
 
@@ -49,7 +50,8 @@ def get_model(device: str = "cuda") -> Any:
     if _MODEL is None:
         from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
         proc = Wav2Vec2Processor.from_pretrained(MODEL_ID)
-        model = Wav2Vec2ForCTC.from_pretrained(MODEL_ID).to(device).eval()
+        # cast(Any): transformers 5.x типизирует .to как обёртку без self, mypy ругается на device
+        model = cast(Any, Wav2Vec2ForCTC.from_pretrained(MODEL_ID)).to(device).eval()
         _MODEL = (proc, model, device)
     return _MODEL
 
@@ -120,7 +122,8 @@ def align_text(
             em, torch.tensor([targets], device=dev), blank=blank)
         spans = torchaudio.functional.merge_tokens(aln[0], sc[0], **_blank_kw(blank))
     except ReelsiError: raise
-    except Exception:
+    except Exception as e:
+        log.warning("выравнивание фрагмента не получилось (%s) — его слова без таймкодов", e)
         return []
     # merge_tokens склеивает подряд идущие одинаковые токены: на удвоенной букве
     # («класс») два таргета сливаются в один спан, и спанов становится меньше целей.
@@ -227,7 +230,8 @@ def align_words(
                 em, torch.tensor([targets], device=dev), blank=blank)
             spans = torchaudio.functional.merge_tokens(aln[0], sc[0], **_blank_kw(blank))
         except ReelsiError: raise
-        except Exception:
+        except Exception as e:
+            log.warning("окно выравнивания пропущено (%s) — его слова без таймкодов", e)
             continue
         # Соответствие «спан i ↔ meta[i]» — то же самое, что в align_text
         # (там же разбор случая «спанов меньше целей»: удвоенная буква).

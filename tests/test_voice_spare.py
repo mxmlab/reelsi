@@ -25,12 +25,12 @@ tests/test_voice_preview_mode.py). Проверяется:
 (б) на стыке живой становится тем, что был дублёром, без присваивания currentTime
     живому;
 (в) дублёр не готов (readyState/позиция) — запасной путь: перемотка живого;
-(г) пауза и скраб — дублёр не готовится;
-(е) стык РЕДАКТОРА шага 1: прицел и разгон ставит `edArm` и ставит их на `ED` (у него
-    живёт дорожка голоса), а не на `PV` — на нём разбег не разгонял никого;
-(ж) промах видео-дублёра (edTake не удался): голос НЕ подменяется дублёром — он глушится
-    и ждёт `seeked` живого видео, а после события включается ровно на его позиции. Это
-    и есть «звук не обгоняет картинку»: замер архитектора — p95 91 мс, 15 точек > 45 мс.
+(г) пауза и скраб — дублёр не готовится.
+
+Шаг 1 (редактор) этой машиной больше не пользуется: звук там играет буфер Web Audio, и
+стыки идут очередью узлов с точностью до сэмпла (tests/test_editor_audio_clock.py). Машина
+осталась у превью шага 3; плеер стенда по-прежнему зовётся `ED` — от имени тут зависит
+только то, откуда берётся время исходника (`P.cs`), правила дублёра у плееров общие.
 
 Запуск:  py -3.10 -m pytest tests/test_voice_spare.py -q
 """
@@ -64,14 +64,12 @@ SPARE_FUNCS = ("bufSilent", "bufIdle", "liveOf", "bufArm", "bufRoll", "bufTake",
                "voicePrime", "vtSpareCtl", "vtIsEd",
                "vtPause", "vtSeek", "vtRate", "vtTick")
 # Константы порогов — тоже из файла: свои копии в стенде разъезжались бы с боевыми молча.
-CONSTS = ("PV_PREROLL", "PV_SWAP_LO", "PV_SWAP_HI", "VT_SWAP_LO", "VT_SWAP_HI", "VT_ARM",
+CONSTS = ("PV_PREROLL", "PV_SWAP_LO", "PV_SWAP_HI", "VT_SWAP_LO", "VT_SWAP_HI",
           "VT_SOFT", "VT_DRIFT", "VT_RATE", "MEDIA_VOL")
-# Двери РЕДАКТОРА шага 1 (70-editor.js): стык блоков правки — его, и прицел дорожки голоса
-# ставит edArm. Тела берём из файла, копий в тесте нет. edJump здесь ради (е) ниже: голос
-# идёт за ФАКТИЧЕСКИМ решением видео, а проверяется это его дверью, а не по кускам;
-# edVoiceSeekWait/Close — ожидание промаха, которое edJump и заводит.
-EDITOR_FUNCS = ("edBlockAt", "edArm", "edSeek", "edTake", "edJump",
-                "edVoiceSeekWait", "edVoiceSeekClose", "edVoiceSeekOff")
+# Из редактора — только поиск блока. Своей дорожки голоса у шага 1 больше нет: звук там
+# играет буфер Web Audio (60-preview.js, блок `ea*`; tests/test_editor_audio_clock.py), а
+# машина дублёра голоса осталась у превью шага 3 — её этот стенд и проверяет.
+EDITOR_FUNCS = ("edBlockAt",)
 
 
 def _func_src(src: str, name: str) -> str:
@@ -104,7 +102,6 @@ def _bodies() -> str:
     preview = PREVIEW_JS.read_text(encoding="utf-8")
     editor = EDITOR_JS.read_text(encoding="utf-8")
     return "\n".join([_const(preview, c) for c in CONSTS]
-                     + [_const(editor, "EDMUTVOICE")]   # выключатель мутации — из файла
                      + [_func_src(preview, n) for n in SPARE_FUNCS]
                      + [_func_src(editor, n) for n in EDITOR_FUNCS])
 
@@ -118,8 +115,6 @@ function t(s){return String(s);}
 function $(id){return null;}
 function voiceWiring(){}
 function vLoaded(){return Promise.resolve();}   // источник дублёра в стенде уже верный
-function edRaw(){return false;}                 // выреза нет: стенд проверяет стык
-function edInCut(){return false;}
 function vtLiveOn(){return false;}              // окно плагинов закрыто: играет дорожка
 function vtLiveUpdate(){return false;}
 function vtLivePause(){}
@@ -415,7 +410,7 @@ console.log(JSON.stringify({onPause:onPause,onScrub:onScrub,armCt:armCt}));
 
 def test_the_jump_through_a_cut_uses_the_spare_and_keeps_the_seek_as_a_fallback(
         tmp_path: Path) -> None:
-    """Прыжок через вырез (edJump) проходит дублёром; не готов — seek на месте.
+    """Прыжок через вырез проходит дублёром; не готов — seek на месте.
 
     Прыжок делает картинка, и дорожка обязана прыгнуть В ТОМ ЖЕ кадре: «подъезжающий»
     голос слышен как чужой кусок клипа. Дублёр на стыке готов — живой не перематывается.
@@ -437,10 +432,8 @@ console.log(JSON.stringify({took:took,liveCt:P.vt.el.currentTime}));
 def test_the_edl_cut_primes_the_spare_before_it_arrives(tmp_path: Path) -> None:
     """У плеера с EDL прицел дублёра — сегмент монтажа, и он взводится ДО стыка.
 
-    Прицел у дорожки голоса один на все плееры: у редактора его ставит edArm (блоки
-    правки), у превью шага 3 и раскладки камер — vtSpareSwap (сегмент EDL). Машина
-    подмены одна, поэтому и проверяем оба прицела: зазевавшийся взвод = стык через
-    перемотку живого, то есть ровно та задержка, от которой уходим.
+    У превью шага 3 и раскладки камер прицел ставит vtSpareSwap (сегмент EDL): зазевавшийся
+    взвод = стык через перемотку живого, то есть ровно та задержка, от которой уходим.
     """
     res = _run_node(tmp_path, _player(4.0) + """
 const seg=vtSpareSeg(P);                           // прицел — кусок ПОСЛЕ стыка
@@ -461,336 +454,6 @@ console.log(JSON.stringify({seg:seg.at, src:src, liveSrc:liveSrc, armedAt:armedA
     assert res["armedAt"] == 6, "дублёр взведён не на позицию после стыка EDL: %s" % res
     assert res["took"] is True, "стык EDL не прошёл подменой дублёра: %s" % res
     assert res["liveCt"] == 6, "дорожка после стыка стоит не на нужном кадре: %s" % res
-
-
-# --------------------------------------------------------------------------- #
-# (е) стык РЕДАКТОРА шага 1: прицел и разгон ставит edArm — и ставит их на ED
-# --------------------------------------------------------------------------- #
-# Стенд редактора: PV — кадр и видео-дублёр, ED — часы и дорожка обработанного голоса.
-# Два РАЗНЫХ плеера, как в бою: на одном объекте промах «взвели не тому дублёру» не поймать.
-# Стык: блок правки кончается на 4.0, следующий начинается на 4.3 — вырезано 0.3 с.
-EDITOR_STAND = r"""
-const cam=new El('video');cam.src='C:/cam1.mp4';cam._ct=0;
-const live=new El('audio');live.src='/api/media?path=C:/cache/final.wav';live._ct=0;
-PV={vids:[cam],bufs:[],cams:[{path:'C:/cam1.mp4'}],segs:[],audio:[],words:[],dur:10,aidx:0,vidx:-1,
-  curCi:-1,scrubbing:false,raf:0,xml:'C:/out/01_clip.xml',voicePanel:null};
-ED={xml:'C:/out/01_clip.xml',blocks:[{s0:0,s1:4},{s0:4.3,s1:10}],fps:60,cam:'C:/cam1.mp4',dur:10,
-  peaks:[],pps:80,sel:-1,play:true,raw:false,raf:0,cs:0,drag:null,v0:0,v1:0,hist:[],cuts:[],br:[],
-  brBand:0,cams:[{path:'C:/cam1.mp4'}],voicePanel:null,
-  vt:{on:true,el:live,path:'C:/cache/final.wav',fin:true,seq:0,timer:0,poll:0,want:'',note:'',
-      vtq:false,vtend:false,live:null,dn:'',wantDn:'',wantFinal:true,warn:'',statesWait:null,
-      vsp:null,vspAt:null}};
-const b0=ED.blocks[0],nb=ED.blocks[1],dt=1/60;
-"""
-
-
-def test_the_editor_cut_rolls_the_voice_spare_on_ed(tmp_path: Path) -> None:
-    """Стык редактора: дублёр голоса разгоняется ЗАРАНЕЕ, а на стыке сам выходит в эфир.
-
-    Баг (найден архитектором в браузере): `edArm` ставил прицел и разгон дорожки голоса
-    на `PV`, а дорожка редактора живёт на `ED` — на каждом из четырёх прыжков дублёр
-    стоял `paused:true, currentTime:0, rolling:false`, удачных подмен 0, и стык шёл
-    перемоткой живого <audio> (та самая задержка 100–200 мс). Здесь часы идут к концу
-    первого блока, и проверяется весь путь: дублёр уведён на `PV_PREROLL` до позиции
-    ПОСЛЕ стыка, едет немым, на стыке `vtSpareTake` отдаёт эфир ему — а живого не сеcит
-    никто.
-    """
-    res = _run_node(tmp_path, EDITOR_STAND + """
-let firstRoll=null,took=false,liveBefore=null,liveAfter=null,oldSeeks=null;
-for(let i=0;i<600;i++){
-  live._ct+=dt;cam._ct+=dt;ED.cs=cam._ct;               // живой исходник играет, часы идут за ним
-  const sp=vtOf(ED).vsp;
-  if(sp&&sp.rolling)sp.el._ct+=dt*sp.el.playbackRate;   // дублёр отыгрывает разбег в фоне
-  if(ED.cs>=b0.s1-0.02){                                // стык: edTick -> edJump
-    liveBefore=live.currentTime;oldSeeks=live.seeks.length;
-    vtTick(ED,nb.s0);                                   // edJump: сначала кадр дорожки
-    took=vtSpareTake(ED,nb.s0);                         // ...и подмена в том же кадре
-    liveAfter=vtOf(ED).el.currentTime;                  // живой ПОСЛЕ подмены — бывший дублёр
-    break;}
-  vtTick(ED,ED.cs);                                     // edTick: кадр дорожки
-  edArm();                                              // ...и один edArm на разбег
-  const r=vtOf(ED).vsp;
-  if(!firstRoll&&r&&r.rolling)
-    firstRoll={cs:ED.cs,ct:r.el.currentTime,at:r.at,paused:!!r.el.paused,muted:!!r.el.muted};}
-console.log(JSON.stringify({firstRoll:firstRoll,took:took,liveBefore:liveBefore,liveAfter:liveAfter,
-  oldSeeks:oldSeeks,liveSeeks:live.seeks.length,cut:nb.s0,b0end:b0.s1,preroll:PV_PREROLL,
-  win:VT_ARM-PV_PREROLL,lo:VT_SWAP_LO,hi:VT_SWAP_HI}));
-""")
-
-    assert res["firstRoll"], (
-        "разбег дорожки голоса в редакторе не готовился вовсе (дублёр взведён не тому плееру?)")
-    roll = res["firstRoll"]
-    # Дублёр уведён на PV_PREROLL до позиции ПОСЛЕ стыка и едет немым: слышно его быть не должно.
-    assert abs(roll["at"] - res["cut"]) < 1e-6, roll
-    assert abs(roll["ct"] - (res["cut"] - res["preroll"])) < 1e-3, \
-        "дублёр стоит не за PV_PREROLL до позиции после стыка: %s" % roll
-    assert roll["muted"] is True and roll["paused"] is False, \
-        "дублёр не поехал немым в окне разбега: %s" % roll
-    # Разгон начат ДО прыжка (в хвосте первого блока) и не раньше окна VT_ARM-PV_PREROLL.
-    assert 0 < res["b0end"] - roll["cs"] <= res["win"] + 2 / 60, \
-        "разгон начат вне окна до стыка: %s" % roll
-    # На стыке в эфир вышел дублёр: подмена прошла, и позиция — у начала следующего блока.
-    assert res["took"] is True, "подмена дублёром на стыке редактора не прошла: %s" % res
-    assert res["lo"] <= res["liveAfter"] - res["cut"] <= res["hi"], res
-    # ...и главное: живого <audio> не перематывали — ни в кадре прыжка, ни на самой подмене.
-    assert res["liveSeeks"] == res["oldSeeks"], \
-        "живому <audio> присвоили currentTime на стыке — это и есть та задержка: %s" % res
-    # Прежний живой остался там, где играл (конец первого блока), а не уехал на стык.
-    assert res["b0end"] - 0.05 <= res["liveBefore"] < res["cut"], res
-
-
-def test_the_last_block_and_a_seek_drop_the_voice_runup(tmp_path: Path) -> None:
-    """Стыка впереди нет (последний блок) или плейхед перемотали — разбег голоса снят.
-
-    Сброс живёт там же, где у видео-дублёра: `edArm` — для последнего блока, `edSeek` —
-    для перемотки. Оставленный прицел страшен тем, что `vtSpareCtl` взводит дублёра по
-    `vspAt` каждый кадр: разогнанный под исчезнувший стык дублёр вернулся бы на него и
-    доигрывал фоном (лишний декод рядом с живым — тот самый ресурс, из-за которого стыки
-    и дёргались).
-    """
-    res = _run_node(tmp_path, EDITOR_STAND + """
-cam._ct=3.9;live._ct=3.9;ED.cs=3.9;
-edArm();                                          // стык близко: дублёр взведён
-const sp=vtOf(ED).vsp;
-const armed={made:!!sp,at:sp?sp.at:null};
-let onLast=null,onSeek=null;
-if(sp){
-  sp.el._ct=nb.s0;sp.rolling=true;sp.el.play();   // ...и уже разогнан
-  ED.blocks=[{s0:0,s1:4}];                        // правка убрала стык: блок последний
-  edArm();
-  onLast={at:sp.at,rolling:!!sp.rolling,paused:sp.el.paused,muted:sp.el.muted,
-    aim:vtOf(ED).vspAt};
-  sp.el._ct=nb.s0;sp.rolling=true;sp.el.play();   // снова разогнан — и перемотка плейхеда
-  ED.blocks=[{s0:0,s1:4},{s0:4.3,s1:10}];ED.cs=3.9;
-  edArm();                                        // стык вернулся: разбег взведён заново
-  sp.el._ct=nb.s0;sp.rolling=true;sp.el.play();
-  ED.play=false;edSeek(1.0);
-  onSeek={at:sp.at,rolling:!!sp.rolling,paused:sp.el.paused,muted:sp.el.muted,cs:ED.cs,
-    aim:vtOf(ED).vspAt};}
-console.log(JSON.stringify({armed:armed,onLast:onLast,onSeek:onSeek,cut:nb.s0}));
-""")
-
-    assert res["armed"]["made"] is True, "дублёр голоса не взведён вовсе: %s" % res
-    assert res["armed"]["at"] == res["cut"], res
-    assert res["onLast"] and res["onSeek"], "дублёр голоса пропал с плеера редактора: %s" % res
-    last = res["onLast"]
-    assert last["at"] is None and last["rolling"] is False, \
-        "на последнем блоке разбег голоса остался взведён: %s" % last
-    assert last["paused"] is True and last["muted"] is True, \
-        "разогнанный дублёр остался играть фоном: %s" % last
-    assert last["aim"] is None, "прицел голоса не снят — vtSpareCtl взведёт дублёра заново"
-    seek = res["onSeek"]
-    assert seek["at"] is None and seek["rolling"] is False, \
-        "перемотка не сняла разбег голоса: %s" % seek
-    assert seek["paused"] is True and seek["muted"] is True, seek
-    assert seek["aim"] is None, "перемотка оставила прицел — дублёр вернётся на покинутый стык"
-    assert abs(seek["cs"] - 1.0) < 1e-9, "плейхед перемотки не встал на место: %s" % seek
-
-
-# --------------------------------------------------------------------------- #
-# (ж) промах видео-дублёра: голос идёт за ФАКТИЧЕСКИМ решением картинки
-# --------------------------------------------------------------------------- #
-# Стенд прыжка: у видео дублёр ЕСТЬ (`bufs` не пуст — без него прыжок вообще не пробует
-# подмену, и «мягкий» промах не воспроизвести), но не готов: он не разогнан, поэтому
-# `bufTake` отказывает. Картинка идёт прежним путём, seek'ом на месте, — ровно тот случай,
-# в котором голос раньше подменялся дублёром мгновенно и ОБГОНЯЛ ещё едущую картинку.
-# Звук камеры (`cam`) и дорожка голоса (`vox`) — РАЗНЫЕ элементы, как в бою: без этого
-# промах «гейт закрыт» не отличить от «гейт открыт», и сторож пропустил бы два голоса.
-JUMP_STAND = r"""
-const cam=new El('video');cam.src='C:/cam1.mp4';cam.readyState=4;cam._ct=3.9;
-const spareCam=new El('video');spareCam.src='C:/cam1.mp4';spareCam.readyState=4;spareCam.muted=true;
-const vox=new El('audio');vox.src='/api/media?path=C:/cache/final.wav';vox.readyState=4;vox._ct=3.9;
-PV={vids:[cam],bufs:[{el:spareCam,slot:0,off:0,at:null,rolling:false}],
-  cams:[{path:'C:/cam1.mp4'}],segs:[],audio:[],words:[],dur:10,aidx:0,vidx:0,
-  curCi:-1,scrubbing:false,raf:0,xml:'C:/out/01_clip.xml',voicePanel:null};
-ED={xml:'C:/out/01_clip.xml',blocks:[{s0:0,s1:4},{s0:6,s1:10}],fps:60,cam:'C:/cam1.mp4',dur:10,
-  peaks:[],pps:80,sel:-1,play:true,raw:false,raf:0,cs:3.9,drag:null,v0:0,v1:0,hist:[],cuts:[],br:[],
-  brBand:0,cams:[{path:'C:/cam1.mp4'}],voicePanel:null,vids:PV.vids,   // камеры — тот же живой список
-  vt:{on:true,el:vox,path:'C:/cache/final.wav',fin:true,seq:0,timer:0,poll:0,want:'',note:'',
-      vtq:false,vtend:false,live:null,dn:'',wantDn:'',wantFinal:true,warn:'',statesWait:null,
-      vsp:null,vspAt:null}};
-// Дублёр голоса взведён и разогнан: он ЖДЁТ подмены на 6.0. Всё, что от него требуется в
-// промахе, — не выйти в эфир, а в мутации — выйти.
-vtSpareAt(ED,6);vtSpareArm(ED);
-const spare=vtOf(ED).vsp;spare.el._ct=6;spare.rolling=true;spare.armed=true;
-PV.scrubbing=false;
-const b0=ED.blocks[0],nb=ED.blocks[1];
-"""
-
-
-def test_a_missed_video_spare_keeps_the_voice_gated_until_the_video_seeks(tmp_path: Path) -> None:
-    """Промах видео-дублёра: голос не подменяется, молчит и включается по `seeked` видео.
-
-    Замер архитектора после `6c471e0`: отставаний больше 125 мс нет, но звук СПЕШИТ —
-    15 точек > 45 мс, p95 91 мс. Причина в коде: `edJump` подменял дорожку голоса
-    дублёром ВСЕГДА, а картинка при промахе видео-дублёра ещё ехала seek'ом, и голос
-    оказывался на новом месте раньше неё. Правило одно: голос идёт за ФАКТИЧЕСКИМ
-    решением видео на этом стыке.
-    """
-    res = _run_node(tmp_path, JUMP_STAND + """
-const el=vtOf(ED).el,spareEl=vtOf(ED).vsp.el;
-let tookCalls=0;
-const realTake=vtSpareTake;
-vtSpareTake=function(P,at){tookCalls++;return realTake(P,at);};   // подмена видна счётчиком
-// Гейт — ОДНА дверь (vtGate): `false` его закрывает (звук камеры молчит), `true` открывает.
-// Считаем именно открытия: пока голос ждёт `seeked`, кадр не имеет права открыть гейт.
-let gateOpens=0;
-const realGate=vtGate;
-vtGate=function(P,on){if(on)gateOpens++;return realGate(P,on);};
-const v=cam;
-v.seeking=true;                     // декодер уже поехал: seek поднят ДО прыжка картинки
-const out=edJump(v,nb.s0);          // дублёр видео не разогнан: edTake не удался -> seek
-const opensAtJump=gateOpens;
-const atMiss={vSeek:v.currentTime,voicePos:el.currentTime,voicePaused:el.paused,
-  voiceMuted:el.muted,open:!!ED.vtOpen,gate:!!vtMuteHost(ED).voiceMute,
-  spareRolling:!!vtOf(ED).vsp.rolling,spareAt:vtOf(ED).vsp.at,
-  aim:vtOf(ED).vspAt,waited:TIMERS.filter(x=>x&&x.ms===300).length,
-  listening:(cam.handlers.seeked||[]).length,out:(out===v)?'video':'spare'};
-// Кадр игры во время ожидания: дорожку он не трогает и гейт НЕ открывает — иначе на стыке
-// зазвучал бы сырой голос камеры, пока картинка ещё едет.
-vtTick(ED,ED.cs);
-const afterTick={opens:gateOpens-opensAtJump,voicePaused:el.paused,open:!!ED.vtOpen,
-  voicePos:el.currentTime};
-// Живое видео доехало: голос обязан включиться ровно на ЕГО позиции, а не на месте прыжка.
-v._ct=6.42;v.seeked();
-const atSeeked={voicePos:el.currentTime,voicePaused:el.paused,voiceMuted:el.muted,
-  videoPos:v.currentTime,gate:!!vtMuteHost(ED).voiceMute,open:!!ED.vtOpen,plays:el.plays,
-  gateOpens:gateOpens,sparePaused:spareEl.paused,
-  waitedAfter:TIMERS.filter(x=>x&&x.fn).length};
-console.log(JSON.stringify({tookCalls:tookCalls,atMiss:atMiss,afterTick:afterTick,
-  atSeeked:atSeeked,cut:nb.s0}));
-""")
-
-    miss = res["atMiss"]
-    # Картинка: дублёр не готов — прежний путь, seek на месте.
-    assert miss["vSeek"] == res["cut"], "картинка не ушла seek'ом на место прыжка: %s" % res
-    assert miss["out"] == "video", \
-        "прыжок вернул дублёра, которого видео не отдавало: %s" % miss
-    # Главное: голос НЕ подменён дублёром. Ни вызовом из edJump, ни сам — vtSpareCtl взвёл
-    # бы его по оставленному прицелу в следующем же кадре.
-    assert res["tookCalls"] == 0, \
-        "на промахе видео голос всё-таки подменили дублёром — звук обгонит картинку: %s" % res
-    assert miss["spareRolling"] is False and miss["spareAt"] is None, \
-        "дублёр голоса остался разогнанным под пройденный стык: %s" % miss
-    assert miss["aim"] is None, \
-        "на промахе оставлен прицел — vtSpareCtl подменит дублёра в следующем кадре: %s" % miss
-    # Глушение без рывка: гейт закрыт и дорожка стоит — на стыке тихо, пока картинка едет.
-    assert miss["gate"] is False, "гейт не закрыт на промахе: %s" % miss
-    assert miss["voicePaused"] is True, "дорожка не остановлена на время seek'а картинки: %s" % miss
-    assert miss["voicePos"] == res["cut"], res
-    assert miss["open"] is True, "ожидание `seeked` живого видео не заведено: %s" % miss
-    # Ждём ровно одно событие: слушатель один, страховка на 300 мс — тоже одна, а не
-    # «ждать вечно» и не «повесить второй обработчик на каждый промах».
-    assert miss["waited"] == 1 and miss["listening"] == 1, \
-        "ожидание `seeked` заведено не один раз: %s" % miss
-    # Кадр во время ожидания гейт не открыл — иначе сырой голос камеры вернулся бы поверх
-    # едущей картинки, то есть ровно та рассинхронность, от которой уходим.
-    tick = res["afterTick"]
-    assert tick["opens"] == 0, \
-        "кадр открыл гейт, пока голос ждал `seeked` — звук камеры вернулся раньше картинки: %s" % tick
-    assert tick["voicePaused"] is True and tick["open"] is True and tick["voicePos"] == res["cut"], tick
-    # После события: голос включён и ВЫРОВНЕН ПО ВИДЕО (6.42), а не по месту прыжка (6.0).
-    done = res["atSeeked"]
-    assert abs(done["voicePos"] - done["videoPos"]) < 1e-9, \
-        "после `seeked` голос стоит не на позиции видео — расхождение и есть обгон: %s" % done
-    assert abs(done["voicePos"] - res["cut"]) > 0.05, \
-        "голос остался на месте прыжка, а не на доехавшей картинке: %s" % done
-    assert done["voicePaused"] is False and done["plays"] == 1, \
-        "после `seeked` живого видео дорожка не вернулась в эфир: %s" % done
-    assert done["gate"] is True, "гейт не открыт после доехавшей картинки: %s" % done
-    assert done["open"] is False, "ожидание не закрылось по своему же событию: %s" % done
-    assert done["waitedAfter"] == 0, "страховочный таймаут остался висеть после события: %s" % done
-
-
-def test_the_watchdog_opens_the_gate_when_the_seek_event_is_lost(tmp_path: Path) -> None:
-    """Событие `seeked` потерялось — через 300 мс голос всё равно включается.
-
-    Слушатель — единственная дверь из тишины, и потерять его может кто угодно: `seeked`
-    не приходит на микро-перемотку внутри буфера, элемент переехал на прокси, вкладку
-    свернули. Тогда голос остался бы немым до конца клипа, поэтому рядом стоит страховка.
-    """
-    res = _run_node(tmp_path, JUMP_STAND + """
-const el=vtOf(ED).el;
-cam.seeking=true;
-edJump(cam,nb.s0);
-const watchdog=TIMERS.find(x=>x&&x.ms===300);
-cam._ct=6.42;                                  // картинка доехала, но событие потеряно
-if(watchdog)watchdog.fn();                     // сработала страховка
-console.log(JSON.stringify({had:!!watchdog,voicePos:el.currentTime,voicePaused:el.paused,
-  videoMuted:cam.muted,gate:!!vtMuteHost(ED).voiceMute,open:!!ED.vtOpen,plays:el.plays,
-  listening:(cam.handlers.seeked||[]).length}));
-""")
-
-    assert res["had"] is True, "страховки на потерянное событие нет вовсе: %s" % res
-    assert res["voicePos"] == 6.42, \
-        "по страховке голос встал не на позицию видео: %s" % res
-    assert res["open"] is False and res["voicePaused"] is False and res["plays"] == 1, \
-        "по страховке голос не вернулся в эфир: %s" % res
-    assert res["gate"] is True, "по страховке гейт остался закрыт: %s" % res
-    assert res["listening"] == 0, "сработавшая страховка оставила слушателя на видео: %s" % res
-
-
-def test_an_instant_seek_hands_the_voice_over_in_the_same_frame(tmp_path: Path) -> None:
-    """Картинка встала seek'ом мгновенно — ждать нечего: голос выравнивается тем же кадром.
-
-    `seeking` не поднялся (позиция уже в буфере декодера) — `seeked` не придёт вовсе, и
-    «ждать событие» значило бы держать голос немым всю страховку. Тишины нет: оба элемента
-    стоят на одном месте, и гейт открывается сразу — но ПО ПОЗИЦИИ КАРТИНКИ, а не по
-    месту прыжка.
-    """
-    res = _run_node(tmp_path, JUMP_STAND + """
-const el=vtOf(ED).el;
-el._ct=3.9;                                    // живой голос ещё на старом месте
-el.seeks.length=0;                             // интересны перемотки ЭТОГО прыжка
-ED.cs=nb.s0;                                   // как edTick: плейхед встаёт на место прыжка
-edJump(cam,nb.s0);
-console.log(JSON.stringify({voicePos:el.currentTime,voicePaused:el.paused,
-  videoMuted:cam.muted,voiceIsLive:vtOf(ED).el===el,open:!!ED.vtOpen,plays:el.plays,
-  seeks:el.seeks.slice(),minSeek:Math.min.apply(null,el.seeks),
-  waited:TIMERS.filter(x=>x&&x.fn).length,
-  listening:(cam.handlers.seeked||[]).length}));
-""")
-    assert res["voiceIsLive"] is True, \
-        "на мгновенном seek'е живой дорожкой стал дублёр, а картинка не переезжала: %s" % res
-    # Дорожку ставили на место прыжка (её позиция была 3.9 — прыжок действительно был нужен).
-    assert res["minSeek"] == 6, \
-        "мгновенный seek не поставил голос на место прыжка: %s" % res
-    assert res["voicePaused"] is False, \
-        "мгновенный seek оставил голос на паузе, хотя картинка уже на месте: %s" % res
-    assert res["open"] is False and res["waited"] == 0 and res["listening"] == 0, \
-        "на мгновенный seek заведено ожидание события, которого не будет: %s" % res
-
-
-def test_the_missed_spare_take_mutation_turns_the_gate_test_red(tmp_path: Path) -> None:
-    """Мутация: снова звать `vtSpareTake` на стыке БЕЗУСЛОВНО — промах обязан покраснеть.
-
-    Возвращаем ровно то, что было до правки: модуль держит для этого один выключатель
-    (`EDMUTVOICE`, выключенный в бою). С ним в промахе живой дорожкой становится бывший
-    дублёр с его собственным currentTime 6.0, гейта и ожидания `seeked` нет вовсе, а
-    позиция видео голос уже не касается — это и есть обгон звука.
-    """
-    res = _run_node(tmp_path, JUMP_STAND + """
-const el=vtOf(ED).el,spareRef=vtOf(ED).vsp;
-// Стенд промаха: видео-дублёр есть, но не готов (не разогнан) — картинка идёт seek'ом.
-// Мутация (`EDMUTVOICE`) возвращает прежнее правило: голос подменяется дублёром на стыке
-// НЕЗАВИСИМО от того, как стык прошёл у видео.
-let took=0;
-const realTake=vtSpareTake;
-vtSpareTake=function(P,at){took++;return realTake(P,at);};
-spareRef.el._ct=6;spareRef.rolling=true;spareRef.armed=true;   // дублёр готов выйти в эфир
-EDMUTVOICE=1;
-edJump(cam,nb.s0);
-const now=vtOf(ED).el;
-console.log(JSON.stringify({took:took,pos:now.currentTime,open:!!ED.vtOpen,
-  paused:now.paused,plays:now.plays,spareIsOld:now===spareRef.el,liveIsOld:now===el,
-  gate:!!vtMuteHost(ED).voiceMute}));
-""")
-
-    # Мутация: прежнее правило позвало подмену и та СОСТОЯЛАСЬ. Голос ушёл на середину
-    # прыжка (6.0) своим ходом, гейта нет — звук пошёл поверх незакрытой картинки.
-    assert res["took"] == 1, "мутация не позвала подмену — стенд проверяет не то: %s" % res
-    assert res["gate"] is True, "мутация не дала обгона — проверять нечего: %s" % res
-    assert res["open"] is False, "мутация не миновала ожидание `seeked`: %s" % res
 
 
 # --------------------------------------------------------------------------- #
@@ -989,6 +652,5 @@ console.log(JSON.stringify({took:took,liveMuted:!!P.vt.el.muted}));
     assert res["took"] is True, res
     assert res["liveMuted"] is True, \
         "мутация не воспроизвела баг — сторож проверяет не то: %s" % res
-
 
 

@@ -14,10 +14,11 @@ r"""Сторож CI: torch ставится в чистом окружении, 
    один коммит, и проверка секретов вырождается в пустую.
 4. `.gitleaks.toml` не глушит правило generic-api-key целиком: исключения — только по
    путям трёх файлов с разобранными ложными срабатываниями.
-5. У pip-audit шесть исключений (`--ignore-vuln`) на уязвимости transformers 4.x:
-   список закрытый и поимённый, у каждого ID есть строка-причина рядом, а шаг
-   `pip-audit` в `tools/slice_check.py` повторяет ту же строку — иначе срез зелёный,
-   а CI красный (или наоборот, уязвимость пропущена молча).
+5. У pip-audit нет исключений (`--ignore-vuln`): transformers 5.10.1 чист, шесть
+   прежних ID (держали 4.x) сняты. Список закрытый и поимённый: появится исключение —
+   строка-причина рядом и правка этого теста; шаг `pip-audit` в `tools/slice_check.py`
+   читает ту же строку ci.yml — иначе срез зелёный, а CI красный (или наоборот,
+   уязвимость пропущена молча).
 
 ci.yml читаем текстом: yaml в тестовой джобе CI не ставится, а проверяем мы ровно те
 строки, которые правят руками.
@@ -33,19 +34,10 @@ ROOT = os.path.dirname(HERE)
 CI_YML = os.path.join(ROOT, ".github", "workflows", "ci.yml")
 GITLEAKS_TOML = os.path.join(ROOT, ".gitleaks.toml")
 
-# Исключения pip-audit: шесть уязвимостей transformers 4.x, чей код в дереве не
-# вызывается (разбор по каждой — в ci.yml рядом со строкой). Перейти на 5.x нельзя:
-# transformers 5.x зовёт на импорте torch.accelerator, а он есть только в torch 2.6,
-# тогда как install.ps1/install.sh и оба README ставят torch 2.5.1. Список закрытый:
-# седьмое исключение — осознанная правка этого теста с причиной, а не тихий пропуск.
-PIP_AUDIT_IGNORES = (
-    "PYSEC-2025-217",
-    "PYSEC-2026-2288",
-    "PYSEC-2026-2289",
-    "PYSEC-2026-2290",
-    "PYSEC-2026-3929",
-    "PYSEC-2026-4174",
-)
+# Исключения pip-audit: пусто. Шесть ID transformers 4.x сняты вместе с переходом на
+# transformers 5.10.1 (чист по pip-audit). Новое исключение — осознанная правка этого
+# теста с причиной рядом со строкой в ci.yml, а не тихий пропуск.
+PIP_AUDIT_IGNORES = ()
 PIP_AUDIT_LINE_PREFIX = "pip-audit -r requirements.txt"
 
 
@@ -214,7 +206,8 @@ def test_шаг_pip_audit_в_slice_check_повторяет_строку_ci():
 
     args, err = sc.extract_ci_pip_audit_args(ROOT)
     assert err == "", err
-    assert args, "в строке ci.yml нет аргументов pip-audit"
+    # Пустые аргументы — норма (исключений нет); отсутствие строки ловит `err` выше.
+    assert args is not None, "в ci.yml нет строки pip-audit"
 
     cmd = sc.pip_audit_command(args)
     assert cmd[1:5] == ["-m", "pip_audit", "-r", "requirements.txt"], cmd

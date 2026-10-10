@@ -67,10 +67,12 @@ def available(path: str | None = None) -> tuple[bool, str]:
     try:
         import silero_vad            # noqa: F401
     except Exception as e:
+        # необязательный пакет: причина уходит в возвращаемую строку, а не в исключение
         return False, f"нет silero-vad ({type(e).__name__})"
     try:
         import transformers          # noqa: F401
     except Exception as e:
+        # необязательный пакет: причина уходит в возвращаемую строку, а не в исключение
         return False, f"нет transformers ({type(e).__name__})"
     p = path or MODEL_JSON
     if not os.path.exists(p):

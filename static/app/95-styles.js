@@ -18,14 +18,10 @@ let STYLE_EDITING=null,STYLE_EDIT_ORIG=null,STYLE_TOUCHED=false;
 // один раз ставит всё, что зависит от спикера, чтобы это не выбиралось руками
 // каждый прогон (и не забывалось — из-за чего клипы уезжали в чужую папку).
 let SPEAKERS={},SPKSAVED='',SPKDEF={},SPKLAB=[],SPKEDIT='',SPKFORMATS={},SPKFORMAT_ORDER=[],SPKDEF_FORMAT='9:16';
-// Глобальная папка для .jsx (клипы БЕЗ тега спикера) — отдельно от того, что поле
-// показывает у клипа с тегом. Тег определяет папку клипа (профиль спикера), поле —
-// вид на неё; глобальное значение хранится здесь, чтобы показ папки спикера не
-// затирал папку для клипов без тега («клип без спикера — как сегодня»).
-let AEGLOBAL='';
-// Папка вывода безголового рендера (шаг 3). Та же механика, что у
-// AEGLOBAL: у клипа со спикером — из его профиля (renderdir), у клипа без тега —
-// глобальная; дефолт — папка exp рядом с репозиторием (подставляет сервер).
+// Папка вывода безголового рендера (шаг 3): у клипа со спикером — из его профиля
+// (renderdir), у клипа без тега — глобальная; дефолт — папка exp рядом с репозиторием
+// (подставляет сервер). Папки .jsx в интерфейсе больше нет вовсе: её задаёт профиль
+// спикера, а клип без спикера кладёт файл рядом со своим XML (см. effOutdir).
 let AERENDER='';
 async function loadSpeakers(){let d;
   try{d=await (await fetch('/api/speakers')).json();}
@@ -45,7 +41,7 @@ async function loadSpeakers(){let d;
     o.value=k;o.textContent=SPEAKERS[k].label||k;sel.appendChild(o);});
   sel.value=SPEAKERS[SPKSAVED]?SPKSAVED:'';
   applySpeakerDirs();
-  spkEditUI();renderStyleInfo();cutSummary();jsxDirNote();}
+  spkEditUI();renderStyleInfo();cutSummary();}
 // Папки выбранного спикера — НА ЗАГРУЗКЕ СТРАНИЦЫ, без вопросов.
 // Раньше профиль попадал в поля только через onSpeakerChange, то есть в момент СМЕНЫ
 // спикера в списке (или сохранения профиля). После F5 спикер восстанавливался, а поля
@@ -58,12 +54,9 @@ async function loadSpeakers(){let d;
 function applySpeakerDirs(){const p=SPEAKERS[val('speaker')];if(!p)return;
   const set=(id,v)=>{const el=$(id);if(el&&v&&!samePath(el.value,v))el.value=v;};
   set('ai_outdir',(p.outdir||'').trim());
-  // Глобальная папка .jsx берёт дефолт из профиля текущего спикера; поле показывает
-  // её (клип без тега) или папку тега (клип с тегом) — см. renderAeDirField.
-  if((p.jsxdir||'').trim())AEGLOBAL=(p.jsxdir||'').trim();
   // Папка вывода рендера — так же из профиля, см. renderRenderDirField.
   if((p.renderdir||'').trim())AERENDER=(p.renderdir||'').trim();
-  renderAeDirField();
+  renderRenderDirField();
   // Папки камер — на загрузке страницы, без вопросов. Раньше они подставлялись
   // только через onSpeakerChange, после F5 оставался автоподбор, а очередь хранит
   // только имена — нарезка уходила читать чужую папку (жалоба 2026-08-20).
@@ -85,17 +78,14 @@ function samePath(a,b){
 // Общий выбор: новая нарезка/профиль, не клип — ставим папку выбранного в селекторе.
 async function spkDir(id,key,ask){const p=SPEAKERS[val('speaker')]||{};
   const want=(p[key]||'').trim();
-  // Глобальная папка .jsx живёт в AEGLOBAL, а не в поле: у клипа с тегом поле
-  // показывает папку тега, и сравнение «как есть» сравнило бы не то.
-  const cur=(id==='aeoutdir')?AEGLOBAL:val(id).trim();
+  const cur=val(id).trim();
   if(!want||samePath(want,cur))return;
   // Спрашиваем ВСЕГДА при непустой разнице — и когда это папка ДРУГОГО спикера тоже:
   // папки называются AutoCut_out / MKAutoCut_out / NGAutoCut_out / VIKAutoCut_out и
   // частят у всех, раньше «своё» ловило чужое и вручную выставленное значение
   // исчезало без следа (жалоба 2026-08-11 «меняю папку, а файла там нет»).
   if(!cur||await askConfirm(ask+want)){
-    if(id==='aeoutdir'){AEGLOBAL=want;renderAeDirField();}
-    else{$(id).value=want;}}}
+    $(id).value=want;}}
 // Папка XML клипа: рядом со «своим XML» — это последняя ступень лестницы папок
 // (см. effOutdir/effRenderdir). Разбор строкой, а не через path: у браузера нет
 // файловой системы, а папка нужна ДО сборки — по ней собирается payload задания.
@@ -103,8 +93,9 @@ function xmlDirOf(xml){const s=(xml||'').replace(/[\\/]+$/,'');
   const i=Math.max(s.lastIndexOf('\\'),s.lastIndexOf('/'));
   return i>0?s.slice(0,i):'';}
 // Папка для .jsx КЛИПА — ЛЕСТНИЦА (жалоба 2026-08-11): клип со спикером → jsxdir его
-// профиля → папка нарезки того же спикера (outdir) → папка XML клипа. Общее поле
-// (AEGLOBAL) сюда не входит вовсе: оно для клипа БЕЗ тега.
+// профиля → папка нарезки того же спикера (outdir) → папка XML клипа. Общего поля в
+// интерфейсе больше нет: клип без тега кладёт .jsx рядом со своим XML — ровно то, что
+// делал пустой outdir в сборке (api/build.py).
 //
 // Раньше здесь было только jsxdir, иначе null. Профиль спикера без jsxdir (у одного
 // из профилей он пустой) ронял клип на общее поле, а его переписывал КАЖДЫЙ выбор спикера
@@ -125,72 +116,13 @@ function effRenderdir(c){const k=clipSpeaker(c),spk=k?SPEAKERS[k]:null;
   return (AERENDER||'').trim()||null;}
 function openClipSpeaker(){if(curAE<0||!CLIPS[curAE])return null;
   const k=clipSpeaker(CLIPS[curAE]);return k?SPEAKERS[k]||null:null;}
-function setAeDir(v){$('aeoutdir').value=v||'';$('aeoutdir3').value=v||'';jsxDirNote();saveState();}
-// Поле показывает то, что сейчас действительно уходит в сборку: у клипа с тегом —
-// папку его профиля (пусто = глобальная), у клипа без тега — глобальную. Вызывается,
-// когда меняется тег открытого клипа, глобальный спикер или восстановленное состояние.
-function renderAeDirField(){const sp=openClipSpeaker();
-  if(sp)setAeDir(effOutdir(CLIPS[curAE])||AEGLOBAL);
-  else{$('aeoutdir').value=AEGLOBAL;$('aeoutdir3').value=AEGLOBAL;jsxDirNote();saveState();}
-  renderRenderDirField();}
 // Папка вывода рендера: та же схема «профиль спикера / глобальная / дефолт exp».
 // Дефолт приходит с сервера (/api/render_status.default_dir) — один источник:
 // «exp рядом с репозиторием» не копируется в JS.
 function renderRenderDirField(){const cur=effRenderdir(curAE>=0?CLIPS[curAE]:null)||'';
   if($('aerenderdir'))$('aerenderdir').value=cur;
   renderDirNote();}
-// Одна папка для .jsx — ДВА поля (шаг 1 и дубль у кнопки сборки на шаге 3), а значение
-// одно: правка любого поля видна в обоих. Отдельной переменной нет — источник один.
-// Сохранение на каждый ввод: поля папок были голыми инпутами,
-// и правка жила только до ближайшего тика flushSave (2.5с) — F5 или квота localStorage
-// раньше тика возвращали старое сохранённое значение ровно с applyState при загрузке.
-function aeDirSync(el){
-  $('aeoutdir').value=el.value;$('aeoutdir3').value=el.value;
-  // У клипа с тегом папка — производная от тега (профиль спикера), глобальную папку
-  // при вводе не трогаем; «закрепить» правку — это запись в профиль (aeDirCommit).
-  const sp=openClipSpeaker();
-  if(!sp){AEGLOBAL=el.value;saveState();}
-  jsxDirNote();}
-// Правка папки на шаге 3 «закрепилась» (blur/выбор): у клипа с тегом это правка
-// сохранённого профиля спикера — с подтверждением, она повлияет на все его будущие
-// клипы. Отказ — поле возвращается к папке профиля. Без тега — глобальная папка.
-async function aeDirCommit(el){const sp=openClipSpeaker();
-  if(!sp){AEGLOBAL=el.value;saveState();jsxDirNote();return;}
-  if(samePath(el.value,(sp.jsxdir||'').trim()))return;
-  if(await askConfirm(t('Папка для .jsx этого клипа — из профиля спикера «{n}». Сохранить новую папку в его профиль? Это повлияет на все его будущие клипы.',{n:sp.label||''})))
-    saveSpeakerJsxdir(sp,el.value);
-  else renderAeDirField();}
-async function saveSpeakerJsxdir(sp,dir){
-  const data=JSON.parse(JSON.stringify(sp));data.jsxdir=dir.trim();
-  let d;
-  try{d=await (await fetch('/api/savespeaker',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({name:data.label,data})})).json();}
-  catch(e){toast(t('Папка не сохранена — сервер не ответил'));uiLog(t('savespeaker(jsxdir): ')+e);renderAeDirField();return;}
-  if(!d.ok){toast(errText(d)||t('Папка не сохранена'));renderAeDirField();return;}
-  SPEAKERS[d.key]=data;
-  setAeDir(data.jsxdir);
-  uiLog(t('папка спикера «{n}» обновлена: ')+data.jsxdir);}
-// Подпись «откуда папка»: лестница effOutdir проговаривается ЦЕЛИКОМ, иначе человек
-// видит путь и не знает, чей он — профиль спикера это, папка нарезки или папка XML.
-// Раньше подпись знала только два случая («папка спикера» / «задана вручную») и на
-// клипе спикера без jsxdir молчала, хотя папка бралась уже не из поля.
-// Общий выбор: новая нарезка/профиль, не клип — ветка клипа без тега (openClipSpeaker).
-function jsxDirNote(){
-  const c=(curAE>=0)?CLIPS[curAE]:null;
-  const sp=(typeof openClipSpeaker==='function')?openClipSpeaker():null;
-  let note='';
-  if(sp){
-    const jd=(sp.jsxdir||'').trim(),od=(sp.outdir||'').trim(),xd=xmlDirOf(c&&c.xml);
-    if(jd)note=t('папка спикера «{n}» — правка сохранится в его профиле',{n:sp.label||''});
-    else if(od)note=t('папка нарезки спикера «{n}» (jsxdir в профиле пуст)',{n:sp.label||''});
-    else if(xd)note=t('папка XML клипа — у спикера «{n}» не заданы ни jsxdir, ни папка нарезки',{n:sp.label||''});
-  }else{
-    const p=(SPEAKERS[val('speaker')]||{}).jsxdir||'';
-    const v=AEGLOBAL;
-    note=(p&&v&&samePath(p,v))?t('папка спикера «{n}»',{n:(SPEAKERS[val('speaker')]||{}).label||''}):(v?t('задана вручную'):'');
-  }
-  ['aeoutdirnote','aeoutdir3note'].forEach(id=>{const e=$(id);if(e)e.textContent=note;});}
-// Папка вывода рендера — как jsxdir: правка поля синхронится в AERENDER (клип без
+// Папка вывода рендера — как renderdir: правка поля синхронится в AERENDER (клип без
 // тега) и «закрепляется» в профиль спикера по blur/выбору (renderDirCommit).
 function renderDirSync(el){const sp=openClipSpeaker();
   if(!sp)AERENDER=el.value;
@@ -289,9 +221,6 @@ function lutClear(k){const el=$('spk_lut'+k);if(el){el.value='';el.focus();}}
 async function onSpeakerChange(){const p=SPEAKERS[val('speaker')];
   if(p){
     await spkDir('ai_outdir','outdir',t('Папка результата задана вручную. Поставить папку спикера?\n'));
-    // .jsx уезжают в проект AE того же человека — папка у них своя и такая же личная,
-    // как папка нарезок. Раньше её меняли руками на шаге сборки и забывали.
-    await spkDir('aeoutdir','jsxdir',t('Папка для .jsx задана вручную. Поставить папку спикера?\n'));
     // Папки камер — те же личные данные: свой материал, свои исходники.
     // Механика та же, что у spkDir, только массив: camdirs[k]. Пусто — автоподбор.
     for(let k=0;k<nCams();k++)await camDirApply(k,t('Папка камеры {n} задана вручную. Поставить папку спикера?\n',{n:k+1}));
@@ -307,7 +236,7 @@ async function onSpeakerChange(){const p=SPEAKERS[val('speaker')];
       else{toast(t('Стиль «{n}» из профиля не найден — оставлен текущий',{n:p.style}));
         uiLog(t('спикер {n}: стиль {s} отсутствует в styles/',{n:p.label||'',s:p.style}));}}}
   renderStyleInfo();          // подпись «чей это стиль» — и когда стиль не менялся
-  spkEditUI();cutSummary();saveState();renderAeDirField();}
+  spkEditUI();cutSummary();saveState();renderRenderDirField();}
 
 // ---- редактор профиля спикера ----
 // Профили заводились только руками, файлом в speakers/*.json: чтобы посадить нового
@@ -347,6 +276,10 @@ function openSpeaker(key){
   const ins=p.inserts||{};
   $('spk_ins_photo').value=(ins.photo!=null?ins.photo:'');
   $('spk_ins_video').value=(ins.video!=null?ins.video:'');
+  // Вставки по названиям: поля в профиле нет — это ВКЛючено (профиль без правок ничего не
+  // меняет), снятая галка пишет named_inserts:false. Читает её бэкенд на шаге вставок.
+  // Старое имя drug_inserts (профили до переименования) тоже учитываем.
+  const dg=$('spk_ins_named');if(dg)dg.checked=p.named_inserts!==false&&p.drug_inserts!==false;
   const ips=p.image_prompts||{};
   $('spk_extra_a').value=(ips.a&&ips.a.extra)||'';
   $('spk_pos_a').value=(ips.a&&ips.a.pos==='prefix')?'prefix':'suffix';
@@ -1315,6 +1248,11 @@ async function saveSpeaker(){
     }
     data.inserts=insObj;
   }
+  // Выключатель вставок по названиям: галка снята — false в профиль, галка стоит — поля нет
+  // (как у lut и format: профиль без правок не обрастает записями про дефолт). Старое поле
+  // drug_inserts уходит всегда: иначе оно перебило бы новую галку на чтении.
+  if($('spk_ins_named')&&!$('spk_ins_named').checked)data.named_inserts=false;else delete data.named_inserts;
+  delete data.drug_inserts;
   [['breath_p_cut','spk_bpcut'],['breath_p_mark','spk_bpmark']].forEach(pair=>{
     const s=val(pair[1]).trim(),v=parseFloat(s);
     if(s===''||isNaN(v))delete data[pair[0]];else data[pair[0]]=v;});
@@ -2024,11 +1962,11 @@ async function saveStyleTo(name){
 
 // ================= misc pickers / music =================
 async function pickdir(id){try{const d=await (await fetch('/api/pickdir')).json();if(d.path){$(id).value=d.path;
-  if(id==='aeoutdir'||id==='aeoutdir3')aeDirCommit($(id));      // выбранное — закрепить (у тега: в профиль спикера)
-  else if(id==='aerenderdir')renderDirCommit($(id));
-  // Папка треков — ключ СТИЛЯ (music_dir), поэтому выбранную нативным диалогом папку
-  // доводит та же дверь, что и ручной ввод: saveState() тут сохранил бы поле, а не стиль.
-  else if(id==='musicdir')musicDirChanged();
+  if(id==='aerenderdir')renderDirCommit($(id));      // выбранное — закрепить
+  // Папка треков — ручка музыки: выбранную нативным диалогом папку доводит та же дверь,
+  // что и ручной ввод (musicFieldEdit), — saveState() сохранил бы поле, а не
+  // переопределение клипа или стиль.
+  else if(id==='st_music_dir'&&typeof musicFieldEdit==='function')musicFieldEdit();
   else saveState();}}
   catch(e){toast(t('Не открылся выбор папки — сервер не ответил'));uiLog(t('pickdir: ')+e);}}
 // Выбор таблицы LUT (.cube) для камеры спикера — как pickdir, только файл и с
@@ -2036,43 +1974,98 @@ async function pickdir(id){try{const d=await (await fetch('/api/pickdir')).json(
 async function pickcube(id){try{const d=await (await fetch('/api/pickcube')).json();if(d.path){$(id).value=d.path;}}
   catch(e){toast(t('Не открылся выбор файла — сервер не ответил'));uiLog(t('pickcube: ')+e);}}
 
-// ================= музыка клипа (шаг 3) =================
+// ================= музыка: ручки стиля и трек ролика =================
 // Музыка — свойство СТИЛЯ (music_mode/music_dir/music_src рядом с music_db), а у клипа
-// есть ПЕРЕОПРЕДЕЛЕНИЕ (job.music_override = null | {mode,src}) и ЗАКРЕПЛЁННЫЙ трек
-// режима «случайно» (job.music_pick). Здесь только интерфейс и правила выбора; сами
-// ключи пишет сборка (jobForBuild) и читает план сцены.
+// есть ПЕРЕОПРЕДЕЛЕНИЕ (job.music_override = null | {mode,src,dir}) и ЗАКРЕПЛЁННЫЙ трек
+// режима «случайно» (job.music_pick). Ручки живут в панели стиля (группа «Аудио →
+// Музыка», схема core/style_schema.py) и правят ЛИБО переопределение ОТКРЫТОГО клипа
+// («только этот ролик», по умолчанию), ЛИБО сам стиль («всем роликам со стилем»).
 //
 // Папка треков клипа — ОДНА дверь на всех: musicPickDir (90-ae.js) со всей лестницей
 // (переопределение клипа → папка стиля → прежнее `aemusicdir` → <папка проекта>\music).
-// Здесь только имя для мест, которые зовут папку про музыку клипа («Другой трек»,
-// «Скачать»): своей копии лестницы тут нет — разъехавшись, превью искало бы треки не
-// там, где сборка.
+// Здесь только имя для мест, которые зовут папку про музыку («Другой трек», «Скачать»):
+// своей копии лестницы тут нет — разъехавшись, превью искало бы треки не там, где сборка.
 function jobsMusicDir(c){return musicPickDir(c);}
+// Стиль КЛИПА: операция над конкретным клипом берёт музыку и цензуру у ЕГО стиля, а не
+// у показанного в панели CURSTYLE. В наборе у каждого клипа свой стиль, и общий CURSTYLE
+// (стиль открытого клипа) раздал бы всем музыку и цензуру одного.
+function clipStyleObj(c){
+  const j=(c&&c.job)||{};
+  const k=j.styleKey;
+  if(k&&k!=='__custom__'&&k!=='__edit__'&&typeof STYLES!=='undefined'&&STYLES[k])return STYLES[k];
+  if(j.style)return j.style;
+  return (typeof CURSTYLE!=='undefined'&&CURSTYLE)||{};}
+// Область правки ручек музыки: 'clip' (по умолчанию) — переопределение ОТКРЫТОГО клипа,
+// 'style' — сам стиль. Без открытого клипа (шаг 1) править можно только стиль.
+let MUSIC_SCOPE='clip';
+function musicClip(){return (typeof curAE!=='undefined'&&curAE>=0&&typeof CLIPS!=='undefined'&&CLIPS[curAE])?CLIPS[curAE]:null;}
+function musicScope(){return (musicClip()&&MUSIC_SCOPE!=='style')?'clip':'style';}
+// Смена области правит и ПОКАЗ ручек: в «этот ролик» поля показывают его переопределение
+// (или стиль), в «всем роликам» — правимый стиль. Без перезаполнения поля остались бы от
+// прошлой области, и следующая правка записала бы чужое значение.
+function musicScopeChanged(v){MUSIC_SCOPE=(v==='style')?'style':'clip';
+  if(typeof fillStyleFields==='function')fillStyleFields();else musicClipUI();}
+// Цензура аудио — ключ СТИЛЯ: своё поле клипа (job.censor) больше не читается, решение
+// принимается по стилю КЛИПА. Дефолт включён — как у прежней галки на шаге 3.
+function clipCensor(c){const st=clipStyleObj(c)||{};return st.censor!==false;}
 // Эффективная музыка клипа: переопределение клипа важнее стиля, всё остальное — из стиля.
 // Одна дверь на показ блока, на сборку и на план сцены: второй копии «откуда берётся
 // трек» быть не должно — разъехавшись, превью и .jsx играли бы разные файлы.
+// Стиль без ключа `music_mode` — «случайно», ровно как на сервере (styles.BASE).
 function effMusic(c){const j=(c&&c.job)||{};const ov=j.music_override;
-  const st=(typeof CURSTYLE!=='undefined'&&CURSTYLE)||{};
-  const mode=ov?ov.mode:(st.music_mode||'off');
+  const st=clipStyleObj(c)||{};
+  const mode=ov?ov.mode:(st.music_mode||'random');
   if(mode==='off')return {mode:'off',src:'',dir:''};
-  if(mode==='file'||mode==='url'){
-    const src=ov?ov.src:(st.music_src||'');
-    return {mode,src:src||'',dir:(st.music_dir||'').trim()};}
-  return {mode:'random',src:(j.music_pick||''),dir:(st.music_dir||'').trim()};}
+  const dir=(ov&&ov.dir)?ov.dir:((st.music_dir||'').trim());
+  if(mode==='file'||mode==='url')return {mode,src:(ov?ov.src:(st.music_src||''))||'',dir};
+  return {mode:'random',src:(j.music_pick||''),dir};}
 // Трек клипа — ровно то, что уедет в сборку: у «file» — путь, у «url» и «off» — ничего,
 // у «random» — закреплённый job.music_pick (сборка НЕ перевыбирает: второй выбор дал бы
 // другое звучание, чем играло превью).
 function musicTrack(c){const m=effMusic(c);return (m.mode==='file'||m.mode==='random')?m.src:'';}
 function musicTrackName(p){return p?String(p).replace(/^.*[\\\/]/,''):'';}
-// Папка треков — настройка СТИЛЯ (рядом с music_db), поэтому правка поля идёт в
-// CURSTYLE: у клипов на этом стиле папка одна и та же, а «свой трек» клипа её не
-// копирует (см. musicOverrideEdit).
-function musicDirChanged(){if(typeof CURSTYLE==='undefined'||!CURSTYLE)return;
-  const el=$('musicdir');CURSTYLE.music_dir=el?el.value.trim():'';
-  const c=(curAE>=0)?CLIPS[curAE]:null;if(c)musicSync(c);
-  if(typeof stEdit==='function')stEdit();   // папка музыки — ключ стиля
+// Что показать в ручке музыки: у открытого клипа — эффективное значение (переопределение
+// или его стиль), в области «всем роликам» — правимый стиль.
+function musicFieldValue(key){
+  const c=musicClip();
+  if(musicScope()==='style'||!c)return (CURSTYLE||{})[key];
+  const j=c.job||{},ov=j.music_override,st=clipStyleObj(c)||{};
+  if(key==='music_mode')return ov?ov.mode:(st.music_mode||'random');
+  if(key==='music_dir')return (ov&&ov.dir)?ov.dir:String(st.music_dir||'');
+  if(key==='music_src')return ov?String(ov.src||''):String(st.music_src||'');
+  return st[key];}
+// Единственная дверь правки музыки из панели. «Только этот ролик» (по умолчанию) пишет
+// ПЕРЕОПРЕДЕЛЕНИЕ клипа: стиль не меняется и не помечается изменённым — у остальных
+// роликов стиля остаётся то, что в стиле. «Всем роликам со стилем» пишет в стиль
+// (stEdit) и снимает переопределение у открытого клипа: иначе он продолжал бы играть
+// своё, а человек думал бы, что сменил всем.
+function musicFieldEdit(){
+  const c=musicClip();
+  const mode=(typeof val==='function'?val('st_music_mode'):'')||'random';
+  const dir=String(typeof val==='function'?(val('st_music_dir')||''):'').trim();
+  const src=String(typeof val==='function'?(val('st_music_src')||''):'').trim();
+  if(c)c.job=c.job||{};
+  if(musicScope()==='style'){
+    CURSTYLE=CURSTYLE||{};
+    CURSTYLE.music_mode=mode;CURSTYLE.music_dir=dir;CURSTYLE.music_src=src;
+    if(c){c.job.music_override=null;c.job.music_pick='';c.job.music_sig='';}
+    if(typeof stEdit==='function')stEdit();     // стиль — и он помечен изменённым
+  }else{
+    c.job.music_override={mode,src,dir};
+    c.job.music_pick='';c.job.music_sig='';
+    if(typeof saveState==='function')saveState();
+    if(typeof fillStyleFields==='function')fillStyleFields();
+  }
+  musicClipUI();
+  if(typeof ipvPlanSoon==='function')ipvPlanSoon();}
+// Снять переопределение: у ролика снова музыка его стиля (кнопка «Вернуть как в стиле»).
+function musicRevert(){
+  const c=musicClip();if(!c)return;const j=c.job=c.job||{};
+  j.music_override=null;j.music_pick='';j.music_sig='';
   if(typeof saveState==='function')saveState();
-  musicClipUI();if(typeof ipvPlanSoon==='function')ipvPlanSoon();}
+  if(typeof fillStyleFields==='function')fillStyleFields();
+  musicClipUI();
+  if(typeof ipvPlanSoon==='function')ipvPlanSoon();}
 // Смена папки или режима — прежний закреплённый трек больше не наш: сбрасываем и
 // перевыбираем. Иначе клип остался бы со случайным треком из ПРОШЛОЙ папки.
 // Папка в подписи — ТА ЖЕ, что уходит в выбор трека (musicPickDir со всей лестницей
@@ -2084,39 +2077,35 @@ function musicSync(c){if(!c)return;const j=c.job;if(!j)return;const m=effMusic(c
   const sig=m.mode+'|'+musicPickDir(c);
   if(!j.music_sig){j.music_sig=sig;return;}
   if(j.music_sig!==sig){j.music_sig=sig;j.music_pick='';}}
-// Показ панели музыки у открытого клипа. Значения читаются из данных (job/CURSTYLE),
-// а не из полей DOM: тех полей больше нет — они переехали в стиль, и одна копия
-// значения меньше.
-function musicClipUI(){const host=$('musictrack');if(!host)return;
-  const c=(curAE>=0)?CLIPS[curAE]:null;
-  if(!c){host.textContent='';return;}
+// Блок «Трек ролика» в панели стиля: текущий трек открытого клипа, «Другой трек» и
+// «Вернуть как в стиле». Значения и видимость кнопок — из ДАННЫХ (job и стиль клипа),
+// а не из полей: отдельного хранилища этого состояния нет, и одной копией меньше.
+function musicClipUI(){
+  const c=musicClip();
+  const scopeRow=$('st_music_scope_row');if(scopeRow)scopeRow.style.display=c?'':'none';
+  const scopeSel=$('st_music_scope');if(scopeSel)scopeSel.value=musicScope();
+  const host=$('st_music_track');
+  const rr=$('st_music_reroll');
+  const rv=$('st_music_revert');
+  if(!host)return;
+  if(!c){host.textContent='';if(rr)rr.style.display='none';if(rv)rv.style.display='none';return;}
   musicSync(c);                 // папка/режим сменились — старый «случайный» трек не наш
   const j=c.job||{};const own=!!(j.music_override&&j.music_override.mode);
   const m=effMusic(c);
-  const sel=$('musicown');if(sel)sel.value=own?'own':'style';
-  const box=$('musicovr');if(box)box.style.display=own?'':'none';
-  const md=$('musicmode');if(md)md.value=own?(j.music_override.mode||'random'):m.mode;
-  // Папка треков и ссылка — настройки СТИЛЯ: поле показывает их и правит их же.
-  const dir=$('musicdir');if(dir)dir.value=(typeof CURSTYLE!=='undefined'&&CURSTYLE&&CURSTYLE.music_dir)||'';
-  const src=$('musicsrc');if(src)src.value=own?((j.music_override||{}).src||'')
-    :((typeof CURSTYLE!=='undefined'&&CURSTYLE&&CURSTYLE.music_src)||'');
-  const rs=(own&&m.mode==='random');
-  const rr=$('musicreroll');if(rr)rr.style.display=rs?'':'none';
   let label='';
   if(m.mode==='off')label=t('музыки нет');
   else if(m.mode==='random')label=m.src?musicTrackName(m.src):t('трек ещё не выбран');
   else if(m.mode==='url')label=m.src?t('скачается при сборке: {n}',{n:m.src}):t('ссылка не задана');
   else label=m.src?musicTrackName(m.src):t('файл не выбран');
-  host.textContent=label;}
-// Кнопка «Другой трек»: новый сид + исключение текущего — детерминированный выбор
-// обязан уметь выбирать ЗАНОВО (иначе кнопка возвращала бы тот же файл и выглядела
-// сломанной). Пока трек не выбран и не пришёл ответ, кнопка заблокирована.
+  host.textContent=label;
+  if(rr)rr.style.display=(m.mode==='random')?'':'none';   // «другой» бывает только у случайного
+  if(rv)rv.style.display=own?'':'none';}                  // своё переопределение — видно, что снять
 let MUSIC_REROLL_BUSY=false;
 async function musicReroll(){
   if(MUSIC_REROLL_BUSY)return;
-  const c=(curAE>=0)?CLIPS[curAE]:null;if(!c)return;const j=c.job;if(!j)return;
+  const c=musicClip();if(!c)return;const j=c.job=c.job||{};
   const dir=jobsMusicDir(c),cur=musicTrack(c);
-  MUSIC_REROLL_BUSY=true;const b=$('musicreroll');if(b)b.disabled=true;
+  MUSIC_REROLL_BUSY=true;const b=$('st_music_reroll');if(b)b.disabled=true;
   let d=null;
   try{d=await (await fetch('/api/music_random',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({dir,seed:c.xml,exclude:cur})})).json();}catch(e){d=null;}
@@ -2131,54 +2120,39 @@ async function musicReroll(){
   if(!d||!d.path)toast(t('Нет треков в папке музыки — проверь папку'));
   if(typeof saveState==='function')saveState();
   musicClipUI();if(typeof ipvPlanSoon==='function')ipvPlanSoon();}
-// Смена «как в стиле / свой трек»: выбор «как в стиле» очищает переопределение
-// (музыка снова из стиля), выбор «свой трек» заводит его по режиму стиля.
-function musicOwnChanged(v){
-  const c=(curAE>=0)?CLIPS[curAE]:null;if(!c)return;const j=c.job=c.job||{};
-  if(v==='own'){const st=(typeof CURSTYLE!=='undefined'&&CURSTYLE)||{};
-    j.music_override={mode:st.music_mode||'random',src:(st.music_src||'')};}
-  else{j.music_override=null;j.music_pick='';j.music_sig='';}
-  if(typeof saveState==='function')saveState();
-  musicClipUI();if(typeof ipvPlanSoon==='function')ipvPlanSoon();}
-// Режим/ссылка своего трека. Папку берём ИЗ СТИЛЯ (CURSTYLE.music_dir), а не из поля
-// блока: поле показывает папку стиля и правит её же, и второе хранилище на клипе
-// разъехалось бы со стилем при первой же смене папки у соседнего клипа.
-// Смена режима сбрасывает закреплённый «случайный» трек: в новом режиме он не наш.
-function musicOverrideEdit(){
-  const c=(curAE>=0)?CLIPS[curAE]:null;if(!c)return;
-  const ownSel=$('musicown');if(ownSel&&ownSel.value!=='own')return;   // правка полей скрытого блока
-  const j=c.job=c.job||{};
-  const md=$('musicmode'),dir=$('musicdir'),src=$('musicsrc');
-  if(dir&&typeof CURSTYLE!=='undefined'&&CURSTYLE)CURSTYLE.music_dir=dir.value.trim();
-  j.music_override={mode:(md&&md.value)||'random',src:src?src.value.trim():''};
-  j.music_pick='';j.music_sig='';
-  if(typeof saveState==='function')saveState();
-  if(typeof stEdit==='function')stEdit();   // папка — ключ стиля: доводим стиль до конца
-  musicClipUI();if(typeof ipvPlanSoon==='function')ipvPlanSoon();}
 // Скачивание трека по ссылке: до этой кнопки ссылка скачивалась ТОЛЬКО на сборке —
 // проверить, что по ней есть что скачать, было нечем. Папка — папка музыки клипа,
-// скачанный файл сразу попадает в пул «случайно».
+// скачанный файл сразу попадает в пул «случайно». Куда положить трек, решает область
+// правки: по умолчанию — переопределение ЭТОГО ролика, иначе стиль.
 async function musicDownload(){
-  const c=(curAE>=0)?CLIPS[curAE]:null;
-  const s=$('musicsrc');const url=s?s.value.trim():'';
+  const c=musicClip();
+  const url=String(typeof val==='function'?(val('st_music_src')||''):'').trim();
   if(!url){toast(t('Сначала вставь ссылку YouTube'));return;}
-  const b=$('musicdl');if(b)b.disabled=true;
+  const b=$('st_music_src_dl');if(b)b.disabled=true;
   if(typeof toast==='function')toast(t('Скачиваю трек…'));
   let d=null;
   try{d=await (await fetch('/api/music_fetch',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({url,dir:c?jobsMusicDir(c):''})})).json();}catch(e){d=null;}
   if(b)b.disabled=false;
   if(!d||!d.ok||!d.path){toast(t('Не скачалось')+': '+((d&&errText(d))||t('сервер не ответил на запрос')));return;}
-  if(s)s.value=d.path;
-  if(c){const j=c.job=c.job||{};j.music_override=j.music_override||{mode:'file'};
-    if(j.music_override.mode==='url')j.music_override.mode='file';
-    j.music_override.src=d.path;j.music_pick='';}
-  if(typeof saveState==='function')saveState();
+  if(musicScope()==='style'){
+    CURSTYLE=CURSTYLE||{};
+    CURSTYLE.music_mode='file';CURSTYLE.music_src=d.path;
+    if(c){c.job=c.job||{};c.job.music_override=null;c.job.music_pick='';c.job.music_sig='';}
+    if(typeof stEdit==='function')stEdit();
+  }else{
+    c.job=c.job||{};
+    c.job.music_override={mode:'file',src:d.path,dir:((c.job.music_override||{}).dir||'')};
+    c.job.music_pick='';c.job.music_sig='';
+    if(typeof saveState==='function')saveState();
+  }
+  if(typeof fillStyleFields==='function')fillStyleFields();
   musicClipUI();if(typeof ipvPlanSoon==='function')ipvPlanSoon();}
-// Выбор файла трека для СВОЕГО трека клипа (не путать с pickdir: это файл).
-async function pickMusic(){
+// «Файл…» у трека: нативный выбор ЗВУКОВОГО файла (у прочих file-полей — любой файл,
+// pickInto). Значение доводит та же дверь правки музыки, что и ручной ввод.
+async function pickAudioInto(id){
   try{const d=await (await fetch('/api/pickaudio')).json();
-    if(d.path){const s=$('musicsrc');if(s)s.value=d.path;musicOverrideEdit();}}
+    if(d.path){$(id).value=d.path;if(typeof musicFieldEdit==='function')musicFieldEdit();}}
   catch(e){toast(t('Не открылся выбор файла — сервер не ответил'));uiLog(t('pickaudio: ')+e);}}
 // Добор закреплённого трека при открытии клипа: режим «случайно», а трека ещё нет —
 // берём его тем же сидом, что берёт сборка (путь XML), и ЗАПОМИНАЕМ на клипе. Пока
@@ -2234,6 +2208,7 @@ async function loadASREngines(){
   ENGLBL={};list.forEach(e=>{ENGLBL[e.id]=e.label;});
   fillEngineSel($('subengine'),list.filter(e=>e&&e.subs),SUBWANT,'whisper:large-v3');
   if(typeof fillCutAsr==='function')fillCutAsr();
+  if(typeof fillCutTextAsr==='function')fillCutTextAsr();
   cutSummary();markupSummary();
 }
 

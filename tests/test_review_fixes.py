@@ -120,6 +120,7 @@ def test_public_files_have_no_dangling_links():
         "tests/test_docs_freshness.py", "tests/test_docs_drift.py", "tools/wt.ps1",
         "tests/test_docs_bilingual.py",   # сторож пар документов: обходит docs/, архив исключает по имени
         "tests/test_review_fixes.py", "tests/test_no_task_codes.py",
+        "tests/test_named_guard.py",   # сторож личных названий: перечисляет исключения-пути (журнал, личные списки)
     }
 
     out = gitfiles.git_files(ROOT)

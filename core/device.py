@@ -52,6 +52,7 @@ def model_device() -> str:
         from core.aicut.config import load_ai_config
         val = load_ai_config().get("model_device")
     except Exception:
+        # конфиг не прочитан — авто-выбор устройства, безопасный дефолт
         return DEVICE_AUTO
     return val if val in DEVICE_CHOICES else DEVICE_AUTO
 

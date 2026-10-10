@@ -247,6 +247,46 @@ def api_preview_proxy() -> Response:
         return jsonify(**umsg_err(e))
 
 
+# Один замок на файл звука: два запроса подряд (открыли клип, тут же сохранили правку —
+# openPreview зовётся снова) не должны писать один и тот же .part разом.
+PALOCKS: dict[str, threading.Lock] = {}
+
+
+@bp.route("/api/preview_audio", methods=["POST"])
+def api_preview_audio() -> Response:
+    """Звук камеры 1 клипа одним WAV — для звука редактора шага 1. body: {xml}.
+
+    Редактор играет звук буфером Web Audio (static/app/60-preview.js, блок `ea*`), а не
+    элементом <video>: так стыки идут с точностью до сэмпла, без перемотки и подгонки
+    скоростью. Камера 1 — та же, что у `/api/aicut_preview` (`virtual_edl`, первая
+    камера): по ней же печётся обработанный голос, и время у них общее. Вынимается
+    один раз на файл камеры, дальше из кэша `_tmp` (`pa_*.wav`)."""
+    d = request.get_json() or {}
+    xml_path = jstr(d, "xml").strip().strip('"')
+    try:
+        if not os.path.isfile(xml_path):
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml_path}",
+                                  path=xml_path))
+        from core import draftrender
+        from core import xml2ae
+        cams = xml2ae.virtual_edl(xml_path).get("cams") or []
+        src = (cams[0].get("path") if cams else "") or ""
+        if not (src and os.path.isfile(src)):
+            raise ReelsiError(umsg("file_not_found", f"Файл не найден: {src}", path=src))
+        dst = draftrender.preview_audio_path(src, draftrender.tmp_dir(xml_path))
+        with PXLOCK:
+            lock = PALOCKS.setdefault(dst, threading.Lock())
+        with lock:
+            if not (os.path.isfile(dst) and os.path.getsize(dst) > 0):
+                if not draftrender.build_preview_audio(src, dst):
+                    raise ReelsiError(umsg("preview_audio_failed",
+                                           f"Звук камеры не вынулся: {os.path.basename(src)}",
+                                           name=os.path.basename(src)))
+        return jsonify(ok=True, path=dst, src=src)
+    except (ReelsiError, SystemExit) as e:
+        return jsonify(**umsg_err(e))
+
+
 @bp.route("/api/preview_proxy_status")
 def api_preview_proxy_status() -> Response:
     """Прогресс фоновой сборки превью-прокси: i/n текущего файла, его имя (cur),

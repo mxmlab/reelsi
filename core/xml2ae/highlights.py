@@ -37,7 +37,7 @@ def _word_color(clip: Any) -> tuple[int, int, int] | None:
         try:
             b = base64.b64decode(v.text.strip())
         except ReelsiError: raise
-        except Exception:
+        except Exception:  # не base64 — цвет не определить: слово белое, как и без якоря ниже
             return None
         s = b.rstrip(b"\x00")
         if s.endswith(_COLOR_ANCHOR):               # после якоря пусто -> цвет не задан (белый)
@@ -136,7 +136,7 @@ def write_highlights(xml_path: str, indices: Any, out_path: str | None = None) -
         try:
             ve.text = lib.make(word)
         except ReelsiError: raise
-        except Exception as e:
+        except Exception as e:  # причина уходит в skipped → ответ gen_subs → лог интерфейса: видно, не молча
             skipped.append((k, word, str(e))); continue
         colored.append(k)
     # запись с сохранением пролога (<?xml?> + <!DOCTYPE xmeml>) — ET их не пишет
@@ -215,7 +215,7 @@ def set_highlights(xml_path: str, indices: Any, out_path: str | None = None) -> 
         try:
             is_col = sb.blob_is_coloured(_b64decode(ve.text))
         except ReelsiError: raise
-        except Exception:
+        except Exception:  # блоб не разобрать — считаем не покрашенным: слово при нужде перекрасится заново
             is_col = False
         wb = len(word.encode("utf-8"))
         if k in want:                                     # хотим жёлтое
@@ -256,7 +256,7 @@ def _make_blob(lib: Any, word: str, want_col: bool) -> str | None:
             return None
         return blob
     except ReelsiError: raise
-    except Exception:
+    except Exception:  # сборка не сошлась или упала — None: слово уйдёт в skipped (см. docstring), а не в битый XML
         return None
 
 
@@ -280,7 +280,7 @@ def edit_word(xml_path: str, index: int, text: str, out_path: str | None = None)
     try:
         coloured = sb.blob_is_coloured(_b64decode(ve.text))
     except ReelsiError: raise
-    except Exception:
+    except Exception:  # не разобрать цвет — считаем белым: тогда берётся белая библиотека (ниже)
         coloured = False
     lib = sb.colour_library() if coloured else sb.library()
     wb = len(text.encode("utf-8"))
@@ -414,7 +414,7 @@ def delete_word(xml_path: str, index: int, out_path: str | None = None) -> dict[
     try:
         root = ET.parse(xml_path).getroot()
     except ReelsiError: raise
-    except Exception as e:
+    except Exception as e:  # ошибка уходит в error ответа — интерфейс показывает её пользователю
         return dict(error=str(e))
     seq = root.find(".//sequence")
     if seq is None:

@@ -19,7 +19,10 @@
 import os
 from typing import Any, TypedDict, cast
 
-from core.fileio import atomic_json_dump, json_load_soft
+from core.applog import get_logger
+from core.fileio import atomic_json_dump, json_load_soft, quarantine_unreadable
+
+log = get_logger(__name__)
 
 # Версия формата сайдкара. 1 — текущая (пишется всегда).
 PROJECT_VERSION = 1
@@ -44,10 +47,13 @@ class ProjectFile(TypedDict, total=False):
       - `selfcheck` — omni_cut (отчёт самопроверки стыков);
       - `user_overrides` — api.editor (память ручных правок) и omni_cut;
       - `assign` — api.build (ручная раскладка камер);
+      - `text_subs` — pipeline (второй проход текста): субтитры в XML взяты у слов
+        исходника из `<stem>.srcwords.json`; переносит omni_cut (см. core/cut_subs.py);
       - `version` — ставит сам `write_project`.
     """
 
     version: int
+    text_subs: bool
     cams: list[str]
     offsets: list[float]
     fps: float
@@ -70,6 +76,11 @@ def write_project(path: str | os.PathLike[str], data: ProjectFile) -> None:
     """
     out = dict(data)
     out["version"] = PROJECT_VERSION
+    # Битый сайдкар откладываем ДО записи: read_project отдал по нему None, а запись
+    # заменила бы файл одним новым словарём (спикер, вставки, порядок клипов — всё пропало бы).
+    bad = quarantine_unreadable(path, valid=lambda d: isinstance(d, dict))
+    if bad:
+        log.warning("сайдкар проекта не прочитан — отложен в %s, записан заново", bad)
     atomic_json_dump(path, out, indent=1)
 
 

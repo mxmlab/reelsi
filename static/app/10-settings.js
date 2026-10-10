@@ -272,6 +272,25 @@ function fillCutAsr(){
   const exists=list.some(e=>e.id===cur);
   sel.value=exists?cur:(list[0]?list[0].id:'gigaam');
 }
+async function setCutTextAsr(name){
+  let d;
+  try{d=await (await fetch('/api/ai_config',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'set_active_cut_text_asr',name:name||''})})).json();}
+  catch(e){toast(t('Сервер не ответил: ')+e);fillCutTextAsr();return;}
+  if(d.error){toast('⚠ '+errText(d));fillCutTextAsr();return;}
+  AICFG.active_cut_text_asr=(d.active_cut_text_asr!==undefined)?d.active_cut_text_asr:(name||'');
+  fillCutTextAsr();cutSummary();
+  toast(t('текст нарезки: ')+(AICFG.active_cut_text_asr?engLabel(AICFG.active_cut_text_asr):t('выкл')));}
+function fillCutTextAsr(){
+  const sel=$('cut_text_asr');if(!sel)return;
+  const list=(typeof ASR_ENGINES!=='undefined'?ASR_ENGINES:[]).filter(e=>e&&e.kind==='whisper');
+  const cur=(AICFG&&AICFG.active_cut_text_asr)||'';
+  sel.innerHTML='';
+  const off=document.createElement('option');off.value='';off.textContent=t('Выкл');sel.appendChild(off);
+  list.forEach(e=>{const o=document.createElement('option');o.value=e.id;o.textContent=t(e.label);sel.appendChild(o);});
+  sel.value=list.some(e=>e.id===cur)?cur:'';
+}
 // ================= Ступени нарезки =================
 // Панель ступеней рисуется ПО ДАННЫМ С СЕРВЕРА (/api/cutstages).
 // Своей копии списка ступеней в JS нет — единственный источник правды cutstages.py.
@@ -477,7 +496,7 @@ function setVadThreshold(key,val){
   }
 }
 function fillAIProfileSelects(){if(!AICFG)return;
-  fillStepReasoning();fillStepProfiles();fillStepConcurrency();fillModelDevice();fillCutAsr();
+  fillStepReasoning();fillStepProfiles();fillStepConcurrency();fillModelDevice();fillCutAsr();fillCutTextAsr();
   const om=$('omniprofile');
   if(om){const cur=AICFG.active_omni||'__local__';
     const LOCALS=['__local__','__gigaam__'];
@@ -493,7 +512,11 @@ function fillAIProfileSelects(){if(!AICFG)return;
   const rb=$('ais_rembg');
   if(rb){rb.checked=(AICFG.image_rembg!==false);
     // снятие фона и «генерить при разметке» имеют смысл только при включённой генерации
-    $('ais_rembgRow').style.display=imgGenOn()?'flex':'none';}
+    $('ais_rembgRow').style.display=imgGenOn()?'flex':'none';
+    // модель вырезания — рядом с галкой, видна вместе с ней
+    const rm=$('ais_rembg_model');
+    if(rm)rm.value=AICFG.rembg_model||'u2net';
+    $('ais_rembgModelRow').style.display=imgGenOn()?'flex':'none';}
   const gg=$('glitchglow');
   if(gg)gg.value=AICFG.glitch_glow||'builtin';
   const bw=$('aebuildworkers');
@@ -641,6 +664,7 @@ function cutSummary(){const el=$('cutsum');if(!el||!AICFG)return;
   const lv=((AICFG.reasoning_effective||{}).cut)||((AICFG.reasoning_steps||{}).cut)||'off';
   const cutAsr=(AICFG&&AICFG.active_cut_asr)||'gigaam';
   const cutL=engLabel(cutAsr);
+  const txt=(AICFG&&AICFG.active_cut_text_asr)||'';
   // общий выбор: новая нарезка/профиль, не клип — сводка рассказывает про нарезку шага 1.
   const sp=(typeof SPEAKERS!=='undefined')?SPEAKERS[val('speaker')]:null;
   const n=sp?Object.keys(sp.cut||{}).length:0;
@@ -666,6 +690,7 @@ function cutSummary(){const el=$('cutsum');if(!el||!AICFG)return;
   }
 
   el.textContent=t('ИИ: ')+stepProf('cut')+t(' · ум: ')+lv+t(' · движок: ')+cutL
+    +(txt?t(' + текст: ')+engLabel(txt):'')
     +offStr
     +(sp?(t(' · спикер: ')+(sp.label||'')
         +(n?t(' ({n} порог. изменено)',{n:n}):t(' (пороги по умолчанию)'))
@@ -793,7 +818,7 @@ async function setImageProfile(name){
     body:JSON.stringify({action:'set_active_image',name})})).json();}
   catch(e){toast(t('Сервер не ответил: ')+e);fillAIProfileSelects();return;}
   if(d.error)toast('⚠ '+errText(d));
-  else{AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;}
+  else{AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.rembg_model=d.rembg_model;}
   fillAIProfileSelects();renderInsHost();}
 async function setImageRembg(on){
   // Сервер недоступен — молча терять настройку нельзя: тост и возврат галки
@@ -803,6 +828,14 @@ async function setImageRembg(on){
     body:JSON.stringify({action:'set_image_rembg',value:!!on})})).json();}
   catch(e){toast(t('Сервер не ответил: ')+e);fillAIProfileSelects();return;}
   if(d.error)toast('⚠ '+errText(d));else AICFG.image_rembg=d.image_rembg;}
+async function setRembgModel(v){
+  // Как у галки: сервер недоступен или отказ — тост и выпадашка возвращается к сохранённой модели
+  let d;
+  try{d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'set_rembg_model',value:v})})).json();}
+  catch(e){toast(t('Сервер не ответил: ')+e);fillAIProfileSelects();return;}
+  if(d.error){toast('⚠ '+errText(d));fillAIProfileSelects();}
+  else AICFG.rembg_model=d.rembg_model;}
 async function setGlitchGlow(v){
   let d;
   try{d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -859,16 +892,21 @@ async function setVideoEncoder(v){
 // Ключи стоков (⚙ → Генерация → Стоки). Наружу сервер отдаёт ТОЛЬКО маску «•••xxxx»,
 // её и показываем в поле: не тронешь — ключ не изменится (маска = «не менял»), очистишь
 // поле — провайдер выключится. Заполняется при открытии настроек, как профиль картинок.
+// Openverse — единственный без ключа (поля ввода у него в разметке нет), поэтому
+// список полей задан явно, а не собран из ключей ответа.
+// Порядок полей = порядок опроса стоков (core/stock.PROVIDERS): Pexels, Unsplash, Pixabay, Coverr.
+const STK_FIELDS=['pexels','unsplash','pixabay','coverr'];
 function fillStockKeys(){if(!AICFG)return;
   const s=AICFG.stock||{};
-  const p=$('stk_pexels');if(p)p.value=s.pexels_key||'';
-  const b=$('stk_pixabay');if(b)b.value=s.pixabay_key||'';}
+  STK_FIELDS.forEach(p=>{const el=$('stk_'+p);if(el)el.value=s[p+'_key']||'';});}
 async function saveStockKeys(){
   // Сервер недоступен — молча терять введённый ключ нельзя: тост и возврат полей
   // к сохранённому состоянию (задание по UI-состояниям).
   let d;
+  const body={action:'set_stock_keys'};
+  STK_FIELDS.forEach(p=>{body[p+'_key']=val('stk_'+p);});
   try{d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({action:'set_stock_keys',pexels_key:val('stk_pexels'),pixabay_key:val('stk_pixabay')})})).json();}
+    body:JSON.stringify(body)})).json();}
   catch(e){toast(t('Сервер не ответил: ')+e);fillStockKeys();return;}
   const res=$('stk_res');
   if(d.error){toast('⚠ '+errText(d));if(res)res.textContent='';fillStockKeys();return;}
@@ -1146,13 +1184,13 @@ async function aiSetSave(){
   const d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'save_profile',name,old_name:AIEDIT,profile:aiSetForm()})})).json();
   if(d.error){aiSetStatus('⚠ '+errText(d),'err');return;}
-  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.glitch_glow=d.glitch_glow;AICFG.ae_build_workers=d.ae_build_workers;
+  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.rembg_model=d.rembg_model;AICFG.glitch_glow=d.glitch_glow;AICFG.ae_build_workers=d.ae_build_workers;
   fillAIProfileSelects();aiSetPick(name);aiSetStatus(t('сохранено'),'ok');}
 async function aiSetMakeActive(){if(!AIEDIT)return;
   const d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'set_active',name:AIEDIT})})).json();
   if(d.error){aiSetStatus('⚠ '+errText(d),'err');return;}
-  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.glitch_glow=d.glitch_glow;AICFG.ae_build_workers=d.ae_build_workers;
+  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.rembg_model=d.rembg_model;AICFG.glitch_glow=d.glitch_glow;AICFG.ae_build_workers=d.ae_build_workers;
   fillAIProfileSelects();aiSetPick(AIEDIT);aiSetStatus(t('активный профиль: {n}',{n:AIEDIT}),'ok');}
 async function aiSetClone(){if(!AIEDIT)return;
   const baseName=AIEDIT;
@@ -1168,14 +1206,14 @@ async function aiSetClone(){if(!AIEDIT)return;
   const d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'clone_profile',name:baseName,new_name:newName})})).json();
   if(d.error){aiSetStatus('⚠ '+errText(d),'err');return;}
-  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.glitch_glow=d.glitch_glow;AICFG.ae_build_workers=d.ae_build_workers;
+  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.rembg_model=d.rembg_model;AICFG.glitch_glow=d.glitch_glow;AICFG.ae_build_workers=d.ae_build_workers;
   fillAIProfileSelects();aiSetPick(newName);aiSetStatus(t('профиль продублирован'),'ok');}
 async function aiSetDelete(){if(!AIEDIT)return;
   if(!await askConfirm(t('Удалить профиль «{n}»?',{n:AIEDIT})))return;
   const d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({action:'delete_profile',name:AIEDIT})})).json();
   if(d.error){aiSetStatus('⚠ '+errText(d),'err');return;}
-  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.glitch_glow=d.glitch_glow;AICFG.ae_build_workers=d.ae_build_workers;
+  AICFG.active=d.active;AICFG.profiles=d.profiles;AICFG.active_omni=d.active_omni;AICFG.active_image=d.active_image;AICFG.image_rembg=d.image_rembg;AICFG.rembg_model=d.rembg_model;AICFG.glitch_glow=d.glitch_glow;AICFG.ae_build_workers=d.ae_build_workers;
   fillAIProfileSelects();aiSetPick(d.active);}
 // Результат проверки — РЯДОМ с кнопкой (#connTestRes), а не в подвале и не тостом:
 // он относится к кнопке, которую нажали, и читается там же. Живёт до первой правки

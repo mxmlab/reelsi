@@ -50,6 +50,12 @@
     inserts
             квота вставок на шаг 2: {"photo": <int>, "video": <int>}, диапазон 0..30,
             сумма >= 1. Пусто = 10 фото и 3 видео.
+    named_inserts
+            вставки по названиям: слово из личного словаря `named_inserts.json` (корень
+            репозитория) получает фото-вставку с картинкой из базы вставок (детерминированный
+            проход после ответа модели, `core/aicut/commands.py`). Здесь только ВЫКЛючатель:
+            поля нет — включено, `false` — не ставить. Названия и формы — в словаре, а не в профиле.
+            Старое имя поля `drug_inserts` при сохранении переезжает сюда.
     lut
             LUT (.cube) на видео камеры: {"<номер камеры с 1>": "путь"}. В превью
             накладывается на лету, в сборке прожигается в видео — AE плохо
@@ -93,8 +99,11 @@ from typing import Any
 
 from core import frame
 from core import paths
+from core.applog import get_logger
 from core.fileio import atomic_text_write
 from core.umsg import ReelsiError
+
+log = get_logger(__name__)
 
 SPEAKER_DIR = paths.root("speakers")
 
@@ -155,7 +164,8 @@ def _key(name: str | None) -> str:
 
 def all_speakers() -> dict[str, dict[str, Any]]:
     """{ключ: профиль} из speakers/*.json. Битый JSON пропускаем молча —
-    из-за одного файла не должен пропадать весь список в UI."""
+    из-за одного файла не должен пропадать весь список в UI; в журнал пишем тип ошибки
+    (имя файла — это имя человека, в лог его не кладём)."""
     out: dict[str, dict[str, Any]] = {}
     if not os.path.isdir(SPEAKER_DIR):
         return out
@@ -166,7 +176,9 @@ def all_speakers() -> dict[str, dict[str, Any]]:
             with open(os.path.join(SPEAKER_DIR, f), encoding="utf-8") as fh:
                 d = json.load(fh)
         except ReelsiError: raise
-        except Exception:
+        except Exception as e:
+            # Один битый профиль не прячет весь список: пропускаем его, но в журнале должно быть видно почему.
+            log.warning("профиль спикера не прочитан (%s), пропущен", type(e).__name__)
             continue
         if not isinstance(d, dict):
             continue
@@ -342,6 +354,14 @@ def save(name: str | None, data: Any) -> tuple[str, str]:
                 raise ValueError(f"некорректное значение inserts.{k}: ожидается число от 0 до 30")
         if sum(ins.values()) < 1:
             raise ValueError("сумма вставок (photo + video) должна быть не меньше 1")
+    # Старое имя выключателя (до «вставок по названиям») переезжает на новое при сохранении:
+    # иначе профиль с drug_inserts:false жил бы вечно рядом с галкой, которую уже не снять.
+    if "drug_inserts" in d:
+        legacy = d.pop("drug_inserts")
+        if "named_inserts" not in d:
+            d["named_inserts"] = legacy
+    if "named_inserts" in d and not isinstance(d["named_inserts"], bool):
+        raise ValueError("поле named_inserts должно быть true/false")
     if "voice_fx" in d:
         _check_voice_fx(d["voice_fx"])
     if "lut" in d:

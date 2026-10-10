@@ -46,6 +46,7 @@ I18N_CONVERTED_LOG_MODULES = [
     "core/gigaam_cut/tune.py",
     "core/gigaam_cut/asr.py",
     "core/gigaam_cut/decide.py",
+    "core/gigaam_cut/textpass.py",
     "core/asr_backends.py",
     "core/insertlib.py",
     "core/roto.py",

@@ -38,7 +38,6 @@ async function loadCams(){
     }else{CAMDIRS[k]=auto[k]||'';CAMFILES[k]=autoF[k]||[];}
   }
   if(!val('ai_outdir'))$('ai_outdir').value=d.outdir;
-  if(!AEGLOBAL){AEGLOBAL=d.outdir;renderAeDirField();}
   if(!val('gdrive_dest'))$('gdrive_dest').value=(d.base||'')+'\\gdrive_downloads';
   $('caminfo').textContent=t('Папки: ')+d.dirs.map(x=>x.name+' ('+x.files.length+')').join(', ');
   buildCamRows();
@@ -533,6 +532,9 @@ function dlXml(c){
         try{const b=await r.json();ed=b;e=b.error||e}catch(_){}
         throw new Error((ed&&errText(ed))||e||t('скачивание XML не удалось ')+r.status);}
       const blob=await r.blob();
+      // голос не переключён в XML (сервер не смог записать) — файл уйдёт со старой дорожкой звука
+      if(r.headers.get('X-Reelsi-Voice-Sync')==='failed')
+        toast(t('XML скачан, но голос в нём не переключён — в файле прежняя дорожка звука'));
       const u=URL.createObjectURL(blob);
       const a=document.createElement('a');a.href=u;
       a.download=(c.name||'timeline').replace(/\.xml$/i,'')+'.xml';
@@ -758,11 +760,10 @@ function setClipSpeaker(i,key){
     // Папки нового спикера ставим сразу — юзер сам только что выбрал этого человека.
     const set=(id,v)=>{const el=$(id);if(el&&v&&!samePath(el.value,v))el.value=v;};
     set('ai_outdir',(spk.outdir||'').trim());
-    if((spk.jsxdir||'').trim())AEGLOBAL=(spk.jsxdir||'').trim();
   }
   if(curAE===i)selectAE(i);           // панель принадлежит этому клипу — перечитать его стиль
   else{saveState();renderClips3();}
-  renderAeDirField();syncBuildBtn();
+  renderRenderDirField();syncBuildBtn();
   uiLog(t('спикер клипа «{name}»: {n}',{name:c.name,n:(spk?spk.label:t('не выбран'))}));}
 // один клик по файлу: выбрать + сразу открыть предпросмотр
 // AEXML — а не только индекс: curAE переживает F5, а панель после перезагрузки пустая,
@@ -855,7 +856,7 @@ async function delClipDiskPrepare(){
   let bytes=0;
   for(const i of list){
     const c=CLIPS[i];if(!c)continue;
-    const jsxdir=(effOutdir(c)||AEGLOBAL||'').trim();
+    const jsxdir=(effOutdir(c)||'').trim();
     try{
       const res=await fetch('/api/clip_delete',{
         method:'POST',headers:{'Content-Type':'application/json'},
@@ -905,7 +906,7 @@ async function delClipDiskExecute(){
   const bad=[];let nfiles=0,bytes=0;
   for(const i of list){
     const c=CLIPS[i];if(!c)continue;
-    const jsxdir=(effOutdir(c)||AEGLOBAL||'').trim();
+    const jsxdir=(effOutdir(c)||'').trim();
     try{
       const res=await fetch('/api/clip_delete',{
         method:'POST',headers:{'Content-Type':'application/json'},

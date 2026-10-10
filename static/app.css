@@ -182,6 +182,28 @@ header.top{position:sticky;top:0;z-index:30;background:var(--bg);border-bottom:1
 /* Файл и точка/координаты */
 .stfile-wrap{display:flex;align-items:center;gap:4px;width:100%;justify-content:flex-start}
 .stfile{height:20px !important;min-height:0 !important;max-height:20px !important;font-size:11px !important;padding:1px 4px !important;background:var(--bg2) !important;color:var(--tx) !important;border:1px solid var(--bd2) !important;border-radius:var(--r-sm);flex:1;max-width:100px;box-sizing:border-box !important}
+/* Строки ручек «папка» (dir) и «файл» (file): в колонке значения не одно поле, а поле и
+   кнопки — «Выбрать…», «Файл…», «Скачать», карандаш звукового редактора. При жёстких 180px
+   кнопки уезжали за правый край панели и обрезались («Скачать» у музыки пропадала из виду):
+   у поля ввода min-width по умолчанию равен его собственной ширине, сжаться оно не могло, и
+   весь лишний размер уходил за колонку. Здесь колонка тянется по содержимому (в пределах
+   строки), поле сжимается ПЕРВЫМ, а кнопки не сжимаются и не переносятся — так они остаются
+   целыми при любой ширине окна предпросмотра. Модификатор ставит 94-stylepanel.js. */
+.strow.stfield-wide{grid-template-columns:auto 8px minmax(0,1fr) minmax(180px,max-content)}
+.strow.stfield-wide > .stfield-right{width:auto;min-width:0;max-width:none}
+.strow.stfield-wide .stfile-wrap{min-width:0}
+.strow.stfield-wide .stfile-wrap > button{flex:none;white-space:nowrap}
+/* Строка «Трек ролика» блока «Трек ролика» (94-stylepanel.js, musicTrackNode): в колонке
+   значений не одно поле, а имя трека и две кнопки. Имя сжимается ПЕРВЫМ и обрезается
+   многоточием, хвост кнопок не сжимается и не переносится по буквам — как у ручек
+   «папка»/«файл» выше. Подпись строки — обычная .stfield-lbl, поэтому отступ у неё тот же,
+   что у подписей ручек музыки. */
+.stmusictrack-name{flex:1 1 0;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;color:var(--tx)}
+.stmusictrack-actions{display:flex;align-items:center;gap:6px;flex:none}
+.stmusictrack-actions>button{flex:none;white-space:nowrap}
+/* Селектор с id — чтобы перебить `#aewstyle input[type=text]{max-width:100%}`: в превью
+   панель живёт в модалке, и там поле ввода могло занять всю строку целиком. */
+#stpanel .strow.stfield-wide .stfile{flex:1 1 0;min-width:0;max-width:100px}
 .stpoint-wrap{display:flex;align-items:center;gap:6px}
 .stpoint-val{font-size:11px;color:var(--tx)}
 .stpoint-lbl{font-size:11px;color:var(--mut);user-select:none}

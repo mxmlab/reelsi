@@ -56,7 +56,7 @@ from .config import (   # noqa: F401
                      PROVIDER_PRESETS, REASONING_BUDGET, REASONING_EXAMPLES, REASONING_LEVELS,
                      REASONING_MODELS, STEP_REASONING_DEFAULT, STEP_TITLES,
                      _default_ai_config, _profile_dict, _seed_ai_config,
-                     apply_profile_headers, cut_asr_engine, glitch_glow_mode, ae_build_workers_cfg, key_env_name, load_ai_config, model_supports_caching,
+                     apply_profile_headers, cut_asr_engine, cut_text_asr_engine, glitch_glow_mode, ae_build_workers_cfg, key_env_name, load_ai_config, model_supports_caching,
                      model_device_cfg,
                      mask_ai_key, mask_header_value, mask_headers, resolve_header_mask,
                      normalize_base_url, omni_local_engine, parse_headers_text, reason_budget,
@@ -80,7 +80,8 @@ from .images import (   # noqa: F401
                      IMAGE_MODEL_HINTS, IMAGE_OFF, IMAGE_PROMPT_SLOTS,
                      IMAGE_MODELS,
                      _gen_image_chat, _gen_image_openrouter, _img_http_error,
-                     build_image_prompt, gen_image, image_rembg_on,
+                     REMBG_DEFAULT, REMBG_MODELS, build_image_prompt, gen_image,
+                     image_rembg_on, rembg_model,
                      resolve_image_profile, resolve_image_prompt_cfg,
                      unsloth_cancel_ours, unsloth_unload_ours)
 from .video import (   # noqa: F401
@@ -110,7 +111,7 @@ from .commands import (   # noqa: F401
                        INTRO_FUNC_WORDS,
                        _STYLE_WORDS, _apply_zones, _busy_windows, _busy_windows_from_free,
                        _end_zone_word, _free_quota, _free_windows, _hook_breaks, _intro_defunc,
-                       _intro_fix_prefix, _intro_fix_prefix_mids, _intro_free_hint, _intro_look,
+                       _intro_fix_prefix, _intro_free_hint, _intro_look,
                        INTRO_PREFIX_WORDS,
                        _place_mids, _snap_to_phrase, _split_words, _strip_style_words,
                        _word_lines, _words_from_xml, _wrap_intro_rows, as_ints, cmd_inserts,

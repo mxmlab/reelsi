@@ -314,3 +314,30 @@ def test_normal_sidecar_works_as_before(client: FlaskClient, sample_xml: str) ->
 
     r_cap_read = client.post("/api/caption", json={"xml": sample_xml}, headers=H)
     assert r_cap_read.get_json() == {"ok": True, "text": "Моя подпись"}
+
+
+def test_api_security_sidecar_refuses_when_realpath_fails(tmp_path, monkeypatch):
+    """realpath не получился — отказ, а не сравнение по abspath: abspath не раскрывает
+    ссылки, и симлинк обошёл бы проверку выхода из папки."""
+    from api import _core
+
+    base = tmp_path / "clip.xml"
+    base.write_text("x", encoding="utf-8")
+    side = tmp_path / "clip.words.json"
+    side.write_text("{}", encoding="utf-8")
+    real = _core.os.path.realpath
+
+    def fail_on(names):
+        def _rp(p, *a, **k):
+            if str(p).endswith(names):
+                raise OSError("realpath недоступен")
+            return real(p, *a, **k)
+        return _rp
+
+    monkeypatch.setattr(_core.os.path, "realpath", fail_on(("clip.xml",)))
+    with pytest.raises(ReelsiError):
+        _core.sidecar_path(str(base), ".words.json")
+
+    monkeypatch.setattr(_core.os.path, "realpath", fail_on(("clip.words.json",)))
+    with pytest.raises(ReelsiError):
+        _core.sidecar_path(str(base), ".words.json")

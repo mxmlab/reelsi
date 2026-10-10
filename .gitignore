@@ -64,6 +64,10 @@ okwords.test.txt
 # keep: *.py, refblobs.json, sub_template.xml, README — these are the working data
 insertlib.json
 insertlib.json.tmp.*
+# личный словарь вставок по названиям (слово -> картинка): у каждого свои названия и формы.
+# Пример с нейтральными словами — data/named_inserts.example.json, он в гит идёт
+named_inserts.json
+named_inserts.test.json
 # кеш ответов стоков (Pexels/Pixabay разрешают кешировать ~24 ч) — рядом с базой
 # вставок; у изолированного профиля свой (REELSI_STOCK_CACHE)
 stock_cache.json
@@ -114,6 +118,8 @@ insertlib.test.json
 _videogen/
 # то же у изолированного профиля (AUTOCUT_VIDEO_DIR в launch.json / webui_test.py)
 _videogen.test/
+# кэш пиков волны (api/files.py, REELSI_PEAKS_CACHE): служебный, пересчитывается из исходника
+_peaks/
 # обработка голоса спикера: запечённые треки и превью «было/стало» (локальные медиа)
 _voicefx/
 # то же у изолированного профиля (REELSI_VOICEFX_DIR в webui_test.py)

@@ -14,6 +14,9 @@ from ._core import _ai_begin, _ai_end, bp, emit, umsg_err, jstr
 from .inserts import _insert_dest
 from core.umsg import ReelsiError, umsg
 from core.app_meta import http_req, t
+from core.applog import get_logger
+
+log = get_logger(__name__)
 
 # Маскирование ключей живёт в core/aicut/config.py: это логика
 # безопасности, а не HTTP. Имена-алиасы оставлены ради соседних роутов этого модуля
@@ -133,12 +136,19 @@ def api_ai_inserts() -> Response:
 def _masked_stock(cfg: dict[str, Any]) -> dict[str, str]:
     """Ключи стоков (раздел `stock` ai_config.json) наружу — только маской «•••xxxx»,
     как ключи профилей: браузер не место для секрета. `env:VAR` не маскируется: это
-    имя переменной окружения, значение подставит resolve_key уже на сервере."""
+    имя переменной окружения, значение подставит resolve_key уже на сервере.
+
+    Список провайдеров — из самого стока (`core.stock.PROVIDERS`): новый сток
+    появляется в ⚙ одной правкой, а не двумя. Поле ключа есть только у провайдера с
+    `keyed=True` (как в core/aicut/config_actions.py): у Openverse ключа нет и поля
+    в ответе не должно быть — иначе интерфейс нарисует ключ, которого стоку не нужно."""
     from core import stock
     section = cfg.get("stock")
     section = section if isinstance(section, dict) else {}
     out: dict[str, str] = {}
     for prov in stock.PROVIDERS:
+        if not stock.PROVIDER_META[prov]["keyed"]:
+            continue
         raw = section.get(prov + "_key")
         out[prov + "_key"] = _mask_ai_key(raw if isinstance(raw, str) else "")
     return out
@@ -159,18 +169,21 @@ def _ai_config_answer(cfg: dict[str, Any], full: bool = False) -> dict[str, Any]
         try:
             step_conc[k] = aicut.step_concurrency(k)
         except ReelsiError: raise
-        except Exception:
+        except Exception as e:
+            log.warning("Параллельность шага %s не определилась, беру 1: %s", k, e)
             step_conc[k] = 1
     ans: dict[str, Any] = {
         "active": cfg.get("active"),
         "profiles": _masked_profiles(cfg),
         "active_omni": cfg.get("active_omni") or aicut.OMNI_LOCAL,
         "active_cut_asr": cfg.get("active_cut_asr") or "gigaam",
+        "active_cut_text_asr": cfg.get("active_cut_text_asr") or "",
         "active_image": cfg.get("active_image") or aicut.IMAGE_OFF,
         "active_video": cfg.get("active_video") or aicut.VIDEO_OFF,
         "video_model": aicut.video_model_cfg(),
         "video_resolution": aicut.video_resolution_cfg(aicut.video_model_cfg()),
         "image_rembg": bool(cfg.get("image_rembg", True)),
+        "rembg_model": aicut.rembg_model(),
         # режим мог остаться от старой версии — наружу отдаём только известный
         "glitch_glow": (cfg.get("glitch_glow")
                         if cfg.get("glitch_glow") in aicut.GLITCH_GLOW_MODES else "builtin"),
@@ -259,6 +272,7 @@ def api_ai_config() -> Response:
     except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
     except ReelsiError: raise
+    # сбой уходит в ответ (umsg_err): панель ИИ показывает текст ошибки, журнал не дублируем
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("ai_config_failed", f"{type(e).__name__}: {e}",
                                                   err=f"{type(e).__name__}: {e}"))))
@@ -333,6 +347,7 @@ def api_ai_test() -> Response:
     except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
     except ReelsiError: raise
+    # сбой уходит в ответ (umsg_err): панель ИИ показывает текст ошибки, журнал не дублируем
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("ai_test_failed", f"{type(e).__name__}: {e}",
                                                   err=f"{type(e).__name__}: {e}"))))
@@ -468,6 +483,7 @@ def api_ai_models() -> Response:
     except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
     except ReelsiError: raise
+    # сбой уходит в ответ (umsg_err): панель ИИ показывает текст ошибки, журнал не дублируем
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("ai_models_failed", f"{type(e).__name__}: {e}",
                                                   err=f"{type(e).__name__}: {e}"))))
@@ -588,9 +604,14 @@ def api_ai_intro() -> Response:
 
             # inserts из UI (если фронт держит актуальный список) — акценты встанут туда,
             # где вставок нет; иначе cmd_intro подхватит сайдкар .inserts.json
+            # style — СТИЛЬ КЛИПА, то же значение, что уходит в сборку (styleForJob на фронте):
+            # из него длина строки интро (intro_row_max). Нет стиля — BASE.
+            st = d.get("style")
+            style = st if isinstance(st, (str, dict)) and st else None
             res = aicut.cmd_intro(xml_path, model=(jstr(d, "model") or None), emit=_emit,
                                   inserts=(d.get("inserts") if isinstance(d.get("inserts"), list)
-                                           else None))
+                                           else None),
+                                  style=style)
             unload = True
             return jsonify(ok=True, intro_rows=res["intro_rows"], mid_groups=res["mid_groups"],
                            log=notes)

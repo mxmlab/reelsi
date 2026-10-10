@@ -127,6 +127,7 @@ def local_ui_port() -> int:
     try:
         import webui
         return int(getattr(webui, "PORT", 0) or DEFAULT_UI_PORT)
+    # webui не импортируется (CLI, тесты): порт берём из PORT или из умолчания, на котором webui поднимается
     except Exception:
         try:
             return int(os.environ.get("PORT") or DEFAULT_UI_PORT)
@@ -283,6 +284,7 @@ def _check_json_body() -> tuple[Response, int] | None:
                 import json
                 data = json.loads(request.data)
             except ReelsiError: raise
+            # тело не разобралось как JSON: это не ошибка этого слоя, data=None, роут сам решает, что с телом делать
             except Exception:
                 data = None
         if data is not None and not isinstance(data, dict):
@@ -320,6 +322,7 @@ def _never_serve(path: str) -> bool:
     try:
         real = os.path.realpath(path)
     except ReelsiError: raise
+    # realpath не получился: имя исходного пути уже проверено выше, ссылки ловит samefile ниже
     except Exception:
         real = path
     if os.path.basename(real).lower() in _NEVER_SERVE:
@@ -384,19 +387,21 @@ def sidecar_path(base: str, suffix: str) -> str:
         raise ReelsiError(umsg("forbidden_sidecar", f"Недопустимый сайдкар: {target}", path=target))
 
     if os.path.lexists(target):
+        # realpath не получился — отказ, а не сравнение по abspath: abspath не раскрывает
+        # ссылки, и проверка выхода из папки стала бы слабее обычной (симлинк обошёл бы её).
         try:
             real_base = os.path.realpath(clean_base)
             real_base_dir = os.path.normcase(os.path.dirname(real_base))
         except ReelsiError: raise
-        except Exception:
-            real_base_dir = os.path.normcase(os.path.dirname(os.path.abspath(clean_base)))
+        except Exception as e:
+            raise ReelsiError(umsg("forbidden_sidecar", f"Недопустимый сайдкар: {target}", path=target)) from e
 
         try:
             real_target = os.path.realpath(target)
             real_target_dir = os.path.normcase(os.path.dirname(real_target))
         except ReelsiError: raise
-        except Exception:
-            real_target_dir = os.path.normcase(os.path.dirname(os.path.abspath(target)))
+        except Exception as e:
+            raise ReelsiError(umsg("forbidden_sidecar", f"Недопустимый сайдкар: {target}", path=target)) from e
 
         if real_base_dir != real_target_dir:
             raise ReelsiError(umsg("forbidden_sidecar", f"Недопустимый сайдкар: {target}", path=target))
@@ -448,6 +453,7 @@ def is_reelsi_target(path: Any, kind: str) -> bool:
             # ошибка разбора означает мусор, а не нарезку.
             tag = str(ET.parse(path).getroot().tag).split("}")[-1]
         except ReelsiError: raise
+        # любой сбой разбора XML (битый или не-XML файл) означает «не нарезка», а не отказ запроса
         except Exception:
             return False
         return tag.strip().lower() == "xmeml"

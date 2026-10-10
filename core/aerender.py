@@ -18,7 +18,7 @@ ETA, статистика длительностей фаз, проверки р
 import os, re, subprocess, shutil, hashlib, json, time as _time
 from typing import Any, Iterable, Sequence
 
-from core.fileio import atomic_json_dump
+from core.fileio import atomic_json_dump, quarantine_unreadable
 from core import paths
 from core.app_meta import env
 from core.umsg import ReelsiError
@@ -69,7 +69,8 @@ def load_render_stats() -> tuple[dict[str, Any], bool]:
         runs = data.get("runs", []) if isinstance(data, dict) else []
         return (data if isinstance(data, dict) else {"runs": []}), bool(runs)
     except ReelsiError: raise
-    except Exception:
+    except Exception as e:
+        log.warning("render_stats.json не прочитан (%s) — оценка времени рендера без истории", e)
         return {"runs": []}, False
 
 
@@ -108,6 +109,11 @@ def save_render_stats(n: int, jsx_sec: float, aep_sec: float, render_sec: float)
         })
         if len(runs) > 100:
             data["runs"] = runs[-100:]
+        # Битую статистику откладываем, а не затираем: load_render_stats отдаёт пустую
+        # историю, и без этого одна новая запись стёрла бы накопленные прогоны.
+        bad = quarantine_unreadable(p, valid=lambda d: isinstance(d, dict))
+        if bad:
+            log.warning("render_stats.json не прочитан — отложен в %s, история начата заново", bad)
         atomic_json_dump(p, data)
     except ReelsiError: raise
     except Exception as ex:
@@ -230,6 +236,8 @@ def short_path(p: str) -> str | None:
         return buf.value if n else None
     except ReelsiError: raise
     except Exception:
+        # проба 8.3-имени (только Windows): None = короткого имени нет, jsx_call_path ниже
+        # берёт путь как есть и сам решает, что делать дальше (с причиной)
         return None
 
 

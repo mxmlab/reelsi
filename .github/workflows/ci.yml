@@ -49,7 +49,8 @@ jobs:
           # ERROR: Could not find a version that satisfies the requirement flit_core<4,>=3.11.
           # Зелено сейчас только за счёт кэша pip у setup-python: сбросится кэш —
           # джоба упадёт на ровном месте. Обратно на замену индекса не чинить.
-          pip install torch torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
+          # Версия — та же пара, что в requirements.txt (torchaudio строго под свой torch).
+          pip install torch==2.8.0 torchaudio==2.8.0 --extra-index-url https://download.pytorch.org/whl/cpu
           # Импорта требуют только эти четыре; всё тяжёлое (transformers,
           # faster-whisper, rembg) грузится лениво внутри функций и в тестах не
           # выполняется. Ставить requirements.txt целиком — минуты ради ничего.
@@ -110,7 +111,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install torch torchaudio --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install torch==2.8.0 torchaudio==2.8.0 --extra-index-url https://download.pytorch.org/whl/cpu
           # Дополняем PyPI индексом pytorch, а не заменяем — почему, разобрано в джобе test.
           # pytest с плагинами — из requirements-dev.txt, как и в джобе test:
           # одинаковые версии инструментов в обеих джобах.
@@ -159,32 +160,16 @@ jobs:
           curl -sL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar xz gitleaks
           ./gitleaks git --redact -v -c .gitleaks.toml .
 
-      # У transformers 4.x шесть уязвимостей, и все шесть — про загрузку НЕДОВЕРЕННЫХ
-      # моделей, конфигов и кода. Уйти на 5.x нельзя: transformers 5.x зовёт на импорте
-      # torch.accelerator (utils/import_utils.py, get_device_type), а он появился только
-      # в torch 2.6 — при этом install.ps1/install.sh и оба README ставят torch 2.5.1,
-      # с которым падает ЛЮБОЙ импорт Auto*-класса (breath, falign, ctc_asr, omni_asr).
-      # Поэтому каждый ID исключается отдельно и с причиной: код, за который он отвечает,
-      # в дереве не вызывается. Список обязан совпадать с шагом pip-audit в
-      # tools/slice_check.py — сторож tests/test_ci_scan.py.
+      # Исключений (--ignore-vuln) нет: transformers 5.10.1 не имеет ни одного advisory
+      # из шести, которые держали 4.x (2025-217, 2026-2288/2289/2290/3929/4174), и
+      # requirements.txt теперь ставит 5.x. Сам pip-audit резолвит torch без пина, поэтому
+      # он проверяет НЕ пару 2.8.0 из шапки requirements.txt (у неё восемь advisories,
+      # фиксы в torch 2.9-2.13) — это решение записано в CHANGELOG. Список шага
+      # обязан совпадать с tools/slice_check.py — сторож tests/test_ci_scan.py.
       - name: Audit dependencies (pip-audit)
         run: |
           pip install pip-audit
-          # PYSEC-2025-217 (фикса нет): десериализация при конвертации чекпоинта X-CLIP —
-          #   конвертации чекпоинтов в дереве нет вовсе, модели только грузятся.
-          # PYSEC-2026-2288 (5.0.0): Trainer._load_rng_state читает rng_state.pth через
-          #   torch.load без weights_only — Trainer не используется (детектор вздохов
-          #   обучается sklearn'ом, tools/train_breath.py).
-          # PYSEC-2026-2289 (5.3.0): вредный config.json с _attn_implementation_internal
-          #   исполняет код через AutoModelForCausalLM.from_pretrained — он не зовётся.
-          # PYSEC-2026-2290 (5.5.0): config.json LightGlue подменяет trust_remote_code в
-          #   AutoModel.from_pretrained — ни LightGlue, ни AutoModel.from_pretrained нет
-          #   (ced-tiny грузится своим классом, на закреплённой ревизии).
-          # PYSEC-2026-3929 (5.10.0): path traversal в save_pretrained через ключи
-          #   chat_template — save_pretrained не вызывается нигде.
-          # PYSEC-2026-4174 (фикса нет): load_custom_generate скачивает чужой модуль ДО
-          #   проверки согласия — custom_generate в generate() не передаётся.
-          pip-audit -r requirements.txt --ignore-vuln PYSEC-2025-217 --ignore-vuln PYSEC-2026-2288 --ignore-vuln PYSEC-2026-2289 --ignore-vuln PYSEC-2026-2290 --ignore-vuln PYSEC-2026-3929 --ignore-vuln PYSEC-2026-4174
+          pip-audit -r requirements.txt
 
   smoke:
     if: github.repository == 'mxmlab/reelsi'

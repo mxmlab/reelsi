@@ -15,8 +15,9 @@ Reelsi is a local editing assistant for talking-head video. AI cuts footage by c
 - **Multicam audio sync**: aligns several camera tracks automatically by audio correlation. Built for up to four cameras, verified on two.
 - **Semantic AI cutting**: cuts speech by transcript content through a local model (LM Studio, Ollama) or a cloud provider. Cutting is a set of stages you choose: pauses, semantic cut, code cleanup of repeats and slips, snap to silence, breaths, draft mp4.
 - **Word-level transcription**: pluggable speech recognition engines (Whisper, whisper.cpp, GigaAM) that give every word its own timing.
+- **Second text pass (optional)**: the setting **Cutting engine (text)** (⚙ → Cut, off by default) lets Whisper correct the spelling of the words GigaAM recognised; the timings stay GigaAM's. With it on, the subtitles go into the XML already when the clip is cut.
 - **Breath removal**: finds breaths before phrases and cuts them out; the disputed ones are shown as an orange strip in the editor and go with one click.
-- **Cut editor**: corrects the result by hand — the cursor, the block edges, the removed pieces brought back with a double click, the cut-out audio for listening, and saving back to the XML.
+- **Cut editor**: corrects the result by hand — the cursor, the block edges, the removed pieces brought back with a double click, the cut-out audio for listening, and saving back to the XML. With the second text pass on, a piece brought back gets its subtitles again from the source words.
 - **Batch queue**: many clips in one queue, cameras paired by name or by sound, and clips that already have a cut skipped.
 - **Draft mp4**: a quick draft of every cut, to preview the result before markup.
 
@@ -38,9 +39,10 @@ Reelsi is a local editing assistant for talking-head video. AI cuts footage by c
 
 - **Word-level subtitles**: animated subtitle graphics with per-word highlights, smart line wrapping and a background plate, plus plain `.srt`.
 - **Word highlights**: the AI picks the key words; yellow words rise, fade and blur in as they are spoken, stack one word at a time in a row, and a camera zoom lands only on the strongest ones.
-- **Intro**: a hook and animated title cards built from the transcript, with accent rows, glow, shadow, per-camera position, scale and edge margins.
+- **Intro**: a hook and animated title cards built from the transcript, with accent rows, glow, shadow, per-camera position, scale and edge margins. The length of a title row is a style setting (20 characters by default), and a call word in quotes at the end of the video becomes the last accent.
 - **Camera work**: zoom animation (smooth, jumps, drift), zoom-ins inside long takes and on highlighted words, framing by hand (fill, zoom point, frame offset, horizon) and head follow — with two cameras that each have their own zoom, framing, colour and intro.
-- **Inserts**: photo and video assets matched from a local library by meaning or generated with an AI provider; a plate mode cuts the photo's background out, and censoring hides a region with a mosaic.
+- **Inserts**: photo and video assets matched from a local library by meaning or generated with an AI provider, or taken from the stock libraries Pexels, Unsplash, Pixabay and Openverse in that order (Coverr behind a flag); a plate mode cuts the photo's background out, and censoring hides a region with a mosaic. A word from your personal `named_inserts.json` dictionary (repository root; the shared example is `data/named_inserts.example.json`) puts its library picture on that word.
+- **Background cut-out model**: u2net (fast, the default, about 0.7 s per picture) or BiRefNet (cleaner edges, about 8 s per picture on a processor), chosen in ⚙ → Generation; BiRefNet downloads its ~1 GB model on first use.
 - **Roto**: GPU background matting puts the speaker's cut-out figure above the intro and the inserts.
 - **Speaker and project styling**: a style panel with every knob, presets, a style bound to a speaker, and the layer order of the assembled scene.
 - **Text extras**: a glossary of terms for recognition, censor word lists with a whole-word option, a caption under the video, and a disclaimer whose scale and position are adjusted in the preview.
@@ -61,7 +63,7 @@ Reelsi is a local editing assistant for talking-head video. AI cuts footage by c
 ## How processing works
 
 1. **Sources**: one to four camera files in folders next to the repository; multi-camera tracks are aligned with each other by sound.
-2. **Recognition**: the speech is transcribed with word-level timings (Whisper, whisper.cpp or GigaAM).
+2. **Recognition**: the speech is transcribed with word-level timings (Whisper, whisper.cpp or GigaAM). With the optional second text pass, Whisper also corrects the spelling; the source words are kept next to the XML (`<stem>.srcwords.json`), so the subtitles of a piece brought back in the editor can be rebuilt.
 3. **Cutting**: the transcript goes to a language model that decides what to remove, locally or through the chosen provider; the code then restores pauses, repeats and breaths and assembles the timeline.
 4. **Editing**: the cut and the camera layout are corrected by hand in the editor.
 5. **Markup and design**: subtitles, highlights, inserts, the intro and the camera work are computed per clip; assets come from the local library or from the AI provider.
@@ -102,7 +104,7 @@ Both installers only install dependencies: the `reelsi`, `reelsi-webui` and `ree
 Or install manually:
 
 ```bash
-pip install torch==2.5.1 torchaudio==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+pip install torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu126
 pip install -r requirements.txt
 pip install -r requirements-optional.txt
 ```

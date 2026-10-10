@@ -7,6 +7,7 @@
   "json": {
    "active": "Основной",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
    "active_video": "__off__",
@@ -244,6 +245,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -264,8 +266,10 @@
     "yellow": "Основной"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_aspects": [
     "9:16",
@@ -740,6 +744,7 @@
   "json": {
    "active": "Основной",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
    "active_video": "__off__",
@@ -787,6 +792,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -807,8 +813,10 @@
     "yellow": "Основной"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "bytedance/seedance-2.0",
@@ -864,6 +872,7 @@
   "json": {
    "active": "Основной",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
    "active_video": "__off__",
@@ -911,6 +920,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -931,8 +941,10 @@
     "yellow": "Основной"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "bytedance/seedance-2.0",
@@ -1024,6 +1036,7 @@
   "json": {
    "active": "Основной",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
    "active_video": "__off__",
@@ -1071,6 +1084,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -1091,8 +1105,10 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "bytedance/seedance-2.0",
@@ -1151,6 +1167,7 @@
   "json": {
    "active": "Основной",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
    "active_video": "__off__",
@@ -1198,6 +1215,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -1218,8 +1236,10 @@
     "yellow": "Основной"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "bytedance/seedance-2.0",
@@ -1276,6 +1296,7 @@
   "json": {
    "active": "Основной",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
    "active_video": "__off__",
@@ -1323,6 +1344,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -1343,8 +1365,10 @@
     "yellow": "Основной"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "bytedance/seedance-2.0",
@@ -1439,6 +1463,7 @@
   "json": {
    "active": "Основной",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
    "active_video": "__off__",
@@ -1486,6 +1511,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 2,
     "inserts": 1,
@@ -1508,8 +1534,10 @@
     "yellow": "Основной"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "bytedance/seedance-2.0",
@@ -1571,6 +1599,7 @@
   "json": {
    "active": "Основной",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
    "active_video": "__off__",
@@ -1618,6 +1647,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 2,
     "inserts": 1,
@@ -1641,8 +1671,10 @@
     "yellow": "Основной"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "bytedance/seedance-2.0",
@@ -1739,6 +1771,7 @@
   "json": {
    "active": "Основной",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
    "active_video": "__off__",
@@ -1786,6 +1819,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -1808,8 +1842,10 @@
     "yellow": "Основной"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "bytedance/seedance-2.0",
@@ -1871,6 +1907,7 @@
   "json": {
    "active": "Основной",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
    "active_video": "__off__",
@@ -1918,6 +1955,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -1938,8 +1976,10 @@
     "yellow": "Основной"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "bytedance/seedance-2.0",
@@ -1997,6 +2037,7 @@
   "json": {
    "active": "Клод",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
    "active_video": "__off__",
@@ -2044,6 +2085,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 4,
     "inserts": 4,
@@ -2064,8 +2106,10 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "bytedance/seedance-2.0",
@@ -2140,6 +2184,7 @@
   "json": {
    "active": "Клод",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
    "active_video": "__off__",
@@ -2187,6 +2232,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 4,
     "inserts": 4,
@@ -2207,8 +2253,10 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "bytedance/seedance-2.0",
@@ -2267,6 +2315,7 @@
   "json": {
    "active": "Клод",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -2314,6 +2363,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 4,
     "inserts": 4,
@@ -2334,8 +2384,10 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "bytedance/seedance-2.0",
@@ -2443,6 +2495,7 @@
   "json": {
    "active": "Клод",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -2490,6 +2543,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 4,
     "inserts": 4,
@@ -2510,8 +2564,10 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "bytedance/seedance-2.0",
@@ -2578,145 +2634,17 @@
   "config": null
  },
  {
-  "name": "set_active_image: успех (Аудио)",
+  "name": "set_active_cut_text_asr: успех (whisper large-v3-turbo)",
   "method": "POST",
   "request": {
-   "action": "set_active_image",
-   "name": "Аудио"
+   "action": "set_active_cut_text_asr",
+   "name": "whisper:large-v3-turbo"
   },
   "status": 200,
   "json": {
    "active": "Клод",
    "active_cut_asr": "gigaam",
-   "active_image": "Аудио",
-   "active_omni": "Аудио",
-   "active_video": "__off__",
-   "ae_build_workers": "auto",
-   "glitch_glow": "builtin",
-   "image_rembg": true,
-   "model_device": "auto",
-   "ok": true,
-   "profiles": {
-    "Аудио": {
-     "api_key": "•••3333",
-     "base_url": "https://openrouter.ai/api/v1",
-     "model": "google/gemini-2.5-flash",
-     "provider": "openrouter"
-    },
-    "Клод": {
-     "api_key": "•••2222",
-     "base_url": "https://api.anthropic.com",
-     "model": "claude-sonnet-5",
-     "provider": "anthropic"
-    },
-    "Основной": {
-     "api_key": "•••1111",
-     "base_url": "http://localhost:1234/v1",
-     "model": "qwen3.6-27b-4bpw-16gb-vram",
-     "provider": "lmstudio"
-    },
-    "Текстовая": {
-     "api_key": "env:NZ_TEST_KEY_MISSING",
-     "base_url": "https://openrouter.ai/api/v1",
-     "key_env_ok": false,
-     "model": "deepseek/deepseek-v4-flash",
-     "provider": "openrouter"
-    }
-   },
-   "reasoning_effective": {
-    "cut": "max",
-    "inserts": "off",
-    "intro": "off",
-    "yellow": "off"
-   },
-   "reasoning_steps": {
-    "cut": "max",
-    "inserts": "off",
-    "intro": "off",
-    "yellow": "off"
-   },
-   "step_concurrency": {
-    "cut": 4,
-    "inserts": 4,
-    "intro": 4,
-    "yellow": 4
-   },
-   "step_concurrency_override": {},
-   "step_local": {
-    "cut": false,
-    "inserts": false,
-    "intro": false,
-    "yellow": false
-   },
-   "step_profiles": {
-    "cut": "Клод",
-    "inserts": "Клод",
-    "intro": "Аудио",
-    "yellow": "Клод"
-   },
-   "stock": {
-    "pexels_key": "",
-    "pixabay_key": ""
-   },
-   "video_encoder": "auto",
-   "video_model": "bytedance/seedance-2.0",
-   "video_resolution": ""
-  },
-  "config": {
-   "active": "Клод",
-   "profiles": {
-    "Основной": {
-     "provider": "lmstudio",
-     "base_url": "http://localhost:1234/v1",
-     "api_key": "•••1111",
-     "model": "qwen3.6-27b-4bpw-16gb-vram"
-    },
-    "Клод": {
-     "provider": "anthropic",
-     "base_url": "https://api.anthropic.com",
-     "api_key": "•••2222",
-     "model": "claude-sonnet-5"
-    },
-    "Аудио": {
-     "provider": "openrouter",
-     "base_url": "https://openrouter.ai/api/v1",
-     "api_key": "•••3333",
-     "model": "google/gemini-2.5-flash"
-    },
-    "Текстовая": {
-     "provider": "openrouter",
-     "base_url": "https://openrouter.ai/api/v1",
-     "api_key": "env:NZ_TEST_KEY_MISSING",
-     "model": "deepseek/deepseek-v4-flash"
-    }
-   },
-   "reasoning_steps": {
-    "cut": "max"
-   },
-   "reasoning_by_model": {
-    "qwen3.6-27b-4bpw-16gb-vram": {
-     "cut": "max"
-    }
-   },
-   "step_profiles": {
-    "intro": "Аудио"
-   },
-   "active_omni": "Аудио",
-   "active_cut_asr": "gigaam",
-   "active_image": "Аудио"
-  }
- },
- {
-  "name": "set_active_image: выключено",
-  "method": "POST",
-  "request": {
-   "action": "set_active_image",
-   "name": "__off__"
-  },
-  "status": 200,
-  "json": {
-   "active": "Клод",
-   "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "whisper:large-v3-turbo",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -2764,6 +2692,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 4,
     "inserts": 4,
@@ -2784,8 +2713,10 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "bytedance/seedance-2.0",
@@ -2832,6 +2763,424 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "whisper:large-v3-turbo"
+  }
+ },
+ {
+  "name": "set_active_cut_text_asr: выключено",
+  "method": "POST",
+  "request": {
+   "action": "set_active_cut_text_asr",
+   "name": ""
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "ae_build_workers": "auto",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "model_device": "auto",
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "rembg_model": "u2net",
+   "step_concurrency": {
+    "cut": 4,
+    "inserts": 4,
+    "intro": 4,
+    "yellow": 4
+   },
+   "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "stock": {
+    "coverr_key": "",
+    "pexels_key": "",
+    "pixabay_key": "",
+    "unsplash_key": ""
+   },
+   "video_encoder": "auto",
+   "video_model": "bytedance/seedance-2.0",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_cut_text_asr": ""
+  }
+ },
+ {
+  "name": "set_active_cut_text_asr: не Whisper (gigaam)",
+  "method": "POST",
+  "request": {
+   "action": "set_active_cut_text_asr",
+   "name": "gigaam"
+  },
+  "status": 200,
+  "json": {
+   "err": "invalid_cut_text_asr",
+   "err_vars": {
+    "name": "gigaam"
+   },
+   "error": "Движок «gigaam» не подходит для текста нарезки"
+  },
+  "config": null
+ },
+ {
+  "name": "set_active_image: успех (Аудио)",
+  "method": "POST",
+  "request": {
+   "action": "set_active_image",
+   "name": "Аудио"
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
+   "active_image": "Аудио",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "ae_build_workers": "auto",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "model_device": "auto",
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "rembg_model": "u2net",
+   "step_concurrency": {
+    "cut": 4,
+    "inserts": 4,
+    "intro": 4,
+    "yellow": 4
+   },
+   "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "stock": {
+    "coverr_key": "",
+    "pexels_key": "",
+    "pixabay_key": "",
+    "unsplash_key": ""
+   },
+   "video_encoder": "auto",
+   "video_model": "bytedance/seedance-2.0",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
+   "active_image": "Аудио"
+  }
+ },
+ {
+  "name": "set_active_image: выключено",
+  "method": "POST",
+  "request": {
+   "action": "set_active_image",
+   "name": "__off__"
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "ae_build_workers": "auto",
+   "glitch_glow": "builtin",
+   "image_rembg": true,
+   "model_device": "auto",
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "rembg_model": "u2net",
+   "step_concurrency": {
+    "cut": 4,
+    "inserts": 4,
+    "intro": 4,
+    "yellow": 4
+   },
+   "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "stock": {
+    "coverr_key": "",
+    "pexels_key": "",
+    "pixabay_key": "",
+    "unsplash_key": ""
+   },
+   "video_encoder": "auto",
+   "video_model": "bytedance/seedance-2.0",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__"
   }
  },
@@ -2880,6 +3229,7 @@
   "json": {
    "active": "Клод",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "Аудио",
@@ -2927,6 +3277,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 4,
     "inserts": 4,
@@ -2947,8 +3298,10 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "google/gemini-2.5-flash",
@@ -2995,6 +3348,7 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "Аудио"
   }
@@ -3010,6 +3364,7 @@
   "json": {
    "active": "Клод",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -3057,6 +3412,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 4,
     "inserts": 4,
@@ -3077,8 +3433,10 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "bytedance/seedance-2.0",
@@ -3125,6 +3483,7 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__"
   }
@@ -3174,6 +3533,7 @@
   "json": {
    "active": "Клод",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -3221,6 +3581,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 4,
     "inserts": 4,
@@ -3241,8 +3602,10 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "bytedance/seedance-2.0",
@@ -3289,6 +3652,7 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "1080p"
@@ -3324,6 +3688,7 @@
   "json": {
    "active": "Клод",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -3371,6 +3736,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 4,
     "inserts": 4,
@@ -3391,8 +3757,10 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "bytedance/seedance-2.0-fast",
@@ -3439,6 +3807,7 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "",
@@ -3456,6 +3825,7 @@
   "json": {
    "active": "Клод",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -3503,6 +3873,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 4,
     "inserts": 4,
@@ -3523,8 +3894,10 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -3571,6 +3944,7 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "",
@@ -3588,6 +3962,7 @@
   "json": {
    "active": "Клод",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -3635,6 +4010,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 4,
     "inserts": 4,
@@ -3655,8 +4031,10 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -3703,6 +4081,7 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "4K",
@@ -3720,6 +4099,7 @@
   "json": {
    "active": "Клод",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -3767,6 +4147,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 4,
     "inserts": 4,
@@ -3787,8 +4168,10 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -3835,6 +4218,7 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "",
@@ -3852,6 +4236,7 @@
   "json": {
    "active": "Клод",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -3899,6 +4284,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 4,
     "inserts": 4,
@@ -3919,8 +4305,10 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -3967,6 +4355,7 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "",
@@ -3985,6 +4374,7 @@
   "json": {
    "active": "Клод",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -4032,6 +4422,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 4,
     "inserts": 4,
@@ -4052,8 +4443,10 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -4100,6 +4493,7 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "",
@@ -4118,6 +4512,7 @@
   "json": {
    "active": "Клод",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -4165,6 +4560,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 4,
     "inserts": 4,
@@ -4185,8 +4581,10 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -4233,6 +4631,7 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "",
@@ -4260,16 +4659,17 @@
   "config": null
  },
  {
-  "name": "set_video_encoder: успех (nvidia)",
+  "name": "set_rembg_model: успех (birefnet-general)",
   "method": "POST",
   "request": {
-   "action": "set_video_encoder",
-   "value": "nvidia"
+   "action": "set_rembg_model",
+   "value": "birefnet-general"
   },
   "status": 200,
   "json": {
    "active": "Клод",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -4317,6 +4717,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "birefnet-general",
    "step_concurrency": {
     "cut": 4,
     "inserts": 4,
@@ -4337,8 +4738,308 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
+   },
+   "video_encoder": "auto",
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
+   "active_image": "__off__",
+   "active_video": "__off__",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": true,
+   "glitch_glow": "deepglow2",
+   "rembg_model": "birefnet-general"
+  }
+ },
+ {
+  "name": "set_rembg_model: чужая модель",
+  "method": "POST",
+  "request": {
+   "action": "set_rembg_model",
+   "value": "sam2"
+  },
+  "status": 200,
+  "json": {
+   "err": "rembg_model_invalid",
+   "err_vars": {
+    "list": "u2net, birefnet-general",
+    "value": "sam2"
+   },
+   "error": "Недопустимая модель вырезания фона «sam2» — можно: u2net, birefnet-general"
+  },
+  "config": null
+ },
+ {
+  "name": "set_rembg_model: возврат к u2net",
+  "method": "POST",
+  "request": {
+   "action": "set_rembg_model",
+   "value": "u2net"
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "ae_build_workers": "auto",
+   "glitch_glow": "deepglow2",
+   "image_rembg": true,
+   "model_device": "auto",
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "rembg_model": "u2net",
+   "step_concurrency": {
+    "cut": 4,
+    "inserts": 4,
+    "intro": 4,
+    "yellow": 4
+   },
+   "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "stock": {
+    "coverr_key": "",
+    "pexels_key": "",
+    "pixabay_key": "",
+    "unsplash_key": ""
+   },
+   "video_encoder": "auto",
+   "video_model": "некая/неизвестная-модель",
+   "video_resolution": ""
+  },
+  "config": {
+   "active": "Клод",
+   "profiles": {
+    "Основной": {
+     "provider": "lmstudio",
+     "base_url": "http://localhost:1234/v1",
+     "api_key": "•••1111",
+     "model": "qwen3.6-27b-4bpw-16gb-vram"
+    },
+    "Клод": {
+     "provider": "anthropic",
+     "base_url": "https://api.anthropic.com",
+     "api_key": "•••2222",
+     "model": "claude-sonnet-5"
+    },
+    "Аудио": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "•••3333",
+     "model": "google/gemini-2.5-flash"
+    },
+    "Текстовая": {
+     "provider": "openrouter",
+     "base_url": "https://openrouter.ai/api/v1",
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "model": "deepseek/deepseek-v4-flash"
+    }
+   },
+   "reasoning_steps": {
+    "cut": "max"
+   },
+   "reasoning_by_model": {
+    "qwen3.6-27b-4bpw-16gb-vram": {
+     "cut": "max"
+    }
+   },
+   "step_profiles": {
+    "intro": "Аудио"
+   },
+   "active_omni": "Аудио",
+   "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
+   "active_image": "__off__",
+   "active_video": "__off__",
+   "video_resolution": "",
+   "video_model": "некая/неизвестная-модель",
+   "image_rembg": true,
+   "glitch_glow": "deepglow2",
+   "rembg_model": "u2net"
+  }
+ },
+ {
+  "name": "set_video_encoder: успех (nvidia)",
+  "method": "POST",
+  "request": {
+   "action": "set_video_encoder",
+   "value": "nvidia"
+  },
+  "status": 200,
+  "json": {
+   "active": "Клод",
+   "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
+   "active_image": "__off__",
+   "active_omni": "Аудио",
+   "active_video": "__off__",
+   "ae_build_workers": "auto",
+   "glitch_glow": "deepglow2",
+   "image_rembg": true,
+   "model_device": "auto",
+   "ok": true,
+   "profiles": {
+    "Аудио": {
+     "api_key": "•••3333",
+     "base_url": "https://openrouter.ai/api/v1",
+     "model": "google/gemini-2.5-flash",
+     "provider": "openrouter"
+    },
+    "Клод": {
+     "api_key": "•••2222",
+     "base_url": "https://api.anthropic.com",
+     "model": "claude-sonnet-5",
+     "provider": "anthropic"
+    },
+    "Основной": {
+     "api_key": "•••1111",
+     "base_url": "http://localhost:1234/v1",
+     "model": "qwen3.6-27b-4bpw-16gb-vram",
+     "provider": "lmstudio"
+    },
+    "Текстовая": {
+     "api_key": "env:NZ_TEST_KEY_MISSING",
+     "base_url": "https://openrouter.ai/api/v1",
+     "key_env_ok": false,
+     "model": "deepseek/deepseek-v4-flash",
+     "provider": "openrouter"
+    }
+   },
+   "reasoning_effective": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "reasoning_steps": {
+    "cut": "max",
+    "inserts": "off",
+    "intro": "off",
+    "yellow": "off"
+   },
+   "rembg_model": "u2net",
+   "step_concurrency": {
+    "cut": 4,
+    "inserts": 4,
+    "intro": 4,
+    "yellow": 4
+   },
+   "step_concurrency_override": {},
+   "step_local": {
+    "cut": false,
+    "inserts": false,
+    "intro": false,
+    "yellow": false
+   },
+   "step_profiles": {
+    "cut": "Клод",
+    "inserts": "Клод",
+    "intro": "Аудио",
+    "yellow": "Клод"
+   },
+   "stock": {
+    "coverr_key": "",
+    "pexels_key": "",
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "nvidia",
    "video_model": "некая/неизвестная-модель",
@@ -4385,12 +5086,14 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "",
    "video_model": "некая/неизвестная-модель",
    "image_rembg": true,
    "glitch_glow": "deepglow2",
+   "rembg_model": "u2net",
    "video_encoder": "nvidia"
   }
  },
@@ -4405,6 +5108,7 @@
   "json": {
    "active": "Клод",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -4452,6 +5156,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 4,
     "inserts": 4,
@@ -4472,8 +5177,10 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "cpu",
    "video_model": "некая/неизвестная-модель",
@@ -4520,12 +5227,14 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "",
    "video_model": "некая/неизвестная-модель",
    "image_rembg": true,
    "glitch_glow": "deepglow2",
+   "rembg_model": "u2net",
    "video_encoder": "cpu"
   }
  },
@@ -4540,6 +5249,7 @@
   "json": {
    "active": "Клод",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -4587,6 +5297,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 4,
     "inserts": 4,
@@ -4607,8 +5318,10 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "",
-    "pixabay_key": ""
+    "pixabay_key": "",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -4655,12 +5368,14 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "",
    "video_model": "некая/неизвестная-модель",
    "image_rembg": true,
    "glitch_glow": "deepglow2",
+   "rembg_model": "u2net",
    "video_encoder": "auto"
   }
  },
@@ -4694,6 +5409,7 @@
   "json": {
    "active": "Клод",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -4741,6 +5457,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 4,
     "inserts": 4,
@@ -4761,8 +5478,10 @@
     "yellow": "Клод"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "env:NZ_STOCK_PEXELS",
-    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+    "pixabay_key": "env:NZ_STOCK_PIXABAY",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -4809,12 +5528,14 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "",
    "video_model": "некая/неизвестная-модель",
    "image_rembg": true,
    "glitch_glow": "deepglow2",
+   "rembg_model": "u2net",
    "video_encoder": "auto",
    "stock": {
     "pexels_key": "env:NZ_STOCK_PEXELS",
@@ -4841,6 +5562,7 @@
   "json": {
    "active": "Новый",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -4898,6 +5620,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -4918,8 +5641,10 @@
     "yellow": "Новый"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "env:NZ_STOCK_PEXELS",
-    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+    "pixabay_key": "env:NZ_STOCK_PIXABAY",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -4976,12 +5701,14 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "",
    "video_model": "некая/неизвестная-модель",
    "image_rembg": true,
    "glitch_glow": "deepglow2",
+   "rembg_model": "u2net",
    "video_encoder": "auto",
    "stock": {
     "pexels_key": "env:NZ_STOCK_PEXELS",
@@ -5006,6 +5733,7 @@
   "json": {
    "active": "Новый",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -5059,6 +5787,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -5079,8 +5808,10 @@
     "yellow": "Новый"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "env:NZ_STOCK_PEXELS",
-    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+    "pixabay_key": "env:NZ_STOCK_PIXABAY",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -5133,12 +5864,14 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "",
    "video_model": "некая/неизвестная-модель",
    "image_rembg": true,
    "glitch_glow": "deepglow2",
+   "rembg_model": "u2net",
    "video_encoder": "auto",
    "stock": {
     "pexels_key": "env:NZ_STOCK_PEXELS",
@@ -5241,6 +5974,7 @@
   "json": {
    "active": "Новый",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -5294,6 +6028,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -5314,8 +6049,10 @@
     "yellow": "Новый"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "env:NZ_STOCK_PEXELS",
-    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+    "pixabay_key": "env:NZ_STOCK_PIXABAY",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -5368,12 +6105,14 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "",
    "video_model": "некая/неизвестная-модель",
    "image_rembg": true,
    "glitch_glow": "deepglow2",
+   "rembg_model": "u2net",
    "video_encoder": "auto",
    "stock": {
     "pexels_key": "env:NZ_STOCK_PEXELS",
@@ -5399,6 +6138,7 @@
   "json": {
    "active": "Новый 2",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -5452,6 +6192,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -5472,8 +6213,10 @@
     "yellow": "Новый 2"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "env:NZ_STOCK_PEXELS",
-    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+    "pixabay_key": "env:NZ_STOCK_PIXABAY",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -5526,12 +6269,14 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "",
    "video_model": "некая/неизвестная-модель",
    "image_rembg": true,
    "glitch_glow": "deepglow2",
+   "rembg_model": "u2net",
    "video_encoder": "auto",
    "stock": {
     "pexels_key": "env:NZ_STOCK_PEXELS",
@@ -5550,6 +6295,7 @@
   "json": {
    "active": "Новый 2",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "Аудио",
    "active_omni": "Аудио",
    "active_video": "__off__",
@@ -5603,6 +6349,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -5623,8 +6370,10 @@
     "yellow": "Новый 2"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "env:NZ_STOCK_PEXELS",
-    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+    "pixabay_key": "env:NZ_STOCK_PIXABAY",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -5677,12 +6426,14 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "Аудио",
    "active_video": "__off__",
    "video_resolution": "",
    "video_model": "некая/неизвестная-модель",
    "image_rembg": true,
    "glitch_glow": "deepglow2",
+   "rembg_model": "u2net",
    "video_encoder": "auto",
    "stock": {
     "pexels_key": "env:NZ_STOCK_PEXELS",
@@ -5701,6 +6452,7 @@
   "json": {
    "active": "Новый 2",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "Аудио",
    "active_omni": "Аудио",
    "active_video": "Аудио",
@@ -5754,6 +6506,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -5774,8 +6527,10 @@
     "yellow": "Новый 2"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "env:NZ_STOCK_PEXELS",
-    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+    "pixabay_key": "env:NZ_STOCK_PIXABAY",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -5828,12 +6583,14 @@
    },
    "active_omni": "Аудио",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "Аудио",
    "active_video": "Аудио",
    "video_resolution": "",
    "video_model": "некая/неизвестная-модель",
    "image_rembg": true,
    "glitch_glow": "deepglow2",
+   "rembg_model": "u2net",
    "video_encoder": "auto",
    "stock": {
     "pexels_key": "env:NZ_STOCK_PEXELS",
@@ -5859,6 +6616,7 @@
   "json": {
    "active": "Новый 2",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "Аудио 2",
    "active_omni": "Аудио 2",
    "active_video": "Аудио 2",
@@ -5912,6 +6670,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -5932,8 +6691,10 @@
     "yellow": "Новый 2"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "env:NZ_STOCK_PEXELS",
-    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+    "pixabay_key": "env:NZ_STOCK_PIXABAY",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -5986,12 +6747,14 @@
    },
    "active_omni": "Аудио 2",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "Аудио 2",
    "active_video": "Аудио 2",
    "video_resolution": "",
    "video_model": "некая/неизвестная-модель",
    "image_rembg": true,
    "glitch_glow": "deepglow2",
+   "rembg_model": "u2net",
    "video_encoder": "auto",
    "stock": {
     "pexels_key": "env:NZ_STOCK_PEXELS",
@@ -6011,6 +6774,7 @@
   "json": {
    "active": "Новый 2",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "Аудио 2",
    "active_omni": "Аудио 2",
    "active_video": "Аудио 2",
@@ -6070,6 +6834,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -6090,8 +6855,10 @@
     "yellow": "Новый 2"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "env:NZ_STOCK_PEXELS",
-    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+    "pixabay_key": "env:NZ_STOCK_PIXABAY",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -6150,12 +6917,14 @@
    },
    "active_omni": "Аудио 2",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "Аудио 2",
    "active_video": "Аудио 2",
    "video_resolution": "",
    "video_model": "некая/неизвестная-модель",
    "image_rembg": true,
    "glitch_glow": "deepglow2",
+   "rembg_model": "u2net",
    "video_encoder": "auto",
    "stock": {
     "pexels_key": "env:NZ_STOCK_PEXELS",
@@ -6242,6 +7011,7 @@
   "json": {
    "active": "Новый 2",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "Аудио 2",
    "active_omni": "Аудио 2",
    "active_video": "Аудио 2",
@@ -6295,6 +7065,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -6315,8 +7086,10 @@
     "yellow": "Новый 2"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "env:NZ_STOCK_PEXELS",
-    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+    "pixabay_key": "env:NZ_STOCK_PIXABAY",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -6369,12 +7142,14 @@
    },
    "active_omni": "Аудио 2",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "Аудио 2",
    "active_video": "Аудио 2",
    "video_resolution": "",
    "video_model": "некая/неизвестная-модель",
    "image_rembg": true,
    "glitch_glow": "deepglow2",
+   "rembg_model": "u2net",
    "video_encoder": "auto",
    "stock": {
     "pexels_key": "env:NZ_STOCK_PEXELS",
@@ -6410,6 +7185,7 @@
   "json": {
    "active": "Основной",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "Аудио 2",
    "active_omni": "Аудио 2",
    "active_video": "Аудио 2",
@@ -6457,6 +7233,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -6477,8 +7254,10 @@
     "yellow": "Основной"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "env:NZ_STOCK_PEXELS",
-    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+    "pixabay_key": "env:NZ_STOCK_PIXABAY",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -6525,12 +7304,14 @@
    },
    "active_omni": "Аудио 2",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "Аудио 2",
    "active_video": "Аудио 2",
    "video_resolution": "",
    "video_model": "некая/неизвестная-модель",
    "image_rembg": true,
    "glitch_glow": "deepglow2",
+   "rembg_model": "u2net",
    "video_encoder": "auto",
    "stock": {
     "pexels_key": "env:NZ_STOCK_PEXELS",
@@ -6549,6 +7330,7 @@
   "json": {
    "active": "Основной",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "Аудио 2",
    "active_omni": "Аудио 2",
    "active_video": "Аудио 2",
@@ -6590,6 +7372,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -6610,8 +7393,10 @@
     "yellow": "Основной"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "env:NZ_STOCK_PEXELS",
-    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+    "pixabay_key": "env:NZ_STOCK_PIXABAY",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -6652,12 +7437,14 @@
    },
    "active_omni": "Аудио 2",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "Аудио 2",
    "active_video": "Аудио 2",
    "video_resolution": "",
    "video_model": "некая/неизвестная-модель",
    "image_rembg": true,
    "glitch_glow": "deepglow2",
+   "rembg_model": "u2net",
    "video_encoder": "auto",
    "stock": {
     "pexels_key": "env:NZ_STOCK_PEXELS",
@@ -6676,6 +7463,7 @@
   "json": {
    "active": "Основной",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
    "active_video": "__off__",
@@ -6711,6 +7499,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -6731,8 +7520,10 @@
     "yellow": "Основной"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "env:NZ_STOCK_PEXELS",
-    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+    "pixabay_key": "env:NZ_STOCK_PIXABAY",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -6765,12 +7556,14 @@
    "step_profiles": {},
    "active_omni": "__local__",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "",
    "video_model": "некая/неизвестная-модель",
    "image_rembg": true,
    "glitch_glow": "deepglow2",
+   "rembg_model": "u2net",
    "video_encoder": "auto",
    "stock": {
     "pexels_key": "env:NZ_STOCK_PEXELS",
@@ -6789,6 +7582,7 @@
   "json": {
    "active": "Основной",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
    "active_video": "__off__",
@@ -6817,6 +7611,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -6837,8 +7632,10 @@
     "yellow": "Основной"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "env:NZ_STOCK_PEXELS",
-    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+    "pixabay_key": "env:NZ_STOCK_PIXABAY",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -6865,12 +7662,14 @@
    "step_profiles": {},
    "active_omni": "__local__",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "",
    "video_model": "некая/неизвестная-модель",
    "image_rembg": true,
    "glitch_glow": "deepglow2",
+   "rembg_model": "u2net",
    "video_encoder": "auto",
    "stock": {
     "pexels_key": "env:NZ_STOCK_PEXELS",
@@ -6904,6 +7703,7 @@
   "json": {
    "active": "Основной",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
    "active_video": "__off__",
@@ -6932,6 +7732,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -6952,8 +7753,10 @@
     "yellow": "Основной"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "env:NZ_STOCK_PEXELS",
-    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+    "pixabay_key": "env:NZ_STOCK_PIXABAY",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -6980,12 +7783,14 @@
    "step_profiles": {},
    "active_omni": "__local__",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "",
    "video_model": "некая/неизвестная-модель",
    "image_rembg": true,
    "glitch_glow": "deepglow2",
+   "rembg_model": "u2net",
    "video_encoder": "auto",
    "stock": {
     "pexels_key": "env:NZ_STOCK_PEXELS",
@@ -7022,6 +7827,7 @@
   "json": {
    "active": "Основной",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
    "active_video": "__off__",
@@ -7050,6 +7856,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -7070,8 +7877,10 @@
     "yellow": "Основной"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "env:NZ_STOCK_PEXELS",
-    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+    "pixabay_key": "env:NZ_STOCK_PIXABAY",
+    "unsplash_key": ""
    },
    "video_encoder": "auto",
    "video_model": "некая/неизвестная-модель",
@@ -7098,12 +7907,14 @@
    "step_profiles": {},
    "active_omni": "__local__",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_video": "__off__",
    "video_resolution": "",
    "video_model": "некая/неизвестная-модель",
    "image_rembg": true,
    "glitch_glow": "deepglow2",
+   "rembg_model": "u2net",
    "video_encoder": "auto",
    "stock": {
     "pexels_key": "env:NZ_STOCK_PEXELS",
@@ -7150,6 +7961,7 @@
   "json": {
    "active": "Основной",
    "active_cut_asr": "gigaam",
+   "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
    "active_video": "__off__",
@@ -7329,6 +8141,7 @@
     "intro": "off",
     "yellow": "off"
    },
+   "rembg_model": "u2net",
    "step_concurrency": {
     "cut": 1,
     "inserts": 1,
@@ -7349,8 +8162,10 @@
     "yellow": "Основной"
    },
    "stock": {
+    "coverr_key": "",
     "pexels_key": "env:NZ_STOCK_PEXELS",
-    "pixabay_key": "env:NZ_STOCK_PIXABAY"
+    "pixabay_key": "env:NZ_STOCK_PIXABAY",
+    "unsplash_key": ""
    },
    "video_aspects": [
     "9:16",

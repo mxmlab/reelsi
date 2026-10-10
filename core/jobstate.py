@@ -21,7 +21,7 @@ import json, os, queue, signal, subprocess, threading, time
 from typing import IO, Any, Callable, Iterable, cast
 
 from core import paths
-from core.fileio import atomic_json_dump
+from core.fileio import atomic_json_dump, quarantine_unreadable
 from core.app_meta import env
 from core.umsg import ReelsiError, UMsg
 
@@ -296,7 +296,7 @@ def cross_lock_progress() -> str | None:
     try:
         return hint() or None
     except ReelsiError: raise
-    except Exception:
+    except Exception:  # подсказка необязательна: не прочлась — строки прогресса не будет, лок работает
         return None
 
 
@@ -329,7 +329,7 @@ def _lock_task_from_file() -> str | None:
             f.seek(_LOCK_TASK_OFFSET)      # байт 0 заперт владельцем
             raw = f.read(256)
     except ReelsiError: raise
-    except Exception:
+    except Exception:  # имя владельца — только подпись к занятости: лок держит задание и без неё
         return None
     name = raw.decode("utf-8", "replace").strip()
     return name or None
@@ -468,7 +468,12 @@ def _journal_read() -> dict[str, Any]:
         with open(JOB_STATE_PATH, encoding="utf-8") as f:
             data = json.load(f)
     except ReelsiError: raise
-    except Exception:
+    except Exception as e:
+        # Отсутствующий журнал — штатно (первый запуск). Битый — громко: следующая запись
+        # журнала возьмёт пустое содержимое и перепишет файл, потеряв записи других слотов.
+        if os.path.exists(JOB_STATE_PATH):
+            print("job state: журнал не читается (%s), при следующей записи он будет отложен в сторону"
+                  % type(e).__name__)
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -504,6 +509,11 @@ def journal_write(slot: str, kind: str, label: str = "", status: str = "running"
         if status == "running":
             _JOB_INTERRUPTED.pop(slot, None)   # новое задание переписало оборванное
         try:
+            # Битый журнал откладываем ДО записи: _journal_read отдал пустое содержимое, и без
+            # этого запись одного слота стёрла бы записи остальных (рендер, генерация видео).
+            bad = quarantine_unreadable(JOB_STATE_PATH, valid=lambda d: isinstance(d, dict))
+            if bad:
+                print("job state: журнал не прочитан, отложен в %s" % bad)
             # ensure_ascii=False уже внутри atomic_json_dump: кириллица в журнале
             # остаётся читаемой, а повторный аргумент — ошибка вызова (ловилась тестом).
             atomic_json_dump(JOB_STATE_PATH, {"version": 1, "jobs": jobs}, indent=1)

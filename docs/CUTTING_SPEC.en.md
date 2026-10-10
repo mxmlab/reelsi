@@ -121,8 +121,76 @@ The order of the `gigaam_cut.pipeline.run()` steps taking the stages (`stages`) 
    - If **`breath: True`**: Silero VAD + CED-tiny + acoustics → gradient boosting (`data/breath_model.json`). `P_CUT`=0.95 — we cut them ourselves (into `cutlog`, the source "вздох"), `P_MARK`=0.5 — we mark them in `<stem>.breaths.json`. The speaker has its own threshold (`breath_p_cut` in the profile).
    - If **`breath: False`**: breath detection is skipped.
    - **A conditional mirror sanity guard:** speech > 30s as one piece — a refusal. It is checked ONLY if `refine` or `breath` is on (a sign that the fine-tuning by sound did not separate the fused speech).
-9. **XML** — `xmlbuild.build` + the `.project.json` and `.cuts.json` sidecars. They are written INSIDE the pipeline, right after the XML and BEFORE the draft render. **Cutting does not make subtitles** (the "Mark up everything" step builds them through the route `/api/gen_subs`).
+9. **XML** — `xmlbuild.build` + the `.project.json` and `.cuts.json` sidecars. They are written INSIDE the pipeline, right after the XML and BEFORE the draft render. **Cutting makes subtitles only when the second text pass is on** (the section below): then they come from the source, and step 2 does not recognise them again. Without it, cutting makes no subtitles — the "Mark up everything" step builds them through the route `/api/gen_subs`.
 10. **The draft** — if the **`draft: True`** stage is on: `draftrender.render_draft(out)`. With `draft: False` the draft render is skipped. At the end — `draftrender.clean_tmp(outdir)`.
+
+## The second text pass — `core/gigaam_cut/textpass.py`, `core/asr_merge.py`
+
+**Why.** The GigaAM CTC model gives exact word timings, but its spelling makes mistakes
+("кус" instead of "курс"). Whisper spells better, but its timings are rough: it can swallow
+a word, make up a word in silence and collapse repeats, and cutting needs the repeats. So the
+rule is: **CTC decides which words there are and where they stand; Whisper only corrects the
+spelling.**
+
+**The setting.** `active_cut_text_asr` in `ai_config.json` (⚙ → "Cut" → "Cutting engine (text)").
+Empty means off, which is the default. Only an engine of kind `whisper` is accepted (the check
+is `cut_text_asr_engine` in `core/aicut/config.py`); another id or an unknown one means off with a
+warning. The `cut` flag of the ASR registry does not apply here: it is about the cut, and this
+pass needs text. The Whisper catalogue: `large-v3`, `large-v3-turbo` (four times faster than
+`large-v3`), `medium`, `small` (`core/asr_backends.py`, `WHISPER_SIZES`).
+
+**The merge rule** (`core/asr_merge.py`, `merge_words`):
+
+- words of the two engines are matched by time within ±0.3 s (`gate`) and by spelling
+  (`sim`: lower case, "ё" as "е", no punctuation);
+- a matched word takes **the timings of CTC and the text of Whisper**;
+- two CTC words that Whisper wrote as one ("по" + "этому" → "поэтому") give one word with the
+  Whisper text (`merge`); one CTC word that Whisper wrote as two ("вобщем" → "в общем") is split
+  into two along its CTC span in proportion to the word lengths (`split`);
+- a CTC word that Whisper did not find (swallowed) **stays as CTC has it**;
+- a Whisper word with no CTC counterpart (made up in silence) is **dropped**; a word that is not
+  in the CTC list never reaches the output;
+- repeats ("чтобы чтобы") **are kept**, because they come from CTC;
+- a gap whose alignment table would be bigger than 60 × 60 cells is not aligned: the CTC words
+  stay as they are and the Whisper words are dropped.
+
+**Two tapes from one pass** (`core/gigaam_cut/textpass.py`, `text_pass`):
+
+- for cutting — the text in CTC form (lower case, outer punctuation removed): cutting compares
+  the words with each other, and a comma from Whisper must not change those comparisons;
+- for subtitles — the Whisper text as it is (case and punctuation).
+
+The Whisper model is always unloaded, also when it fails, under the lock "текст нарезки"
+("cut text"). The unload is done in its own way, not through `asr_backends.transcribe_words`:
+that one unloads the LM Studio models, which a neighbouring clip may be using at the same time.
+On any error of the second engine the result is `(CTC words, None)`: cutting goes on with the
+CTC text and does not fail.
+
+**What is written at cutting** (branch 1, step 9, `core/gigaam_cut/pipeline.py`):
+
+- the XML with subtitles built from the Whisper words of the **kept** pieces only
+  (`cut_subs.subs_for_keep`, `xmlbuild.build(..., sub_words=…)`);
+- `<stem>.words.json` and `<stem>.srt` — the subtitles on the new timeline, in seconds;
+- `<stem>.srcwords.json` — the words of the **whole** source `{w, start, end}` in seconds of
+  camera 1, not only of the kept pieces; it is written AFTER the XML build succeeds, so that a
+  failed build does not leave other words next to the old XML;
+- `project.json`, field `text_subs: true` — the mark that the subtitles were taken from the
+  source. It is a mark, not the current setting: the setting may have been switched off after
+  the cut.
+
+Without the setting none of this is written: step 2 adds the subtitles, as before.
+
+**Editing pieces on step 1** (`/api/editor_save` → `core/cut_subs.py`, `subs_after_edit`):
+
+- the words of the **remaining** pieces come from the CURRENT XML — with manual text edits and
+  deletions, moved to the new timeline;
+- the words of the **returned** pieces and the widened borders come from `.srcwords.json`; the
+  cut parts go;
+- yellow words are carried over: when the subtitles are rebuilt, a yellow word is searched within
+  half a second of its old place (`YELLOW_TOL_FRAMES` = 30 frames at 60 fps);
+- if `.srcwords.json` is missing and the edit adds a piece, the subtitles are cleared: step 2 makes
+  them again, and the reply explains why;
+- without the `text_subs` mark the edit carries the subtitles over from the timeline, as before.
 
 ## Branch 2: VAD cutting — `reelsi.py` (cutting by sound loudness)
 
@@ -224,9 +292,9 @@ a 4K source is decoded in 3.8s instead of 60s), and then the segments are cut fr
   always camera 1's video; the subtitles as an overlay. It requires no render. (In the cut editor
   the preview is camera 1 only: camera 2's cutaways are needed only in the step 2 previews.)
 - **The cut editor**: the waveform of the whole source (`/api/waveform` → the cache
-  `*.peaks<pps>.json`), the keep blocks (green) + what was cut (grey) + the cut-log as markers +
+  `_peaks/`, named by the source version), the keep blocks (green) + what was cut (grey) + the cut-log as markers +
   the orange breath strips from `.breaths.json` (a click cuts them); edge handles, undo.
-  Saving → `/api/editor_save`: rebuilding the XML from the blocks + **recording the edit memory**:
+  Saving → `/api/editor_save`: rebuilding the XML from the blocks (the subtitles — per "The second text pass", when it is on) + **recording the edit memory**:
   restored/deleted ranges (>0.3s, with the text from the transcript) → `user_overrides`
   (up to 50, deduplicated) — they will be read by the next run of the old path (steps 4-5 of path B;
   the GigaAM path does not read them yet).

@@ -496,3 +496,73 @@ def test_plan_audio_voice_src_follows_processed_voice(xml_subs, tmp_path, monkey
                                    intro_riser=False, emit=_noop)
     assert plan["audio"]["voice_src"] == plan["cams"][0]["path"], \
         "без обработанного голоса превью должно играть звук камеры 1"
+
+
+def test_voicefx_sync_failure_is_emitted_not_swallowed(tmp_path, monkeypatch):
+    """Сбой переключения XML на запечённый голос виден строкой и не валит запекание."""
+    from core import voicefx, xmlbuild
+
+    xml = tmp_path / "clip.xml"
+    xml.write_text("<xmeml/>", encoding="utf-8")
+    lines: list[str] = []
+
+    def emit(line="", /, **_v):
+        lines.append(line)
+
+    monkeypatch.setattr(xmlbuild, "sync_xml_voice", lambda *a, **k: False)
+    assert voicefx._sync_xml_voice(str(xml), str(tmp_path / "v.wav"), emit=emit) is False
+    assert any("XML не переключён на него" in s for s in lines), lines
+
+    def boom(*a, **k):
+        raise RuntimeError("диск занят")
+
+    lines.clear()
+    monkeypatch.setattr(xmlbuild, "sync_xml_voice", boom)
+    assert voicefx._sync_xml_voice(str(xml), str(tmp_path / "v.wav"), emit=emit) is False
+    assert any("XML не переключён на него" in s for s in lines), lines
+
+    lines.clear()
+    monkeypatch.setattr(xmlbuild, "sync_xml_voice", lambda *a, **k: True)
+    assert voicefx._sync_xml_voice(str(xml), str(tmp_path / "v.wav"), emit=emit) is True
+    assert lines == [], "успешная синхронизация не должна ничего писать в вывод"
+
+
+def test_voicefx_clear_reports_xml_not_switched(tmp_path, monkeypatch):
+    """Голос убран, а XML не переключён на обычный звук — строка в выводе очистки."""
+    from core import voicefx, xmlbuild
+
+    xml = tmp_path / "clip.xml"
+    xml.write_text("<xmeml/>", encoding="utf-8")
+    monkeypatch.setattr(xmlbuild, "sync_xml_voice", lambda *a, **k: False)
+    lines: list[str] = []
+
+    def emit(line="", /, **_v):
+        lines.append(line)
+
+    voicefx.clear_final_voice(str(xml), emit=emit)
+    assert any("убран, но XML не переключён" in s for s in lines), lines
+
+
+def test_voicefx_bake_off_reports_xml_not_switched(tmp_path, monkeypatch):
+    """Обработка выключена, голос убран, XML не переключён: ответ несёт ошибку с кодом,
+    по которой панель покажет причину (без неё «голос выключен» выглядит успехом)."""
+    from flask import Flask
+    import api
+    from core import voicefx, xmlbuild
+
+    app = Flask(__name__)
+    app.register_blueprint(api.bp)
+    app.config["TESTING"] = True
+    client = app.test_client()
+
+    xml = tmp_path / "clip.xml"
+    xml.write_text("<xmeml/>", encoding="utf-8")
+    monkeypatch.setattr(voicefx, "voice_fx_on", lambda norm: False)
+    monkeypatch.setattr(xmlbuild, "sync_xml_voice", lambda *a, **k: False)
+
+    r = client.post("/api/voicefx_bake", json={"xml": str(xml), "src": "", "fx": {}},
+                    headers={"Host": "127.0.0.1:5001"})
+    body = r.get_json()
+    assert r.status_code == 200 and body["ok"] is True
+    assert body.get("err") == "voice_xml_not_switched", body
+    assert body.get("error"), body

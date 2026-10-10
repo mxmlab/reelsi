@@ -576,7 +576,7 @@ def test_unsaved_style_edits_survive_clip_switch():
     function defJob(){ return {}; }
     function introResolve(){ return {lines: [], remove: [], splits: []}; }
     function saveState(){}
-    function val(id){ return {style: 'mak', aeexposure: '0', musicmode: 'file', aemusic: ''}[id] || ''; }
+    function val(id){ return {style: 'mak'}[id] || ''; }
     function $(id){ return {checked: true}; }
     captureAE();
     const dirty = {key: CLIPS[0].job.styleKey, fit: CLIPS[0].job.style && CLIPS[0].job.style.cam2_fit};
@@ -607,9 +607,6 @@ def test_set_style_db_marks_clip_style_dirty_and_survives_clip_switch(tmp_path):
       el.id = id;
       document.body.appendChild(el);
     });
-    const censor = document.createElement('input'); censor.id = 'censor'; censor.type = 'checkbox'; document.body.appendChild(censor);
-    const aeexp = document.createElement('input'); aeexp.id = 'aeexposure'; aeexp.value = '0'; document.body.appendChild(aeexp);
-    const aemusic = document.createElement('input'); aemusic.id = 'aemusic'; aemusic.value = ''; document.body.appendChild(aemusic);
 
     CLIPS = [
       { xml: 'a.xml', name: 'clip0', job: { styleKey: 'mak' } },
@@ -623,7 +620,7 @@ def test_set_style_db_marks_clip_style_dirty_and_survives_clip_switch(tmp_path):
     function renderIns() {}
     function musicUI() {}
     function renderClips3() {}
-    function renderAeDirField() {}
+    function renderRenderDirField() {}
     function loadWordsFor() {}
     function ensureCustomOption() {}
     function styleKeyFor(s) { return null; }
@@ -677,9 +674,6 @@ def test_sub_words_and_layer_order_mark_style_dirty(tmp_path):
     });
     const swInp = document.createElement('input'); swInp.id = 'insp_subwords'; swInp.value = '3'; document.body.appendChild(swInp);
     const srInp = document.createElement('input'); srInp.id = 'insp_subrows'; srInp.value = '2'; document.body.appendChild(srInp);
-    const censor = document.createElement('input'); censor.id = 'censor'; censor.type = 'checkbox'; document.body.appendChild(censor);
-    const aeexp = document.createElement('input'); aeexp.id = 'aeexposure'; aeexp.value = '0'; document.body.appendChild(aeexp);
-    const aemusic = document.createElement('input'); aemusic.id = 'aemusic'; aemusic.value = ''; document.body.appendChild(aemusic);
 
     CLIPS = [
       { xml: 'a.xml', name: 'clip0', job: { styleKey: 'mak' } },
@@ -694,7 +688,7 @@ def test_sub_words_and_layer_order_mark_style_dirty(tmp_path):
     function renderIns() {}
     function musicUI() {}
     function renderClips3() {}
-    function renderAeDirField() {}
+    function renderRenderDirField() {}
     function loadWordsFor() {}
     function ensureCustomOption() {}
     function syncSubTabUI() {}

@@ -284,6 +284,7 @@ def cut_engine_label(engine: str) -> str:
         meta = asr_backends.engine_meta(engine) or {}
         label = str(meta.get("label") or "")
     except ReelsiError: raise
+    # подпись движка — косметика строки статуса: без неё показываем сам id движка
     except Exception:
         label = ""
     return label.split(" (")[0].strip() or engine

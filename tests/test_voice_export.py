@@ -428,3 +428,50 @@ def test_api_export_xml_with_voice(tmp_path, cams):
     assert "file-voice" in xml_data
     _vt, at = _tracks(xml_data)
     assert _refs(at[0]) == ["file-voice", "file-voice"]
+
+
+def test_xmlbuild_sync_xml_voice_bool_contract(tmp_path, cams):
+    """sync_xml_voice: True — XML в нужном состоянии (и когда уже было так), False — сбой.
+
+    Вызывающие проверяют результат и показывают сбой строкой, а «уже так» строкой не
+    считается: иначе каждая сборка с голосом сообщала бы о сбое.
+    """
+    from core import xmlbuild
+
+    out = tmp_path / "bool_clip.xml"
+    _build(xmlbuild, cams, out)
+    _wav(tmp_path / f"{out.stem}.voice.wav")
+    assert xmlbuild.sync_xml_voice(str(out)) is True
+    assert xmlbuild.sync_xml_voice(str(out)) is True, "уже синхронизированный XML — не сбой"
+    assert xmlbuild.sync_xml_voice(str(tmp_path / "нет_такого.xml")) is False
+    broken = tmp_path / "broken.xml"
+    broken.write_text("<xmeml><не-закрыт", encoding="utf-8")
+    assert xmlbuild.sync_xml_voice(str(broken)) is False
+
+
+def test_xmlbuild_export_xml_flags_voice_not_switched(tmp_path, cams, monkeypatch):
+    """/api/export_xml: голос не переключился — заголовок `failed` (фронт покажет строку),
+    файл при этом всё равно отдаётся; переключился — `ok`."""
+    from flask import Flask
+    import api
+    from core import xmlbuild
+
+    app = Flask(__name__)
+    app.register_blueprint(api.bp)
+    app.config["TESTING"] = True
+    client = app.test_client()
+
+    out = tmp_path / "flag_clip.xml"
+    _build(xmlbuild, cams, out)
+
+    monkeypatch.setattr(xmlbuild, "sync_xml_voice", lambda *a, **k: False)
+    r = client.post("/api/export_xml", json={"path": str(out)},
+                    headers={"Host": "127.0.0.1:5001"})
+    assert r.status_code == 200
+    assert r.headers.get("X-Reelsi-Voice-Sync") == "failed"
+    assert r.data
+
+    monkeypatch.setattr(xmlbuild, "sync_xml_voice", lambda *a, **k: True)
+    r2 = client.post("/api/export_xml", json={"path": str(out)},
+                     headers={"Host": "127.0.0.1:5001"})
+    assert r2.headers.get("X-Reelsi-Voice-Sync") == "ok"

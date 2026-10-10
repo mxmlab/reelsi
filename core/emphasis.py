@@ -1068,6 +1068,10 @@ def compute_emphasis(inp: EmphasisInputs) -> dict[int, float]:
         components[i] = comp
     scores = {i: _score(c.get(n_emo, 0.0), c[n_stress]) for i, c in components.items()}
     key = cache_key(words, inp.intro_words or (), source, idx)
+    # Битый сайдкар (read_emphasis перед этим отдал «не готов») откладываем, а не затираем.
+    bad = fileio.quarantine_unreadable(emph_path(inp.xml_path), valid=lambda d: isinstance(d, dict))
+    if bad:
+        log.warning("сайдкар силы не прочитан — отложен в %s", bad)
     fileio.atomic_json_dump(emph_path(inp.xml_path), {
         "key": key,
         "scores": {str(k): components[k] for k in sorted(components)},

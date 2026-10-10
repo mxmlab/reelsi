@@ -132,8 +132,11 @@ from typing import Any, Callable, Iterator, Protocol, Sequence
 from core import device
 from core import fileio, paths
 from core.app_meta import child_env, console_emit, env, wrap_emit
+from core.applog import get_logger
 from core.jobstate import JOB_LOCK_PATH
 from core.umsg import ReelsiError, cli_error
+
+log = get_logger(__name__)
 
 # --------------------------------------------------------------------------- #
 # Рядом с файловым замком — тот же каталог, что у `.gpu` и `job.lock`
@@ -360,7 +363,7 @@ def model_device_cfg() -> str:
     try:
         from core.aicut.config import model_device_cfg as cfg
         return cfg()
-    except Exception:
+    except Exception:  # конфиг устройства необязателен: не прочёлся — «авто», как по умолчанию
         return device.DEVICE_AUTO
 
 
@@ -573,11 +576,11 @@ def _psutil_process(pid: int) -> Any | None:
     """
     try:
         import psutil
-    except Exception:
+    except Exception:  # psutil необязателен: без него работают запасные меры ниже (см. docstring)
         return None
     try:
         return psutil.Process(pid)
-    except Exception:
+    except Exception:  # процесса уже нет или нет прав на него: «не наш», значит не гасим
         return None
 
 
@@ -624,7 +627,7 @@ def _windows_create_time(pid: int) -> float | None:
             return ticks / 10_000_000.0 - 11644473600.0   # 100-нс тики от 1601 к эпохе
         finally:
             kernel32.CloseHandle(handle)
-    except Exception:
+    except Exception:  # время старта не узнать — None: вызывающий трактует это как «не проверить», не гасит
         return None
 
 
@@ -657,7 +660,7 @@ def _posix_create_time(pid: int) -> float | None:
         if not out:
             return None
         return float(time.mktime(time.strptime(out, "%a %b %d %H:%M:%S %Y")))
-    except Exception:
+    except Exception:  # ps не ответил или формат чужой — None: время не известно, процесс не трогаем
         return None
 
 
@@ -674,7 +677,7 @@ def _windows_cmdline(pid: int) -> str | None:
                  ".CommandLine" % pid]):
         try:
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-        except Exception:
+        except Exception:  # wmic снят в новых Windows — пробуем следующую команду; ни одна не сработала — None
             continue
         text = (r.stdout or "").strip()
         if not text:
@@ -704,7 +707,7 @@ def _process_cmdline(pid: int) -> str | None:
     try:
         with open("/proc/%d/cmdline" % pid, "rb") as fh:
             return fh.read().decode("utf-8", "replace").replace("\0", " ").strip()
-    except Exception:
+    except Exception:  # файла нет (процесс вышел) или нет прав — командной строки нет, это не наш процесс
         return None
 
 
@@ -1327,7 +1330,7 @@ class _Service:
                 wait_for_vram(emit=self.emit)
                 words = transcribe_loaded(head, wav, emit=self.emit, stopped=self._stopped)
                 return {"ok": True, "words": list(words)}
-            except Exception as ex:
+            except Exception as ex:  # ошибка уходит вызывающему в ответе {ok: False, error}, сервис не падает
                 return {"ok": False, "error": "%s: %s" % (type(ex).__name__, ex)}
 
     def _breath(self, payload: Any) -> dict[str, Any]:
@@ -1355,7 +1358,7 @@ class _Service:
                                          [(float(a), float(b)) for a, b in spans],
                                          ced=_loaded_ced(self._stopped))
                 return {"ok": True, "probs": [[float(x) for x in row] for row in probs]}
-            except Exception as ex:
+            except Exception as ex:  # ошибка уходит вызывающему в ответе {ok: False, error}, сервис не падает
                 return {"ok": False, "error": "%s: %s" % (type(ex).__name__, ex)}
 
     def _emo(self, payload: Any) -> dict[str, Any]:
@@ -1375,7 +1378,7 @@ class _Service:
                 from core import emphasis
                 probs = emphasis.emotion_probs(window, _loaded_emo(self._stopped), sr)
                 return {"ok": True, "probs": {str(k): float(v) for k, v in probs.items()}}
-            except Exception as ex:
+            except Exception as ex:  # ошибка уходит вызывающему в ответе {ok: False, error}, сервис не падает
                 return {"ok": False, "error": "%s: %s" % (type(ex).__name__, ex)}
 
     def _preload(self, payload: Any) -> dict[str, Any]:
@@ -1403,7 +1406,7 @@ class _Service:
                 else:
                     _loaded_model(head, self._stopped)
                 return {"ok": True}
-            except Exception as ex:
+            except Exception as ex:  # ошибка уходит вызывающему в ответе {ok: False, error}, сервис не падает
                 return {"ok": False, "error": "%s: %s" % (type(ex).__name__, ex)}
 
     # --- цикл слушателя --------------------------------------------------- #
@@ -2235,7 +2238,9 @@ def model_cap() -> dict[str, Any]:
                 dev = device.pick_device(force=device.DEVICE_AUTO)
             else:
                 dev = device.auto_device_without_torch()
-        except Exception:
+        except Exception as e:
+            # Подпись в статусе — не выбор устройства: сбой здесь показываем «cpu» и пишем в журнал.
+            log.warning("устройство для подписи статуса не определено (%s), показываю cpu", type(e).__name__)
             dev = "cpu"
     auto = chosen == device.DEVICE_AUTO
     if dev == "cpu":

@@ -40,14 +40,14 @@ ENGINES_JSON = paths.data("asr_engines.json")
 # name -> callable(wav_path, **opts) -> [{"w","start","end"[,"prob"]}]
 ASR_BACKENDS: dict[str, Any] = {}
 
-WHISPER_SIZES = ["large-v3", "medium", "small"]
+WHISPER_SIZES = ["large-v3", "large-v3-turbo", "medium", "small"]
 
 # Встроенные движки. lang: 'multi' | ISO-код; prob: даёт ли пословную вероятность
 # (нужна самопроверке); subs/selfcheck/cut: где движок предлагается в UI.
 # cut: True — отдаёт родные границы звучания слова (CTC), годен для нарезки;
 # False — RNN-T (эмиссия токенов), whisper (грубые границы) или omni (без таймингов).
 _BUILTIN = [{"id": "whisper:%s" % s, "label": "Whisper %s" % s, "lang": "multi",
-             "kind": "whisper", "prob": True, "subs": s == "large-v3", "selfcheck": True, "cut": False}
+             "kind": "whisper", "prob": True, "subs": s in ("large-v3", "large-v3-turbo"), "selfcheck": True, "cut": False}
             for s in WHISPER_SIZES] + [
     # GigaAM: один и тот же энкодер, разные головы. CTC — чистая акустика (быстро,
     # для нарезки); RNN-T — внутренняя языковая модель ПРАВИТ слова; e2e — сверх

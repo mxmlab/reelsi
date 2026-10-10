@@ -81,12 +81,14 @@ def _mod(name: str) -> tuple[bool, str]:
     try:
         importlib.import_module(name)
     except ReelsiError: raise
+    # сбой импорта и есть результат проверки: вернём тип ошибки, а не уроним весь отчёт
     except Exception as e:
         return False, type(e).__name__
     try:
         from importlib.metadata import version
         return True, version(_DIST.get(name, name))
     except ReelsiError: raise
+    # версия без метаданных (пакет из исходников, без dist-info) — не ошибка, версия просто неизвестна
     except Exception:
         return True, ""
 
@@ -117,6 +119,7 @@ def check_core() -> None:
                                  timeout=10).stdout.splitlines()
             row(OK, "ffmpeg", (out[0][:60] if out else t("найден")))
         except ReelsiError: raise
+        # ffmpeg найден, но не отвечает: строка WARN с типом ошибки, остальные проверки идут дальше
         except Exception as e:
             row(WARN, "ffmpeg", t("найден, но не отвечает: {err}", err=type(e).__name__))
     else:
@@ -151,6 +154,7 @@ def check_compute() -> None:
             row(OK, t("устройство"), f"cuda — {name}, " + t("свободно "
                                   "{free:.1f} из {total:.1f} ГБ", free=free / 2**30, total=total / 2**30))
         except ReelsiError: raise
+        # сведения о видеопамяти необязательны: cuda уже подтверждено, без цифр строка остаётся OK
         except Exception:
             row(OK, t("устройство"), "cuda")
     elif dev == "mps":
@@ -188,6 +192,7 @@ def check_whisper_cpp() -> None:
             row(WARN, "whisper.cpp", t("моделей нет — скачаются при первом выборе "
                                       "движка (large-v3 ≈ 3 ГБ)"))
     except ReelsiError: raise
+    # сбой проверки whisper виден строкой WARN с типом ошибки; отчёт должен дойти до конца
     except Exception as e:
         row(WARN, "whisper.cpp", t("проверка не удалась: {err}", err=type(e).__name__))
 
@@ -219,6 +224,7 @@ def check_voice_sep() -> None:
                                     "«Скачать RoFormer ({size})» в панели голоса",
                                     models=", ".join(left), size=st["size"]))
     except ReelsiError: raise
+    # сбой проверки RoFormer виден строкой WARN с типом ошибки; отчёт должен дойти до конца
     except Exception as e:
         row(WARN, "RoFormer", t("проверка не удалась: {err}", err=type(e).__name__))
 
@@ -298,6 +304,7 @@ def check_assets() -> None:
                 "шрифт, и строка субтитров поедет. Поставь SF Pro или пересобери блобы "
                 "под свой: tools/harvest_good.py", want=want))
     except ReelsiError: raise
+    # сбой проверки шрифта виден строкой WARN; остальные проверки продолжают идти
     except Exception as e:
         row(WARN, t("шрифт субтитров"), t("не смог проверить ({err})", err=type(e).__name__))
 
@@ -322,6 +329,7 @@ def check_assets() -> None:
                     t("кэш есть ({when}, {nprov} провайдеров) — возможности моделей известны",
                       when=when, nprov=nprov))
             except ReelsiError: raise
+            # битый кэш каталога виден строкой WARN и перезапишется сам; падать из-за него нельзя
             except Exception:
                 row(WARN, t("каталог models.dev"), t("битый кэш, перезапишется при первом обращении"))
         else:
@@ -342,6 +350,7 @@ def check_workspace() -> None:
         import reelsi as cli
         base = env("BASE") or cli.DEFAULT_BASE
     except ReelsiError: raise
+    # рабочая папка не определилась: строка WARN и выход из этой проверки, отчёт продолжается
     except Exception as e:
         row(WARN, t("рабочая папка"), t("не смог определить ({err})", err=type(e).__name__))
         return
@@ -379,6 +388,7 @@ def check_external() -> None:
             ok = out.returncode == 0
             reason = t("код {code}", code=out.returncode)
         except ReelsiError: raise
+        # запуск проверки упал: ok=False и тип ошибки уходят в строку отчёта
         except Exception as e:
             ok = False
             reason = type(e).__name__
@@ -396,12 +406,14 @@ def check_external() -> None:
         return
     try:
         from core.aerender import find_ae
+    # импорт core.aerender упал: строка WARN, сама диагностика продолжается
     except Exception as e:
         row(WARN, "After Effects", t("не смог проверить ({err})", err=type(e).__name__))
         return
     try:
         ae = find_ae()
     except ReelsiError: raise
+    # find_ae упал: строка ERR с типом ошибки — это и есть ответ «безголовый рендер недоступен»
     except Exception as e:
         row(ERR, "After Effects", t("есть, но падает ({err}) — отключится "
                                   "безголовый рендер", err=type(e).__name__))

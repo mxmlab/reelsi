@@ -465,7 +465,9 @@ def ensure_video_catalog(prof: Optional[dict[str, Any]], emit: Optional[Callable
         with urllib.request.urlopen(req, timeout=20) as r:
             data = json.load(r)
     except ReelsiError: raise
-    except Exception:
+    except Exception as e:
+        # каталог моделей провайдера не получен — поля моделей останутся по умолчанию
+        log.warning("каталог видео-моделей провайдера не загружен (%s)", e)
         return
     entries = data.get("data") or data.get("models") or []
     set_video_catalog(key, entries)
@@ -513,6 +515,8 @@ def _head_media(url: str, timeout: int = 12) -> tuple[str, int]:
                 return ct, size
         except ReelsiError: raise
         except Exception:
+            # этот способ не сработал (сеть, нет заголовка) — пробуем следующий; если ни один,
+            # вернётся пустой ответ, и вызывающий код его обработает
             continue
     return "", 0
 
@@ -548,6 +552,7 @@ def probe_media(url: str, timeout: int = 25) -> dict[str, Any]:
         d = json.loads(pr.stdout or "{}")
     except ReelsiError: raise
     except Exception:
+        # ffprobe не запустился или вернул не JSON — пустой d; тип возьмём из Content-Type ниже
         d = {}
     streams = d.get("streams") or []
     if not streams:
@@ -1098,6 +1103,8 @@ def gen_video(prompt: Any, refs: Optional[list[dict[str, Any]]] = None, opts: Op
                     return ReelsiError("остановлено по кнопке — провайдер отменил задачу")
             except ReelsiError: raise
             except Exception:
+                # отмена этим способом не принята (404/405 — эндпоинта нет): молча пробуем следующий;
+                # если ни один не сработал, ниже в сообщении скажем, что провайдер отмену не принял
                 continue
         return ReelsiError(f"остановлено по кнопке. ВНИМАНИЕ: провайдер отмену не принял — "
                            f"задача {vid} может досчитаться и списаться; готовое видео "
@@ -1315,6 +1322,7 @@ def _video_error_text(detail: Any) -> tuple[str, str]:
             d = json.loads(msg[msg.index("{"):])
         except ReelsiError: raise
         except Exception:
+            # вложенного JSON нет — текст показываем как есть, разбирать дальше нечего
             break
         m = d.get("error") if isinstance(d.get("error"), dict) else d
         nxt = str((m or {}).get("message") or "")
@@ -1336,6 +1344,7 @@ def _video_http_error(e: urllib.error.HTTPError, prof: dict[str, Any], where: st
         detail = e.read().decode("utf-8", "replace")[:1200]
     except ReelsiError: raise
     except Exception:
+        # тело ошибки — подробность; код ответа известен и без него (e.code)
         detail = ""
     if e.code in (401, 403):
         return umsg("key_rejected", f"API-ключ не принят ({e.code}) — проверь профиль «{prof['name']}» в ⚙",

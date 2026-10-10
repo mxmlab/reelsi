@@ -9,11 +9,15 @@
 нигде не был виден и сменить его было нельзя; ссылка YouTube скачивалась молча и только
 в момент сборки.
 
-Стало: `music_mode`/`music_dir`/`music_src` — ключи СТИЛЯ (рядом с `music_db`), у клипа
-`job.music_override` (null = как в стиле) и `job.music_pick` (закреплённый трек режима
-«случайно»). Сборка и превью играют `music_pick` как файл — второго независимого выбора
-нет; «Другой трек» берёт новый сид и исключает текущий (`exclude`); ссылку скачивает
-новая кнопка (`/api/music_fetch`).
+Стало: `music_mode`/`music_dir`/`music_src` — ключи СТИЛЯ (рядом с `music_db`) и ручки
+панели стиля (группа «Аудио → Музыка»); цензура аудио — тоже ключ стиля (`censor`).
+У клипа `job.music_override` (null = как в стиле) и `job.music_pick` (закреплённый трек
+режима «случайно»). Ручки музыки правят ЛИБО переопределение ОТКРЫТОГО клипа («только
+этот ролик», по умолчанию), ЛИБО сам стиль («всем роликам со стилем») — второй выбор
+только и помечает стиль изменённым. Сборка и превью играют `music_pick` как файл —
+второго независимого выбора нет; «Другой трек» берёт новый сид и исключает текущий
+(`exclude`); ссылку скачивает кнопка «Скачать» (`/api/music_fetch`). Яркости клипа
+(`aeexposure`/`exposure`) больше нет вовсе, а цензура берётся из стиля клипа.
 
 Тесты:
 
@@ -23,11 +27,16 @@
 3. `/api/music_fetch` зовёт `ytmusic.resolve` (он подменён — сеть НЕ трогается);
 4. `plan_audio` с пришедшим файлом НЕ зовёт `random_track` (иначе сборка играла бы не то,
    что играло превью);
-5. node: «Другой трек» меняет `job.music_pick`; клип с `music_override=null` берёт режим
-   стиля, с override — свой;
+5. node: ручки музыки в области «только этот ролик» пишут переопределение клипа и НЕ
+   трогают стиль (мутация: пишут в стиль — тест краснеет); «всем роликам со стилем» пишут
+   в стиль и снимают переопределение; скачанный трек уходит туда же по выбору;
 6. папка музыки (одна лестница `musicPickDir` на сборку и превью): переопределение клипа
    -> папка стиля -> прежнее общее `aemusicdir` -> `<папка проекта>\\music`; папка XML не
-   участвует нигде (регрессия 2026-10-06: клип из подпапки нарезки собирался без музыки).
+   участвует нигде (регрессия 2026-10-06: клип из подпапки нарезки собирался без музыки);
+7. стиль без ключа `music_mode` = `random`, как на сервере (мутация: `||'off'` — красный);
+8. цензура из стиля доезжает до сборки (`_norm_build_jobs`: style.censor -> censor_audio),
+   а яркости клипа в задании сборки больше нет (`exposure` не принимает ни `scene_plan`,
+   ни `jobForBuild`).
 
 Запуск: python -m pytest tests/test_music_style.py -q
 """
@@ -120,6 +129,127 @@ def test_base_defaults_do_not_change_the_jsx(tmp_path):
         plain.pop(k, None)
     assert src(base_keys) == src(plain), (
         "ключи музыки стиля попали в .jsx — вид проектов изменился бы")
+
+
+# ---------------------------------------------------------------------------
+# 1б. Ручки музыки и цензуры — в схеме панели стиля
+# ---------------------------------------------------------------------------
+
+def _schema_fields():
+    """Поля схемы по ключу — как их обходит панель."""
+    from core import style_schema
+
+    out = {}
+
+    def walk(items):
+        for it in items:
+            if it.get("type") == "group":
+                walk(it.get("items", []))
+            elif it.get("type") == "field":
+                out[it["key"]] = it
+
+    for layer in style_schema.LAYERS:
+        walk(layer.get("items", []))
+    return out
+
+
+def test_music_and_censor_knobs_live_in_the_panel_schema():
+    """Режим, папка и файл/ссылка музыки — обычные ручки схемы, помеченные `track`.
+
+    Раньше их ручки жили внизу шага 3, а ключи числились внешними (`EXTERNAL`) — ровно
+    чтобы сторож «каждая ручка влияет на .jsx» их не видел. Теперь ручки в панели стиля,
+    а сторож отличает их по флагу `track`: ручка выбирает трек, а на текст .jsx не влияет.
+    Цензура аудио — тоже ручка схемы (галка), и в BASE она включена.
+    """
+    from core import style_schema
+
+    fields = _schema_fields()
+    for key in MUSIC_KEYS:
+        assert key in fields, "ручки %s нет в схеме панели стиля" % key
+        assert fields[key].get("track") is True, (
+            "у ручки %s нет флага track — сторож .jsx не отличит её от ручки текста" % key)
+        assert key not in style_schema.EXTERNAL, "ключ %s снова числится внешним" % key
+    assert fields["music_mode"]["ctl"] == "select", "режим музыки — не список"
+    assert [o[0] for o in fields["music_mode"]["options"]] == ["off", "random", "file", "url"], (
+        "варианты режима музыки разъехались с сервером")
+    assert fields["censor"]["ctl"] == "bool", "цензура — не галка"
+    assert styles.BASE["censor"] is True, "цензура по умолчанию выключена"
+    assert styles.resolve({})["censor"] is True, "стиль без ключа остался без цензуры"
+
+
+# ---------------------------------------------------------------------------
+# 1в. Цензура из стиля доезжает до сборки; яркости клипа в сборке нет
+# ---------------------------------------------------------------------------
+
+def _timeline(tmp_path):
+    import gzip
+    xml = str(tmp_path / "timeline.xml")
+    with gzip.open(os.path.join(HERE, "fixtures", "timeline_subs.xml.gz"), "rb") as g, \
+            open(xml, "wb") as f:
+        shutil.copyfileobj(g, f)
+    return xml
+
+
+def test_censor_of_the_style_reaches_the_build(tmp_path):
+    """`_norm_build_jobs` берёт цензуру из СТИЛЯ, а поле клипа больше не читается.
+
+    Миграция: у клипа, где когда-то стояло `censor:false`, цензура снова будет по стилю
+    (по умолчанию — включена). Это осознанное решение: у клипов одного стиля цензура одна.
+    """
+    from api import build as build_mod
+
+    xml = _timeline(tmp_path)
+
+    def censor_audio(job):
+        jobs = build_mod._norm_build_jobs([dict(job, xml=xml)])
+        return jobs[0]["censor_audio"]
+
+    assert censor_audio({"style": {"censor": False}}) is False
+    assert censor_audio({"style": {"censor": True}}) is True
+    assert censor_audio({"style": {}}) is True, "дефолт стиля потерялся"
+    assert censor_audio({"style": {"label": "старый"}}) is True, "стиль без ключа остался без цензуры"
+    assert censor_audio({"censor": False}) is True, (
+        "поле клипа censor снова управляет цензурой")
+
+
+def test_censor_flag_changes_the_assembled_jsx(tmp_path):
+    """Цензура доезжает до .jsx: снятая галка стиля убирает окна мьюта (var CENSOR=[])."""
+    from core import xml2ae
+
+    xml = _timeline(tmp_path)
+
+    def src(censor_audio):
+        jsx, _, _ = xml2ae.to_ae_full(xml, return_source=True, style={},
+                                      censor_audio=censor_audio, emit=lambda *a, **k: None)
+        return jsx
+
+    off, on = src(False), src(True)
+    assert off != on, "цензура не влияет на собранный .jsx"
+    assert "var CENSOR=[];" in off, "снятая цензура не убрала окна мьюта"
+    assert "var CENSOR=[[" in on, "включённая цензура не дала окон мьюта"
+
+
+def test_clip_brightness_is_gone_from_the_assembly(tmp_path):
+    """Яркость клипа убрана совсем: ни `scene_plan`, ни `to_ae_full` её не принимают.
+
+    Значение подстановки `EXPOSURE` жёстко 0 = «не вешать»: ветка `if (EXPOSURE!=0)` в
+    шаблоне не срабатывает никогда, и .jsx от стиля `lm_exposure` не зависит — Lumetri
+    настраивается стилем («Камера 1/2 → Цвет»).
+    """
+    import inspect
+    from core import xml2ae
+
+    assert "exposure" not in inspect.signature(xml2ae.scene_plan).parameters, (
+        "у плана сцены снова есть экспозиция клипа")
+    assert "exposure" not in inspect.signature(xml2ae.to_ae_full).parameters, (
+        "у сборки .jsx снова есть экспозиция клипа")
+    xml = _timeline(tmp_path)
+    with pytest.raises(TypeError):
+        xml2ae.scene_plan(xml, exposure=0.5, emit=lambda *a, **k: None)
+    jsx, _, _ = xml2ae.to_ae_full(xml, return_source=True, style={},
+                                  emit=lambda *a, **k: None)
+    assert "var EXPOSURE=0;" in jsx, "подстановка яркости не обнулена — сборка поехала бы"
+    assert "var LUMETRI" not in jsx, "стиль без галки Lumetri вдруг получил цвет"
 
 
 # ---------------------------------------------------------------------------
@@ -382,12 +512,24 @@ function toast(m){TOASTS.push(String(m));}
 function uiLog(m){}
 function errText(d){return String((d&&(d.error||d))||'');}
 function stEdit(){EDITS++;}
-const TOASTS=[];let EDITS=0;let MUSIC_REROLL_BUSY=false;
+// Дверь спикера клипа живёт в 40-queue.js: здесь внешняя дверь вырезанных функций
+// (jobForBuild/musicPickDir ходят за папками и стилем клипа).
+function clipSpeaker(c){return (c&&c.job&&c.job.speaker)||'';}
+function styleKeyFor(j){return (j&&j.styleKey)||null;}
+function nCams(){return 2;}
+const TOASTS=[];let EDITS=0;
 """
 
 
 def _run_node(tmp_path, name, funcs, body):
     script = (NODE_STUBS + "\nconst CLIPS=[];let curAE=-1;let CURSTYLE={};\n"
+              # Стили и их ключи музыки: у клипа стиль берётся У НЕГО (clipStyleObj),
+              # а не из показанного в панели CURSTYLE.
+              "const STYLES={};\n"
+              "const SPEAKERS={};\n"
+              # Область правки музыки и флаг занятости кнопки живут в 95-styles.js
+              # (`let`-объявления, а не функции) — в стенде их объявляем сами.
+              "let MUSIC_SCOPE='clip',MUSIC_REROLL_BUSY=false;\n"
               # Прежнее общее значение «папка музыки»: живёт в памяти (99-boot.js), поля
               # в разметке нет — боевая реализация читает его этой же переменной.
               "let AEMUSICDIR='';\n"
@@ -401,10 +543,12 @@ def _run_node(tmp_path, name, funcs, body):
     return json.loads(p.stdout.strip().splitlines()[-1])
 
 
-MUSIC_FUNCS = ["xmlDirOf", "effMusic", "musicTrack", "musicTrackName", "musicJobFields",
-               "musicPickDir", "jobsMusicDir", "musicSync", "musicClipUI",
-               "musicReroll", "musicOwnChanged", "musicOverrideEdit", "musicDownload",
-               "musicDirChanged", "pickMusic", "pickdir", "musicPickEnsure"]
+MUSIC_FUNCS = ["xmlDirOf", "clipStyleObj", "effMusic", "musicTrack", "musicTrackName",
+               "musicFieldValue", "musicFieldEdit", "musicRevert", "musicScope", "musicClip",
+               "clipCensor", "musicSync", "musicClipUI", "musicReroll", "musicDownload",
+               "musicPickEnsure", "jobsMusicDir", "pickAudioInto", "effOutdir",
+               "musicPickDir", "defJob", "styleForJob", "clipNcams", "musicJobFields",
+               "jobForBuild"]
 
 
 @node
@@ -559,32 +703,174 @@ globalThis.fetch=async (url,opt)=>{const body=JSON.parse(opt.body);
 
 
 @node
-def test_own_track_toggle_and_folder_change(tmp_path):
-    """«Свой трек» заводит переопределение, «как в стиле» — снимает; смена папки сбрасывает трек."""
-    out = _run_node(tmp_path, "music_toggle.js", MUSIC_FUNCS, r"""
-CURSTYLE={music_mode:'file',music_dir:'C:/m1',music_src:'C:/m1/a.m4a'};
-CLIPS.push({xml:'C:/cut/01.xml',job:{music_pick:'C:/m1/pick.m4a'}});curAE=0;
-$('musicown').value='own';musicOwnChanged('own');
-const own=JSON.parse(JSON.stringify(CLIPS[0].job.music_override));
-$('musicown').value='style';musicOwnChanged('style');
-const back=CLIPS[0].job.music_override;
-const pickAfterBack=CLIPS[0].job.music_pick;
-// смена папки: подпись под треком не совпадает — трек сбрасывается и выбирается заново
-CLIPS[0].job={music_pick:'C:/m1/pick.m4a',music_sig:'random|C:/m1'};
-CURSTYLE.music_dir='C:/m2';
-$('musicdir').value='C:/m2';
-musicDirChanged();
-console.log(JSON.stringify({own,back,pickAfterBack,dir:CURSTYLE.music_dir,
-  pick:CLIPS[0].job.music_pick,edits:EDITS}));
+def test_clip_scope_writes_the_override_and_leaves_the_style_alone(tmp_path):
+    """«Только этот ролик» (по умолчанию) пишет переопределение клипа, а не стиль.
+
+    Это и есть решение владельца: выбрал файл у ролика — стиль не меняется и не
+    помечается изменённым, у остальных роликов стиля остаётся то, что в стиле (например,
+    «случайно из папки»). Признак правки стиля — вызов stEdit (стиль помечается
+    изменённым именно там): в области клипа его быть не должно, а сам CURSTYLE обязан
+    остаться нетронутым.
+
+    Мутация: начать писать в стиль (stEdit / запись в CURSTYLE) — тест краснеет.
+    """
+    out = _run_node(tmp_path, "music_clip_scope.js", MUSIC_FUNCS, r"""
+CURSTYLE={music_mode:'random',music_dir:'C:/stylemusic',music_src:''};
+STYLES.mak={music_mode:'random',music_dir:'C:/stylemusic',music_src:''};
+CLIPS.push({xml:'C:/cut/01.xml',job:{styleKey:'mak'}});curAE=0;
+$('st_music_mode').value='file';$('st_music_dir').value='C:/own';
+$('st_music_src').value='C:/own/track.m4a';
+MUSIC_SCOPE='clip';
+musicFieldEdit();
+const styleKeys=JSON.parse(JSON.stringify(CURSTYLE));
+const ov=JSON.parse(JSON.stringify(CLIPS[0].job.music_override));
+const fields={mode:musicFieldValue('music_mode'),src:musicFieldValue('music_src')};
+const stJobs=musicJobFields(CLIPS[0]);
+// Переопределение клипа важнее стиля — и в полях, и в том, что уходит в сборку.
+console.log(JSON.stringify({styleKeys,ov,fields,stJobs,edits:EDITS,
+  styleUntouched:JSON.stringify(CURSTYLE)===JSON.stringify(styleKeys)}));
 """)
-    assert out["own"] == {"mode": "file", "src": "C:/m1/a.m4a"}, (
-        "«свой трек» не взял режим и ссылку стиля: %r" % out["own"])
-    assert out["back"] is None and out["pickAfterBack"] == "", (
-        "«как в стиле» не сняло переопределение: %r / %r"
-        % (out["back"], out["pickAfterBack"]))
-    assert out["dir"] == "C:/m2", "папка треков не записалась в стиль: %r" % out["dir"]
-    assert out["pick"] == "", "при смене папки прежний трек не сброшен: %r" % out["pick"]
-    assert out["edits"] >= 1, "правка папки не доведена до стиля (stEdit не позван)"
+    assert out["ov"] == {"mode": "file", "src": "C:/own/track.m4a", "dir": "C:/own"}, (
+        "правка «только этот ролик» не завела переопределение клипа: %r" % out["ov"])
+    assert out["edits"] == 0, (
+        "правка трека ролика позвала stEdit — стиль помечен изменённым: %r" % out["edits"])
+    assert out["styleUntouched"] and out["styleKeys"]["music_mode"] == "random" \
+        and out["styleKeys"]["music_src"] == "", (
+        "стиль изменился от правки трека одного ролика: %r" % out["styleKeys"])
+    assert out["fields"] == {"mode": "file", "src": "C:/own/track.m4a"}, (
+        "поля панели не показывают трек ролика: %r" % out["fields"])
+    assert out["stJobs"]["music"] == "C:/own/track.m4a", (
+        "в сборку ушёл не трек ролика: %r" % out["stJobs"])
+
+
+@node
+def test_style_scope_writes_the_style_and_drops_the_clip_override(tmp_path):
+    """«Всем роликам со стилем» пишет в стиль и снимает переопределение клипа.
+
+    Иначе открытый клип продолжал бы играть своё, а человек думал бы, что сменил всем.
+    """
+    out = _run_node(tmp_path, "music_style_scope.js", MUSIC_FUNCS, r"""
+CURSTYLE={music_mode:'random',music_dir:'C:/stylemusic',music_src:''};
+STYLES.mak={music_mode:'random',music_dir:'C:/stylemusic',music_src:''};
+CLIPS.push({xml:'C:/cut/01.xml',job:{styleKey:'mak',
+  music_override:{mode:'file',src:'C:/own/old.m4a'}}});curAE=0;
+$('st_music_mode').value='file';$('st_music_dir').value='C:/stylemusic';
+$('st_music_src').value='C:/stylemusic/new.m4a';
+MUSIC_SCOPE='style';
+musicFieldEdit();
+// captureAE (боевая дверь stEdit) унёс бы правленый стиль в задание клипа копией —
+// здесь стенд его зовёт заглушкой, поэтому проверяем оба конца: сам стиль и то, что
+// клип со стилем-копией берёт новый трек.
+const stCopy=JSON.parse(JSON.stringify(CURSTYLE));
+const jobs=musicJobFields({xml:'C:/cut/01.xml',job:{style:stCopy}});
+console.log(JSON.stringify({mode:CURSTYLE.music_mode,src:CURSTYLE.music_src,
+  dir:CURSTYLE.music_dir,ov:CLIPS[0].job.music_override,edits:EDITS,jobs:jobs}));
+""")
+    assert out["mode"] == "file" and out["src"] == "C:/stylemusic/new.m4a", (
+        "«всем роликам со стилем» не записало трек в стиль: %r" % out)
+    assert out["ov"] is None, (
+        "переопределение клипа осталось и перекрыло бы стиль: %r" % out["ov"])
+    assert out["edits"] == 1, "правка стиля не помечена изменённой (stEdit не позван)"
+    assert out["jobs"]["music"] == "C:/stylemusic/new.m4a", (
+        "клип не взял новый трек стиля: %r" % out["jobs"])
+
+
+@node
+def test_downloaded_track_goes_to_the_clip_or_to_the_style_by_scope(tmp_path):
+    """Скачанный трек уходит в переопределение клипа или в стиль — по выбору области."""
+    out = _run_node(tmp_path, "music_download.js", MUSIC_FUNCS, r"""
+CURSTYLE={music_mode:'url',music_dir:'',music_src:'https://youtu.be/abc'};
+STYLES.mak={music_mode:'url',music_dir:'',music_src:'https://youtu.be/abc'};
+CLIPS.push({xml:'C:/cut/01.xml',job:{styleKey:'mak'}});curAE=0;
+$('st_music_mode').value='url';$('st_music_src').value='https://youtu.be/abc';
+globalThis.fetch=async (url,opt)=>({json:async()=>({ok:true,path:'C:/dl/track.m4a'})});
+(async()=>{
+  MUSIC_SCOPE='clip';
+  await musicDownload();
+  const clipOv=JSON.parse(JSON.stringify(CLIPS[0].job.music_override));
+  const clipStyleSrc=CURSTYLE.music_src, editsAfterClip=EDITS;
+  CLIPS.push({xml:'C:/cut/02.xml',job:{styleKey:'mak'}});curAE=1;
+  MUSIC_SCOPE='style';
+  await musicDownload();
+  console.log(JSON.stringify({clipOv,clipStyleSrc,editsAfterClip,
+    styleSrc:CURSTYLE.music_src,ov:CLIPS[1].job.music_override,edits:EDITS}));
+})();
+""")
+    assert out["clipOv"]["src"] == "C:/dl/track.m4a" and out["clipOv"]["mode"] == "file", (
+        "скачанный трек не ушёл в переопределение клипа: %r" % out["clipOv"])
+    assert out["clipStyleSrc"] == "https://youtu.be/abc" and out["editsAfterClip"] == 0, (
+        "скачивание в области «этот ролик» тронуло стиль: %r" % out)
+    assert out["styleSrc"] == "C:/dl/track.m4a", (
+        "скачанный трек не ушёл в стиль: %r" % out["styleSrc"])
+    assert out["ov"] is None and out["edits"] == 1, out
+
+
+@node
+def test_style_without_mode_is_random_like_the_server(tmp_path):
+    """Стиль без ключа `music_mode` = «случайно», как дефолт на сервере.
+
+    Мутация: вернуть в effMusic `||'off'` — тест краснеет (владелец видел «рандома
+    больше нет»: у стиля без ключа музыка выключалась, хотя на сервере было random).
+    """
+    out = _run_node(tmp_path, "music_default.js", MUSIC_FUNCS, r"""
+STYLES.old={music_dir:'C:/m'};                    // ключа music_mode в стиле нет вовсе
+CLIPS.push({xml:'C:/cut/01.xml',job:{styleKey:'old',music_pick:'C:/m/one.m4a'}});curAE=0;
+const m=effMusic(CLIPS[0]);
+const noStyle=effMusic({xml:'C:/cut/02.xml',job:{}});   // и вовсе без стиля
+console.log(JSON.stringify({mode:m.mode,src:m.src,noStyle:noStyle.mode}));
+""")
+    assert out["mode"] == "random", (
+        "стиль без ключа режима выключил музыку вместо «случайно»: %r" % out["mode"])
+    assert out["src"] == "C:/m/one.m4a", out
+    assert out["noStyle"] == "random", out
+
+
+@node
+def test_style_censor_of_the_clip_is_what_the_build_gets(tmp_path):
+    """Цензура берётся у стиля КЛИПА: у двух клипов разных стилей она своя.
+
+    Клип несёт только имя стиля; стиль задаёт и музыку, и цензуру. Второй клип того же
+    набора не должен получить чужое решение.
+    """
+    out = _run_node(tmp_path, "music_censor.js", MUSIC_FUNCS, r"""
+STYLES.loud={music_mode:'off',censor:false};
+STYLES.quiet={music_mode:'off',censor:true};
+CLIPS.push({xml:'C:/cut/01.xml',job:{styleKey:'loud',censor:true}});   // старьё клипа: не читаем
+CLIPS.push({xml:'C:/cut/02.xml',job:{styleKey:'quiet'}});
+console.log(JSON.stringify({a:clipCensor(CLIPS[0]),b:clipCensor(CLIPS[1]),
+  none:clipCensor({xml:'C:/cut/03.xml',job:{}}),
+  job:jobForBuild(CLIPS[1])}));
+""")
+    assert out["a"] is False and out["b"] is True, (
+        "цензура взята не у стиля клипа: %r" % out)
+    assert out["none"] is True, (
+        "клип без стиля потерял цензуру по умолчанию (включена): %r" % out["none"])
+    assert "censor" not in out["job"], (
+        "цензура снова уезжает полем клипа в задание сборки: %r" % out["job"])
+    assert "exposure" not in out["job"], (
+        "яркость снова уезжает в задание сборки: %r" % out["job"])
+
+
+@node
+def test_build_job_has_no_exposure_and_no_clip_censor(tmp_path):
+    """В задании сборки нет ни яркости, ни цензуры: и то, и другое решено стилем.
+
+    Яркость убрана совсем (Lumetri настраивается стилем), цензура — ключ стиля и
+    считается на сервере из стиля (`_norm_build_jobs`), а не полем клипа.
+    """
+    out = _run_node(tmp_path, "music_job.js", MUSIC_FUNCS, r"""
+STYLES.mak={music_mode:'file',music_dir:'C:/m',music_src:'C:/m/a.m4a',censor:false};
+CLIPS.push({xml:'C:/cut/01.xml',job:{styleKey:'mak'}});curAE=0;
+const j=jobForBuild(CLIPS[0]);
+const dj=defJob();
+console.log(JSON.stringify({keys:Object.keys(j).sort(),
+  defKeys:Object.keys(dj).sort(),job:j}));
+""")
+    assert "exposure" not in out["keys"], "яркость вернулась в задание сборки: %r" % out["keys"]
+    assert "censor" not in out["keys"], "цензура вернулась полем клипа: %r" % out["keys"]
+    assert "exposure" not in out["defKeys"] and "censor" not in out["defKeys"], (
+        "поля яркости/цензуры вернулись в задание клипа: %r" % out["defKeys"])
+    assert out["job"]["music"] == "C:/m/a.m4a", out
 
 
 @node
@@ -623,17 +909,19 @@ globalThis.fetch=async (url,opt)=>{CALLS.push(JSON.parse(opt.body));
 
 
 @node
-def test_pickers_write_the_style_and_the_override(tmp_path):
-    """Кнопки «Файл…» и «Выбрать…» доводят выбор до стиля/клипа, а не в пустое поле.
+def test_pickers_write_where_the_scope_points(tmp_path):
+    """Кнопки «Файл…» и «Выбрать…» доводят выбор туда же, куда ручной ввод.
 
-    Раньше эти же кнопки писали в общие поля шага 3. Теперь путь трека — ключ стиля или
-    переопределение клипа, и нативный диалог обязан попасть туда же, куда ручной ввод:
-    иначе «выбрал файл — а играет прежний».
+    Выбор звукового файла и папки треков идёт нативными диалогами (`/api/pickaudio`,
+    `/api/pickdir`), а значение пишет ОДНА дверь правки музыки (musicFieldEdit). В области
+    «только этот ролик» (по умолчанию) это переопределение клипа, и стиль не трогается:
+    иначе «выбрал файл — а изменился стиль всем».
     """
-    out = _run_node(tmp_path, "music_pickers.js", MUSIC_FUNCS, r"""
+    out = _run_node(tmp_path, "music_pickers.js", MUSIC_FUNCS + ["pickdir"], r"""
 CURSTYLE={music_mode:'random',music_dir:'C:/m1',music_src:''};
-CLIPS.push({xml:'C:/cut/01.xml',job:{}});curAE=0;
-$('musicown').value='own';
+STYLES.mak={music_mode:'random',music_dir:'C:/m1',music_src:''};
+CLIPS.push({xml:'C:/cut/01.xml',job:{styleKey:'mak'}});curAE=0;
+MUSIC_SCOPE='clip';
 const CALLS=[];
 globalThis.fetch=async (url,opt)=>{
   CALLS.push(url);
@@ -642,16 +930,19 @@ globalThis.fetch=async (url,opt)=>{
   return {json:async()=>({path:''})};
 };
 (async()=>{
-  await pickMusic();
-  const own=JSON.parse(JSON.stringify(CLIPS[0].job.music_override));
-  $('musicown').value='own';$('musicmode').value='random';
-  await pickdir('musicdir');
-  console.log(JSON.stringify({own,dir:CURSTYLE.music_dir,calls:CALLS}));
+  await pickAudioInto('st_music_src');
+  const afterFile=JSON.parse(JSON.stringify(CLIPS[0].job.music_override));
+  await pickdir('st_music_dir');
+  console.log(JSON.stringify({afterFile,
+    ov:JSON.parse(JSON.stringify(CLIPS[0].job.music_override)),
+    styleDir:CURSTYLE.music_dir,edits:EDITS,calls:CALLS}));
 })();
 """)
-    assert out["own"]["src"] == "C:/own/pick.m4a", (
-        "«Файл…» не записал путь трека в переопределение клипа: %r" % out["own"])
-    assert out["dir"] == "C:/m3", (
-        "«Выбрать…» у папки треков не довёл папку до стиля: %r" % out["dir"])
+    assert out["afterFile"]["src"] == "C:/own/pick.m4a", (
+        "«Файл…» не записал путь трека в переопределение клипа: %r" % out["afterFile"])
+    assert out["ov"]["dir"] == "C:/m3", (
+        "«Выбрать…» у папки треков не довёл папку до переопределения: %r" % out["ov"])
+    assert out["styleDir"] == "C:/m1" and out["edits"] == 0, (
+        "выбор файла/папки в области «этот ролик» тронул стиль: %r" % out)
     assert "/api/pickaudio" in out["calls"] and "/api/pickdir" in out["calls"], (
         "кнопки зовут не нативные диалоги: %r" % out["calls"])

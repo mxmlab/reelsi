@@ -47,6 +47,7 @@ def _load_disk(path: str) -> Any:
             return json.load(f)
     except ReelsiError: raise
     except Exception:
+        # кэш на диске необязателен: битый или нечитаемый — каталог просто запросим заново
         return None
 
 

@@ -245,6 +245,7 @@ def api_insertlib_describe() -> Response:
                 with ILL_LOCK:
                     ILL_JOB["error"] = sysexit_text(e)
             except ReelsiError: raise
+            # ошибка пишется в ILL_JOB['error'] и видна в статусе описания вставок
             except Exception as e:
                 with ILL_LOCK:
                     ILL_JOB["error"] = f"{type(e).__name__}: {e}"
@@ -307,7 +308,7 @@ def api_insertlib_items() -> Response:
         return jsonify(**umsg_err(e))
 
 
-# ---- стоки (Pexels/Pixabay) как источник вставок ---------------------------
+# ---- стоки (Pexels/Unsplash/Pixabay и др.) как источник вставок -----------
 # Поиск и скачивание живут в core/stock.py: здесь только HTTP и проверка тела
 # запроса. Скачанный файл ложится В БАЗУ (<dest>/stock/<провайдер>/) и в индекс —
 # дальше это обычная вставка базы, автоподбор находит её сам.
@@ -315,7 +316,8 @@ def api_insertlib_items() -> Response:
 def api_stock_search() -> Response:
     """Кандидаты со стоков по запросу карточки: {query, type} -> {ok, results}.
 
-    Порядок провайдеров — приоритет (Pexels, затем Pixabay). Кеш ответов — 24 ч
+    Порядок провайдеров — приоритет (Pexels, затем Unsplash, затем Pixabay: см.
+    `core.stock.PROVIDERS`). Кеш ответов — 24 ч
     (условие обоих стоков), поэтому повторный поиск по тому же запросу сети не
     касается. Скачивания тут нет: сначала юзер смотрит превью глазами.
     """

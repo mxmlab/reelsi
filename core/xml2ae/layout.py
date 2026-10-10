@@ -88,7 +88,7 @@ def _img_size(path: str | None) -> tuple[int, int] | None:
             with Image.open(p) as im:
                 _IMG_SIZE_CACHE[p] = im.size
         except ReelsiError: raise
-        except Exception:
+        except Exception:  # битая картинка или нет PIL — размер неизвестен (None в кэше); вызывающие берут (0, 0)
             _IMG_SIZE_CACHE[p] = None
     return _IMG_SIZE_CACHE[p]
 
@@ -1456,7 +1456,7 @@ def _media_dims(path: str | None) -> tuple[int, int] | None:
         w, h, _rot = draftrender._display_dims(path)
         return (w, h) if w and h else None
     except ReelsiError: raise
-    except Exception:
+    except Exception:  # размер видео не прочитан — вставку не трогаем вовсе (как в старом JS, см. docstring)
         return None
 
 

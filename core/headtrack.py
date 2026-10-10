@@ -241,6 +241,11 @@ def load_or_track(xml_path: str | None, video: str, ranges: Sequence[Any], emit:
     data["ranges"] = [list(r) for r in merged_ranges]
 
     if head_path:
+        # Битый сайдкар (load_cached выше отдал None) откладываем, а не затираем: молчаливая
+        # перезапись убрала бы файл, по которому видно, что с ним было не так.
+        bad = fileio.quarantine_unreadable(head_path, valid=lambda d: isinstance(d, dict))
+        if bad:
+            log.warning("трек головы не прочитан — отложен в %s", bad)
         fileio.atomic_text_write(head_path, json.dumps(data, ensure_ascii=False, indent=2))
         emit("  · сохранён трек головы {path}", path=os.path.basename(head_path))
     return data

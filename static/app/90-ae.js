@@ -14,7 +14,7 @@ let AEXML='';
 // music_override — «свой трек» у клипа (null = как в стиле), music_pick — закреплённый
 // случайный трек: оба поля живут на клипе, а не в общих полях шага 3 (см. musicClipUI).
 function defJob(){return {highlights:[],hl_breaks:[],hl_count:[],hl_joins:[],hlxml:'',introRows:[],intromode:'word',
-  music_override:null,music_pick:'',music_sig:'',exposure:0,style:null,styleKey:null,censor:true,ins:[]};}
+  music_override:null,music_pick:'',music_sig:'',style:null,styleKey:null,ins:[]};}
 // normInsPath объявлена в 85-inserts-view.js (грузится раньше) — один общий источник для
 // ensureJobs, applyInsMoved и драга в предпросмотре: «та же вставка» ищется одинаково.
 function ensureJobs(){CLIPS.forEach(c=>{if(!c.job)c.job=defJob();
@@ -79,7 +79,8 @@ function selectAE(i){if(curAE>=0&&curAE!==i)captureAE();curAE=i;const c=CLIPS[i]
   INS=(j.ins||[]).map(x=>({...x}));renderIns();
   // gx/gy/gs — геометрия группы: живёт на головной строке, таскаем со строкой
   INTRO=(j.introRows||[]).map(r=>({count:r.count,color:r.color||'white',fill:r.fill||null,anim:(r.anim==='count'?'':(r.anim||'')),fx:r.fx||'',dec:parseInt(r.dec)||0,is_count:!!(r.is_count||r.anim==='count'),cnt_words:(Array.isArray(r.cnt_words)?r.cnt_words.slice():null),break:!!r.break,from:(r.from!=null?r.from:null),gx:r.gx||0,gy:r.gy||0,gs:r.gs||100,accent:!!r.accent,back:!!r.back,big:!!r.big}));INTRO_PICK=-1;
-  $('aeexposure').value=j.exposure||0;$('censor').checked=j.censor!==false;
+  // Яркости и цензуры клипа в панели больше нет: яркость убрана совсем (Lumetri — в
+  // стиле), цензура — ключ стиля (clipCensor), галки на шаге 3 не осталось.
   // стиль: сперва по ключу задания, иначе — узнаём шаблон по содержимому (старые задания,
   // и «кастом», совпадающий с шаблоном 1в1: незачем открывать простыню настроек)
   let sk=(j.styleKey&&j.styleKey!=='__custom__'&&STYLES[j.styleKey])?j.styleKey:styleKeyFor(j.style);
@@ -103,7 +104,7 @@ function selectAE(i){if(curAE>=0&&curAE!==i)captureAE();curAE=i;const c=CLIPS[i]
   // клипа режим «случайно» и трека ещё нет — выбираем его СИДОМ ПО ПУТИ XML: тем же,
   // каким выбирала сборка раньше, поэтому музыка старых клипов не меняется.
   musicSync(c);musicClipUI();musicPickEnsure(c);
-  rotoSync();renderClips3();renderAeDirField();loadWordsFor(c.xml);saveState();
+  rotoSync();renderClips3();renderRenderDirField();loadWordsFor(c.xml);saveState();
   if($('st_name'))$('st_name').value='';   // вышли из редактора шаблона — см. captureAE (templateEdit)
 }
 // curAE переживает клип (список стал короче после удаления/пересборки набора, а индекс
@@ -122,7 +123,6 @@ function captureAE(){if(curAE<0)return;const c=CLIPS[curAE];if(!c){curAE=-1;retu
   const ir=introResolve();
   j.highlights=(HLXML===c.xml)?[...HL]:[];j.hl_breaks=(HLXML===c.xml)?[...BRK]:[];j.hl_count=(HLXML===c.xml)?[...CNT]:[];j.hl_joins=(HLXML===c.xml)?[...JNS]:[];j.hlxml=HLXML;
   j.introRows=INTRO.map(r=>({count:r.count,color:r.color||'white',fill:r.fill||null,anim:r.anim||'',fx:r.fx||'',dec:parseInt(r.dec)||0,is_count:!!r.is_count,cnt_words:(Array.isArray(r.cnt_words)?r.cnt_words.slice():null),break:!!r.break,from:(r.from!=null?r.from:null),gx:r.gx||0,gy:r.gy||0,gs:r.gs||100,accent:!!r.accent,back:!!r.back,big:!!r.big}));j.intromode=val('intromode');
-  j.exposure=parseFloat(val('aeexposure'))||0;j.censor=$('censor').checked;
   // Копия стиля живёт в задании ТОЛЬКО у безымянного кастома: у именованного стиля
   // источник — файл стиля, его читает сборка (styles.resolve по имени). Копия в задании
   // и была причиной рассинхрона: правка стиля до клипа не доезжала.
@@ -136,6 +136,9 @@ function captureAE(){if(curAE<0)return;const c=CLIPS[curAE];if(!c){curAE=-1;retu
   if(!dirty&&sk&&sk!=='__custom__'&&STYLES[sk])delete j.style;else j.style=CURSTYLE;
   c.job=j;
   j.ins=INS.map(x=>({...x}));
+  // Стиль клипа мог смениться (галка рото или слежения, выбор стиля): кнопка «Рассчитать
+  // рото и трекинг» пересчитывается здесь, а не только при открытии окна (87-roto-preview.js).
+  if(typeof ipvCalcStyleChanged==='function')ipvCalcStyleChanged();
   saveState();}
 // число камер — ПО КЛИПУ (из xml_state/parse_full), радио шага 1 — только фолбэк:
 // в одном наборе спокойно живут 1- и 2-камерные файлы.
@@ -183,12 +186,12 @@ function musicJobFields(c){const m=effMusic(c);
     music_dir:musicPickDir(c)};}
 function jobForBuild(c){const j=c.job||defJob();
   return {xml:c.xml,...musicJobFields(c),
-    // Папка для .jsx — из тега спикера (лестница jsxdir → outdir → папка XML); пусто =
-    // глобальное поле на шаге 3.
+    // Папка для .jsx — из тега спикера (лестница jsxdir → outdir → папка XML); пустая
+    // папка у клипа без спикера = файл ляжет рядом со своим XML (решает сборка).
     outdir:effOutdir(c)||'',
     highlights:j.highlights||[],hl_breaks:j.hl_breaks||[],hl_count:j.hl_count||[],hl_joins:j.hl_joins||[],inserts:(j.ins||[]).filter(r=>(r.media||'').trim()),
     intro:[],intro_remove:[],intro_splits:[],introRows:j.introRows||[],intro_mode:j.intromode||'word',
-    cams:clipNcams(c),exposure:j.exposure||0,style:styleForJob(j),censor:j.censor!==false};}
+    cams:clipNcams(c),style:styleForJob(j)};}
 // intro для сборки надо резолвить по словам ЭТОГО файла — делаем на бэке? нет: резолвим из introRows+загруженных слов текущего.
 // поэтому перед сборкой текущего используем introResolve(); для набора — по сохранённым introRows и словам каждого (грузим).
 
@@ -206,7 +209,7 @@ function applyInsMoved(map){
   return keys.length;}
 async function startBuild(jobs,mode,outdir){const el=$('aeres');el.className='muted';el.textContent='';
   const d=await (await fetch('/api/build_run',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({jobs,mode,outdir:outdir!==undefined?outdir:AEGLOBAL,dest:(val('illdest')||'').trim()})})).json();
+    body:JSON.stringify({jobs,mode,outdir:outdir!==undefined?outdir:'',dest:(val('illdest')||'').trim()})})).json();
   if(d.error){el.className='err';el.textContent='⚠ '+errText(d);return;}
   uiBusySet(true);progOpen({title:t('Сборка .jsx')});logReset();pollBuild();}
 async function pollBuild(){pollJob(pollBuild,t('Сборка .jsx'),0.3,d=>{const res=d.results||[];const el=$('aeres');
@@ -240,7 +243,7 @@ async function tojsx(){if(uiBusyGuard())return;if(curAE<0){toast(t('Выбери
     outdir:effOutdir(c)||'',          // папка клипа — лестница профиля спикера
     highlights:(HLXML===xml)?[...HL]:[],hl_breaks:(HLXML===xml)?[...BRK]:[],hl_count:(HLXML===xml)?[...CNT]:[],hl_joins:(HLXML===xml)?[...JNS]:[],inserts:INS.filter(r=>(r.media||'').trim()),
     intro:ir.lines,intro_remove:ir.remove,intro_splits:ir.splits,intro_mode:val('intromode'),
-    censor:$('censor').checked,cams:clipNcams(c),exposure:parseFloat(val('aeexposure'))||0,
+    cams:clipNcams(c),
     style:styleForJob({styleKey:(val('style')==='__edit__'?STYLE_EDITING:val('style')),style:CURSTYLE})};
   await startBuild([body],'separate');}
 
@@ -372,9 +375,10 @@ async function collectJobs(){if(curAE>=0)captureAE();if(!CLIPS.length){toast(t('
       const words=wd.words||[];ir=resolveIntroFor(j.introRows,words);}catch(e){}}
     const jb=jobForBuild(c);jb.intro=ir.lines;jb.intro_remove=ir.remove;jb.intro_splits=ir.splits;jobs.push(jb);}
   return jobs;}
-// outdir набора — по набору целиком: один спикер = его папка, иначе общая (AEGLOBAL).
+// outdir набора — по набору целиком: один спикер = его папка, иначе пусто: клипы разных
+// спикеров собираются каждый в свою, а клип без спикера кладёт .jsx рядом со своим XML.
 function buildOutdir(){const sel=selClips();const spks=new Set(sel.map(c=>clipSpeaker(c)).filter(Boolean));
-  return (spks.size===1)?effOutdir(sel[0])||AEGLOBAL:AEGLOBAL;}
+  return (spks.size===1)?(effOutdir(sel[0])||''):'';}
 async function buildMulti(){if(uiBusyGuard())return;const jobs=await collectJobs();if(jobs===null)return;
   const mode=document.querySelector('input[name=multimode]:checked').value;
   await startBuild(jobs,mode,buildOutdir());}
@@ -529,8 +533,9 @@ async function aiIntroRun(){if(uiBusyGuard())return;   // идёт пакетн�
   // владельца). Колея та же, что у пакетного aiIntroAllRun.
   const c=CLIPS[curAE];const el=$('introres');
   el.className='muted';el.textContent=t('ИИ размечает…');uiLog(t('интро (ИИ) для ')+c.name+t('…'));
-  // шлём вставки клипа — акценты за спиной встанут туда, где вставок нет
-  try{const d=await aiFetch('/api/ai_intro',{xml:c.xml,
+  // шлём вставки клипа — акценты за спиной встанут туда, где вставок нет; и СТИЛЬ КЛИПА —
+  // то же значение, что уходит в сборку (styleForJob): из него длина строки интро (ручка стиля)
+  try{const d=await aiFetch('/api/ai_intro',{xml:c.xml,style:styleForJob(c.job||defJob()),
         inserts:(c.inserts||[]).map(x=>({start_sec:x.start_sec,duration_sec:x.duration_sec}))},'introStop','introres');
     if(d.error){el.className='err';el.textContent='⚠ '+errText(d);uiLog(t('  ОШИБКА: ')+d.error);return;}
     insLog(d);
@@ -615,7 +620,7 @@ async function aiIntroOne(c,batch){
   if(!((c.status||{}).subs>0)){uiLog(t('  пропуск — нет субтитров'));localQSet(c.name,'wait',t('нет субтитров'));return 'skip';}
   let res='ok';
   localQSet(c.name,'intro','');
-  try{const d=await aiPost('/api/ai_intro',{xml:c.xml,batch,
+  try{const d=await aiPost('/api/ai_intro',{xml:c.xml,batch,style:styleForJob(c.job||defJob()),
       inserts:(c.inserts||[]).map(x=>({start_sec:x.start_sec,duration_sec:x.duration_sec}))},t('интро (ИИ)'));
     if(d.error)throw errText(d);
     insLog(d);

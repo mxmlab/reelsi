@@ -3,12 +3,15 @@
 """Файлы и папки: список камер, автоподбор камер по звуку, поиск ещё не нарезанных
 дублей, нативные диалоги выбора, отдача медиа, ui_state.
 """
-import os, re, sys, json, subprocess, threading
+import os, re, sys, json, subprocess, threading, hashlib, time
 from typing import Any, cast
 from flask import request, jsonify, send_file, Response
-from core.fileio import atomic_json_dump, json_load_soft
+from core.fileio import atomic_json_dump, json_load_soft, quarantine_unreadable
 from core.project_file import read_project
 from core.applog import get_logger
+from core.app_meta import env
+from core.draftrender import src_file_version
+from core import paths as repo_paths
 from core import cams
 from core import clipstore
 from core import lutbake
@@ -41,6 +44,7 @@ def api_cams() -> Response:
     try:
         return _cams_response(base)
     except ReelsiError: raise
+    # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("cams_failed", str(e)))))
 
@@ -60,6 +64,7 @@ def api_cams_make() -> Response:
             os.makedirs(os.path.join(base, f"{prefix}{k}"), exist_ok=True)
         return _cams_response(base)
     except ReelsiError: raise
+    # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("cams_make_failed", str(e)))))
 
@@ -113,6 +118,7 @@ def api_cammatch() -> Response:
                         "score": best["score"] if best else 0.0})
         return jsonify(ok=True, cam1=os.path.basename(cam1), matches=out)
     except ReelsiError: raise
+    # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("cammatch_failed", f"{type(e).__name__}: {e}"))))
 
@@ -249,6 +255,7 @@ def api_newtakes() -> Response:
             (done if cut else new).append(f)
         return jsonify(ok=True, new=new, done=done)
     except ReelsiError: raise
+    # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("newtakes_failed", f"{type(e).__name__}: {e}"))))
 
@@ -311,6 +318,7 @@ def api_ui_state() -> Response:
                     return jsonify(ok=True, state=raw, rev=0)
                 return jsonify(ok=True, state=None, rev=0)
             except ReelsiError: raise
+            # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
             except Exception as e:
                 return jsonify(**umsg_err(ReelsiError(umsg("ui_state_load_failed", f"{type(e).__name__}: {e}"))))
 
@@ -338,6 +346,11 @@ def api_ui_state() -> Response:
             if isinstance(state, dict):
                 payload = dict(state)
                 payload[_UI_STATE_REV_KEY] = next_rev
+            # Битое состояние (json_load_soft выше дал ревизию 0) откладываем, а не затираем:
+            # в нём то, что пользователь сделал в интерфейсе, и новое состояние его не вернёт.
+            bad = quarantine_unreadable(UI_STATE_PATH, valid=lambda d: isinstance(d, dict))
+            if bad:
+                log.warning("состояние интерфейса не прочитано — отложено в %s", bad)
             atomic_json_dump(UI_STATE_PATH, payload)
             if isinstance(state, dict):
                 try:
@@ -346,6 +359,7 @@ def api_ui_state() -> Response:
                     log.warning("Не удалось сохранить снимки клипов clipstore: %s", e)
             return jsonify(ok=True, rev=next_rev)
         except ReelsiError: raise
+        # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
         except Exception as e:
             return jsonify(**umsg_err(ReelsiError(umsg("ui_state_save_failed", f"{type(e).__name__}: {e}"))))
 
@@ -373,6 +387,7 @@ def api_pickmedia() -> Response:
             "filetypes=[('Медиа','*.png *.jpg *.jpeg *.webp *.avif *.gif "
             "*.mp4 *.mov *.m4v *.webm'),('Все файлы','*.*')])"))
     except ReelsiError: raise
+    # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("pickmedia_failed", str(e)))))
 
@@ -386,6 +401,7 @@ def api_pickcube() -> Response:
             "filedialog.askopenfilename(title='Выбери LUT', "
             "filetypes=[('Таблица LUT','*.cube'),('Все файлы','*.*')])"))
     except ReelsiError: raise
+    # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("pickcube_failed", str(e)))))
 
@@ -430,6 +446,7 @@ def api_fontfile(ps_name: str) -> Response | tuple[Response, int]:
 
         return send_file(file_path, mimetype=mime, conditional=True)
     except ReelsiError: raise
+    # ошибка уходит в ответ (500 с текстом) и видна пользователю
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 500
 
@@ -443,6 +460,7 @@ def api_pickfiles() -> Response:
                            "filetypes=[('XML','*.xml'),('Все файлы','*.*')]))")
         return jsonify(paths=[p for p in raw.split("|") if p.strip()])
     except ReelsiError: raise
+    # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("pickfiles_failed", str(e)))))
 
@@ -454,6 +472,7 @@ def api_pickone() -> Response:
         p = _native_pick("filedialog.askopenfilename(title='Выбери файл')")
         return jsonify(path=p)
     except ReelsiError: raise
+    # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("pickone_failed", str(e)))))
 
@@ -465,6 +484,7 @@ def api_pickaudio() -> Response:
             "filedialog.askopenfilename(title='Выбери аудио', "
             "filetypes=[('Аудио','*.m4a *.mp3 *.wav *.aac *.opus *.flac *.ogg'),('Все файлы','*.*')])"))
     except ReelsiError: raise
+    # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("pickaudio_failed", str(e)))))
 
@@ -474,6 +494,7 @@ def api_pickdir() -> Response:
     try:
         return jsonify(path=_native_pick("filedialog.askdirectory(title='Выбери папку')"))
     except ReelsiError: raise
+    # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("pickdir_failed", str(e)))))
 
@@ -550,6 +571,7 @@ def _media_path_ok(path: str, exts: set[str]) -> bool:
     try:
         real_ext = os.path.splitext(os.path.realpath(path))[1].lower().lstrip(".")
     except ReelsiError: raise
+    # realpath не получился: расширение не подтвердить, отказываем (False), а не пропускаем
     except Exception:
         real_ext = ""
     if real_ext not in exts:
@@ -649,6 +671,7 @@ def api_music_random() -> Response:
         from core import ytmusic
         return jsonify(path=ytmusic.random_track(dir_, seed=seed, exclude=exclude) or "")
     except ReelsiError: raise
+    # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
     except Exception as e:
         return jsonify(path="", **umsg_err(ReelsiError(umsg("music_random_failed", f"{type(e).__name__}: {e}"))))
 
@@ -684,13 +707,74 @@ def api_music_fetch() -> Response:
 
         return jsonify(ok=True, path=ytmusic.resolve(url, dir_, emit=_emit) or "")
     except ReelsiError: raise
+    # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("music_fetch_failed", f"Не скачалось: {e}", err=str(e)))))
 
 
+# Кэш пиков волны живёт в СЛУЖЕБНОЙ папке, а не рядом с медиа. Раньше писался
+# `<файл>.peaks<pps>.json` в папку камеры: мусор в исходниках владельца, и файл
+# оставался после удаления клипа. И ключа версии не было: изменил исходник —
+# волна рисовалась по старым пикам (прокси при этом перестраивался по mtime/size).
+# Теперь ключ — та же версия исходника, что у прокси (draftrender.src_file_version).
+PEAKS_CACHE_MAX_AGE_S = 60 * 86400   # записи старше 60 дней уходят при записи новой
+_PEAKS_NAME_RE = re.compile(r"peaks_[0-9a-f]{16}\.json")
+
+
+def _peaks_dir() -> str:
+    """Папка кэша пиков. Читается на каждый вызов: тестовый профиль переключает её
+    переменной REELSI_PEAKS_CACHE, как и другие файлы состояния."""
+    return env("PEAKS_CACHE") or repo_paths.root("_peaks")
+
+
+def peaks_cache_path(path: str, pps: int) -> str:
+    """Файл кэша пиков для исходника `path` при данном `pps`.
+
+    Ключ — версия исходника + pps: изменился файл → другой ключ → пики пересчитаются,
+    разные pps живут раздельно."""
+    h = hashlib.sha1(f"{src_file_version(path)}|pps{pps}".encode("utf-8")).hexdigest()[:16]
+    return os.path.join(_peaks_dir(), f"peaks_{h}.json")
+
+
+def _drop_legacy_peaks(path: str) -> None:
+    """Удаляет старые кэши `<имя>.peaks<pps>.json`, которые раньше лежали рядом с
+    исходником. Шаблон — точно этот и только для этого имени: соседние файлы не трогаем."""
+    d, name = os.path.split(os.path.abspath(path))
+    pat = re.compile(re.escape(name) + r"\.peaks\d+\.json")
+    try:
+        with os.scandir(d) as it:
+            for e in it:
+                if pat.fullmatch(e.name) and e.is_file(follow_symlinks=False):
+                    try:
+                        os.remove(e.path)
+                    except OSError:
+                        pass          # не удалился — не беда, кэш он и есть кэш
+    except OSError:
+        pass                          # папку не прочли — старый кэш просто остаётся
+
+
+def _prune_peaks_cache(d: str) -> None:
+    """Записи кэша старше PEAKS_CACHE_MAX_AGE_S удаляются при записи новой.
+    Без отдельного потока: уборка идёт на записи, редко и дёшево."""
+    cutoff = time.time() - PEAKS_CACHE_MAX_AGE_S
+    try:
+        with os.scandir(d) as it:
+            for e in it:
+                if not _PEAKS_NAME_RE.fullmatch(e.name) or not e.is_file(follow_symlinks=False):
+                    continue
+                try:
+                    if e.stat(follow_symlinks=False).st_mtime < cutoff:
+                        os.remove(e.path)
+                except OSError:
+                    pass                  # запись не удалилась (занята) — уберём при следующей записи
+    except OSError:
+        pass                              # папку кэша не прочли — уборка необязательна, кэш остаётся
+
+
 @bp.route("/api/waveform")
 def api_waveform() -> Response | tuple[str, int]:
-    """Пики амплитуды исходника (для рисования волны на блоках). Кэш рядом с файлом."""
+    """Пики амплитуды исходника (для рисования волны на блоках). Кэш в служебной папке
+    (`peaks_cache_path`), по версии файла: изменился исходник — пики пересчитаются."""
     path = (request.args.get("path") or "").strip().strip('"')
     try:
         pps = int(request.args.get("pps") or 80)
@@ -708,6 +792,7 @@ def api_waveform() -> Response | tuple[str, int]:
     try:
         real_ext = os.path.splitext(os.path.realpath(path))[1].lower().lstrip(".")
     except ReelsiError: raise
+    # realpath не получился: расширение не подтвердить, отвечаем 403, а не отдаём файл
     except Exception:
         real_ext = ""
     if real_ext not in ALLOWED_WAVE_EXTS:
@@ -716,10 +801,12 @@ def api_waveform() -> Response | tuple[str, int]:
         return ("forbidden", 403)
     if not os.path.isfile(path):
         return jsonify(**umsg_err(ReelsiError(umsg("no_file", "нет файла"))))
-    cache = path + f".peaks{pps}.json"
+    _drop_legacy_peaks(path)          # старый кэш рядом с файлом — убираем, он больше не читается
+    cache = peaks_cache_path(path, pps)
     if os.path.isfile(cache):
         try:
-            return jsonify(json.load(open(cache, encoding="utf-8")))
+            with open(cache, encoding="utf-8") as f:
+                return jsonify(json.load(f))
         except ReelsiError: raise
         except Exception:
             pass  # кэш пиков битый — пересчитаем ниже
@@ -730,12 +817,15 @@ def api_waveform() -> Response | tuple[str, int]:
         peaks = [round(float(np.abs(y[i:i+step]).max()), 3) for i in range(0, len(y), step)]
         res = {"ok": True, "dur": round(len(y)/sr, 3), "pps": pps, "peaks": peaks}
         try:
-            json.dump(res, open(cache, "w", encoding="utf-8"))
+            os.makedirs(os.path.dirname(cache), exist_ok=True)
+            atomic_json_dump(cache, res)
+            _prune_peaks_cache(os.path.dirname(cache))
         except ReelsiError: raise
         except Exception:
             pass  # кэш пиков не записался — в следующий раз просто пересчитаем
         return jsonify(res)
     except ReelsiError: raise
+    # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("waveform_failed", f"{type(e).__name__}: {e}"))))
 
@@ -800,6 +890,7 @@ def api_clip_delete() -> Response:
     try:
         entries = sorted(os.listdir(xml_dir))
     except ReelsiError: raise
+    # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("list_dir_failed", f"Не удалось прочитать папку: {e}", err=str(e)))))
 
@@ -834,6 +925,7 @@ def api_clip_delete() -> Response:
         try:
             same_dir = os.path.realpath(jsxdir).lower() == os.path.realpath(xml_dir).lower()
         except ReelsiError: raise
+        # realpath не получился: считаем папки разными; дубль, если папка та же, отсекает seen_paths ниже
         except Exception:
             same_dir = False
         if not same_dir:
@@ -888,6 +980,7 @@ def api_clip_delete() -> Response:
                 skipped.append({"path": rec["path"], "why": f"не перенесён: {rec['why']}"})
             files_to_delete = deleted
             total_bytes = sum(f["size"] for f in files_to_delete)
+        # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
         except Exception as e:
             return jsonify(**umsg_err(ReelsiError(umsg("trash_move_failed", f"Ошибка переноса в корзину: {e}", err=str(e)))))
         try:
@@ -931,6 +1024,7 @@ def api_trash_list() -> Response:
         items = clipstore.list_trash(dir_)
         return jsonify(ok=True, items=items)
     except ReelsiError: raise
+    # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("trash_list_failed", f"Не удалось получить список корзины: {e}", err=str(e)))))
 
@@ -952,6 +1046,7 @@ def api_trash_restore() -> Response:
         res = clipstore.restore_trash(dir_, id_)
         return jsonify(**res)
     except ReelsiError: raise
+    # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("trash_restore_failed", f"Ошибка восстановления из корзины: {e}", err=str(e)))))
 

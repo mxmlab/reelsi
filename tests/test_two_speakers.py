@@ -36,7 +36,8 @@ r"""Два клипа — два спикера: каждая фича берё�
 3. папка `.jsx` и папка рендера со всей лестницей — `effOutdir`, `effRenderdir`,
    `jobForBuild`, `buildOutdir`;
    `test_jsx_and_render_folders_follow_the_speaker_of_the_clip`;
-4. музыка: папка стиля и переопределение клипа — `effMusic`, `musicPickDir`;
+4. музыка и цензура: режим, папка стиля и переопределение клипа — `effMusic`,
+   `clipStyleObj`, `clipCensor`, `musicPickDir`;
    `test_music_folder_follows_the_speaker_of_the_clip`;
 5. LUT камеры и кадр камеры (формат ролика, рамка) — `lutPath`, `camFrameSpeaker`,
    `camFrameProfile`, `camFrameWH`, `camFrameOf`;
@@ -63,6 +64,12 @@ r"""Два клипа — два спикера: каждая фича берё�
    `test_render_folder_follows_the_speaker_of_the_selected_set`;
 15. переименование спикера перетегирует клипов ТОГО спикера — `saveSpeaker`;
    `test_renaming_a_speaker_retags_only_clips_of_that_speaker`.
+16. вставки по названиям (слово из личного словаря с картинкой из базы): выключатель
+   `named_inserts` берётся из профиля спикера КЛИПА — `cmd_inserts(speaker=…)`;
+   `test_named_inserts_follow_the_switch_of_the_clip_speaker`.
+17. ИИ-интро: длина строки интро — из СТИЛЯ клипа (тело
+   `/api/ai_intro` несёт `styleForJob(job)`, как сборка) — `aiIntroRun`, `aiIntroOne`;
+   `test_ai_intro_sends_the_style_of_the_clip`.
 
 ДЫРУ В ПОКРЫТИИ ВИДНО ТОЛЬКО МУТАЦИЕЙ. Место, не попавшее ни в одну проверку
 ниже, остаётся «зелёным», пока кто-нибудь не подменит в нём `clipSpeaker(...)`
@@ -81,6 +88,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 from typing import Any
 
 import pytest
@@ -120,10 +128,12 @@ SPEAKERS[SPK_V]={label:'СпикерВ',inserts:{photo:11,video:6},style:'stV',
   jsxdir:'D:\\spkV\\jsx',outdir:'D:\\spkV\\out',renderdir:'D:\\spkV\\render',
   lut:{'1':'D:\\spkV\\cam1.cube'},frame:{'1':{x:0.5,y:0.5,zoom:300}},
   voice_fx:{denoise:'v'},format:'4:5'};
-// Музыка — свойство СТИЛЯ, а стиль клипа выбирается профилем ЕГО спикера
-// (setClipSpeaker/selectAE): у каждого спикера своя папка треков.
-const STYLES={stA:{label:'stA',music_mode:'random',music_dir:'D:\\spkA\\music'},
-  stB:{label:'stB',music_mode:'random',music_dir:'D:\\spkB\\music'},
+// Музыка и цензура — свойства СТИЛЯ, а стиль клипа выбирается профилем ЕГО спикера
+// (setClipSpeaker/selectAE): у каждого спикера свой режим, своя папка треков и своя
+// цензура. Клип берёт их У СЕБЯ (clipStyleObj), а не из показанного в панели CURSTYLE.
+const STYLES={stA:{label:'stA',music_mode:'random',music_dir:'D:\\spkA\\music',censor:false},
+  stB:{label:'stB',music_mode:'file',music_dir:'D:\\spkB\\music',
+       music_src:'D:\\spkB\\track.m4a',censor:true},
   stV:{label:'stV',music_mode:'random',music_dir:'D:\\spkV\\music'}};
 const SPKFORMATS={'1:1':[1080,1080],'16:9':[1920,1080],'4:5':[1080,1350],'9:16':[1080,1920]};
 const GENERAL=SPK_V;
@@ -137,7 +147,7 @@ function toast(m){}
 function askConfirm(m){return Promise.resolve(false);}
 function sleep(ms){return Promise.resolve();}
 function nCams(){return 2;}
-let AEGLOBAL='',AERENDER='D:\\global\\render',AEMUSICDIR='',CURSTYLE=null;
+let AERENDER='D:\\global\\render',AEMUSICDIR='',CURSTYLE=null;
 let curAE=-1,curIns=-1,VOICEFXSPK='';
 const ELS={};
 function $(id){if(!ELS[id])ELS[id]={id:id,className:'',textContent:'',innerHTML:'',
@@ -146,7 +156,7 @@ function saveState(){}
 function renderClips3(){}
 function renderClips2(){}
 function renderInsHost(){}
-function renderAeDirField(){}
+function renderRenderDirField(){}
 function syncBuildBtn(){}
 function syncClipLists(){}
 function selectAE(i){curAE=i;}
@@ -330,15 +340,16 @@ def test_jsx_and_render_folders_follow_the_speaker_of_the_clip(tmp_path):
     """3. Папки клипа — лестница ЕГО профиля: jsxdir → outdir → папка XML.
 
     У А и Б свои папки; провал на следующую ступень остаётся у ТОГО ЖЕ спикера
-    (jsxdir Б пуст — берётся outdir Б, а не папка соседа и не общее поле). Набор из
-    клипов двух спикеров в одну папку не собирается: `buildOutdir` отдаёт общую.
+    (jsxdir Б пуст — берётся outdir Б, а не папка соседа). Набор из клипов двух спикеров
+    в одну папку не собирается: `buildOutdir` отдаёт пусто (каждый — в свою, а клип без
+    тега ложится рядом со своим XML).
     """
     script = (HARNESS + _door()
               + _funcs(QUEUE_JS, ("selClips",))
               + _funcs(STYLES_JS, ("xmlDirOf", "effOutdir", "effRenderdir"))
               + _funcs(AE_JS, ("defJob", "styleForJob", "clipNcams", "musicJobFields",
                                "jobForBuild", "buildOutdir"))
-              + _funcs(STYLES_JS, ("effMusic",)) + _funcs(AE_JS, ("musicPickDir",))
+              + _funcs(STYLES_JS, ("effMusic", "clipStyleObj")) + _funcs(AE_JS, ("musicPickDir",))
               + _tail(r"""(async()=>{
   const out={};
   out.jsx=[effOutdir(CLIPS[0]),effOutdir(CLIPS[1])];
@@ -349,12 +360,11 @@ def test_jsx_and_render_folders_follow_the_speaker_of_the_clip(tmp_path):
   SPEAKERS[SPK_A].outdir='';
   out.ladderXml=[effOutdir(CLIPS[0])];
   SPEAKERS[SPK_A].jsxdir='D:\\spkA\\jsx';SPEAKERS[SPK_A].outdir='D:\\spkA\\out';
-  AEGLOBAL='D:\\global\\jsx';
   const both=buildOutdir();
   CLIPS[0].sel=true;
   const one=buildOutdir();
   CLIPS[0].sel=false;
-  out.mixed=both;out.single=one;out.global=AEGLOBAL;
+  out.mixed=both;out.single=one;
   console.log(JSON.stringify(out));
 """))
     res = _run_node(tmp_path, "twospk_folders.js", script)
@@ -363,7 +373,9 @@ def test_jsx_and_render_folders_follow_the_speaker_of_the_clip(tmp_path):
     assert res["job"] == ["D:\\spkA\\jsx", "D:\\spkB\\jsx"], res["job"]
     assert res["ladderOut"] == ["D:\\spkA\\out"], res["ladderOut"]
     assert res["ladderXml"] == ["D:\\out"], res["ladderXml"]
-    assert res["mixed"] == res["global"], res          # два спикера — общая папка
+    # Два спикера — общей папки .jsx больше нет вовсе: каждый собирается в свою,
+    # а клип без тега кладёт файл рядом со своим XML.
+    assert res["mixed"] == "", res
     assert res["single"] == "D:\\spkA\\jsx", res        # один — папка ЕГО спикера
     assert "D:\\spkV" not in json.dumps(res, ensure_ascii=False), res
 
@@ -371,35 +383,40 @@ def test_jsx_and_render_folders_follow_the_speaker_of_the_clip(tmp_path):
 # ============================ 4. МУЗЫКА ============================
 @node
 def test_music_folder_follows_the_speaker_of_the_clip(tmp_path):
-    """4. Папка музыки — папка стиля спикера ЭТОГО клипа, выше — своё клипа.
+    """4. Музыка и цензура — у стиля ЭТОГО клипа, выше — своё клипа.
 
     Стиль клипа ставит его профиль (`setClipSpeaker` — та же дверь, что в `selectAE`:
-    тег → стиль), а `musicPickDir` берёт папку переопределения клипа, иначе папку
-    стиля: у клипа А треки из папки А, у клипа Б — из папки Б, третий спикер не
-    участвует.
+    тег → стиль), а `effMusic`/`clipCensor` берут их У САМОГО КЛИПА (`clipStyleObj`),
+    а не из показанного в панели CURSTYLE: у клипа А режим и папка из стиля А и цензура
+    снята, у клипа Б — свой файл и цензура включена, третий спикер не участвует.
+    `musicPickDir` над этим берёт папку переопределения клипа, иначе папку стиля.
     """
     script = (HARNESS + _door()
               + _funcs(STYLES_JS, ("samePath",))
               + _funcs(QUEUE_JS, ("setClipSpeaker", "selClips"))
-              + _funcs(AE_JS, ("defJob", "musicPickDir")) + _funcs(STYLES_JS, ("effMusic",))
+              + _funcs(AE_JS, ("defJob", "musicPickDir"))
+              + _funcs(STYLES_JS, ("clipStyleObj", "effMusic", "clipCensor"))
               + _tail(r"""(async()=>{
   // Стиль клипа выбирает его профиль — та же дверь, что в selectAE: тег → стиль.
+  // CURSTYLE нарочно ставим чужим (стиль спикера В): клип обязан брать СВОЙ стиль.
   function styleOf(c){setClipSpeaker(CLIPS.indexOf(c),clipSpeaker(c));
-    CURSTYLE=STYLES[c.job.styleKey]||{};return musicPickDir(c);}
+    CURSTYLE=STYLES[SPK_V]||{};
+    return {dir:musicPickDir(c),mode:effMusic(c).mode,censor:clipCensor(c)};}
   const out={};
-  out.style=[styleOf(CLIPS[0]),styleOf(CLIPS[1])];
-  out.styleAgain=[styleOf(CLIPS[0]),styleOf(CLIPS[1])];
+  out.a=styleOf(CLIPS[0]);out.b=styleOf(CLIPS[1]);
+  out.again=[styleOf(CLIPS[0]),styleOf(CLIPS[1])];
   CLIPS[0].job.music_override={mode:'random',dir:'D:\\spkA\\own'};
-  out.override=[styleOf(CLIPS[0]),styleOf(CLIPS[1])];
+  out.override=[styleOf(CLIPS[0]).dir,styleOf(CLIPS[1]).dir];
   CLIPS[0].job.music_override=null;
   CLIPS[1].job.music_override={mode:'off'};
-  out.modeOff=[styleOf(CLIPS[1])];
+  out.modeOff=[styleOf(CLIPS[1]).dir];
   CLIPS[1].job.music_override=null;
   console.log(JSON.stringify(out));
 """))
     res = _run_node(tmp_path, "twospk_music.js", script)
-    assert res["style"] == ["D:\\spkA\\music", "D:\\spkB\\music"], res["style"]
-    assert res["styleAgain"] == ["D:\\spkA\\music", "D:\\spkB\\music"], res["styleAgain"]
+    assert res["a"] == {"dir": "D:\\spkA\\music", "mode": "random", "censor": False}, res["a"]
+    assert res["b"] == {"dir": "D:\\spkB\\music", "mode": "file", "censor": True}, res["b"]
+    assert res["again"] == [res["a"], res["b"]], res["again"]
     assert res["override"] == ["D:\\spkA\\own", "D:\\spkB\\music"], res["override"]
     assert res["modeOff"] == [""], res["modeOff"]
     assert "D:\\spkV" not in json.dumps(res, ensure_ascii=False), res
@@ -1014,3 +1031,94 @@ def test_renaming_a_speaker_retags_only_clips_of_that_speaker(tmp_path):
     assert res["saved"] == "СпикерА2", res["saved"]
     assert res["del"] == ["СпикерА"], res["del"]
     assert "СпикерВ" not in json.dumps(res, ensure_ascii=False), res
+
+
+# ============ 16. ВСТАВКИ ПО НАЗВАНИЯМ ПО ПРОФИЛЮ КЛИПА ============
+def test_named_inserts_follow_the_switch_of_the_clip_speaker(tmp_path, monkeypatch):
+    """16. Вставки по названиям: выключатель берётся из профиля СПИКЕРА КЛИПА.
+
+    У клипа А профиль вставки по названиям не выключал — его клип получает фото-вставку с
+    картинкой названного предмета. У клипа Б тот же вызов, но профиль выключатель снял
+    (`named_inserts: false`) — у его клипа вставок по названиям нет ни одной. Разница только
+    в спикере, который пришёл от клипа: возьми код общий селектор — оба клипа повели бы
+    себя одинаково.
+
+    Проверка питоновская (у вставок по названиям нет своей двери на фронте — весь выбор
+    делает `cmd_inserts`), а стоит в этом файле потому, что это фича СО СПИКЕРОМ: список
+    выше — реестр таких фич, и своя строка в нём обязательна.
+    """
+    sys.path.insert(0, str(ROOT))
+    from core import insertlib
+    from core.aicut import commands
+
+    named = tmp_path / "named_inserts.json"
+    named.write_text('{"кофемашина": ["кофемашины"]}', encoding="utf-8")
+    monkeypatch.setattr(commands, "NAMED_INSERTS_PATH", str(named))
+    monkeypatch.setitem(commands._NAMED_CACHE, "mtime", None)
+    monkeypatch.setitem(commands._NAMED_CACHE, "cfg", None)
+    words = [(0, "поставил", 1.0, 1.5), (1, "кофемашины", 34.2, 34.7), (2, "всё", 60.0, 60.5)]
+    monkeypatch.setattr(commands, "_words_from_xml", lambda p: list(words))
+    monkeypatch.setattr(commands, "_ask_json", lambda *a, **k: {"inserts": []})
+    monkeypatch.setattr(insertlib, "find_named",
+                        lambda terms, kind="photo", secondary=(), prefer=(), avoid=(): {"path": "D:\\lib\\coffee-machine-box.png"})
+    base = {"inserts": {"photo": 10, "video": 3}}
+    prof_a = dict(base, label="СпикерА")
+    prof_b = dict(base, label="СпикерБ", named_inserts=False)
+
+    res_a = commands.cmd_inserts(str(tmp_path / "СпикерА.xml"), speaker=prof_a,
+                                 emit=lambda *a, **k: None)
+    res_b = commands.cmd_inserts(str(tmp_path / "СпикерБ.xml"), speaker=prof_b,
+                                 emit=lambda *a, **k: None)
+
+    assert [x for x in res_a["inserts"] if x.get("auto") == "named"], res_a["inserts"]
+    assert not [x for x in res_b["inserts"] if x.get("auto") == "named"], res_b["inserts"]
+
+
+# ======================= 17. ИИ-ИНТРО: СТИЛЬ КЛИПА =======================
+INTRO_STYLE_STUBS = r"""
+const CALLS=[];
+let AEXML='',UICANCEL=false,INTRO=[],INTRO_PICK=-1;
+function uiBusyGuard(){return false;}
+function insLog(d){}
+function midCount(d){return 0;}
+function renderIntro(){}
+function captureAE(){}
+function aewRender(){}
+function aiAborted(e){return false;}
+function localQSet(name,stage,detail){}
+function take(){return CALLS.splice(0);}
+function record(url,body){CALLS.push({url:url,style:(body.style==null)?null:String(body.style)});}
+async function aiFetch(url,body,tag,res){record(url,body);return {intro_rows:[],mid_groups:[]};}
+async function aiPost(url,body,title){record(url,body);return {intro_rows:[],mid_groups:[]};}
+"""
+
+
+@node
+def test_ai_intro_sends_the_style_of_the_clip(tmp_path):
+    """17. ИИ-интро: длина строки интро берётся из СТИЛЯ клипа.
+
+    Тело `/api/ai_intro` несёт то же значение, что уходит в сборку клипа (`styleForJob`):
+    у клипа А стиль stA, у клипа Б stB. Обе двери — одиночная (`aiIntroRun`) и пакетная
+    (`aiIntroOne`) — шлют стиль СВОЕГО клипа; стиль без привязки к клипу дал бы обоим
+    одну и ту же ручку длины строки.
+    """
+    script = (HARNESS
+              + _funcs(AE_JS, ("aiIntroRun", "aiIntroOne", "introRowsFromAI",
+                               "styleForJob", "defJob"))
+              + INTRO_STYLE_STUBS
+              + _tail(r"""(async()=>{
+  const out={};
+  AEXML=CLIPS[0].xml;curAE=0;await aiIntroRun();
+  AEXML=CLIPS[1].xml;curAE=1;await aiIntroRun();
+  out.single=take();
+  CLIPS[0].status={subs:12};CLIPS[1].status={subs:12};
+  CLIPS[0].inserts=[];CLIPS[1].inserts=[];
+  await aiIntroOne(CLIPS[0]);
+  await aiIntroOne(CLIPS[1]);
+  out.batch=take();
+  console.log(JSON.stringify(out));
+"""))
+    res = _run_node(tmp_path, "twospk_intro_style.js", script)
+    assert [c["url"] for c in res["single"]] == ["/api/ai_intro"] * 2, res["single"]
+    assert [c["style"] for c in res["single"]] == ["stA", "stB"], res["single"]
+    assert [c["style"] for c in res["batch"]] == ["stA", "stB"], res["batch"]

@@ -47,7 +47,7 @@ function stateObj(){return {
   // разметка, — поля с этим id в index.html нет. typeof — потому что stateObj
   // вырезают и гоняют стенды интерфейса без файла запуска: незаданная переменная
   // там не ошибка, а честное «папки нет».
-  base:val('base'),ai_outdir:val('ai_outdir'),aeoutdir:AEGLOBAL,aerender:AERENDER,
+  base:val('base'),ai_outdir:val('ai_outdir'),aerender:AERENDER,
   aemusicdir:(typeof AEMUSICDIR!=='undefined'?AEMUSICDIR:''),
   // Движок рендера (какой из двух) — настройка рендера, как папка вывода: живёт в
   // состоянии, а не в разметке. Значение читает сам переключатель (rendEngine).
@@ -123,10 +123,7 @@ function srvStatePost(s){ // собственно отправка зеркал�
     .catch(e=>{SRVST_SENDING=false;SRVST_PENDING=null;
       if(!SRVST_ERR){SRVST_ERR=true;uiLog(t('⚠ ui_state: ')+e);}});}
 function applyState(s){try{
-  ['base','ai_outdir','aeoutdir'].forEach(k=>{const el=$(k);if(el&&s[k]!=null)el.value=s[k];});
-  // Глобальная папка .jsx (клипы без тега спикера) — из сохранённого состояния;
-  // поле показывает её или папку тега открытого клипа (см. renderAeDirField).
-  if(s.aeoutdir!=null)AEGLOBAL=s.aeoutdir;
+  ['base','ai_outdir'].forEach(k=>{const el=$(k);if(el&&s[k]!=null)el.value=s[k];});
   if(s.aerender!=null)AERENDER=s.aerender;
   // Движок рендера — до первого сохранения состояния: rendEngineUI внутри ставит
   // выбранную радиокнопку и зовёт saveState (без него выбор так и остался бы в файле).
@@ -177,7 +174,7 @@ function applyState(s){try{
   if(s.VID){VIDSAVED=s.VID;
     if(Array.isArray(s.VID.refs))VREFS=s.VID.refs;
     const tp=$('vid_prompt');if(tp&&s.VID.prompt!=null)tp.value=s.VID.prompt;}
-  buildCamRows();renderQueue();renderAeDirField();renderCutStagesUI();cutSummary();
+  buildCamRows();renderQueue();renderRenderDirField();renderCutStagesUI();cutSummary();
 }catch(e){
   uiLog(t('⚠ состояние интерфейса не восстановлено: ')+e);
   console.error(e);

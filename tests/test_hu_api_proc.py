@@ -12,6 +12,7 @@
 8. Сторож простоя aerender в api/render.py _run_proc.
 """
 import json
+import os
 import sys
 import types
 from unittest.mock import MagicMock
@@ -114,16 +115,17 @@ def test_waveform_pps_clamped(client, tmp_path, monkeypatch):
                     headers={"Host": "127.0.0.1:5001"})
     assert r1.status_code == 200
     assert r1.get_json().get("pps") == 10
-    assert (tmp_path / "clip.wav.peaks10.json").is_file()
-    assert not (tmp_path / "clip.wav.peaks-1.json").exists()
+    from api import files as files_api
+    assert os.path.isfile(files_api.peaks_cache_path(str(fake_audio), 10))
+    assert not os.path.isfile(files_api.peaks_cache_path(str(fake_audio), -1))
 
     # Запрос с pps=100000 -> clamp to 1000
     r2 = client.get(f"/api/waveform?path={fake_audio}&pps=100000",
                     headers={"Host": "127.0.0.1:5001"})
     assert r2.status_code == 200
     assert r2.get_json().get("pps") == 1000
-    assert (tmp_path / "clip.wav.peaks1000.json").is_file()
-    assert not (tmp_path / "clip.wav.peaks100000.json").exists()
+    assert os.path.isfile(files_api.peaks_cache_path(str(fake_audio), 1000))
+    assert not os.path.isfile(files_api.peaks_cache_path(str(fake_audio), 100000))
 
 
 def test_render_run_normalizes_before_response(client, monkeypatch):

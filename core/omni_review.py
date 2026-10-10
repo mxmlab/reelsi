@@ -92,7 +92,7 @@ def main() -> None:
             _cut_chunk(a.draft, t, t1, piece)
             txt = review_chunk(proc, model, piece)
         except ReelsiError: raise
-        except Exception as ex:
+        except Exception as ex:  # ошибка видна: станет текстом куска и напечатается; остальные куски идут дальше
             txt = f"(ошибка куска: {ex})"
         finally:
             try:

@@ -328,7 +328,7 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
                music: Any = None, music_db: float = -20.0, music_dir: Any = None, base: Any = None,
                disclaimer: str = DEFAULT_DISCLAIMER, disc_sec: float = 1.35, intro_riser: bool = True,
                highlights: Any = None, hl_breaks: Any = None, hl_count: Any = None, hl_joins: Any = None, inserts: Any = None, censor_audio: bool = True, intro: Any = None,
-               intro_remove: Any = None, intro_splits: Any = None, ncams: int | None = None, exposure: float = 0.0, intro_mode: str = "word",
+               intro_remove: Any = None, intro_splits: Any = None, ncams: int | None = None, intro_mode: str = "word",
                roto: bool = False, roto_bottom: float = 0.0, roto_device: Any = None, style: Any = None,
                music_random: bool = False, emit: Any = None,
                include_xml_inserts: bool = True, cancel: Any = None, word_timings: Any = None,
@@ -481,10 +481,10 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
     _any_plate = bool(stv.plate_path) and any(x.get("plate") for x in inserts)
     # ---- Цвет камер через Lumetri вынесен в plan_lumetri.py (остаток распила) ----
     # Девять значений стиля одной дверью: их читают и .jsx (LUMETRI / applyLumetri),
-    # и превью (`plan["lumetri"]`), второй копии правил нет. Экспозиция клипа (kwarg
-    # exposure с шага AE) прибавляется к стилевой там же; ключи читаются ЯВНО — сторож
-    # схемы (test_r11_li_every_knob) ищет ручку в коде по её имени.
-    _lm = plan_lumetri(LumetriInputs(style=stv, exposure=exposure))
+    # и превью (`plan["lumetri"]`), второй копии правил нет. Экспозиции клипа с шага AE
+    # больше нет вовсе (яркость убрана, Lumetri настраивается стилем); ключи читаются
+    # ЯВНО — сторож схемы (test_r11_li_every_knob) ищет ручку в коде по её имени.
+    _lm = plan_lumetri(LumetriInputs(style=stv))
     lumetri, lumetri2 = _lm.lum, _lm.lum2
     # Цвет мидтонов жёлтой строки — тот самый, что уезжает в подстановку _yellow_expr:
     # своя подстановка intro_hl_fill перебивает hl_fill. Яркость у него ОДНА на двоих
@@ -799,7 +799,7 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
         hl_short_fn=hl_short_fn,
         posy=_posy, hl_rise=_hl_rise, hl_step=_hl_step, hl_dur=_hl_dur,
         fsize=_fsize, fsize_base=_fsize_base, inserts_js=inserts_js,
-        fps=_fps0, exposure=exposure, music_db=music_db, voice_wav=voice_wav,
+        fps=_fps0, music_db=music_db, voice_wav=voice_wav,
         voice_db=voice_db, audio_fade=audio_fade, riser=riser, pop=pop,
         censor_js=censor_js, music_path=music_path, trans=trans, trans_sfx=trans_sfx,
         intro_font_ps=intro_font_ps, intro_hl_font_ps=intro_hl_font_ps,

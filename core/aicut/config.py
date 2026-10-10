@@ -249,6 +249,8 @@ def step_concurrency(step: str) -> int:
                     slots = max(1, min(16, val))
         except ReelsiError: raise
         except Exception:
+            # проба слотов llama.cpp (/props): нет эндпоинта или сервер не ответил — один слот,
+            # медленнее, но не падаем; кэш на 60 с не даёт пробе повторяться на каждом запросе
             slots = 1
         with _PROPS_CACHE_LOCK:
             _PROPS_CACHE[base_url] = (time.time() + 60.0, slots)
@@ -707,6 +709,31 @@ def cut_asr_engine(emit: Callable[..., Any] | None = None) -> str:
     return "gigaam"
 
 
+def cut_text_asr_engine(emit: Callable[..., Any] | None = None) -> str:
+    """Второй движок «на текст» при нарезке: Whisper правит написание слов CTC.
+
+    Берётся из ai_config.json (active_cut_text_asr). Пусто или ключа нет — выключено (""),
+    это дефолт. Сохранённый id, которого нет в каталоге или который не Whisper, тоже даёт
+    выключено, но с предупреждением: молча терять настройку нельзя."""
+    engine = load_ai_config().get("active_cut_text_asr") or ""
+    if not engine:
+        return ""
+    try:
+        from core import asr_backends
+        meta = asr_backends.engine_meta(engine)
+        if meta and meta.get("kind") == "whisper":
+            return engine
+        msg = f"⚠ Движок текста нарезки «{engine}» не найден или не Whisper — второй проход выключен"
+        if emit:
+            emit(msg)
+        else:
+            print(msg, flush=True)
+    except Exception as ex:
+        log.warning("движок текста нарезки «%s» не проверен: %s — второй проход выключен",
+                    engine, ex)
+    return ""
+
+
 def model_device_cfg() -> str:
     """«Где считать модели» (сервис моделей): `auto` / `cuda` / `cpu`.
 
@@ -718,6 +745,7 @@ def model_device_cfg() -> str:
     try:
         return _device.model_device()
     except Exception:
+        # конфиг не прочитан — авто-выбор устройства: безопасный дефолт, сам подберёт GPU или CPU
         return _device.DEVICE_AUTO
 
 
@@ -739,6 +767,7 @@ def ae_build_workers_cfg() -> Any:
     try:
         return load_ai_config().get("ae_build_workers", "auto")
     except Exception:
+        # конфиг не прочитан — «auto»: число воркеров подберёт сборка сама
         return "auto"
 
 

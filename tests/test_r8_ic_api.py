@@ -87,7 +87,7 @@ def _reset_jobs(tmp_path, monkeypatch):
 @pytest.fixture
 def xml_file(tmp_path):
     """Живой XML: без него `_norm_build_jobs` падает раньше проверки полей —
-    «файл не найден» вместо разбора «exposure»/«style»."""
+    «файл не найден» вместо разбора «inserts»/«style»."""
     p = tmp_path / "01_clip.xml"
     p.write_text("<xmeml version='4'><sequence></sequence></xmeml>", encoding="utf-8")
     return str(p)
@@ -96,11 +96,11 @@ def xml_file(tmp_path):
 @pytest.mark.parametrize("jobs", [
     [123],                                                   # элемент набора — не объект
     [{"xml": None, "style": 5}],                             # стиль — число
-    [{"xml": None, "exposure": "abc"}],                       # Exposure — не число
+    [{"xml": None, "inserts": 5}],                           # inserts — не список
 ])
 def test_render_run_bad_set_is_not_500_and_not_file_not_found(client, monkeypatch,
                                                               xml_file, jobs):
-    """Три тела из задания: `{"jobs":[123]}`, `"style": 5`, `"exposure": "abc"`."""
+    """Три тела из задания: `{"jobs":[123]}`, `"style": 5`, `"inserts": 5`."""
     jobs = [{**j, "xml": xml_file} if isinstance(j, dict) else j for j in jobs]
     monkeypatch.setattr("threading.Thread.start", lambda self: None)
     r = client.post("/api/render_run", json={"jobs": jobs}, headers=H)
@@ -120,24 +120,28 @@ def test_render_run_missing_file_is_file_not_found(client, monkeypatch):
     assert d["err"] == "file_not_found" and d["err_vars"]["path"] == "нет-такого.xml", d
 
 
-def test_render_run_exposure_error_names_the_field(client, monkeypatch, xml_file):
-    """Сообщение обязано называть ПОЛЕ, а не «could not convert string to float»."""
+def test_render_run_bad_field_error_names_the_field(client, monkeypatch, xml_file):
+    """Сообщение обязано называть ПОЛЕ, а не падать текстом питона.
+
+    Раньше нечисловое поле доезжало до `float()` и роут отвечал «файл не найден»;
+    теперь ошибка называет само поле (`inserts` — список), и по ней видно, что чинить.
+    """
     monkeypatch.setattr("threading.Thread.start", lambda self: None)
     d = client.post("/api/render_run",
-                    json={"jobs": [{"xml": xml_file, "exposure": "abc"}]},
+                    json={"jobs": [{"xml": xml_file, "inserts": 5}]},
                     headers=H).get_json()
-    assert "exposure" in d["error"], d
-    assert "float" not in d["error"], d
+    assert "inserts" in d["error"], d
+    assert "int" not in d["error"], d
 
 
 def test_build_run_bad_set_is_not_file_not_found(client, monkeypatch, xml_file):
     """Тот же дефект был и у сборки .jsx: `_norm_build_jobs` — общая для двух роутов."""
     monkeypatch.setattr("threading.Thread.start", lambda self: None)
     d = client.post("/api/build_run",
-                    json={"jobs": [{"xml": xml_file, "exposure": "abc"}]},
+                    json={"jobs": [{"xml": xml_file, "inserts": 5}]},
                     headers=H).get_json()
     assert d.get("err") == "build_set_invalid", d
-    assert "exposure" in d["error"], d
+    assert "inserts" in d["error"], d
 
 
 @pytest.mark.parametrize("url", ["/api/render_run", "/api/build_run"])

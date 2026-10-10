@@ -341,6 +341,25 @@ The `tools/` scripts whose `main()` is deliberately without tests (the pure help
 - `tools/intro_rules.py` and `tools/intro_hook_rules.py`: their `main()` are tied to the user's real folders `MKAutoCut_out/` and `AutoCut_out/` (the pure logic is covered).
 
 
+### Open 2026-10-10: torch stays on 2.8, dead code, two pid tests
+
+**Torch above 2.8 is not installed for now.** The pair torch 2.8.0 + torchaudio 2.8.0 + torchvision 0.23.0
+is the recommended one (`requirements.txt`, the installers, CI). The reason: from torchaudio 2.9 the sound is
+loaded through a separate package, torchcodec; on torchaudio 2.11 and 2.13 `torchaudio.load` fails (checked
+on a real wav), and `torchaudio.forced_align` is marked as deprecated. An unpaired build of torchaudio under
+someone else's torch is risky because of the C++ operations. **What is known:** moving to a newer torch is
+possible only after `torchaudio.load` and `forced_align` are replaced.
+
+**`camAt` in the `.jsx` template is dead code.** No function of the template calls it; the call-count
+measurement over the 34 functions of the template (`tests/test_jsx_stand_cover.py`) never reached it.
+
+**`aiInsertsRun` and `aiInsertsMore` in the front end are dead code.** They are not called from the interface
+(`static/app/*.js`).
+
+**Two pid tests of the model service fail under a venv on Windows.** The full suite in a new environment is
+green except for these two. The cause is a quirk of the venv launcher on Windows (noted during the torch
+update, commit 8c7d0f67).
+
 ### Closed after the 2026-09-22 review
 
 - **`SystemExit` as an error channel** — closed: user errors go through

@@ -100,6 +100,105 @@ def test_исключения_перечислены_с_причиной():
 
 
 # --------------------------------------------------------------------------- #
+# Широкий `except` (Exception / BaseException / голый) — не только `pass`
+#
+# `pass` — не единственный способ промолчать: `return ""`, `return None`, присвоение
+# дефолта тоже глотают отказ. Поэтому у КАЖДОГО широкого обработчика должно быть одно
+# из трёх: `raise` в теле, вызов журнала/вывода, комментарий, который объясняет выбор.
+# --------------------------------------------------------------------------- #
+_BROAD = {"Exception", "BaseException"}
+# Журнал: модульные логгеры и stdlib-модули, по корню цепочки атрибутов.
+_LOG_BASES = {"log", "logger", "logging", "warnings", "traceback", "_log"}
+# Вывод пользователю: print, консольный и любой *emit-колбэк (`emit`, `_emit`,
+# `_gemit`, `vemit`, `remit`, `console_emit`). Имя, оканчивающееся на emit, — это
+# соглашение проекта для строк лога, поэтому такие обёртки не нужно перечислять.
+_LOG_NAMES = {"print", "console_emit"}
+
+
+def _is_broad(type_node):
+    """Ловит ли обработчик всё: голый `except:`, `Exception`, `BaseException` или кортеж с ними."""
+    if type_node is None:
+        return True
+    names = type_node.elts if isinstance(type_node, ast.Tuple) else [type_node]
+    for n in names:
+        name = n.id if isinstance(n, ast.Name) else n.attr if isinstance(n, ast.Attribute) else ""
+        if name in _BROAD:
+            return True
+    return False
+
+
+def _root_name(node):
+    """Самое левое имя цепочки атрибутов: `logging.getLogger().warning` -> `logging`."""
+    while isinstance(node, (ast.Attribute, ast.Call)):
+        node = node.func if isinstance(node, ast.Call) else node.value
+    return node.id if isinstance(node, ast.Name) else ""
+
+
+def _is_log_call(call):
+    f = call.func
+    if isinstance(f, ast.Name):
+        return f.id in _LOG_NAMES or f.id.endswith("emit")
+    if isinstance(f, ast.Attribute):
+        return _root_name(f) in _LOG_BASES or f.attr.endswith("emit")
+    return False
+
+
+def _handler_explained(handler, comments):
+    """Есть ли у обработчика журнал/вывод, `raise` или комментарий (на except, строкой выше, в теле)."""
+    for node in handler.body:
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.Raise):
+                return True
+            if isinstance(sub, ast.Call) and _is_log_call(sub):
+                return True
+    end = handler.end_lineno or handler.lineno
+    lines = set(range(handler.lineno - 1, end + 1))
+    return bool(lines & comments)
+
+
+def _unexplained_broad(src):
+    """Номера строк широких `except`, которые глотают отказ без объяснения."""
+    tree = ast.parse(src)
+    comments = _comment_lines(src)
+    return [node.lineno for node in ast.walk(tree)
+            if isinstance(node, ast.ExceptHandler) and _is_broad(node.type)
+            and not _handler_explained(node, comments)]
+
+
+def test_широкий_except_объяснён_в_каждом_файле():
+    """Сторож B2: широкий `except` без raise / журнала / комментария — падение со списком мест."""
+    bad = []
+    for path in _scanned_files():
+        for line in _unexplained_broad(path.read_text(encoding="utf-8")):
+            bad.append(f"{path.relative_to(ROOT).as_posix()}:{line}")
+    assert not bad, ("широкий except глотает отказ без объяснения "
+                     "(нужен raise, вызов журнала/вывода или комментарий):\n  " + "\n  ".join(bad))
+
+
+def test_сторож_различает_объяснённое_и_немое():
+    """Самопроверка сторожа: на синтетических обработчиках он должен быть прав в обе стороны."""
+    немой = "try:\n    f()\nexcept Exception:\n    return ''\n"
+    голый_pass = "try:\n    f()\nexcept:\n    pass\n"
+    с_комментарием = "try:\n    f()\nexcept Exception:  # ответ — пустая строка\n    return ''\n"
+    комментарий_выше = "try:\n    f()\n# почему молчим\nexcept Exception:\n    return ''\n"
+    с_raise = "try:\n    f()\nexcept BaseException as e:\n    raise RuntimeError() from e\n"
+    с_журналом = "try:\n    f()\nexcept Exception as e:\n    log.warning('x %s', e)\n"
+    с_обёрткой = "try:\n    f()\nexcept Exception as e:\n    _gemit('сбой: {err}', err=e)\n"
+    с_print = "try:\n    f()\nexcept (ValueError, Exception):\n    print('x')\n"
+    узкий = "try:\n    f()\nexcept ValueError:\n    return ''\n"
+
+    assert _unexplained_broad(немой) == [3]
+    assert _unexplained_broad(голый_pass) == [3]
+    assert _unexplained_broad(с_комментарием) == []
+    assert _unexplained_broad(комментарий_выше) == []
+    assert _unexplained_broad(с_raise) == []
+    assert _unexplained_broad(с_журналом) == []
+    assert _unexplained_broad(с_обёрткой) == []
+    assert _unexplained_broad(с_print) == []
+    assert _unexplained_broad(узкий) == [], "узкий except вне сторожа"
+
+
+# --------------------------------------------------------------------------- #
 # Поведение: три места, где молчание дороже всего
 # --------------------------------------------------------------------------- #
 @pytest.fixture
@@ -307,3 +406,334 @@ def test_занятое_имя_отложенного_файла_не_затир
     saved = [b for b in _bad(path) if b.read_bytes() == before]
     assert len(saved) == 1, "битый журнал не отложен под свободным именем"
     assert isinstance(json.loads(path.read_text(encoding="utf-8")), list)
+
+
+# --------------------------------------------------------------------------- #
+# Остальные писатели, которые читают файл и пишут его обратно: индекс базы вставок,
+# статистика рендера, журнал задач, снимок клипа, сайдкар проекта, трек головы, кэш
+# плагинов, состояние интерфейса, сайдкар голоса. Битый файл уходит в `.bad-…` с
+# прежними байтами, целый файл не откладывается ни разу.
+# --------------------------------------------------------------------------- #
+@pytest.fixture
+def index(tmp_path, monkeypatch):
+    """Индекс вставок — во временном каталоге: боевой insertlib.json личный."""
+    from core import insertlib
+    path = tmp_path / "insertlib.json"
+    monkeypatch.setattr(insertlib, "INDEX_PATH", str(path))
+    # Иначе пустой путь тихо скопировал бы боевой индекс (см. _seed_index).
+    monkeypatch.setattr(insertlib, "_seed_index", lambda: None)
+    monkeypatch.setattr(insertlib, "_CACHE", {"mtime": 0, "data": None, "mat": None,
+                                              "mat_items": None, "df": None,
+                                              "cand_words": None, "N": 0})
+    return insertlib, path
+
+
+@pytest.mark.parametrize("raw", [b'{"items": [{"path": "a.png"', b"[1, 2, 3]"],
+                         ids=["обрезан", "не объект"])
+def test_битый_индекс_вставок_откладывается_а_не_стирается(index, raw):
+    """Личная база вставок: запись поверх битого индекса стёрла бы тысячи записей."""
+    insertlib, path = index
+    path.write_bytes(raw)
+    before = path.read_bytes()
+
+    insertlib._load()                        # как пишущие пути: сначала читают
+    insertlib._save({"items": []})
+
+    bad = _bad(path)
+    assert len(bad) == 1 and bad[0].read_bytes() == before, "база вставок затёрта"
+    assert json.loads(path.read_text(encoding="utf-8")) == {"items": []}
+
+
+def test_целый_индекс_вставок_не_откладывается(index):
+    insertlib, path = index
+    path.write_text(json.dumps({"items": [{"path": "a.png"}]}), encoding="utf-8")
+
+    d = insertlib._load()
+    d["items"].append({"path": "b.png"})
+    insertlib._save(d)
+
+    assert _bad(path) == []
+    assert len(json.loads(path.read_text(encoding="utf-8"))["items"]) == 2
+
+
+@pytest.fixture
+def render_stats(tmp_path, monkeypatch):
+    """Статистика рендеров — во временном каталоге (REELSI_RENDER_STATS его и задаёт)."""
+    from core import aerender
+    path = tmp_path / "render_stats.json"
+    monkeypatch.setattr(aerender, "get_stats_path", lambda: str(path))
+    return aerender, path
+
+
+def test_битая_статистика_рендера_откладывается(render_stats):
+    """Одна новая запись поверх битой статистики стёрла бы историю прогонов."""
+    aerender, path = render_stats
+    path.write_bytes(b'{"runs": [{"n": 3, "jsx_sec": 1.0')
+    before = path.read_bytes()
+
+    aerender.save_render_stats(2, 1.0, 2.0, 3.0)
+
+    bad = _bad(path)
+    assert len(bad) == 1 and bad[0].read_bytes() == before, "история рендеров стёрта"
+    runs = json.loads(path.read_text(encoding="utf-8"))["runs"]
+    assert len(runs) == 1 and runs[0]["n"] == 2
+
+
+def test_целая_статистика_рендера_не_откладывается(render_stats):
+    aerender, path = render_stats
+    aerender.save_render_stats(2, 1.0, 2.0, 3.0)
+    aerender.save_render_stats(4, 1.0, 2.0, 3.0)
+
+    assert _bad(path) == []
+    assert len(json.loads(path.read_text(encoding="utf-8"))["runs"]) == 2
+
+
+@pytest.fixture
+def journal(tmp_path, monkeypatch):
+    """Журнал задач — во временном каталоге: боевой job_state.json живой."""
+    from core import jobstate
+    path = tmp_path / "job_state.json"
+    monkeypatch.setattr(jobstate, "JOB_STATE_PATH", str(path))
+    return jobstate, path
+
+
+def test_битый_журнал_задач_откладывается(journal):
+    """Запись одного слота поверх битого журнала стёрла бы записи остальных слотов."""
+    jobstate, path = journal
+    path.write_bytes(b'{"version": 1, "jobs": {"render": {"slot": "render"')
+    before = path.read_bytes()
+
+    jobstate.journal_write("job", "cut", "ролик", "running")
+
+    bad = _bad(path)
+    assert len(bad) == 1 and bad[0].read_bytes() == before, "журнал задач затёрт"
+    assert "job" in json.loads(path.read_text(encoding="utf-8"))["jobs"]
+
+
+def test_целый_журнал_задач_не_откладывается(journal):
+    jobstate, path = journal
+    jobstate.journal_write("render", "render", "рендер", "running")
+    jobstate.journal_write("job", "cut", "ролик", "running")
+
+    assert _bad(path) == []
+    assert set(json.loads(path.read_text(encoding="utf-8"))["jobs"]) == {"render", "job"}
+
+
+def test_битый_снимок_клипа_откладывается(tmp_path):
+    """Снимок клипа — единственная копия состояния клипа рядом с XML."""
+    from core import clipstore
+    xml = tmp_path / "01_clip.xml"
+    xml.write_text("<xmeml/>", encoding="utf-8")
+    cpath = Path(clipstore.clip_path(str(xml)))
+    cpath.write_bytes(b'{"v": 1, "clip": {"xml"')
+    before = cpath.read_bytes()
+    clip = {"xml": str(xml), "name": "01_clip.xml", "job": {"introRows": []}}
+
+    assert clipstore.save_clips({"CLIPS": [clip]}) == 1
+
+    bad = _bad(cpath)
+    assert len(bad) == 1 and bad[0].read_bytes() == before, "снимок клипа затёрт"
+    assert clipstore.load_clip(str(xml)) == clip
+
+
+def test_целый_снимок_клипа_не_откладывается(tmp_path):
+    from core import clipstore
+    xml = tmp_path / "01_clip.xml"
+    xml.write_text("<xmeml/>", encoding="utf-8")
+    clip = {"xml": str(xml), "name": "01_clip.xml"}
+
+    clipstore.save_clips({"CLIPS": [clip]})
+    clip2 = dict(clip, name="02_clip.xml")
+    clipstore.save_clips({"CLIPS": [clip2]})
+
+    assert _bad(Path(clipstore.clip_path(str(xml)))) == []
+    assert clipstore.load_clip(str(xml)) == clip2
+
+
+def test_битый_сайдкар_проекта_откладывается(tmp_path):
+    """read_project отдал None, а запись заменила бы сайдкар новым словарём."""
+    from core import project_file
+    path = tmp_path / "01_clip.project.json"
+    path.write_bytes(b'{"speaker": "ivan", "inserts"')
+    before = path.read_bytes()
+
+    project_file.write_project(path, {"speaker": "maxim"})
+
+    bad = _bad(path)
+    assert len(bad) == 1 and bad[0].read_bytes() == before, "сайдкар проекта затёрт"
+    assert project_file.read_project(path)["speaker"] == "maxim"
+
+
+def test_целый_сайдкар_проекта_не_откладывается(tmp_path):
+    from core import project_file
+    path = tmp_path / "01_clip.project.json"
+    project_file.write_project(path, {"speaker": "maxim"})
+    project_file.write_project(path, {"speaker": "ivan"})
+
+    assert _bad(path) == []
+    assert project_file.read_project(path)["speaker"] == "ivan"
+
+
+def test_битый_трек_головы_откладывается(tmp_path, monkeypatch):
+    """Трек головы, который load_cached не принял, перезаписывается — файл уходит в .bad-…"""
+    from core import headtrack
+    video = tmp_path / "cam1.mp4"
+    video.write_bytes(b"0" * 16)
+    xml = str(tmp_path / "timeline.xml")
+    head = Path(headtrack.head_cache_path(xml, 1))
+    head.write_bytes(b'{"v": 1, "video": "')
+    before = head.read_bytes()
+    monkeypatch.setattr(headtrack, "track",
+                        lambda video, ranges, emit=None, cancel=None, fps=10: {"v": 1, "frames": []})
+
+    headtrack.load_or_track(xml, str(video), [(0.0, 1.0)], cam=1)
+
+    bad = _bad(head)
+    assert len(bad) == 1 and bad[0].read_bytes() == before, "трек головы затёрт"
+    assert json.loads(head.read_text(encoding="utf-8"))["frames"] == []
+
+
+def test_целый_трек_головы_не_откладывается(tmp_path, monkeypatch):
+    from core import headtrack
+    video = tmp_path / "cam1.mp4"
+    video.write_bytes(b"0" * 16)
+    xml = str(tmp_path / "timeline.xml")
+    head = Path(headtrack.head_cache_path(xml, 1))
+    monkeypatch.setattr(headtrack, "track",
+                        lambda video, ranges, emit=None, cancel=None, fps=10: {"v": 1, "frames": []})
+
+    headtrack.load_or_track(xml, str(video), [(0.0, 1.0)], cam=1)
+    headtrack.load_or_track(xml, str(video), [(0.0, 1.0)], cam=1)
+
+    assert _bad(head) == []
+
+
+def test_битый_кэш_плагинов_откладывается(tmp_path):
+    """Родитель пишет свой кэш поверх битого: прошлые результаты сканирования пропали бы."""
+    from core import voicefx_scan
+    path = tmp_path / "vst3_cache.json"
+    path.write_bytes(b'{"version": 1, "entries": {"a": ')
+    before = path.read_bytes()
+
+    voicefx_scan.write_cache(str(path), {"k": {"ok": True, "names": ["A"]}})
+
+    bad = _bad(path)
+    assert len(bad) == 1 and bad[0].read_bytes() == before, "кэш плагинов затёрт"
+    assert voicefx_scan.read_cache(str(path)) == {"k": {"ok": True, "names": ["A"]}}
+
+
+def test_целый_кэш_плагинов_не_откладывается(tmp_path):
+    from core import voicefx_scan
+    path = tmp_path / "vst3_cache.json"
+    voicefx_scan.write_cache(str(path), {"a": {"ok": True, "names": []}})
+    voicefx_scan.write_cache(str(path), {"b": {"ok": True, "names": []}})
+
+    assert _bad(path) == []
+    assert set(voicefx_scan.read_cache(str(path))) == {"b"}
+
+
+def test_битое_состояние_интерфейса_откладывается(tmp_path, monkeypatch):
+    """Состояние интерфейса: ревизия читается как 0, запись заменила бы файл целиком."""
+    import api
+    from flask import Flask
+    app = Flask(__name__)
+    app.register_blueprint(api.bp)
+    app.config["TESTING"] = True
+    client = app.test_client()
+    path = tmp_path / "ui_state.json"
+    monkeypatch.setattr(api.files, "UI_STATE_PATH", str(path))
+    path.write_bytes(b'{"CLIPS": [{"xml": ')
+    before = path.read_bytes()
+
+    res = client.post("/api/ui_state", json={"state": {"CLIPS": []}},
+                      headers={"Content-Type": "application/json"})
+
+    assert res.status_code == 200 and res.get_json()["ok"] is True
+    bad = _bad(path)
+    assert len(bad) == 1 and bad[0].read_bytes() == before, "состояние интерфейса затёрто"
+
+
+def test_целое_состояние_интерфейса_не_откладывается(tmp_path, monkeypatch):
+    import api
+    from flask import Flask
+    app = Flask(__name__)
+    app.register_blueprint(api.bp)
+    app.config["TESTING"] = True
+    client = app.test_client()
+    path = tmp_path / "ui_state.json"
+    monkeypatch.setattr(api.files, "UI_STATE_PATH", str(path))
+    H = {"Content-Type": "application/json"}
+
+    client.post("/api/ui_state", json={"state": {"CLIPS": []}}, headers=H)
+    client.post("/api/ui_state", json={"state": {"CLIPS": [], "x": 1}}, headers=H)
+
+    assert _bad(path) == []
+
+
+def test_битый_сайдкар_голоса_откладывается(tmp_path, monkeypatch):
+    """Сайдкар итогового голоса: final_voice_ready отдал «не готов» — пересборка пишет поверх."""
+    from core import voicefx
+    xml = tmp_path / "01_clip.xml"
+    xml.write_text("<xmeml/>", encoding="utf-8")
+    cache = tmp_path / "voice_cache.wav"
+    cache.write_bytes(b"RIFF0000WAVEfmt ")
+    monkeypatch.setattr(voicefx, "render_cached", lambda *a, **k: str(cache))
+    monkeypatch.setattr(voicefx, "_sync_xml_voice", lambda *a, **k: None)
+    meta = Path(voicefx._final_meta_path(str(xml)))
+    meta.write_bytes(b'{"key": "stale"')
+    before = meta.read_bytes()
+
+    voicefx.ensure_final_voice(str(xml), "cam1.mp4", {}, emit=lambda *a, **k: None)
+
+    bad = _bad(meta)
+    assert len(bad) == 1 and bad[0].read_bytes() == before, "сайдкар голоса затёрт"
+    saved = json.loads(meta.read_text(encoding="utf-8"))
+    assert saved["key"] == voicefx.final_voice_key("cam1.mp4", {})
+
+
+def test_целый_сайдкар_голоса_не_откладывается(tmp_path, monkeypatch):
+    from core import voicefx
+    xml = tmp_path / "01_clip.xml"
+    xml.write_text("<xmeml/>", encoding="utf-8")
+    cache = tmp_path / "voice_cache.wav"
+    cache.write_bytes(b"RIFF0000WAVEfmt ")
+    monkeypatch.setattr(voicefx, "render_cached", lambda *a, **k: str(cache))
+    monkeypatch.setattr(voicefx, "_sync_xml_voice", lambda *a, **k: None)
+
+    voicefx.ensure_final_voice(str(xml), "cam1.mp4", {}, emit=lambda *a, **k: None)
+    voicefx.ensure_final_voice(str(xml), "cam1.mp4", {}, emit=lambda *a, **k: None)
+
+    assert _bad(Path(voicefx._final_meta_path(str(xml)))) == []
+
+
+def test_битый_сайдкар_силы_откладывается(tmp_path):
+    """Сайдкар силы: read_emphasis отдал «не готов», расчёт пишет поверх — файл уходит в .bad-…"""
+    from core import emphasis
+    xml = str(tmp_path / "clip.xml")
+    open(xml, "w", encoding="utf-8").close()
+    side = Path(emphasis.emph_path(xml))
+    side.write_bytes(b'{"key": [1, 2')
+    before = side.read_bytes()
+    words = [emphasis.WordRef(idx=0, text="слово", start=0.0, end=0.5)]
+
+    emphasis.compute_emphasis(emphasis.EmphasisInputs(
+        words=words, parsed=(None, [], [], None), xml_path=xml, idx=[0],
+        emit=lambda *a, **k: None))
+
+    bad = _bad(side)
+    assert len(bad) == 1 and bad[0].read_bytes() == before, "сайдкар силы затёрт"
+    assert "scores" in json.loads(side.read_text(encoding="utf-8"))
+
+
+def test_целый_сайдкар_силы_не_откладывается(tmp_path):
+    from core import emphasis
+    xml = str(tmp_path / "clip.xml")
+    open(xml, "w", encoding="utf-8").close()
+    words = [emphasis.WordRef(idx=0, text="слово", start=0.0, end=0.5)]
+    inp = emphasis.EmphasisInputs(words=words, parsed=(None, [], [], None), xml_path=xml,
+                                  idx=[0], emit=lambda *a, **k: None)
+
+    emphasis.compute_emphasis(inp)
+    emphasis.compute_emphasis(inp)
+
+    assert _bad(Path(emphasis.emph_path(xml))) == []

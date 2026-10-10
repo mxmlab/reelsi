@@ -31,7 +31,7 @@ from . import catalog
 from .config import (GLITCH_GLOW_MODES, OMNI_LOCAL, OMNI_LOCAL_ENGINES, REASONING_LEVELS,
                      STEP_REASONING_DEFAULT, normalize_base_url, parse_headers_text,
                      step_profile, unmask_ai_key, unmask_headers)
-from .images import IMAGE_OFF
+from .images import IMAGE_OFF, REMBG_MODELS
 from .video import VIDEO_OFF, video_caps, video_model_cfg
 
 
@@ -199,6 +199,22 @@ def set_active_cut_asr(cfg: dict[str, Any], d: dict[str, Any]) -> None:
     cfg["active_cut_asr"] = name
 
 
+def set_active_cut_text_asr(cfg: dict[str, Any], d: dict[str, Any]) -> None:
+    """Второй движок «на текст» при нарезке: пусто = выключено (дефолт), иначе id
+    движка из каталога с kind == whisper. CTC-движок сюда не годится: он даёт тайминги,
+    а не написание, и править им написание бессмысленно."""
+    name = _s(d, "name")
+    if not name:
+        cfg["active_cut_text_asr"] = ""
+        return
+    from core import asr_backends
+    meta = asr_backends.engine_meta(name)
+    if not meta or meta.get("kind") != "whisper":
+        raise ReelsiError(umsg("invalid_cut_text_asr",
+                              f"Движок «{name}» не подходит для текста нарезки", name=name))
+    cfg["active_cut_text_asr"] = name
+
+
 def set_active_image(cfg: dict[str, Any], d: dict[str, Any]) -> None:
     """Кто ГЕНЕРИТ картинки-вставки: "__off__" = выключено, иначе имя профиля
     с image-моделью (Nano Banana); anthropic/lmstudio не умеют."""
@@ -266,6 +282,17 @@ def set_video_resolution(cfg: dict[str, Any], d: dict[str, Any]) -> None:
 def set_image_rembg(cfg: dict[str, Any], d: dict[str, Any]) -> None:
     """Убирать ли фон у сгенерённого (rembg): картинка ложится в базу уже с альфой."""
     cfg["image_rembg"] = bool(d.get("value"))
+
+
+def set_rembg_model(cfg: dict[str, Any], d: dict[str, Any]) -> None:
+    """Модель вырезания фона: u2net (дефолт, быстрая) или birefnet-general (чище края).
+    Чужое значение — отказ, а не молчаливый откат: иначе настройка врала бы о модели."""
+    val = d.get("value")
+    if val not in REMBG_MODELS:
+        raise ReelsiError(umsg("rembg_model_invalid",
+            f"Недопустимая модель вырезания фона «{val}» — можно: " + ", ".join(REMBG_MODELS),
+            value=val, list=", ".join(REMBG_MODELS)))
+    cfg["rembg_model"] = val
 
 
 def set_glitch_glow(cfg: dict[str, Any], d: dict[str, Any]) -> None:
@@ -415,19 +442,25 @@ def clone_profile(cfg: dict[str, Any], d: dict[str, Any]) -> None:
 
 
 def set_stock_keys(cfg: dict[str, Any], d: dict[str, Any]) -> None:
-    """Ключи стоков (Pexels/Pixabay) — раздел `stock` ai_config.json.
+    """Ключи стоков (раздел `stock` ai_config.json) — по провайдеру.
+
+    Список провайдеров берём у самого стока (`core.stock.PROVIDERS`), а не пишем
+    здесь второй раз: новый сток — это правка стока, а не ещё одного места в UI.
+    Openverse ключа не требует и поля в конфиге не заводит; Coverr ключ принимает,
+    хотя и включается отдельным флагом.
 
     Как у ключей профилей: маска «•••…» значит «не менял» (в поле показана маска
     уже сохранённого ключа — записать её вместо ключа означало бы потерять ключ),
     а пустая строка — «ключа нет»: провайдер молча выключается, и поиск идёт по
     остальным. Поля нет в теле — не трогаем вовсе."""
+    from core import stock            # ленивый импорт: ядро не тянем на импорте роута
     st = cfg.get("stock")
     if not isinstance(st, dict):
         st = {}
         cfg["stock"] = st
-    for prov in ("pexels", "pixabay"):
+    for prov in stock.PROVIDERS:
         field = prov + "_key"
-        if field not in d:
+        if field not in d or not stock.PROVIDER_META[prov]["keyed"]:
             continue
         val = _s(d, field).strip()
         if val.startswith("•••"):
@@ -471,11 +504,13 @@ ACTIONS = {
     "set_active": set_active,
     "set_active_omni": set_active_omni,
     "set_active_cut_asr": set_active_cut_asr,
+    "set_active_cut_text_asr": set_active_cut_text_asr,
     "set_active_image": set_active_image,
     "set_active_video": set_active_video,
     "set_video_model": set_video_model,
     "set_video_resolution": set_video_resolution,
     "set_image_rembg": set_image_rembg,
+    "set_rembg_model": set_rembg_model,
     "set_glitch_glow": set_glitch_glow,
     "set_ae_build_workers": set_ae_build_workers,
     "set_video_encoder": set_video_encoder,

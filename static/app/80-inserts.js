@@ -348,7 +348,9 @@ async function aiInsertsRun(){if(curIns<0)return;const c=CLIPS[curIns];const xml
   el.className='muted';el.textContent=t('подбираю…');uiLog(t('вставки (ИИ) для ')+c.name+t('…'));
   try{const d=await aiFetch('/api/ai_inserts',{xml,rejected:c.ins_rejected||[],speaker:clipSpeaker(c)||undefined},'insStop','insres');
     if(d.error){el.className='err';el.textContent='⚠ '+errText(d);uiLog(t('  ОШИБКА: ')+d.error);return;}
-    c.inserts=(d.inserts||[]).map(x=>({...x,media:''}));insLog(d);
+    // media у ИИ-вставки пустое (файл подберёт insAfterAI), но вставка по названию приезжает
+    // с уже найденной картинкой (auto:'named'; 'drug' — старая метка) — её media терять нельзя.
+    c.inserts=(d.inserts||[]).map(x=>({...x,media:(x&&(x.auto==='named'||x.auto==='drug'))?(x.media||''):''}));insLog(d);
     c.insTarget=Math.max(d.insTarget||0,c.inserts.length);   // цель «добрать» приезжает с бэкенда (от длины ролика), а не зашита в JS
     const nv=c.inserts.filter(x=>x.type==='video').length;
     const tail=await insAfterAI(c);   // файлы из базы + (по галке) генерация остатка
@@ -379,7 +381,7 @@ async function aiInsertsMore(){if(curIns<0)return;const c=CLIPS[curIns];const cu
   try{const d=await aiFetch('/api/ai_inserts',{xml:c.xml,count:need,avoid,rejected:c.ins_rejected||[],speaker:clipSpeaker(c)||undefined},'insStop','insres');
     if(d.error){el.className='err';el.textContent='⚠ '+errText(d);uiLog(t('  ОШИБКА: ')+d.error);return;}
     insLog(d);
-    const fresh=(d.inserts||[]).map(x=>({...x,media:''}))
+    const fresh=(d.inserts||[]).map(x=>({...x,media:(x&&(x.auto==='named'||x.auto==='drug'))?(x.media||''):''}))
       .filter(n=>!cur.some(o=>Math.abs((o.start_sec||0)-(n.start_sec||0))<1.0)).slice(0,need);
     c.inserts=cur.concat(fresh).sort((a,b)=>(a.start_sec||0)-(b.start_sec||0));
     const nv=c.inserts.filter(x=>x.type==='video').length;
@@ -799,7 +801,7 @@ async function insLibFor(i){const x=CLIPS[curIns].inserts[i];if(!x)return;
 function insLibPick(i,j){const x=CLIPS[curIns].inserts[i];const o=(x.libOpts||[])[j];if(!o)return;
   insSetMedia(x,o.path);insApplyCrop(x,o);x.libAuto=false;x.libShown=false;
   renderInsHost();syncClipLists();saveState();}
-// кнопка «Сток» на карточке: кадры со стоков (Pexels первым, Pixabay вторым) по тому же
+// кнопка «Сток» на карточке: кадры со стоков (Pexels первым, Unsplash вторым, Pixabay третьим) по тому же
 // запросу, что идёт в базу. Показываем только превью: файл скачивается по клику, ложится
 // в базу вставок — и дальше это обычная вставка, сток для неё больше не нужен.
 function insStockRow(x,i){const opts=x.stockOpts||[];

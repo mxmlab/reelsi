@@ -459,6 +459,121 @@ function isNodeOn(item) {
   return Boolean(val);
 }
 
+// Строка блока «Трек ролика» — ТЕМ ЖЕ составом, что строка ручки панели (.strow
+// stfield): ячейка controls, колонка точки 8px, имя (.stfield-name + .stfield-lbl) и
+// колонка значения (.stfield-right). Иначе подпись попадала в колонку controls шириной
+// 12px, и «Куда менять» / «Трек ролика» вставали не на отступ подписей ручек музыки, а
+// выпадашка с кнопками — не в колонку значений. Собирается здесь, а не через renderItems:
+// у блока нет ни ключа схемы, ни точки «изменено» (это состояние клипа, а не стиль).
+function musicRowNode(labelText, labelFor) {
+  const row = document.createElement('div');
+  row.className = 'strow stfield';
+
+  // колонка 1: спейсер — у ручки тут треугольник, у блока состояния его нет
+  const ctl1 = document.createElement('span');
+  ctl1.className = 'strow-ctl';
+  const spc = document.createElement('span');
+  spc.className = 'sttw-spacer';
+  ctl1.appendChild(spc);
+  row.appendChild(ctl1);
+
+  // колонка 2: точка «изменено» — пустая: своего ключа у строки нет
+  const dot = document.createElement('span');
+  dot.className = 'stdot';
+  row.appendChild(dot);
+
+  const nameWrap = document.createElement('div');
+  nameWrap.className = 'stfield-name';
+  const lbl = document.createElement('label');
+  lbl.className = 'stfield-lbl';
+  if (labelFor) lbl.htmlFor = labelFor;
+  lbl.textContent = t(labelText);
+  nameWrap.appendChild(lbl);
+  row.appendChild(nameWrap);
+  row.appendChild(nameWrap);
+
+  const right = document.createElement('div');
+  right.className = 'stfield-right';
+  row.appendChild(right);
+  return { row: row, right: right };
+}
+
+// Блок «Трек ролика» в группе «Музыка»: область правки, текущий трек открытого клипа и
+// действия над ним. Ручками схемы он быть не может — это не значение стиля, а состояние
+// клипа, поэтому строится здесь и оживляется дверями из 95-styles.js (typeof — стенды
+// панели грузят её не всегда).
+function musicTrackNode(level) {
+  const box = document.createElement('div');
+  box.className = 'stmusictrack';
+  box.id = 'st_music_track_box';
+
+  // Строка области правки: подпись — на отступе подписей ручек, выпадашка — в колонке
+  // значений, ровно как «Источник музыки» рядом. id строки остался: по нему 95-styles.js
+  // (musicClipUI) прячет её, когда клип не открыт.
+  const scopeParts = musicRowNode('Куда менять', 'st_music_scope');
+  const scopeRow = scopeParts.row;
+  scopeRow.id = 'st_music_scope_row';
+  scopeRow.style.setProperty('--lvl', level);
+  const scope = document.createElement('select');
+  scope.id = 'st_music_scope';
+  scope.className = 'stselect';
+  [['clip', 'только этот ролик'], ['style', 'всем роликам со стилем']].forEach(pair => {
+    const opt = document.createElement('option');
+    opt.value = pair[0];
+    opt.textContent = t(pair[1]);
+    scope.appendChild(opt);
+  });
+  scope.onchange = () => {
+    if (typeof musicScopeChanged === 'function') musicScopeChanged(scope.value);
+  };
+  scopeParts.right.appendChild(scope);
+  box.appendChild(scopeRow);
+
+  // Строка трека: имя и кнопки — в колонке значений, как у остальных ручек. Класс
+  // stfield-wide — тот же, что у ручек «папка»/«файл»: в колонке не одно поле, а имя и
+  // две кнопки, и в жёстких 180px имя схлопывалось бы в ноль, а кнопки уезжали за панель.
+  const trackParts = musicRowNode('Трек ролика');
+  const trackRow = trackParts.row;
+  trackRow.classList.add('stfield-wide');
+  trackRow.style.setProperty('--lvl', level);
+  const trackRight = trackParts.right;
+  const trackName = document.createElement('span');
+  trackName.className = 'mono stmusictrack-name';
+  trackName.id = 'st_music_track';
+  trackRight.appendChild(trackName);
+  // Кнопки — одним хвостом справа: имя сжимается первым (stmusictrack-name), кнопки не
+  // сжимаются и не переносятся по буквам.
+  const actions = document.createElement('span');
+  actions.className = 'stmusictrack-actions';
+  const btnReroll = document.createElement('button');
+  btnReroll.type = 'button';
+  btnReroll.className = 'sm';
+  btnReroll.id = 'st_music_reroll';
+  btnReroll.textContent = t('Другой трек');
+  btnReroll.setAttribute('aria-label', t('Другой трек'));
+  btnReroll.dataset.t = t('Выбрать другой трек из папки музыки: прежний исключается, поэтому трек гарантированно сменится.');
+  btnReroll.onclick = () => {
+    if (typeof musicReroll === 'function') musicReroll();
+  };
+  actions.appendChild(btnReroll);
+  const btnRevert = document.createElement('button');
+  btnRevert.type = 'button';
+  btnRevert.className = 'sm';
+  btnRevert.id = 'st_music_revert';
+  btnRevert.textContent = t('Вернуть как в стиле');
+  btnRevert.setAttribute('aria-label', t('Вернуть как в стиле'));
+  btnRevert.dataset.t = t('Снять своё переопределение трека: у этого ролика снова играет музыка стиля.');
+  btnRevert.onclick = () => {
+    if (typeof musicRevert === 'function') musicRevert();
+  };
+  actions.appendChild(btnRevert);
+  trackRight.appendChild(actions);
+  box.appendChild(trackRow);
+
+  if (typeof musicClipUI === 'function') musicClipUI();
+  return box;
+}
+
 function renderStylePanel() {
   const host = document.getElementById('stpanel');
   if (!host) return;
@@ -574,6 +689,11 @@ function renderStylePanel() {
 
         if (item.items) {
           gBody.appendChild(renderItems(item.items, level + 1));
+          // Блок «Трек ролика» — рядом с ручками музыки. Схемой он не описывается: это не
+          // настройка стиля, а состояние и действия над треком ОТКРЫТОГО клипа (текущий
+          // трек, «Другой трек», «Вернуть как в стиле», область правки), своих ключей у
+          // него нет, и ручкой схемы ему быть нечем.
+          if (item.id === 'audio.music') gBody.appendChild(musicTrackNode(level + 1));
         }
 
         const toggleGroup = () => {
@@ -606,6 +726,10 @@ function renderStylePanel() {
         fRow.className = 'strow stfield';
         fRow.id = 'strow_' + item.key;
         fRow.style.setProperty('--lvl', level);
+        // Ручки «папка»/«файл»: в колонке значения поле и кнопки («Выбрать…», «Файл…»,
+        // «Скачать», карандаш звука) — ей нужна ширина по содержимому, иначе кнопки уезжают
+        // за правый край панели и обрезаются (см. .stfield-wide в app.css).
+        if (item.ctl === 'file' || item.ctl === 'dir') fRow.classList.add('stfield-wide');
 
         // col 1: controls (треугольник числа или спейсер)
         const ctl1 = document.createElement('span');
@@ -723,7 +847,11 @@ function renderStylePanel() {
           chk.type = 'checkbox';
           chk.id = 'st_' + item.key;
           chk.className = 'stchk';
-          chk.onchange = () => stEdit();
+          // Ручки выбора трека (music_mode/music_dir/music_src) — своя дверь: у открытого
+          // клипа по умолчанию это ПЕРЕОПРЕДЕЛЕНИЕ клипа, а не правка стиля (musicFieldEdit,
+          // 95-styles.js). Через stEdit() правка пометила бы стиль изменённым и уехала в него.
+          chk.onchange = () => (item.track && typeof musicFieldEdit === 'function')
+            ? musicFieldEdit() : stEdit();
           right.appendChild(chk);
         } else if (item.ctl === 'color' || item.ctl === 'color_opt') {
           const cWrap = document.createElement('div');
@@ -752,7 +880,8 @@ function renderStylePanel() {
           const sel = document.createElement('select');
           sel.id = 'st_' + item.key;
           sel.className = 'stselect';
-          sel.onchange = () => stEdit();
+          sel.onchange = () => (item.track && typeof musicFieldEdit === 'function')
+            ? musicFieldEdit() : stEdit();
           if (item.options) {
             for (const opt of item.options) {
               const o = document.createElement('option');
@@ -781,7 +910,8 @@ function renderStylePanel() {
           inp.id = 'st_' + item.key;
           inp.className = 'stfile';
           if (item.placeholder) inp.placeholder = t(item.placeholder);
-          inp.onchange = () => stEdit();
+          inp.onchange = () => (item.track && typeof musicFieldEdit === 'function')
+            ? musicFieldEdit() : stEdit();
 
           const btnPick = document.createElement('button');
           btnPick.type = 'button';
@@ -789,7 +919,10 @@ function renderStylePanel() {
           btnPick.textContent = t('Файл…');
           btnPick.setAttribute('aria-label', fTitle + ' — ' + t('Файл…'));
           btnPick.onclick = () => {
-            if (typeof pickInto === 'function') pickInto('st_' + item.key);
+            // Файл трека выбирается звуковым диалогом: у остальных file-полей —
+            // общий выбор файла (pickInto), у музыки — звук (pickAudioInto).
+            if (item.track && typeof pickAudioInto === 'function') pickAudioInto('st_' + item.key);
+            else if (typeof pickInto === 'function') pickInto('st_' + item.key);
           };
 
           const btnEdit = document.createElement('button');
@@ -806,7 +939,45 @@ function renderStylePanel() {
           // Карандаш звукового редактора — только у ЗВУКОВЫХ полей (sfx в схеме). У подложки
           // фото-вставок звука нет: кнопка открывала бы редактор пустого префикса.
           if (item.sfx) fWrap.appendChild(btnEdit);
+          // «Скачать» — у поля музыки: до этой кнопки ссылка скачивалась только на сборке,
+          // и проверить, что по ней есть что качать, было нечем (musicDownload).
+          if (item.download && typeof musicDownload === 'function') {
+            const btnDl = document.createElement('button');
+            btnDl.type = 'button';
+            btnDl.className = 'sm';
+            btnDl.id = 'st_' + item.key + '_dl';
+            btnDl.textContent = t('Скачать');
+            btnDl.setAttribute('aria-label', fTitle + ' — ' + t('Скачать'));
+            btnDl.onclick = () => musicDownload();
+            fWrap.appendChild(btnDl);
+          }
           right.appendChild(fWrap);
+        } else if (item.ctl === 'dir') {
+          // Папка (не файл): тот же нативный выбор папки, что у прочих полей-папок
+          // (pickdir), но значение доводит своя дверь поля — musicDirPicked.
+          const dWrap = document.createElement('div');
+          dWrap.className = 'stfile-wrap';
+
+          const dInp = document.createElement('input');
+          dInp.type = 'text';
+          dInp.id = 'st_' + item.key;
+          dInp.className = 'stfile';
+          if (item.placeholder) dInp.placeholder = t(item.placeholder);
+          dInp.onchange = () => (item.track && typeof musicFieldEdit === 'function')
+            ? musicFieldEdit() : stEdit();
+
+          const dBtn = document.createElement('button');
+          dBtn.type = 'button';
+          dBtn.className = 'sm';
+          dBtn.textContent = t('Выбрать…');
+          dBtn.setAttribute('aria-label', fTitle + ' — ' + t('Выбрать…'));
+          dBtn.onclick = () => {
+            if (typeof pickdir === 'function') pickdir('st_' + item.key);
+          };
+
+          dWrap.appendChild(dInp);
+          dWrap.appendChild(dBtn);
+          right.appendChild(dWrap);
         } else if (item.ctl === 'point') {
           const ptWrap = document.createElement('div');
           ptWrap.className = 'stpoint-wrap';
@@ -1467,7 +1638,11 @@ function fillStyleFields() {
   function walk(items) {
     for (const item of items) {
       if (item.type === 'field') {
-        let val = s[item.key];
+        // Ручки выбора трека показывают ЭФФЕКТИВНОЕ значение клипа (переопределение или
+        // стиль) — своя дверь, а не значение CURSTYLE: у клипа со своим треком поля
+        // обязаны показывать именно его, иначе «стоит файл А, а играет Б».
+        let val = (item.track && typeof musicFieldValue === 'function')
+          ? musicFieldValue(item.key) : s[item.key];
         const isCam2Field = item.key && item.key.startsWith('lm2_');
         if (isLm2Linked && isCam2Field) {
           const k1 = 'lm_' + item.key.slice(4);
@@ -1605,9 +1780,13 @@ function fillStyleFields() {
   if (typeof syncSubTabUI === 'function') syncSubTabUI();
   if (typeof applyStyleHlColor === 'function') applyStyleHlColor();
   if (typeof styleSubPos === 'function') styleSubPos();
+  // Панель заполнена стилем клипа (выбор стиля, кастом, правка шаблона, смена клипа): прежний
+  // ответ сервера про кнопку рото уже не про него. captureAE этих путей не всех касается.
+  if (typeof ipvCalcStyleChanged === 'function') ipvCalcStyleChanged();
   if (typeof aewUpdateCaptionUI === 'function') aewUpdateCaptionUI();
   if (typeof updateStyleDiffDots === 'function') updateStyleDiffDots();
   if (typeof renderLayerOrderUI === 'function') renderLayerOrderUI();
+  if (typeof musicClipUI === 'function') musicClipUI();
 }
 
 function stEdit() {
@@ -1624,6 +1803,12 @@ function stEdit() {
   function walk(items) {
     for (const item of items) {
       if (item.type === 'field') {
+        // Ручки выбора трека стиль НЕ пишут, когда правят ПЕРЕОПРЕДЕЛЕНИЕ клипа: их
+        // правку доводит своя дверь musicFieldEdit, и запись их значения в CURSTYLE
+        // означала бы «сменил трек у ролика — изменил стиль всем». В области «всем
+        // роликам», без открытого клипа и в стендах панели без 95-styles.js поля идут
+        // общим путём — там запись в CURSTYLE и есть правильное поведение.
+        if (item.track && typeof musicScope === 'function' && musicScope() === 'clip') continue;
         if (CURSTYLE.lm2_link !== false && item.key && item.key.startsWith('lm2_')) {
           // Цепочка замкнута: своё значение камеры 2 не действует, в стиль не пишется.
           // Своё, оставшееся от разомкнутой цепи, не стираем («можно их не стирать»),
@@ -2099,7 +2284,8 @@ function stRefresh(key) {
   const field = findFieldByKey(key);
   if (!field) return;
   const s = CURSTYLE || {};
-  const val = s[key];
+  const val = (field.track && typeof musicFieldValue === 'function')
+    ? musicFieldValue(key) : s[key];
   const view = stView(field, val);
 
   if (field.ctl === 'bool') {

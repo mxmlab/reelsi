@@ -16,6 +16,7 @@ import soundfile as sf
 from core import aicut
 from core import xmlbuild
 from core import align
+from core import cut_subs
 from core import sync
 from core import draftrender
 from core import cutstages
@@ -26,6 +27,7 @@ from core.app_meta import console_emit
 from core.fileio import atomic_json_dump
 from core.project_file import write_project
 from . import tune
+from . import textpass
 from .asr import transcribe_words_for_cut, transcribe_words_whole
 _orig_transcribe_words_whole = transcribe_words_whole
 from .decide import decide_markup
@@ -181,6 +183,7 @@ def _audio_file_diag(wav_path: str) -> str:
             file_info = f"существует, {sz} байт ({sz / (1024 * 1024):.2f} МБ)"
         except ReelsiError: raise
         except Exception as e:
+            # ошибка уходит в текст диагностики (file_info) — это и есть сообщение, поэтому не глотаем молча
             file_info = f"существует, размер неизвестен ({e})"
     else:
         file_info = "НЕ существует"
@@ -193,6 +196,7 @@ def _audio_file_diag(wav_path: str) -> str:
             dir_info = f"в '{parent}': [{items_str}]"
         except ReelsiError: raise
         except Exception as e:
+            # ошибка уходит в текст диагностики (dir_info) — это и есть сообщение
             dir_info = f"каталог '{parent}' недоступен ({e})"
     else:
         dir_info = f"каталог '{parent}' НЕ существует"
@@ -307,6 +311,14 @@ def _run(wav_path: str, cams: Sequence[str], offsets: Sequence[float], out: str,
                                          model_factory=lambda head: gigaam_factory(head, emit))
     if not words:
         raise RuntimeError("GigaAM не дал ни одного слова — проверь аудио")
+    # Второй проход: Whisper правит написание слов CTC (тайминги остаются CTC). Слова
+    # для субтитров (текст Whisper с регистром и пунктуацией) сохраняем — их впишем в XML
+    # сразу, отдельное распознавание на шаге 2 тогда не нужно. Выключено — ничего не меняем.
+    text_engine = aicut.cut_text_asr_engine(emit=emit)
+    sub_src: list[dict[str, Any]] | None = None
+    if text_engine:
+        words, sub_src = textpass.text_pass(wav_path, words, text_engine, emit)
+        full_text = " ".join(w["w"] for w in words)
     src_s = (words[-1]["end"] - words[0]["start"]) if words else 0.0
     silence_bounds: Any
     if stages.get("pauses") != "off":
@@ -420,9 +432,18 @@ def _run(wav_path: str, cams: Sequence[str], offsets: Sequence[float], out: str,
     # пишем ниже, после XML), а формат нужен прямо сейчас: он задаёт размер
     # секвенции. Профиля нет (обычная CLI-нарезка) — 9:16, как было.
     _seq_w, _seq_h = frame.frame_size(frame.speaker_format(speaker))
+    # Субтитры из второго прохода кладём в XML сразу: кадры на выходной ленте, как у
+    # cutjob. Без второго прохода — как раньше, субтитры добавит шаг 2.
+    sub_words = cut_subs.subs_for_keep(sub_src, keep)
     last_info = xmlbuild.build(cams, keep, offsets, out, assign=assign,
                                seq_w=_seq_w, seq_h=_seq_h,
-                               sub_words=None, music_path=None)
+                               sub_words=sub_words, music_path=None)
+    if sub_src:
+        # Слова исходника сохраняем ПОСЛЕ удачной сборки: если сборка упала, прошлая
+        # нарезка осталась бы рядом с чужими словами. Правка блоков на шаге 1 берёт
+        # субтитры отсюда (core/cut_subs.py), а не из XML.
+        cut_subs.write_sidecars(out, sub_words, emit=emit)
+        cut_subs.save_source_words(out, sub_src)
     # обновить cutlog под итоговый drop (после возможных возвратов). rule — имя
     # функции/источника, снявшего каждый кусок: без него «кто виноват
     # в лишнем резе» не видно, всё помечено «GigaAM + 27b».
@@ -439,6 +460,9 @@ def _run(wav_path: str, cams: Sequence[str], offsets: Sequence[float], out: str,
             "scale": scale, "keep": [[round(s, 3), round(e, 3)] for s, e in keep]}
     if speaker:
         proj["speaker"] = speaker
+    if sub_src:
+        # Субтитры в XML от исходника: правка блоков пересоберёт их по .srcwords.json.
+        proj["text_subs"] = True
     write_project(os.path.splitext(out)[0] + ".project.json", cast(Any, proj))
     cutlog.sort(key=lambda c: c["t0"])
     atomic_json_dump(os.path.splitext(out)[0] + ".cuts.json", cutlog, indent=1)

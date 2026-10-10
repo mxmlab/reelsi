@@ -80,7 +80,7 @@ def _norm(xml: str) -> dict:
     """Один клип набора в том виде, в каком его отдаёт `_norm_build_jobs` (для диспетчера)."""
     return {"xml_path": xml, "music": None, "music_dir": None, "highlights": [],
             "hl_breaks": [], "hl_count": [], "hl_joins": [], "inserts": [], "intro": [],
-            "intro_remove": [], "intro_splits": [], "ncams": None, "exposure": 0.0,
+            "intro_remove": [], "intro_splits": [], "ncams": None,
             "intro_mode": "word", "roto": False, "roto_bottom": 0.0, "roto_device": None,
             "style": None, "music_db": -20.0, "music_random": False, "censor_audio": True,
             "glitch_glow": "builtin", "include_xml_inserts": False}

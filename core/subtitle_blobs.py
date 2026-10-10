@@ -164,13 +164,13 @@ def harvest_coloured(xml_paths: Sequence[str], out_json: str | None = None) -> B
         try:
             txt = open(xp, encoding="utf-8").read()
         except ReelsiError: raise
-        except Exception:
+        except Exception:  # один нечитаемый XML не ломает сбор: остальные дают блобы; если не дал ни один — RuntimeError ниже
             continue
         for name, val in _EFFECT_RE.findall(txt):
             try:
                 b = base64.b64decode(val)
             except ReelsiError: raise
-            except Exception:
+            except Exception:  # битое base64-значение — пропускаем: остальные значения того же XML дают блобы
                 continue
             w = _read_text(b)
             if w is None or w != name.strip() or not blob_is_coloured(b):
@@ -233,7 +233,7 @@ if __name__ == "__main__":
                 back = _read_text(base64.b64decode(out))
                 status = "OK" if back == w else f"MISMATCH->{back!r}"
             except ReelsiError: raise
-            except Exception as e:
+            except Exception as e:  # ERR уходит в строку отчёта самотеста (blob_selftest.txt): видно, какое слово сломалось
                 status = f"ERR {e}"
             p(f"  make({w!r:24}) L={len(w.encode('utf-8')):2d} -> {status}")
         log.close()

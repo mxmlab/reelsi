@@ -30,7 +30,7 @@ Read [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) first. For features beyond 
 Run all commands from the `reelsi/` folder:
 
 ```bash
-pip install torch==2.5.1 torchaudio==2.5.1 torchvision==0.20.1 --index-url https://download.pytorch.org/whl/cu121
+pip install torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu126
 pip install -r requirements.txt -r requirements-optional.txt
 pip install -r requirements-dev.txt
 pre-commit install

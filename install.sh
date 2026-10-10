@@ -76,24 +76,24 @@ step "Installing torch"
 
 if [ "$FORCE_CPU" = "1" ]; then
   say "CPU build (forced via --cpu flag)"
-  "$PY" -m pip install torch torchaudio torchvision
+  "$PY" -m pip install torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0
 elif [ "$OS" = "Darwin" ]; then
   # On Apple Silicon the default PyPI wheel already includes Metal (MPS) —
   # no separate index needed, unlike CUDA and ROCm.
   say "macOS — default build, MPS (Metal) is included"
-  "$PY" -m pip install torch torchaudio torchvision
+  "$PY" -m pip install torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0
 elif command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then
-  say "NVIDIA detected — installing CUDA 12.1 build"
-  "$PY" -m pip install torch==2.5.1 torchaudio==2.5.1 torchvision==0.20.1 \
-      --index-url https://download.pytorch.org/whl/cu121
+  say "NVIDIA detected — installing CUDA 12.6 build (torch 2.8.0 pair, see requirements.txt)"
+  "$PY" -m pip install torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0 \
+      --index-url https://download.pytorch.org/whl/cu126
 elif command -v rocminfo >/dev/null 2>&1 || [ -d /opt/rocm ]; then
   say "ROCm detected — installing AMD build"
   say "If your ROCm version differs, install torch manually: https://pytorch.org/get-started/locally/"
-  "$PY" -m pip install torch torchaudio torchvision \
+  "$PY" -m pip install torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0 \
       --index-url https://download.pytorch.org/whl/rocm6.2
 else
   say "GPU not detected — CPU build. Everything will work, but orders of magnitude slower."
-  "$PY" -m pip install torch torchaudio torchvision
+  "$PY" -m pip install torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0
 fi
 
 step "Installing dependencies"

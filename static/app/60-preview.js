@@ -66,7 +66,11 @@ function pvFrameReplan(){for(const L of PV_FRAMES){if(L.on)pvFramePlan(L.P,L.fn)
 // voicePanel — id панели «Голос» ЭТОГО плеера: по ней дорожка обработанного голоса
 // (vt*, ниже) берёт живые ручки шумодава, а не профиль спикера. У плееров без панели
 // (шаг 3) поля нет — им остаётся профиль.
-let PV={vids:[],bufs:[],cams:null,segs:[],audio:[],words:[],dur:0,aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,scrubbing:false,scrubT:0,raf:0,xml:'',voicePanel:'pvvoice'};
+// `silent` — все <video> этого кадра НЕМЫЕ всегда: звук шага 1 играет буфер Web Audio
+// (блок `ea*` ниже), а не элементы. Писателей `muted` у <video> много (ракурс, гейт голоса,
+// живой хост, пуск редактора), и каждый обязан добавить `||P.silent`: иначе любой из них
+// вернул бы звук камеры поверх звука редактора — два голоса разом.
+let PV={vids:[],bufs:[],cams:null,segs:[],audio:[],words:[],dur:0,aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,scrubbing:false,scrubT:0,raf:0,xml:'',voicePanel:'pvvoice',silent:true};
 // ===== двойной буфер камеры 1: склейка без замирания =====
 // Раньше на КАЖДОМ стыке плеер делал av.currentTime=av.src прямо в момент склейки.
 // Это честный seek-декодера (флаш буфера -> ближайший ключевой кадр -> декод вперёд):
@@ -87,11 +91,6 @@ const PV_SWAP_HI=0.5;    // ...и перебежал; вне окна — отк
 // вперёд голос куда заметнее, чем лишний кадр картинки.
 const VT_SWAP_LO=-0.06;  // допуск позиции дублёра дорожки голоса на стыке (сек)
 const VT_SWAP_HI=0.25;
-// Насколько заранее взводим разбег дорожки голоса, сек. Больше PV_PREROLL нарочно:
-// тик, на котором решаем пускать дублёра, сам приходит с опозданием (в фоновой
-// вкладке rAF молчит и остаётся страховочный интервал 120 мс) — взведённый в упор
-// дублёр к стыку не успевает, и стык снова идёт перемоткой живого <audio>.
-const VT_ARM=0.6;
 // ===== общая громкость видео-превью (монтаж / интро / раскладка камер) =====
 // Одна настройка на все три плеера, живёт отдельным ключом localStorage (глобальная,
 // как выбранный шаг). Ставим громкость ВСЕМ <video> плеера (слышен только не-
@@ -99,7 +98,10 @@ const VT_ARM=0.6;
 // (см. openPreview/ipvRefresh/cpvOpen) берут MEDIA_VOL прямо при создании.
 let MEDIA_VOL=1;
 try{const _v=parseFloat(localStorage.getItem('reelsi_vol'));if(_v>=0&&_v<=1)MEDIA_VOL=_v;}catch(e){}
-function applyMediaVol(){[PV,IPV,CPV].forEach(P=>{if(P&&P.vids)P.vids.forEach(v=>{if(v)v.volume=MEDIA_VOL;});
+// ED — в списке обязательно: дорожка голоса шага 1 живёт на редакторе (vtOf(ED)), и без
+// него ползунок не трогал обработанный голос — громкость оставалась той, что была при
+// создании дорожки (жалоба «ползунок работает не всегда»: с обработкой — не работал).
+function applyMediaVol(){[PV,(typeof ED!=='undefined'?ED:null),IPV,CPV].forEach(P=>{if(P&&P.vids)P.vids.forEach(v=>{if(v)v.volume=MEDIA_VOL;});
   if(P&&P.bufs)P.bufs.forEach(b=>{b.el.volume=MEDIA_VOL;});
   // Дорожка обработанного голоса — тем же множителем: ползунок громкости превью обязан
   // менять оба источника, иначе «стало» звучит громче «было» само по себе.
@@ -111,6 +113,7 @@ function applyMediaVol(){[PV,IPV,CPV].forEach(P=>{if(P&&P.vids)P.vids.forEach(v=
   // (жалоба 2026-08-12). MEDIA_VOL — громкость прослушивания, она обязана менять
   // оба источника одинаково; в .jsx она не уезжает вообще.
   if(typeof MUSIC_EL!=='undefined'&&MUSIC_EL)MUSIC_EL.volume=MEDIA_VOL;
+  if(typeof eaGain==='function')eaGain();               // звук редактора шага 1 — свой гейн
   if(typeof sfxSyncApply==='function')sfxSyncApply();}   // SFX-звуки тем же множителем
 function setMediaVol(pct){MEDIA_VOL=Math.max(0,Math.min(1,(+pct||0)/100));
   try{localStorage.setItem('reelsi_vol',MEDIA_VOL);}catch(e){}
@@ -167,7 +170,9 @@ function voiceGraphWire(v){
 // прокси, дублёр стыка), подключается сразу: иначе «+3 дБ» стиля к нему не применятся.
 function voiceWiring(v){if(!v||v.__wired)return;
   if(AUDIO&&voiceGraphNeeded()&&voiceGraphWire(v))return;
-  if(VOICEPEND.indexOf(v)<0)VOICEPEND.push(v);}
+  // Метка «стоял в документе» — при постановке, а не при разборе: дублёр дорожки голоса
+  // (vtSpareOf) в документ не вставляется никогда и должен подключаться как раньше.
+  if(VOICEPEND.indexOf(v)<0){v.__inDom=!!v.isConnected;VOICEPEND.push(v);}}
 // Правило «граф нужен по громкости»: громкость голоса стиля делает ТОЛЬКО VG.gain,
 // `volume` элемента больше 1 не умеет. Одно место правила — его зовут voiceWiring и applyDbGains.
 function voiceGraphNeeded(){
@@ -178,7 +183,13 @@ function voiceGraphNeeded(){
 // и applyDbGains при громкости голоса не 0: её делает только VG.gain, `volume` элемента
 // больше 1 не умеет. Второй двери подключения очереди быть не должно.
 function voiceEnsure(){
-  for(const v of VOICEPEND.splice(0))voiceGraphWire(v);   // копия: wire может добавить ещё
+  for(const v of VOICEPEND.splice(0)){   // копия: wire может добавить ещё
+    // Страховка для элементов, удалённых из документа мимо mediaFree: стоявший в документе
+    // при постановке и выпавший из него — мёртвый клип, в граф его не пускаем. Проверка
+    // именно «был в документе», а не голое isConnected: дублёр дорожки голоса в документ не
+    // вставляется никогда, и голое правило выбросило бы его из графа (громкость голоса мимо).
+    if(v.__inDom&&!v.isConnected)continue;
+    voiceGraphWire(v);}
   audioWake();}
 function dbToGain(db){return Math.pow(10,(+db||0)/20);}
 function applyDbGains(){if(!VG||!MG)return;const s=(typeof CURSTYLE!=='undefined'&&CURSTYLE)?CURSTYLE:{};
@@ -187,6 +198,7 @@ function applyDbGains(){if(!VG||!MG)return;const s=(typeof CURSTYLE!=='undefined
   // При voice_db != 0 звук камеры обязан идти через граф — иначе «+3 дБ» в превью
   // не слышно. Дверь та же — voiceEnsure, правило — voiceGraphNeeded.
   if(voiceGraphNeeded()&&typeof voiceEnsure==='function')voiceEnsure();
+  if(typeof eaGain==='function')eaGain();   // громкость голоса стиля — и звуку редактора шага 1
   // Живому хосту — итог этой громкости и громкости прослушивания (одна формула
   // живёт там же: 95-styles.js:voiceFxLiveOutDb).
   if(typeof voiceFxLiveGain==='function')voiceFxLiveGain();}
@@ -404,7 +416,9 @@ async function pvProxyRefresh(){   // прокси дособрались — о
   for(const P of [PV,IPV,CPV])if(P&&P.vids&&P.vids.length&&!pvVidsPlaying(P))await spareHandover(P);
   // Прокси приехал (может, и видео): причина молчания Firefox ушла вместе с src —
   // строку об этом снимаем тем же опросом, что и прогресс.
-  for(const [id,P] of [['pvstage',PV],['ipvstage',IPV],['cpvstage',CPV]]){
+  // Шаг 1 (pvstage) сюда не входит: его <video> немые, звук играет буфер редактора (`ea*`),
+  // и молчание исходника в Firefox к нему отношения не имеет.
+  for(const [id,P] of [['ipvstage',IPV],['cpvstage',CPV]]){
     const st=$(id);if(st&&typeof pvAudioLimit==='function')pvAudioLimit(st,P);}}
 async function openPreview(xml){
   const stage=$('pvstage');
@@ -424,8 +438,8 @@ async function openPreview(xml){
   PV.dur=d.dur||(PV.audio.length?PV.audio[PV.audio.length-1].te:0);
   [...stage.querySelectorAll('video')].forEach(v=>mediaFree(v));
   PV.vids=cams.map((c,ix)=>{const v=document.createElement('video');
-    v.src=pvSrc(c.path);v.preload='auto';v.muted=(ix!==0);v.playsInline=true;
-    v.volume=MEDIA_VOL;v.style.zIndex=(ix===0)?'2':'1';stage.insertBefore(v,$('pvsub'));voiceWiring(v);return v;});
+    v.src=pvSrc(c.path);v.preload='auto';v.muted=(ix!==0)||!!PV.silent;v.playsInline=true;
+    v.volume=MEDIA_VOL;v.style.zIndex=(ix===0)?'2':'1';stage.insertBefore(v,$('pvsub'));return v;});
   PV.bufs=[];bufMake(PV,stage,$('pvsub'),0,0);
   PV.delta=camDeltas(PV);camBufs(PV,stage,$('pvsub'));   // тут камера одна, но контракт общий
   const camEl=$('edcam');   // «камера — склеек — длина»: строка переехала в редактор (блок «Монтаж» убран)
@@ -433,6 +447,9 @@ async function openPreview(xml){
   // Панель «Голос» здесь НЕ рисуется: её зовёт openEditClip ПОСЛЕ edOpen (порядок см. там).
   if(px&&px.building)pvProxyWatch('pvstage');
   pvVideoTo(0);
+  // Звук камеры 1 — в буфер редактора заранее, пока человек смотрит на клип: к «Играть»
+  // он уже декодирован. Не ждём: картинке звук не нужен, а запрос — секунды.
+  if(typeof eaOpen==='function')eaOpen(xml);
 }
 function pvSegAt(list,tm){for(let i=0;i<list.length;i++){if(tm<list[i].te-1e-3)return i;}return Math.max(0,list.length-1);}
 // Слово под плейхедом: строка субтитра кадра. Ищется по МОНТАЖНОМУ времени (PV.words
@@ -460,7 +477,8 @@ function bufMake(P,stage,before,slot,off){
   // preload='metadata', а не 'auto': к дублёру обращаются ТОЛЬКО после явного seek на
   // разбег, качать \ демуксить начало файла второй раз — впустую удвоенный декод камеры
   el.src=live.src;el.preload='metadata';el.muted=true;el.playsInline=true;
-  el.volume=MEDIA_VOL;el.style.zIndex='0';stage.insertBefore(el,before);voiceWiring(el);   // дублёр — под всеми камерами
+  el.volume=MEDIA_VOL;el.style.zIndex='0';stage.insertBefore(el,before);   // дублёр — под всеми камерами
+  if(!P.silent)voiceWiring(el);   // немому кадру (шаг 1) граф не нужен: звук у него свой
   const b={el,slot,off:off||0,at:null,rolling:false};(P.bufs=P.bufs||[]).push(b);return b;}
 // `vsp` — дублёр дорожки голоса: живёт на другом элементе (<audio>, без слоёв и
 // z-index), но правило у него ОБЩЕЕ: пока играет живой, дублёр стоит немым и с
@@ -628,7 +646,7 @@ const CAM_RATE=0.06;   // насколько ускоряем/замедляем
 // только кто сверху. Дублёры лежат ниже всех (z=0) — они играют с опережением.
 function camVisual(P,ci,play){const ac=P.audioCi||0;
   P.vids.forEach((v,i)=>{v.style.opacity='1';v.style.zIndex=(i===ci)?'2':'1';
-    v.muted=(i!==ac)||!!P.voiceMute||!!P.liveMute;
+    v.muted=(i!==ac)||!!P.voiceMute||!!P.liveMute||!!P.silent;
     if(play)v.play().catch(()=>{});});}   // играют ВСЕ камеры: см. «вторая непрерывная дорожка»
 // Постоянный оффсет каждой камеры от ведущей — по первому её сегменту в EDL.
 function camDeltas(P){const d=(P.vids||[]).map(()=>0);
@@ -715,6 +733,138 @@ function pvStep(P){
 // vtTick. Монтажные pvPlay/pvPause/pvTick/pvScrub вместе с блоком «Монтаж» удалены:
 // два плеера на одном <video> спорили за currentTime, и клик по таймлайну откатывался
 // назад началом следующего куска монтажа.
+
+// ===== Звук редактора шага 1: буфер Web Audio, часы — звук =====================
+// Раньше звук шага 1 вели HTML-элементы: <video> камеры (без обработки) или <audio>
+// запечённого голоса. На каждом стыке их перематывали или подменяли дублёром, а между
+// стыками подгоняли к картинке СКОРОСТЬЮ ±6 %. Отсюда все жалобы разом: голос «плыл»
+// (замер 2026-10-09: 63 смены скорости за 40 с), терял куски на промахе дублёра (5 из 16
+// стыков) и молчал, пока картинка доезжала seek'ом.
+//
+// Теперь как в монтажке: ВЕДУЩИЙ — ЗВУК. Звук клипа целиком лежит в AudioBuffer (2–4 мин
+// — десятки МБ), и на «Играть» каждый блок правки встаёт в очередь узлом
+// AudioBufferSourceNode.start(когда, откуда, сколько) — с точностью до сэмпла, без
+// перемотки и без подгонки скоростью. Очередь стоит заранее, поэтому порезанный звук
+// играет верно и в фоновой вкладке, где кадры не приходят вовсе.
+// Часы плеера — то, что СЕЙЧАС звучит (getOutputTimestamp), из них считается ED.cs, а
+// немое видео догоняет звук (edFollow, 70-editor.js): скорость видео не слышна.
+//
+// Буферов два: звук камеры 1 (`raw`, /api/preview_audio — есть всегда) и обработанный
+// голос (`proc`, его печёт и отдаёт панель «Голос» через vtUse). Играет обработанный, если
+// он есть. Пока печётся новый, звучит прежний.
+const EA_LEAD=0.03;   // через сколько после команды звучит первый сэмпл, с: в прошлое не ставим
+const EA_FADE=0.004;  // склейка на стыке, с: без неё на обрыве волны слышен щелчок
+let EA={xml:'',raw:null,rawUrl:'',rid:0,proc:null,procUrl:'',pid:0,
+  nodes:[],segs:null,len:0,t0:0,clk:'',sig:'',gain:null};
+// Клип открыт: звук камеры 1 — в буфер. Тот же клип (повторный openPreview после
+// «Сохранить») буфер не перезагружает: камера та же.
+async function eaOpen(xml){
+  if(EA.xml===xml&&EA.rawUrl)return;
+  eaStop();EA.xml=xml;EA.raw=null;EA.rawUrl='';EA.proc=null;EA.procUrl='';
+  let d;
+  try{d=await (await fetch('/api/preview_audio',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({xml})})).json();}
+  catch(e){uiLog('preview_audio: '+e);return;}
+  if(EA.xml!==xml)return;                 // пока вынимали, открыли другой клип
+  if(d.error){toast(errText(d));return;}
+  const url='/api/media?path='+encodeURIComponent(d.path);
+  EA.rawUrl=url;
+  const buf=await eaDecode(url);
+  if(EA.xml!==xml||EA.rawUrl!==url||!buf)return;
+  EA.raw=buf;EA.rid++;}
+async function eaDecode(url){
+  audioGraph();if(!AUDIO)return null;
+  try{const ab=await (await fetch(url)).arrayBuffer();
+    return await AUDIO.decodeAudioData(ab);}
+  catch(e){uiLog('звук редактора не декодировался: '+e);return null;}}
+// Обработанный голос готов (vtUse) или снят (vtDetach — null). Прежний буфер звучит, пока
+// новый декодируется: подмена — одним присваиванием, очередь пересоберёт eaSync.
+async function eaVoice(path){
+  if(!path){EA.proc=null;EA.procUrl='';EA.pid++;return;}
+  const url='/api/media?path='+encodeURIComponent(path);
+  if(EA.procUrl===url)return;
+  EA.procUrl=url;
+  const buf=await eaDecode(url);
+  if(EA.procUrl!==url||!buf)return;
+  EA.proc=buf;EA.pid++;}
+function eaBuf(){return EA.proc||EA.raw;}
+// Подпись того, по чему стоит очередь: буфер, режим «слушать вырезанное», блоки правки.
+// Сверяется на каждом кадре (eaSync) — так очередь пересобирают ВСЕ правки разом (тяга
+// края, ✂, удаление, Ctrl+Z, возврат щели, вырез вздоха), а не каждая своей дверью.
+function eaSig(){
+  const b=EA.proc?'p'+EA.pid:(EA.raw?'r'+EA.rid:'n');
+  return b+'|'+(ED.raw?1:0)+'|'+ED.blocks.map(x=>x.s0+','+x.s1).join(';');}
+// Что звучит от места cs до конца: в обычном режиме — оставленные блоки, в режиме
+// «слушать вырезанное» — исходник подряд. Блоки встык (✂ без удаления) сливаются: склейка
+// посреди сплошного звука дала бы провал на 8 мс.
+function eaPlan(cs){
+  if(ED.raw)return cs<ED.dur?[{s0:cs,s1:ED.dur}]:[];
+  const out=[];
+  for(const b of ED.blocks){
+    if(b.s1<=cs+1e-4)continue;
+    const s0=Math.max(b.s0,cs),last=out[out.length-1];
+    if(last&&s0-last.s1<1e-3)last.s1=b.s1;else out.push({s0,s1:b.s1});}
+  return out;}
+// Время, которое СЕЙЧАС звучит, по часам контекста. getOutputTimestamp — уже с задержкой
+// вывода; нет его — вычитаем outputLatency. Контекст ещё спит (не было жеста) — часы
+// страницы: картинка идёт, а звук встанет в очередь, как только контекст проснётся.
+function eaNow(){
+  if(EA.clk==='ctx'&&AUDIO){
+    const ts=AUDIO.getOutputTimestamp?AUDIO.getOutputTimestamp():null;
+    if(ts&&ts.contextTime>0&&ts.performanceTime>0)
+      return ts.contextTime+(performance.now()-ts.performanceTime)/1000;
+    return AUDIO.currentTime-(AUDIO.outputLatency||AUDIO.baseLatency||0);}
+  return performance.now()/1000;}
+function eaStop(){
+  for(const n of EA.nodes){try{n.stop();}catch(e){}try{n.disconnect();}catch(e){}}
+  EA.nodes=[];EA.segs=null;}
+// Поставить очередь от места cs. Отрезки — во времени исходника, `m` — их смещение в
+// монтаже от начала очереди.
+function eaStart(cs){
+  eaStop();audioGraph();eaGain();
+  const ctx=!!(AUDIO&&AUDIO.state==='running');
+  EA.clk=ctx?'ctx':'perf';
+  EA.t0=(ctx?AUDIO.currentTime:performance.now()/1000)+EA_LEAD;
+  let m=0;
+  EA.segs=eaPlan(cs).map(p=>{const s={s0:p.s0,s1:p.s1,m};m+=p.s1-p.s0;return s;});
+  EA.len=m;EA.sig=eaSig();
+  const buf=eaBuf();
+  if(!ctx||!buf||!EA.gain)return;
+  for(const s of EA.segs){
+    const dur=Math.min(s.s1,buf.duration)-s.s0;if(dur<=0)continue;
+    const at=EA.t0+s.m,f=Math.min(EA_FADE,dur/4);
+    const n=AUDIO.createBufferSource(),g=AUDIO.createGain();
+    n.buffer=buf;n.connect(g);g.connect(EA.gain);
+    g.gain.setValueAtTime(0,at);g.gain.linearRampToValueAtTime(1,at+f);
+    g.gain.setValueAtTime(1,at+dur-f);g.gain.linearRampToValueAtTime(0,at+dur);
+    n.start(at,s.s0,dur);EA.nodes.push(n);}}
+// Где плейхед по звуку: {cs, end}. До первого сэмпла держим начало очереди.
+function eaClock(){
+  if(!EA.segs)return null;
+  const el=eaNow()-EA.t0,S=EA.segs;
+  if(!S.length)return {cs:ED.cs,end:true};
+  if(el<0)return {cs:S[0].s0,end:false};
+  for(const s of S){if(el<s.m+(s.s1-s.s0))return {cs:s.s0+(el-s.m),end:false};}
+  return {cs:S[S.length-1].s1,end:true};}
+// Кадр игры: очередь стоит по актуальным блокам и буферу, иначе — пересобрать от того
+// места, что звучит сейчас. Проснувшийся контекст (был жест) — тоже пересборка: до него
+// очередь шла по часам страницы и без звука.
+function eaSync(){
+  if(!EA.segs)eaStart(ED.cs);
+  else if(EA.sig!==eaSig()||(EA.clk==='perf'&&AUDIO&&AUDIO.state==='running')){
+    const c=eaClock();eaStart(c?c.cs:ED.cs);}
+  eaGain();
+  return eaClock();}
+// Громкость звука редактора: громкость прослушивания (ползунок) × громкость голоса стиля.
+// Свой гейн прямо в выход, а не через VG: VG уводит в ноль цензура шага 3 (vgDuck), и
+// оставленный там ноль глушил бы шаг 1. Окно плагина открыто — звучит живой хост, свой
+// звук в ноль (иначе голос слышен дважды).
+function eaGain(){
+  if(!AUDIO)return;
+  if(!EA.gain){EA.gain=AUDIO.createGain();EA.gain.connect(AUDIO.destination);}
+  const s=(typeof CURSTYLE!=='undefined'&&CURSTYLE)?CURSTYLE:{};
+  const live=typeof vtLiveOn==='function'&&typeof ED!=='undefined'&&vtLiveOn(ED);
+  EA.gain.gain.value=live?0:MEDIA_VOL*dbToGain(s.voice_db!=null?s.voice_db:0);}
 
 // ===== Обработанный голос клипа: одна дорожка на ВСЕ превью =====
 // Включён ИИ-шумодав (или плагин цепочки) — панель «Голос» считает ОБРАБОТАННЫЙ голос
@@ -870,11 +1020,9 @@ function vtSpareCtl(P,at,tm){
   vtSpareArm(P);
   if(!vsp&&typeof voicePrime==='function')voicePrime(P);   // трек подключился уже во время игры — источник догоняем сами
   const cue=vtOf(P).vspAt;
-  // Окно подмены отсчитывается от ТОЧКИ ПРЫЖКА, а не от прицела. У редактора прицел —
-  // начало следующего блока, а прыжок — конец текущего: на вырезе уже VT_SWAP_HI окно
-  // открывалось ДО прыжка, и голос переезжал раньше картинки. Стык редактора подменяет
-  // edJump (он и прыгает), поэтому ранней подмены здесь у него нет.
-  if(!vtIsEd(P)&&cue!=null&&Math.abs(cue-at)<=VT_SWAP_HI)vtSpareTake(P,cue);
+  // Прицел у плеера по EDL и есть точка стыка: в окне VT_SWAP_HI подменяем в этом же кадре.
+  // (Редактор шага 1 сюда не заходит: его звук — буфер Web Audio, блок `ea*`.)
+  if(cue!=null&&Math.abs(cue-at)<=VT_SWAP_HI)vtSpareTake(P,cue);
   vtSpareRoll(P,tm);}
 
 // Состояние дорожки — на плеере: у шага 1 и шага 3 свои элементы, свои запросы и своя
@@ -966,7 +1114,7 @@ function vtGate(P,on){
   // обработки нет — графа нет, и простой звук камеры не зависит от AudioContext.
   if(live&&typeof voiceEnsure==='function')voiceEnsure();
   M.voiceMute=live;
-  const v=M.vids&&M.vids[ac];if(v)v.muted=live;}
+  const v=M.vids&&M.vids[ac];if(v)v.muted=live||!!M.silent;}
 // Надпись про голос — в панель «Голос» плеера (она есть у превью нарезки). Плееру без
 // панели (шаг 3) писать некуда: там голос не настраивают, а только слушают.
 function vtNote(P,text){
@@ -1006,6 +1154,8 @@ function vtDetach(P){
   const st=vtOf(P);st.on=false;st.path='';st.fin=false;st.dn='';
   // Дублёр говорил прежним треком — его разбег больше не наш.
   if(typeof vtSpareIdle==='function')vtSpareIdle(P);
+  // Шаг 1: буфер обработанного голоса снимаем — звучит звук камеры 1 (eaBuf).
+  if(vtIsEd(P)&&typeof eaVoice==='function')eaVoice(null);
   const el=st.el;
   if(!el)return;
   el.pause();
@@ -1035,7 +1185,7 @@ function vtSetMute(P,on){
   const M=vtMuteHost(P);
   M.voiceMute=!!on;
   const ac=vtAudioCam(P),v=M.vids&&M.vids[ac];
-  if(v)v.muted=!!M.voiceMute||!!M.liveMute;
+  if(v)v.muted=!!M.voiceMute||!!M.liveMute||!!M.silent;
   return !!M.voiceMute;}
 // Кадр плеера для ЖИВОГО окна: позиция — исходное время камеры 1 (та же формула,
 // что у дорожки, vtSrcAt), пуск/пауза — состояние плеера, стык и перемотка —
@@ -1052,7 +1202,7 @@ function vtLiveUpdate(P,tm){
     if(st.live){st.live=null;}
     if(M.liveMute!==undefined){
       M.liveMute=undefined;M.voiceMute=false;
-      const v=M.vids&&M.vids[ac];if(v)v.muted=false;
+      const v=M.vids&&M.vids[ac];if(v)v.muted=!!M.silent;
     }
     return false;}
   if(!st.live)st.live={sid:'',at:-1,sent:0,pending:0,rate:1};
@@ -1071,7 +1221,7 @@ function vtLiveUpdate(P,tm){
   M.liveMute=live;
   M.voiceMute=false;
   const v=M.vids&&M.vids[vtAudioCam(P)];
-  if(v)v.muted=!!M.liveMute;
+  if(v)v.muted=!!M.liveMute||!!M.silent;
   // Своя дорожка обработанного голоса молчит: звучит хост. Она остаётся ПОДКЛЮЧЁННОЙ
   // (`st.on`), а не отцепляется: хост гасят, когда плагины выключили, и тогда звук
   // должен вернуться ей без нового захода за дорожкой на сервер.
@@ -1129,7 +1279,7 @@ function vtLiveSid(P){
 function vtLivePlay(P){if(!vtLiveOn(P))return;vtLiveUpdate(P,vtNow(P));}
 function vtLivePause(P){if(!vtLiveOn(P))return;vtLiveCmd(P,'pause');
   const M=vtMuteHost(P);M.liveMute=false;
-  const v=M.vids&&M.vids[vtAudioCam(P)];if(v)v.muted=!!M.voiceMute;}
+  const v=M.vids&&M.vids[vtAudioCam(P)];if(v)v.muted=!!M.voiceMute||!!M.silent;}
 // Пауза: звук тоже стоит (иначе голос доигрывал бы поверх паузы). Звук камеры на паузе
 // возвращаем: при следующем пуске его снова заглушит vtTick.
 function vtPause(P){const st=vtOf(P);if(st.el)st.el.pause();
@@ -1383,7 +1533,6 @@ function vtUse(P,path,seq,fin){
   const st=vtOf(P);
   if(seq!=null&&seq!==st.seq)return;
   if(!path)return;
-  const el=vtEl(P);
   st.on=true;st.dn=st.wantDn;st.fin=!!fin;
   // Надпись панели — под то, что слышно: иначе после счёта (или мгновенно из кеша)
   // висело «голос обрабатывается…», хотя обработанный голос уже играл.
@@ -1393,6 +1542,9 @@ function vtUse(P,path,seq,fin){
   // подменяем: `<audio>` держит ровно один источник.
   if(st.path===path&&!!st.fin===!!fin){vtTick(P,vtNow(P));return;}
   st.path=path;
+  // Шаг 1: голос играет буфер редактора (eaVoice), своего <audio> у ED нет вовсе.
+  if(vtIsEd(P)){if(typeof eaVoice==='function')eaVoice(path);return;}
+  const el=vtEl(P);
   el.volume=MEDIA_VOL;
   el.src='/api/media?path='+encodeURIComponent(path);
   const start=()=>{if(seq==null||seq===st.seq)vtTick(P,vtNow(P));};
@@ -1410,12 +1562,12 @@ function vtUse(P,path,seq,fin){
 // там». Точная установка остаётся там, где ждать нельзя: пауза, скраб, вырез (vtSeek).
 function vtTick(P,tm){
   const st=vtOf(P);
-  // Промах видео-дублёра на стыке редактора: картинка ещё едет seek'ом, а голос ждёт её
-  // `seeked` в закрытом гейте (edJump -> edVoiceSeekWait). Пока ждём — кадр дорожку не
-  // трогает вовсе: иначе vtGate(P,true) ниже открыл бы звук камеры, и на стыке было бы
-  // слышно сырой голос. Ожидание одно на плеер и снимается в единственной двери
-  // (edVoiceSeekClose), поэтому второй копии правила «кто открывает гейт» не заводится.
-  if(typeof ED!=='undefined'&&ED&&P===ED&&ED.vtOpen)return;
+  // Шаг 1: звук играет буфер редактора (eaSync из edTick), подводить нечего. Остаётся
+  // живой хост плагинов (ему — позиция и пуск/пауза) и гейн: окно открыто — свой звук в 0.
+  if(vtIsEd(P)){
+    if(vtLiveOn(P)||vtMuteHost(P).liveMute!==undefined||st.live)vtLiveUpdate(P,tm);
+    if(typeof eaGain==='function')eaGain();
+    return;}
   // Окно плагина открыто: голос играет ОН (трек через цепочку в реальном времени),
   // и превью только задаёт ему позицию. Ветка одна на всё: своя дорожка в это время
   // молчит — иначе слышно два голоса разом.
@@ -1428,20 +1580,12 @@ function vtTick(P,tm){
   if(vtAudioCam(P)!==0){                 // слушают другую камеру — она звучит сама
     if(!el.paused)el.pause();
     vtGate(P,false);return;}
-  // Вырезанное место (только у единственного плеера шага 1 — редактора): картинка там
-  // прыгает через вырез (edTick -> edJump), и звук обязан прыгнуть вместе с ней. Иначе
-  // обработанный голос доигрывал бы удалённый кусок поверх прыжка картинки. Гейт при этом
-  // НЕ открываем: звук камеры на вырезанном тоже должен молчать, а не зазвучать сырым.
-  if(typeof edRaw==='function'&&!edRaw(P)&&typeof edInCut==='function'&&edInCut(P)){
-    if(!el.paused)el.pause();
-    vtGate(P,false);return;}
   vtGate(P,true);
   const at=vtSrcAt(P,tm);
   if(at==null)return;
   // Живому <audio> готовим дублёра ровно так же, как живому <video>: прицел ставит
-  // тот, кто знает EDL, — vtSpareSwap (pvStep) или edTick/edArm у редактора.
-  // Заодно там подмена на стыке и разбег — одной дверью (vtSpareCtl).
-  // `typeof` — для стендов: они вырезают из файла по функциям (как и edJump).
+  // тот, кто знает EDL, — vtSpareSwap (pvStep). Заодно там подмена на стыке и разбег —
+  // одной дверью (vtSpareCtl). `typeof` — для стендов: они вырезают из файла по функциям.
   if(typeof vtSpareCtl==='function')vtSpareCtl(P,at,tm);
   if(el.readyState<1)return;             // трек ещё не открылся — молчим, но не камеру
   const live=vtPlaying(P)&&!P.scrubbing;
@@ -1470,15 +1614,6 @@ function vtRate(P,at){
     if(ad>VT_SOFT)vtSeek(P,at);
     return;}
   el.playbackRate=(ad<=VT_SOFT)?1:(d<0?1+VT_RATE:1-VT_RATE);}
-// Прыжок через вырез на шаге 1 (edInCut/edJump): позиция ставится СРАЗУ и точно, без
-// ожидания порога — картинка там уже прыгнула, и «подъезжающий» голос был бы слышен
-// как чужой кусок клипа. Живого хоста это тоже касается: команда seek уходит ему.
-function vtSeekAt(P,tm){
-  if(vtLiveOn(P)){vtLiveUpdate(P,tm);return false;}
-  const st=vtOf(P);
-  if(!st.on||!st.el||!st.path)return false;
-  const at=vtSrcAt(P,tm);if(at==null)return false;
-  vtSeek(P,at);return true;}
 // Пересчёт после правки ручки панели: ~400 мс затишья. Ползунок сыплется на каждый
 // пиксель, а голос клипа — это счёт шумодава на весь клип: запрос на каждое движение
 // ставил бы их в очередь. Кеш по настройкам делает повторный вызов дешёвым: те же

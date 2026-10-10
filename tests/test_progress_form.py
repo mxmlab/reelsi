@@ -449,7 +449,9 @@ out.res=await aiIntroOne(c,'b1');
 out.rows=$('qlist').innerHTML;
 out.snap=globalThis.SNAP||null;
 """ + _TAIL
-    script = _stand(body, _fn(AE_JS, "aiIntroOne"), _fn(EDITOR_JS, "aiPost"),
+    # styleForJob/defJob — то, чем aiIntroOne берёт стиль клипа в тело /api/ai_intro
+    script = _stand(body, _fn(AE_JS, "aiIntroOne"), _fn(AE_JS, "styleForJob"),
+                    _fn(AE_JS, "defJob"), _fn(EDITOR_JS, "aiPost"),
                     _fn(EDITOR_JS, "logTail"),
                     _extract(_read(os.path.join(APP, "50-chrome.js")), "function mergeLog(d)"),
                     """

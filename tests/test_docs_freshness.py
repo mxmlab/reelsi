@@ -17,6 +17,7 @@ README, ARCHITECTURE, спеки нарезки и их друзья. Цифры
 печатаются самим тестом в комментарий к коллекциям — отчёт по ним берётся из
 запуска `pytest -q`, а не пересказом.
 """
+import fnmatch
 import re
 import sys
 from pathlib import Path
@@ -25,6 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 sys.path.insert(0, str(ROOT / "tools"))
 import public_slice  # noqa: E402
+from tests import gitfiles  # noqa: E402
 
 DOCS = [
     "README.md",
@@ -142,7 +144,10 @@ def _resolve_module(name):
         return exact
     if "/" in name:
         return None
-    hits = [p for p in ROOT.rglob(name) if ".git" not in p.parts]
+    # Обход без `.claude` (рабочие копии подагентов): rglob заходил туда и падал,
+    # когда параллельная сессия меняла файлы. См. gitfiles.walk_repo.
+    hits = [Path(d) / f for d, _dirs, files in gitfiles.walk_repo(str(ROOT))
+            for f in files if fnmatch.fnmatch(f, name)]
     return hits[0] if len(hits) == 1 else (hits[0] if hits else None)
 
 

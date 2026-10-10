@@ -353,6 +353,7 @@ def test_mypy_runs_without_the_env(monkeypatch):
 CHROME_TEST_FILES = (
     "tests/test_ui_static.py",
     "tests/test_wv_ins_modal_geometry.py",
+    "tests/test_style_dirfile_geometry.py",
     "tests/test_webrender.py",
 )
 

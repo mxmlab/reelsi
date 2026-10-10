@@ -232,6 +232,7 @@ def _download_job(cmd: list[str], url: str) -> None:
         with GDLOCK:
             GDJOB["cur"] = f"ошибка: {txt}"
     except ReelsiError: raise
+    # ошибка уходит в журнал задачи (_gemit) и в статус GDJOB — видна, не глотается
     except Exception as e:
         _gemit(f"ОШИБКА: {type(e).__name__}: {e}")
         with GDLOCK:

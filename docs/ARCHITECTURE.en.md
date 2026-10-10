@@ -763,16 +763,45 @@ recomputed…"; when done — the `<audio>` source is swapped without a pause. T
 track, if it is enabled and already computed; the raw sound is left only to those who have nothing else to
 play (no cache — while RoFormer is computing, the person needs to hear the voice, not silence).
 
-Sync of its own track (`vtTick`, `static/app/60-preview.js`): a discrepancy of 0.03–0.25 s is damped by
-SPEED (`playbackRate` ±6 %, like the cameras — `camTrack`), more than 0.25 s — by seeking, while on
-pause/scrub and on a jump across a cut (`vtSeekAt`, from `edJump`) the position is set exactly and
-immediately. Seeking every 0.15 s was what sounded like "played in the wrong place".
+Sync of its own track in the step 3 preview (`vtTick`, `static/app/60-preview.js`): a discrepancy of
+0.03–0.25 s is damped by SPEED (`playbackRate` ±6 %, like the cameras — `camTrack`), more than 0.25 s — by
+seeking, while on pause and scrub the position is set exactly and immediately. Seeking every 0.15 s was
+what sounded like "played in the wrong place".
+
+**Step 1: the sound is the clock, the video is mute (2026-10-09).** In the step 1 editor the sound is played
+NOT by an element but by a Web Audio buffer (the `ea*` block in `60-preview.js`). The clip's whole sound
+sits in an `AudioBuffer`: camera 1's sound (`POST /api/preview_audio` extracts it into `_tmp/pa_*.wav`,
+cached per camera file and kept by the automatic cleanup together with the proxies) or, once ready, the
+processed voice (`vtUse(ED)` → `eaVoice`; `ED` has no `<audio>` of its own). On "Play" every kept block is
+queued as an `AudioBufferSourceNode.start(when, offset, duration)` with a 4 ms splice — a cut sounds
+sample-accurate, with no seeking and no speed matching. The player's clock is what is sounding NOW
+(`getOutputTimestamp`); `edTick` takes `ED.cs` from it, and the mute video follows the sound (`edFollow`):
+inside a block by speed ±10 % (inaudible), at a cut by the spare armed `ED_ARM` = 1 s ahead, on a miss by a
+seek with a lead (`ED.seekLead`, tuned from measured seeks). Invariants:
+
+- **The queue is rebuilt by a signature check every frame** (`eaSync`: buffer, `ED.raw`, blocks), not by
+  each edit through its own door — dragging an edge, ✂, delete, Ctrl+Z, restoring a gap, cutting a breath
+  and the arrival of the processed voice all rebuild it. Seek and play go through `eaStart` from the spot.
+- **Every step 1 `<video>` is mute** (`PV.silent`): every writer of `muted` (`camVisual`, `vtGate`,
+  `vtSetMute`, `vtLive*`, `edPlay`, `edTake`) adds `||P.silent`. Exactly one source sounds; the step 1
+  camera is never even queued for the graph.
+- **Volume is its own gain** (`eaGain`: `MEDIA_VOL` × the style's voice level), straight to the output
+  rather than through `VG`: `VG` is pulled to zero by the step 3 censoring. With a plug-in window open the
+  gain is 0 and the live host sounds (`vtLiveUpdate` still sends it the position from `ED.cs`).
+- **Background**: the queue is set up ahead, so in a hidden tab the sound is cut correctly without a single
+  frame; frames (the `pvFramePlan` watchdog) are needed only for the picture and the playhead.
+
+Why (measured 2026-10-09 on a clip copy, 720p proxy, 40 s, 16 cuts): the old machine matched the sound to
+the picture by speed — 63 rate changes in 40 s, the voice "wobbled"; the video spare was armed 0.25 s
+before a cut while needing a 0.35 s run-up and missed 5 cuts of 16, and each miss muted the voice until
+`seeked`. After: 18 of 18 cuts by the spare, 0 seeks, 0 frozen frames, 0 sounding elements. The volume
+slider did not work with the processed voice because `applyMediaVol` did not walk over `ED`.
 
 Added 2026-07-23: **a shared volume control** for all three video previews (edit `PV`, inserts `IPV`,
 layout `CPV`). A slider `<input data-vol>` in each panel, one value `MEDIA_VOL` (localStorage
-`autocut2_vol`, 0..1) for all players — `setMediaVol` writes the key, applies it to ALL `<video>` (only
+`reelsi_vol`, 0..1) for all players — `setMediaVol` writes the key, applies it to ALL `<video>` (only
 the non-muted one is audible) and synchronizes all sliders; new `<video>` elements take `MEDIA_VOL` when
-created.
+created. Step 1's sound is the editor buffer's gain (`eaGain`), set by `applyMediaVol` with the same formula.
 
 **Preview sound and the Web Audio graph (2026-10-07).** `createMediaElementSource` is an IRREVERSIBLE
 door: after it the element gives sound only into the graph, and a suspended `AudioContext` (the browser
@@ -1215,6 +1244,30 @@ must not exist anywhere in `core/` and `api/` (guarded by `tests/test_infra_dedu
 **Pipeline edit memory** — `user_overrides` in `.project.json`: the tree
 `{ clip: { restored: [..], deleted: [..] } }` — "restored/deleted" in the editor; a repeated omni_cut
 strictly protects what was restored and reports it to the LLM.
+
+**Subtitles of the second text pass** — with "Cut engine (text)" on, words are recognized over the whole
+source, and only the kept pieces reach the XML. Sidecars: `<stem>.srcwords.json` — source words
+`{w, start, end}` in seconds of camera 1, the full list, written after a successful build; `text_subs: true`
+in `.project.json` — the XML subtitles come from the source. A block edit on step 1 (`/api/editor_save`)
+rebuilds the subtitles through `core/cut_subs.py`: the words of the remaining pieces come from the CURRENT
+XML (with manual edits and deletions), the returned pieces and widened borders come from `.srcwords.json`,
+and the cut parts go. Without the flag (a cut without the second pass) the edit carries the subtitles over
+from the timeline, as before.
+
+**The waveform peaks cache** (`api/files.py`, `/api/waveform`) — in the service folder `_peaks/`
+(`REELSI_PEAKS_CACHE`, by default `_peaks/` in the repository root). The file name is taken from the
+source's version (path, date, size) and from `pps`; the version rule is the same as for the proxy
+(`src_file_version` in `core/draftrender.py`), otherwise an edited source would keep showing its old
+waveform while its proxy is rebuilt. Old `*.peaks*.json` files next to the source are removed when its
+waveform is read; entries older than 60 days are removed when a new one is written. It is written through
+`atomic_json_dump`.
+
+**The quarantine of broken files** (`core/fileio.py`, `quarantine_unreadable`) — if the file being
+overwritten cannot be read (a broken JSON), it is moved aside as `<file>.bad-<time>` with its original
+bytes, instead of being replaced by an empty one. This protects the insert library index, the render
+statistics, the job log, the UI state, the clip and project sidecars, the head track, the final voice, the
+VST cache and the yellow-highlight strength; a line goes to the log. The same mechanism is used for
+`terms.json` and the video-generation history.
 
 **Rejected inserts** — `ins_rejected` on the clip → `rejected` in `cmd_inserts`: the prompt + a hard
 filter of similar ones.
@@ -2198,6 +2251,13 @@ human, and `http://127.0.0.1:1234` (LM Studio) is normal there. The guard is
   what is visible by structure. After code edits **the old `.jsx` must be reassembled** — on
   disk they remain the previous ones.
 
+**The guards that stop silent failures from coming back.** `tests/test_no_silent_except.py`: every
+broad `except` in the root modules, `core/` and `api/` has a re-raise, a log line or a comment on why
+it must not crash here; a broad `except` without such a reason turns the suite red. The personal files:
+`tests/conftest.py` points the state paths at a test folder before the modules are imported, and
+`tests/test_personal_guard.py` compares the fingerprints of `ai_config.json`, `named_inserts.json` and
+`insertlib.json` in the root before and after a run — if any of them changed, the run fails with exit code 1.
+
 ## Backlog
 
 - **Intro above or below roto? (not clarified, 2026-07-27.)** The first end-to-end comparison of an
@@ -2678,7 +2738,7 @@ checkbox) generation of the remainder; it is called from all four paths: "Match 
 - `GET /api/media` — serves any media file (Range for streaming); `?nobg=1` for an image
   returns `insertlib.nobg_path` (the same `<stem>.nobg.png` cache that goes into assembly), video
   — as is.
-- `GET /api/waveform` — the peaks cache for the cut editor.
+- `GET /api/waveform` — the waveform peaks for the cut editor; the cache is in `_peaks/` (see above).
 - `POST /api/cams`, `/api/cammatch` — camera layout, matching cams 2..N by sound.
 - `POST /api/cams_make` — creating 1..4 folders `cameraN`/`камераN` by an explicit button on a clean installation (they are not created silently), returns the camera composition.
 - `POST /api/newtakes` — the "already cut" filter for the queue.

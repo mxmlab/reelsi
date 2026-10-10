@@ -68,7 +68,7 @@ PREVIEW_FUNCS = ("vtOf", "vtCam1", "vtSrcAt", "vtNow", "vtAudioCam", "vtPlaying"
                  "vtStatesWait", "vtStatesTake", "vtHostDown",
                  "vtPrep", "vtVoiceShow", "vtVoiceWatch", "vtVoicePoll",
                  "pvProgRow", "pvProgDrop", "vtVoiceLine", "vtVoiceStop", "vtVoiceTake",
-                 "vtVoiceUse", "vtUse", "vtTick", "vtSeek", "vtRate", "vtSeekAt",
+                 "vtVoiceUse", "vtUse", "vtTick", "vtSeek", "vtRate",
                  "voiceGraphNeeded", "applyDbGains", "dbToGain")
 
 

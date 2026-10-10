@@ -210,6 +210,11 @@ function plur(n,one,few,many){n=Math.abs(n)%100;const d=n%10;
 // освободить медиа-элемент: пауза, снятый src (файл перестаёт держать соединение)
 // и load() — им браузер отпускает ресурс, и убрать из DOM
 function mediaFree(v){if(!v)return;
+  // Элемент закрытого плеера уходит и из очереди подключения звука (VOICEPEND, 60-preview.js).
+  // Иначе он висел бы там с буферами до первого понадобившегося графа, а voiceEnsure подключил
+  // бы уже мёртвый элемент — утечка элементов закрытых клипов. VOICEPEND объявлен в 60-preview.js,
+  // а этот файл грузится раньше, поэтому имя проверяем только в момент вызова.
+  if(typeof VOICEPEND!=='undefined'){const i=VOICEPEND.indexOf(v);if(i>=0)VOICEPEND.splice(i,1);}
   try{v.pause();}catch(e){}
   try{v.removeAttribute('src');}catch(e){}
   try{v.load();}catch(e){}

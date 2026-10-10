@@ -7,11 +7,11 @@
 // Порядок важен — объявления функций поднимаются в пределах своего файла.
 
 // ================= editor (таймлайн: зум/пан, линейка, undo, возврат вырезанного) =================
-// ЕДИНСТВЕННЫЙ плеер шага 1. Играет исходник камеры 1 и пропускает вырезанное, а
-// обработанный голос (дорожка vt*) звучит в нём же: время звука — ED.cs (исходное время
-// камеры 1 под плейхедом, оно же время запечённого трека). Блока «Монтаж» со своим
-// плеером и ползунком больше нет: два плеера на одном <video> спорили за currentTime,
-// и клик по таймлайну откатывался назад началом следующего куска монтажа.
+// ЕДИНСТВЕННЫЙ плеер шага 1. Картинка — исходник (или прокси) камеры 1, немая; ЗВУК
+// играет буфер Web Audio (60-preview.js, блок `ea*`), и он же — часы: ED.cs (исходное время
+// камеры 1 под плейхедом) считается из того, что сейчас звучит, а видео догоняет звук
+// (edFollow). Блока «Монтаж» со своим плеером больше нет: два плеера на одном <video>
+// спорили за currentTime, и клик по таймлайну откатывался назад.
 // `step` — токен шага планировщика кадра (60-preview.js:pvFramePlan): по нему сторож-таймер
 // и rAF гасят друг друга, чтобы на кадр пришёлся ровно один шаг.
 let ED={xml:'',blocks:[],fps:60,cam:'',dur:0,peaks:[],pps:80,sel:-1,play:false,raw:false,raf:0,step:0,
@@ -20,16 +20,16 @@ let ED={xml:'',blocks:[],fps:60,cam:'',dur:0,peaks:[],pps:80,sel:-1,play:false,r
   // дорожка и живой хост берут файл камеры 1 через vtCam1(P); `voicePanel` — id панели
   // «Голос» этого плеера, по ней vtFx берёт ЖИВЫЕ ручки на экране, а vtNote пишет статус.
   cams:null,voicePanel:'pvvoice',
-  // Промах видео-дублёра на стыке: дорожку голоса держим закрытой, пока живое видео не
-  // доедет seek'ом до места прыжка. `vtOpen` — идёт такое ожидание, `vtTimer` — его
-  // страховка, `vtEl`/`vtOn` — на каком элементе и каким слушателем ждём (см. edJump).
-  vtOpen:false,vtTimer:0,vtEl:null,vtOn:null};
+  // Упреждение перемотки видео на промахе дублёра, с: пока декодер доезжает, звук уходит
+  // вперёд, поэтому целимся туда, где звук будет. Подстраивается по замеру каждой перемотки.
+  seekLead:0.12};
 const EDRULER=18;                                   // высота линейки, css px
-// Мутационный выключатель к тесту `test_voice_spare.py`: с ним `edJump` снова зовёт
-// `vtSpareTake` БЕЗУСЛОВНО — ровно то, что было до правки «голос следует за решением
-// видео». Живёт в модуле, а не на плеере: плеер — боевое состояние, и лишнего поля в нём
-// быть не должно. Выключен по умолчанию, в браузере никто его не ставит.
-let EDMUTVOICE=0;
+// Видео догоняет звук (edFollow). Оно немое, поэтому скорость его подгонки не слышна —
+// в отличие от прежней подгонки звука скоростью, от которой голос «плыл».
+const ED_V_SOFT=0.04;   // расхождение видео со звуком меньше — не трогаем, с
+const ED_V_HARD=0.5;    // больше — скоростью не догнать, перемотка
+const ED_V_RATE=0.1;    // насколько ускоряем/замедляем видео
+const ED_ARM=1.0;       // за сколько до стыка уводим дублёра видео на разбег, с
 async function edOpen(){const xml=PV.xml||(curEdit>=0?CLIPS[curEdit].xml:'')||ED.xml;if(!xml)return;ED.xml=xml;
   const info=$('edtime');info.textContent=t('загрузка…');
   try{const d=await (await fetch('/api/editor_load',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml})})).json();
@@ -103,11 +103,6 @@ function edDraw(){const c=$('edtl');if(!c||!ED.dur)return;const g=c.getContext('
   g.strokeStyle='#f5c518';g.lineWidth=Math.max(1,1.5*dpr);g.beginPath();g.moveTo(cx,0);g.lineTo(cx,H);g.stroke();
   g.fillStyle='#f5c518';g.beginPath();g.moveTo(cx-4*dpr,0);g.lineTo(cx+4*dpr,0);g.lineTo(cx,6*dpr);g.closePath();g.fill();}
 function edUI(){const el=$('edtime');if(el)el.textContent=fmtIns(edCutTime(ED.cs))+' / '+fmtIns(edTotal());edWords();}
-// Вырезанное место плейхеда: режим «слушать вырезанное» (галка ED.raw) отключён, а под
-// плейхедом — щель между блоками. Спрашивают про ЭТОТ плеер — редактор; у шага 3 своего
-// выреза нет, и его дорожка голоса глушиться из-за чужого плейхеда не должна.
-function edRaw(P){return (typeof P==='undefined'||P===ED)&&!!ED.raw;}
-function edInCut(P){return (typeof P==='undefined'||P===ED)&&!edRaw(P)&&ED.dur>0&&edBlockAt(ED.cs)<0;}
 // Слово под плейхедом и строка субтитра кадра. Плеер один — редактор, поэтому и панель
 // слов ведёт он (монтажного плеера, который вёл её раньше, больше нет). Считаем по
 // ИСХОДНОЙ раскладке (ED.orig — то, что лежит в XML): PV.words сняты с неё, и
@@ -118,199 +113,92 @@ function edWords(){
   const el=$('pvsub');
   if(el)el.textContent=pvWordAt(mt);}
 // Перемотка — ОДНА дверь для всех: клик и драг по таймлайну, хоткеи, кнопка. Кто играет —
-// тот и продолжает: состояние воспроизведения не трогаем, а плейхед и звук ставим на
-// место клика сразу, без ожидания следующего кадра.
+// тот и продолжает: состояние воспроизведения не трогаем, а плейхед, картинку и очередь
+// звука ставим на место клика сразу, без ожидания следующего кадра.
 function edSeek(s){ED.cs=Math.max(0,Math.min(ED.dur,s));
   pvVideoTo(ED.cs);
-  // Перемотка снимает и ожидание по промаху видео-дублёра: плейхед уже в другом месте, и
-  // открыть гейт по чужому `seeked` значило бы вернуть голос на покинутый стык.
-  if(ED.vtOpen)edVoiceSeekOff();
-  // Разбег дорожки голоса снимается на перемотке там же, где его снимает pvVideoTo камере
-  // (spareIdle): разбег готовился под конец ПРЕЖНЕГО блока, а плейхед уже в другом месте.
-  // Прицел снимаем вместе с разбегом: vtSpareCtl взводит дублёра по `vspAt` каждый кадр,
-  // и оставленный прицел вернул бы разогнанный дублёр на покинутый стык.
-  if(typeof vtSpareIdle==='function'){vtSpareIdle(ED);vtSpareAt(ED,null);}
-  if(typeof vtOf==='function')vtTick(ED,ED.cs);   // звук — на то же место и сразу, не ждём кадра
+  if(ED.play&&typeof eaStart==='function')eaStart(ED.cs);
+  if(typeof vtOf==='function')vtTick(ED,ED.cs);   // живому хосту плагинов — новое место
   edDraw();edUI();}
 function edToggle(){ED.play?edPause():edPlay();}
 function edPlay(){const v=PV.vids&&PV.vids[0];if(!v){toast(t('нет видео камеры 1'));return;}
-  // Граф Web Audio будим ЗДЕСЬ и одной дверью на все плееры (audioWake): браузер держит
-  // AudioContext в `suspended`, пока не было живого жеста, а звук камеры после
-  // createMediaElementSource идёт ТОЛЬКО через граф — приостановленный даёт ровно
-  // «видео играет, звука нет, ошибок нет». Зовём из обработчика нажатия, как и положено.
+  // AudioContext будим ЗДЕСЬ, из обработчика нажатия: браузер держит его в `suspended`,
+  // пока не было живого жеста, а звук редактора играет только через него.
   if(typeof audioWake==='function')audioWake();
-  // Строка «Firefox не читает звук этих камер» — одна на все плееры (pvAudioLimit):
-  // без неё молчание исходника читается как поломка.
-  if(typeof pvAudioLimit==='function')pvAudioLimit($('pvstage'),ED);
   // Голос клипа в прошлый раз не посчитался — «Играть» обязан попробовать снова: причина
   // (нет окружения RoFormer, занятый сервер) могла уйти, а vtPrep зовут только правки ручек.
   if(typeof vtOf==='function'&&vtOf(ED).failed){vtOf(ED).failed=false;vtPrep(ED);}
   if(!ED.raw&&edBlockAt(ED.cs)<0){const nb=ED.blocks.find(b=>b.s0>=ED.cs)||ED.blocks[0];if(!nb)return;ED.cs=nb.s0;}
   ED.play=true;$('edplay').innerHTML=ico('pause');
-  // Пуск снимает ожидание по промаху: голос включается здесь же, и оставленный гейт
-  // держал бы его немым до чужого события.
-  if(ED.vtOpen)edVoiceSeekOff();
   spareIdle(PV);                                    // дублёр общий с показом кадра — начинаем с чистого листа
   pvVideoTo(ED.cs);
-  v.muted=false;v.volume=MEDIA_VOL;v.style.opacity='1';v.style.zIndex='2';PV.vids.forEach((o,i)=>{if(i)o.style.zIndex='1';});
+  v.muted=true;v.volume=MEDIA_VOL;v.style.opacity='1';v.style.zIndex='2';PV.vids.forEach((o,i)=>{if(i)o.style.zIndex='1';});
   v.play().catch(()=>{});
+  if(typeof eaStart==='function')eaStart(ED.cs);    // очередь звука — с этого места
   vtLivePlay(ED);   // окно плагина открыто — команда «играть» уходит ему, с этого кадра
   // Следующий кадр планирует ОБЩИЙ помощник кадра (60-preview.js): видимая вкладка — rAF,
-  // скрытая — таймер. В скрытой вкладке rAF не приходит вовсе, и без этого игра в фоне
-  // шла бы без перескока через вырезанное. `typeof` — стенды вырезают по функциям.
+  // скрытая — таймер. Звуку он не нужен (очередь стоит заранее), он нужен картинке.
   if(typeof pvFrameStart==='function')pvFrameStart(ED,edTick);}
 function edPause(){const was=ED.play;ED.play=false;const b=$('edplay');if(b)b.innerHTML=ico('play');
   // Пауза снимает ОБА вида шага (rAF и таймер) и забывает цикл: иначе смена видимости
   // вернула бы в фоне уже остановленную игру. `typeof` — стенды вырезают по функциям.
   if(typeof pvFrameOff==='function')pvFrameOff(ED);
+  if(typeof eaStop==='function')eaStop();
   if(PV.vids&&PV.vids[0])PV.vids[0].pause();spareStop(PV);camIdle(PV);
-  if(was)vtPause(ED);}   // стояли и без нас — дорожку голоса дважды не дёргаем
-// Стык блока в РЕДАКТОРЕ — тот же seek, что был в монтажном плеере, и болит он тут
-// сильнее: по этому таймлайну и делают правки. Дублёр общий с монтажным плеером, цель —
-// исходное время камеры 1, поэтому годится та же машина bufArm/bufRoll/bufTake. Отличие
-// одно: живой <video> в редакторе красит не camVisual, а мы сами.
+  if(was)vtPause(ED);}   // живому хосту — пауза; стояли и без нас — дважды не дёргаем
+// Подмена живого видео дублёром на стыке: машина bufTake общая со всеми плеерами, цель —
+// исходное время камеры 1. Звука у видео нет (немой кадр), поэтому подмена его не трогает.
 function edTake(at){if(!bufTake(PV,spareLead(PV),at))return false;
-  const v=PV.vids[0];v.muted=false;v.volume=MEDIA_VOL;v.style.opacity='1';v.style.zIndex='2';return true;}
-// Прыжок через вырезанное: картинка — дублёром или seek'ом, а голос следует ФАКТИЧЕСКОМУ
-// решению картинки на ЭТОМ стыке, а не своему.
-//
-// Раньше дорожка голоса подменялась дублёром ВСЕГДА, а картинка при промахе видео-дублёра
-// ещё ехала seek'ом. Голос оказывался на новом месте мгновенно, картинка — через задержку
-// декодера: это и есть «звук спешит» (замер архитектора: 15 точек > 45 мс, p95 91 мс).
-// Теперь голос идёт за видео: нет дублёра на камерах клипа — нет переезда картинки, значит
-// нет и подмены голоса. Дублёр отказал или его нет вовсе — глушим и ждём `seeked` живого
-// видео (страховка 300 мс), и только тогда включаем голос, выровняв его по картинке.
-// Без этой ветки картинка вставала бы seek'ом, а «мягкий» промах (дублёр есть, но не
-// долез) увёл бы оба потока на прыжок мимо `edTake` — и голос снова обогнал бы картинку.
-function edJump(v,at){let out=v;
-  const spare=spareLead(PV);
-  if(!spare){
-    // Дублёров камер у плеера нет вовсе: прыгать нечем, и голос не подменяем тоже.
-    try{v.currentTime=at;}catch(e){}
-    if(typeof vtSpareIdle==='function')vtSpareIdle(ED);
-    if(typeof vtSpareAt==='function')vtSpareAt(ED,null);
-    // Порядок важен: сначала голос в тишину, и только потом кадр дорожки. Наоборот — и
-    // vtTick своим vtGate(P,true) вернул бы звук камеры, пока дорожка ещё звучит.
-    edVoiceSeekWait(v,at);
-    if(typeof vtOf==='function')vtTick(ED,at);
-    return out;}
-  const take=(typeof edTake==='function')&&edTake(at);
-  if(take)out=PV.vids[0];          // дублёр успел — подмена элементом, звук туда же
-  else try{v.currentTime=at;}catch(e){}   // не вышла — старый путь: seek на месте
-  if(take||EDMUTVOICE){
-    // Стык взят дублёром: дорожка проходит его своим и в ЭТОМ ЖЕ кадре. Пока живой
-    // <audio> догонял бы перемоткой (а после неё он играет с задержкой 100–200 мс),
-    // подменённый уже стоит на нужном кадре. Сначала кадр (vtTick получает прицел и
-    // вживляет источник дублёра), потом подмена.
-    if(typeof vtOf==='function')vtTick(ED,at);
-    if(typeof vtOf==='function'&&typeof vtSpareTake==='function')vtSpareTake(ED,at);
-    return out;}
-  // Промах видео: дублёра голоса снимаем ДО кадра — vtSpareCtl взводит его по прицелу и
-  // в следующем же тике подменил бы его сам, а голос на этом стыке подменять нечем.
-  if(typeof vtSpareIdle==='function')vtSpareIdle(ED);
-  if(typeof vtSpareAt==='function')vtSpareAt(ED,null);
-  edVoiceSeekWait(v,at);
-  if(typeof vtOf==='function')vtTick(ED,at);
-  return out;}
-// Промах видео-дублёра: голос молчит, пока картинка не встанет на место seek'ом.
-//
-// Глушим гейтом (vtGate) и паузой, а не одним muted: пока картинка едет, дорожка камеры 1
-// обязана молчать вместе с голосом, иначе на стыке слышен сырой голос камеры. Позицию
-// ставим сразу — это не перемотка в эфире (дорожка уже на паузе), а подготовка места.
-//
-// Ждём только РЕАЛЬНУЮ перемотку: `currentTime` присвоен, но декодер попал в буфер и
-// `seeking` не поднялся — события `seeked` не будет вовсе, и ждать его значило бы держать
-// голос немым всю страховку. Тогда закрываемся здесь же и в том же кадре.
-function edVoiceSeekWait(v,at){
-  edVoiceSeekOff();                            // прежнее ожидание (повторный прыжок) — прочь
-  const live=(typeof vtOf==='function'&&vtOf(ED).el)||null;
-  // Гейт ставим тому плееру, чей `vids` и есть картинка (в бою это vtMuteHost): у самого
-  // редактора своих `vids` нет, и `vtGate(ED,…)` не заглушил бы НИЧЕГО — пока картинка
-  // едет seek'ом, на стыке зазвучал бы сырой голос камеры. `typeof` — для стендов.
-  const host=(typeof vtMuteHost==='function')?vtMuteHost(ED):ED;
-  if(typeof vtGate==='function')vtGate(host,false);
-  if(live){live.pause();
-    const want=Math.max(0,at);
-    if(Math.abs(live.currentTime-want)>0.005){try{live.currentTime=want;}catch(e){}}}
-  ED.vtAt=at;                                  // куда целились: страховка, если позиция не встала
-  const video=v||(PV.vids&&PV.vids[0])||null;
-  ED.vtOpen=true;ED.vtEl=video;
-  if(!video||!video.seeking){edVoiceSeekClose(at,video);return;}
-  const onSeeked=()=>edVoiceSeekClose(at,video);
-  // Ссылку на слушатель храним: без неё removeEventListener не найдёт его, и на каждом
-  // промахе на видео оседал бы ещё один живой обработчик.
-  ED.vtOn={fn:onSeeked};
-  ED.vtTimer=setTimeout(onSeeked,300);   // страховка: событие могло потеряться
-  // В node таймер держит процесс живым после прогона стенда; в браузере unref нет.
-  if(ED.vtTimer&&typeof ED.vtTimer.unref==='function')ED.vtTimer.unref();
-  video.addEventListener('seeked',onSeeked,{once:true});}
-// Конец ожидания: голос обратно, и его позиция выровнена по ЖИВОМУ видео в этот момент —
-// ровно этого не хватало, когда звук «спешил»: он стоял на месте прыжка, а картинка ещё
-// подъезжала. Часы — currentTime живого видео (`at` — только запасной путь, если элемент
-// уже сменился: в бою это ШАГ КАДРА при 60 к/с, на порядок меньше порога заметности).
-function edVoiceSeekClose(at,video){
-  if(!ED.vtOpen)return;
-  edVoiceSeekOff();
-  const st=(typeof vtOf==='function')?vtOf(ED):null,el=st&&st.el;
-  if(!el)return;
-  const want=(video&&isFinite(+video.currentTime))?(+video.currentTime):((at==null)?0:at);
-  if(Math.abs(el.currentTime-Math.max(0,want))>0.005){try{el.currentTime=Math.max(0,want);}catch(e){}}
-  if(typeof vtGate==='function')vtGate(ED,true);
-  if(typeof vtPlaying==='function'&&!vtPlaying(ED))return;   // на паузе дорожка замирает вместе с картинкой
-  el.play().catch(()=>{});}
-// Снять ожидание не трогая дорожку: таймер, слушатель и отметки. Нужна там, где решение
-// принято другое — новый прыжок, перемотка, пуск: открыть гейт по чужому `seeked` значило
-// бы вернуть голос на покинутый стык.
-function edVoiceSeekOff(){
-  if(ED.vtTimer){clearTimeout(ED.vtTimer);ED.vtTimer=0;}
-  const video=ED.vtEl;
-  if(video&&ED.vtOn&&ED.vtOn.fn&&video.removeEventListener)
-    video.removeEventListener('seeked',ED.vtOn.fn);
-  ED.vtOn=null;ED.vtOpen=false;ED.vtEl=null;ED.vtAt=null;}
+  const v=PV.vids[0];v.muted=true;v.volume=MEDIA_VOL;v.style.opacity='1';v.style.zIndex='2';return true;}
+// Прыжок картинки к звуку на стыке: дублёр, взведённый на этот стык, — подмена элементом;
+// промах — перемотка с упреждением (звук за это время уйдёт вперёд). Звук тут не трогается
+// вовсе: он уже на месте, очередь стоит заранее.
+function edJump(v,at){
+  const b=spareLead(PV);
+  if(b&&b.at!=null&&at>=b.at-0.05&&at-b.at<0.3&&edTake(b.at))return PV.vids[0];
+  edVideoSeek(v,at+(ED.play?ED.seekLead:0));
+  return v;}
+// Перемотка живого видео с замером: сколько декодер доезжал — столько и упреждение дальше.
+function edVideoSeek(v,at){
+  try{v.currentTime=Math.max(0,at);}catch(e){return;}
+  const t0=performance.now();
+  v.addEventListener('seeked',()=>{
+    const dt=(performance.now()-t0)/1000;
+    ED.seekLead=Math.max(0.03,Math.min(0.5,0.7*ED.seekLead+0.3*dt));},{once:true});}
+// Видео догоняет звук. Внутри блока — скоростью (видео немое, скорость не слышна); на стыке
+// (видео ещё в прежнем блоке или в вырезанном) и на крупном разрыве — прыжок.
+function edFollow(){const v=PV.vids&&PV.vids[0];if(!v)return;
+  if(v.seeking){v.playbackRate=1;return;}
+  const cs=ED.cs,d=v.currentTime-cs,ad=Math.abs(d);
+  const cut=!ED.raw&&edBlockAt(v.currentTime)!==edBlockAt(cs);
+  if((cut&&ad>0.06)||ad>ED_V_HARD){v.playbackRate=1;
+    const live=edJump(v,cs)||PV.vids[0];
+    if(live.paused)live.play().catch(()=>{});
+    return;}
+  if(v.paused)v.play().catch(()=>{});
+  v.playbackRate=(ad<=ED_V_SOFT)?1:(d<0?1+ED_V_RATE:1-ED_V_RATE);}
+// Разбег дублёра видео к ближайшему стыку. Уводим его на разбег за ED_ARM до стыка: перемотка
+// дублёра на 4K сама стоит 0,2–0,4 с, а потом ему ещё PV_PREROLL разбега. Раньше взвод шёл за
+// 0,25 с — меньше самого разбега, и дублёр почти не успевал (замер: 5 промахов из 16).
 function edArm(){if(ED.raw||!ED.play)return;const i=edBlockAt(ED.cs);if(i<0)return;
-  const b=ED.blocks[i],nb=ED.blocks[i+1];
-  // Стыка впереди больше нет (последний блок или правка свела блоки вплотную) — дублёра
-  // гасим. Раньше просто выходили, и разогнанный под исчезнувший стык дублёр доигрывал
-  // фоном: лишний декод 4K рядом с живым — ровно тот ресурс, из-за которого стыки и дёргались.
-  // Прицел голоса снимаем вместе с разбегом: vtSpareCtl взводит дублёра по `vspAt` каждый
-  // кадр, и оставленный прицел вернул бы его на исчезнувший стык.
-  if(!nb||nb.s0-b.s1<=0.06){bufIdle(spareLead(PV));vtSpareIdle(ED);vtSpareAt(ED,null);return;}
-  // Сколько РЕАЛЬНОГО времени осталось до прыжка. Мера одна на оба дублёра: и видео, и
-  // голос обязаны прийти на позицию ПОСЛЕ стыка ровно к прыжку — не раньше и не позже.
+  const b=ED.blocks[i],nb=ED.blocks[i+1],sp=spareLead(PV);
+  // Стыка впереди нет (последний блок или блоки встык) — дублёра гасим: лишний декод 4K
+  // рядом с живым — ровно тот ресурс, из-за которого стыки и дёргались.
+  if(!nb||nb.s0-b.s1<=0.06){bufIdle(sp);return;}
   const left=b.s1-ED.cs;
-  // Прицел и разгон дорожки голоса — на ED, НЕ на PV: дорожка редактора живёт на ED
-  // (vtOf(ED); edJump зовёт vtSpareTake(ED,at)), а на PV её дублёр не разгонялся вовсе —
-  // замер архитектора: на КАЖДОМ из четырёх прыжков `paused:true, currentTime:0,
-  // rolling:false`, удачных подмен 0 из 4. Видео-дублёр остаётся на PV: видео редактора —
-  // это PV.vids, и edTake/edJump берут его там же.
-  vtSpareAt(ED,nb.s0);   // прицел дорожки голоса: у редактора это блоки правки, а не EDL
-  if(left>VT_ARM-PV_PREROLL)bufIdle(spareLead(PV));   // до стыка ещё далеко
-  else bufArm(PV,spareLead(PV),nb.s0);            // блоки правки — цель пересчитываем каждый тик
-  vtSpareArm(ED);
-  // Левое время vtSpareRoll считает как «прицел − tm». Прицел голоса — НАЧАЛО следующего
-  // блока (nb.s0), а прыжок редактор делает на КОНЦЕ текущего (b.s1): между ними вырезанный
-  // зазор. Отсчёт от прицела даёт левое время с лишним зазором — дублёр пускается позже
-  // нужного и на стыке отстаёт ровно на зазор, подмена срывается в запасной seek (это и
-  // есть отставание голоса, от которого уходим: p95 48 мс, две точки > 125 мс). Отсчёт
-  // ведём от реального времени до прыжка — `nb.s0-left` и есть нужное vtSpareRoll «tm».
-  if(left<=VT_ARM-PV_PREROLL){bufRoll(spareLead(PV),left);vtSpareRoll(ED,nb.s0-left);}}
-function edTick(){if(!ED.play)return;let v=PV.vids[0];ED.cs=v.currentTime;
-  // seek ТОЛЬКО при реальном вырезанном зазоре (>60мс): микро-seek на смежном стыке (после ✂)
-  // флашит декодер (readyState 4→1) и воспроизведение залипает на месте правки
-  if(!ED.raw){const i=edBlockAt(ED.cs);
-    if(i<0){const nb=ED.blocks.find(b=>b.s0>=ED.cs);
-      if(!nb){edPause();ED.cs=ED.blocks.length?ED.blocks[0].s0:0;edDraw();edUI();return;}
-      if(nb.s0>ED.cs+0.06){v=edJump(v,nb.s0);ED.cs=nb.s0;}}
-    else{const b=ED.blocks[i];
-      if(ED.cs>=b.s1-0.02){if(i>=ED.blocks.length-1){edPause();ED.cs=ED.blocks[0]?ED.blocks[0].s0:0;edDraw();edUI();return;}
-        const nb=ED.blocks[i+1];
-        if(nb.s0>ED.cs+0.06){v=edJump(v,nb.s0);ED.cs=nb.s0;}}}}
-  else if(ED.cs>=ED.dur-0.05){edPause();}
-  if(typeof vtOf==='function')vtTick(ED,ED.cs);   // дорожка обработанного голоса идёт за плейхедом
-  if(typeof pvAudioLimit==='function')pvAudioLimit($('pvstage'),ED);   // строка про звук Firefox — по факту игры
+  if(left>ED_ARM){bufIdle(sp);return;}
+  bufArm(PV,sp,nb.s0);
+  bufRoll(sp,left);}
+function edTick(){if(!ED.play)return;
+  // Плейхед — по звуку: что звучит сейчас, то и ED.cs. Конец очереди — конец клипа.
+  const c=(typeof eaSync==='function')?eaSync():null;
+  if(!c||c.end){edPause();if(!ED.raw)ED.cs=ED.blocks.length?ED.blocks[0].s0:0;edDraw();edUI();return;}
+  ED.cs=c.cs;
+  edFollow();
+  if(typeof vtOf==='function')vtTick(ED,ED.cs);   // живому хосту плагинов — позиция
   edArm();
-  // В скрытой вкладке таймлайна не видно: рисование пропускаем, а перескок (выше), голос
-  // (vtTick) и разбег дублёра (edArm) — нет. Стенд без помощника считает вкладку видимой.
+  // В скрытой вкладке таймлайна не видно: рисование пропускаем. Стенд без помощника
+  // считает вкладку видимой.
   if(!(typeof pvFrameHidden==='function'&&pvFrameHidden())){edDraw();edUI();}
   if(typeof pvFramePlan==='function')pvFramePlan(ED,edTick);}
 // Что под курсором: БЛИЖАЙШИЙ край блока или плейхед. Раньше цикл брал первый край,
@@ -443,6 +331,7 @@ async function edSave(){const btn=$('edsave');const info=$('edtime');
   try{const d=await (await fetch('/api/editor_save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml:ED.xml,keep:ED.blocks.map(b=>[b.s0,b.s1])})})).json();
     if(d.error){toast(errText(d));info.textContent='⚠';}
     else{info.textContent=t('сохранено ({n} блоков, {d}с)',{n:d.segs,d:d.dur});
+      if(d.note){toast(d.note);uiLog(d.note);}           // субтитры сняты как устаревшие — пусть видно
       if(c){const msg=edRemapInserts(c);if(msg){toast(msg);uiLog(msg);}
         const nhl=clearHl(c);                        // индексы жёлтых больше не совпадают со словами
         if(nhl)uiLog(t('жёлтые сброшены ({n}) — после пересборки индексы указывали бы на другие слова',{n:nhl}));
@@ -684,7 +573,7 @@ async function markupAllRun(subeng,list,phases,ask){
       insertsPromise=phase(phases.indexOf('inserts')+1,t('вставки (ИИ)'),c=>!(c.status.subs>0),c=>(c.inserts||[]).length>0,async c=>{
         localQSet(c.name,'inserts','');
         const d=await aiPost('/api/ai_inserts',{xml:c.xml,batch,rejected:c.ins_rejected||[],speaker:clipSpeaker(c)||undefined},t('вставки (ИИ)'));
-        if(d.error)throw errText(d);c.inserts=(d.inserts||[]).map(x=>({...x,media:''}));c.insTarget=Math.max(d.insTarget||0,c.inserts.length);if(typeof insLog==='function')insLog(d);uiLog(t('  вставок: ')+c.inserts.length);
+        if(d.error)throw errText(d);c.inserts=(d.inserts||[]).map(x=>({...x,media:(x&&(x.auto==='named'||x.auto==='drug'))?(x.media||''):''}));c.insTarget=Math.max(d.insTarget||0,c.inserts.length);if(typeof insLog==='function')insLog(d);uiLog(t('  вставок: ')+c.inserts.length);
         if(!fail.has(c))localQSet(c.name,'files','');
         uiLog(t('  файлы:')+((typeof insAfterAI==='function'&&await insAfterAI(c))||' —'));},aiStepConc('inserts'),'inserts');
     }
@@ -706,7 +595,12 @@ function qClipSum(c){const s=c.status||{};const p=[];
   if((c.inserts||[]).length)p.push(t('вставок: ')+c.inserts.length);
   return p.join(' · ');}
 // субтитры с нуля -> жёлтые -> вставки; статусы читаем через xml_state, вставки в clip.inserts
-async function markupClip(c){const xml=c.xml;const subeng=val('subengine')||'whisper';
+async function markupClip(c,batch){const xml=c.xml;const subeng=val('subengine')||'whisper';
+  // Жёлтые и вставки одного ролика идут ПАРАЛЛЕЛЬНО (Promise.all ниже). Без общей пачки сервер
+  // (begin_call) вытесняет первый стартовавший вызов: одиночный или чужой пачки уходит в _DEAD,
+  // и тот отвечает «вызов заменён новым запуском». Пачку заводим так же, как markupAllRun;
+  // из пакета (batch передан снаружи) берём пакетную — отдельную не заводим.
+  batch=batch||('mk'+Date.now().toString(36));
   // Одиночная разметка — список из одного клипа. Из пакета (markupAllRun) список уже
   // заведён, и свой начинать нельзя: он затёр бы строки остальных роликов прогона.
   const own=!LOCALQ;if(own)localQStart([c.name]);
@@ -739,7 +633,7 @@ async function markupClip(c){const xml=c.xml;const subeng=val('subengine')||'whi
     const doYellow=async()=>{
       if(!(c.status.colored>0)){localQSet(c.name,'yellow','');progStep(t('жёлтые слова (ИИ)…'));uiLog(t('  жёлтые (ИИ)…'));
         try{
-          const d=await aiPost('/api/ai_yellow',{xml},t('жёлтые (ИИ)'));
+          const d=await aiPost('/api/ai_yellow',{xml,batch},t('жёлтые (ИИ)'));
           if(d.error)throw errText(d);
           c.status.colored=(d.colored||d.yellow||[]).length;uiLog(t('  жёлтых: ')+c.status.colored);
           clearHl(c);if(curAE>=0&&CLIPS[curAE]===c)loadWordsFor(c.xml);await sleep(700);
@@ -752,9 +646,9 @@ async function markupClip(c){const xml=c.xml;const subeng=val('subengine')||'whi
     const doInserts=async()=>{
       if(!(c.inserts||[]).length){localQSet(c.name,'inserts','');progStep(t('вставки (ИИ)…'));uiLog(t('  вставки (ИИ)…'));
         try{
-          const d=await aiPost('/api/ai_inserts',{xml,rejected:c.ins_rejected||[],speaker:clipSpeaker(c)||undefined},t('вставки (ИИ)'));
+          const d=await aiPost('/api/ai_inserts',{xml,batch,rejected:c.ins_rejected||[],speaker:clipSpeaker(c)||undefined},t('вставки (ИИ)'));
           if(d.error)throw errText(d);
-          c.inserts=(d.inserts||[]).map(x=>({...x,media:''}));c.insTarget=Math.max(d.insTarget||0,c.inserts.length);insLog(d);uiLog(t('  вставок: ')+c.inserts.length);
+          c.inserts=(d.inserts||[]).map(x=>({...x,media:(x&&(x.auto==='named'||x.auto==='drug'))?(x.media||''):''}));c.insTarget=Math.max(d.insTarget||0,c.inserts.length);insLog(d);uiLog(t('  вставок: ')+c.inserts.length);
           localQSet(c.name,'files','');
           uiLog(t('  файлы:')+(await insAfterAI(c)||' —'));
         }catch(e){

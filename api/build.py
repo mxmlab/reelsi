@@ -19,21 +19,6 @@ from .inserts import _adopt_inserts, _insert_dest
 # слов в XML, база вставок, раскладка камер. Перенесены сюда 1:1.
 # ==========================================================================
 
-def _num_field(d: dict[str, Any], key: str, default: float = 0.0) -> float:
-    """Числовое поле тела запроса.
-
-    Нечисловое значение раньше доезжало до `float()` и падало ValueError'ом с
-    текстом питона («could not convert string to float: 'abc'»), который роут
-    называл «файл не найден». Теперь ошибка называет ПОЛЕ — по ней и отвечаем
-    `render_set_invalid`, а не «файла нет»."""
-    v = d.get(key)
-    if v is None or (isinstance(v, str) and not v.strip()):
-        return float(default)
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        raise ValueError(f"Поле {key} должно быть числом, получено: {v!r}")
-
 
 
 def _roto_bottom_safe(st: dict[str, Any]) -> float:
@@ -96,14 +81,15 @@ def _norm_build_jobs(jobs_in: Any) -> list[dict[str, Any]]:
             intro_remove=j.get("intro_remove") or [],
             intro_splits=j.get("intro_splits") or [],
             ncams=j.get("cams") or None,
-            exposure=_num_field(j, "exposure", 0),
             intro_mode=jstr(j, "intro_mode") or "word",
             roto=bool(st.get("roto")), roto_bottom=_roto_bottom_safe(st),
             roto_device=jstr(j, "roto_device").strip().lower() or None,
             style=style or None,
             music_db=float(st.get("music_db") if st.get("music_db") is not None else -20.0),
             music_random=bool(j.get("music_random")),
-            censor_audio=bool(j.get("censor", True)),
+            # Цензура — ключ СТИЛЯ (styles.BASE["censor"], дефолт включён): поле клипа
+            # (job.censor) больше не читается, у клипов одного стиля цензура одна.
+            censor_audio=bool(st.get("censor", True)),
             glitch_glow=glitch_glow,
             include_xml_inserts=False))
     return norm
@@ -598,6 +584,7 @@ def api_export_xml() -> Response | tuple[str, int]:
     try:
         real_ext = os.path.splitext(os.path.realpath(path))[1].lower()
     except ReelsiError: raise
+    # realpath не получился: расширение пустое, файл не пройдёт проверку .xml, то есть отказ, а не пропуск
     except Exception:
         real_ext = ""
     if real_ext != ".xml":
@@ -607,17 +594,23 @@ def api_export_xml() -> Response | tuple[str, int]:
     if not os.path.isfile(path):
         return ("not found", 404)
     from core import xmlbuild
+    # Голос в XML не переключился — файл уйдёт со старой дорожкой звука. Об этом говорит
+    # заголовок X-Reelsi-Voice-Sync: фронт показывает строку (скачивание не отменяем).
+    voice_ok = False
     try:
-        xmlbuild.sync_xml_voice(path)
+        voice_ok = bool(xmlbuild.sync_xml_voice(path))
         text = open(path, encoding="utf-8", newline="").read()
         text, n = xmlbuild.fix_timecodes(text)
     except ReelsiError: raise
     except Exception:                       # не смогли починить — отдаём как есть
-        return send_file(path, as_attachment=True, download_name=os.path.basename(path))
+        resp = send_file(path, as_attachment=True, download_name=os.path.basename(path))
+        resp.headers["X-Reelsi-Voice-Sync"] = "ok" if voice_ok else "failed"
+        return resp
     name = urllib.parse.quote(os.path.basename(path))   # кириллица в имени -> RFC 5987
     return Response(text, mimetype="application/xml", headers={
         "Content-Disposition": f"attachment; filename*=UTF-8''{name}",
-        "X-Reelsi-Timecodes-Fixed": str(n)})
+        "X-Reelsi-Timecodes-Fixed": str(n),
+        "X-Reelsi-Voice-Sync": "ok" if voice_ok else "failed"})
 
 
 @bp.route("/api/export_drp", methods=["POST"])

@@ -24,6 +24,7 @@ sys.path.insert(0, ROOT)
 os.environ.setdefault("REELSI_NO_BROWSER", "1")
 
 from core import xml2ae  # noqa: E402
+from tests import gitfiles  # noqa: E402
 
 
 @pytest.fixture()
@@ -700,10 +701,9 @@ def test_live_catalogs_are_assigned_to_the_owning_module():
     """
     import re as _re
     pat = _re.compile(r"\baicut\.[A-Za-z_]+\s*=(?!=)")
-    skip_dirs = {"aicut", ".git", "__pycache__", "docs", "_videogen", ".ruff_cache"}
+    skip_dirs = {"aicut", "docs", "_videogen"}
     bad = []
-    for dirpath, dirnames, filenames in os.walk(ROOT):
-        dirnames[:] = [d for d in dirnames if d not in skip_dirs]
+    for dirpath, dirnames, filenames in gitfiles.walk_repo(ROOT, skip=skip_dirs):
         for fn in filenames:
             if not fn.endswith(".py"):
                 continue

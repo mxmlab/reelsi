@@ -521,7 +521,7 @@ def _file_fps(path: str) -> float | None:
         fps = float(num) / float(den) if den else float(num or 0)
     except ReelsiError:
         raise
-    except Exception:
+    except Exception:  # причину печатает capture_frames строкой «⚠ … частота источника не прочлась»; здесь None достаточно
         return None
     return fps if 1.0 < fps < 240.0 else None
 
@@ -811,7 +811,7 @@ def _frame_link(src: str, dst: str) -> bool:
         return True
     except ReelsiError:
         raise
-    except Exception:
+    except Exception:  # копия не записалась — False: capture_frames поднимет ReelsiError «кадр не записался» с путём
         return False
 
 
@@ -1803,7 +1803,7 @@ def _drain(stream: Any) -> str:
         return ""
     try:
         return stream.read().decode("utf-8", "replace").strip()[-600:]
-    except Exception:
+    except Exception:  # хвост вывода нужен только для текста ошибки; саму ошибку всё равно поднимает вызывающий
         return ""
 
 

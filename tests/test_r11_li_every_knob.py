@@ -35,10 +35,13 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE)
 
 from api import build  # noqa: E402
-from core import fonts, insertlib, roto, style_schema, styles, xml2ae  # noqa: E402
+from core import app_meta, fonts, insertlib, roto, style_schema, styles, xml2ae  # noqa: E402
 from tests.test_geometry_python import _build, _mask_assets  # noqa: E402
 
 T_CAM1, T_CAM2 = 1.0, 8.3
+
+node = pytest.mark.skipif(not shutil.which("node"),
+                          reason="контракт фронта требует node в PATH")
 
 # Имя ручки удержания перебивки — склейкой: целиком это литерал видит gitleaks
 # (generic-api-key: `== "<слово>"` с достаточной энтропией) и валит срез, а ручка
@@ -125,6 +128,12 @@ DG_DARK_HL_FILL = [0.0, 0.75, 1.0]
 # все ручки схемы проверяются в сборке (intro_dg_with_glow — в режиме Deep Glow 2,
 # см. dg в test_each_knob_affects_assembly).
 EXCEPTIONS = {}
+
+# Ручки, которые ВЫБИРАЮТ ТРЕК, вычисляются ниже — из САМОЙ схемы (флаг `track`):
+# они решают, ОТКУДА сборка возьмёт музыку, а на текст .jsx не влияют — в подстановку
+# уходит уже готовый путь. Перечень не константа: новая такая ручка попадёт в него сама.
+# Проверяются они отдельным тестом (test_track_knob_selects_the_track_path_in_the_build) —
+# «ручка -> путь трека в сборке».
 
 # Известные мёртвые ключи (ключ есть в схеме, но нигде не читается бэкендом).
 # В LI2 pop_db реабилитирован (_sfx_cfg конкатенирует prefix + "_db"), мёртвых ключей нет.
@@ -315,7 +324,15 @@ def _collect_schema_items():
 
 SCHEMA_ITEMS = _collect_schema_items()
 ALL_SCHEMA_KEYS = sorted(SCHEMA_ITEMS.keys())
-TESTED_KEYS = [k for k in ALL_SCHEMA_KEYS if k not in EXCEPTIONS]
+# Ручки выбора трека — из флага `track` самой схемы (см. комментарий выше).
+TRACK_KNOBS = {k for k, v in SCHEMA_ITEMS.items() if (v.get("field") or {}).get("track")}
+# Ручки СТАДИИ ИИ (флаг `ai` в схеме): длина строки интро (intro_row_max) решает,
+# КАКИЕ строки отдаст разметка ИИ (cmd_intro). В сборку .jsx уходит уже размеченный хук,
+# поэтому по устройству текст .jsx они не меняют — проверяются отдельно: «ручка -> строки
+# разметки» (test_ai_knob_changes_the_intro_rows). Без флага они упали бы в обход молча.
+AI_KNOBS = {k for k, v in SCHEMA_ITEMS.items() if (v.get("field") or {}).get("ai")}
+TESTED_KEYS = [k for k in ALL_SCHEMA_KEYS
+               if k not in EXCEPTIONS and k not in TRACK_KNOBS and k not in AI_KNOBS]
 
 
 def _build_source(xml, style=None, inserts=None, music_path=None, caption="Спикер Иван",
@@ -333,6 +350,9 @@ def _build_source(xml, style=None, inserts=None, music_path=None, caption="Сп�
         intro_splits=RICH_INTRO_SPLITS,
         music=music_path,
         music_db=music_val,
+        # Цензура — ключ стиля, и в сборку он едет этой же дверью (api/build.py:
+        # `censor_audio=bool(st.get("censor", True))`): ручка стиля обязана менять .jsx.
+        censor_audio=bool(st.get("censor", True)),
         roto=bool(st.get("roto")),
         roto_bottom=build._roto_bottom_safe(st),
         roto_device=st.get("roto_device"),
@@ -594,7 +614,9 @@ def test_schema_knobs_coverage_exact():
     Число ключей тут не стережётся: новая ручка обязана попасть в перечень
     сама — она его и составляет, — а проверок «стало ровно столько-то» нет. Исключений
     быть не должно: ключ в EXCEPTIONS — это ручка, которая на сборку не влияет (LI2 свёл
-    список к нулю, и он обязан остаться пустым).
+    список к нулю, и он обязан остаться пустым). Ручки выбора трека (флаг `track`) на
+    текст .jsx не влияют по устройству, и они не исключение из схемы, а ОТДЕЛЬНАЯ
+    проверка: без неё они просто выпали бы из обхода молча.
     """
     all_keys_set = set(ALL_SCHEMA_KEYS)
     tested_set = set(TESTED_KEYS)
@@ -604,9 +626,16 @@ def test_schema_knobs_coverage_exact():
         "EXCEPTIONS обязан оставаться пустым, а в нём: %s — ручки, которые на сборку "
         "не влияют" % sorted(exc_set)
     )
-    assert tested_set == all_keys_set, (
+    assert TRACK_KNOBS, "флаг track потерял все ручки — отдельная проверка ослепла"
+    assert AI_KNOBS, "флаг ai потерял все ручки — отдельная проверка ослепла"
+    own = TRACK_KNOBS | AI_KNOBS
+    assert tested_set == all_keys_set - own, (
         "Перечень проверяемых ручек разошёлся со схемой — без проверки остались: %s"
-        % sorted(all_keys_set - tested_set)
+        % sorted(all_keys_set - tested_set - own)
+    )
+    assert tested_set | own == all_keys_set, (
+        "часть ручек схемы не попала ни в один сторож: %s"
+        % sorted(all_keys_set - tested_set - own)
     )
 
 
@@ -639,9 +668,17 @@ def test_exceptions_read_in_code_or_reported_as_dead():
                 f"Мёртвый ключ {key}: не найден в коде core/ и api/, но не зафиксирован в KNOWN_DEAD_KEYS"
             )
 
-    # 2. Проверяем ВСЕ ключи схемы на отсутствие необъявленных мёртвых ручек
-    all_dead = [k for k in ALL_SCHEMA_KEYS if not _is_read(k)]
+    # 2. Проверяем ВСЕ ключи схемы на отсутствие необъявленных мёртвых ручек.
+    # Ручки выбора трека исключены из проверки по core/api нарочно: их читает ИНТЕРФЕЙС
+    # (режим/папка/файл решают, откуда взять трек), а в сборку уходит уже готовый путь.
+    # Что они не мертвы, проверяет отдельный тест ниже — и он же сверяет их с фронтом.
+    all_dead = [k for k in ALL_SCHEMA_KEYS if k not in TRACK_KNOBS and not _is_read(k)]
     assert all_dead == sorted(KNOWN_DEAD_KEYS), f"Найдены мёртвые ключи в схеме: {all_dead}"
+
+    front = app_meta.app_js_text()
+    for k in sorted(TRACK_KNOBS):
+        assert k in front, (
+            "ручка выбора трека %s не читается ни бэкендом, ни интерфейсом — мертва" % k)
 
 
 @pytest.mark.parametrize("knob_key", TESTED_KEYS)
@@ -814,3 +851,85 @@ def test_conv_scale_in_scene_plan_and_normalization(xml_subs, tmp_path):
     ])
     assert norm[0]["roto_bottom"] == pytest.approx(0.35)
     assert norm[1]["roto_bottom"] == pytest.approx(0.35)
+
+
+# ---------------------------------------------------------------------------
+# 5. Ручки выбора трека: «ручка -> путь трека в сборке»
+# ---------------------------------------------------------------------------
+
+# Значение ручки, при котором сборка возьмёт ДРУГОЙ трек. База — так, чтобы «до» и
+# «после» отличались по тройке, которая уходит в сборку (music/music_random/music_dir).
+TRACK_CASES = {
+    "music_mode": ({"music_mode": "file", "music_dir": "C:/m",
+                    "music_src": "C:/m/a.m4a"}, "off"),
+    "music_dir": ({"music_mode": "random", "music_dir": "C:/m1"}, "C:/m2"),
+    "music_src": ({"music_mode": "file", "music_dir": "C:/m",
+                   "music_src": "C:/m/a.m4a"}, "C:/m/b.m4a"),
+}
+
+
+@node
+@pytest.mark.parametrize("knob", sorted(TRACK_KNOBS))
+def test_track_knob_selects_the_track_path_in_the_build(knob, tmp_path):
+    """5. Ручка выбора трека меняет ПУТЬ трека, который уходит в сборку.
+
+    Эти ручки на текст .jsx не влияют по устройству: трек выбирается (или скачивается)
+    ДО подстановки, и в .jsx уходит уже готовый путь. Поэтому сторож «каждая ручка
+    влияет на .jsx» их не проверяет — а отдельная проверка обязана: иначе ручка, которую
+    никто не читает, тихо выпала бы из обхода. Гоняются БОЕВЫЕ функции интерфейса
+    (`effMusic` -> `musicJobFields`): тройка полей сборки — та же, что уходит в
+    `/api/build_run` (в теле роутов её больше нет, она собирается в jobForBuild).
+    """
+    from tests.test_music_style import MUSIC_FUNCS, _run_node
+
+    base, new = TRACK_CASES[knob]
+    out = _run_node(tmp_path, "track_%s.js" % knob, MUSIC_FUNCS, r"""
+STYLES.mak=%s;
+CLIPS.push({xml:'C:/cut/01.xml',job:{styleKey:'mak'}});curAE=0;
+const before=musicJobFields(CLIPS[0]);
+STYLES.mak[%s]=%s;
+const after=musicJobFields(CLIPS[0]);
+console.log(JSON.stringify({before,after}));
+""" % (json.dumps(base), json.dumps(knob), json.dumps(new)))
+    assert out["before"] != out["after"], (
+        "ручка %s не меняет тройку полей музыки, которая уходит в сборку: %r"
+        % (knob, out["before"]))
+    if knob == "music_dir":
+        assert out["after"]["music_dir"] == "C:/m2", out
+    elif knob == "music_src":
+        assert out["after"]["music"] == "C:/m/b.m4a", out
+    else:
+        assert out["after"]["music"] == "" and out["after"]["music_dir"] == "", out
+
+
+# ---- ручки стадии ИИ (флаг `ai`): ручка -> строки разметки интро ----
+
+# Для каждой ручки стадии ИИ — два стиля (включено / выключено), слова ролика и ответ
+# модели, на котором разница видна, и что сравниваем (число слов в строках).
+AI_KNOB_CASES = {
+    "intro_row_max": (
+        ("НИ", "В", "КОЕМ", "СЛУЧАЕ"),
+        [{"count": 4, "color": "white", "break": True}],
+        {"intro_row_max": 9}, {"intro_row_max": 20},
+        lambda res: [r["count"] for r in res["intro_rows"]],
+    ),
+}
+
+
+@pytest.mark.parametrize("knob_key", sorted(AI_KNOBS))
+def test_ai_knob_changes_the_intro_rows(knob_key, tmp_path, monkeypatch):
+    """Ручка стадии ИИ меняет строки разметки интро (cmd_intro), а не .jsx: на одних
+    словах и одном ответе модели два значения ручки дают разные строки.
+    Список ручек сверяется со схемой: новая ручка `ai` без своего случая — красная."""
+    from core.aicut import commands
+    assert knob_key in AI_KNOB_CASES, "ручка стадии ИИ без проверки разметки: %s" % knob_key
+    names, model, style_on, style_off, pick = AI_KNOB_CASES[knob_key]
+    words = [(i, w, i * 0.5, i * 0.5 + 0.4) for i, w in enumerate(names)]
+    monkeypatch.setattr(commands, "_words_from_xml", lambda _p: words)
+    monkeypatch.setattr(commands, "_ask_json",
+                        lambda *a, **k: {"intro_rows": model, "mid_groups": []})
+    on = commands.cmd_intro(str(tmp_path / "clip.xml"), emit=lambda *a, **k: None,
+                            style=style_on)
+    off = commands.cmd_intro(str(tmp_path / "clip.xml"), emit=lambda *a, **k: None,
+                             style=style_off)
+    assert pick(on) != pick(off), (knob_key, pick(on), pick(off))

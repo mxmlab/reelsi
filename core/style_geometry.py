@@ -192,6 +192,8 @@ FRAME_INDEPENDENT: frozenset[str] = frozenset({
     # интро: множители, проценты и времена
     "intro_scale", "intro_margin", "intro_margin2", "intro_fit_max", "intro_fit_max2",
     "intro_line_step",
+    # длина строки хука — число символов, а не доля кадра: разметка ИИ режет по буквам
+    "intro_row_max",
     "intro_big_step", "intro_big_over", "back_step",
     "back_scale", "intro_fade", "intro_fx_hold_add", "intro_last_hold",
     "intro_sub_fade", "intro_shadow_op", "intro_shadow_dir",

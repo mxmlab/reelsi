@@ -207,10 +207,6 @@
   <div class="card">
     <h2><span class="k">◆</span>Папки и параметры</h2>
     <div class="row" style="margin-top:8px;align-items:center">
-      <div class="grow"><label for="aeoutdir3">Папка для .jsx <span class="i" data-t="Куда уедут собранные .jsx. У клипа со спикером папка — из его профиля, правка сохраняется туда с подтверждением. У клипа без спикера — общее поле. Пусто = файл ляжет рядом со своим XML.">!</span></label><input id="aeoutdir3" style="width:100%" oninput="aeDirSync(this)" onchange="aeDirCommit(this)"><span class="hint" id="aeoutdir3note" style="display:block;margin-top:4px"></span></div>
-      <button class="sm" onclick="pickdir('aeoutdir3')">Выбрать…</button>
-    </div>
-    <div class="row" style="margin-top:8px;align-items:center">
       <div class="grow"><label for="aerenderdir">Папка вывода рендера <span class="i" data-t="Куда уедет готовый ролик. Дефолт — папка exp рядом с репозиторием. Движок выбирается ниже: безголовый прогон After Effects или встроенный рендер, которому After Effects не нужен вовсе.">!</span></label><input id="aerenderdir" style="width:100%" oninput="renderDirSync(this)" onchange="renderDirCommit(this)"><span class="hint" id="aerenderdirnote" style="display:block;margin-top:4px"></span></div>
       <button class="sm" onclick="pickdir('aerenderdir')">Выбрать…</button>
       <span id="aeresrend" class="muted"></span>
@@ -218,48 +214,10 @@
     <div class="row" style="margin-top:8px;align-items:center">
       <div class="seg" id="rendengine"><label class="on" data-t="Прежний путь рендера: безголовый прогон After Effects (сборка .aep + aerender). Нужен установленный After Effects; именно он даёт кадр в кадр с проектом AE."><input type="radio" name="rendengine" value="ae" checked onchange="rendEngineUI()"> After Effects</label><label data-t="Рендер без After Effects: кадры рисует наш же предпросмотр, звук сводится по плану сцены. Превью повторяется приблизительно — Glow, Lumetri и мозаика цензуры близко, motion blur нет. After Effects не нужен; на время съёмки поднимается несколько экземпляров Chrome."><input type="radio" name="rendengine" value="builtin" onchange="rendEngineUI()"> Встроенный</label></div>
     </div>
-    <details><summary>Дополнительно — яркость, музыка, цензура, папки</summary>
-      <div class="row" style="margin-top:12px">
-        <div><label for="aeexposure">Яркость (Lumetri Exposure, 0 = выкл)</label><input type="number" id="aeexposure" step="0.1" value="0" style="width:120px" onchange="captureAE()"></div>
-        <div style="align-self:center"><label class="chk" style="display:flex;gap:7px;align-items:center;margin:0"><input type="checkbox" id="censor" checked onchange="captureAE()"> Цензурить аудио</label></div>
-      </div>
-      <div class="row" style="margin-top:12px">
-        <div class="grow"><label for="aeoutdir">Папка для .jsx</label><input id="aeoutdir" style="width:100%" oninput="aeDirSync(this)" onchange="aeDirCommit(this)"><span class="hint" id="aeoutdirnote" style="display:block;margin-top:4px"></span></div>
-        <button class="sm" onclick="pickdir('aeoutdir')">Выбрать…</button>
-      </div>
-    </details>
-    <!-- Музыка КЛИПА: режим и папка — из стиля (там же, где громкость music_db), у клипа
-         только переопределение. Выбранный при «случайно» трек виден именем файла — раньше
-         он выбирался в момент сборки и нигде не показывался, а сменить его было нельзя.
-         Этот блок — единственная дверь музыки клипа: прежние общие поля шага 3
-         (musicmode/aemusic/aemusicdir) убраны, чтобы значение не жило в двух местах. -->
-    <div class="sect">Музыка</div>
-    <div class="row" style="margin-top:8px;align-items:center">
-      <div><label for="musicown">Музыка клипа</label><select id="musicown" onchange="musicOwnChanged(this.value)">
-        <option value="style">как в стиле</option>
-        <option value="own">свой трек</option></select></div>
-      <span class="grow"></span>
-      <span id="musictrack" class="mono" style="font-size:12px"></span>
-      <button class="sm" id="musicreroll" onclick="musicReroll()" style="display:none" data-t="Выбрать другой трек из папки музыки: прежний исключается, поэтому трек гарантированно сменится.">Другой трек</button>
-    </div>
-    <div id="musicovr" style="display:none">
-      <div class="row" style="margin-top:8px;align-items:center">
-        <div><label for="musicmode">Какой трек</label><select id="musicmode" onchange="musicOverrideEdit()">
-          <option value="off">без музыки</option>
-          <option value="random">случайно из папки</option>
-          <option value="file">файл</option>
-          <option value="url">ссылка YouTube</option></select></div>
-        <button class="sm" onclick="pickMusic()">Файл…</button>
-      </div>
-      <div class="row" style="margin-top:8px;align-items:center">
-        <div class="grow"><label for="musicsrc">Файл или ссылка <span class="i" data-t="Путь к файлу трека или ссылка YouTube. Ссылку скачивает кнопка «Скачать» — до этого сборка качала её молча и только в момент сборки. Скачанный файл попадает в папку музыки и может быть выбран режимом «случайно».">!</span></label><input id="musicsrc" style="width:100%" onchange="musicOverrideEdit()"></div>
-        <button class="sm" id="musicdl" onclick="musicDownload()">Скачать</button>
-      </div>
-      <div class="row" style="margin-top:8px;align-items:center">
-        <div class="grow"><label for="musicdir">Папка треков (стиль) <span class="i" data-t="Папка, из которой берётся трек в режиме «случайно». Это настройка СТИЛЯ, а не клипа: правка видна у всех клипов на этом стиле. Пусто — папка music рядом с проектом.">!</span></label><input id="musicdir" style="width:100%" onchange="musicDirChanged()"></div>
-        <button class="sm" onclick="pickdir('musicdir')">Выбрать…</button>
-      </div>
-    </div>
+    <!-- Папки .jsx здесь больше нет: её задаёт профиль спикера (jsxdir → папка нарезки),
+         а клип без спикера кладёт файл рядом со своим XML. Яркость, цензура и музыка
+         клипа тоже убраны: яркость — совсем (Lumetri в стиле), цензура и музыка — в
+         панели стиля, в группе «Аудио». -->
   </div>
 </div>
 
@@ -648,6 +606,8 @@
               <label for="spk_ins_video" style="margin:0;font-size:12px;white-space:nowrap">Вставок-видео</label>
               <input type="number" id="spk_ins_video" min="0" max="30" step="1" placeholder="3" style="flex:1;min-width:0">
             </span></div>
+          <div class="setrow"><label for="spk_ins_named">Вставки по названиям <span class="i" data-t="Слово из личного словаря named_inserts.json (корень репозитория; пример — data/named_inserts.example.json) прозвучало в речи — на нём встаёт фото-вставка с картинкой из базы вставок. Словаря нет — ничего не ставится. Картинки в базе нет — вставки не будет, а в логе появится «картинки нет». Галочка снята — не ставить вовсе.">!</span></label>
+            <input type="checkbox" id="spk_ins_named" checked style="flex:0 0 auto"></div>
           <div class="setrow"><label for="spk_pos_a">Приписка к промпту 1 <span class="i" data-t="Что дописывать к предмету при генерации картинки кнопкой 1 (Nano Banana): «3d icon», «photorealistic» и т.п. Клеится пробелом. Пусто — генерим предмет как есть.">!</span></label>
             <span style="display:flex;gap:8px;flex:1;min-width:0">
               <input id="spk_extra_a" placeholder="пусто — без приписки" style="flex:1;min-width:0">
@@ -870,6 +830,8 @@
           <select id="omniprofile" onchange="setOmniProfile(this.value)"></select></div>
         <div class="setrow"><label for="cut_asr">Движок нарезки (тайминги) <span class="i" data-t="Кто делает пословные тайминги для нарезки: чистый CTC-акустический движок с родными таймингами слов. GigaAM-v3 (RU, CTC) — русский; GigaAM multilingual — 70+ языков; пользовательские CTC-модели из data/asr_engines.json.">!</span></label>
           <select id="cut_asr" onchange="setCutAsr(this.value)"></select></div>
+        <div class="setrow"><label for="cut_text_asr">Движок нарезки (текст) <span class="i" data-t="Второй проход Whisper после движка таймингов: он только правит написание слов, а сами слова и их тайминги остаются от движка таймингов — нарезка не сдвигается. Субтитры при этом пишутся в XML сразу при нарезке, и разметка на шаге 2 их уже не распознаёт заново. «Выкл» — как раньше: текст от движка таймингов, субтитры на шаге 2.">!</span></label>
+          <select id="cut_text_asr" onchange="setCutTextAsr(this.value)"></select></div>
         <div class="sect">Ступени нарезки <span class="i" data-t="Ступени кастомной нарезки. Паузы выбирают ветку: по речи (GigaAM) или по громкости (VAD). Ступени речевой ветки недоступны при нарезке по громкости.">!</span></div>
         <div id="cut_stages_list" style="display:flex;flex-direction:column;gap:8px"></div>
         <div id="vad_thresholds_box" style="display:none;flex-direction:column;gap:11px">
@@ -908,13 +870,21 @@
         <div class="sethdr">Картинки</div>
         <div class="setrow"><label for="ais_image">Картинки (генерация) <span class="i" data-t="Профиль-«художник» для генерации картинок-вставок (кнопки-звёздочки в редакторе вставок). Нужна image-модель, напр. google/gemini-3.1-flash-lite-image (Nano Banana 2 Lite, ~$0.04/шт). Выключено = кнопок генерации нет. Сгенерённое падает в базу вставок и переиспользуется бесплатно.">!</span></label>
           <select id="ais_image" aria-label="Профиль генерации картинок" onchange="setImageProfile(this.value)"></select></div>
-        <div class="setrow" id="ais_rembgRow" style="display:none"><label>Убирать фон <span class="i" data-t="Как «Remove Background» в фотошопе: после генерации локальная модель rembg (u2net) вырезает предмет и сохраняет PNG с прозрачностью, пустые поля обрезаются. Так сгенерированное ложится в базу таким же, как стоковые вставки. Считается на CPU ~1–2 с на картинку; при первом запуске модель (~176 МБ) скачается сама.">!</span></label>
+        <div class="setrow" id="ais_rembgRow" style="display:none"><label>Убирать фон <span class="i" data-t="Как «Remove Background» в фотошопе: после генерации локальная модель rembg вырезает предмет и сохраняет PNG с прозрачностью, пустые поля обрезаются. Какая именно модель — выбирается ниже. Так сгенерированное ложится в базу таким же, как стоковые вставки. Считается на CPU ~1–2 с на картинку; при первом запуске выбранная модель скачается сама.">!</span></label>
           <label class="chk" style="gap:7px;align-items:center;margin:0"><input type="checkbox" id="ais_rembg" aria-label="Убирать фон" onchange="setImageRembg(this.checked)"> прозрачный PNG вместо белого фона</label></div>
+        <div class="setrow" id="ais_rembgModelRow" style="display:none"><label for="ais_rembg_model">Модель вырезания фона <span class="i" data-t="u2net — быстрая модель по умолчанию (~0.7 с на картинку, ~176 МБ). BiRefNet — чище края у волос и мелких предметов, но на процессоре ~8 с на картинку и ~1 ГБ: при первом выборе она скачивается в папку моделей rembg, если её там нет. Смена модели действует со следующей вырезки; уже вырезанные картинки пересчитываются, когда понадобятся.">!</span></label>
+          <select id="ais_rembg_model" aria-label="Модель вырезания фона" onchange="setRembgModel(this.value)"><option value="u2net">u2net — быстро (≈0.7 с)</option><option value="birefnet-general">BiRefNet — чище края, медленнее (≈8 с на процессоре)</option></select></div>
         <div class="sethdr">Стоки</div>
-        <div class="setrow"><label for="stk_pexels">Ключ Pexels <span class="i" data-t="Бесплатный ключ: pexels.com/api, pixabay.com/api/docs. Хранится только в ai_config.json. Скачанное со стока ложится в базу вставок с файлом лицензии">!</span></label>
+        <div class="setrow"><label for="stk_pexels">Ключ Pexels <span class="i" data-t="Ключи стоков. Бесплатные: pexels.com/api, pixabay.com/api/docs, unsplash.com/developers, coverr.co (Openverse работает без ключа). Хранятся только в ai_config.json. Скачанное со стока ложится в базу вставок с файлом лицензии — автором, ссылкой и лицензией. Сток без ключа просто не ищется.">!</span></label>
           <input type="password" id="stk_pexels" aria-label="Ключ Pexels" onchange="saveStockKeys()"></div>
+        <div class="setrow"><label for="stk_unsplash">Ключ Unsplash <span class="i" data-t="Unsplash: api.unsplash.com, нужен Access Key приложения (уходит заголовком Client-ID). Только фото; при скачивании приложение обязано отметить скачивание у Unsplash.">!</span></label>
+          <input type="password" id="stk_unsplash" aria-label="Ключ Unsplash" onchange="saveStockKeys()"></div>
         <div class="setrow"><label for="stk_pixabay">Ключ Pixabay</label>
           <input type="password" id="stk_pixabay" aria-label="Ключ Pixabay" onchange="saveStockKeys()"></div>
+        <div class="setrow"><label for="stk_coverr">Ключ Coverr <span class="i" data-t="Coverr: видео, ключ из личного кабинета coverr.co. Провайдер включается переменной окружения REELSI_STOCK_COVERR=1 — схема их поиска ещё проверяется.">!</span></label>
+          <input type="password" id="stk_coverr" aria-label="Ключ Coverr" onchange="saveStockKeys()"></div>
+        <div class="setrow"><label>Openverse <span class="i" data-t="Openverse (api.openverse.org) — фото под свободными лицензиями, ключ не нужен. Берутся только лицензии, разрешающие коммерческое использование и изменение; лицензия и автор ложатся в файл лицензии рядом с файлом.">!</span></label>
+          <span class="muted" style="font-size:12px">ключ не нужен</span></div>
         <div class="setrow"><label></label>
           <button class="sm" onclick="saveStockKeys()">Сохранить ключи</button>
           <span class="muted" id="stk_res" style="font-size:12px"></span></div>

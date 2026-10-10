@@ -45,6 +45,8 @@ os.environ["REELSI_MODELS_DEV"] = os.path.join(_TEST_LOG_DIR, "models_dev.json")
 # Журнал заданий (job_state.json): без своей переменной тесты писали бы
 # в боевой файл рабочей копии — а сторож изоляции внизу это заметит и завалит сессию.
 os.environ["REELSI_JOB_STATE"] = os.path.join(_TEST_LOG_DIR, "job_state.json")
+# Кэш пиков волны: без своей переменной тесты клали бы его в боевую папку _peaks.
+os.environ["REELSI_PEAKS_CACHE"] = os.path.join(_TEST_LOG_DIR, "_peaks")
 
 # Изоляция ai_config на уровне сессии тестов:
 # REELSI_AI_CONFIG указывает на путь в сессионном каталоге, но файл изначально не создаётся,
@@ -145,6 +147,8 @@ from core import app_meta, applog, insertlib, paths
 from core import jobstate  # noqa: F401  (для sys.modules в фикстуре путей)
 from core.aicut import config as _aicut_cfg
 from core.aicut import llm
+from tests import gitfiles
+from tests._personal_guard import personal_changes, personal_snapshot
 
 # Отключаем автозасев из личного ai_config.json в корне:
 # в тестах конфиг изначально не существует и берётся строго из _default_ai_config()
@@ -167,31 +171,21 @@ except Exception:
 # ---- Сторож изоляции репозитория ---------------------------
 _ROOT_SNAPSHOT = {}
 
-_SNAPSHOT_SKIP_DIRS = frozenset({
-    ".git",
-    "__pycache__",
-    ".pytest_cache",
-    ".ruff_cache",
-    ".mypy_cache",
-    ".venv",
-    "node_modules",
-})
-
-
 def _snapshot_root_files():
     """Снимок всего дерева репозитория: путь относительно корня -> (mtime_ns, size).
 
-    Пропускает служебные каталоги (.git, кэши, виртуальные окружения)
-    и скомпилированные файлы *.pyc.
+    Пропускает служебные каталоги (.git, кэши, виртуальные окружения и
+    `.claude` — рабочие копии подагентов, которые правит параллельная сессия)
+    и скомпилированные файлы *.pyc. Список каталогов общий с остальными
+    обходами tests/ — `gitfiles.SKIP_DIRS`.
     """
     snap = {}
     root = paths.ROOT
     try:
-        for dirpath, dirnames, filenames in os.walk(root):
+        for dirpath, dirnames, filenames in gitfiles.walk_repo(root):
             dirnames[:] = [
                 d for d in dirnames
-                if d not in _SNAPSHOT_SKIP_DIRS
-                and not d.startswith((".pytest", ".ruff", "__pycache"))
+                if not d.startswith((".pytest", ".ruff", "__pycache"))
             ]
             for fname in filenames:
                 if fname.endswith(".pyc"):
@@ -214,10 +208,24 @@ def _snapshot_root_files():
 _ROOT_SNAPSHOT = _snapshot_root_files()
 
 
+# ---- Сторож личных файлов ----------------------------------
+# Сверка sha256 личных файлов корня до и после прогона (логика — tests/_personal_guard.py).
+# Пути берутся через core.paths.root, а НЕ через REELSI_*: те уже подменены на временные
+# (см. выше), и сторож сверял бы пустоту, а не личные файлы.
+# ui_state.json сюда не входит нарочно: его пишет живой сервер владельца, и сверка
+# показывала бы его работу как порчу.
+_PERSONAL_SNAPSHOT = None
+
+
+def _personal_snapshot_now():
+    return personal_snapshot(lambda name: paths.root(name))
+
+
 def pytest_sessionstart(session):
-    """Снимок файлов репозитория до начала прогона тестов."""
-    global _ROOT_SNAPSHOT
+    """Снимок файлов репозитория и личных файлов до начала прогона тестов."""
+    global _ROOT_SNAPSHOT, _PERSONAL_SNAPSHOT
     _ROOT_SNAPSHOT = _snapshot_root_files()
+    _PERSONAL_SNAPSHOT = _personal_snapshot_now()
 
 
 @pytest.fixture
@@ -324,6 +332,7 @@ def isolate_state_files(tmp_path, monkeypatch):
     monkeypatch.setenv("REELSI_INSERTLIB", str(insertlib_path))
     monkeypatch.setenv("REELSI_AI_CONFIG", str(ai_config_path))
     monkeypatch.setenv("REELSI_JOB_STATE", str(job_state_path))
+    monkeypatch.setenv("REELSI_PEAKS_CACHE", str(tmp_path / "_peaks"))
 
     # Подмена модульных констант (там, где модуль уже импортирован)
     for mod_name in ("core.aicut.config", "core.aicut", "core.aicut.catalog", "api.ai", "api"):
@@ -595,6 +604,27 @@ def _check_root_snapshot(session):
         session.exitstatus = 1
 
 
+def _check_personal_guard(session):
+    """Сверить личные файлы корня с хэшами со старта сессии.
+
+    Любое изменение (в том числе тот же размер и тот же mtime) — громкое сообщение
+    с именами файлов и exitstatus = 1. Содержимое и хэши в вывод не попадают.
+    """
+    if _PERSONAL_SNAPSHOT is None:
+        return
+    changes = personal_changes(_PERSONAL_SNAPSHOT, _personal_snapshot_now())
+    if changes:
+        bar = "!" * 72
+        sys.stderr.write(
+            "\n" + bar + "\n"
+            "[СТОРОЖ ЛИЧНЫХ ФАЙЛОВ] Прогон тестов изменил личные файлы репозитория:\n  "
+            + "\n  ".join(changes)
+            + "\nСценарии настроек пишут только во временный файл (REELSI_AI_CONFIG).\n"
+            "Проверь файлы в корне репозитория и резервные копии: ключи могли пропасть.\n"
+            + bar + "\n")
+        session.exitstatus = 1
+
+
 @pytest.hookimpl(hookwrapper=True)
 def pytest_runtest_teardown(item, nextitem):
     """Переармирование логгера ПОСЛЕ завершения всех фикстур теста (включая monkeypatch)."""
@@ -741,6 +771,7 @@ def pytest_sessionfinish(session, exitstatus):
     лежат внутри _TEST_LOG_DIR, затем удаляем каталог через shutil.rmtree.
     """
     _check_root_snapshot(session)
+    _check_personal_guard(session)
     logger = logging.getLogger("reelsi")
     norm_test_dir = os.path.normcase(os.path.realpath(_TEST_LOG_DIR))
     for h in list(logger.handlers):

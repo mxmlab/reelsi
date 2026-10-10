@@ -335,7 +335,7 @@ function makeDom() {
       clientHeight: 360,
       dataset: {},
       attrs: {},
-      style: { display: '', setProperty() {}, getPropertyValue: () => '' },
+      style: (function(){ const m = new Map(); return { display: '', setProperty(k,v){ m.set(k,String(v)); }, getPropertyValue(k){ return m.get(k) || ''; } }; })(),
       children: [],
       parentNode: null,
       _listeners: {}
@@ -910,3 +910,42 @@ def test_incomplete_templates_no_false_diff_dots(tmp_path):
     )
 
 
+
+MUSIC_TRACK_LVL = DOM_STUB + r"""
+// Строки блока «Трек ролика» (#st_music_scope_row, строка трека) должны получить
+// тот же --lvl, что строка ручки #strow_music_mode (они все внутри группы «Музыка»).
+buildPanel();
+const scopeRow = document.getElementById('st_music_scope_row');
+const modeRow  = document.getElementById('strow_music_mode');
+// Строка трека — .stfield-wide внутри .stmusictrack
+const trackBox = document.querySelector('.stmusictrack');
+const trackRow = trackBox ? trackBox.querySelector('.stfield-wide') : null;
+
+const modeLvl  = modeRow  ? modeRow.style.getPropertyValue('--lvl')  : null;
+const scopeLvl = scopeRow ? scopeRow.style.getPropertyValue('--lvl') : null;
+const trackLvl = trackRow ? trackRow.style.getPropertyValue('--lvl') : null;
+
+console.log(JSON.stringify({
+  mode_lvl: modeLvl, scope_lvl: scopeLvl, track_lvl: trackLvl
+}));
+"""
+
+
+@node
+def test_music_track_rows_inherit_group_lvl(tmp_path):
+    """--lvl строк «Куда менять» и «Трек ролика» совпадает с --lvl строки ручки music_mode.
+
+    Отступ строки панели стиля задаёт CSS-переменная --lvl. Без неё подписи блока
+    «Трек ролика» стоят на 28 px левее подписей ручек «Музыки». Мутация «убрать
+    установку --lvl в musicTrackNode» должна ронять именно этот тест.
+    """
+    res = _run_node(tmp_path, "music_track_lvl.js", MUSIC_TRACK_LVL)
+    assert res["mode_lvl"], "строка ручки music_mode не получила --lvl"
+    assert res["scope_lvl"], "строка «Куда менять» не получила --lvl"
+    assert res["track_lvl"], "строка «Трек ролика» не получила --lvl"
+    assert res["scope_lvl"] == res["mode_lvl"], (
+        "у строки «Куда менять» --lvl=%s, а у ручки music_mode --lvl=%s"
+        % (res["scope_lvl"], res["mode_lvl"]))
+    assert res["track_lvl"] == res["mode_lvl"], (
+        "у строки «Трек ролика» --lvl=%s, а у ручки music_mode --lvl=%s"
+        % (res["track_lvl"], res["mode_lvl"]))

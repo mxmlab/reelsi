@@ -77,10 +77,6 @@ CACHE_WRITES = {
         'json.dump(ws, open(a.out, "w", encoding="utf-8"), ensure_ascii=False, indent=0)':
             "кэш пословного транскрипта",
     },
-    "api/files.py": {
-        'json.dump(res, open(cache, "w", encoding="utf-8"))':
-            "кэш волны для превью",
-    },
 }
 
 

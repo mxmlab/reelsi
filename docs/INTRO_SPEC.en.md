@@ -240,11 +240,17 @@ the hook's.
 
 ### "не", prepositions and dependent words are not torn from their word
 
-`_intro_fix_prefix` (the hook's lines) and `_intro_fix_prefix_mids` (the accents, working on the field
-`from`) do not let a line end on a function word: "не", prepositions and dependent words
-go into the line together with their word. The same rule stands verbatim in the prompt
-(`INTRO_SYSTEM`) — the model no longer tears the particle off by itself. The previous `_intro_defunc`
-(a function word not at the end of a line) remains a separate step and works before the transfer.
+`_intro_fix_prefix` (the hook's lines) does not let a line end on a function word: "не", prepositions
+and dependent words go into the line together with their word. For the accents (`mid_groups`) the same
+is done by `_place_mids` BEFORE the inserts and the line split, for every colour (the owner's decision,
+2026-10-09): a group with a word from `INTRO_PREFIX_WORDS` before it pulls that word in, as a chain
+("НИ В КОЕМ СЛУЧАЕ" — the group "КОЕМ СЛУЧАЕ" starts with "НИ"); a group ending on such a word takes the
+next word (if the roll has ended, the word is dropped from the end). There is no separate fix after the
+layout any more (`_intro_fix_prefix_mids` is removed). `_split_words`, when splitting a long line, does not
+cut right after "не"/a preposition and does not leave such a word alone in a chunk; if there is no
+admissible cut, the line is not split. The same rule stands verbatim in the prompt (`INTRO_SYSTEM`) — the
+model no longer tears the particle off by itself. The previous `_intro_defunc` (a function word not at the
+end of a line) remains a separate step and works before the transfer.
 
 ### Line glow — only from the style (`intro_accent_glow`)
 
@@ -269,6 +275,15 @@ max 16), a long word is not cut; a precomp is one phrase, 2–3 lines and 3–5 
 schema `intro_rows` now has `break`; the mechanical fallback `_hook_breaks`
 (`INTRO_HOOK_ROW_MAX_CHARS = 14`, `INTRO_HOOK_ROWS`/`WORDS`/`PAUSE`) sets the split
 itself if the model did not send it.
+
+**The hook's line length comes from the style; a call to action at the end is the last accent (2026-10-10).**
+The hook's line length is set by the style knob `intro_row_max` (default 20): `cmd_intro` substitutes it into
+the prompt in place of the `<ROW_MAX>` token, and `_wrap_intro_rows` cuts by the same number, so the model and
+the code see one knob. A call word at the end ("напишите мне слово «консультация» в личные сообщения") must be
+the last accent. If the last 15 % of the words (at least 30) contain a pair of quotes no longer than three
+words, `_place_call_word` puts a yellow group on it and removes the accents after it; a call word inside the
+intro or under an insert is left alone and logged. The measurement on the owner's data is `tools/intro_eval.py`,
+the "призыв" line in the summary.
 
 ## Line selectors, animations, effects and the number counter
 

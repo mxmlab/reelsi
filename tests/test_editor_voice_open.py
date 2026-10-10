@@ -58,8 +58,7 @@ PREVIEW_FUNCS = (
     "openEditClip", "openPreview", "pvVideoTo", "pvWordAt", "pvSegAt", "pvSrc",
     "bufMake", "bufIdle", "bufArm", "bufRoll", "bufTake", "bufSwap", "spareLead",
     "spareIdle", "spareStop", "spareSwap", "spareRollAt",
-    # Гашение дорожки и её разбега идёт через дублёра голоса (spareStop -> vtSpareStop),
-    # а стык блока редактора взводит и пускает его же (edArm -> vtSpareAt/Arm/Roll).
+    # Гашение камерного разбега (spareStop) зовёт и гашение дублёра голоса.
     "vtSpareOf", "vtSpareLive", "vtSpareIdle", "vtSpareStop", "vtSpareAt", "vtSpareArm",
     "vtSpareRoll", "vtSpareTake", "vtSpareSwap", "vtSpareCtl", "voicePrime",
     "camVisual", "camIdle", "camApply", "camTrack", "camDeltas", "camBufs",
@@ -68,14 +67,17 @@ PREVIEW_FUNCS = (
     "vtStop", "vtPause", "vtGate", "vtLiveOn", "vtSetMute", "vtLiveUpdate", "vtLiveRate", "vtLiveExpect",
     "vtLiveCmd", "vtLiveSid", "vtLivePlay", "vtLivePause", "vtPrep", "vtVoiceShow",
     "vtVoiceWatch", "vtVoicePoll", "vtVoiceLine", "vtVoiceStop", "vtVoiceTake", "vtVoiceUse",
-    "vtUse", "vtTick", "vtSeek", "vtRate", "vtSeekAt",
+    "vtUse", "vtTick", "vtSeek", "vtRate",
+    # Звук редактора шага 1: буфер Web Audio, очередь блоков, часы, гейн.
+    "eaOpen", "eaDecode", "eaVoice", "eaBuf", "eaSig", "eaPlan", "eaNow", "eaStop",
+    "eaStart", "eaClock", "eaSync", "eaGain", "dbToGain",
     "vtHostLive", "vtLivePrep", "vtStatesWait", "vtHostDown", "pvProgRow", "pvProgDrop",
 )
 # Единственный плеер шага 1 — редактор (70-editor.js)
 EDITOR_FUNCS = (
     "edOpen", "edResize", "edTotal", "edBlockAt", "edCutTime", "edCutOf", "edS2X", "edX2S",
-    "edUI", "edRaw", "edInCut", "edWords", "edSeek", "edToggle", "edPlay", "edPause",
-    "edTake", "edJump", "edVoiceSeekWait", "edVoiceSeekClose", "edVoiceSeekOff", "edArm", "edTick",
+    "edUI", "edWords", "edSeek", "edToggle", "edPlay", "edPause",
+    "edTake", "edJump", "edVideoSeek", "edFollow", "edArm", "edTick",
 )
 
 
@@ -132,12 +134,19 @@ def _bodies() -> str:
     out = [_func_src(styles, n) for n in VOICE_FUNCS]
     # Пороги синхрона дорожки — ИЗ ФАЙЛА: свои копии в стенде разъезжались бы с
     # боевыми молча (перемотка становится скоростью — на этом и попались). Допуск
-    # подмены дублёра голоса (VT_SWAP_*) и запас взвода (VT_ARM) — оттуда же.
+    # подмены дублёра голоса (VT_SWAP_*) и пороги звука редактора (EA_*, ED_V_*) — оттуда же.
     for name in ("VT_SOFT", "VT_DRIFT", "VT_RATE", "VT_QUIET", "VT_POLL",
-                 "VT_SWAP_LO", "VT_SWAP_HI", "VT_ARM"):
+                 "VT_SWAP_LO", "VT_SWAP_HI", "EA_LEAD", "EA_FADE"):
         m = re.search(r"^const %s=.*$" % name, preview, re.M)
         assert m is not None, f"в 60-preview.js нет const {name}"
         out.append(m.group(0))
+    for name in ("ED_V_SOFT", "ED_V_HARD", "ED_V_RATE", "ED_ARM"):
+        m = re.search(r"^const %s=.*$" % name, editor, re.M)
+        assert m is not None, f"в 70-editor.js нет const {name}"
+        out.append(m.group(0))
+    # Состояние звука редактора `let EA={…};` — литерал на две строки, берём до `};`.
+    a = preview.index("let EA={")
+    out.append(preview[a:preview.index("};", a) + 2])
     for name in PREVIEW_FUNCS:
         src = _func_src(preview, name)
         if name == "vtTick":              # боевую дорожку зовём из счётчика стенда
@@ -286,7 +295,20 @@ function voiceFxStatus(host,text){const el=host?host.querySelector('[data-vfx="s
   if(el)el.textContent=text||'';}
 // Общий объект кадра клипа (как в 60-preview.js) и плеер шага 1 — из файла (см. _ed_literal)
 let PV={vids:[],bufs:[],cams:null,segs:[],audio:[],words:[],dur:0,aidx:0,vidx:-1,primed:-1,
-  curCi:-1,rollCi:-1,scrubbing:false,scrubT:0,raf:0,xml:'',voicePanel:'pvvoice'};
+  curCi:-1,rollCi:-1,scrubbing:false,scrubT:0,raf:0,xml:'',voicePanel:'pvvoice',silent:true};
+// Поддельный Web Audio: узлы помнят буфер и место в очереди, часы двигает стенд.
+const SRCS=[];
+class FNode{constructor(){this.out=[];this.gain={value:1,setValueAtTime(){},linearRampToValueAtTime(){}};
+    this.buffer=null;this.started=null;this.stopped=false;}
+  connect(n){this.out.push(n);return n;}disconnect(){this.out=[];}
+  start(w,o,d){this.started={when:w,off:o,dur:d};}stop(){this.stopped=true;}}
+const ACTX={state:'running',currentTime:100,outputLatency:0,destination:new FNode(),
+  createGain(){return new FNode();},createBufferSource(){const n=new FNode();SRCS.push(n);return n;},
+  decodeAudioData(ab){return Promise.resolve({duration:120,name:ab&&ab.name});},
+  resume(){return Promise.resolve();}};
+let AUDIO=null;
+function audioGraph(){AUDIO=ACTX;}
+function audioWake(){audioGraph();}
 const CUT={audio:[{ts:0,te:70,src:0},{ts:70,te:120,src:80}],
   cams:[{path:'C:/cam1.mp4',name:'A'}],
   segs:[{ts:0,te:70,src:0,ci:0},{ts:70,te:120,src:80,ci:0}],
@@ -306,6 +328,9 @@ globalThis.fetch=async(url,opt)=>{
     path:'C:/out/01_clip.voice.wav'})};
   if(u==='/api/voicefx_host')return {json:async()=>({ok:true,sid:'s1',fresh:true,track_ready:false,
     window:false,skipped:[]})};
+  if(u==='/api/preview_audio')return {json:async()=>({ok:true,path:'C:/out/_tmp/pa_cam1.wav'})};
+  if(u.indexOf('/api/media?')===0)return {arrayBuffer:async()=>({
+    name:u.indexOf('voice')>=0?'voice':'camera'})};
   return {json:async()=>({ok:true})};};
 // Дорожка голоса зовётся счётчиком: проверяем, ЧЕМ плеер её ведёт (шаг 1 — редактор)
 function vtTick(P,tm){VTTICK.push([P,+tm]);return realVtTick(P,tm);}
@@ -422,31 +447,33 @@ def test_open_preview_asks_for_the_final_track_and_does_not_raise_the_host() -> 
 # --------------------------------------------------------------------------- #
 @node
 def test_editor_frame_drives_the_track_and_mutes_the_camera() -> None:
-    """«Играть» — это кадр редактора, и дорожка идёт за ним (vtTick(ED, ED.cs)).
+    """«Играть» — кадр редактора: звучит готовый голос клипа из буфера, камера немая.
 
-    Время звука — исходное время камеры 1 под плейхедом (ED.cs), поэтому и спрашивают
-    плеер шага 1. Глушение звука камеры ставится ОБЩЕМУ объекту кадра (PV): кадр и
-    ракурс красит он, и флаг на самом редакторе оставил бы камеру звучать поверх
-    обработанного голоса — два голоса разом.
+    Открытие клипа заказало итоговый голос; он готов — и уходит в буфер звука редактора
+    (`eaVoice`), а не в <audio>. «Играть» ставит очередь блоков на этот буфер с места
+    плейхеда (ED.cs — исходное время камеры 1 = время запечённого трека). <video> кадра
+    немые всегда (PV.silent): иначе звук камеры звучал бы поверх голоса — два голоса разом.
     """
     out = _run("""
 (async()=>{
   await openFlow();
+  for(let i=0;i<10;i++)await Promise.resolve();   // звук камеры и голос декодированы
   VTTICK.length=0;
   edPlay();
-  ED.raf=0;edTick();
+  ACTX.currentTime+=1/60;ED.raf=0;edTick();
+  const q=SRCS.filter(n=>!n.stopped&&n.started);
   console.log(JSON.stringify({ticks:VTTICK.map(x=>[x[0]===ED,x[1]]),
-    play:!!ED.play,video:PV.vids[0].played,camPaused:PV.vids[0].paused,
-    mute:!!PV.vids[0].muted,camFlag:!!PV.voiceMute,trackPath:vtOf(ED).path||'',
-    trackOn:!!vtOf(ED).on,edFlag:('voiceMute' in ED)}));
+    play:!!ED.play,video:PV.vids[0].played,
+    mute:PV.vids.every(v=>v.muted),trackPath:vtOf(ED).path||'',trackOn:!!vtOf(ED).on,
+    trackEl:!!vtOf(ED).el,bufs:q.map(n=>n.buffer&&n.buffer.name),firstOff:q.length?q[0].started.off:null}));
 })();
 """)
-    assert out["ticks"], "кадр редактора не позвал дорожку обработанного голоса"
+    assert out["ticks"], "кадр редактора не позвал дорожку голоса (живой хост и гейн)"
     assert all(t[0] for t in out["ticks"]), f"дорожку ведёт не плеер шага 1: {out['ticks']}"
-    assert out["ticks"][0][1] == 0, f"время звука не равно времени камеры 1: {out['ticks']}"
     assert out["play"] is True and out["video"] >= 1, f"редактор не заиграл: {out}"
     assert out["trackOn"] is True and out["trackPath"] == "C:/out/01_clip.voice.wav", out
-    assert out["mute"] is True and out["camFlag"] is True, (
-        f"звук камеры не заглушён флагом общего объекта кадра — слышно два голоса: {out}")
-    assert out["edFlag"] is False, (
-        f"флаг глушения остался на редакторе, а camVisual читает его у PV: {out}")
+    assert out["trackEl"] is False, f"у плеера шага 1 завёлся <audio> голоса: {out}"
+    assert out["bufs"] and set(out["bufs"]) == {"voice"}, (
+        f"очередь звука играет не готовый голос клипа: {out}")
+    assert out["firstOff"] == 0, f"звук начался не с места плейхеда: {out}"
+    assert out["mute"] is True, f"звук камеры шага 1 не немой — слышно два голоса: {out}"

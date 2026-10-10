@@ -34,6 +34,7 @@ import urllib.error
 import urllib.request
 from unittest import mock
 
+import pytest
 from flask import Flask
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -67,6 +68,7 @@ if __name__ == "__main__":
     os.environ["REELSI_VIDEO_HISTORY"] = os.path.join(_TMP, "_videogen", "history.json")
 
 import api  # noqa: E402
+from core import paths  # noqa: E402
 from core.aicut import config as aicut_config  # noqa: E402
 
 
@@ -167,6 +169,15 @@ SCENARIOS = [
      "body": {"action": "set_active_cut_asr", "name": "whisper"},
      "expect": "invalid_cut_asr"},
 
+    # ---- set_active_cut_text_asr ----
+    {"name": "set_active_cut_text_asr: успех (whisper large-v3-turbo)", "method": "POST",
+     "body": {"action": "set_active_cut_text_asr", "name": "whisper:large-v3-turbo"}},
+    {"name": "set_active_cut_text_asr: выключено", "method": "POST",
+     "body": {"action": "set_active_cut_text_asr", "name": ""}},
+    {"name": "set_active_cut_text_asr: не Whisper (gigaam)", "method": "POST",
+     "body": {"action": "set_active_cut_text_asr", "name": "gigaam"},
+     "expect": "invalid_cut_text_asr"},
+
     # ---- set_active_image ----
     {"name": "set_active_image: успех (Аудио)", "method": "POST",
      "body": {"action": "set_active_image", "name": "Аудио"}},
@@ -212,6 +223,17 @@ SCENARIOS = [
     {"name": "set_glitch_glow: недопустимый режим", "method": "POST",
      "body": {"action": "set_glitch_glow", "value": "мусор"},
      "expect": "glitch_glow_mode_invalid"},
+
+    # ---- set_rembg_model ----
+    # Модель вырезания фона (⚙ → Генерация): u2net — дефолт, birefnet-general — чище края.
+    # Последний сценарий возвращает u2net, чтобы состояние конфига совпало с дефолтом.
+    {"name": "set_rembg_model: успех (birefnet-general)", "method": "POST",
+     "body": {"action": "set_rembg_model", "value": "birefnet-general"}},
+    {"name": "set_rembg_model: чужая модель", "method": "POST",
+     "body": {"action": "set_rembg_model", "value": "sam2"},
+     "expect": "rembg_model_invalid"},
+    {"name": "set_rembg_model: возврат к u2net", "method": "POST",
+     "body": {"action": "set_rembg_model", "value": "u2net"}},
 
     # ---- set_video_encoder ----
     # Чем кодировать видео, которое Reelsi пишет сам (черновик и видео камер с LUT):
@@ -429,6 +451,21 @@ def _branch(rec):
     return js.get("err")
 
 
+def _refuse_personal_config(cfg_path):
+    """Отказ, если сценарий направлен на личный ai_config.json корня репозитория.
+
+    Инцидент 2026-10-09: сценарий вызвали мимо pytest с боевым путём — он перезаписал
+    личный конфиг, и ключи API пропали. Изоляция REELSI_* живёт только в conftest,
+    поэтому сам сценарий проверяет путь и сам отказывает. Путь сравнивается через
+    realpath и normcase: на Windows регистр и вид пути у одного файла бывают разные.
+    """
+    personal = paths.root("ai_config.json")
+    if os.path.normcase(os.path.realpath(cfg_path)) == os.path.normcase(os.path.realpath(personal)):
+        raise RuntimeError(
+            "сценарий пишет конфиг — личный ai_config.json не трогаю; "
+            "выставь REELSI_AI_CONFIG на временный файл")
+
+
 def run_scenarios(cfg_path):
     """Прогнать все сценарии подряд на конфиге cfg_path и вернуть записи ответов.
 
@@ -438,6 +475,7 @@ def run_scenarios(cfg_path):
     """
     from core.aicut import catalog
 
+    _refuse_personal_config(cfg_path)
     with open(cfg_path, "w", encoding="utf-8") as f:
         json.dump(START_CFG, f, ensure_ascii=False, indent=1)
 
@@ -582,9 +620,73 @@ def test_masking_is_not_implemented_in_api_module():
             "%s в api/ai.py — не тот же объект, что config.%s" % (alias, real))
 
 
+def test_get_ai_config_stock_fields_only_for_keyed_providers():
+    """В ответе GET поле ключа стока — только у провайдера с keyed=True.
+
+    Openverse ключа не требует: поля `openverse_key` наружу быть не должно, даже если
+    в файле конфига остался старый лишний ключ. Набор полей считается по самому стоку,
+    чтобы новый keyed-сток не потребовал правки теста.
+    """
+    from core import stock
+    with open(aicut_config.AI_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump({"active": "Тест", "profiles": {
+            "Тест": {"provider": "openai", "base_url": "http://localhost:1/v1",
+                     "api_key": "test-key-9999", "model": "m"}},
+            "stock": {"pexels_key": "test-pexels-1234", "openverse_key": "stale-5678"}},
+            f, ensure_ascii=False)
+    app = Flask(__name__)
+    app.register_blueprint(api.bp)
+    app.config["TESTING"] = True
+    js = app.test_client().get("/api/ai_config").get_json()
+    want = {p + "_key" for p in stock.PROVIDERS if stock.PROVIDER_META[p]["keyed"]}
+    assert set(js["stock"]) == want
+    assert "openverse_key" not in js["stock"]
+    assert js["stock"]["pexels_key"] == "•••1234"
+
+
+def test_scenario_refuses_personal_config_path(tmp_path, monkeypatch):
+    """Боевой путь личного конфига — отказ; файл по этому пути не создан и не изменён.
+
+    Корень репозитория подменён на временный каталог, поэтому настоящий ai_config.json
+    этот тест не видит и не трогает.
+    """
+    fake_root = tmp_path / "repo"
+    fake_root.mkdir()
+    monkeypatch.setattr(paths, "ROOT", str(fake_root))
+    personal = fake_root / "ai_config.json"
+
+    # Файла нет: отказ, и файл не появляется.
+    with pytest.raises(RuntimeError, match="личный ai_config.json не трогаю"):
+        run_scenarios(str(personal))
+    assert not personal.exists()
+
+    # Файл есть: отказ, и содержимое не меняется.
+    sentinel = '{"sentinel": true}'
+    personal.write_text(sentinel, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="личный ai_config.json не трогаю"):
+        run_scenarios(str(personal))
+    assert personal.read_text(encoding="utf-8") == sentinel
+
+    # Снятие эталона (_capture) тот же отказ — раньше, чем подменяется путь модуля.
+    monkeypatch.setenv("REELSI_AI_CONFIG", str(personal))
+    monkeypatch.setattr(aicut_config, "AI_CONFIG_PATH", aicut_config.AI_CONFIG_PATH)
+    with pytest.raises(RuntimeError, match="личный ai_config.json не трогаю"):
+        _capture(str(tmp_path / "out.json"))
+    assert personal.read_text(encoding="utf-8") == sentinel
+    assert not (tmp_path / "out.json").exists()
+
+
+def test_refuse_helper_lets_other_paths_through(tmp_path, monkeypatch):
+    """Отказ касается только личного файла корня: временный путь проходит."""
+    monkeypatch.setattr(paths, "ROOT", str(tmp_path / "repo"))
+    _refuse_personal_config(str(tmp_path / "temp_ai_config.json"))  # не бросает
+    _refuse_personal_config(str(tmp_path / "repo" / "other.json"))  # не бросает
+
+
 def _capture(target):
     """Снять эталон в файл target (прогон вне pytest, см. шапку файла)."""
     cfg_path = os.environ["REELSI_AI_CONFIG"]
+    _refuse_personal_config(cfg_path)
     # Модуль api импортирован ещё до подмены REELSI_*: путь к конфигу привязан при
     # импорте, поэтому подменяем его руками (как это делает conftest.py для тестов) и
     # глушим автозасев из личного ai_config.json рабочей копии.

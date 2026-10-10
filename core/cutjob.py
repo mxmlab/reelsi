@@ -238,6 +238,10 @@ def process_pair(cams: list[str] | str, out_xml: str, opts: CutOptions,
         # пометит клип упавшим и пойдёт дальше.
         emit("  ⚠ XML не создан — {reason}", reason=str(e))
         raise RuntimeError(str(e)) from None
+    # XML переписан без второго прохода текста: слова исходника прежней нарезки к нему
+    # не относятся, и правка блоков не должна брать их (см. core/cut_subs.py).
+    from core import cut_subs
+    cut_subs.forget_source(out_xml)
     if info.get("long_words"):
         emit("  ⚠ слишком длинные слова (>19 букв) — без титра, добавь вручную: {words}",
              words=", ".join(info["long_words"]))
@@ -252,6 +256,7 @@ def process_pair(cams: list[str] | str, out_xml: str, opts: CutOptions,
             extra += f" + .jsx ({nc}кл/{ns}суб)"
         except ReelsiError: raise
         except Exception as e:
+            # ошибка .jsx видна в строке «-> …» ниже (через extra); сам xml при этом уже готов
             extra += f" [jsx err: {e}]"
     emit("  -> {name}  ({sec:.0f}s, {segs} сег., {subs} суб.){extra}",
          name=os.path.basename(out_xml), sec=info['total_s'],

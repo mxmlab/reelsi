@@ -49,6 +49,19 @@ def image_rembg_on() -> bool:
     return bool(load_ai_config().get("image_rembg", True))
 
 
+# Модель вырезания фона (rembg). u2net — дефолт, быстрая (~0.7 с на картинку); BiRefNet —
+# чище края, но на процессоре ~8 с. Значения — имена моделей rembg как есть.
+REMBG_DEFAULT = "u2net"
+REMBG_MODELS = ("u2net", "birefnet-general")
+
+
+def rembg_model() -> str:
+    """Модель вырезания фона из общих настроек. Чужое или битое значение в конфиге —
+    дефолт: вырезание не должно ломаться от руками испорченного файла."""
+    v = load_ai_config().get("rembg_model")
+    return v if v in REMBG_MODELS else REMBG_DEFAULT
+
+
 # Слотов приписки ЧЕТЫРЕ: a/b под разные стили (на карточке вставки кнопки 1 и 2) и
 # pa/pb — свои приписки для вставок с галкой «на подложке»: подложка уже
 # из стиля, фото с вырезанным фоном, и стиль предмета у таких вставок свой.
@@ -121,6 +134,7 @@ def _img_http_error(e: urllib.error.HTTPError, prof: dict[str, Any]) -> str:
         detail = e.read().decode("utf-8", "replace")[:300]
     except ReelsiError: raise
     except Exception:
+        # тело ошибки — только подробность к коду (e.code уже известен и обработан ниже)
         detail = ""
     if e.code in (401, 403):
         raise ReelsiError(umsg("key_rejected", f"API-ключ не принят ({e.code}) — проверь профиль «{prof['name']}» в ⚙", code=e.code, name=prof["name"]))
@@ -369,6 +383,7 @@ def _unsloth_ensure_loaded(root: str, model_path: str, gguf: str, emit: Callable
             try:
                 err_detail = e.read().decode("utf-8", "replace")[:300]
             except Exception:
+                # тело ответа не прочиталось — подробность берём из текста самого исключения
                 err_detail = str(e)
             raise ReelsiError(umsg("unsloth_load_failed",
                                    "Unsloth Studio не загрузил {model}: {err}",

@@ -165,6 +165,7 @@ def vemit(line: Any, /, **vars: Any) -> None:
         try:
             line = line.format(**vars)
         except ReelsiError: raise
+        # format не справился (лишние фигурные скобки в тексте): подставляем имена вручную, строка всё равно выводится
         except Exception:
             for key, value in vars.items():
                 line = line.replace("{" + str(key) + "}", str(value))
@@ -211,6 +212,7 @@ def _video_worker(prompt: str, refs: list[dict[str, Any]], opts: dict[str, Any],
         vhist_put(key, status="cancelled" if stopped else "error", error=ue["error"],
                   err=ue.get("err"), err_vars=ue.get("err_vars"))
     except ReelsiError: raise
+    # ошибка уходит в задачу (VJOB), в строку журнала (vemit) и в историю — видна пользователю
     except Exception:
         tb = _tb.format_exc()
         with VLOCK:
@@ -489,6 +491,7 @@ def api_video_models() -> Response:
             try:
                 detail = e.read().decode("utf-8", "replace")[:300]
             except ReelsiError: raise
+            # тело ошибки HTTP не читается: код статуса уже известен, detail пустой и попадает в текст ошибки ниже
             except Exception:
                 detail = ""
             if e.code in (401, 403):

@@ -53,6 +53,8 @@ def test_builtin_engines_catalog() -> None:
 
     for size in asr_backends.WHISPER_SIZES:
         assert f"whisper:{size}" in ids
+    # whisper.cpp собран не для всех размеров: turbo есть только у CT2-движка (второй проход текста)
+    for size in ("large-v3", "medium", "small"):
         assert f"whisper.cpp:{size}" in ids
 
     assert "gigaam" in ids

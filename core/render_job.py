@@ -1152,7 +1152,7 @@ def resolve_ae_build_workers(n_clips: int, cfg_val: Any = None) -> int:
         try:
             from core.aicut.config import ae_build_workers_cfg
             cfg_val = ae_build_workers_cfg()
-        except Exception:
+        except Exception:  # конфиг не прочитан — «авто», как по умолчанию; число воркеров всё равно считается по RAM
             cfg_val = "auto"
     val_str = str(cfg_val).strip().lower()
     if val_str == "auto":

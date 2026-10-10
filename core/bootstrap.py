@@ -51,6 +51,7 @@ def _write_example(src_path: str, target_path: str, name: str) -> None:
             f.write("\n")
     except ReelsiError: raise
     except Exception:
+        # пример не переписался как JSON — копируем как есть; имя внутри останется примерным, это не ошибка
         shutil.copy2(src_path, target_path)
 
 

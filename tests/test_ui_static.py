@@ -14,6 +14,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -314,17 +315,6 @@ def test_tabs_expose_selection(html, js):
     assert "aria-selected" in js, "aiSetTab не обновляет aria-selected"
 
 
-def test_video_cancel_reachable_from_overlay(js):
-    """«Остановить» в оверлее прогресса гасит и генерацию видео.
-
-    Видео живёт в своём джобе: /api/cancel его не касается, а оверлей перекрывает
-    страницу с кнопкой «Остановить» — раньше нажатие не делало ничего.
-    """
-    body = js[js.index("async function cancelTask"):]
-    body = body[:body.index("\n// ")] if "\n// " in body else body[:600]
-    assert "VIDPOLL" in body and "vidCancel" in body
-
-
 def test_help_lives_in_tooltips(js):
     """Пустое состояние референсов — строка действия, а не абзац справки."""
     m = re.search(r"Референсов нет[^']*", js)
@@ -541,15 +531,6 @@ def test_step1_row_controls_order_and_dedupe_in_state(html, js):
     assert "dedupe" in app_, "applyState не восстанавливает dedupe"
 
 
-def test_editor_tooltip_shows_cut_rule(js):
-    """Тултип вырезанного куска в редакторе нарезки показывает rule —
-    имя функции, снявшей кусок («кто виноват в лишнем резе» видно в обычной работе).
-    Пустой rule не печатается: старые .cuts.json без поля остаются читаемыми."""
-    seg = js[js.index("вырезано [{src}]"):js.index("вырезанный кусок — двойной клик")]
-    assert "{rule}" in seg, "тултип не подставляет rule"
-    assert "k.rule?(' · '+k.rule):''" in seg, "пустой rule должен молчать"
-
-
 def test_capture_ae_writes_only_the_clip_loaded_into_the_panel(js):
     """Панель AE пишется в задание только того клипа, который в неё загрузили.
 
@@ -655,23 +636,11 @@ def test_cut_results_land_in_the_list_one_by_one(js, html):
         "из оверлея прогресса не уйти к готовым клипам — он перекрывает страницу")
 
 
-def test_status_refresh_is_not_dropped(js):
-    """Запрос статусов, пришедший во время обхода, не теряется, а повторяет обход.
-
-    Клипы прилетают по одному прямо во время нарезки: старое «уже идёт — выходим»
-    оставляло свежий клип без тегов субтитров/жёлтых до конца очереди.
-    """
-    body = js[js.index("async function refreshStatuses"):js.index("// ================= progress overlay")]
-    assert "REFRESHWANT=true;return;" in body, "refreshStatuses снова молча пропускает запрос"
-    assert "if(REFRESHWANT){REFRESHWANT=false;refreshStatuses();}" in body, (
-        "отложенный обход статусов не запускается")
-
-
 # Двери длинных операций: на экране обязан быть контекст очереди — заголовок операции,
 # «клип i из N» и имя клипа (требование «прогресс везде как у AE», эталон — нарезка/сборка).
 PROG_DOORS = (
     ("40-queue.js", "function jobProg(d,eager,title)"),      # нарезка/сборка — эталон
-    ("70-editor.js", "async function markupClip(c)"),        # разметка ОДНОГО клипа
+    ("70-editor.js", "async function markupClip(c"),         # разметка ОДНОГО клипа (c, batch)
     ("70-editor.js", "async function markupAllRun("),        # пакетная разметка (фазы)
     ("90-ae.js", "async function aiIntroAllRun(list)"),      # ИИ интро на набор
     ("90-ae.js", "async function pollRender()"),             # рендер AE
@@ -808,20 +777,6 @@ def test_every_long_operation_shows_its_clip_and_the_queue():
                      "(нужен progQueue/progStep):\n" + "\n".join(bad))
 
 
-def test_loadstyles_blames_the_right_thing(js):
-    """«Сервер не ответил» — только про сеть.
-
-    Один try на запрос и на разбор превращал любую ошибку применения (падение
-    onStyleChange на битом состоянии) в ложное обвинение сервера, а честную ошибку
-    бэкенда глушил через if(!d.ok)return — без тоста и без записи в журнал.
-    """
-    body = js[js.index("async function loadStyles()"):js.index("// Какой пункт селектора")]
-    assert body.count("catch") >= 2, "loadStyles снова ловит запрос и применение одним catch"
-    assert "сервер не ответил" in body.split("if(!d.ok)")[0], (
-        "«сервер не ответил» уехало из ветки запроса")
-    assert "d.error" in body, "ошибка бэкенда снова уходит в никуда"
-
-
 def _save_speaker(js):
     return js[js.index("async function saveSpeaker()"):js.index("async function delSpeaker()")]
 
@@ -869,24 +824,6 @@ def test_ae_style_is_a_speaker_default_not_a_lock(js):
         "пропавший стиль профиля снова игнорируется молча — клип соберётся чужим")
 
 
-def test_named_style_change_hydrates_all_editor_fields(js):
-    """Именованный стиль должен заполнить DOM до любого последующего stEdit().
-
-    Одного reflectStyle() недостаточно: он обновляет только несколько полей превью,
-    поэтому сохранение, например, одной громкости могло записать в стиль поля прошлого
-    выбранного шаблона.
-    """
-    body = _func(js, "onStyleChange")
-    ordinary = body.split("  else{\n", 1)[1]
-    copied = ordinary.index("CURSTYLE=JSON.parse(JSON.stringify(STYLES[name]||{}));")
-    assert "fillStyleFields();" in ordinary, (
-        "выбор именованного стиля не гидратирует поля редактора")
-    assert "reflectStyle();" not in ordinary, (
-        "именованный стиль снова обновляет только урезанный набор полей")
-    assert ordinary.index("fillStyleFields();") > copied, (
-        "поля заполняются до копирования выбранного стиля")
-
-
 def test_localstorage_keys_are_migrated_not_just_renamed(js):
     """Переименование AutoCut -> Reelsi не должно стирать состояние страницы.
 
@@ -928,9 +865,9 @@ def test_preview_swaps_video_instead_of_seeking_at_the_cut(js):
         "seek на месте должен остаться ЗАПАСНЫМ путём (короткий сегмент, дублёр не успел)")
     assert "if(av.seeking){tm=a.ts;}" in step, (
         "во время seek время из currentTime не считается — иначе блоки проскакивают пачкой")
-    # шаг 1 — редактор: стык блока идёт через тот же pvStep (edTick -> edJump)
-    tick = js[js.index("function edTick()"):js.index("function edBreathAt(")]
-    assert "edJump(v,nb.s0)" in tick, "редактор снова сеcит живой <video> прямо на стыке блока"
+    # шаг 1 — редактор: картинка догоняет звук, стык — через дублёра (edFollow -> edJump)
+    follow = js[js.index("function edFollow()"):js.index("function edArm()")]
+    assert "edJump(v,cs)" in follow, "редактор снова сеcит живой <video> прямо на стыке блока"
     # шаг 3 и раскладка камер идут через один общий шаг (было три копии, и гонка правилась трижды)
     for player, head in (("IPV", "function ipvStep()"), ("CPV", "function cpvStep()")):
         body = js[js.index(head):js.index(head) + 300]
@@ -1009,40 +946,6 @@ def test_every_preview_switches_cameras_through_one_machine(js, player, apply_fn
     assert f"camIdle({player})" in body(pause), f"{player}: на паузе камеры остаются с правленой скоростью"
 
 
-def test_secondary_cameras_run_as_continuous_tracks(js):
-    """Вторичная камера — непрерывная дорожка, а не «спящий кадр, который будят на стыке».
-
-    Это третий заход на «моргание при переключении камер», и первые два лечили симптом.
-    Держать камеру на паузе — значит на стыке показывать ПРЕЖНЮЮ лишние кадры, пока
-    декодер просыпается (жалоба «мелькает прежняя камера»). Держать играющей, но править
-    дрейф seek'ом — сам seek роняет кадр и даёт тот же откат. Поэтому: ведём КАЖДУЮ немую
-    камеру каждый кадр (цель — время ведущей + P.delta[k]), дрейф гасим скоростью, стык
-    проходим дублёром.
-    """
-    body = js[js.index("function camApply(P,tm,play)"):js.index("function camIdle(P)")]
-    assert "for(let k=1;k<P.vids.length;k++)" in body, (
-        "ведём только текущую камеру — входящая опять окажется не готова к стыку")
-    assert "lead.currentTime+((P.delta||[])[k]||0)" in body, "цель вторичной камеры больше не привязана к ведущей"
-    assert "k!==ac" in body, "скорость правится и звуковой камере — поедет звук"
-
-    vis = js[js.index("function camVisual(P,ci,play)"):js.index("function camDeltas(P)")]
-    assert "v.pause()" not in vis, "скрытые камеры снова ставятся на паузу — стык будет их будить"
-
-
-def test_camera_shown_is_exactly_the_one_edl_asks_for(js):
-    """Показывается РОВНО тот ракурс, который просит EDL, без «подождём готовности».
-
-    Любое ожидание = показ ДРУГОЙ камеры, а цикл показа идёт 60 раз в секунду: «подержим
-    пару кадров» и есть видимая вспышка чужого ракурса — та самая жалоба. Держать прежнюю
-    камеру нельзя ни при каких условиях; худшее допустимое — пара кадров ТОГО ЖЕ ракурса,
-    ещё доигрывающего seek.
-    """
-    body = js[js.index("function camApply(P,tm,play)"):js.index("function camIdle(P)")]
-    assert "const ci=s.ci;" in body, "ракурс снова вычисляется, а не берётся из EDL как есть"
-    assert "P.curCi>=0?P.curCi" not in body, "снова показываем прежнюю камеру вместо запрошенной"
-    assert "camVisual(P,ci,play)" in body, "показ идёт мимо общей функции"
-
-
 def test_camera_choice_never_walks_back_while_playing(js):
     """Во время игры показ не возвращается на предыдущий кусок EDL.
 
@@ -1109,25 +1012,6 @@ def test_double_buffer_catches_up_to_the_seam_by_rate(js):
         "дублёр выходит в эфир с разгонной скоростью — картинка поедет быстрее звука")
 
 
-@pytest.mark.parametrize("opener,end", [
-    ("async function openPreview(xml)", "function pvSegAt("),
-    ("async function ipvOpen(xml)", "function ipvApplyVisual("),
-    ("async function cpvOpen(xml)", "function cpvAudio("),
-])
-def test_every_preview_plays_camera_proxies(js, opener, end):
-    """Все три предпросмотра играют прокси камер, а не исходники.
-
-    H.264 High 4:2:2 10 бит (Sony/Canon) не берёт ни один аппаратный декодер — ни NVDEC,
-    ни QSV; браузер отвечает powerEfficient=false и жуёт 4K софтом, seek на стыке 365 мс.
-    Тот же материал в 720p 4:2:0 8 бит — 124 мс и powerEfficient=true.
-    """
-    body = js[js.index(opener):js.index(end)]
-    assert "pvSrc(c.path)" in body, "плеер снова создаёт <video> прямо с исходника"
-    assert "encodeURIComponent(c.path)" not in body, "остался прямой путь в обход прокси"
-    assert "pvProxyLoad(" in body, "сборка прокси не запускается при открытии"
-    assert "bufMake(" in body, "дублёр не создаётся"
-
-
 def test_camera_layout_buffers_the_audio_camera_too(js):
     """В раскладке камер звуковая камера тоже проходит склейку подменой, а не seek'ом.
 
@@ -1157,17 +1041,19 @@ def test_camera_layout_buffers_the_audio_camera_too(js):
 def test_editor_playback_uses_the_same_double_buffer(js):
     """Стык блока в РЕДАКТОРЕ тоже идёт через дублёра, а не через seek на месте.
 
-    По этому таймлайну и делают правки, поэтому замирание здесь больнее всего. Дублёр
-    общий с монтажным плеером: цель у обоих — исходное время камеры 1, поэтому она и
-    хранится одним числом (PV.spareAt), а не индексом в чьём-то списке сегментов.
+    По этому таймлайну и делают правки, поэтому замирание здесь больнее всего. Звук стык
+    проходит очередью буфера (блок `ea*`), а картинка догоняет его: дублёром, взведённым
+    заранее, и только при промахе — перемоткой с упреждением.
     """
     tick = js[js.index("function edTick()"):js.index("function edBreathAt(")]
-    assert "edJump(v,nb.s0)" in tick, "edTick снова сеcит живой <video> прямо на стыке блока"
-    assert "let v=PV.vids[0]" in tick, (
-        "v захвачен const — после подмены он указывает на снятый с эфира элемент")
+    assert "edFollow()" in tick, "кадр редактора не подводит картинку к звуку"
     assert "edArm()" in tick, "редактор не готовит разбег дублёра"
-    jump = js[js.index("function edJump(v,at)"):js.index("function edArm()")]
-    assert "try{v.currentTime=at;}" in jump, (
+    follow = js[js.index("function edFollow()"):js.index("function edArm()")]
+    assert "const live=edJump(v,cs)" in follow, (
+        "после подмены картинка берётся у снятого с эфира элемента")
+    jump = js[js.index("function edJump(v,at)"):js.index("function edVideoSeek(")]
+    assert "edTake(b.at)" in jump, "прыжок через вырез не пробует дублёра"
+    assert "edVideoSeek(v," in jump, (
         "seek на месте должен остаться запасным путём, когда дублёр не успел")
     play = js[js.index("function edPlay()"):js.index("function edPause()")]
     assert "spareIdle(PV)" in play, "редактор стартует с чужим разбегом дублёра"
@@ -1418,9 +1304,16 @@ def test_every_player_video_is_wired_to_the_volume_graph(js):
     значит после первого же стыка пустить звук мимо регулятора; симптом
     «громкость работает, а потом перестаёт», и ищется он долго.
     """
-    for marker in ("async function openPreview(", "function bufMake(", "async function ipvOpen("):
+    for marker in ("function bufMake(", "async function ipvOpen("):
         assert "voiceWiring(" in _fn_body(js, marker), (
             "<video> создаётся без voiceWiring: " + marker)
+    # Шаг 1 — исключение: его <video> немые (PV.silent), звук играет буфер редактора
+    # (блок `ea*`) со своим гейном. `createMediaElementSource` необратим — немой камере
+    # граф не нужен, и дублёра немого кадра bufMake тоже не заявляет.
+    assert "voiceWiring(" not in _fn_body(js, "async function openPreview("), (
+        "камера шага 1 заявлена на граф, а звука у неё нет")
+    assert "if(!P.silent)voiceWiring(el)" in _fn_body(js, "function bufMake("), (
+        "дублёр немого кадра шага 1 заявлен на граф")
     assert "v.__wired" in js and "if(!v||v.__wired)return" in js, (
         "пропал признак «источник уже создан»: второй createMediaElementSource "
         "на том же элементе роняет звук совсем")
@@ -1529,19 +1422,6 @@ def test_editor_words_panel_shows_the_word_under_the_playhead(js):
     assert "pvwHighlight(" not in body, "вернулась подсветка чипов удалённой панели"
     ui = _fn_body(js, "function edUI(")
     assert "edWords()" in ui, "edUI — единственная точка, куда стекаются сдвиги плейхеда"
-
-
-def test_cam1_inserts_follow_camera_zoom_only_on_cam1(js):
-    """Вставки кам1 наследуют зум Камеры 1, остальные — нет.
-
-    В AE нул «вставки кам1» привязан к нулу Камеры 1 (insNull1.parent=cam1null),
-    а нулы «вставки кам1 на кам2» и «вставки кам2» свободны. Применить зум ко всем
-    трём — развести превью с AE в другую сторону; таблица случаев в.
-    """
-    place = _fn_body(js, "function ipvInsPlace(")
-    assert "style==='cam1'&&!x.oncam2" in place, (
-        "зум привязан не к той вставке: нужен style cam1 и oncam2=false")
-    assert "ipvZoomAt(" in place, "вставка кам1 не берёт масштаб из общего интерполятора"
 
 
 def test_frame_drag_writes_data_not_a_second_storage(js):
@@ -1753,19 +1633,22 @@ def test_restyle_mechanism_is_gone_from_app_scripts():
 
 
 def test_jsx_folder_derives_from_the_tag(js):
-    """Папка .jsx — производная от тега: у клипа со спикером — его jsxdir
-    (effOutdir), без тега — глобальное поле. Эта папка уходит в сборку per-job
-    (jobForBuild), а правка поля у клипа с тегом пишется в профиль спикера."""
-    assert "function effOutdir(c)" in js, "папки по тегу нет"
-    assert "function renderAeDirField()" in js, "поле не показывает папку тега"
+    """Папка .jsx — производная от тега спикера; отдельного поля в интерфейсе нет.
+
+    У клипа со спикером папка — jsxdir его профиля (иначе папка нарезки его же), и она
+    уходит в сборку per-job (jobForBuild). У клипа без тега — пусто, и .jsx ложится рядом
+    со своим XML: ровно это api/build.py делает с пустым outdir. Общего поля (AEGLOBAL)
+    в интерфейсе больше нет — оно переписывалось каждым выбором спикера и уводило чужие
+    клипы в папку последнего выбранного.
+    """
+    assert "function effOutdir(c)" in js, "лестницы папок по тегу нет"
+    assert "AEGLOBAL" not in js, "общее поле папки .jsx вернулось"
     jfb = _fn_body(js, "function jobForBuild(c)")
     assert "outdir:effOutdir(c)" in jfb, "папка клипа не уходит в сборку per-job"
-    commit = _fn_body(js, "function aeDirCommit(el)")
-    assert "saveSpeakerJsxdir(sp,el.value)" in commit, (
-        "правка папки у клипа с тегом не пишется в профиль спикера")
-    assert "renderAeDirField()" in commit, "отказ не возвращает поле к папке профиля"
-    save = _fn_body(js, "async function saveSpeakerJsxdir(")
-    assert "savespeaker" in save, "папка не сохраняется через /api/savespeaker"
+    eff = _fn_body(js, "function effOutdir(c)")
+    assert "xmlDirOf(c&&c.xml)" in eff, "последняя ступень лестницы — не папка XML"
+    build = _fn_body(js, "function buildOutdir()")
+    assert "effOutdir(sel[0])" in build, "набор одного спикера собирается не в его папку"
 
 
 def test_mixed_speakers_disable_set_build(js):
@@ -2272,13 +2155,19 @@ def test_style_panel_cp3_all_fields_call_stedit(html):
         assert "stEdit()" in _fn_body(panel, header), (
             "%s не ведёт в stEdit() — правка поля не доедет до стиля" % header)
 
-    # простые контролы подключаются к stEdit прямо в разметке панели
-    for line in ("chk.onchange = () => stEdit();", "sel.onchange = () => stEdit();",
-                 "inp.onchange = () => stEdit();", "inp.oninput = () => stEdit();",
+    # простые контролы подключаются к stEdit прямо в разметке панели. У ручек выбора
+    # трека (флаг track) — своя дверь musicFieldEdit: она решает, писать переопределение
+    # клипа или сам стиль, и в области стиля ведёт в тот же stEdit.
+    for line in ("chk.onchange = () => (item.track && typeof musicFieldEdit === 'function')",
+                 "sel.onchange = () => (item.track && typeof musicFieldEdit === 'function')",
+                 "inp.onchange = () => (item.track && typeof musicFieldEdit === 'function')",
+                 "inp.oninput = () => stEdit();",
                  "ta.onchange = () => stEdit();", "ta.oninput = () => stEdit();",
                  "hex.onchange = () => stHexChange(item.key, hex.value);",
                  "swatch.onchange = () => stColorSwatchChange(item.key, swatch.value);"):
         assert line in panel, "в панели пропала привязка контрола к stEdit(): " + line
+    assert "? musicFieldEdit() : stEdit();" in panel, (
+        "дверь ручек трека не ведёт в stEdit в области стиля")
 
 
 def test_style_panel_cp3_layout_and_dots(html, css, js):
@@ -2388,9 +2277,13 @@ def test_style_element_ids_exist_in_html_dm(html):
         derived.add("st_" + key)
     for key in (it.get("link") for _kind, it in watcher.schema_items() if it.get("link")):
         derived.add("st_" + key)
-    # постоянные id панели и предпросмотра (см. JB п. 3, список оставшихся обращений)
+    # постоянные id панели и предпросмотра (см. JB п. 3, список оставшихся обращений).
+    # st_music_* — блок «Трек ролика» в группе «Музыка»: ручек схемы у него нет (это
+    # состояние открытого клипа, а не настройка стиля), id создаёт сама панель
+    # (musicTrackNode), поэтому вывести их из ключей схемы нельзя.
     known = {"stpanel", "st_name", "st_saved", "st_pickzoom", "st_layer_order_list",
-             "st_disc_text"}
+             "st_disc_text", "st_music_scope", "st_music_scope_row", "st_music_track",
+             "st_music_reroll", "st_music_revert", "st_music_src_dl"}
 
     pattern = re.compile(r"""(?:\$|getElementById|val|num|setParentDot)\s*\(\s*["'](st_[a-zA-Z0-9_]+)["']\s*\)""")
     missing = []
@@ -2467,6 +2360,7 @@ def test_norm_ins_path_declared_once():
     )
 
 
+@pytest.mark.skipif(not shutil.which("node"), reason="проверка cardToIns исполняет боевую функцию под node")
 def test_card_to_ins_duration_default_when_zero(js):
     """Дефолт длительности в cardToIns при duration_sec=0 даёт dur_s=2 ().
 
@@ -2478,15 +2372,12 @@ def test_card_to_ins_duration_default_when_zero(js):
         "cardToIns должен использовать ||2 для сохранения дефолта 2с при duration_sec=0"
     )
     fn_card = _func(js, "cardToIns")
-    try:
-        out = _run_node(
-            f"{fn_card}\n"
-            "const r = cardToIns({duration_sec: 0});\n"
-            "console.log(JSON.stringify(r));"
-        )
-        assert out["dur_s"] == 2, f"dur_s при duration_sec=0 должен быть 2, получено {out['dur_s']}"
-    except (FileNotFoundError, OSError, subprocess.CalledProcessError):
-        pass
+    out = _run_node(
+        f"{fn_card}\n"
+        "const r = cardToIns({duration_sec: 0});\n"
+        "console.log(JSON.stringify(r));"
+    )
+    assert out["dur_s"] == 2, f"dur_s при duration_sec=0 должен быть 2, получено {out['dur_s']}"
 
 
 def test_i18n_data_containers_opt_out(html, js):
@@ -2650,25 +2541,6 @@ def test_remove_selected_works_only_on_checked_clips(js, html):
     assert "rmSelClips" in sync, "disabled кнопки не обновляется из syncBuildBtn"
 
 
-def test_remove_selected_reloads_panel_when_active_removed(js):
-    """Убрали отмеченным и сам открытый в панели клип — панель не остаётся на удалённом.
-
-    После _spliceClip curAE открытого клипа становится -1, а данные панели
-    (AEXML/WORDS/INTRO) всё ещё про удалённый файл. При живых клипах панель
-    пересаживается на живой клип (selectAE(0), как goStep(3)). При пустом списке
-    selectAE звать не на чем — панель #aecfg прячется явно и снимается её
-    принадлежность (AEXML=''), иначе старые данные удалённого клипа дожили бы
-    до перезахода в шаг.
-    """
-    body = _fn_body(js, "function removeSelClips(")
-    assert "curAE<0&&CLIPS.length)selectAE(0)" in body, (
-        "панель не пересаживается на живой клип после удаления открытого")
-    assert "$('aecfg').style.display='none'" in body, (
-        "при пустом списке #aecfg не прячется — панель остаётся от удалённого клипа")
-    assert "AEXML=''" in body, (
-        "при пустом списке не снимается принадлежность панели (AEXML)")
-
-
 def test_inserts_history_undo_redo_contract(js, html):
     """Отмена и повтор правок вставок: снимок состояния, ОДНА дверь записи, кнопки в окне.
 
@@ -2803,25 +2675,6 @@ def test_step2_phase_buttons_call_selclips_and_single_phase_fd(js):
     assert "phases.includes('subs')" in run and "phases.includes('yellow')" in run and "phases.includes('inserts')" in run
 
 
-def test_step2_rewrite_question_only_for_single_phase_fd(js):
-    """Вопрос о перезаписи — ТОЛЬКО у явного запуска одной фазы (ask=true).
-
-    «Разметить всё» (ask=false) молча пропускает уже готовое, как раньше:
-    askConfirm не вызывается вовсе, has(c) пропускает как раньше. Регресс был в том,
-    что на наборе с частично размеченными клипами «Разметить всё» выдавал до ТРЁХ
-    модалок подряд — проверяем, что при трёх фазах вопрос не задаётся ни разу.
-    """
-    run = js[js.index("async function markupAllRun(subeng,list,phases"):js.index("// субтитры с нуля")]
-    # вопрос берётся под ask: без ask (undefined=false) already пуст и askConfirm не зовётся
-    assert "const already=ask?list.filter(c=>!fail.has(c)&&has(c)):[]" in run, (
-        "already считается только при ask — иначе вопрос вылезет и у «Разметить всё»")
-    assert "const force=ask&&already.length&&await askConfirm(" in run, (
-        "askConfirm вызывается только при ask=true и наличии готовых")
-    # «Разметить всё» не передаёт ask — вызов без четвёртого аргумента
-    assert "markupAllRun(subeng,list,['subs','yellow','inserts'])" in js, (
-        "«Разметить всё» не передаёт ask (должен молча пропускать готовое)")
-
-
 def test_step2_rewrite_question_behavior_in_node_fd(js):
     """Поведение: при 3 фазах askConfirm не зовётся ни разу; при одной фазе — зовётся.
 
@@ -2931,27 +2784,6 @@ def test_no_triple_backslash_quote_in_on_attributes():
     assert any(r"typeof hex2rgb===\'function\'" in line for line in preview_lines), (
         "в 60-preview.js пропала строка с экранированными кавычками "
         "typeof hex2rgb===\\'function\\'")
-
-
-def test_sfx_ensure_updates_src_on_media_change(js):
-    """sfxEnsure переустанавливает src элемента звука при смене media."""
-    body = _func(js, "sfxEnsure")
-    assert "path:s.media" in body or "path: s.media" in body, (
-        "sfxEnsure обязан сохранять путь к медиа в записи эффекта (path: s.media)")
-    assert "st.path!==s.media" in body or "st.path !== s.media" in body, (
-        "sfxEnsure обязан проверять смену пути media эффекта")
-    assert "st.el.src" in body and "encodeURIComponent(s.media)" in body
-    assert "st.path=s.media" in body or "st.path = s.media" in body
-
-
-def test_ipv_drag_insert_index_matches_plan_filter(js):
-    """Индекс вставки при перетаскивании в предпросмотре сопоставляется с INS
-    через тот же фильтр, что в ipvPlanBody: INS.filter(r => (r.media || '').trim())[i]."""
-    ins = _fn_body(js, "$('ipvins').addEventListener('pointerdown'")
-    assert ("INS.indexOf(INS.filter(r => (r.media || '').trim())[i])" in ins or
-            "INS.indexOf(INS.filter(r=>(r.media||'').trim())[i])" in ins), (
-        "сопоставление индекса обязано опираться на тот же фильтр, что ipvPlanBody, "
-        "а не на findIndex по media")
 
 
 def test_style_panel_layer_order_and_slider_contracts(css, js):

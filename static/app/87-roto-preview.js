@@ -18,15 +18,19 @@
 let IPVCALC_UP=false;     // по кэшам всё посчитано (кнопка снята, пометка «посчитано»)
 let IPVCALC_TO=0;         // таймер опроса, чтобы не завести второй
 const IPVCALC_POLL=1500;  // мс: расчёт идёт минутами, чаще спрашивать нечего
-// Что в стиле клипа означает «есть что считать»: рото и слежение за головой. Ключи
-// читаются ИЗ СТИЛЯ, а не из плана: до первого ответа /api/scene плана может не быть,
-// а кнопку показать надо. Своего списка ключей тут нет — это те же имена, что в
-// core/xml2ae/plan_camera.py.
+let IPVCALC_SRV=null;     // ответ быстрой двери `wanted` для клипа {xml, wanted}; null — ещё не спрашивали
+// Есть ли что считать в окне превью. Решает то же, что сервер по тому же телу: ответ
+// быстрой двери `wanted` по этому клипу главнее (он знает число камер в XML и умолчания
+// BASE, а в браузере их нет). Пока ответа нет — окно только открыли или стиль только что
+// записан (ipvCalcStyleChanged сбрасывает ответ), — решаем по полям, что уходят в дверь:
+// стиль CURSTYLE и roto, как в ipvPlanBody. Своей копии правил чтения стиля здесь нет.
 function ipvCalcWanted(){
-  const s=(typeof CURSTYLE!=='undefined'&&CURSTYLE&&typeof CURSTYLE==='object')?CURSTYLE:null;
+  if(IPVCALC_SRV&&IPVCALC_SRV.xml===IPV.xml)return IPVCALC_SRV.wanted;
+  const s=(typeof CURSTYLE!=='undefined'&&CURSTYLE&&typeof CURSTYLE==='object')?CURSTYLE:{};
   const b=(typeof STSCHEMA!=='undefined'&&STSCHEMA&&STSCHEMA.base)?STSCHEMA.base:{};
-  const get=k=>(s&&s[k]!=null)?s[k]:b[k];
-  return !!get('roto')||!!get('cam1_head_follow')||!!get('cam2_head_follow');
+  // roto — тот же запасной путь, что у поля `roto` в ipvPlanBody (нет в стиле — из схемы)
+  const roto=(s.roto!=null)?!!s.roto:!!b.roto;
+  return roto||!!s.cam1_head_follow||!!s.cam2_head_follow;
 }
 // Строка прогресса в кадре: текст — из общего словаря прогресса (55-progress.js), своей
 // формулировки у этой двери нет. Пустой текст снимает строку.
@@ -57,6 +61,8 @@ async function ipvCalcApply(){
   catch(e){return null;}
   if(IPV.xml!==xml)return null;                 // модалку успели переоткрыть на другом клипе
   if(d.error)return null;
+  // Решение сервера по этому клипу (см. ipvCalcWanted): кнопка берёт его, а не гадает по полям
+  if('wanted' in d)IPVCALC_SRV={xml:xml,wanted:!!d.wanted};
   const roto=d.roto||[];
   const head=d.head||{};
   IPVCALC_UP=!!(roto.length||head.ready);
@@ -82,7 +88,9 @@ async function ipvCalcRun(){
   let d;try{d=await (await fetch('/api/preview_calc',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify(body)})).json();}
   catch(e){toast(String(e));return;}
-  if(d.error){toast(errText(d));return;}
+  if(d.error){
+    // Ошибка двери (в т.ч. «нечего считать»): кнопку снимаем, причину показываем тостом
+    IPVCALC_SRV={xml:xml,wanted:false};ipvCalcUI(false);toast(errText(d));return;}
   if(!d.building){await ipvCalcDone();return;}
   ipvCalcUI(false);
   ipvCalcPoll();}
@@ -113,6 +121,13 @@ function ipvCalcStop(){
   // Опрос НЕ прекращаем: «Стоп» только ставит флаг — текущий кусок рото досчитывается,
   // и задание завершится само. Без опроса строка «останавливаю…» осталась бы на кадре.
   clearTimeout(IPVCALC_TO);IPVCALC_TO=setTimeout(ipvCalcPoll,IPVCALC_POLL);}
+// Стиль клипа сменился. Два входа покрывают все пути: fillStyleFields (94-stylepanel.js) —
+// панель заполнена стилем (выбор, кастом, правка шаблона, смена клипа), captureAE (90-ae.js) —
+// стиль записан в задание (галки, панель, зум, сброс поля). Прежний ответ сервера уже не
+// про этот стиль: сбрасываем его и пересчитываем кнопку по полям тела.
+// Свежий ответ придёт с планом (ipvPlanFetch -> ipvCalcApply), пометку «посчитано» не
+// трогаем — иначе она мигала бы на каждом шаге зума.
+function ipvCalcStyleChanged(){IPVCALC_SRV=null;ipvCalcUI(IPVCALC_UP);}
 // Показ/скрытие кнопки и пометки «посчитано». Pulse Green — ТОЛЬКО статус готовности
 // (docs/DESIGN.md): пометка «посчитано» зелёная, кнопка — обычная.
 function ipvCalcUI(ready){

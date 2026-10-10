@@ -103,7 +103,12 @@ def _load_halluc() -> set[str]:
     try:
         return HALLUC_SEED | set(json.load(open(HALLUC_PHRASES_PATH, encoding="utf-8")))
     except ReelsiError: raise
-    except Exception:
+    except Exception as e:
+        # Нет файла — первый запуск, штатно. Файл есть, а не читается — громко: иначе выученные
+        # фразы молча выпадут из фильтра. Встроенный список работает в любом случае.
+        if os.path.exists(HALLUC_PHRASES_PATH):
+            log.warning("файл фраз-галлюцинаций не читается (%s): только встроенные фразы",
+                        type(e).__name__)
         return set(HALLUC_SEED)
 
 
@@ -553,7 +558,7 @@ def _load_omni_cache(omf: str, intervals: Sequence[Sequence[float]]) -> list[dic
         with open(omf, encoding="utf-8") as f:
             cand = json.load(f)
     except ReelsiError: raise
-    except Exception:
+    except Exception:  # битый .omni.json (крах при записи) — не ошибка: VAD пересчитает транскрипт заново
         return None
     if not isinstance(cand, list) or len(cand) != len(intervals):
         return None
@@ -807,6 +812,12 @@ def main(work: str) -> None:
                 "scale": a.scale, "keep": [[round(s, 3), round(e, 3)] for s, e in keep]}
         if a.speaker:
             proj["speaker"] = a.speaker
+        # Флаг «субтитры от исходника» поставил pipeline в сайдкаре, который здесь
+        # переписывается целиком: переносим его, иначе правка блоков сочтёт субтитры
+        # чужими и не пересоберёт их по словам исходника (core/cut_subs.py).
+        _prev_gc = read_project(os.path.splitext(a.out)[0] + ".project.json") or {}
+        if _prev_gc.get("text_subs"):
+            proj["text_subs"] = True
         write_project(os.path.splitext(a.out)[0] + ".project.json", cast(Any, proj))
         # cut-log: что именно и почему убрано
         cutlog.sort(key=lambda c: c["t0"])
@@ -899,7 +910,10 @@ def main(work: str) -> None:
                 ssm_pre[i] = ssmmod.repeat_cut_ranges(af[int(s*16000):int(e*16000)],
                                                       text=texts[i]["text"], off=s)
             except ReelsiError: raise
-            except Exception:
+            except Exception as e_ssm:
+                # Повторы интервала не посчитались — он идёт без подрезки по повторам. Шаг пропал, пишем в журнал.
+                log.warning("повторы интервала %d не посчитаны (%s): подрезка по повторам пропущена",
+                            i, type(e_ssm).__name__)
                 ssm_pre[i] = []
 
     # память правок: юзер после ПРОШЛОЙ нарезки возвращал вырезанное в редакторе —
@@ -911,7 +925,13 @@ def main(work: str) -> None:
             _prev = read_project(pj) or {}
             prev_overrides = _prev.get("user_overrides")
         except ReelsiError: raise
-        except Exception:
+        except Exception as e_prev:
+            # Правки прошлой нарезки не прочитаны: LLM их не увидит и защиты вырезанного не будет. Громко.
+            log.warning("память правок прошлой нарезки не прочитана (%s): прошлые правки не учтены",
+                        type(e_prev).__name__)
+            # И в выводе нарезки: без строки пользователь не узнает, что защита его правок выключена.
+            print(f"память правок прошлой нарезки не прочитана ({type(e_prev).__name__}): "
+                  "защита вырезанного вами в этот раз ВЫКЛЮЧЕНА, LLM прошлые правки не видит", flush=True)
             prev_overrides = None
 
     _prof = aicut.resolve_profile(a.model)

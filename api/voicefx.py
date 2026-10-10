@@ -495,13 +495,21 @@ def _voice_bake_json(xml: str, src: str, fx: dict[str, Any], final: bool = False
     from core import voicefx
     norm = voicefx.normalize_fx(fx)
     if not voicefx.voice_fx_on(norm):
-        voicefx.clear_final_voice(xml)
+        notes: list[str] = []
+        # Сбой переключения XML на обычный звук приходит строкой в notes: без неё голос
+        # убран, а XML может ещё ссылаться на убранный файл, и панель это не покажет.
+        voicefx.clear_final_voice(xml, emit=lambda line="", /, **_v: notes.append(line))
         with VOICELOCK:
             _voice_set(_voice_slot(xml), done=True, queued=False, running=False, want=False,
                                     path="", final_wav="", key="", i=0, n=0, pct=0, error="")
             VOICELAST["xml"] = xml
-        return jsonify(ok=True, xml=xml, ready=False, queued=False, running=False,
-                       path="", final="", pct=0, i=0, n=0)
+        body: dict[str, Any] = dict(ok=True, xml=xml, ready=False, queued=False, running=False,
+                                    path="", final="", pct=0, i=0, n=0)
+        if notes:
+            body.update(umsg_err(ReelsiError(umsg("voice_xml_not_switched",
+                "голос убран, но XML не переключён на обычный звук — в нём может остаться ссылка на убранный файл",
+                path=xml))))
+        return jsonify(**body)
     if not src or not os.path.isfile(src):
         raise ReelsiError(umsg("voicefx_no_src",
                                "Выбери клип — обработка идёт по его звуку"))

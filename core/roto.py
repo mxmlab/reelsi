@@ -38,7 +38,7 @@ from typing import Any, Callable, Sequence, cast
 from core import paths
 from core.app_meta import env, console_emit, wrap_emit
 from core.device import pick_device, autocast_dtype
-from core.umsg import ReelsiError, cli_error
+from core.umsg import ReelsiError, cli_error, umsg
 
 _MODEL: tuple[Any, str, Any] | None = None          # (model, dev, dtype) кэш
 _VARIANT = "mobilenetv3"   # быстрее; "resnet50" — качественнее/медленнее
@@ -135,7 +135,7 @@ def _has_frames(path: str) -> bool:
             timeout=30).stdout.strip()
         return out.isdigit() and int(out) >= 1
     except ReelsiError: raise
-    except Exception:
+    except Exception:  # ffprobe не ответил — кадры не подтверждены: False, маска пересчитается (кэш не доверяем)
         return False
 
 
@@ -150,8 +150,12 @@ def _probe(video: str) -> tuple[int, int, float, str]:
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=30).stdout.strip()
     except ReelsiError: raise
-    except Exception:            # недоступный файл/зависший I/O -> дефолты, а не висящий поток
-        return 0, 0, 60.0, "60"
+    except Exception as e:
+        # Заглушка 0×0 и 60 fps уводила рото в тихий брак: маска считалась по пустому
+        # кадру. Отказ с понятным текстом — пользователь видит, какой файл не прочитан.
+        raise ReelsiError(umsg("roto_probe_failed",
+                               f"не удалось прочитать видео камеры для рото: {video} ({type(e).__name__})",
+                               path=video, why=type(e).__name__)) from e
     try:
         kv = dict(ln.split("=", 1) for ln in out.splitlines() if "=" in ln)
         w, h = int(kv.get("width") or 0), int(kv.get("height") or 0)
@@ -162,10 +166,17 @@ def _probe(video: str) -> tuple[int, int, float, str]:
             fps = float(fr or 60)
         if abs(int(float(kv.get("rotation") or 0))) % 180 == 90:
             w, h = h, w
-        return w, h, fps, fr
     except ReelsiError: raise
-    except Exception:
-        return 0, 0, 60.0, "60"
+    except Exception as e:
+        raise ReelsiError(umsg("roto_probe_failed",
+                               f"не удалось прочитать видео камеры для рото: {video} ({type(e).__name__})",
+                               path=video, why=type(e).__name__)) from e
+    if not w or not h:
+        # ffprobe ответил, но потока с размерами нет (не видео, пустой файл): 0×0 дальше не пойдёт.
+        raise ReelsiError(umsg("roto_probe_no_video",
+                               f"не удалось прочитать видео камеры для рото: {video} (нет видеопотока)",
+                               path=video))
+    return w, h, fps, fr
 
 
 def _fps(video: str) -> float:
@@ -181,7 +192,7 @@ def _codec(video: str) -> str:
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=30).stdout.strip()
     except ReelsiError: raise
-    except Exception:
+    except Exception:  # ffprobe не ответил — кодек только подсказка для выбора декодера (NVDEC или нет), хватит расширения
         out = ""
     return out or os.path.splitext(video)[1].lower()   # кодек не распознан — хотя бы расширение
 
@@ -253,7 +264,7 @@ def alpha_for_video(video: str, out_mask: str, downsample_ratio: float | None = 
     import torch
     if dev == "cpu" and not (device or env("ROTO_DEVICE")):
         emit("⚠ CUDA недоступна (torch.cuda.is_available()=False) — считаю на CPU, медленно. "
-             "Нужна CUDA-сборка torch: pip uninstall -y torch torchvision, затем установка с --index-url .../cu121")
+             "Нужна CUDA-сборка torch: pip uninstall -y torch torchaudio torchvision, затем установка с --index-url .../cu126 (пара версий — в README)")
     w, h, fps, fps_raw = _probe(video)
     if not w or not h:
         raise RuntimeError("ffprobe не отдал размеры видео: " + video)
@@ -467,6 +478,8 @@ def alpha_for_ranges(video: str, ranges: Sequence[Any], out_dir: str, bottom_pct
                             continue
                     except ReelsiError: raise
                     except Exception as ex2:
+                        # Повтор мельче тоже упал: строка в журнал, иначе причина пропадёт за общим «рото прервано».
+                        emit("  ! повтор мельче тоже упал: {err}", err=str(ex2)[:200])
                         ex = ex2
                 release(emit=emit)
                 emit("  ! рото прервано: не хватает видеопамяти. Закрой LM Studio/другие "

@@ -103,6 +103,7 @@ def _stand(view_funcs=VIEW_FUNCS, calc_funcs=CALC_FUNCS, dom=None, view_consts=(
 _DOM_JS = r"""
 let IPVCALC_UP=false;
 let IPVCALC_TO=0;
+let IPVCALC_SRV=null;
 const IPV_ROTOSEQ=[];
 var IPV={fps:60,plan:null,roto:[],xml:'',vids:[]};
 function El(tag){this.tag=tag;this.style={};this.className='';this.dataset={};

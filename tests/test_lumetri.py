@@ -7,8 +7,9 @@
 
 - **Lumetri.** Галка стиля `lm_on` кладёт на каждый клип камеры и на каждую рото-копию
   один эффект `ADBE Lumetri` с девятью значениями (номера параметров сняты с живого
-  AE 26.2, таблица — в `core/xml2ae/build.py:LUMETRI_PARAMS`); экспозиция клипа (шаг AE,
-  kwarg `exposure`) ПРИБАВЛЯЕТСЯ к стилевой. Выключенная галка обязана оставить .jsx
+  AE 26.2, таблица — в `core/xml2ae/build.py:LUMETRI_PARAMS`); значения берутся ТОЛЬКО
+  из стиля — покадровой экспозиции клипа (шаг AE, kwarg `exposure`) больше нет, яркость
+  убрана из интерфейса. Выключенная галка обязана оставить .jsx
   побайтово прежним (`fixtures/golden_geometry.jsx`), поэтому проверяется и она.
   Превью рисует приближение теми же числами из `plan["lumetri"]` — кривая тона, баланс и
   насыщенность в SVG-фильтре (вторая копия формул в JS не заводится: числа даёт план).
@@ -62,8 +63,6 @@ LM2_KEYS = tuple("lm2_" + k[len("lm_"):] for k in LM_KEYS)
 LM2_ALL = {"lm2_exposure": -0.75, "lm2_contrast": -12, "lm2_highlights": -18,
            "lm2_shadows": -25, "lm2_whites": 38, "lm2_blacks": 45,
            "lm2_temp": -55, "lm2_tint": 65, "lm2_sat": 75}
-# Экспозиция клипа (шаг AE) — её прибавляет сборка, а не панель.
-CLIP_EXPOSURE = 1.25
 
 # Тот же набор вставок, что у геометрии: golden обязан быть машино-независимым.
 INS = [
@@ -94,20 +93,24 @@ def _isolate_censor(monkeypatch):
                                            "ok": (None, None, censor.DEFAULT_OK)})
 
 
-def _build(xml, tmp_path, style=None, exposure=0.0, inserts=None):
-    """Сборка .jsx фикстуры: то же, что test_geometry_python._build, плюс exposure."""
+def _build(xml, tmp_path, style=None, inserts=None):
+    """Сборка .jsx фикстуры: то же, что test_geometry_python._build.
+
+    Экспозиции клипа у сборки нет вовсе (яркость убрана, Lumetri — только стиль):
+    kwarg `exposure` не принимается ни здесь, ни в самом to_ae_full.
+    """
     st = dict(style or {})
     st["intro_riser"] = False
     path, _, _ = xml2ae.to_ae_full(
         xml, jsx_path=str(tmp_path / "out.jsx"),
         inserts=[dict(x) for x in (inserts if inserts is not None else INS)],
-        style=st, disclaimer="", intro_riser=False, exposure=exposure,
+        style=st, disclaimer="", intro_riser=False,
         emit=lambda *a, **k: None)
     return open(path, encoding="utf-8-sig").read()
 
 
-def _plan(xml, style=None, exposure=0.0):
-    return xml2ae.scene_plan(xml, style=dict(style or {}), exposure=exposure,
+def _plan(xml, style=None):
+    return xml2ae.scene_plan(xml, style=dict(style or {}),
                              disclaimer="", intro_riser=False, emit=lambda *a, **k: None)
 
 
@@ -186,21 +189,23 @@ def test_lm_off_jsx_is_the_main_one(xml_subs, tmp_path):
     jsx = _build(xml_subs, tmp_path, style={"lm_on": False})
     assert "LUMETRI" not in jsx and "applyLumetri" not in jsx, \
         "при снятой галке в .jsx появились объявления Lumetri"
-    assert "if (EXPOSURE!=0)" in jsx, "покадровая экспозиция клипов пропала из .jsx"
+    # Ветка `if (EXPOSURE!=0)` в шаблоне осталась прежней, но значение жёстко 0 =
+    # «не вешать»: яркости клипа в сборке нет вовсе, и цвет ставит только стиль.
+    assert "var EXPOSURE=0;" in jsx, "подстановка яркости клипа больше не обнулена"
 
 
 # ------------------------------------------------------------------
-# 2. Включённая галка — LUMETRI, applyLumetri, matchName'ы, экспозиция
+# 2. Включённая галка — LUMETRI, applyLumetri, matchName'ы
 # ------------------------------------------------------------------
 
 def test_lm_on_writes_lumetri_to_cameras_and_roto(xml_subs, tmp_path):
     """2. Все девять значений в .jsx, вызов на клипах камер и рото, номера из таблицы."""
     st = dict(LM_ALL)
     st["lm_on"] = True
-    jsx = _build(xml_subs, tmp_path, style=st, exposure=CLIP_EXPOSURE)
+    jsx = _build(xml_subs, tmp_path, style=st)
 
     got = _lumetri_from_jsx(jsx)
-    want = {"exposure": LM_ALL["lm_exposure"] + CLIP_EXPOSURE,
+    want = {"exposure": LM_ALL["lm_exposure"],
             "contrast": LM_ALL["lm_contrast"], "highlights": LM_ALL["lm_highlights"],
             "shadows": LM_ALL["lm_shadows"], "whites": LM_ALL["lm_whites"],
             "blacks": LM_ALL["lm_blacks"], "temp": LM_ALL["lm_temp"],
@@ -235,12 +240,12 @@ def test_plan_lumetri_none_or_dict(xml_subs):
         "ручки без галки всё равно попали в план"
     assert _plan(xml_subs, style={"lm_on": False, "lm_exposure": 3.0})["lumetri"] is None
 
-    plan = _plan(xml_subs, style=dict(LM_ALL, lm_on=True), exposure=CLIP_EXPOSURE)
+    plan = _plan(xml_subs, style=dict(LM_ALL, lm_on=True))
     lum = plan["lumetri"]
     assert isinstance(lum, dict), "план не несёт значения Lumetri"
     assert set(lum) == {key for key, _m, _l in LUMETRI_PARAMS}, sorted(lum)
-    assert lum["exposure"] == pytest.approx(LM_ALL["lm_exposure"] + CLIP_EXPOSURE), \
-        "экспозиция клипа не прибавилась к стилевой"
+    assert lum["exposure"] == pytest.approx(LM_ALL["lm_exposure"]), \
+        "экспозиция стиля не доехала до плана"
     assert lum["sat"] == pytest.approx(LM_ALL["lm_sat"])
     assert lum["temp"] == pytest.approx(LM_ALL["lm_temp"])
 
@@ -631,12 +636,12 @@ def test_lm2_unlinked_gives_camera2_its_own_color(xml_subs, tmp_path):
     st["lm_on"] = True
     st["lm2_on"] = True
     st["lm2_link"] = False
-    jsx = _build(xml_subs, tmp_path, style=st, exposure=CLIP_EXPOSURE)
+    jsx = _build(xml_subs, tmp_path, style=st)
 
     got1 = _lumetri_from_jsx(jsx, "LUMETRI")
     got2 = _lumetri_from_jsx(jsx, "LUMETRI2")
-    want1 = {"exposure": LM_ALL["lm_exposure"] + CLIP_EXPOSURE}
-    want2 = {"exposure": LM2_ALL["lm2_exposure"] + CLIP_EXPOSURE}
+    want1 = {"exposure": LM_ALL["lm_exposure"]}
+    want2 = {"exposure": LM2_ALL["lm2_exposure"]}
     for key in LM_KEYS:
         jkey = key[len("lm_"):]
         want1.setdefault(jkey, LM_ALL[key])
@@ -684,7 +689,7 @@ def test_lm2_unlinked_jsx_is_syntactically_valid(xml_subs, tmp_path):
     out = str(tmp_path / "cam2_color.jsx")
     xml2ae.to_ae_full(xml_subs, out,
                       inserts=[dict(x) for x in INS], style=st, disclaimer="",
-                      intro_riser=False, exposure=CLIP_EXPOSURE,
+                      intro_riser=False, 
                       emit=lambda *a, **k: None)
     check = out + ".check.js"                 # node --check не принимает расширение .jsx
     shutil.copy(out, check)
@@ -741,16 +746,16 @@ def test_plan_lumetri2_only_when_unlinked(xml_subs):
     st["lm_on"] = True
     st["lm2_on"] = True
     st["lm2_link"] = False
-    plan = _plan(xml_subs, style=st, exposure=CLIP_EXPOSURE)
+    plan = _plan(xml_subs, style=st)
 
     lum2 = plan["lumetri2"]
     assert isinstance(lum2, dict), "план не несёт значения цвета Камеры 2"
     assert set(lum2) == {key for key, _m, _l in LUMETRI_PARAMS}, sorted(lum2)
-    assert lum2["exposure"] == pytest.approx(LM2_ALL["lm2_exposure"] + CLIP_EXPOSURE), \
+    assert lum2["exposure"] == pytest.approx(LM2_ALL["lm2_exposure"]), \
         "экспозиция клипа не прибавилась к стилевой Камеры 2"
     assert lum2["sat"] == pytest.approx(LM2_ALL["lm2_sat"])
     assert lum2["temp"] == pytest.approx(LM2_ALL["lm2_temp"])
-    assert plan["lumetri"]["exposure"] == pytest.approx(LM_ALL["lm_exposure"] + CLIP_EXPOSURE), \
+    assert plan["lumetri"]["exposure"] == pytest.approx(LM_ALL["lm_exposure"]), \
         "набор Камеры 1 подменился набором Камеры 2"
 
 

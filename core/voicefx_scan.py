@@ -49,7 +49,7 @@ from typing import Any, NoReturn, Sequence
 
 from core import voicefx_proc
 from core.app_meta import env
-from core.fileio import atomic_json_dump, json_load_soft
+from core.fileio import atomic_json_dump, json_load_soft, quarantine_unreadable
 from core.umsg import ReelsiError, umsg
 
 # Версия формата кэша. Чужой/старый файл (версия не наша) читается как пустой:
@@ -96,6 +96,11 @@ def write_cache(path: str, entries: dict[str, dict[str, Any]]) -> None:
     parent = os.path.dirname(os.path.abspath(path))
     if parent:
         os.makedirs(parent, exist_ok=True)
+    # Битый кэш откладываем ДО записи: read_cache отдал по нему пусто, и родитель записал бы
+    # свои записи поверх — результаты прошлых сканирований плагинов пропали бы молча.
+    bad = quarantine_unreadable(path, valid=lambda d: isinstance(d, dict))
+    if bad:
+        print("voicefx: кэш плагинов не прочитан, отложен в %s" % bad)
     atomic_json_dump(path, {"version": VST3_CACHE_VERSION, "entries": entries}, indent=1)
 
 

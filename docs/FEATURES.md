@@ -146,6 +146,24 @@ time, so GigaAM is unloaded before the LLM is called.
 **Code:** `core/gigaam_cut/asr.py:49`, `core/gigaam_cut/decide.py:26`,
 `core/gigaam_cut/decide.py:169`, `core/gigaam_cut/pipeline.py:61`
 
+### Second text pass: Whisper corrects the spelling
+
+**Where:** ⚙ › **Cut** › **Cutting engine (text)** (off by default); it acts on the next **AI cut**.
+**How:** 1. Pick a Whisper engine in **Cutting engine (text)**. 2. Run **AI cut** as usual.
+**Settings:** Whisper transcribes the same file again, and only the spelling of GigaAM's words
+changes, and only when both engines agree in time (within 0.3 s) and in letters. The timings stay
+GigaAM's. A word Whisper swallowed stays as GigaAM has it; a word Whisper made up in silence is
+dropped; repeats are kept, because cutting needs them. Whisper large-v3-turbo is in the engine list
+as well (about four times faster than large-v3). With the setting on, the subtitles are written into
+the XML during the cut, together with `.words.json` and `.srt`, so step 2 does not recognise the speech
+again. When a piece is brought back in the step 1 editor, its subtitles come back from the source
+words, and hand edits of words are kept.
+**Limitations / price:** the pass runs under its own GPU lock; if Whisper fails, the cut goes on with
+GigaAM's text. Measured on 49 clips with the owner's corrections: large-v3 fixed 309 words and broke 30,
+large-v3-turbo fixed 222 and broke 63. Russian fine-tunes of Whisper did worse than the stock models.
+**Code:** `core/gigaam_cut/textpass.py:37`, `core/asr_merge.py:65`, `core/cut_subs.py:230`,
+`core/aicut/config.py:712`
+
 ### Custom cutting and its stages
 
 **Where:** step 1 › **Cut** › **Custom**; the stages themselves are in ⚙ ›
@@ -460,6 +478,54 @@ roto masks, drafts and camera sources.
 **Code:** `core/insertlib.py:1`, `api/inserts.py:89`, `api/inserts.py:208`,
 `api/inserts.py:177`, `templates/index.html:494`
 
+### Stock photos and video
+
+**Where:** the insert card › **Stock** (the query of the card is searched on the stock sites, and the
+candidates are shown for choice).
+**How:** 1. Press **Stock** on a card that has no file yet. 2. Look at the candidates. 3. Pick one: it is
+downloaded into the library, and the next clips find it there without a stock.
+**Settings:** the order is Pexels → Unsplash → Pixabay → Openverse → Coverr. The search walks the list
+until it has enough candidates; the order was chosen by a measurement on 30 of the owner's queries.
+Keys are in ⚙ › **Generation** › **Stock**; Openverse needs no key. Coverr (video) stays behind
+`REELSI_STOCK_COVERR=1` until a live key has been checked, and `REELSI_STOCK_OFF` switches providers off.
+The query is written by the AI as the object and one or two visible features in English, without numbers,
+doses or labels: "syringe with small 250 mark" brought motorcycles from Pixabay.
+**Limitations / price:** search answers are cached for 24 hours. A refusal from a stock (Unsplash's demo
+limit, 429 or 403) moves the search on to the next stock. Openverse keeps only the licences that allow
+commercial use and modification. Each downloaded file gets a `.license.json` next to it with the provider,
+the author and the licence.
+**Code:** `core/stock.py:67`, `core/stock.py:171`, `api/inserts.py:316`, `static/app/80-inserts.js:804`
+
+### Inserts by name
+
+**Where:** the speaker profile › **Inserts by name** (on by default). The dictionary is `named_inserts.json`
+in the repository root; it is not in git.
+**How:** 1. Copy `data/named_inserts.example.json` to `named_inserts.json` and fill it with the names you use.
+2. Run the AI markup on the clip. 3. When a name is spoken and the library has a picture for it, a photo
+insert appears at that word.
+**Settings:** a key is the object's name; its value lists the forms used in speech and in the library
+(endings are matched by the word stem). `_prefer` lists words the picture must contain (`коробк*` matches
+the start of a word); `_avoid` lists story words that spoil a picture; `secondary` lists forms such as an
+older name of a brand, which are searched only when the main names find nothing. Among the pictures, a name
+in the file name beats a name only in the description, and a main name beats a secondary one.
+**Limitations / price:** without the dictionary the feature is off silently. A name is not placed closer
+than 4 s to another insert, the same name is used at most once per 20 s, and the photo lasts 2.5 s by
+default. Named inserts count in the photo quota and are not pushed out by it; when the photos exceed the
+quota, the weakest AI photos go first.
+**Code:** `core/aicut/commands.py:578`, `core/aicut/commands.py:285`, `core/insertlib.py:1015`
+
+### Background cut-out model
+
+**Where:** ⚙ › **Generation** › **Background removal model** (next to **Remove background**).
+**How:** 1. Keep **u2net** for speed (about 0.7 s a picture). 2. Choose **BiRefNet** for cleaner edges of
+hair and small objects. 3. After a change, a picture is cut out again: the cache records which model made
+each file.
+**Settings:** the setting is `rembg_model` in `ai_config.json`. BiRefNet takes about 8 s a picture on a
+processor and downloads its model of about 1 GB into the rembg folder on first use.
+**Limitations / price:** on 12 pictures of the library, BiRefNet did better on 3, worse on 1, and left less
+translucent haze on 9 of 12. A cache file without a model mark counts as u2net.
+**Code:** `core/aicut/images.py:58`, `core/insertlib.py:1115`, `core/stock.py:275`
+
 ### Censoring
 
 **Where:** ⚙ › **Words** › **Censoring**; the audio switch is in the same tab on step 3.
@@ -547,11 +613,18 @@ white row of 2–3 words rises, everything else has no animation. "Не", prepos
 dependent words stay with their word in a row and in accents. **Glow of accent rows** is a
 single style switch (see "Glitch glow" below): the style decides the glow of a row, not the
 AI's markup.
+**Line length and the call word:** the style's **Intro line length** (group Intro, default 20 characters)
+sets how long a hook row may be. The AI breaks a hook row only when it is longer, and only between
+meaningful pieces; a hook ends on a finished thought, not on a conjunction, a preposition or a pronoun.
+"Не" and "ни" at the end of a row always move to their word; a preposition moves only before a row of
+another colour. If the video ends by asking the viewer to write a word in quotes, that word is the last
+accent, and nothing follows it.
 **Limitations / price:** already marked-up intro is replaced after a confirmation. Intro
 words are cut out of the subtitles, so they do not show up in the subtitle rows either; this
 works the same in the row mode and in the word-by-word mode.
 **Code:** `api/ai.py:463`, `static/app/90-ae.js:283`, `static/app/90-ae.js:392`,
-`core/aicut/commands.py:1`
+`core/aicut/commands.py:1`, `core/aicut/commands.py:941`, `core/aicut/commands.py:1376`,
+`core/aicut/prompts.py:130`
 
 ### Editing word highlights
 
@@ -928,7 +1001,9 @@ the mask bottom. 3. Press **Compute roto and tracking** in the preview to see th
 without building the set. 4. Or just build the set.
 **Settings:** the mask is computed by Robust Video Matting on the GPU; the mask bottom
 percentage cuts the mask, and **Roto on Camera 1 only** skips camera 2 pieces. The compute
-button is shown when the style has roto or tracking on; it computes the masks and the head
+button is shown when the style has roto or tracking on (with both off, or only camera 2's tracking with
+one camera in the XML, there is nothing to compute: the server refuses before it takes the GPU, and the
+button is recomputed on every style change); it computes the masks and the head
 track with per-chunk progress and a **Stop** button, and marks itself "computed" when done.
 The preview then shows the **speaker's cut-out figure**: the camera frame multiplied by the
 mask, above the intro in the style's layer order and in sync with the player; tracking
@@ -939,7 +1014,8 @@ so it never runs on top of a cut, a build or a render, and the build reuses what
 second build reuses them. RVM is released from video memory right after the calculation. On
 a VRAM shortage the build stops with a clear message and the XML is not overwritten. Add the
 photo and intro layers below roto to bring the person in front of them.
-**Code:** `core/roto.py:1`, `core/roto.py:41`, `core/style_schema.py:1768`
+**Code:** `core/roto.py:1`, `core/roto.py:41`, `core/style_schema.py:1768`, `api/previewcalc.py:156`,
+`templates/index.html:419`
 
 ### Music
 

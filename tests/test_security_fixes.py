@@ -117,7 +117,7 @@ def test_stock_file_stays_inside_the_library(iso, monkeypatch, evil_id):
     dest = iso / "lib"
     calls = []
 
-    def fake_download(url, path):
+    def fake_download(url, path, headers=None):
         calls.append(path)
         with open(path, "wb") as f:
             f.write(b"x")
@@ -174,7 +174,7 @@ def test_path_outside_the_library_is_rejected_by_the_guard(tmp_path, monkeypatch
 
 def test_stock_route_refuses_path_escape(client, iso, monkeypatch):
     """Тот же отказ через роут: файл остаётся внутри папки базы, наружу не пишется."""
-    def fake_download(url, path):
+    def fake_download(url, path, headers=None):
         with open(path, "wb") as f:
             f.write(b"\xff\xd8\xff" + b"jpeg" * 50)
 
@@ -453,11 +453,11 @@ def test_mutation_inside_dir_is_the_realpath_check(tmp_path, monkeypatch, iso):
     written: list[str] = []
 
     monkeypatch.setattr(stock, "_download_file",
-                        lambda url, path: written.append(os.path.realpath(path)))
+                        lambda url, path, headers=None: written.append(os.path.realpath(path)))
     # имя внутри базы, но символическая ссылка «link» уводит его наружу
     monkeypatch.setattr(stock, "_slug", lambda cand: "link")
     monkeypatch.setattr(stock, "_ext_of", lambda url, kind: "")
-    monkeypatch.setattr(stock, "_write_license", lambda path, cand: None)
+    monkeypatch.setattr(stock, "_write_license", lambda path, cand, extra=None, kind=None: None)
     # перекодировка и индекс — своя тема; здесь важно только, КУДА ушёл файл,
     # иначе мёртвая ветка мутации падала бы на записи лицензии рядом с ним
     monkeypatch.setattr(insertlib, "to_ae_media", lambda p, emit=None: p)

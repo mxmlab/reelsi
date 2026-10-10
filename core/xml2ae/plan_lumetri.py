@@ -6,29 +6,24 @@
 `lumetri_decl`/`lumetri_cam`/`lumetri_roto`, план_ae), и превью (`plan["lumetri"]`),
 второй копии нет. Модуль забирает этот сбор: одна дверь на оба словаря.
 
-Экспозиция клипа (kwarg `exposure` с шага AE) ПРИБАВЛЯЕТСЯ к стилевой: раньше её нёс
-EXPOSURE ровно на тех же слоях. Выключенная галка — None: подстановки шаблона прежние,
-.jsx побайтово как раньше (golden). Ключи читаются ЯВНО (не склейкой "lm_"+k): сторож
+Покадровой экспозиции клипа (kwarg `exposure` с шага AE) здесь больше нет: яркость
+убрана из интерфейса, а Lumetri целиком настраивается стилем (lm_exposure и соседи).
+Значение по умолчанию — как раньше при exposure=0: подстановки шаблона прежние, .jsx
+побайтово как раньше (golden). Ключи читаются ЯВНО (не склейкой "lm_"+k): сторож
 схемы (`tests/test_r11_li_every_knob`) ищет ручку в коде по её имени.
 
 Перенос ПОСТРОЧНЫЙ: числа и порядок ключей не менялись ни на байт (проверяется эталоном
 fixtures/golden_geometry.jsx и побайтовым сравнением .jsx/плана).
 """
 from dataclasses import dataclass
-from typing import Any
 
 from .plan_style import StyleValues
 
 
 @dataclass(frozen=True)
 class LumetriInputs:
-    """Вход цвета камер: структура стиля и экспозиция клипа с шага AE.
-
-    Экспозиция приходит kwarg'ом сборки (`exposure`), а не из стиля: в .jsx её несла
-    покадровая экспозиция клипа, и там она прибавляется к стилевой.
-    """
+    """Вход цвета камер: структура стиля (Lumetri задаётся только стилем)."""
     style: StyleValues
-    exposure: Any
 
 
 @dataclass(frozen=True)
@@ -44,11 +39,11 @@ class LumetriPlan:
 
 def plan_lumetri(inp: LumetriInputs) -> LumetriPlan:
     """Собрать значения Lumetri: чистая функция от `LumetriInputs`."""
-    stv, exposure = inp.style, inp.exposure
+    stv = inp.style
     lum = None
     if stv.lm_on:
         lum = {
-            "exposure": stv.lm_exposure + float(exposure or 0),
+            "exposure": stv.lm_exposure,
             "contrast": stv.lm_contrast,
             "highlights": stv.lm_highlights,
             "shadows": stv.lm_shadows,
@@ -61,7 +56,7 @@ def plan_lumetri(inp: LumetriInputs) -> LumetriPlan:
     lum2 = None
     if not stv.lm2_link and stv.lm2_on:
         lum2 = {
-            "exposure": stv.lm2_exposure + float(exposure or 0),
+            "exposure": stv.lm2_exposure,
             "contrast": stv.lm2_contrast,
             "highlights": stv.lm2_highlights,
             "shadows": stv.lm2_shadows,

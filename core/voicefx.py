@@ -85,7 +85,7 @@ from core import sync
 from core import voicefx_sep
 from core import voicefx_win
 from core.app_meta import child_env, console_emit, module_cmd, t
-from core.fileio import atomic_json_dump, atomic_stream_write, json_load_soft
+from core.fileio import atomic_json_dump, atomic_stream_write, json_load_soft, quarantine_unreadable
 from core.gpulock import gpu_lock
 from core.jobstate import kill_tree, pump_stdout, task_popen_kwargs
 from core.project_file import read_project
@@ -1360,7 +1360,7 @@ def clip_voice_wav(xml_path: str, emit: Callable[..., Any] = console_emit) -> st
         return ""
 
 
-def clear_final_voice(xml_path: str) -> bool:
+def clear_final_voice(xml_path: str, emit: Callable[..., Any] = console_emit) -> bool:
     """Убрать запечённый голос клипа (ВСЕ версии `<стем>.voice*.wav` и сайдкар).
 
     Обработка выключена — файлы наши (их писал `ensure_final_voice`), и, оставшись
@@ -1384,9 +1384,13 @@ def clear_final_voice(xml_path: str) -> bool:
             pass                                  # занят плеером/сборкой — не повод падать
     try:
         from core import xmlbuild
-        xmlbuild.sync_xml_voice(xml_path, voice="")
-    except Exception:
-        pass  # сбой синхронизации XML не должен ломать очистку голоса
+        synced = xmlbuild.sync_xml_voice(xml_path, voice="")
+    except Exception:  # noqa: BLE001 — сбой синхронизации не ломает очистку, сбой виден строкой ниже
+        synced = False
+    if not synced:
+        # Файл голоса уже убран, а XML мог остаться со ссылкой на него: AE и Resolve
+        # откроют пустой трек без предупреждения. Строка — единственный след.
+        emit("! голос: убран, но XML не переключён на обычный звук — в нём может остаться ссылка на убранный файл")
     return gone
 
 
@@ -1426,13 +1430,20 @@ def _final_lock(xml_path: str) -> threading.Lock:
         return lock
 
 
-def _sync_xml_voice(xml_path: str, voice: str) -> None:
-    """Подменить аудиодорожку клипа в XML на путь голоса — сбой не валит запекание."""
+def _sync_xml_voice(xml_path: str, voice: str, emit: Callable[..., Any] = console_emit) -> bool:
+    """Подменить аудиодорожку клипа в XML на путь голоса — сбой не валит запекание.
+
+    Сбой виден строкой в `emit` (той же, что у запекания): без неё сборка уедет с
+    прежним звуком, и никто не узнает, почему голос «не применился».
+    """
     try:
         from core import xmlbuild
-        xmlbuild.sync_xml_voice(xml_path, voice=voice)
-    except Exception:
-        pass  # сбой синхронизации XML не должен ломать отдачу запечённого голоса
+        synced = xmlbuild.sync_xml_voice(xml_path, voice=voice)
+    except Exception:  # noqa: BLE001 — сбой синхронизации не валит запекание, сбой виден строкой ниже
+        synced = False
+    if not synced:
+        emit("! голос: запечён, но XML не переключён на него — в сборке пойдёт прежний звук")
+    return synced
 
 
 def ensure_final_voice(xml_path: str, cam1: str, fx: Any,
@@ -1470,12 +1481,12 @@ def ensure_final_voice(xml_path: str, cam1: str, fx: Any,
     """
     if final_voice_ready(xml_path, cam1, fx):
         # Ключ тот же — файл кеша на месте ПО ОПРЕДЕЛЕНИЮ ключа: не рендерим и не ищем.
-        return _ready_final_voice(xml_path, cam1, fx)
+        return _ready_final_voice(xml_path, cam1, fx, emit=emit)
     with _final_lock(xml_path):
         # Соперник по этому клипу мог всё запечь, пока мы ждали замок: тогда готовое
         # берём как есть — второй счёт на тот же ключ был бы платой ни за что.
         if final_voice_ready(xml_path, cam1, fx):
-            return _ready_final_voice(xml_path, cam1, fx)
+            return _ready_final_voice(xml_path, cam1, fx, emit=emit)
         key = final_voice_key(cam1, fx)
         cache = render_cached(cam1, fx, emit=emit, progress=progress,
                               cancelled=cancelled, pid_of=pid_of)
@@ -1488,15 +1499,20 @@ def ensure_final_voice(xml_path: str, cam1: str, fx: Any,
             _copy_atomic(cache, dst)
         # Сайдкар — ПОСЛЕ появления файла: читатель, увидевший имя раньше файла,
         # получил бы мёртвый путь (резолвер отдаёт имя, только если файл на месте).
+        # Битый сайдкар (final_voice_ready выше отдал «не готов») откладываем, а не затираем.
+        bad = quarantine_unreadable(_final_meta_path(xml_path), valid=lambda d: isinstance(d, dict))
+        if bad:
+            emit("сайдкар голоса не прочитан — отложен в {path}", path=bad)
         atomic_json_dump(_final_meta_path(xml_path),
                          {"key": key, "src": cam1, "file": os.path.basename(dst)}, indent=1)
         _prune_final_voice(xml_path, keep=dst)
         emit("голос: итоговый трек запечён ({path})", path=dst)
-        _sync_xml_voice(xml_path, dst)
+        _sync_xml_voice(xml_path, dst, emit=emit)
         return dst, cache
 
 
-def _ready_final_voice(xml_path: str, cam1: str, fx: Any) -> tuple[str, str]:
+def _ready_final_voice(xml_path: str, cam1: str, fx: Any,
+                       emit: Callable[..., Any] = console_emit) -> tuple[str, str]:
     """Уже запечённый голос клипа: (рядом с XML, в кеше) — без счёта и копирования.
 
     Заодно best-effort приборка прочих версий (`_prune_final_voice`): прошлую
@@ -1504,7 +1520,7 @@ def _ready_final_voice(xml_path: str, cam1: str, fx: Any) -> tuple[str, str]:
     и есть этот заход.
     """
     dst = final_voice_path(xml_path)
-    _sync_xml_voice(xml_path, dst)
+    _sync_xml_voice(xml_path, dst, emit=emit)
     _prune_final_voice(xml_path, keep=dst)
     return dst, cache_path(cam1, fx)
 

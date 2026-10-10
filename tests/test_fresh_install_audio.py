@@ -427,7 +427,7 @@ def test_allow_list_не_протух() -> None:
 BOUNDED = {
     "librosa": ">=0.10,<1.0",
     "faster-whisper": ">=1.0,<2",
-    "transformers": ">=4.46,<5",
+    "transformers": ">=5.10.1,<6",
     "numpy": ">=1.26,<3",
     "soundfile": ">=0.12,<1",
     "av": ">=12,<19",

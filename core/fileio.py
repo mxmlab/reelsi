@@ -27,7 +27,10 @@ import tempfile
 import time
 from typing import IO, Any, Callable
 
+from core.applog import get_logger
 from core.umsg import ReelsiError
+
+log = get_logger(__name__)
 
 # umask снимаем ОДИН раз при импорте: mkstemp всегда даёт 0600, а у нового файла
 # права должны быть такие же, как у open(..., "w") — 0666 & ~umask.
@@ -169,7 +172,11 @@ def json_load_soft(path: str | os.PathLike[str], default: Any = None) -> Any:
         with open(path, encoding="utf-8") as f:
             return json.load(f)
     except ReelsiError: raise
-    except Exception:
+    except Exception as e:
+        # нет файла — норма, тихо отдаём default; битый файл пишем в журнал: иначе данные
+        # тихо подменятся default'ом (что с ним делать, решает владелец — см. докстроку)
+        if os.path.isfile(path):
+            log.warning("JSON %s не читается (%s) — взят default", os.path.basename(str(path)), e)
         return default
 
 

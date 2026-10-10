@@ -319,6 +319,7 @@ def _detect_sys_lang() -> str:
         return "en"
     except ReelsiError: raise
     except Exception:
+        # язык системы не определился — английский: безопасный дефолт, переопределяется REELSI_LANG
         return "en"
 
 
@@ -347,6 +348,7 @@ def ui_lang(force_reload: bool = False) -> str:
             res = _detect_sys_lang()
     except ReelsiError: raise
     except Exception:
+        # по докстроке функции любое исключение здесь — «en»: интерфейс не должен падать из-за языка
         res = "en"
 
     _UI_LANG_CACHED = res
@@ -375,6 +377,8 @@ def _get_i18n_dict() -> dict[str, Any]:
             _I18N_DICT = json.loads(raw) if raw else {}
         except ReelsiError: raise
         except Exception:
+            # словарь не прочитался — интерфейс остаётся на русских ключах (t() вернёт ключ);
+            # это деградация текста, а не падение, и порчу en.json держат тесты
             _I18N_DICT = {}
     return _I18N_DICT
 
@@ -398,6 +402,7 @@ def t(key: str, **vars: Any) -> str:
             val = val.format(**vars)
         except ReelsiError: raise
         except Exception:
+            # в строке фигурные скобки, которые не формат-шаблон (русский текст) — подставляем вручную
             for k, v in vars.items():
                 val = val.replace("{" + str(k) + "}", str(v))
     return val
@@ -435,6 +440,7 @@ def wrap_emit(emit_fn: Callable[..., Any] | None = None) -> Callable[..., Any]:
             formatted = line.format(**vars)
         except ReelsiError: raise
         except Exception:
+            # то же, что в t(): скобки в строке не формат-шаблон — ручная подстановка, лог не падает
             formatted = line
             for k, v in vars.items():
                 formatted = formatted.replace("{" + str(k) + "}", str(v))
@@ -445,6 +451,7 @@ def wrap_emit(emit_fn: Callable[..., Any] | None = None) -> Callable[..., Any]:
                 return emit_fn(line, **vars)
             except ReelsiError: raise
             except Exception:
+                # колбэк вывода упал и на второй форме вызова — вывод лога не должен ронять сборку
                 return None
     return _e
 

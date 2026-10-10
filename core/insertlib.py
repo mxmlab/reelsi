@@ -28,7 +28,7 @@ import os, re, json, math, threading, time, urllib.request
 from collections import Counter
 from typing import Any, Sequence, cast
 import numpy as np
-from core.fileio import atomic_bytes_write, atomic_json_dump
+from core.fileio import atomic_bytes_write, atomic_json_dump, quarantine_unreadable
 from core.media import probe_duration
 
 from core import paths
@@ -82,6 +82,49 @@ def _norm_filename(path: str | None) -> str:
 
 def _tokens(s: str | None) -> set[str]:
     return set(w for w in re.split(r"[^a-zа-яё0-9]+", (s or "").lower()) if len(w) >= 2)
+
+
+# ---------- сравнение по основе слова ----------
+# Слово в речи приходит в падеже («ноутбуком», «кофемашины»), а имя файла и описание —
+# в основе («laptop», «кофемашина»). Такие пары сравниваются по ОСНОВЕ: у слова
+# срезается падежное окончание, и основы обязаны совпасть ЦЕЛИКОМ. Совпадения по началу
+# мало: «кофе» поймало бы «кофемашину». Окончания только русские:
+# у латинских слов их нет, и срез латинской «e» слепил бы «machine» с «machin».
+STEM_ENDINGS = (
+    "ами", "ями", "ах", "ях", "ов", "ев", "ой", "ей", "ом", "ем", "ам", "ям",
+    "ий", "ый", "ая", "яя", "ое", "ее", "ые", "ие", "ью", "ья", "ию", "ия",
+    "а", "я", "о", "е", "у", "ю", "ы", "и", "ь", "й",
+)
+# Короче основы не бывает: «де» поймало бы «дело», «ро» — «рост».
+STEM_MIN = 3
+
+
+def stem_tokens(text: str | None) -> list[str]:
+    """Слова текста для сравнения по основе: нижний регистр, ё=е, разделители — границы."""
+    return re.findall(r"[a-zа-я0-9]+", (text or "").lower().replace("ё", "е"))
+
+
+def word_stem(word: str | None) -> str:
+    """Основа ОДНОГО слова: срезано падежное окончание («Кофемашины» -> «кофемашин»).
+
+    Строка из нескольких слов основой не является — вернётся пустая строка: склеивать
+    «гормон» и «роста» в одну основу нельзя, форма из нескольких слов сравнивается по
+    словам (см. `commands._named_mentions`).
+    """
+    toks = stem_tokens(word)
+    if len(toks) != 1:
+        return ""
+    w = toks[0]
+    for e in STEM_ENDINGS:
+        if w.endswith(e) and len(w) - len(e) >= STEM_MIN:
+            return w[:-len(e)]
+    return w
+
+
+def stem_match(word: str | None, form: str | None) -> bool:
+    """Одно ли и то же слово по основе: «кофемашины» = «кофемашина», «деки» = «дека»."""
+    a, b = word_stem(word), word_stem(form)
+    return len(a) >= STEM_MIN and a == b
 
 
 def _norm_look(text: str | None) -> str:
@@ -334,7 +377,9 @@ def _embed(texts: Sequence[str], model: str | None) -> list[list[float]] | None:
             out.extend(r["embedding"] for r in rows)
         return out
     except ReelsiError: raise
-    except Exception:
+    except Exception as e:
+        # эмбеддер не ответил — вектора не получены, поиск пойдёт без них; пишем причину в журнал
+        log.warning("эмбеддинги не получены (%s) — поиск по вставкам без векторов", e)
         return None
 
 
@@ -362,7 +407,9 @@ def _scan_xml_inserts(xml_path: str) -> list[str]:
         _meta, _cams, _subs, inserts = xml2ae.parse_full(xml_path)
         return [x["media"] for x in (inserts or []) if x.get("media")]
     except ReelsiError: raise
-    except Exception:
+    except Exception as e:
+        # XML прошлого проекта не разобран — его вставки не попадут в библиотеку; причину пишем в журнал
+        log.warning("XML прошлого проекта не разобран (%s) — его вставки не попали в библиотеку", e)
         return []
 
 
@@ -679,7 +726,15 @@ def _load() -> dict[str, Any] | None:
             return None
         if _CACHE["data"] is None or _CACHE.get("mtime") != mt:
             try:
-                _CACHE["data"] = json.load(open(INDEX_PATH, encoding="utf-8"))
+                # with, а не голый open: при битом файле дескриптор остался бы открытым через
+                # traceback, и на Windows отложить файл (os.replace) не удалось бы.
+                with open(INDEX_PATH, encoding="utf-8") as f:
+                    data = json.load(f)
+                # Не объект (список, строка) — тот же битый индекс: его методы читают .get().
+                # Считаем нечитаемым, чтобы запись ниже откладывала файл, а не затирала его.
+                if not isinstance(data, dict):
+                    raise ValueError("индекс — не объект JSON")
+                _CACHE["data"] = data
                 _CACHE["mtime"] = mt
                 _CACHE["mat"] = None
                 _CACHE["mat_items"] = None
@@ -687,7 +742,13 @@ def _load() -> dict[str, Any] | None:
                 _CACHE["cand_words"] = None
                 _CACHE["N"] = 0
             except ReelsiError: raise
-            except Exception:
+            except Exception as e:
+                # индекс не читается — библиотека пуста, пока файл не починен; это должно быть видно в журнале.
+                # Прошлые данные кэша к битому файлу не относятся: сбрасываем их, иначе _save
+                # решил бы, что читать было нечего, и затёр бы файл вместо того, чтобы отложить его.
+                log.warning("индекс вставок не читается (%s) — библиотека пуста, пока файл не починен; "
+                            "при следующей записи он будет отложен в %s.bad-…", e, INDEX_PATH)
+                _CACHE["data"] = None
                 return None
         return _CACHE["data"]
 
@@ -916,9 +977,125 @@ def match(query: str, k: int = 5, type_hint: str | None = None, look: str | None
     return match_many([query], k=k, type_hint=type_hint, look=look)[0]
 
 
+# Слова из личного словаря (`named_inserts.json`, поля `_prefer` и `_avoid`) — разбор
+# один раз на вызов, сам список живёт в файле, а не в коде: какие слова нужны картинке
+# и какие её портят, знает только владелец словаря.
+def _word_rules(words: Sequence[str]) -> tuple[frozenset[str], tuple[str, ...]]:
+    """Слова списка -> (целые слова, начала слов).
+
+    Запись с «*» на конце — по началу слова («vial*» ловит «vials»). Без «*» — только
+    целым словом: короткое «pen» не должно ловить «pending», «pill» — «pillow».
+    Регистр и ё приводятся как у слов записи (`stem_tokens`).
+    """
+    exact: set[str] = set()
+    starts: list[str] = []
+    for raw in words:
+        if not isinstance(raw, str):
+            continue
+        w = raw.strip().lower().replace("ё", "е")
+        if w.endswith("*"):
+            w = w[:-1].strip()
+            if w:
+                starts.append(w)
+        elif w:
+            exact.add(w)
+    return frozenset(exact), tuple(starts)
+
+
+def _has_word(toks: set[str], rules: tuple[frozenset[str], tuple[str, ...]]) -> bool:
+    exact, starts = rules
+    return any(t in exact or (starts and t.startswith(starts)) for t in toks)
+
+
+def _name_stems(terms: Sequence[str]) -> list[str]:
+    """Основы названий для сравнения с записями базы: короче STEM_MIN и числа не берём."""
+    return [w for t in terms for w in stem_tokens(t) if len(w) >= STEM_MIN and not w.isdigit()]
+
+
+def find_named(terms: Sequence[str], kind: str = "photo", secondary: Sequence[str] = (),
+               prefer: Sequence[str] = (), avoid: Sequence[str] = ()) -> dict[str, Any] | None:
+    """Лучшая живая запись базы, которую `terms` называют ПО ИМЕНИ (сравнение по основе).
+
+    Порядок выбора (ключ сортировки, меньше — лучше):
+      1. уровень совпадения: 0 — основное название (`terms`: канон и прямые формы),
+         1 — вторичная форма (`secondary`: эфир, вариант написания…). Вторичная
+         ищет картинку, только если по основным совпадений в базе нет;
+      2. название найдено в ИМЕНИ ФАЙЛА (0), а не только в описании (1);
+      3. число слов из `avoid` в записи — слова, которые портят картинку (сюжет, брак);
+      4. короче имя файла;
+      5. порядок в базе.
+    `prefer` — слова, без которых картинка не годится: запись обязана содержать хотя бы
+    одно (`_word_rules`: «vial*» — по началу слова). Пустой `prefer` — обязательного
+    слова нет. Без этого правила брали первую запись по порядку, и картинкой становился
+    бланк или ценник рядом с предметом, а не сам предмет.
+    Записей с обязательным словом нет — возвращаем None: вставки по названию нет, в лог
+    «картинки нет».
+
+    Нужна детерминированному подбору по названию (вставки по названиям): подбор «по смыслу
+    фразы» (`match`) тут не годится — картинка обязана быть именно этого предмета, а не
+    похожего по описанию. Смотрим имя файла и все текстовые поля записи (desc, ru, vis):
+    база называет предмет и в имени файла, и в описании, и во зрительном описании (vis).
+    kind — тип записи ('photo'/'video'), None — любой.
+    Записи с пропавшим файлом (gone) и ссылки в никуда пропускаем: такой путь уехал бы в
+    .jsx пустым кадром. Порядок — как в индексе (когда добавлен).
+    """
+    d = _load()
+    if not d:
+        return None
+    main = _name_stems(terms)
+    sec = _name_stems(secondary)
+    if not main and not sec:
+        return None
+    prefer_rules = _word_rules(prefer)
+    avoid_exact = _word_rules(avoid)[0]
+    best: tuple[tuple[int, int, int, int, int], dict[str, Any]] | None = None
+    for idx, it in enumerate(d.get("items", [])):
+        if it.get("gone"):
+            continue
+        path = str(it.get("path") or "")
+        if kind and (_media_kind(path) or it.get("type")) != kind:
+            continue
+        text = " ".join([str(it.get(f) or "") for f in ("name", "desc", "ru", "vis")]
+                        + [_norm_filename(path)])
+        if not os.path.isfile(path):
+            continue
+        toks = set(stem_tokens(text))
+        # 1) уровень: основное название важнее эфира/вторичной формы
+        if any(stem_match(tok, s) for tok in toks for s in main):
+            level, want = 0, main
+        elif any(stem_match(tok, s) for tok in toks for s in sec):
+            level, want = 1, sec
+        else:
+            continue
+        # Обязательное слово из словаря (`_prefer`): без него запись не годится вовсе —
+        # картинка должна показывать предмет, а не только упоминать его в тексте.
+        if prefer_rules[0] or prefer_rules[1]:
+            if not _has_word(toks, prefer_rules):
+                continue
+        # 2) название в имени файла (0) важнее, чем только в описании (1)
+        name_toks = set(stem_tokens(os.path.basename(path) + " " + str(it.get("name") or "")))
+        in_name = 0 if any(stem_match(tok, s) for tok in name_toks for s in want) else 1
+        # 3)–5) слова из `avoid`, короче имя файла, порядок в базе
+        key = (level, in_name, len(toks & avoid_exact), len(os.path.basename(path)), idx)
+        if best is None or key < best[0]:
+            best = (key, {"path": path, "name": it.get("name") or os.path.basename(path),
+                          "type": it.get("type") or _media_kind(path),
+                          "mw": it.get("mw"), "mh": it.get("mh")})
+    return best[1] if best else None
+
+
 # ---------- импорт в СВОЮ папку базы ----------
 def _save(data: dict[str, Any]) -> None:
     with _LOCK:
+        # Битый индекс откладываем ДО записи: иначе одна новая запись стёрла бы всю личную
+        # базу вставок (тысячи записей, эмбеддинги не пересчитать). Проверяем, только если
+        # кэш пуст — то есть успешного чтения не было: все пишущие пути зовут _load() прямо
+        # перед записью, и прочитанный им файл битым быть не может. Так обычная запись
+        # не парсит индекс лишний раз (чекпойнты авто-описаний пишут часто).
+        if _CACHE["data"] is None:
+            bad = quarantine_unreadable(INDEX_PATH, valid=lambda d: isinstance(d, dict))
+            if bad:
+                log.warning("индекс вставок не читается — отложен в %s, записан заново", bad)
         atomic_json_dump(INDEX_PATH, data)
         _CACHE["data"] = None                            # сбросить кэш
         _CACHE["mat"] = None
@@ -928,13 +1105,20 @@ def _save(data: dict[str, Any]) -> None:
         _CACHE["N"] = 0
 
 
-_RB_SESSION = None                                       # сессия rembg (модель грузится 1 раз)
-_RB_LOCK = threading.Lock()                              # создание сессии — под локом (1 раз)
+_RB_SESSION = None                                       # сессия rembg (модель грузится 1 раз на модель)
+_RB_SESSION_NAME = None                                  # имя модели, под которую создана сессия
+_RB_LOCK = threading.Lock()                              # создание сессии — под локом
+# Метка модели в PNG-вырезке (tEXt). По ней кэш <стем>.nobg.png различает модели: имя
+# файла оставляем прежним (его читают интерфейс и список базы), а смена модели в
+# настройках пересчитывает кэш, а не отдаёт прошлую вырезку. Кэш без метки — u2net:
+# до выбора модели была только она, такие кэши не пересчитываем.
+REMBG_TAG = "reelsi_rembg_model"
 
 
 def remove_bg(img_bytes: bytes, trim: bool = True, emit: Any = None) -> bytes:
     """«Remove Background» как в фотошопе: PNG с настоящей альфой вместо белого фона.
-    Модель u2net (onnx, CPU ~1–2 с/шт) качается один раз в ~/.u2net при первом вызове.
+    Модель — из общих настроек (`rembg_model`: u2net или birefnet-general), onnx на CPU;
+    качается один раз в ~/.u2net при первом вызове этой модели.
     trim — обрезать полностью прозрачные поля (генератор оставляет широкие пустые
     рамки, а вставка в AE масштабируется по кадру — без обрезки предмет мелкий).
     Если модель съела всё (пустая альфа) — возвращаем исходник, лучше фон чем дырка."""
@@ -945,13 +1129,18 @@ def remove_bg(img_bytes: bytes, trim: bool = True, emit: Any = None) -> bytes:
     except ImportError:
         raise ReelsiError("для снятия фона нужен пакет rembg — «pip install rembg» "
                          "(или сними галку «убирать фон» в ⚙)")
-    global _RB_SESSION
-    if _RB_SESSION is None:
-        with _RB_LOCK:                                   # double-checked locking
-            if _RB_SESSION is None:
-                _RB_SESSION = new_session()              # u2net по умолчанию (1 раз)
+    from core import aicut                               # ленивый: aicut тянет настройки ИИ, ядру вставок не нужны
+    global _RB_SESSION, _RB_SESSION_NAME
+    name = aicut.rembg_model()
+    with _RB_LOCK:                                       # одна сессия на модель
+        if _RB_SESSION is None or _RB_SESSION_NAME != name:
+            _RB_SESSION = None                           # старую отпускаем до загрузки новой
+            _RB_SESSION = new_session(name)
+            _RB_SESSION_NAME = name
+        session, used = _RB_SESSION, _RB_SESSION_NAME
     from PIL import Image
-    im = Image.open(io.BytesIO(remove(img_bytes, session=_RB_SESSION))).convert("RGBA")
+    from PIL.PngImagePlugin import PngInfo
+    im = Image.open(io.BytesIO(remove(img_bytes, session=session))).convert("RGBA")
     box = im.getchannel("A").point(lambda v: 255 if v > 8 else 0).getbbox()
     if box is None:                                      # альфа пустая — фон не сняли
         emit("  фон снять не вышло (пустая альфа) — оставляю как есть")
@@ -959,9 +1148,24 @@ def remove_bg(img_bytes: bytes, trim: bool = True, emit: Any = None) -> bytes:
     if trim and box != (0, 0, im.width, im.height):
         im = im.crop(box)
     buf = io.BytesIO()
-    im.save(buf, "PNG")
+    meta = PngInfo()
+    meta.add_text(REMBG_TAG, used)
+    im.save(buf, "PNG", pnginfo=meta)
     emit("  фон убран, прозрачный PNG {width}x{height}", width=im.width, height=im.height)
     return buf.getvalue()
+
+
+def _nobg_model(path: str) -> str:
+    """Модель, которой сделан кэш вырезки: метка REMBG_TAG в PNG. Без метки — u2net
+    (кэш сделан до выбора модели). Файл не читается как картинка — пустая строка:
+    она не совпадёт ни с одной моделью, и кэш пересчитается."""
+    from PIL import Image
+    from core import aicut
+    try:
+        with Image.open(path) as im:
+            return im.info.get(REMBG_TAG) or aicut.REMBG_DEFAULT
+    except Exception:  # не картинка (видео, битый файл): пустая метка не совпадёт ни с одной моделью, кэш пересчитается, а не упадёт вставка
+        return ""
 
 
 def nobg_path(media: str, emit: Any = None) -> str:
@@ -972,8 +1176,9 @@ def nobg_path(media: str, emit: Any = None) -> str:
     это onnx-модель на CPU, 1-2 с на картинку, а вставок в ролике десятки.
 
     Кэш НОВЕЕ исходника — берём его. Исходник перегенерировали/поправили — считаем заново:
-    иначе на экране осталась бы прошлая картинка. Не картинка (видео) или rembg упал —
-    возвращаем ИСХОДНЫЙ путь: вставка с фоном лучше пропавшей.
+    иначе на экране осталась бы прошлая картинка. Кэш сделан ДРУГОЙ моделью, чем выбрана
+    в настройках, — тоже считаем заново (см. REMBG_TAG). Не картинка (видео) или rembg
+    упал — возвращаем ИСХОДНЫЙ путь: вставка с фоном лучше пропавшей.
     """
     emit = wrap_emit(emit)
     p = os.path.abspath(media or "")
@@ -985,8 +1190,10 @@ def nobg_path(media: str, emit: Any = None) -> str:
         return media
     dst = os.path.join(os.path.dirname(p),
                        os.path.basename(p) + ".nobg.png")
+    from core import aicut
     try:
-        if os.path.isfile(dst) and os.path.getmtime(dst) >= os.path.getmtime(p):
+        if (os.path.isfile(dst) and os.path.getmtime(dst) >= os.path.getmtime(p)
+                and _nobg_model(dst) == aicut.rembg_model()):
             return dst
     except OSError:
         pass                                             # mtime не прочитался — считаем заново
@@ -1052,6 +1259,7 @@ def image_real_format(path: str) -> str | None:
                 return fmt
     except ReelsiError: raise
     except Exception:
+        # PIL не открыл картинку (битая или неизвестная) — формат не определяем: None, как в докстроке
         return None
     return None
 
@@ -1324,6 +1532,7 @@ def _real_case(p: str) -> str:
         r = os.path.realpath(p)
     except ReelsiError: raise
     except Exception:
+        # realpath не справился (битая ссылка и т.п.) — путь берём как был; регистр тогда не исправлен, это не критично
         return p
     if r.startswith("\\\\?\\"):
         r = r[4:]
@@ -1707,7 +1916,9 @@ def _thumb_b64(path: str) -> str | None:
             b = f.read()
         return base64.b64encode(b).decode() if b else None
     except ReelsiError: raise
-    except Exception:
+    except Exception as e:
+        # кадр не вытащен (ffmpeg нет или не запустился) — None; вызывающий покажет «vision не ответил»
+        log.warning("кадр для vision не вытащен (%s)", e)
         return None
     finally:
         try:
@@ -1743,7 +1954,9 @@ def describe_file(path: str, model: str) -> str | None:
         txt = " ".join(txt.replace("\n", " ").split()).strip().strip('."\'' )
         return txt[:220] or None
     except ReelsiError: raise
-    except Exception:
+    except Exception as e:
+        # vision-модель не ответила — None; auto_describe покажет «⚠ vision не ответил», причину пишем в журнал
+        log.warning("vision-описание не получено (%s)", e)
         return None
 
 

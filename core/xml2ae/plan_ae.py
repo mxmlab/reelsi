@@ -187,10 +187,9 @@ class AeInputs:
     fsize: Any
     fsize_base: Any
     inserts_js: str
-    # Числа, которые считает только scene_plan: кадр, fps, экспозиция клипа, громкость
-    # музыки, тексты, шрифты, имена и флаги блоков.
+    # Числа, которые считает только scene_plan: кадр, fps, громкость музыки, тексты,
+    # шрифты, имена и флаги блоков.
     fps: float
-    exposure: Any
     music_db: Any
     # Путь запечённого голоса Камеры 1: None — голос не обработан (подстановки пустые).
     voice_wav: "str | None"
@@ -268,7 +267,6 @@ def plan_ae(inp: AeInputs) -> AePlan:
     _posy, _hl_rise, _hl_step, _hl_dur = inp.posy, inp.hl_rise, inp.hl_step, inp.hl_dur
     _fsize, _fsize_base = inp.fsize, inp.fsize_base
     inserts_js = inp.inserts_js
-    exposure = inp.exposure
     music_db, voice_wav, voice_db = inp.music_db, inp.voice_wav, inp.voice_db
     audio_fade, riser, pop, censor_js = inp.audio_fade, inp.riser, inp.pop, inp.censor_js
     music_path, trans, trans_sfx = inp.music_path, inp.trans, inp.trans_sfx
@@ -453,7 +451,10 @@ def plan_ae(inp: AeInputs) -> AePlan:
     intro_back_scale_word=_itpl.back_scale_word,
     intro_back_scale_wpx=_itpl.back_scale_wpx,
     intro_glow=stv.intro_glow,
-    exposure=float(exposure or 0), roto="[]",
+    # Яркости клипа (EXPOSURE) больше нет: ручка убрана из интерфейса, Lumetri задаётся
+    # стилем. Значение жёстко 0 = «не вешать» — подстановка `if (EXPOSURE!=0)` в шаблоне
+    # остаётся прежней и не срабатывает никогда, поэтому .jsx побайтово как раньше (golden).
+    exposure=0.0, roto="[]",
     # Цвет камер через Lumetri: при выключенной галке подстановки несут
     # ровно прежний текст шаблона и пустое объявление — .jsx побайтово как раньше
     # (golden). При включённой: LUMETRI / LUMETRI2 + applyLumetri / applyLumetri2 вместо

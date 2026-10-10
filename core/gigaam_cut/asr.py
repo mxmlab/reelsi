@@ -393,7 +393,10 @@ def _align_full_chunked(
         try:
             sw = falign.align_text(clip, " ".join(seg))
         except ReelsiError: raise
-        except Exception:
+        except Exception as e:
+            # окно не выровнялось — его слова пойдут без таймкодов; сборку не роняем, но говорим прямо
+            emit("  align_full: окно {w0}-{w1} слов не выровнено ({err_type}: {err}) — без таймкодов",
+                 w0=w0, w1=w1, err_type=type(e).__name__, err=e)
             sw = []
         for w in sw:
             out.append({"w": w["w"], "start": round(a0 / SR + w["start"], 3),

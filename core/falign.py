@@ -178,6 +178,27 @@ def _chunks(
     return out
 
 
+def load_wav_16k(wav_path: str) -> Any:
+    """Звук файла как float32-моно тензор 16 кГц (одномерный).
+
+    Зачем не чтение через torchaudio: torchaudio ≥ 2.9 читает звук только через пакет
+    torchcodec, которого у нас нет, и вызов падает. soundfile уже в requirements.txt и
+    читает WAV без него. PCM16 → float32 делит на 32768, как делал torchaudio. Каналы
+    сводим средним В TORCH, а не в numpy — так результат совпадает с прежней цепочкой бит в бит.
+    Ресемпл остаётся за torchaudio.functional.resample: он в torchaudio 2.11 есть.
+    """
+    import numpy as np
+    import soundfile as sf
+    import torch
+    a, sr = sf.read(wav_path, dtype="float32", always_2d=True)     # [N, C]
+    wav = torch.from_numpy(np.ascontiguousarray(a.T))              # [C, N]
+    audio = wav.mean(0) if wav.shape[0] > 1 else wav[0]
+    if int(sr) != 16000:
+        import torchaudio
+        audio = torchaudio.functional.resample(audio, int(sr), 16000)
+    return audio
+
+
 def align_words(
     wav_path: str, words: list[dict[str, Any]], device: str = "cuda", emit: Any = console_emit
 ) -> list[dict[str, Any]]:
@@ -191,10 +212,7 @@ def align_words(
     blank = proc.tokenizer.pad_token_id
     delim = vocab.get("|")
     SR = 16000
-    wav, sr = torchaudio.load(wav_path)          # [C, N]; чисто torch, без ctranslate2
-    audio = wav.mean(0) if wav.shape[0] > 1 else wav[0]
-    if sr != SR:
-        audio = torchaudio.functional.resample(audio, sr, SR)
+    audio = load_wav_16k(wav_path)               # [N] float32, 16 кГц моно; без torchcodec
     dur = len(audio) / SR
 
     def norm(w: str) -> str:

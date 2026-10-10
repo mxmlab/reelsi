@@ -341,14 +341,15 @@ The `tools/` scripts whose `main()` is deliberately without tests (the pure help
 - `tools/intro_rules.py` and `tools/intro_hook_rules.py`: their `main()` are tied to the user's real folders `MKAutoCut_out/` and `AutoCut_out/` (the pure logic is covered).
 
 
-### Open 2026-10-10: torch stays on 2.8, dead code, two pid tests
+### Open 2026-10-10: torch stays on 2.11, dead code, two pid tests
 
-**Torch above 2.8 is not installed for now.** The pair torch 2.8.0 + torchaudio 2.8.0 + torchvision 0.23.0
-is the recommended one (`requirements.txt`, the installers, CI). The reason: from torchaudio 2.9 the sound is
-loaded through a separate package, torchcodec; on torchaudio 2.11 and 2.13 `torchaudio.load` fails (checked
-on a real wav), and `torchaudio.forced_align` is marked as deprecated. An unpaired build of torchaudio under
-someone else's torch is risky because of the C++ operations. **What is known:** moving to a newer torch is
-possible only after `torchaudio.load` and `forced_align` are replaced.
+**Torch above 2.11 is not installed for now.** The pair torch 2.11.0 + torchaudio 2.11.0 + torchvision 0.26.0
+is the recommended one (`requirements.txt`, the installers, CI). The reason: torchaudio 2.11.0 is the last
+torchaudio release and has no build for torch 2.12 or later, while GigaAM and our alignment need torchaudio
+(MelSpectrogram, resample, forced_align, merge_tokens). An unpaired build of torchaudio under someone else's
+torch is risky because of the C++ operations. pip-audit reports one advisory for 2.11.0 (PYSEC-2025-194 /
+CVE-2025-3000, `torch.jit.script`, fixed in torch 2.13); Reelsi does not call `torch.jit.script`.
+**What is known:** moving to a newer torch waits for a torchaudio release built for it.
 
 **`camAt` in the `.jsx` template is dead code.** No function of the template calls it; the call-count
 measurement over the 34 functions of the template (`tests/test_jsx_stand_cover.py`) never reached it.

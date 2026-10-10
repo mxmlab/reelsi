@@ -128,7 +128,7 @@ def test_forced_align_words_uses_same_mapping(monkeypatch):
 
     monkeypatch.setattr(falign, "_MODEL", (proc, DummyModel(), "cpu"))
     # 8 секунд аудио и клип ровно 8 секунд (слова кончаются в 7.75) → кадр эмиссии = 1.0 с
-    monkeypatch.setattr(torchaudio, "load", lambda p: (torch.zeros(1, 16000 * 8), 16000))
+    monkeypatch.setattr(falign, "load_wav_16k", lambda p: torch.zeros(16000 * 8))
     words = [{"w": "аб", "start": 0.0, "end": 5.0},
              {"w": "вг", "start": 5.1, "end": 7.0},
              {"w": "де", "start": 7.1, "end": 7.75}]

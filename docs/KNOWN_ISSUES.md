@@ -346,14 +346,15 @@ multicast и неопределённый — отказ (`unsafe_url_reason`, `
 - `tools/intro_rules.py` и `tools/intro_hook_rules.py`: их `main()` завязаны на реальные папки пользователя `MKAutoCut_out/` и `AutoCut_out/` (чистая логика покрыта).
 
 
-### Открыто 2026-10-10: torch на 2.8, мёртвый код, два теста pid
+### Открыто 2026-10-10: torch на 2.11, мёртвый код, два теста pid
 
-**Torch выше 2.8 пока не ставим.** Пара torch 2.8.0 + torchaudio 2.8.0 + torchvision 0.23.0
-рекомендована (`requirements.txt`, установщики, CI). Причина: torchaudio с версии 2.9 грузит
-звук через отдельный пакет torchcodec, на torchaudio 2.11 и 2.13 `torchaudio.load` падает
-(проверено на настоящем wav), а `torchaudio.forced_align` помечен устаревшим. Непарная сборка
-torchaudio под чужой torch рискованна из-за C++-операций. **Что известно:** переход на свежий
-torch возможен только после замены `torchaudio.load` и `forced_align`.
+**Torch выше 2.11 пока не ставим.** Пара torch 2.11.0 + torchaudio 2.11.0 + torchvision 0.26.0
+рекомендована (`requirements.txt`, установщики, CI). Причина: torchaudio 2.11.0 — последний выпуск
+torchaudio, сборок под torch 2.12 и новее нет, а GigaAM и наше выравнивание нуждаются в torchaudio
+(MelSpectrogram, resample, forced_align, merge_tokens). Непарная сборка torchaudio под чужой torch
+рискованна из-за C++-операций. pip-audit даёт для 2.11.0 одно замечание (PYSEC-2025-194 /
+CVE-2025-3000, `torch.jit.script`, фикс в torch 2.13); Reelsi `torch.jit.script` не вызывает.
+**Что известно:** переход на более новый torch ждёт выпуска torchaudio под него.
 
 **`camAt` в шаблоне `.jsx` — мёртвый код.** Ни одна функция шаблона её не вызывает; замер
 входа по 34 функциям шаблона (`tests/test_jsx_stand_cover.py`) её не застал.

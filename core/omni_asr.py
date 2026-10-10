@@ -86,21 +86,14 @@ def transcribe_clip(proc: Any, model: Any, arr_int16: Any) -> str:
             pass  # временный wav уже убран
 
 
-def transcribe_clip_gigaam(model: Any, clip_audio: Any) -> str:
-    """Транскрибировать чанк через GigaAM. Принимает путь к wav-файлу (грузит через ffmpeg),
-    а не numpy-массив. Пишем во временный файл, дескриптор сразу закрываем,
-    а сам файл гарантированно удаляем в finally."""
+def _gigaam_file_text(model: Any, arr: Any) -> str:
+    """Один кусок <= 25 с: пишем во временный wav, отдаём GigaAM.transcribe.
+    Дескриптор сразу закрываем, файл гарантированно удаляем в finally."""
     fd, tmp = tempfile.mkstemp(suffix=".wav", prefix="_omni_gigaam_")
     os.close(fd)
     try:
-        sf.write(tmp, clip_audio, SR, subtype="PCM_16")
-        # Короткие чанки (<25с) — transcribe; длинные — transcribe_longform
-        # (иначе GigaAM бросает ValueError "Too long wav file").
-        if len(clip_audio) > SR * 25:
-            res = model.transcribe_longform(tmp)
-        else:
-            res = model.transcribe(tmp)
-        # TranscriptionResult / LongformTranscriptionResult оба отдают текст через .text
+        sf.write(tmp, arr, SR, subtype="PCM_16")
+        res = model.transcribe(tmp)
         return res.text if hasattr(res, "text") else str(res)
     finally:
         try:
@@ -108,6 +101,40 @@ def transcribe_clip_gigaam(model: Any, clip_audio: Any) -> str:
         except ReelsiError: raise
         except OSError:
             pass  # временный wav уже убран
+
+
+def transcribe_clip_gigaam(model: Any, clip_audio: Any) -> str:
+    """Транскрибировать чанк через GigaAM. Кусок до 25 с уходит одним вызовом transcribe.
+    Длиннее режем сами на части до 24 с по самой тихой точке (как нарезка GigaAM) и
+    склеиваем тексты частей через пробел.
+
+    Почему не transcribe_longform: он идёт через pyannote.audio, а pyannote нет в
+    зависимостях (на чистой установке его нет вовсе), и pyannote 3.x не импортируется
+    на torchaudio 2.11 (torchaudio.AudioMetaData убран). Ошибка на одном куске роняла
+    весь прогон Omni (SystemExit в main). Нарезка GigaAM от pyannote уже отказалась
+    и режет окнами со швом в тишине — здесь делаем то же самое."""
+    if len(clip_audio) <= SR * 25:
+        return _gigaam_file_text(model, clip_audio)
+    # Ленивый импорт: пакет нарезки тяжёлый, а короткие куски его не трогают.
+    from core.gigaam_cut.asr import _quiet_cut
+    n = len(clip_audio)
+    limit = SR * 24
+    min_piece = SR // 2      # хвост короче 0.5 с в модель не шлём — клеим к текущей части
+    bounds: list[tuple[int, int]] = []
+    pos = 0
+    while n - pos > limit:
+        cut = _quiet_cut(clip_audio, pos + SR * 18, pos + SR * 24, SR)
+        if n - cut < min_piece:
+            break
+        bounds.append((pos, cut))
+        pos = cut
+    bounds.append((pos, n))
+    texts: list[str] = []
+    for lo, hi in bounds:
+        t = _gigaam_file_text(model, clip_audio[lo:hi]).strip()
+        if t:                # пустой текст части не даёт двойных пробелов
+            texts.append(t)
+    return " ".join(texts)
 
 
 def _hf_cache_bytes(repo: str) -> int:

@@ -261,16 +261,13 @@ def align_full(
     Фолбэк (OOM/ошибка): пооконный align_text с пропорциональной разбивкой слов."""
     emit = wrap_emit(emit)
     import torch, torchaudio
-    from core.falign import get_model
+    from core.falign import get_model, load_wav_16k
     proc, model, dev = get_model(device)
     vocab = proc.tokenizer.get_vocab()
     blank = proc.tokenizer.pad_token_id
     delim = vocab.get("|")
 
-    wav, sr = torchaudio.load(wav_path)
-    audio = wav.mean(0) if wav.shape[0] > 1 else wav[0]
-    if sr != SR:
-        audio = torchaudio.functional.resample(audio, sr, SR)
+    audio = load_wav_16k(wav_path)               # [N] float32, 16 кГц моно; без torchcodec
     dur = len(audio) / SR
 
     words = [w for w in re.split(r"\s+", (text or "").strip()) if w]

@@ -11,7 +11,7 @@ FROM python:3.10
 RUN apt-get update -qq && apt-get install -y -qq ffmpeg curl && \
     curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
     apt-get install -y -qq nodejs && rm -rf /var/lib/apt/lists/*
-RUN pip install --no-cache-dir torch==2.8.0 torchaudio==2.8.0 --extra-index-url https://download.pytorch.org/whl/cpu
+RUN pip install --no-cache-dir torch==2.11.0 torchaudio==2.11.0 --extra-index-url https://download.pytorch.org/whl/cpu
 COPY requirements-dev.txt /tmp/requirements-dev.txt
 RUN pip install --no-cache-dir -r /tmp/requirements-dev.txt
 RUN pip install --no-cache-dir flask numpy scipy soundfile fonttools "pillow>=10.0" pyarrow "zstandard>=0.22"

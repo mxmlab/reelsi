@@ -74,7 +74,7 @@ def test_границы_слов_при_pad_token_id_5(model):
 
 def test_align_words_при_pad_token_id_5(model, monkeypatch):
     """Второе место с тем же `merge_tokens` — `align_words` (уточнение таймингов)."""
-    monkeypatch.setattr(torchaudio, "load", lambda p: (torch.zeros(1, 16000 * 8), 16000))
+    monkeypatch.setattr(falign, "load_wav_16k", lambda p: torch.zeros(16000 * 8))
     words = [{"w": "аб", "start": 0.0, "end": 5.0},
              {"w": "вг", "start": 5.1, "end": 7.0}]
     res = falign.align_words("dummy.wav", words, device="cpu", emit=lambda *a, **k: None)

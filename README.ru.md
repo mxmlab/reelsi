@@ -104,7 +104,7 @@ bash install.sh                                        # macOS и Linux
 Ручная установка:
 
 ```bash
-pip install torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0 --index-url https://download.pytorch.org/whl/cu126
+pip install torch==2.11.0 torchaudio==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu126
 pip install -r requirements.txt
 pip install -r requirements-optional.txt
 ```

@@ -50,7 +50,7 @@ jobs:
           # Зелено сейчас только за счёт кэша pip у setup-python: сбросится кэш —
           # джоба упадёт на ровном месте. Обратно на замену индекса не чинить.
           # Версия — та же пара, что в requirements.txt (torchaudio строго под свой torch).
-          pip install torch==2.8.0 torchaudio==2.8.0 --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install torch==2.11.0 torchaudio==2.11.0 --extra-index-url https://download.pytorch.org/whl/cpu
           # Импорта требуют только эти четыре; всё тяжёлое (transformers,
           # faster-whisper, rembg) грузится лениво внутри функций и в тестах не
           # выполняется. Ставить requirements.txt целиком — минуты ради ничего.
@@ -111,7 +111,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install torch==2.8.0 torchaudio==2.8.0 --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install torch==2.11.0 torchaudio==2.11.0 --extra-index-url https://download.pytorch.org/whl/cpu
           # Дополняем PyPI индексом pytorch, а не заменяем — почему, разобрано в джобе test.
           # pytest с плагинами — из requirements-dev.txt, как и в джобе test:
           # одинаковые версии инструментов в обеих джобах.
@@ -163,8 +163,8 @@ jobs:
       # Исключений (--ignore-vuln) нет: transformers 5.10.1 не имеет ни одного advisory
       # из шести, которые держали 4.x (2025-217, 2026-2288/2289/2290/3929/4174), и
       # requirements.txt теперь ставит 5.x. Сам pip-audit резолвит torch без пина, поэтому
-      # он проверяет НЕ пару 2.8.0 из шапки requirements.txt (у неё восемь advisories,
-      # фиксы в torch 2.9-2.13) — это решение записано в CHANGELOG. Список шага
+      # он проверяет НЕ пару 2.11.0 из шапки requirements.txt (у неё одно advisory,
+      # PYSEC-2025-194 / CVE-2025-3000, фикс в torch 2.13) — это решение записано в CHANGELOG. Список шага
       # обязан совпадать с tools/slice_check.py — сторож tests/test_ci_scan.py.
       - name: Audit dependencies (pip-audit)
         run: |

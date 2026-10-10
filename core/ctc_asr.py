@@ -85,13 +85,10 @@ def release_model() -> bool:
 
 
 def _load_audio(wav_path: str) -> Any:
-    """float32-моно 16кГц (torchaudio: он и так в зависимостях falign/gigaam_cut)."""
-    import torchaudio
-    wav, sr = torchaudio.load(wav_path)
-    audio = wav.mean(0) if wav.shape[0] > 1 else wav[0]
-    if sr != SR:
-        audio = torchaudio.functional.resample(audio, sr, SR)
-    return audio
+    """float32-моно 16кГц — одна читалка на три движка (core.falign.load_wav_16k):
+    torchaudio ≥ 2.9 без torchcodec звук не читает, поэтому чтение идёт через soundfile."""
+    from core.falign import load_wav_16k
+    return load_wav_16k(wav_path)
 
 
 def _quiet_cut(audio: Any, lo: int, hi: int, frame: float = 0.05) -> int:

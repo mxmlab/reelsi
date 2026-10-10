@@ -108,8 +108,8 @@ if (-not $Cpu) {
 }
 
 if ($cuda) {
-    Say "NVIDIA detected - installing CUDA 12.6 build (torch 2.8.0 pair, see requirements.txt)"
-    & $py -m pip install torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0 `
+    Say "NVIDIA detected - installing CUDA 12.6 build (torch 2.11.0 pair, see requirements.txt)"
+    & $py -m pip install torch==2.11.0 torchaudio==2.11.0 torchvision==0.26.0 `
         --index-url https://download.pytorch.org/whl/cu126
 } else {
     if ($Cpu) { Say "CPU build (forced via -Cpu flag)" }
@@ -117,7 +117,7 @@ if ($cuda) {
         Say "NVIDIA not detected - installing CPU build."
         Say "If you have an AMD GPU: there is a separate ROCm build, see docs/PLATFORMS.md"
     }
-    & $py -m pip install torch==2.8.0 torchaudio==2.8.0 torchvision==0.23.0
+    & $py -m pip install torch==2.11.0 torchaudio==2.11.0 torchvision==0.26.0
 }
 
 Step "Installing dependencies"

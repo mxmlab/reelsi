@@ -959,10 +959,53 @@ def test_gigaam_ровно_25с_ещё_transcribe():
     assert [c["method"] for c in model.calls] == ["transcribe"]
 
 
-def test_gigaam_длинный_чанк_идёт_в_longform():
+def test_gigaam_длинный_чанк_режется_сами_без_longform():
+    """25с + 1 отсчёт: transcribe_longform (pyannote) не зовётся, кусок режется на два
+    вызова transcribe — 24с и хвост (см. докстринг transcribe_clip_gigaam)."""
     model = _GigaAM(_Res("ок"))
     omni_asr.transcribe_clip_gigaam(model, _clip_samples(omni_asr.SR * 25 + 1))
-    assert [c["method"] for c in model.calls] == ["transcribe_longform"]
+    assert [c["method"] for c in model.calls] == ["transcribe", "transcribe"]
+
+
+class _GigaAMSeq(_GigaAM):
+    """GigaAM-заглушка: каждый вызов transcribe отдаёт свой текст по очереди."""
+
+    def __init__(self, texts):
+        super().__init__()
+        self.texts = list(texts)
+
+    def transcribe(self, path):
+        self._run("transcribe", path)
+        return _Res(self.texts[len(self.calls) - 1])
+
+
+def _шумный_кусок_60с():
+    """60с шума амплитуды ~0.3 с двумя паузами по 0.4с: около 20с и около 42с."""
+    np = pytest.importorskip("numpy")
+    rng = np.random.default_rng(0)
+    x = rng.uniform(-0.3, 0.3, omni_asr.SR * 60).astype(np.float32)
+    for start in (19.8, 42.0):
+        x[int(start * omni_asr.SR):int((start + 0.4) * omni_asr.SR)] = 0.0
+    return x
+
+
+def test_gigaam_60с_режется_по_тишине_на_части_до_24с(tmp_tempdir):
+    model = _GigaAMSeq(["первая", "вторая", "третья"])
+    text = omni_asr.transcribe_clip_gigaam(model, _шумный_кусок_60с())
+
+    assert [c["method"] for c in model.calls] == ["transcribe"] * 3
+    assert all(len(c["data"]) <= omni_asr.SR * 24 for c in model.calls)
+    # первый шов — внутри тишины у 20с (тихая точка, а не случайная граница окна)
+    assert 19.8 * omni_asr.SR <= len(model.calls[0]["data"]) <= 20.2 * omni_asr.SR
+    assert text == "первая вторая третья"
+    assert list(tmp_tempdir.glob("_omni_gigaam_*.wav")) == []   # за каждой частью убрано
+
+
+def test_gigaam_пустой_текст_части_не_даёт_двойных_пробелов():
+    model = _GigaAMSeq(["первая", "   ", "третья"])
+    text = omni_asr.transcribe_clip_gigaam(model, _шумный_кусок_60с())
+    assert text == "первая третья"
+    assert "  " not in text
 
 
 def test_gigaam_результат_без_атрибута_text():

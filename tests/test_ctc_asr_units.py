@@ -21,6 +21,7 @@ import types
 from typing import Any
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 import torch
 
@@ -402,8 +403,8 @@ def test_release_model_frees_resources(monkeypatch: pytest.MonkeyPatch) -> None:
 # --------------------------------------------------------------------------- #
 def test_load_audio_mono(monkeypatch: pytest.MonkeyPatch) -> None:
     """Одноканальное 16 кГц аудио возвращается как 1D тензор."""
-    fake_tensor = torch.zeros(1, 16000)
-    monkeypatch.setattr("torchaudio.load", lambda path: (fake_tensor, 16000))
+    # Подменяем чтение файла (soundfile: [N, C]); сведение и ресемпл выполняются настоящие
+    monkeypatch.setattr("soundfile.read", lambda path, **kw: (np.zeros((16000, 1), np.float32), 16000))
 
     audio = ctc_asr._load_audio("mono.wav")
     assert audio.shape == (16000,)
@@ -411,10 +412,8 @@ def test_load_audio_mono(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_load_audio_stereo_downmix(monkeypatch: pytest.MonkeyPatch) -> None:
     """Двухканальное аудио усредняется по каналам (mean(0))."""
-    ch1 = torch.ones(1, 16000)
-    ch2 = torch.full((1, 16000), 3.0)
-    stereo = torch.cat([ch1, ch2], dim=0)
-    monkeypatch.setattr("torchaudio.load", lambda path: (stereo, 16000))
+    stereo = np.stack([np.ones(16000), np.full(16000, 3.0)], axis=1).astype(np.float32)  # [N, C]
+    monkeypatch.setattr("soundfile.read", lambda path, **kw: (stereo, 16000))
 
     audio = ctc_asr._load_audio("stereo.wav")
     assert audio.shape == (16000,)
@@ -423,8 +422,7 @@ def test_load_audio_stereo_downmix(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_load_audio_resampling(monkeypatch: pytest.MonkeyPatch) -> None:
     """Аудио с частотой 44100 ресемплируется в 16000."""
-    fake_tensor = torch.zeros(1, 44100)
-    monkeypatch.setattr("torchaudio.load", lambda path: (fake_tensor, 44100))
+    monkeypatch.setattr("soundfile.read", lambda path, **kw: (np.zeros((44100, 1), np.float32), 44100))
     resample_mock = MagicMock(return_value=torch.zeros(16000))
     monkeypatch.setattr("torchaudio.functional.resample", resample_mock)
 

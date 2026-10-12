@@ -80,7 +80,6 @@ import numpy as np
 
 from core import paths
 from core import speakers
-from core import styles
 from core import sync
 from core import voicefx_sep
 from core import voicefx_win
@@ -1069,16 +1068,6 @@ def render_cached(src: str, fx: dict[str, Any], emit: Callable[..., Any] = conso
 # --------------------------------------------------------------------------- #
 # Подключение: нарезка и итоговый голос — по ОДНОМУ правилу (voice_fx_on)
 # --------------------------------------------------------------------------- #
-def style_voice_db(profile: Any) -> float:
-    """Громкость голоса из стиля спикера (`voice_db`, дБ). Стиля нет — 0.
-
-    Нарезка слушает тот же уровень, что уедет в ролик: стиль спикера — обычный
-    пресет AE (`styles/*.json`), и громкость голоса живёт в нём.
-    """
-    style = profile.get("style") if isinstance(profile, dict) else None
-    return float(styles.resolve(style).get("voice_db") or 0.0)
-
-
 def analysis_wav(full: str, dst: str, gain_db: float = 0.0,
                  emit: Callable[..., Any] = console_emit) -> str:
     """Голос для НАРЕЗКИ: моно `sync.SR`, PCM, с громкостью стиля — поверх `dst`.
@@ -1152,7 +1141,9 @@ def apply_cut_fx(wav0: str, cam1: str, speaker: Any,
     if not voice_fx_on(fx):
         return False
     emit("голос: обработка для нарезки…")
-    gain = style_voice_db(prof)
+    # Громкость голоса — свойство спикера (профиль, иначе его стиль): то же правило, что
+    # у сборки и рендера, — нарезка слушает уровень, который уедет в ролик.
+    gain = speakers.voice_db_of(prof)
     try:
         # Вся цепочка и её кеш целиком (исходник + шумодав + плагины с состоянием):
         # повторная нарезка того же клипа без правок не печёт ничего заново.

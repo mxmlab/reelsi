@@ -455,6 +455,19 @@ one person has several styles (one camera / two / another font), and there are a
 styles than speakers. Whose style is currently set is visible on step 1 in the cut summary and
 next to the style selector (`styleSpeakerNote`).
 
+**Voice volume lives in the speaker profile, not in the clip.** The profile field `voice_db`
+(−60..12 dB, step 0.5) is one volume for all clips of the speaker. There is one rule —
+`speakers.voice_db_of(prof)`: own value → the speaker's style volume → 0. It is used by the cut
+(`voicefx.apply_cut_fx`), the .jsx assembly and the built-in render (`xml2ae.scene_plan`, parameter
+`speaker` — the clip's tag arrives in the normalized job from `_norm_build_jobs` (`api/build.py`) and travels in
+the render body). A clip without a tag keeps its style's volume. The front end reads and writes it through
+two doors: `voiceDbOf(c)` and `setVoiceDb(v)` in `app/95-styles.js` (the step-1 "Volume" slider, the
+preview header of the inserts, the style panel field via `speaker_db` in the schema, and the preview audio in
+`60-preview.js`). The edit goes to the profile via `/api/savespeaker` after a 400 ms pause; "Save style" is
+not needed, and the "style changed" dot does not light up for it. Before, the volume lived in the clip's copy
+of the style (`job.style.voice_db`), so an import gave every clip −3 dB, and an edit of one clip did not reach
+the others.
+
 **Analysis across all three (`project.json` → `user_overrides` as the reference, word-level
 timings taken by GigaAM on 11 clips) — the conclusion is DIFFERENT for each:**
 
@@ -818,7 +831,7 @@ two doors, each its own:
   synchronization: the step-3 player sounded because `ipvPlay` called `musicSync` at the end, while no one
   woke the graph for the step-1 player.
 - **`voiceGraphNeeded()`** — the rule for whether the graph is needed because of volume: the voice volume
-  of the style (`voice_db`) can only be done by `VG.gain`, the element's `volume` cannot exceed 1.
+  of the clip (`voiceDbOf()`) can only be done by `VG.gain`, the element's `volume` cannot exceed 1.
 - **`voiceWiring(v)`** — a request for connection (the element is created, the decision later),
   **`voiceEnsure()`** — "the graph is needed": it connects the `VOICEPEND` queue and wakes the context.
   It is called only by the doors where processing actually sounds (`vtGate` with the gate open,
@@ -1352,10 +1365,15 @@ checks are in `tests/test_podcast_editor_js.py` and in the node stands.
   stands without styles. The tick step `tlTickStep`, the labels `tlRulerLabel`, the ruler
   `tlPaintRuler`, the piece frames `tlDrawSpan`, the playhead with its flag `tlDrawPlayhead`, the
   waveform `tlPaintWave` (the maximum of the peaks per pixel, not point sampling).
-- The view: `tlClampView` (clamps the window), `tlZoomSpan` (zoom to a point), `tlFollowHead` (the view
-  follows the playhead, which stays 10 % of the width from the left edge).
+- The view: `tlClampView` (clamps the window), `tlZoomSpan` (zoom to a point), `tlReveal` (shows the target
+  of an explicit jump: the window moves so that the target sits 10 % of the width from the left edge; a
+  target already inside the window does not move it). The window does not follow the playhead, neither
+  during playback nor on seeks (the owner's decision of 2026-10-12): the playhead leaves the edge and the
+  window stays. Explicit jumps: `podPlaySeg` ("play piece"), `ipvJump` (double click on an insert),
+  `subrowGo` (a row of the subtitle list).
 - Gestures: `tlWheelBind` (the wheel: horizontal or Shift pans, vertical zooms; step `TL_ZOOM_STEP`),
-  `tlMidPan` (the middle button and dragging the ruler), `tlMidGuard` (stops the browser's autoscroll on
+  `tlMidPan` (the middle button and dragging the ruler; a left click on the ruler without a drag beyond
+  `TL_CLICK_MAX_PX` = 3 px puts the playhead at the click through the `click` callback, the window stays), `tlMidGuard` (stops the browser's autoscroll on
   the middle button), `tlPanning`. The capture order is `tlHitOrder`: a piece edge, the playhead, the
   ruler, the middle of a piece.
 - Editing and history: `tlEditKey` (C/S cut, D/Delete/Backspace remove), `histStack` — undo and redo

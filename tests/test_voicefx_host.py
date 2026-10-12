@@ -1021,7 +1021,10 @@ def test_live_host_gain_is_voice_db_plus_listening_volume(tmp_path: Path) -> Non
     js = STYLES_JS.read_text(encoding="utf-8")
     preview = (ROOT / "static" / "app" / "60-preview.js").read_text(encoding="utf-8")
     src = "\n".join(_func_src(js, n) for n in (
-        "voiceFxHostOn", "voiceFxLiveOutDb", "voiceFxLiveGain", "voiceFxHostStart"))
+        "voiceFxHostOn", "voiceFxLiveOutDb", "voiceFxLiveGain", "voiceFxHostStart",
+        # громкость голоса — боевая дверь (спикер клипа, иначе стиль); стенду нужен её контекст
+        "voiceDbSpeakerKey", "voiceDbBySpeaker", "voiceDbOf"))
+    src += "\nlet curAE=-1,CLIPS=[],SPEAKERS={};\n"
     src += "\n" + "\n".join(_func_src(preview, n) for n in ("vtCam1", "vtSrcAt", "vtNow"))
     lets = re.search(r"let VFXHOST=\{[^\n]*\};", js)
     assert lets, "не нашлось состояние хоста VFXHOST"

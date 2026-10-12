@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reelsi"
-version = "0.4.0b0"
+version = "0.4.1b0"
 description = "AI video editor on top of Premiere and After Effects: multicam cut, word-by-word subtitles, AE assembly"
 readme = "README.md"
 license = "AGPL-3.0-or-later"

@@ -54,6 +54,7 @@ sys.path.insert(0, str(ROOT))
 
 APP = ROOT / "static" / "app"
 PREVIEW_JS = APP / "60-preview.js"
+STYLES_JS = APP / "95-styles.js"
 EDITOR_JS = APP / "70-editor.js"
 VIEW_JS = APP / "85-inserts-view.js"
 CAMJS = APP / "88-cams.js"
@@ -296,6 +297,15 @@ window.AudioContext=AudioContext;
 """
 
 
+# Дверь громкости голоса (95-styles.js): читает громкость спикера клипа, а без открытого
+# клипа — спикер шага 1. Стенду нужен только её контекст; сама дверь — боевая.
+_VOICE_DOOR_FUNCS = ("voiceDbSpeakerKey", "voiceDbBySpeaker", "voiceDbOf")
+_VOICE_DOOR_STAND = (
+    "let curAE=-1,CLIPS=[],SPEAKERS={};\n"
+    "const val=()=>'';\n"
+    "function clipSpeaker(c){return (c&&c.job&&c.job.speaker)||'';}\n")
+
+
 def _audio_stand(tmp_path: Path, name: str, body: str,
                  extra: tuple[str, ...] = ()) -> subprocess.CompletedProcess[str]:
     """Стенд по боевым функциям графа: тела берутся из 60-preview.js, копий в тесте нет.
@@ -305,11 +315,14 @@ def _audio_stand(tmp_path: Path, name: str, body: str,
     настоящим телом — так и задумано: стенд повторяет боевой граф, а не правится по частям.
     """
     prev = _read(PREVIEW_JS)
+    styles = _read(STYLES_JS)
     funcs = tuple(_AUDIO_FUNCS) + tuple(extra)
     script = ("const assert=require('assert');\n" + _AUDIO_STAND
               + "let AUDIO=null,VG=null,MG=null;\n"
               + "let VOICEPEND=[];\n"
               + "let MEDIA_VOL=1;\n"
+              + _VOICE_DOOR_STAND
+              + "\n".join(_func_src(styles, n) for n in _VOICE_DOOR_FUNCS) + "\n"
               + "\n".join(_func_src(prev, n) for n in funcs) + "\n"
               + body)
     return _run_node(tmp_path, name, script)

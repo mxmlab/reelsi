@@ -232,7 +232,8 @@ def test_behav_build_payload_sends_style_name_not_copy(tmp_path):
 
     Рото из задания в payload не попадает: оно живёт в стиле.
     """
-    res = _case(tmp_path, "b3_build_payload.js", ("styleForJob", "jobForBuild", "defJob", "clipNcams"), r"""
+    res = _case(tmp_path, "b3_build_payload.js", ("styleForJob", "jobForBuild", "defJob", "clipNcams",
+                                                  "clipSpeaker"), r"""
 STYLES={stA:{label:'stA'}};
 const cNamed={xml:'A.xml',job:Object.assign(defJob(),{styleKey:'stA'})};
 const cCustom={xml:'B.xml',job:Object.assign(defJob(),{styleKey:'__custom__',style:{font:'Copy'}})};
@@ -277,13 +278,17 @@ def test_behav_voice_is_muted_only_inside_censor_windows_of_the_plan(tmp_path):
 
     Без плана голос идёт на обычной громкости стиля, плеер не ломается.
     """
-    res = _case(tmp_path, "b3_vg_duck.js", ("vgDuck",), r"""
+    # Громкость голоса — боевая дверь: без открытого клипа её спикер — `$('speaker')`,
+    # в стенде его нет, значит громкость берётся из CURSTYLE (путь клипа без спикера).
+    res = _case(tmp_path, "b3_vg_duck.js", ("vgDuck", "voiceDbOf", "voiceDbSpeakerKey",
+                                            "voiceDbBySpeaker"), r"""
 CURSTYLE={voice_db:-6};
 const plan={audio:{censor:[[2,3]]}};
 vgDuck(2.5,plan);out.inside=VG.gain.value;
 vgDuck(4,plan);out.outside=Math.round(VG.gain.value*1000)/1000;
 vgDuck(4,null);out.noPlan=Math.round(VG.gain.value*1000)/1000;
-""", pre="let VG={gain:{value:1}};\nfunction dbToGain(db){return Math.pow(10,db/20);}")
+""", pre="let VG={gain:{value:1}};\nfunction dbToGain(db){return Math.pow(10,db/20);}\n"
+             "function $(){return null;}")
     assert res["inside"] == 0, res
     assert res["outside"] == 0.501, res
     assert res["noPlan"] == 0.501, res

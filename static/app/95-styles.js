@@ -303,9 +303,18 @@ function openSpeaker(key){
   spkFormatFill();
   const fs=$('spk_format');if(fs)fs.value=(p.format&&SPKFORMATS[p.format])?p.format:SPKDEF_FORMAT;
   spkGrid(p.cut||{});
-  // Голос — только сводкой: ручек здесь нет и не будет, крутят их в панели «Голос»
-  // превью нарезки, на звуке клипа (та же функция разметки, см. voiceFxRender).
-  voiceFxRender($('spkVoice'),p.voice_fx,{mode:'summary'});
+  // Голос — ТА ЖЕ панель, что в превью нарезки (одна разметка, voiceFxRender), но со
+  // своим спикером (spk) и БЕЗ звука клипа (audio:false): крутить и сохранять в профиль
+  // можно, слушать — нельзя (кнопки неактивны). Новый спикер ещё не записан в speakers/,
+  // ключа у него нет: сохранять в профиль, которого нет, нельзя — только подсказка.
+  const vh=$('spkVoice');
+  if(SPKEDIT){
+    voiceFxRender(vh,p.voice_fx,{mode:'panel',spk:SPKEDIT,audio:false});
+    vstFxList(vh,false);
+    voiceFxSepFill(vh);}
+  else voiceFxRender(vh,null,{mode:'off',
+    note:t('Сначала сохрани профиль спикера — тогда здесь появятся настройки голоса.'),
+    tip:t('Обработка голоса настраивается в профиле уже сохранённого спикера.')});
   $('spk_del').style.display=SPKEDIT?'':'none';
   openModal('mbSpeaker');}
 // ---- пересчёт стиля под кадр формата ----
@@ -380,7 +389,10 @@ function spkGrid(cut){const host=$('spk_cut');if(!host)return;host.innerHTML='';
 // (core/voicefx.py:voice_fx_on) — здесь его зеркало для разметки (voiceFxOn).
 const VFX_DB_DEFAULT=40;
 let VSTLIST=[];              // найденные VST3: список один на страницу (пункт «Добавить плагин»)
-let VOICEFXSPK='';           // ключ профиля спикера клипа, открытого в превью (см. pvVoicePanel)
+// Спикер КЛИПА, открытого в превью (см. pvVoicePanel). Только для звука клипа: живой хост,
+// окно плагина, запекание. Что записать в профиль, панель берёт из СВОЕГО data-spk (спикера
+// панели), а не отсюда — иначе правка профиля A при открытом клипе B писала бы в B.
+let VOICEFXSPK='';
 // Сила RoFormer — доля обработанного в смеси с исходником, %: 100 = только
 // обработанный (штатный режим, владелец выбирал движок по этому звуку). У
 // deep-filter сила другая — предел подавления в дБ (VFX_DB_DEFAULT).
@@ -422,6 +434,20 @@ function vfxEngineSel(host){
 // Панель, к которой относится элемент разметки: строки цепочки, галки и кнопки зовут
 // обработчики с `this`, а работают всегда в пределах своей панели.
 function voiceFxHost(el){return (el&&el.closest)?el.closest('[data-vfxroot]'):null;}
+// Панель со ЗВУКОМ клипа — панель превью нарезки. Панель профиля звука не имеет: в ней
+// крутят и сохраняют, а слушать нельзя (живой хост, окно плагина, запекание — только клип).
+// Флаг ставит сама разметка (data-audio), поэтому проверка не зависит от id элемента.
+function voiceFxIsClip(host){return !!host&&host.dataset&&host.dataset.audio==='1';}
+// Неактивный контрол панели без звука клипа (профиль спикера) — в ОБЁРТКЕ, а справка
+// висит на обёртке, не на самом контроле. Chrome не шлёт события мыши и фокус disabled-
+// контролам, поэтому data-t на disabled-кнопке не всплывал бы. Обёртка фокусируется
+// (tabindex) и ловится общим механизмом подсказок (50-chrome.js: mouseover/focusin по
+// closest('[data-t]')); сам контрол мыши не принимает — правило .vfxlock>:disabled в app.css.
+function noAudioWrap(html){
+  return '<span class="vfxlock" tabindex="0" data-t="'+esc(t('Слушать — в превью клипа этого спикера'))+'">'+html+'</span>';}
+// Все панели «Голос» на странице: превью нарезки и профиль спикера. Громкость у них одна
+// (свойство спикера), значит ползунки обеих панелей обновляет один вызов (syncDbSliders).
+function voiceFxPanelHosts(){return ['pvvoice','spkVoice'].map(id=>$(id)).filter(Boolean);}
 function vfxEl(host,k){return host?host.querySelector('[data-vfx="'+k+'"]'):null;}
 function vstTitle(p){return (p&&(p.title||p.name))||((p&&p.path||'').replace(/^.*[\\\/]/,''));}
 // Обработка включена: шумодав или хоть один плагин с галкой. Это ЗЕРКАЛО серверного
@@ -497,21 +523,22 @@ function vfxDnUpdateSummary(host){
   const eng=vfxEngineSel(host);
   const str=voiceFxStrength(host);
   sum.textContent=vfxDnSummaryText(eng,str);}
-// Разметка блока. mode: panel — панель настроек (превью нарезки), summary — сводка
-// (редактор профиля), off — крутить нечего (у клипа нет спикера или профиль пропал).
+// Разметка блока. Один режим для двух мест — панель (mode:'panel'): превью нарезки и
+// профиль спикера. `o.spk` — спикер панели (ключ профиля, на который пишется voice_fx и
+// громкость); `o.audio` — панель со звуком клипа (только превью, см. voiceFxIsClip).
+// off — крутить нечего: у клипа нет спикера, профиль пропал или спикера ещё нет.
+// `o.note` и `o.tip` — свои слова вместо общих (текст «!» — тот же механизм).
 function voiceFxRender(host,fx,opts){
   if(!host)return;
   const o=opts||{},f=(fx&&typeof fx==='object')?fx:{};
+  const audio=!!o.audio;
   host.setAttribute('data-vfxroot','1');
   host.dataset.vfxmode=o.mode||'panel';
-  if(o.mode==='summary'){
-    host.innerHTML='<div class="hint">'+esc(voiceFxSummary(f))+'</div>'
-      +'<div class="hint" style="margin-top:6px;font-size:11.5px">'
-      +t('Настраивается в превью нарезки — на звуке клипа: там слышно, что выходит.')+'</div>';
-    return;}
+  host.setAttribute('data-spk',o.mode==='panel'?(o.spk||''):'');
+  host.setAttribute('data-audio',o.mode==='panel'&&audio?'1':'0');
   if(o.mode==='off'){
     host.innerHTML='<div class="hint">'+esc(o.note||t('У клипа нет спикера — обработка голоса настраивается в профиле спикера.'))
-      +' <span class="i" data-t="'+esc(t('Обработка голоса — настройка ПРОФИЛЯ спикера: у клипа без тега профиля нет, поэтому и панели нет. Поставь тег спикера на клип или открой клип с тегом.'))+'">!</span></div>';
+      +' <span class="i" data-t="'+esc(o.tip||t('Обработка голоса — настройка ПРОФИЛЯ спикера: у клипа без тега профиля нет, поэтому и панели нет. Поставь тег спикера на клип или открой клип с тегом.'))+'">!</span></div>';
     tipArm(host);
     return;}
   const dn=(f.denoise&&typeof f.denoise==='object')?f.denoise:{};
@@ -522,9 +549,12 @@ function voiceFxRender(host,fx,opts){
   const str=(eng==='deepfilter')?att:mix;
   const alt=(eng==='deepfilter')?mix:att;
   const vst=(Array.isArray(f.vst)?f.vst:[]).filter(v=>v&&v.path);
-  const curDb=(typeof CURSTYLE!=='undefined'&&CURSTYLE&&CURSTYLE.voice_db!=null)?CURSTYLE.voice_db:0;
+  // Громкость голоса — свойство спикера ЭТОЙ панели (одна на всех его клипов): читаем одной дверью.
+  const curDb=voiceDbOf(undefined,o.spk||'');
   const vdbVal=Math.round(curDb*2)/2;
   const vdbTxt=(vdbVal>=0?'+':'')+vdbVal.toFixed(1)+' dB';
+  // Слушать нельзя без звука клипа: «Куда играть» и «Настроить» неактивны, справка — на обёртке.
+  const devSel='<select data-vfx="device" style="width:auto;max-width:320px"'+(audio?'':' disabled')+'></select>';
   // ВЫКЛЮЧАТЕЛЬ ОДИН. Галок «Для нарезки» и «В итоговый трек» здесь больше нет:
   // включённая обработка работает везде и весь, и второго решения у неё нет.
   // Списки (движок, плагины, «куда играть») — по ширине содержимого, а не на всю
@@ -532,8 +562,10 @@ function voiceFxRender(host,fx,opts){
   let h='<div class="setrow" style="margin-bottom:10px">'
     +'<label data-t="'+esc(t('Громкость голоса спикера'))+'">'+t('Громкость')+'</label>'
     +'<span style="display:flex;gap:12px;align-items:center;flex:1;min-width:0">'
-    +'<input type="range" id="pvvoicedb" data-vfx="voice_db" min="-60" max="12" step="0.5" value="'+vdbVal+'" style="flex:1;min-width:0" oninput="setStyleDb(\'voice\',this.value)">'
-    +'<span id="pvvoicedbv" style="width:62px;text-align:right;font-variant-numeric:tabular-nums;font-size:12px">'+vdbTxt+'</span>'
+    // Ни id, ни «спикер открытого клипа»: ползунок знает своего спикера через панель
+    // (data-spk), и две панели на странице не делят один id.
+    +'<input type="range" data-vfx="spk_db" min="-60" max="12" step="0.5" value="'+vdbVal+'" style="flex:1;min-width:0" oninput="setVoiceDb(this.value,undefined,voiceFxHost(this).dataset.spk)">'
+    +'<span data-vfx="spk_dbv" style="width:62px;text-align:right;font-variant-numeric:tabular-nums;font-size:12px">'+vdbTxt+'</span>'
     +'</span></div>'
     +'<div class="sethdr">'+t('Цепочка обработки')+' <span class="i" data-t="'
     +esc(t('Цепочка обработки голоса: шумодав и плагины идут сверху вниз, в том порядке, в каком стоят в списке.'))+'">!</span></div>'
@@ -571,7 +603,7 @@ function voiceFxRender(host,fx,opts){
     +'<button class="sm" onclick="vstFxAdd(this)">'+t('+ Добавить плагин')+'</button></div>'
     +'<div class="setrow" style="margin-top:8px"><label data-t="'
     +esc(t('Устройство вывода для живого прослушивания в окне плагина. «По умолчанию» — системное. Настройка этой машины, а не спикера: запоминается в браузере.'))+'">'
-    +t('Куда играть')+'</label><select data-vfx="device" style="width:auto;max-width:320px"></select></div>'
+    +t('Куда играть')+'</label>'+(audio?devSel:noAudioWrap(devSel))+'</div>'
     +'<div class="row" style="gap:12px;align-items:center;margin-top:10px;flex-wrap:wrap">'
     +'<span class="muted" data-vfx="autosave" style="font-size:11.5px">'
     +t('Сохраняется само: закрыл окно плагина или отпустил ручку — настройки уже у спикера.')+'</span>'
@@ -579,9 +611,10 @@ function voiceFxRender(host,fx,opts){
     +'<div class="hint" data-vfx="status" style="margin-top:6px;font-size:11.5px"></div>';
   host.innerHTML=h;
   const box=vfxEl(host,'vst');
-  if(box)vst.forEach(p=>box.appendChild(vstRow(p)));
+  if(box)vst.forEach(p=>box.appendChild(vstRow(p,audio)));
   vstFxNote(host);
-  fxDeviceFill(host);
+  // Устройство вывода нужно только живому прослушиванию — в профиле его нет и не спрашиваем.
+  if(audio)fxDeviceFill(host);
   tipArm(host);}
 // Значения панели — то, что уедет в data.voice_fx профиля спикера. Ничего не включено и
 // список пуст → null: у профиля, который не трогали, поля voice_fx не появляется (как у
@@ -628,7 +661,7 @@ function dnAttenSync(el){
   if(isNaN(v)||v<0||v>100)v=vfxEngineSel(host)==='deepfilter'?VFX_DB_DEFAULT:VFX_MIX_DEFAULT;
   r.value=v;n.value=v;
   vfxDnUpdateSummary(host);
-  pvVoiceTune();}
+  pvVoiceTune(host);}
 // Смена движка шумодава. Ползунок один, а сила у движков своя (дБ против %):
 // значение прошлого движка уезжает в скрытое поле, из него же берётся значение
 // нового — иначе переключение туда-обратно молча теряло бы настройку. Плюс
@@ -646,24 +679,28 @@ function dnEngineSync(sel){
   const lab=vfxEl(host,'dn_label');
   if(lab){lab.textContent=vfxStrengthLabel(now);lab.setAttribute('data-t',vfxStrengthHint(now));}
   if(typeof voiceFxStatus==='function')voiceFxStatus(host,'');
-  if(typeof vtNote==='function'&&typeof ED!=='undefined')vtNote(ED,'');
+  // Надпись про голос клипа — только в панели клипа: профиль её не касается.
+  if(voiceFxIsClip(host)&&typeof vtNote==='function'&&typeof ED!=='undefined')vtNote(ED,'');
   voiceFxSepFill(host);                 // окружения для нового движка может не быть
   vfxDnUpdateSummary(host);
-  pvVoiceTune();}
+  pvVoiceTune(host);}
 // Одна строка цепочки: галка «вкл», название и кнопки. Иконки стрелок — SVG
 // (эмодзи в хроме запрещены, docs/DESIGN.md), подписи — через t().
 // Путь, имя и состояние плагина лежат в data-атрибутах строки: строка И ЕСТЬ запись
 // цепочки, поэтому порядок строк — это порядок обработки, и второй копии списка нет.
-function vstRow(p){
+function vstRow(p,audio){
   const el=document.createElement('div');el.className='setrow';
   el.setAttribute('data-vst','1');
   el.dataset.path=p.path||'';el.dataset.name=p.name||'';el.dataset.state=p.state||'';
+  // «Настроить» открывает окно плагина со ЗВУКОМ клипа — без клипа (профиль) неактивна.
+  const edit='<button class="sm" onclick="vstFxEdit(this)"'
+    +(audio?' data-t="'+esc(t('Окно плагина откроется СВЕРХУ, сразу: ручки слышно на звуке клипа в реальном времени, а настройки сохраняются сами — закрыл окно, и они уже у спикера.'))+'"':' disabled')
+    +'>'+t('Настроить')+'</button>';
   el.innerHTML='<label class="chk" style="flex:0 0 auto" data-t="'
     +esc(t('Плагин в цепочке: снятая галка — плагин пропускается'))+'">'
     +'<input type="checkbox" data-vfx="vst_on"'+(p.on!==false?' checked':'')+' onchange="vstFxOn(this)"></label>'
     +'<span class="grow" style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(vstTitle(p))+'</span>'
-    +'<button class="sm" onclick="vstFxEdit(this)" data-t="'
-    +esc(t('Окно плагина откроется СВЕРХУ, сразу: ручки слышно на звуке клипа в реальном времени, а настройки сохраняются сами — закрыл окно, и они уже у спикера.'))+'">'+t('Настроить')+'</button>'
+    +(audio?edit:noAudioWrap(edit))
     +'<button class="icon" aria-label="'+esc(t('Выше в цепочке'))+'" data-t="'+esc(t('Выше в цепочке'))+'"'
     +' onclick="vstFxMove(this,-1)">'+ico('arrow_up')+'</button>'
     +'<button class="icon" aria-label="'+esc(t('Ниже в цепочке'))+'" data-t="'+esc(t('Ниже в цепочке'))+'"'
@@ -685,19 +722,19 @@ function vstFxNote(host){
 // Включили/выключили шумодав: пересчитаться должно всё, что зависит от обработки, —
 // голос клипа (pvVoiceTune) и запечённый трек. Отдельного правила «включили обработку —
 // поставить галку» больше нет: выключатель один, и он же решение.
-function vstFxDn(el){pvVoiceTune();}
-function vstFxOn(el){pvVoiceTune();}
+function vstFxDn(el){pvVoiceTune(voiceFxHost(el));}
+function vstFxOn(el){pvVoiceTune(voiceFxHost(el));}
 function vstFxDel(el){
   const row=(el&&el.closest)?el.closest('[data-vst]'):null;if(!row)return;
   const host=voiceFxHost(el);row.remove();
-  if(host){vstFxNote(host);pvVoiceTune();}}
+  if(host){vstFxNote(host);pvVoiceTune(host);}}
 function vstFxMove(el,d){
   const row=(el&&el.closest)?el.closest('[data-vst]'):null;if(!row)return;
   const box=row.parentElement,rows=Array.from(box.querySelectorAll('[data-vst]'));
   const i=rows.indexOf(row),j=i+d;
   if(i<0||j<0||j>=rows.length)return;
   if(d<0)box.insertBefore(row,rows[j]);else box.insertBefore(row,rows[j].nextSibling);
-  pvVoiceTune();}
+  pvVoiceTune(voiceFxHost(el));}
 function vstFxAdd(el){
   const host=voiceFxHost(el);if(!host)return;
   const sel=vfxEl(host,'pick'),box=vfxEl(host,'vst');
@@ -709,9 +746,9 @@ function vstFxAdd(el){
   const have=Array.from(box.querySelectorAll('[data-vst]'))
     .some(r=>r.dataset.path===p.path&&(r.dataset.name||'')===(p.name||''));
   if(have){toast(t('Этот плагин уже в цепочке'));return;}
-  box.appendChild(vstRow({path:p.path,name:p.name||'',state:'',on:true}));
+  box.appendChild(vstRow({path:p.path,name:p.name||'',state:'',on:true},voiceFxIsClip(host)));
   vstFxNote(host);
-  pvVoiceTune();}
+  pvVoiceTune(host);}
 // Список найденных VST3 грузим при открытии панели или по кнопке «Обновить список».
 // Имена читает ОТДЕЛЬНЫЙ процесс (core/voicefx_scan): JUCE оставляет потоки чужого
 // плагина жить до конца процесса, поэтому в сервере плагин не грузится никогда.
@@ -849,10 +886,14 @@ function voiceFxSepWatch(host){
     else{progItem(t('окружение и модели RoFormer'),'done',{detail:t('готово')});
       progDone(t('RoFormer установлен — можно слушать'));
       if(typeof voiceFxStatus==='function')voiceFxStatus(host,'');
-      if(typeof vtNote==='function'&&typeof ED!=='undefined')vtNote(ED,'');
-      const fx=voiceFxRead(host);
-      voiceFxHostSync(fx,{force:true});}
-    pvVoiceTune();},VFXSEP_POLL);}
+      // Живой хост и голос клипа — только у панели клипа. Установка в профиле звука не
+      // касается: окружение нужно самой нарезке, а слушать в профиле всё равно нельзя.
+      if(voiceFxIsClip(host)){
+        if(typeof vtNote==='function'&&typeof ED!=='undefined')vtNote(ED,'');
+        const fx=voiceFxRead(host);
+        voiceFxHostSync(fx,{force:true});}}
+    // Опрос каждые 1.5 с: сохранять профиль на каждом тике незачем — только панели клипа.
+    if(voiceFxIsClip(host))pvVoiceTune(host);},VFXSEP_POLL);}
 // Окно плагина открывает СЕРВЕР (отдельным процессом: JUCE требует главный поток) — и
 // это ПАНЕЛЬ живого хоста клипа (core/voicefx_editor --live), а не отдельный процесс со
 // своим звуком. Модель как в Ableton/DaVinci: плагин — вставка на дорожке, и ПОКА ОКНО
@@ -1020,8 +1061,7 @@ function voiceFxHostGone(d,player){
 // этого ползунок громкости прослушивания его не касался бы вовсе. Второй копии
 // формулы нет: её зовут и правка любого из ползунков, и подъём хоста.
 function voiceFxLiveOutDb(){
-  const s=(typeof CURSTYLE!=='undefined'&&CURSTYLE)?CURSTYLE:{};
-  const vdb=s.voice_db!=null?+s.voice_db:0.;
+  const vdb=voiceDbOf();
   if(isNaN(vdb))return 0.;
   const vol=(typeof MEDIA_VOL==='number'&&isFinite(MEDIA_VOL))?Math.max(0,Math.min(1,MEDIA_VOL)):1;
   // Ползунок на нуле — тишина, а не «очень тихо»: Math.log10(0) даёт −Infinity, и
@@ -1086,6 +1126,9 @@ if(typeof window!=='undefined'&&typeof window.addEventListener==='function')wind
 async function vstFxEdit(el){
   const row=(el&&el.closest)?el.closest('[data-vst]'):null;if(!row)return;
   const host=voiceFxHost(el),box=row.parentElement;
+  // Окно плагина живёт на звуке клипа: в профиле спикера его не открывают (кнопка неактивна,
+  // это и страховка на случай, если разметка устарела).
+  if(!voiceFxIsClip(host)){toast(t('Слушать — в превью клипа этого спикера'));return;}
   if(typeof voiceFxStatus==='function')voiceFxStatus(host,'');
   if(typeof vtNote==='function'&&typeof ED!=='undefined')vtNote(ED,'');
   const idx=Array.from(box.querySelectorAll('[data-vst]')).indexOf(row);
@@ -1120,7 +1163,7 @@ function pvVoicePanel(){
     voiceFxRender(host,null,{mode:'off',
       note:t('Профиль спикера «{n}» не нашёлся в speakers/ — обработка голоса настраивается в его профиле.',{n:key})});
     return;}
-  voiceFxRender(host,prof.voice_fx,{mode:'panel'});
+  voiceFxRender(host,prof.voice_fx,{mode:'panel',spk:key,audio:true});
   vstFxList(host,false);
   voiceFxSepFill(host);       // есть ли окружение RoFormer: от этого — кнопка скачивания
   // Включённый ИИ-шумодав работает и в превью: голос ВСЕГО клипа считается сразу при
@@ -1133,31 +1176,38 @@ function pvVoicePanel(){
 // --------------------------------------------------------------------------- #
 // Сохранение настроек голоса — САМО, без кнопки
 // --------------------------------------------------------------------------- #
-// Две двери, и обе ведут в одно место — профиль спикера клипа:
-//   * ручки панели (шумодав, движок, цепочка) — после ЗАТИШЬЯ (`pvVoiceAuto`);
+// Две двери, и обе ведут в профиль спикера ПАНЕЛИ (её data-spk):
+//   * ручки панели (шумодав, движок, цепочка, громкость) — после ЗАТИШЬЯ (`pvVoiceAuto`);
 //   * окно плагина — по его закрытию, на СЕРВЕРЕ (`api/voicefx.py:_save_live`):
 //     состояние плагина знает только процесс окна, и забирать его фронту незачем.
-// Запись профиля у обеих дверей ОДНА — `pvVoiceSave` (свежий профиль с сервера,
-// правка ТОЛЬКО voice_fx): вторая копия «как сохранить профиль» разъехалась бы.
+// Панелей две — превью клипа и профиль спикера, и обе пишут ОДНО место: профиль того
+// спикера, чья панель. Запись одна — `pvVoiceSave` (свежий профиль с сервера, правка
+// ТОЛЬКО voice_fx): вторая копия «как сохранить профиль» разъехалась бы.
 // Затишье: ползунок сыплется на каждый пиксель, а сохранение — это файл профиля.
 const VFX_SAVE_QUIET=700;
 let VFXSAVET=0;
-function pvVoiceAuto(){
+function pvVoiceAuto(host){
   clearTimeout(VFXSAVET);
+  const h=host||$('pvvoice');
   VFXSAVET=setTimeout(()=>{VFXSAVET=0;
-    // Окно плагина открыто: там свои настройки, и записывать сейчас нечего — иначе
-    // автосохранение панели перетёрло бы состояние, которое вот-вот отдаст окно.
-    if(voiceFxWindowOn())return;
-    pvVoiceSave(null,{bake:true});},VFX_SAVE_QUIET);}
+    // Окно плагина открыто у ЭТОГО спикера: его настройки сейчас отдаёт окно, и писать
+    // поверх них нечего — иначе автосохранение перетёрло бы состояние, которое вот-вот
+    // вернётся от окна. Окно другого спикера (открыт клип B, правим профиль A) не мешает.
+    const key=h?(h.dataset.spk||''):'';
+    if(key&&key===VOICEFXSPK&&voiceFxWindowOn())return;
+    pvVoiceSave(null,{bake:true,host:h});},VFX_SAVE_QUIET);}
 // Записать профиль под ТЕКУЩИЕ значения панели. Профиль читаем СВЕЖИМ с сервера и
 // правим в нём ОДНО поле: правки чужих полей (LUT, рамка кадра, папки), сделанные
-// в соседних панелях, не затираются. `bake` — пересчитать ли голос клипа сразу:
-// при закрытии окна плагина это делает сервер, и второй счёт не нужен.
+// в соседних панелях, не затираются. `bake` — пересчитать ли голос клипа сразу, и
+// только если клип открыт у ЭТОГО спикера (правка профиля B голос клипа A не трогает).
+// При закрытии окна плагина пересчёт делает сервер, и второй счёт не нужен.
 async function pvVoiceSave(btn,opts){
   const o=opts||{};
-  const host=o.host||voiceFxHost(btn)||$('pvvoice'),key=VOICEFXSPK;
+  const host=o.host||voiceFxHost(btn)||$('pvvoice');
+  // Спикер — ЯВНЫЙ: ключ панели (data-spk), а не спикер открытого клипа (VOICEFXSPK).
+  const key=host?(host.dataset.spk||''):'';
   if(!host||host.dataset.vfxmode!=='panel')return;
-  if(!key){toast(t('У клипа нет спикера — сохранять некуда'));return;}
+  if(!key){toast(t('Спикер не выбран — сохранять некуда'));return;}
   // Пустая панель и профиль без обработки: сохранять нечего (профиль не должен
   // обзаводиться полем voice_fx от одного открытия превью).
   if(voiceFxRead(host)==null&&!(SPEAKERS[key]&&SPEAKERS[key].voice_fx))return;
@@ -1178,7 +1228,19 @@ async function pvVoiceSave(btn,opts){
   SPEAKERS[d.key||key]=data;
   voiceFxStatus(host,t('сохранено у спикера «{n}»',{n:data.label||key}));
   uiLog(t('обработка голоса спикера «{n}» сохранена: ',{n:data.label||key})+voiceFxSummary(fx||{}));
-  if(o.bake!==false)pvVoiceBake();}   // .voice.wav для ЭТОГО клипа — в фоне (60-preview.js)
+  // Вторая панель того же спикера (превью клипа или профиль) — из сохранённого, а не из
+  // старого вида. Сначала перерисовка, потом пересчёт: голос клипа берёт значения ИЗ панели.
+  voiceFxSyncPanels(key,host,fx);
+  if(o.bake!==false&&key===VOICEFXSPK)pvVoiceBake();}   // .voice.wav ЭТОГО клипа — в фоне (60-preview.js)
+// Правка в одной панели спикера — и вторая панель того же спикера показывает сохранённое.
+// Панель-источник не трогаем: её перерисовка выбила бы ползунок из-под пальца. Панель
+// без спикера (режим off) и панель другого спикера пропускаем.
+function voiceFxSyncPanels(key,src,fx){
+  voiceFxPanelHosts().forEach(h=>{
+    if(h===src||h.dataset.vfxmode!=='panel'||h.dataset.spk!==key)return;
+    voiceFxRender(h,fx,{mode:'panel',spk:key,audio:voiceFxIsClip(h)});
+    vstFxList(h,false);
+    voiceFxSepFill(h);});}
 async function saveSpeaker(){
   const label=val('spk_label').trim();
   if(!label){toast(t('Дай спикеру имя'));$('spk_label').focus();return;}
@@ -1748,17 +1810,84 @@ function pctToPxY(pct){return Math.round(((parseFloat(pct)||0)/100)*styleFrameDi
 // число справа от ползунков блока звука превью: «−20», «0», «+3» (знак минус настоящий; dB — в тултипе группы)
 function ipvDbText(db){const v=Math.round((+db||0)*2)/2;return (v<0?'−':v>0?'+':'')+Math.abs(v);}
 function syncDbSliders(){const s=CURSTYLE||{};
-  const md=(s.music_db!=null?s.music_db:-20),vd=(s.voice_db!=null?s.voice_db:0);
+  const md=(s.music_db!=null?s.music_db:-20),vd=voiceDbOf();
   const m=$('ipvmusicdb');if(m)m.value=Math.round(md*2)/2;
   const v=$('ipvvoicedb');if(v)v.value=Math.round(vd*2)/2;
   const mv=$('ipvmusicdbv');if(mv)mv.textContent=ipvDbText(md);
   const vv=$('ipvvoicedbv');if(vv)vv.textContent=ipvDbText(vd);
-  const pv=$('pvvoicedb');if(pv)pv.value=Math.round((s.voice_db!=null?s.voice_db:0)*2)/2;
-  const pvv=$('pvvoicedbv');if(pvv){
-    const val=(s.voice_db!=null?s.voice_db:0);
-    pvv.textContent=(val>=0?'+':'')+val.toFixed(1)+' dB';}
+  // Громкость голоса — одна на спикера, а панелей с ней две (превью и профиль): ползунки
+  // обеих обновляем здесь же, иначе профиль показывал бы старое, пока открыт клип.
+  // Значение — ЧУЖОГО спикера тоже: профиль A показывает A, даже когда открыт клип B.
+  voiceFxPanelHosts().forEach(h=>{
+    const pdb=voiceDbOf(undefined,h.dataset.spk||'');
+    const pv=vfxEl(h,'spk_db');if(pv)pv.value=Math.round(pdb*2)/2;
+    const pvv=vfxEl(h,'spk_dbv');if(pvv)pvv.textContent=(pdb>=0?'+':'')+pdb.toFixed(1)+' dB';});
   if(typeof syncSldnums==='function')syncSldnums();
   updateStyleDiffDots();}
+
+// ===== Громкость голоса: ОДНА дверь чтения и ОДНА дверь записи =====
+// Громкость голоса — свойство СПИКЕРА (поле громкости его профиля): одна на всех клипов.
+// Чей спикер сейчас «в деле»: открытого клипа (его тег, шаги 2–3); без открытого клипа —
+// спикер верхнего селектора шага 1 (новая нарезка). Клип без спикера — громкость своего
+// стиля (поле громкости CURSTYLE), как было. Лестница та же, что у сервера (правило
+// правило громкости спикера в core/speakers.py): своё значение профиля → громкость стиля спикера → 0. Поле громкости профиля и CURSTYLE читаются и пишутся только в этих функциях
+// и в setStyleDb.
+// `spk` — явный спикер (панель: своё data-spk). Он важнее открытого клипа: правка громкости
+// в профиле A при открытом клипе B пишет в A. Без `spk` — как раньше.
+function voiceDbSpeakerKey(c,spk){
+  if(spk)return spk;
+  if(c===undefined){
+    const open=(typeof curAE!=='undefined'&&curAE>=0)?CLIPS[curAE]:null;
+    if(open)return clipSpeaker(open);
+    return ($('speaker')?val('speaker'):'')||'';}
+  return clipSpeaker(c);}
+// Громкость голоса ведёт профиль спикера (а не стиль клипа): true — у «дела» есть профиль.
+function voiceDbBySpeaker(c){const k=voiceDbSpeakerKey(c);return !!(k&&SPEAKERS&&SPEAKERS[k]);}
+// Читать громкость голоса (дБ): c — клип; без аргумента — «дело» (открытый клип или шаг 1).
+function voiceDbOf(c,spk){
+  const k=voiceDbSpeakerKey(c,spk),p=(k&&SPEAKERS)?SPEAKERS[k]:null;
+  if(p){
+    if(typeof p.voice_db==='number'&&isFinite(p.voice_db))return p.voice_db;
+    const st=(p.style&&STYLES)?STYLES[p.style]:null;
+    return (st&&typeof st.voice_db==='number'&&isFinite(st.voice_db))?st.voice_db:0;}
+  const s=(typeof CURSTYLE!=='undefined'&&CURSTYLE)?CURSTYLE:{};
+  return (s.voice_db!=null&&isFinite(+s.voice_db))?+s.voice_db:0;}
+// Записать громкость голоса (дБ): спикер есть — в его профиль (отложенное сохранение);
+// спикера нет — громкость стиля через setStyleDb (там точка «стиль изменён»).
+function setVoiceDb(v,c,spk){
+  const db=Math.max(-60,Math.min(12,Math.round((parseFloat(v)||0)*2)/2));
+  const k=voiceDbSpeakerKey(c,spk),p=(k&&SPEAKERS)?SPEAKERS[k]:null;
+  if(!p){setStyleDb('voice',db);return;}
+  p.voice_db=db;
+  syncDbSliders();                              // все ползунки громкости голоса — по новому значению
+  if(typeof stRefreshSpeakerFields==='function')stRefreshSpeakerFields();   // поле в панели стиля
+  applyDbGains();
+  voiceDbSaveSoon(k);}
+// Громкость спикера уходит в профиль с задержкой: тянешь ползунок — десятки значений, а
+// сохранить надо один раз, последним. Профиль целиком (как saveSpeakerRenderdir): меняется
+// только поле громкости. Pending по ключам: правка у спикера А, потом у Б в ту же секунду
+// не должна потерять А.
+const VOICEDB_SAVE_MS=400;
+let VOICEDB_SAVE_T=null;const VOICEDB_PENDING={};
+function voiceDbSaveSoon(k){
+  VOICEDB_PENDING[k]=true;
+  if(VOICEDB_SAVE_T)clearTimeout(VOICEDB_SAVE_T);
+  VOICEDB_SAVE_T=setTimeout(voiceDbSaveNow,VOICEDB_SAVE_MS);}
+async function voiceDbSaveNow(){
+  VOICEDB_SAVE_T=null;
+  const keys=Object.keys(VOICEDB_PENDING);
+  keys.forEach(k=>{delete VOICEDB_PENDING[k];});
+  for(const k of keys){
+    const p=(SPEAKERS&&SPEAKERS[k])||null;if(!p)continue;
+    const data=JSON.parse(JSON.stringify(p));
+    let d;
+    // Имя — КЛЮЧ профиля, а не подпись: подпись могла переименоваться, и сохранение по ней
+    // завело бы второй файл рядом со старым (как и у сохранения voice_fx: pvVoiceSave).
+    try{d=await (await fetch('/api/savespeaker',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name:k,data:data})})).json();}
+    catch(e){toast(t('Громкость голоса не сохранена — сервер не ответил'));uiLog('savespeaker(громкость): '+e);continue;}
+    if(!d.ok){toast(errText(d)||t('Громкость голоса не сохранена'));uiLog('savespeaker(громкость): '+JSON.stringify(d).slice(0,200));}}}
+
 function setStyleDb(which,v){if(!CURSTYLE)CURSTYLE=JSON.parse(JSON.stringify(STYLES.base||{}));
   const db=Math.max(-60,Math.min(12,Math.round((parseFloat(v)||0)*2)/2));
   if(which==='music'){CURSTYLE.music_db=db;}

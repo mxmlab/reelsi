@@ -450,11 +450,12 @@ function podWheelBind(tl){
       podPan(dx/w*(POD.v1-POD.v0));podRenderTl();},
     zoom:(f,x)=>{if(!POD.dur)return;podZoom(f,x);}});
 }
-// Плейхед ушёл за край окна (игра, переход на кусок) — окно едет, чтобы он был виден.
-// Пока тянут пустое место, окно не трогаем: иначе съезжало бы под пальцем.
-function podKeepHead(){
-  if(tlPanning($('pod_tl')))return;   // протяжка окна (средняя кнопка, линейка) двигает его сама: плейхед не возвращает
-  const r=tlFollowHead(POD.v0,POD.v1,podNow(),POD.dur,POD_VIEW_MIN);
+// Явный переход к куску («Играть кусок») показывает его: окно встаёт на t, если t вне окна (tlReveal).
+// Игра, перемотка и протяжка по самому «Вся запись» окно не двигают — решение владельца 2026-10-12.
+// Протяжка окна (средняя кнопка, линейка) идёт своим путём — её не перебиваем.
+function podRevealAt(tm){
+  if(tlPanning($('pod_tl')))return;
+  const r=tlReveal(POD.v0,POD.v1,tm,POD.dur,POD_VIEW_MIN);
   POD.v0=r[0];POD.v1=r[1];
 }
 
@@ -530,15 +531,17 @@ function podDownTl(e){
 
 // Средняя кнопка и линейка: протяжка окна — общая tlMidPan (00-core.js). Окно едет за курсором
 // ровно на пройденное расстояние; курсор захвачен, поэтому тяга не теряет окно за краем холста.
+// Линейка и средняя кнопка. Окно на всю запись тоже идёт сюда: протяжка там безвредна (окно не
+// сдвигается), а клик по линейке должен ставить плейхед и при полном окне.
 function podMid(e){
   if(!POD.dur)return;
-  if(POD.v1-POD.v0>=POD.dur)return;
   const el=$('pod_tl');if(!el)return;
   tlMidPan(el,e,{snap:()=>({v0:POD.v0,v1:POD.v1}),apply:(dx,s)=>{
     const cv=podTlCanvas();if(!cv)return;
     const w=cv.getBoundingClientRect().width||1;
     const r=podPanBy(s.v0,s.v1,-dx,w,POD.dur);     // podPanBy: dx > 0 — окно вправо, тянем вправо — окно назад
-    POD.v0=r[0];POD.v1=r[1];podRenderTl();}});
+    POD.v0=r[0];POD.v1=r[1];podRenderTl();},
+    click:cx=>podSeek(podT(cx))});                 // клик по линейке — плейхед в точку клика, окно стоит
 }
 // Курсор над плейхедом — ew-resize: за него тянут (см. podDownTl)
 function podTlHover(e){
@@ -654,7 +657,6 @@ function podSeek(tm){
   POD.stopAt=null;
   const max=POD.dur>0?POD.dur:tm;
   v.currentTime=Math.max(0,Math.min(tm,max));
-  if(!POD.drag)podKeepHead();
   podRenderTime();podRenderTl();
 }
 
@@ -665,7 +667,7 @@ function podPlaySeg(id){
   POD.sel=id;
   v.currentTime=sg.start;
   POD.stopAt=sg.end;
-  podKeepHead();
+  podRevealAt(sg.start);   // явный переход из списка: кусок виден, даже если окно ушло
   v.play().catch(()=>{});
   podSyncPlayBtn();podRenderSegs();podRenderTl();
 }
@@ -673,16 +675,17 @@ function podPlaySeg(id){
 function podOnTime(){
   const v=podVideo();if(!v)return;
   if(POD.stopAt!=null&&v.currentTime>=POD.stopAt){v.pause();POD.stopAt=null;}
-  podRenderTime();podKeepHead();podRenderTl();
+  podRenderTime();podRenderTl();
 }
 
-// Во время игры окно едет за плейхедом по кадрам: timeupdate приходит ~4 раза в секунду,
-// на 60 px/s это прыжки по 15 px — видно глазом. Кадр останавливается сам при паузе.
+// Во время игры плейхед перерисовывается по кадрам: timeupdate приходит ~4 раза в секунду,
+// на 60 px/s это прыжки по 15 px — видно глазом. Окно при этом не едет (решение 2026-10-12);
+// кадр только рисует плейхед на месте. Кадр останавливается сам при паузе.
 function podFollow(){
   POD.raf=0;
   const v=podVideo();
   if(!POD.open||!v||v.paused)return;
-  podKeepHead();podRenderTl();
+  podRenderTl();
   POD.raf=requestAnimationFrame(podFollow);
 }
 function podFollowStart(){if(!POD.raf)POD.raf=requestAnimationFrame(podFollow);}
@@ -917,11 +920,14 @@ async function podConvertPicked(){
   if(!(await podFlush()))return;
   if(PODRUNNING){toast(t('Подкаст уже обрабатывается — дождись конца'));return;}
   const ids=POD.picked.filter(id=>podSegIdx(id)>=0);
+  // speaker — как у podConvert: без него рилсы уходят в запасную папку подкаста, а не в папку
+  // камеры 1 спикера (владелец, 2026-10-11). Подсказку про запасную папку — той же podFallbackToast.
   let r;
   try{r=await (await fetch('/api/podcast_convert',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({dir:POD.dir,ids:ids})})).json();}
+    body:JSON.stringify({dir:POD.dir,ids:ids,speaker:val('speaker')})})).json();}
   catch(e){toast(t('Сервер не ответил: ')+e);uiLog('podcast: '+e);return;}
   if(r.error){toast('⚠ '+errText(r));uiLog(t('подкаст: ')+errText(r));return;}
+  podFallbackToast(r);
   PODLOGN=0;
   const st=$('podcast_status');if(st){st.className='muted mono';st.textContent=t('запуск…');}
   podcastPoll();

@@ -1368,7 +1368,7 @@ function initNumDrag(span, input, field) {
       const slider = document.getElementById('st_' + field.key + '_slider');
       if (slider) slider.value = Math.max(field.min != null ? field.min : -Infinity, Math.min(field.max != null ? field.max : Infinity, fin));
       if (field.ctl === 'angle') updateAngleDial(field.key, fin);
-      stEdit();
+      stFieldEdit(field);
     }
   };
 
@@ -1398,7 +1398,7 @@ function initNumDrag(span, input, field) {
       const slider = document.getElementById('st_' + field.key + '_slider');
       if (slider) slider.value = Math.max(field.min != null ? field.min : -Infinity, Math.min(field.max != null ? field.max : Infinity, v));
       if (field.ctl === 'angle') updateAngleDial(field.key, v);
-      stEdit();
+      stFieldEdit(field);
       if (field.hint === 'rotomask' && typeof rotoMaskSync === 'function') rotoMaskSync();
     }
   });
@@ -1435,7 +1435,7 @@ function initNumDrag(span, input, field) {
         const slider = document.getElementById('st_' + field.key + '_slider');
         if (slider) slider.value = Math.max(field.min != null ? field.min : -Infinity, Math.min(field.max != null ? field.max : Infinity, v));
         if (field.ctl === 'angle') updateAngleDial(field.key, v);
-        stEdit();
+        stFieldEdit(field);
         if (field.hint === 'rotomask' && typeof rotoMaskSync === 'function') rotoMaskSync();
       }
     };
@@ -1545,6 +1545,29 @@ function updateAngleDial(key, deg) {
   needle.setAttribute('y2', y2.toFixed(1));
 }
 
+// Правка числового поля. Громкость голоса спикера (флаг `speaker_db` в схеме) — своя дверь
+// setVoiceDb: в стиль не пишется и «стиль изменён» не загорается. Остальные поля — как были.
+function stFieldEdit(field) {
+  if (field && field.speaker_db && typeof voiceDbBySpeaker === 'function' && voiceDbBySpeaker()) {
+    const sp = document.getElementById('st_' + field.key + '_val');
+    const v = parseFloat(String(sp ? sp.textContent : '').replace(/−/g, '-').replace(/^\+/, ''));
+    if (!isNaN(v) && typeof setVoiceDb === 'function') setVoiceDb(v);
+    return;
+  }
+  stEdit();
+}
+
+// Поля громкости голоса спикера — обновить показ (после правки ползунками шагов 1–3).
+function stRefreshSpeakerFields() {
+  if (!STSCHEMA || !STSCHEMA.layers) return;
+  (function walk(items) {
+    for (const it of items) {
+      if (it.type === 'field' && it.speaker_db) stRefresh(it.key);
+      if (it.items) walk(it.items);
+    }
+  })(STSCHEMA.layers);
+}
+
 function stSliderInput(key, val) {
   const field = findFieldByKey(key);
   if (!field) return;
@@ -1558,7 +1581,7 @@ function stSliderInput(key, val) {
   }
   if (input) input.value = v;
   if (field.ctl === 'angle') updateAngleDial(key, v);
-  stEdit();
+  stFieldEdit(field);
   if (field.hint === 'rotomask' && typeof rotoMaskSync === 'function') rotoMaskSync();
 }
 
@@ -1641,8 +1664,10 @@ function fillStyleFields() {
         // Ручки выбора трека показывают ЭФФЕКТИВНОЕ значение клипа (переопределение или
         // стиль) — своя дверь, а не значение CURSTYLE: у клипа со своим треком поля
         // обязаны показывать именно его, иначе «стоит файл А, а играет Б».
+        // Громкость голоса спикера показывает дверь спикера (voiceDbOf), а не стиль клипа.
         let val = (item.track && typeof musicFieldValue === 'function')
-          ? musicFieldValue(item.key) : s[item.key];
+          ? musicFieldValue(item.key)
+          : (item.speaker_db && typeof voiceDbOf === 'function') ? voiceDbOf() : s[item.key];
         const isCam2Field = item.key && item.key.startsWith('lm2_');
         if (isLm2Linked && isCam2Field) {
           const k1 = 'lm_' + item.key.slice(4);
@@ -1803,6 +1828,9 @@ function stEdit() {
   function walk(items) {
     for (const item of items) {
       if (item.type === 'field') {
+        // Громкость голоса спикера пишет свою дверь (setVoiceDb), а не стиль: при спикере
+        // поле стиля не читаем и не пишем — иначе правка громкости пометила бы стиль.
+        if (item.speaker_db && typeof voiceDbBySpeaker === 'function' && voiceDbBySpeaker()) continue;
         // Ручки выбора трека стиль НЕ пишут, когда правят ПЕРЕОПРЕДЕЛЕНИЕ клипа: их
         // правку доводит своя дверь musicFieldEdit, и запись их значения в CURSTYLE
         // означала бы «сменил трек у ролика — изменил стиль всем». В области «всем
@@ -2072,6 +2100,8 @@ function updateStyleDiffDots() {
   }
 
   function isFieldChanged(field) {
+    // Громкость голоса спикера — не поле стиля: точка «стиль изменён» на ней не горит.
+    if (field.speaker_db && typeof voiceDbBySpeaker === 'function' && voiceDbBySpeaker()) return false;
     const curVal = getNormVal(s, field.key, field.nullable);
     const defVal = getNormVal(orig, field.key, field.nullable);
 
@@ -2285,7 +2315,8 @@ function stRefresh(key) {
   if (!field) return;
   const s = CURSTYLE || {};
   const val = (field.track && typeof musicFieldValue === 'function')
-    ? musicFieldValue(key) : s[key];
+    ? musicFieldValue(key)
+    : (field.speaker_db && typeof voiceDbOf === 'function') ? voiceDbOf() : s[key];
   const view = stView(field, val);
 
   if (field.ctl === 'bool') {

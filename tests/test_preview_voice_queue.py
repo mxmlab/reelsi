@@ -37,6 +37,13 @@ sys.path.insert(0, ROOT)
 
 CORE_JS = os.path.join(ROOT, "static", "app", "00-core.js")
 PREVIEW_JS = os.path.join(ROOT, "static", "app", "60-preview.js")
+STYLES_JS = os.path.join(ROOT, "static", "app", "95-styles.js")
+# Дверь громкости голоса (95-styles.js) — боевая; стенду нужен только её контекст.
+VOICE_DOOR = r"""
+let curAE=-1,CLIPS=[],SPEAKERS={};
+const $=()=>null,val=()=>'';
+function clipSpeaker(c){return (c&&c.job&&c.job.speaker)||'';}
+"""
 
 node = pytest.mark.skipif(not shutil.which("node"),
                           reason="стенд требует node в PATH")
@@ -97,7 +104,10 @@ MG={connect(){},gain:{value:1}};
 def _run(tmp_path, body):
     core = _src(CORE_JS)
     prev = _src(PREVIEW_JS)
-    script = (STUBS + "\n"
+    styles = _src(STYLES_JS)
+    script = (STUBS + "\n" + VOICE_DOOR + "\n"
+              + "\n".join(_func(styles, f) for f in ("voiceDbSpeakerKey", "voiceDbBySpeaker", "voiceDbOf"))
+              + "\n"
               + "\n".join(_let(prev, d) for d in LETS_PREVIEW) + "\n"
               + "\n".join(_func(core, f) for f in FUNCS_CORE) + "\n"
               + "\n".join(_func(prev, f) for f in FUNCS_PREVIEW) + "\n"

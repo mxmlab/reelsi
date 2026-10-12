@@ -89,6 +89,9 @@ def _run_node(tmp_path, name, body, with_styles=False):
     src = DOM_STUB + BROWSER_GLOBALS + _env_src() + _src(PANEL_JS)
     if with_styles:
         src += _src(STYLES_JS)
+    # Дверь громкости голоса (95-styles.js) читает спикера открытого клипа: тег клипа
+    # стенду не нужен, функция — заглушка (настоящая живёт в 40-queue.js, сюда не грузим).
+    src += "\nfunction clipSpeaker(c){return (c&&c.job&&c.job.speaker)||'';}\n"
     src += "\nSTSCHEMA = {base: BASE, layers: LAYERS};\n"
     src += body
     with io.open(path, "w", encoding="utf-8") as f:
@@ -547,6 +550,7 @@ def _run_node_full(tmp_path, name, body, with_inserts=False):
     src = DOM_STUB + BROWSER_GLOBALS + _env_src() + _src(PANEL_JS) + _src(STYLES_JS) + _src(AE_JS)
     if with_inserts:
         src += _src(INSERTS_JS)
+    src += "\nfunction clipSpeaker(c){return (c&&c.job&&c.job.speaker)||'';}\n"
     src += "\nSTSCHEMA = {base: BASE, layers: LAYERS};\n"
     src += body
     with io.open(path, "w", encoding="utf-8") as f:

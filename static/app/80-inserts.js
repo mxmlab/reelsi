@@ -113,12 +113,15 @@ function renderSubRowsList(){
     el.setAttribute('role','button');
     el.dataset.t=t('Клик — перейти к этой строке');
     el.innerHTML='<span class="subrow-time mono muted">'+fmtT(sub.s)+' – '+fmtT(sub.e)+'</span><span class="subrow-text">'+esc(sub.w)+'</span>';
-    el.onclick=()=>ipvSeekTo(sub.s);
-    el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();ipvSeekTo(sub.s);}};
+    el.onclick=()=>subrowGo(sub.s);
+    el.onkeydown=e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();subrowGo(sub.s);}};
     host.appendChild(el);
   });
   subrowHighlight(ipvNow());
 }
+// Клик или Enter по строке списка субтитров — явный переход к ней: плейхед на начало строки, а лента
+// вставок показывает это место (itlRevealAt, 85-inserts-view.js), если оно вне видимого окна.
+function subrowGo(s){ipvSeekTo(s);itlRevealAt(s);}
 function subrowHighlight(tm){
   const host=$('subrowslist');if(!host)return;
   const subs=(IPV.plan&&IPV.plan.subs)||[];

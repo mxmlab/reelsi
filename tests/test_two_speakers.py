@@ -486,8 +486,12 @@ def test_voice_profile_of_the_panel_belongs_to_the_clip(tmp_path):
     assert res["panel"]["spk"] == "СпикерА", res["panel"]
     assert res["panelB"]["spk"] == "СпикерБ", res["panelB"]
     assert res["panelNone"]["spk"] == "", res["panelNone"]
-    assert res["panel"]["rend"][0] == {"prof": {"denoise": "a"}, "opts": {"mode": "panel"}}, res
-    assert res["panelB"]["rend"][0] == {"prof": {"denoise": "b"}, "opts": {"mode": "panel"}}, res
+    # Панель клипа несёт СВОЕГО спикера явно (spk) и звук клипа (audio): профиль в ней
+    # берётся от клипа, а не от того, что открыто последним
+    assert res["panel"]["rend"][0] == {"prof": {"denoise": "a"},
+                                       "opts": {"mode": "panel", "spk": "СпикерА", "audio": True}}, res
+    assert res["panelB"]["rend"][0] == {"prof": {"denoise": "b"},
+                                        "opts": {"mode": "panel", "spk": "СпикерБ", "audio": True}}, res
     assert res["panelNone"]["rend"][0]["opts"] == {"mode": "off"}, res["panelNone"]
     assert "СпикерВ" not in json.dumps(res, ensure_ascii=False), res
 

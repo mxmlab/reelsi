@@ -911,13 +911,12 @@ def _fn_body(src, start, end=None):
     return src[i:src.index(end, i)] if end else src[i:]
 
 
-def test_speaker_voice_block_is_a_summary_only():
-    """В профиле спикера — ТОЛЬКО сводка значений (#spkVoice), ручек там нет.
+def test_speaker_voice_block_is_the_panel_without_listening():
+    """В профиле спикера — та же панель «Голос» (#spkVoice), что в превью, но без звука.
 
-    Крутят обработку голоса в одном месте — в панели «Голос» превью нарезки
-    (#pvvoice), где её слышно на звуке клипа. Ручки в профиле означали бы вторую
-    копию разметки и второго читателя тех же значений (владелец: «в профиле хранятся
-    только значения»).
+    Владелец: в профиле спикера править можно так же, как в любом клипе, без
+    прослушивания. Разметка одна (voiceFxRender), старые id ручек профиля не
+    возвращаются; «Куда играть» и «Настроить» там неактивны — звука клипа в профиле нет.
     """
     html = _read(os.path.join("templates", "index.html"))
     assert html.count('id="spkVoice"') == 1, "в модалке спикера нет (или задвоена) сводка #spkVoice"
@@ -931,19 +930,19 @@ def test_speaker_voice_block_is_a_summary_only():
         "блок голоса должен идти перед блоком картинок-вставок"
 
 
-def test_speaker_editor_shows_summary_and_keeps_voice_fx_untouched():
-    """openSpeaker рисует сводку, saveSpeaker voice_fx НЕ трогает вовсе.
+def test_speaker_editor_draws_panel_and_keeps_voice_fx_untouched():
+    """openSpeaker рисует панель спикера, saveSpeaker voice_fx НЕ трогает вовсе.
 
-    Поле voice_fx пишет только панель превью: если редактор профиля станет писать
-    его из своей разметки, он затрёт настройки пустотой — ручек-то у него больше нет.
+    Поле voice_fx пишет панель (pvVoiceSave по данным своего спикера): если редактор
+    профиля станет писать его из своего снимка, он затрёт свежие настройки старыми.
     """
     js = _read(os.path.join("static", "app", "95-styles.js"))
     save = _fn_body(js, "async function saveSpeaker()", "\nasync function delSpeaker")
     assert "data.voice_fx" not in save, "редактор профиля пишет voice_fx из своей разметки"
     assert "spkVoiceData" not in js and "spkVoiceFill" not in js, "вернулась старая пара блок/чтение"
     opn = _fn_body(js, "function openSpeaker(key)", "\nasync function saveSpeaker")
-    assert "voiceFxRender($('spkVoice'),p.voice_fx,{mode:'summary'})" in opn, \
-        "openSpeaker не рисует сводку голоса той же функцией разметки"
+    assert "voiceFxRender(vh,p.voice_fx,{mode:'panel',spk:SPKEDIT,audio:false})" in opn, \
+        "openSpeaker не рисует панель голоса той же функцией разметки"
     # Роуты обработки: панель зовёт окно плагина и список плагинов, а плеер превью —
     # дверь запекания голоса всего клипа (`/api/voicefx_bake`), готовый трек играется
     # через /api/media. Окна по 20 с больше нет: она считала шумодав заново на каждом

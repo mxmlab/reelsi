@@ -330,7 +330,7 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
                highlights: Any = None, hl_breaks: Any = None, hl_count: Any = None, hl_joins: Any = None, inserts: Any = None, censor_audio: bool = True, intro: Any = None,
                intro_remove: Any = None, intro_splits: Any = None, ncams: int | None = None, intro_mode: str = "word",
                roto: bool = False, roto_bottom: float = 0.0, roto_device: Any = None, style: Any = None,
-               music_random: bool = False, emit: Any = None,
+               music_random: bool = False, emit: Any = None, speaker: Any = None,
                include_xml_inserts: bool = True, cancel: Any = None, word_timings: Any = None,
                caption: Any = None, glitch_glow: str = "builtin") -> dict[str, Any]:
     """ПЛАН СЦЕНЫ: вся арифметика сборки, без записи .jsx и без GPU.
@@ -376,6 +376,15 @@ def scene_plan(xml_path: str, cam1_scale: Any = None,   # None -> авто по 
             for xi in xml_inserts]
     from core import styles as _styles  # пресет стиля (шрифт/цвет/звуки/рото/вставки)
     st = _styles.resolve(style)
+    # Громкость голоса — свойство СПИКЕРА клипа (его профиль, иначе стиль спикера), а не
+    # клипа: у всех клипов одного спикера она одна. `speaker` — тег клипа; без тега или
+    # без профиля громкость остаётся от стиля клипа. Копия st: resolve отдаёт словарь, а
+    # правило громкости живёт в одном месте — speakers.voice_db_of.
+    if speaker:
+        from core import speakers as _speakers
+        prof = _speakers.load(speaker)
+        if prof is not None:
+            st = dict(st, voice_db=_speakers.voice_db_of(prof))
     # Стиль читается ОДИН раз: дальше scene_plan берёт значения из структуры,
     # а шесть модулей plan_* получают её одним полем style=. Сырой st нужен только на
     # резолв и на дисклеймер/ризер ниже — их же читает и структура.

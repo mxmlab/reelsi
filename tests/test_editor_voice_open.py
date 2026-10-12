@@ -49,6 +49,8 @@ VOICE_FUNCS = (
     "voiceFxOther", "voiceFxStatus", "vfxEngine", "vfxEngineSel", "vfxEngName",
     "vfxStrengthLabel", "vfxStrengthHint", "vfxAltDefault", "vstRow", "vstFxNote",
     "vfxDnSummaryText", "vfxDnToggle", "vfxDnUpdateSummary",
+    # громкость голоса — боевая дверь (eaGain и хост её читают)
+    "voiceDbSpeakerKey", "voiceDbBySpeaker", "voiceDbOf",
     "voiceFxHostKey", "voiceFxHostPost", "voiceFxHostSync", "voiceFxHostStart",
     "voiceFxHostPoll", "voiceFxHostNotes", "voiceFxHostGone", "voiceFxHostStop",
     "pvVoicePanel",
@@ -77,10 +79,10 @@ PREVIEW_FUNCS = (
 EDITOR_FUNCS = (
     "edOpen", "edResize", "edTotal", "edBlockAt", "edCutTime", "edCutOf", "edS2X", "edX2S",
     "edUI", "edWords", "edSeek", "edToggle", "edPlay", "edPause",
-    "edTake", "edJump", "edVideoSeek", "edFollow", "edArm", "edTick", "edFollowView",
+    "edTake", "edJump", "edVideoSeek", "edFollow", "edArm", "edTick",
 )
-# Окно за плейхедом — общие правила из 00-core.js (edFollowView → tlFollowHead)
-CORE_FUNCS = ("tlClampView", "tlFollowHead", "tlPanning")
+# Общие функции окна из 00-core.js (слежения редактора за плейхедом нет — решение 2026-10-12)
+CORE_FUNCS = ("tlClampView", "tlPanning")
 
 
 def _func_src(src: str, name: str) -> str:

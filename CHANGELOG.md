@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.1-beta — 2026-10-12
+
+### Highlights
+- **Voice volume is set once per speaker**: one value for all of the speaker's clips, saved at once; a new import no longer starts at −3 dB.
+- **Voice panel in the speaker profile**: the denoiser, plug-ins and volume are changed there without listening to a clip, and each change is saved to the speaker at once.
+- **Timelines no longer follow the playhead**: the view stays put during playback and the playhead runs off the edge; a click on the ruler sets the playhead.
+- **AE preview on large screens**: the 9:16 frame fills the column on step 3 instead of staying small.
+- **Podcast reels**: a reel converted again no longer plays the deleted reel's sound in the preview, "To reels" from the podcast editor puts the reel into the speaker's camera 1 folder, and a deleted reel takes its frame plan to the bin.
+
+### Fixed
+- **A long clip name pushed the status tags onto a second line**: the name now takes the free space and is cut with an ellipsis (the full path stays in its tooltip), and the tags stay on one line in the same column for every clip on steps 1–3.
+- **The AE preview on step 3 left the frame small on large screens**: the video column now takes its width from the available height, so the 9:16 frame fills the column (456×811 instead of about 375 px wide in a 2000×1125 window), and the word chips sit at the top with the normal gap instead of rows spread far apart.
+- **Voice volume was per clip, so every import started at −3 dB and a change to one clip did not reach the others**: the volume now lives in the speaker profile and is one value for all of the speaker's clips. Cut, preview, .jsx assembly and the built-in render all read it from there; a speaker without his own value takes the volume of his style, and a clip without a speaker keeps its style's volume.
+- **A reel converted again under the same name played the old sound in the step 1 preview**: after a reel was deleted and its piece converted again, the new cut got the same XML name, and the preview kept the sound of the deleted reel under the new video. The preview now asks the server for the camera sound every time a clip opens and reloads it when the file changed; when the server cannot give the sound, the preview stays silent instead of playing a stranger's sound.
+- **"To reels" from the podcast editor put the reel into the podcast folder**: the button did not send the speaker, so the reel went to `<podcast>/reels` instead of the speaker's camera 1 folder. It now sends the speaker and shows the same hint as the list button when the speaker has no camera 1 folder.
+- **Deleting a reel with its sources left its frame plan behind**: `<reel>.reframe.json` and `.<reel>.crop.txt` now go to the bin together with the reel and come back with it on restore.
+- **The timeline window no longer follows the playhead, and a click on the ruler moves the playhead**: during playback and on seeks the view stays where it is and the playhead runs off the edge, on all three timelines (step 1 cut editor, the podcast's "Whole recording", the inserts strip). A jump from a list or a button ("play piece", double click on an insert, a subtitle row) still brings its target into view. A left click on the time ruler without a drag puts the playhead at the click, and dragging the ruler scrolls the view as before.
+
+### Changed
+- **The speaker profile has the same Voice panel as the cut preview**: the denoiser, the plug-ins, their order and the speaker's volume can be changed there without listening, and each change is saved to that speaker at once. The buttons that need the clip sound (Configure, Output device) are disabled in the profile. A speaker without processed voice yet gets its settings on the first switch.
+
 ## 0.4.0-beta — 2026-10-12
 
 ### Highlights

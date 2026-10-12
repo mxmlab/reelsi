@@ -283,15 +283,19 @@ function tlZoomSpan(v0,v1,f,atF,dur,minSpan){
   const s=Number(v0)+a*span0;          // время под курсором до зума
   return tlClampView(s-a*span,s-a*span+span,dur,mn);
 }
-// Окно следует за плейхедом: now внутри окна — окно не трогаем; ушёл за край — окно встаёт так,
-// чтобы плейхед был на 10 % ширины от левого края. Окно шире записи или запись без длины — без
-// слежения. Окно не уходит за конец записи (tlClampView). Возвращает [v0,v1].
-// ПОЧЕМУ 10 %: плейхед при игре уходит к правому краю — слева остаётся место увидеть, что было.
-function tlFollowHead(v0,v1,now,dur,minSpan){
+// Окно показывает цель ЯВНОГО перехода (кнопка «играть кусок/вставку», двойной клик по вставке,
+// выбор строки в списке): t внутри окна — окно не трогаем; t вне окна — окно встаёт так, чтобы t
+// была на 10 % ширины от левого края. За плейхедом при игре, перемотке и протяжке по самому
+// таймлайну окно НЕ ездит — решение владельца 2026-10-12 («пусть идёт, мы остаёмся на месте»).
+// Окно шире записи или запись без длины — без сдвига. Окно не уходит за конец записи (tlClampView).
+// Возвращает [v0,v1].
+// ПОЧЕМУ 10 %: цель перехода встаёт у левого края — видно, что было перед ней, и что идёт дальше.
+// Параметр зовётся tm, не t: одиночное t в static/app — функция перевода (сторож test_ui_static).
+function tlReveal(v0,v1,tm,dur,minSpan){
   const span=Number(v1)-Number(v0);
   if(!(dur>0)||!(span>0)||span>=dur)return [v0,v1];
-  if(now>=v0&&now<=v1)return [v0,v1];
-  const a=now-span*0.1;
+  if(tm>=v0&&tm<=v1)return [v0,v1];
+  const a=tm-span*0.1;
   const r=tlClampView(a,a+span,dur,minSpan);
   return [r.v0,r.v1];
 }
@@ -407,25 +411,39 @@ function tlWheelBind(el,o){
 // вернуть вид на смещение dxCss (css px, вправо > 0). Курсор — grabbing, класс panning — тоже на время
 // тяги. Захват указателя — тяга не теряет вид за краем холста; pointercancel и потеря захвата кончают её.
 // Пока el._tlPan — слежение за плейхедом вид не возвращает (tlPanning).
+// Порог клика по полосе времени (css px): отпускание, если указатель за всё нажатие не ушёл дальше
+// этого от точки нажатия, — клик (плейхед в точку), дальше — протяжка (окно едет). Рука дрожит на
+// 1–2 px, и без порога каждая протяжка ставила бы плейхед туда, где кончилась.
+const TL_CLICK_MAX_PX=3;
+// o.click(clientX) — необязательный колбэк клика: зовётся на отпускании левой кнопки, если указатель
+// не ушёл дальше TL_CLICK_MAX_PX. Передаётся точка НАЖАТИЯ. Средняя кнопка и отмена захвата клика не
+// дают. Колбэк ставит плейхед своей перемоткой и окно НЕ двигает (правило NF1, решение 2026-10-12).
 function tlMidPan(el,ev,o){
   if(!el)return;
   tlMidGuard(el);
   const snap=o.snap?o.snap():null;
   const x0=ev.clientX, cur=el.style.cursor;
+  let far=0;   // дальше всего от нажатия за всё движение: по нему клик отличается от протяжки
   el.style.cursor='grabbing';el.classList.add('panning');el._tlPan=true;
   try{el.setPointerCapture(ev.pointerId);}catch(err){}
-  const mv=m=>{ if(m.pointerId!==ev.pointerId) return; o.apply(m.clientX-x0,snap); };
-  const up=m=>{ if(m&&m.pointerId!==undefined&&m.pointerId!==ev.pointerId) return;
+  // Пока указатель в пределах порога, окно не двигаем: иначе дрожь сдвинула бы окно, и клик
+  // поставил бы плейхед не туда, где нажали (мапинг клика — по окну на момент нажатия).
+  const mv=m=>{ if(m.pointerId!==ev.pointerId) return; far=Math.max(far,Math.abs(m.clientX-x0));
+    if(far>TL_CLICK_MAX_PX)o.apply(m.clientX-x0,snap); };
+  const done=(m,clicked)=>{
     el.removeEventListener('pointermove',mv);
-    el.removeEventListener('pointerup',up);
-    el.removeEventListener('pointercancel',up);
-    el.removeEventListener('lostpointercapture',up);
+    el.removeEventListener('pointerup',onUp);
+    el.removeEventListener('pointercancel',onCancel);
+    el.removeEventListener('lostpointercapture',onCancel);
     el.style.cursor=cur;el.classList.remove('panning');el._tlPan=false;
-    try{el.releasePointerCapture(ev.pointerId);}catch(err){} };
+    try{el.releasePointerCapture(ev.pointerId);}catch(err){}
+    if(clicked&&o.click&&ev.button===0&&far<=TL_CLICK_MAX_PX)o.click(x0); };
+  const onUp=m=>{ if(m&&m.pointerId!==undefined&&m.pointerId!==ev.pointerId) return; done(m,true); };
+  const onCancel=m=>{ if(m&&m.pointerId!==undefined&&m.pointerId!==ev.pointerId) return; done(m,false); };
   el.addEventListener('pointermove',mv);
-  el.addEventListener('pointerup',up);
-  el.addEventListener('pointercancel',up);
-  el.addEventListener('lostpointercapture',up);
+  el.addEventListener('pointerup',onUp);
+  el.addEventListener('pointercancel',onCancel);
+  el.addEventListener('lostpointercapture',onCancel);
 }
 // Средняя кнопка не включает автоскролл браузера: гасим mousedown и auxclick (однократно на элемент).
 // Ставится при инициализации полосы — mousedown уже прошёл бы к моменту старта тяги.

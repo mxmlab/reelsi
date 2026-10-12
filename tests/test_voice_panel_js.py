@@ -52,6 +52,8 @@ node = pytest.mark.skipif(not shutil.which("node"), reason="стенд треб�
 # тесте нет (стенд сторожил бы сам себя).
 VOICE_FUNCS = (
     "voiceFxHost", "vfxEl", "vstTitle", "voiceFxLive", "voiceFxOn", "voiceFxLiveOn", "voiceFxWindowOn",
+    # одна панель на два места: спикер и «есть звук клипа» — от панели, не от открытого клипа
+    "voiceFxIsClip", "voiceFxPanelHosts", "voiceFxSyncPanels", "noAudioWrap",
     "voiceFxSummary", "voiceFxRender", "voiceFxRead", "voiceFxStrength", "voiceFxOther",
     "voiceFxStatus", "dnAttenSync", "dnEngineSync", "vfxEngine", "vfxEngineSel",
     "vfxEngName", "vfxStrengthLabel", "vfxStrengthHint", "vfxAltDefault",
@@ -59,6 +61,9 @@ VOICE_FUNCS = (
     "vfxSepStep", "vfxSepText", "vfxSepSize", "vfxSepApply", "pvVoiceAuto", "pvVoiceSave",
     "vfxDnSummaryText", "vfxDnToggle", "vfxDnUpdateSummary",
     "syncDbSliders", "setStyleDb", "voiceFxLiveGain", "voiceFxLiveOutDb", "voiceFxHostOn",
+    # громкость голоса: одна дверь чтения и одна записи (спикер клипа или стиль)
+    "voiceDbSpeakerKey", "voiceDbBySpeaker", "voiceDbOf", "setVoiceDb", "voiceDbSaveSoon",
+    "voiceDbSaveNow",
 )
 PREVIEW_FUNCS = ("vtOf", "vtCam1", "vtSrcAt", "vtNow", "vtAudioCam", "vtPlaying", "vtEl", "vtGate",
                  "vtNote", "vtName", "vtProfileFx", "vtFx", "vtDetach", "vtStop", "vtPause",
@@ -91,6 +96,12 @@ def _func_src(src: str, name: str) -> str:
     raise AssertionError(f"не нашлась закрывающая скобка функции {name}")
 
 
+# Хелперы «одна панель на два места» (VO2). На коде ДО них их нет: стенд тогда не
+# должен падать на сборке, а обязан провалиться по ПОВЕДЕНИЮ (правка профиля уходит
+# не тому спикеру) — поэтому отсутствующий хелпер пропускаем, а не требуем.
+OPTIONAL_HELPERS = ("voiceFxIsClip", "voiceFxPanelHosts", "voiceFxSyncPanels", "noAudioWrap")
+
+
 def _src(*names: str) -> str:
     """Тела боевых функций: голос — из 95-styles.js, плеер — из 60-preview.js."""
     styles = STYLES_JS.read_text(encoding="utf-8")
@@ -99,6 +110,8 @@ def _src(*names: str) -> str:
     for name in names:
         where = styles if name in VOICE_FUNCS else preview
         assert name in VOICE_FUNCS or name in PREVIEW_FUNCS, f"нет такого стенда: {name}"
+        if name in OPTIONAL_HELPERS and "function %s(" % name not in where:
+            continue
         out.append(_func_src(where, name))
     return "\n".join(out)
 
@@ -245,11 +258,25 @@ def _sync_consts() -> str:
     return "\n".join(out)
 
 
-def _run_node(tmp_path: Path, body: str, name: str = "voice_stand.js") -> Any:
-    """Прогнать стенд под node и вернуть разобранный JSON с последней строки."""
+def _src_any(name: str) -> str:
+    """Тело функции из любого файла (95-styles.js или 60-preview.js) — для `extra`."""
+    for where in (STYLES_JS, PREVIEW_JS):
+        text = where.read_text(encoding="utf-8")
+        if re.search(r"(?<![\w$])(?:async\s+)?function\s+%s\s*\(" % re.escape(name), text):
+            return _func_src(text, name)
+    raise AssertionError(f"нет функции {name}")
+
+
+def _run_node(tmp_path: Path, body: str, name: str = "voice_stand.js", extra: tuple = ()) -> Any:
+    """Прогнать стенд под node и вернуть разобранный JSON с последней строки.
+
+    `extra` — НАСТОЯЩИЕ функции поверх заглушек STATE (pvVoiceTune, vstFxEdit): обычные
+    стенды их глушат, а здесь проверяем именно то, как правка доходит до сохранения.
+    """
     path = tmp_path / name
     path.write_text(DOM + _sync_consts() + "\n" + STATE
-                    + _src(*(VOICE_FUNCS + PREVIEW_FUNCS)) + "\n" + body,
+                    + _src(*(VOICE_FUNCS + PREVIEW_FUNCS)) + "\n"
+                    + "\n".join(_src_any(n) for n in extra) + "\n" + body,
                     encoding="utf-8")
     proc = subprocess.run(["node", str(path)], capture_output=True, text=True,
                           encoding="utf-8-sig", errors="replace", timeout=60,
@@ -260,50 +287,68 @@ def _run_node(tmp_path: Path, body: str, name: str = "voice_stand.js") -> Any:
     return json.loads(lines[-1])
 
 
-def _panel(fx: Any, mode: str = "panel") -> str:
-    """Отрисовка панели боевой функцией и проверка, что разметка вообще появилась."""
-    return ("const host=new El('div');\nvoiceFxRender(host,%s,{mode:'%s'});\n"
-            % (json.dumps(fx, ensure_ascii=False), mode))
+def _panel(fx: Any, mode: str = "panel", spk: str = "", audio: bool = True) -> str:
+    """Отрисовка панели боевой функцией и проверка, что разметка вообще появилась.
+
+    `spk` — спикер панели (ключ профиля, куда пишется voice_fx); `audio` — панель со
+    звуком клипа (превью). По умолчанию — превью клипа этого спикера.
+    """
+    opts = {"mode": mode, "spk": spk, "audio": audio}
+    return ("const host=new El('div');\nvoiceFxRender(host,%s,%s);\n"
+            % (json.dumps(fx, ensure_ascii=False), json.dumps(opts, ensure_ascii=False)))
 
 
 # --------------------------------------------------------------------------- #
 # 1. Одна разметка на два места: панель превью и сводка профиля
 # --------------------------------------------------------------------------- #
 @node
-def test_one_renderer_for_panel_and_summary(tmp_path: Path) -> None:
-    """Панель и сводка строятся одной функцией; читает значения тоже одна."""
+def test_one_renderer_for_clip_and_profile_panel(tmp_path: Path) -> None:
+    """Панель превью и панель профиля строятся ОДНОЙ функцией; профиль — без звука клипа.
+
+    Владелец: в профиле спикера править можно так же, как в любом клипе. Поэтому панель
+    профиля — та же разметка (режима-сводки больше нет), но слушать в ней нечего: «Куда
+    играть» и «Настроить» неактивны, справка — на самих контролах. Значения читаются из
+    той же разметки и в профиле, и в превью.
+    """
     body = _panel({"denoise": {"on": True, "atten_db": 55},
                    "vst": [{"path": "C:/a.vst3", "name": "", "state": "AQID", "on": True},
-                           {"path": "C:/b.vst3", "name": "Shell", "state": "", "on": False}],
-                   "cut": True, "final": True}) + """
+                           {"path": "C:/b.vst3", "name": "Shell", "state": "", "on": False}]},
+                  spk="Мясников", audio=True) + """
 const html=host.innerHTML;
 const read=voiceFxRead(host);
-// Второе место — сводка в редакторе профиля: та же функция, другой режим
-const sum=new El('div');
-voiceFxRender(sum,{denoise:{on:true,atten_db:55},
-  vst:[{path:'C:/a.vst3',on:true},{path:'C:/b.vst3',on:false}],cut:true,final:true},
-  {mode:'summary'});
+const prof=new El('div');
+voiceFxRender(prof,{denoise:{on:true,atten_db:55},
+  vst:[{path:'C:/a.vst3',on:true},{path:'C:/b.vst3',on:false}]},
+  {mode:'panel',spk:'Спикер_Подкаст',audio:false});
+const phtml=prof.innerHTML;
+const readProf=voiceFxRead(prof);
 const off=new El('div');
 voiceFxRender(off,null,{mode:'off'});
-// Сводка и «крутить нечего» — без ручек вовсе
-const readSummary=voiceFxRead(sum), readOff=voiceFxRead(off);
 console.log(JSON.stringify({
-  mode:host.dataset.vfxmode, sumMode:sum.dataset.vfxmode, offMode:off.dataset.vfxmode,
+  mode:host.dataset.vfxmode, profMode:prof.dataset.vfxmode, offMode:off.dataset.vfxmode,
+  spk:host.dataset.spk, profSpk:prof.dataset.spk,
+  audio:host.dataset.audio, profAudio:prof.dataset.audio,
   has:{dn:html.indexOf('data-vfx="dn_on"')>=0,atten:html.indexOf('data-vfx="dn_atten_num"')>=0,
        vst:html.indexOf('data-vfx="vst"')>=0,pick:html.indexOf('data-vfx="pick"')>=0,
        status:html.indexOf('data-vfx="status"')>=0,
        cut:html.indexOf('data-vfx="cut"')>=0,final:html.indexOf('data-vfx="final"')>=0,
        listen:html.indexOf('data-vfx="listen"')>=0},
   rows:host.querySelectorAll('[data-vst]').length,
-  read:read,
-  sumText:sum.innerHTML, sumInputs:sum.querySelectorAll('[data-vfx]').length,
-  offText:off.innerHTML, offInputs:off.querySelectorAll('[data-vfx]').length,
-  readSummary:readSummary, readOff:readOff
+  read:read, readProf:readProf,
+  profRows:prof.querySelectorAll('[data-vst]').length,
+  profDisabled:prof.querySelectorAll('[disabled]').length,
+  clipDisabled:host.querySelectorAll('[disabled]').length,
+  profTips:prof.querySelectorAll('[data-t="Слушать — в превью клипа этого спикера"]').length,
+  profHtmlHasTip:phtml.indexOf('Слушать — в превью клипа этого спикера')>=0,
+  offInputs:off.querySelectorAll('[data-vfx]').length
 }));
 """
     res = _run_node(tmp_path, body)
 
-    assert res["mode"] == "panel" and res["sumMode"] == "summary" and res["offMode"] == "off"
+    assert res["mode"] == "panel" and res["profMode"] == "panel" and res["offMode"] == "off"
+    # Спикер панели — свой: превью пишет в спикера клипа, профиль — в своего
+    assert res["spk"] == "Мясников" and res["profSpk"] == "Спикер_Подкаст", res
+    assert res["audio"] == "1" and res["profAudio"] == "0", "панель профиля получила звук клипа"
     # Панель: ОДИН выключатель, шумодав с силой, цепочка, состояние
     assert res["has"]["dn"] and res["has"]["atten"] and res["has"]["vst"] and res["has"]["pick"]
     assert res["has"]["status"], f"в панели нет части разметки: {res['has']}"
@@ -314,20 +359,20 @@ console.log(JSON.stringify({
     assert res["rows"] == 2, "строки цепочки плагинов не построены"
     # Значения читаются из ТОЙ ЖЕ разметки — порядок строк и есть порядок обработки.
     # cut/final панель не пишет вовсе: решение одно и выводится из обработки.
-    assert res["read"] == {"denoise": {"on": True, "engine": "roformer",
-                                       "atten_db": 55, "mix": 100},
-                           "vst": [
-        {"path": "C:/a.vst3", "name": "", "state": "AQID", "on": True},
-        {"path": "C:/b.vst3", "name": "Shell", "state": "", "on": False}]}, res["read"]
-    # Сводка: словами, без ручек, и читать из неё нечего
-    assert res["sumInputs"] == 0, "в сводке профиля появились ручки — это вторая панель"
-    assert res["readSummary"] is None and res["readOff"] is None
-    # Сводка: словами, без ручек, и читать из неё нечего.
-    # Движка в профиле нет — значит RoFormer (мягкий) с долей 100 %: поле движка
-    # появилось позже, а умолчание у него теперь своё (см. vfxEngine).
-    assert "Шумодав RoFormer (мягкий) 100 %" in res["sumText"], res["sumText"]
-    assert "работает везде" in res["sumText"], res["sumText"]
-    assert "спикера" in res["offText"], res["offText"]
+    expect = {"denoise": {"on": True, "engine": "roformer", "atten_db": 55, "mix": 100},
+              "vst": [{"path": "C:/a.vst3", "name": "", "state": "AQID", "on": True},
+                      {"path": "C:/b.vst3", "name": "Shell", "state": "", "on": False}]}
+    assert res["read"] == expect, res["read"]
+    # Панель профиля читается так же: её значения и уйдут в voice_fx спикера
+    assert res["readProf"]["denoise"] == {"on": True, "engine": "roformer",
+                                          "atten_db": 55, "mix": 100}, res["readProf"]
+    assert [v["on"] for v in res["readProf"]["vst"]] == [True, False], res["readProf"]
+    # Профиль: строки есть, а без звука неактивны «Куда играть» и обе «Настроить»;
+    # справка про это — на самих контролах (три места), клип этим не затронут
+    assert res["profRows"] == 2 and res["profDisabled"] == 3, res
+    assert res["profTips"] == 3, res["profTips"]
+    assert res["clipDisabled"] == 0, "в панели клипа что-то неактивно без причины"
+    assert res["offInputs"] == 0, "режим off рисует ручки"
 
 
 def test_list_end_ends_are_narrow_and_engine_button_is_compact() -> None:
@@ -364,11 +409,13 @@ def test_voice_block_markup_is_declared_once() -> None:
     for gone in ("voiceFxAutoFinal", "data-vfx=\"cut\"", "data-vfx=\"final\"",
                  "data-vfx=\"listen\"", "Галки относятся ко всей обработке"):
         assert gone not in src, f"в интерфейсе осталось: {gone}"
-    # Оба места зовут одну функцию — каждое своим режимом
-    assert "voiceFxRender($('spkVoice'),p.voice_fx,{mode:'summary'})" in src, \
-        "редактор профиля рисует сводку не общей функцией"
-    assert "voiceFxRender(host,prof.voice_fx,{mode:'panel'})" in src, \
+    # Оба места зовут одну функцию — каждое своим спикером; режима-сводки больше нет
+    assert "voiceFxRender(vh,p.voice_fx,{mode:'panel',spk:SPKEDIT,audio:false})" in src, \
+        "профиль спикера рисует блок не общей функцией"
+    assert "voiceFxRender(host,prof.voice_fx,{mode:'panel',spk:key,audio:true})" in src, \
         "панель превью рисует блок не общей функцией"
+    # (голый 'summary' — тег <summary> в других панелях; ищем именно режим разметки)
+    assert "mode:'summary'" not in src and "mode==='summary'" not in src, "режим-сводка остался в коде"
     # И ни одного литерального id старого блока: ручек в профиле спикера больше нет
     html = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
     for el_id in ("spk_dn_on", "spk_vst_list", "spk_fx_final", "spk_fx_start",
@@ -433,7 +480,7 @@ def test_save_writes_only_voice_fx(tmp_path: Path) -> None:
                "lut": {"1": "C:/lut/cam1.cube"}, "camdirs": ["C:/cam"],
                "breath_model": "model.json", "ref": "ref.json",
                "voice_fx": {"denoise": {"on": True, "atten_db": 20}, "vst": []}}
-    body = _panel({"denoise": {"on": True, "atten_db": 40}, "vst": []}) + """
+    body = _panel({"denoise": {"on": True, "atten_db": 40}, "vst": []}, spk="Мясников") + """
 const ORIG=%s;
 SPEAKERS={'Мясников':JSON.parse(JSON.stringify(ORIG))};
 VOICEFXSPK='Мясников';
@@ -648,7 +695,8 @@ voiceFxRender(ro,{denoise:{on:true,engine:'roformer_aggr',atten_db:55,mix:70},vs
 const deep=new El('div');           // прежний движок по-прежнему выбирается
 voiceFxRender(deep,{denoise:{on:true,engine:'deepfilter',atten_db:55},vst:[]},{mode:'panel'});
 const sum=new El('div');
-voiceFxRender(sum,{denoise:{on:true,engine:'roformer',mix:60},vst:[]},{mode:'summary'});
+voiceFxRender(sum,{denoise:{on:true,engine:'roformer',mix:60},vst:[]},
+  {mode:'panel',spk:'Спикер_Подкаст',audio:false});
 console.log(JSON.stringify({
   oldEngine:vfxEl(old,'dn_engine').dataset.engine, oldLabel:vfxEl(old,'dn_label').textContent,
   oldSlider:String(vfxEl(old,'dn_atten_num').value), oldAlt:String(vfxEl(old,'dn_alt').value),
@@ -682,7 +730,8 @@ console.log(JSON.stringify({
     assert res["roEngine"] == "roformer_aggr" and res["roSlider"] == "70" and res["roAlt"] == "55"
     assert res["roRead"]["denoise"] == {"on": True, "engine": "roformer_aggr",
                                         "atten_db": 55, "mix": 70}, res["roRead"]
-    assert "Шумодав RoFormer (мягкий) 60 %" in res["sumText"], res["sumText"]
+    # Панель профиля показывает ту же сводку шумодава, что и превью (одна разметка)
+    assert "RoFormer (мягкий) · доля 60 %" in res["sumText"], res["sumText"]
 
 
 @node
@@ -881,14 +930,12 @@ voiceFxRender(host, {
 }, { mode: 'panel' });
 document.body.appendChild(host);
 globalThis.__byId = {
-  pvvoice: host,
-  pvvoicedb: host.querySelector('[id="pvvoicedb"]'),
-  pvvoicedbv: host.querySelector('[id="pvvoicedbv"]')
+  pvvoice: host
 };
 
 // Проверяем наличие ползунка громкости
-const volSlider = host.querySelector('[id="pvvoicedb"]');
-const volTxt = host.querySelector('[id="pvvoicedbv"]');
+const volSlider = host.querySelector('[data-vfx="spk_db"]');
+const volTxt = host.querySelector('[data-vfx="spk_dbv"]');
 const sldFound = !!(volSlider && volTxt);
 
 // Меняем значение через setStyleDb
@@ -921,7 +968,7 @@ console.log(JSON.stringify({
 }));
 """
     res = _run_node(tmp_path, body)
-    assert res["sldFound"] is True, "ползунок громкости pvvoicedb не найден в панели"
+    assert res["sldFound"] is True, "ползунок громкости (spk_db) не найден в панели"
     assert res["dbAfter"] == -6.0, "setStyleDb не выставил voice_db в CURSTYLE"
     assert res["sldValAfter"] == -6.0, "syncDbSliders не обновил значение ползунка"
     assert "dB" in res["txtValAfter"], "подпись громкости не содержит dB"
@@ -1020,3 +1067,256 @@ def test_both_volume_sliders_ring_the_live_host() -> None:
     assert "20*Math.log10(vol)" in out, out
     start = _func_src(styles, "voiceFxHostStart").replace(" ", "")
     assert "gain_db:gain" in start and "voiceFxLiveOutDb()" in start, start
+
+
+# --------------------------------------------------------------------------- #
+# 7. Профиль спикера — та же панель, но СВОЙ спикер и без звука клипа (VO2)
+# --------------------------------------------------------------------------- #
+# Глобалы модуля, которые стенд не берёт из функций (`let`/`const`/`var` верхнего уровня
+# файлов). Таймеры — сразу: тесту важен итог записи, а не порядок затишья.
+VO2_GLOBALS = r"""
+let VFXSAVET=0;
+const VFX_SAVE_QUIET=700;
+let VOICEDB_SAVE_T=null;const VOICEDB_PENDING={};const VOICEDB_SAVE_MS=400;
+var VG=null,MG=null;
+var CURSTYLE={voice_db:0,music_db:-20};
+var ED={xml:'',vt:null};
+function captureAE(){}
+function updateStyleDiffDots(){}
+function applyDbGains(){}
+let PREPS=0;
+function vtPrep(){PREPS++;}
+const REQS=[];
+globalThis.setTimeout=(fn)=>{fn();return 0;};
+globalThis.clearTimeout=()=>{};
+async function settle(){for(let i=0;i<80;i++)await Promise.resolve();}
+const SAVES=()=>REQS.filter(r=>r.url==='/api/savespeaker');
+const FORBIDDEN=()=>REQS.filter(r=>r.url.indexOf('/api/voicefx_host')===0||r.url.indexOf('/api/voicefx_bake')===0).length;
+globalThis.fetch=async(url,opt)=>{
+  const u=String(url);
+  REQS.push({url:u,body:(opt&&opt.body)?JSON.parse(opt.body):null});
+  if(u==='/api/speakers')return {json:async()=>({ok:true,speakers:JSON.parse(JSON.stringify(SPEAKERS))})};
+  if(u==='/api/savespeaker')return {json:async()=>({ok:true,key:JSON.parse(opt.body).name})};
+  if(u==='/api/voicefx_devices')return {json:async()=>({devices:[]})};
+  return {json:async()=>({ok:true})};};
+"""
+
+_VO2_A = {"label": "СпикерА", "voice_db": -3,
+          "voice_fx": {"denoise": {"on": True, "engine": "roformer", "atten_db": 40, "mix": 100},
+                       "vst": []}}
+_VO2_B = {"label": "СпикерБ", "voice_db": 5,
+          "voice_fx": {"denoise": {"on": True, "engine": "roformer", "atten_db": 40, "mix": 100},
+                       "vst": [{"path": "C:/eq.vst3", "name": "EQ", "on": True, "state": ""}]}}
+
+
+@node
+def test_profile_edit_writes_its_own_speaker_only(tmp_path: Path) -> None:
+    """Открыт клип спикера Б, а профиль А правим: пишется ТОЛЬКО А, Б не трогаем.
+
+    Шумодав, громкость и плагин — каждая правка уходит одним /api/savespeaker с ключом А.
+    Звуковые кнопки в профиле неактивны, а хост и запекание голоса не запрашиваются ни разу:
+    звука клипа в профиле нет.
+    """
+    body = VO2_GLOBALS + """
+SPEAKERS={'СпикерА':JSON.parse(JSON.stringify(__A__)),'СпикерБ':JSON.parse(JSON.stringify(__B__))};
+const B0=JSON.stringify(SPEAKERS['СпикерБ']);
+VSTLIST=[{path:'C:/new.vst3',name:'New',title:'New'}];
+// Клип спикера Б — панель превью (звук клипа); профиль А — в модалке (без звука)
+VOICEFXSPK='СпикерБ';
+ED={xml:'C:/out/B.xml',vt:null};
+const clip=new El('div');
+voiceFxRender(clip,SPEAKERS['СпикерБ'].voice_fx,{mode:'panel',spk:'СпикерБ',audio:true});
+document.body.appendChild(clip);
+const prof=new El('div');
+voiceFxRender(prof,SPEAKERS['СпикерА'].voice_fx,{mode:'panel',spk:'СпикерА',audio:false});
+document.body.appendChild(prof);
+globalThis.__byId={pvvoice:clip,spkVoice:prof};
+(async()=>{
+  const out={steps:[]};
+  const step=async(label,fn)=>{const n0=SAVES().length;await fn();await settle();
+    const got=SAVES().slice(n0).map(r=>r.body.name);
+    out.steps.push({label:label,saves:got.length,names:got});};
+  await step('denoiseOff',async()=>{const dn=vfxEl(prof,'dn_on');dn.checked=false;vstFxDn(dn);});
+  await step('denoiseOn',async()=>{const dn=vfxEl(prof,'dn_on');dn.checked=true;vstFxDn(dn);});
+  await step('volume',async()=>{const sl=vfxEl(prof,'spk_db');sl.value='-9';
+    setVoiceDb(sl.value,undefined,voiceFxHost(sl).dataset.spk);});
+  await step('plugin',async()=>{vfxEl(prof,'pick').value='0';vstFxAdd(vfxEl(prof,'pick'));});
+  // Страховка: «Настроить» в профиле не открывает окно плагина (звука клипа там нет)
+  const n0=REQS.length;
+  const btn=prof.querySelector('[onclick="vstFxEdit(this)"]');
+  if(btn)await vstFxEdit(btn);
+  await settle();
+  const bA=SPEAKERS['СпикерА'];
+  console.log(JSON.stringify({steps:out.steps,
+    bUntouched:JSON.stringify(SPEAKERS['СпикерБ'])===B0,
+    aVoiceDb:bA.voice_db, aDenoise:!!(bA.voice_fx&&bA.voice_fx.denoise&&bA.voice_fx.denoise.on),
+    aPlugins:((bA.voice_fx&&bA.voice_fx.vst)||[]).length,
+    clipDenoise:vfxEl(clip,'dn_on').checked, clipRows:clip.querySelectorAll('[data-vst]').length,
+    forbidden:FORBIDDEN(), baked:BAKED, preps:PREPS,
+    profDisabled:prof.querySelectorAll('[disabled]').length,
+    clipDisabled:clip.querySelectorAll('[disabled]').length,
+    guardReqs:REQS.length-n0, guardBtn:!!btn}));
+})();
+""".replace("__A__", json.dumps(_VO2_A, ensure_ascii=False)).replace("__B__", json.dumps(_VO2_B, ensure_ascii=False))
+    res = _run_node(tmp_path, body, extra=("pvVoiceTune", "vstFxEdit"))
+    assert res["guardBtn"] is True, "в профиле нет кнопки «Настроить» — нечего проверять"
+    for st in res["steps"]:
+        assert st["saves"] == 1 and st["names"] == ["СпикерА"], \
+            f"правка «{st['label']}» в профиле А записала не один профиль А: {st}"
+    assert res["bUntouched"] is True, "профиль спикера Б изменился от правок профиля А"
+    assert res["aVoiceDb"] == -9, res
+    assert res["aDenoise"] is True and res["aPlugins"] == 1, res
+    assert res["clipRows"] == 1 and res["clipDenoise"] is True, \
+        "панель открытого клипа Б подменилась правкой профиля А (у Б одна строка EQ)"
+    assert res["forbidden"] == 0, "профиль запросил хост или запекание голоса клипа"
+    assert res["baked"] == 0 and res["preps"] == 0, "голос клипа Б пересчитан из профиля А"
+    # Неактивны: «Куда играть» и «Настроить» у строки плагина (шумодав-галка — не звук)
+    assert res["profDisabled"] >= 2, "в профиле нет неактивных кнопок звука"
+    assert res["clipDisabled"] == 0, "в панели клипа кнопки звука неактивны без причины"
+    assert res["guardReqs"] == 0, "«Настроить» в профиле дёрнула сервер"
+
+
+@node
+def test_profile_without_voice_fx_gets_it_on_first_switch(tmp_path: Path) -> None:
+    """У спикера без voice_fx (Спикер_Подкаст) панель рисуется, шумодав создаёт его.
+
+    Раньше настроить такого спикера можно было только открыв клип. Теперь включение
+    шумодава в профиле записывает voice_fx в сохраняемый профиль.
+    """
+    body = VO2_GLOBALS + """
+SPEAKERS={'Спикер_Подкаст':{label:'Спикер Подкаст',voice_db:0}};
+VOICEFXSPK='';
+const prof=new El('div');
+voiceFxRender(prof,undefined,{mode:'panel',spk:'Спикер_Подкаст',audio:false});
+document.body.appendChild(prof);
+globalThis.__byId={spkVoice:prof};
+(async()=>{
+  const drawn=prof.dataset.vfxmode==='panel'&&!!vfxEl(prof,'dn_on');
+  const dn=vfxEl(prof,'dn_on');dn.checked=true;vstFxDn(dn);
+  await settle();
+  const saves=SAVES();
+  console.log(JSON.stringify({drawn:drawn,saves:saves.length,
+    name:saves[0]?saves[0].body.name:null,
+    fx:saves[0]?saves[0].body.data.voice_fx:null,
+    stored:SPEAKERS['Спикер_Подкаст'].voice_fx||null,
+    label:saves[0]?saves[0].body.data.label:null,
+    baked:BAKED}));
+})();
+"""
+    res = _run_node(tmp_path, body, extra=("pvVoiceTune",))
+    assert res["drawn"] is True, "панель профиля без voice_fx не нарисовалась"
+    assert res["saves"] == 1 and res["name"] == "Спикер_Подкаст", res
+    assert res["fx"] and res["fx"]["denoise"]["on"] is True, res["fx"]
+    assert res["fx"]["denoise"]["engine"] == "roformer", res["fx"]
+    assert res["stored"] and res["stored"]["denoise"]["on"] is True, "в памяти профиля voice_fx не появился"
+    assert res["label"] == "Спикер Подкаст", "подпись профиля потерялась при записи voice_fx"
+    assert res["baked"] == 0, "профиль без открытого клипа запустил запекание"
+
+
+@node
+def test_open_clip_and_profile_of_same_speaker_stay_in_sync(tmp_path: Path) -> None:
+    """Клип спикера А и профиль А открыты: правка в профиле видна в панели клипа, и наоборот.
+
+    Профиль пишет voice_fx и громкость; панель клипа перерисовывается из сохранённого, а
+    голос клипа пересчитывается (pvVoiceBake). Правка клипа — обратно в профиль.
+    """
+    body = VO2_GLOBALS + """
+SPEAKERS={'СпикерА':JSON.parse(JSON.stringify(__A__))};
+VOICEFXSPK='СпикерА';
+ED={xml:'C:/out/A.xml',vt:null};
+const clip=new El('div');
+voiceFxRender(clip,SPEAKERS['СпикерА'].voice_fx,{mode:'panel',spk:'СпикерА',audio:true});
+document.body.appendChild(clip);
+const prof=new El('div');
+voiceFxRender(prof,SPEAKERS['СпикерА'].voice_fx,{mode:'panel',spk:'СпикерА',audio:false});
+document.body.appendChild(prof);
+globalThis.__byId={pvvoice:clip,spkVoice:prof};
+(async()=>{
+  const pdn=vfxEl(prof,'dn_on');pdn.checked=false;vstFxDn(pdn);
+  await settle();
+  const cl={dn:vfxEl(clip,'dn_on').checked};
+  const psl=vfxEl(prof,'spk_db');psl.value='-9';setVoiceDb(psl.value,undefined,voiceFxHost(psl).dataset.spk);
+  await settle();
+  cl.db=vfxEl(clip,'spk_db').value;
+  cl.dbv=vfxEl(clip,'spk_dbv').textContent;
+  const bakedAfterProfile=BAKED;
+  const cdn=vfxEl(clip,'dn_on');cdn.checked=true;vstFxDn(cdn);
+  await settle();
+  console.log(JSON.stringify({clipAfterProfile:cl,
+    profDnAfterClip:vfxEl(prof,'dn_on').checked,
+    stored:!!(SPEAKERS['СпикерА'].voice_fx&&SPEAKERS['СпикерА'].voice_fx.denoise.on),
+    bakedAfterProfile:bakedAfterProfile, bakedAfterAll:BAKED,
+    names:SAVES().map(r=>r.body.name)}));
+})();
+""".replace("__A__", json.dumps(_VO2_A, ensure_ascii=False))
+    res = _run_node(tmp_path, body, extra=("pvVoiceTune",))
+    ca = res["clipAfterProfile"]
+    assert ca["dn"] is False, "панель клипа не перерисовалась по сохранённому профилю (шумодав)"
+    # Ползунок в стенде хранит число, в браузере — строку: сравниваем по значению
+    assert float(ca["db"]) == -9.0 and ca["dbv"] == "-9.0 dB", f"громкость в панели клипа не обновилась: {ca}"
+    assert res["bakedAfterProfile"] >= 1, "голос клипа не пересчитан после правки профиля того же спикера"
+    assert res["profDnAfterClip"] is True, "правка клипа не дошла до профиля того же спикера"
+    assert res["stored"] is True, "правка клипа не записалась в профиль"
+    assert all(n == "СпикерА" for n in res["names"]), res["names"]
+
+
+# --------------------------------------------------------------------------- #
+# 8. Подсказка неактивного контрола в профиле — на ОБЁРТКЕ (VO2, правка 2)
+# --------------------------------------------------------------------------- #
+# Chrome не шлёт события мыши disabled-контролам: tooltip, висящий на самом disabled
+# «Куда играть» или «Настроить», не всплывает ни на hover, ни на фокус. Поэтому справка
+# висит на фокусируемой обёртке (span.vfxlock, tabindex=0), а сам контрол не принимает
+# указатель (app.css: .vfxlock>:disabled{pointer-events:none}).
+@node
+def test_locked_controls_in_profile_carry_the_tooltip_on_a_wrapper(tmp_path: Path) -> None:
+    body = """
+const fx={denoise:{on:true,atten_db:40},vst:[{path:'C:/a.vst3',name:'',state:'',on:true}]};
+const prof=new El('div');
+voiceFxRender(prof,fx,{mode:'panel',spk:'Спикер_Подкаст',audio:false});
+const dev=vfxEl(prof,'device');
+const btn=prof.querySelector('[onclick="vstFxEdit(this)"]');
+const clip=new El('div');
+voiceFxRender(clip,fx,{mode:'panel',spk:'Спикер_Подкаст',audio:true});
+const cbtn=clip.querySelector('[onclick="vstFxEdit(this)"]');
+const devW=dev?dev.parentElement:null, btnW=btn?btn.parentElement:null;
+console.log(JSON.stringify({
+  devFound:!!dev, btnFound:!!btn,
+  devDisabled:!!dev&&dev.attrs.disabled!==undefined,
+  devTag:devW?devW.tag:'', devClass:devW?(devW.attrs.class||''):'',
+  devTip:devW?(devW.attrs['data-t']||''):'', devTab:devW?(devW.attrs.tabindex||''):'',
+  devOwnTip:dev?(dev.attrs['data-t']||''):'',
+  btnDisabled:!!btn&&btn.attrs.disabled!==undefined,
+  btnTag:btnW?btnW.tag:'', btnClass:btnW?(btnW.attrs.class||''):'',
+  btnTip:btnW?(btnW.attrs['data-t']||''):'', btnTab:btnW?(btnW.attrs.tabindex||''):'',
+  btnOwnTip:btn?(btn.attrs['data-t']||''):'',
+  clipBtnDisabled:!!cbtn&&cbtn.attrs.disabled!==undefined,
+  clipDevWrapped:!!vfxEl(clip,'device')&&!!vfxEl(clip,'device').parentElement&&vfxEl(clip,'device').parentElement.attrs.class==='vfxlock'
+}));
+"""
+    res = _run_node(tmp_path, body)
+    tip = "Слушать — в превью клипа этого спикера"
+    assert res["devFound"] and res["btnFound"], res
+    # Неактивный контрол — disabled, а справка — на фокусируемой обёртке
+    assert res["devDisabled"] is True and res["devOwnTip"] == "", "справка осталась на disabled-контроле"
+    assert res["devTag"] == "span" and "vfxlock" in res["devClass"], res
+    assert res["devTip"] == tip and res["devTab"] == "0", res
+    assert res["btnDisabled"] is True and res["btnOwnTip"] == "", "справка осталась на кнопке «Настроить»"
+    assert res["btnTag"] == "span" and "vfxlock" in res["btnClass"], res
+    assert res["btnTip"] == tip and res["btnTab"] == "0", res
+    # В панели клипа ничего не заперто: ни обёртки, ни disabled
+    assert res["clipBtnDisabled"] is False and res["clipDevWrapped"] is False, res
+
+
+def test_css_stops_disabled_controls_from_taking_the_pointer() -> None:
+    """Сторож CSS: у заперто-обёрнутого контрола pointer-events:none, и причина записана.
+
+    Без этого правила hover уходит к disabled-контролу, и обёртка с подсказкой не
+    получает mouseover (в Chrome события мыши disabled-контролам не доставляются).
+    """
+    css = (ROOT / "static" / "app.css").read_text(encoding="utf-8")
+    m = re.search(r"\.vfxlock\s*>\s*:disabled\s*\{\s*pointer-events\s*:\s*none\s*;?\s*\}", css)
+    assert m is not None, "в app.css нет правила .vfxlock>:disabled{pointer-events:none}"
+    before = css[:m.start()][-400:]
+    assert "Chrome" in before and "disabled" in before, "правило без комментария — почему"
+    js = STYLES_JS.read_text(encoding="utf-8")
+    assert 'class="vfxlock"' in js and 'tabindex="0"' in js, "обёртка с подсказкой не отрисована"

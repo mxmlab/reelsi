@@ -64,6 +64,7 @@ sys.path.insert(0, str(ROOT))
 PREVIEW_JS = ROOT / "static" / "app" / "60-preview.js"
 EDITOR_JS = ROOT / "static" / "app" / "70-editor.js"
 VIEW_JS = ROOT / "static" / "app" / "85-inserts-view.js"
+STYLES_JS = ROOT / "static" / "app" / "95-styles.js"
 
 node = pytest.mark.skipif(not shutil.which("node"), reason="стенд требует node в PATH")
 
@@ -74,17 +75,20 @@ FRAME_FUNCS = ("pvFrameHidden", "pvFrameStop", "pvFramePlan", "pvFrameStart",
                "pvFrameOff", "pvFrameReplan")
 # Двери цикла редактора: пуск/пауза, часы (edTick), картинка за звуком (edFollow) и прыжок.
 EDITOR_FUNCS = ("edPlay", "edPause", "edSeek", "edTick", "edFollow", "edJump", "edVideoSeek",
-                "edBlockAt", "edFollowView")
-# Окно за плейхедом — общие правила из 00-core.js (edTick зовёт edFollowView → tlFollowHead)
-CORE_FUNCS = ("tlClampView", "tlFollowHead", "tlPanning")
+                "edBlockAt")
+# Общие функции окна из 00-core.js. Слежения редактора за плейхедом больше нет (решение 2026-10-12),
+# поэтому tlReveal здесь не нужен: он зовётся только из явных переходов вставок и подкаста.
+CORE_FUNCS = ("tlClampView", "tlPanning")
 EDITOR_DECLS = ("ED_V_SOFT", "ED_V_HARD", "ED_V_RATE")
 # Звук редактора (60-preview.js, блок `ea*`): очередь блоков и часы — боевые тела.
 EA_FUNCS = ("eaBuf", "eaSig", "eaPlan", "eaNow", "eaStop", "eaStart", "eaClock", "eaSync",
             "eaGain", "dbToGain")
 EA_DECLS = ("EA_LEAD", "EA_FADE")
 # Двери цикла предпросмотра вставок: свой шаг идёт через общий pvStep.
-VIEW_FUNCS = ("ipvStep", "ipvTick", "ipvPlay", "ipvPause", "itlEnsure")
+VIEW_FUNCS = ("ipvStep", "ipvTick", "ipvPlay", "ipvPause")
 PREVIEW_FUNCS = ("pvStep",)
+# Дверь громкости голоса (95-styles.js): eaGain зовёт voiceDbOf.
+VOICE_DOOR_FUNCS = ("voiceDbSpeakerKey", "voiceDbBySpeaker", "voiceDbOf")
 
 
 def _func_src(src: str, name: str) -> str:
@@ -121,6 +125,7 @@ def _bodies() -> str:
     editor = EDITOR_JS.read_text(encoding="utf-8")
     view = VIEW_JS.read_text(encoding="utf-8")
     core = (ROOT / "static" / "app" / "00-core.js").read_text(encoding="utf-8")
+    styles = STYLES_JS.read_text(encoding="utf-8")
     a = preview.index("let EA={")                 # литерал на две строки — до `};`
     return "\n".join([_decl(preview, c) for c in FRAME_CONSTS + EA_DECLS]
                      + [preview[a:preview.index("};", a) + 2]]
@@ -130,7 +135,12 @@ def _bodies() -> str:
                      + [_func_src(preview, n) for n in FRAME_FUNCS]
                      + [_func_src(preview, n) for n in PREVIEW_FUNCS]
                      + [_func_src(editor, n) for n in EDITOR_FUNCS]
-                     + [_func_src(view, n) for n in VIEW_FUNCS])
+                     + [_func_src(view, n) for n in VIEW_FUNCS]
+                     # громкость голоса (eaGain её зовёт): боевая дверь из 95-styles.js; контекст —
+                     # заглушка без открытого клипа, значит громкость идёт от CURSTYLE
+                     + ["let curAE=-1,CLIPS=[],SPEAKERS={};\nfunction val(){return '';}\n"
+                        "function clipSpeaker(c){return (c&&c.job&&c.job.speaker)||'';}"]
+                     + [_func_src(styles, n) for n in VOICE_DOOR_FUNCS])
 
 
 STAND = r"""
@@ -271,7 +281,7 @@ let PV={vids:[CAM],bufs:[],cams:[{path:'C:/cam1.mp4',name:'A'}],segs:[],audio:[]
   voicePanel:'pvvoice',silent:true};
 // Предпросмотр вставок (IPV): два куска EDL с вырезом 2..5 исходника — прыжок есть.
 const IV=new El('video');IV.src='C:/cam1.mp4';
-let ITL={pps:0,scrub:false};   // лента вставок: itlEnsure (ipvStep) ведёт её за плейхедом
+let ITL={pps:0,scrub:false};   // лента вставок: при игре не едет (только явный переход — itlRevealAt)
 let IPV={vids:[IV],bufs:[],scrubbing:false,scrubT:0,
   segs:[{ts:0,te:2,src:0,ci:0},{ts:2,te:4,src:5,ci:0}],
   audio:[{ts:0,te:2,src:0,ci:0},{ts:2,te:4,src:5,ci:0}],words:[],dur:4,contentDur:4,fps:60,aidx:0,

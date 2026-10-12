@@ -325,7 +325,7 @@
           <!-- Панель «Голос»: сюда переехали все ручки обработки (шумодав, цепочка
                плагинов, галки назначения) — настраивается там, где слышно, на звуке
                этого клипа. Разметку строит ОДНА функция (voiceFxRender), в профиле
-               спикера та же функция рисует сводку значений. -->
+               спикера та же функция рисует ту же панель, без звука клипа. -->
           <div class="edgrp">
             <div class="edlbl">Голос <span id="pvvoicespk" class="muted" data-noi18n></span>
               <span class="i" data-t="Обработка голоса спикера этого клипа: шумодав и цепочка плагинов. Значения уедут в профиль спикера по кнопке «Сохранить у спикера», а до неё действуют только здесь. Спикера у клипа нет — панели нет: обработка — настройка профиля.">!</span></div>
@@ -359,7 +359,7 @@
 
       <div class="edtlbar tlhead">
         <span class="edlbl">Таймлайн</span>
-        <span class="i" data-t="Клик или протяжка по полю и по плейхеду — перемотка · протяжка по линейке или средняя кнопка — прокрутка окна · колесо — зум · Shift+колесо или горизонтальное колесо — прокрутка · тяни края блоков · двойной клик по серому — вернуть вырезанное · C или S — резать · D, Delete или Backspace — удалить · Ctrl+Z / Ctrl+Y — отмена и повтор">!</span>
+        <span class="i" data-t="Клик или протяжка по полю и по плейхеду — перемотка · клик по линейке — плейхед в точку клика · протяжка по линейке или средняя кнопка — прокрутка окна · колесо — зум · Shift+колесо или горизонтальное колесо — прокрутка · тяни края блоков · двойной клик по серому — вернуть вырезанное · C или S — резать · D, Delete или Backspace — удалить · Ctrl+Z / Ctrl+Y — отмена и повтор">!</span>
         <span id="edcut" class="hint grow" style="text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span>
         <button class="icon" onclick="edZoom(TL_ZOOM_STEP)" aria-label="Приблизить" data-t="Приблизить"><span data-ic="plus"></span></button>
         <button class="icon" onclick="edZoom(1/TL_ZOOM_STEP)" aria-label="Отдалить" data-t="Отдалить"><span data-ic="minus"></span></button>
@@ -402,7 +402,7 @@
       <!-- «Вся запись» забирает всё место, что осталось под куски: шапка + холст (flex в app.css) -->
       <div class="pod-tlblock">
         <div class="pod-tlhead tlhead"><span class="edlbl">Вся запись</span>
-          <span class="i" data-t="Лента сверху — слова расшифровки баблами: зумятся вместе с записью; если бабл не помещается — слово прячется до приближения. Тяни края кусков — границы (при отпускании прилипают к словам в пределах 1 с), середину — сдвиг; I/O — начало/конец по плейхеду. Клик или протяжка по полю и по плейхеду — перемотка · протяжка по линейке или средняя кнопка — прокрутка окна · колесо — зум · Shift+колесо или горизонтальное колесо — прокрутка · C или S — резать кусок под плейхедом, D, Delete или Backspace — удалить выбранные · Ctrl+Z / Ctrl+Y — отмена и повтор. Двойной клик по пустому месту — новый кусок там (вернуть вырезанное). Клик — выбрать кусок; Ctrl/⌘+клик — добавить или убрать, Shift+клик — диапазон.">!</span>
+          <span class="i" data-t="Лента сверху — слова расшифровки баблами: зумятся вместе с записью; если бабл не помещается — слово прячется до приближения. Тяни края кусков — границы (при отпускании прилипают к словам в пределах 1 с), середину — сдвиг; I/O — начало/конец по плейхеду. Клик или протяжка по полю и по плейхеду — перемотка · клик по линейке — плейхед в точку клика · протяжка по линейке или средняя кнопка — прокрутка окна · колесо — зум · Shift+колесо или горизонтальное колесо — прокрутка · C или S — резать кусок под плейхедом, D, Delete или Backspace — удалить выбранные · Ctrl+Z / Ctrl+Y — отмена и повтор. Двойной клик по пустому месту — новый кусок там (вернуть вырезанное). Клик — выбрать кусок; Ctrl/⌘+клик — добавить или убрать, Shift+клик — диапазон.">!</span>
           <button class="sm" id="pod_cut" onclick="podCut()" data-t="Разрезать кусок под плейхедом на два (C или S). Точка прилипает к концу ближайшего слова в пределах 1 с; оба куска — не короче 5 с."><span data-ic="cut"></span> Резать<span class="kbd">C</span></button>
           <button class="sm" id="pod_del" onclick="podDelKey()" data-t="Удалить выбранные куски, а без выбора — активный (D, Delete или Backspace). Отмена — Ctrl+Z."><span data-ic="trash"></span> Удалить<span class="kbd">D</span></button>
           <span class="grow"></span>
@@ -504,10 +504,10 @@
         <span class="pvaudio">
           <span class="pvgrp" role="group" aria-label="Громкость" data-t="Громкость превью — общая для всех плееров"><span class="pvsl"><span data-ic="sound"></span><input type="range" data-vol aria-label="Громкость превью" min="0" max="100" value="100" step="1" oninput="setMediaVol(this.value)" onpointerup="this.blur()"></span><span class="pvval" data-volv data-noi18n>100</span></span>
           <span class="pvgrp" role="group" aria-label="Музыка" data-t="Уровень музыки превью, dB — тот же, что MUSIC_DB в .jsx. «Случайно»: играет случайный трек из папки музыки, при сборке выберется другой — уровень от этого не зависит. Не путать с громкостью превью (та — первый ползунок, 0–100)."><span class="pvsl"><span data-ic="music" data-cls="gold"></span><input type="range" id="ipvmusicdb" aria-label="Музыка, dB" min="-40" max="6" step="0.5" value="-20" oninput="setStyleDb('music',this.value)" onpointerup="this.blur()" onchange="this.blur()"></span><span class="pvval" id="ipvmusicdbv" data-noi18n>−20</span></span>
-          <span class="pvgrp" role="group" aria-label="Голос" data-t="Громкость голоса (камера 1) превью, dB — тот же, что VOICE_DB в .jsx."><span class="pvsl"><span data-ic="mic" data-cls="gold"></span><input type="range" id="ipvvoicedb" aria-label="Голос, dB" min="-40" max="6" step="0.5" value="0" oninput="setStyleDb('voice',this.value)" onpointerup="this.blur()" onchange="this.blur()"></span><span class="pvval" id="ipvvoicedbv" data-noi18n>0</span></span>
+          <span class="pvgrp" role="group" aria-label="Голос" data-t="Громкость голоса спикера, dB — одна на всех его клипов: правка сохраняется в профиль спикера. Тот же уровень, что VOICE_DB в .jsx."><span class="pvsl"><span data-ic="mic" data-cls="gold"></span><input type="range" id="ipvvoicedb" aria-label="Голос, dB" min="-60" max="12" step="0.5" value="0" oninput="setVoiceDb(this.value)" onpointerup="this.blur()" onchange="this.blur()"></span><span class="pvval" id="ipvvoicedbv" data-noi18n>0</span></span>
         </span>
         <span class="grow"></span>
-        <span class="i" data-t="Монтаж со вставками, без рендера. Вставки — блоки на полосе внизу: тяни блок — двигаешь по времени, тяни края — длительность, двойной клик — посмотреть. Без выбранного файла показывается заглушка с запросом. Пробел — играть/пауза. Клик или протяжка по полю и по плейхеду — перемотка · протяжка по линейке или средняя кнопка — прокрутка окна · колесо — зум · Shift+колесо или горизонтальное колесо — прокрутка · Ctrl+Z / Ctrl+Y — отмена и повтор">!</span>
+        <span class="i" data-t="Монтаж со вставками, без рендера. Вставки — блоки на полосе внизу: тяни блок — двигаешь по времени, тяни края — длительность, двойной клик — посмотреть. Без выбранного файла показывается заглушка с запросом. Пробел — играть/пауза. Клик или протяжка по полю и по плейхеду — перемотка · клик по линейке — плейхед в точку клика · протяжка по линейке или средняя кнопка — прокрутка окна · колесо — зум · Shift+колесо или горизонтальное колесо — прокрутка · Ctrl+Z / Ctrl+Y — отмена и повтор">!</span>
         <button class="icon" onclick="itlZoom(TL_ZOOM_STEP)" aria-label="Приблизить" data-t="Приблизить"><span data-ic="plus"></span></button>
         <button class="icon" onclick="itlZoom(1/TL_ZOOM_STEP)" aria-label="Отдалить" data-t="Отдалить"><span data-ic="minus"></span></button>
         <button class="icon" onclick="itlFit()" aria-label="Показать весь ролик" data-t="Показать весь ролик"><span data-ic="fit"></span></button>
@@ -667,9 +667,9 @@
       <div class="sethdr">Заметка <span class="i" data-t="Для себя: почему у этого спикера стоят такие цифры. В работе не участвует.">!</span></div>
       <textarea id="spk_note" rows="3" style="resize:vertical" placeholder="чем мерил, что подтвердилось"></textarea>
 
-      <details class="spkcalib"><summary>Голос: обработка <span class="i" data-t="Шумодав и плагины на голос камеры 1 — запекаются до After Effects, по ним же режет нарезка. Здесь видно, что у спикера стоит; настраивается это в превью нарезки, на звуке клипа.">!</span></summary>
-        <!-- Только сводка значений: ручек и «Прослушать» тут нет — их крутят в превью
-             нарезки, где слышно результат (одна разметка на два места, voiceFxRender). -->
+      <details class="spkcalib"><summary>Голос: обработка <span class="i" data-t="Шумодав и плагины на голос камеры 1 — запекаются до After Effects, по ним же режет нарезка. Крутится здесь то же, что в превью нарезки, и сохраняется в профиль сразу. Слушать можно только в превью клипа этого спикера: там звук клипа, здесь его нет.">!</span></summary>
+        <!-- Та же панель, что в превью нарезки (одна разметка, voiceFxRender), со своим
+             спикером профиля и без звука клипа: слушать тут нельзя, крутить и сохранять — можно. -->
         <div id="spkVoice" style="margin-top:11px"></div>
       </details>
 

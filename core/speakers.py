@@ -89,16 +89,22 @@
             появления RoFormer. Форма и дефолты — `core/voicefx.py:normalize_fx`,
             редактор — блок «Голос» в превью нарезки. Запекается в WAV до
             After Effects; пусто = голос как есть
+    voice_db
+            громкость голоса СПИКЕРА, дБ (−60..12, шаг 0.5 — как ползунок). Одна на всех
+            клипов спикера: любой ползунок громкости голоса правит её и сохраняет профиль.
+            Поля нет — громкость берётся из стиля спикера, нет и его — 0 (правило —
+            `voice_db_of`). Нарезка, превью, сборка .jsx и встроенный рендер берут её отсюда
 
 Профиль без `cut` = текущее поведение один в один: дефолты здесь и константы в
 `gigaam_cut.tune` — одни и те же числа, за этим следит `tests/test_speakers.py`.
 """
 from __future__ import annotations
-import os, json, re, copy
+import math, os, json, re, copy
 from typing import Any
 
 from core import frame
 from core import paths
+from core import styles
 from core.applog import get_logger
 from core.fileio import atomic_text_write
 from core.umsg import ReelsiError
@@ -319,6 +325,25 @@ def _check_format(raw: Any) -> str:
     return fmt
 
 
+# Пределы громкости голоса спикера — те же, что у ползунка (он же задаёт и шаг 0.5).
+VOICE_DB_MIN, VOICE_DB_MAX = -60.0, 12.0
+
+
+def _check_voice_db(raw: Any) -> float:
+    """Проверить поле `voice_db` перед записью профиля (иначе — ValueError).
+
+    Громкость голоса — свойство СПИКЕРА: через профиль она уходит в нарезку, превью,
+    сборку и рендер. Строка или значение вне ползунка (−100 — это цензура, а не
+    громкость) молча попали бы в ролик, поэтому проверка здесь, по тем же пределам.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or not math.isfinite(raw):
+        raise ValueError("поле voice_db должно быть числом (дБ)")
+    if not VOICE_DB_MIN <= raw <= VOICE_DB_MAX:
+        raise ValueError(f"некорректное значение voice_db: {raw!r} (нужно от "
+                         f"{VOICE_DB_MIN:g} до {VOICE_DB_MAX:g} дБ)")
+    return float(raw)
+
+
 def _check_frame(raw: Any) -> dict[str, dict[str, float]]:
     """Проверить поле `frame` перед записью профиля (иначе — ValueError).
 
@@ -382,6 +407,11 @@ def save(name: str | None, data: Any) -> tuple[str, str]:
             d["frame"] = fr
         else:
             del d["frame"]        # все камеры на дефолте — поля нет, как у lut
+    if "voice_db" in d:
+        if d["voice_db"] is None:
+            del d["voice_db"]     # пусто = громкость из стиля спикера, поля нет
+        else:
+            d["voice_db"] = _check_voice_db(d["voice_db"])
     os.makedirs(SPEAKER_DIR, exist_ok=True)
     key = _key(name or d["label"])
     path = os.path.join(SPEAKER_DIR, key + ".json")
@@ -418,3 +448,22 @@ def resolve_cut(prof: Any) -> dict[str, Any]:
         except (TypeError, ValueError):
             continue
     return out
+
+
+def voice_db_of(prof: Any) -> float:
+    """Громкость голоса клипа спикера, дБ — ЕДИНОЕ правило для нарезки, превью,
+    сборки .jsx и встроенного рендера.
+
+    Лестница: своё значение профиля (`voice_db`) → громкость стиля спикера
+    (`style` → `styles.resolve`) → 0. Переход на профиль не меняет звук спикера,
+    у которого своего значения ещё нет: берётся ровно то, что было в его стиле.
+    Клип без спикера сюда не приходит — его громкость остаётся в стиле клипа.
+    Фронт (`voiceDbOf`, static/app/95-styles.js) повторяет эту лестницу по тем же
+    полям; тест держит их вместе.
+    """
+    if not isinstance(prof, dict):
+        return 0.0
+    own = prof.get("voice_db")
+    if isinstance(own, (int, float)) and not isinstance(own, bool) and math.isfinite(own):
+        return float(own)
+    return float(styles.resolve(prof.get("style")).get("voice_db") or 0.0)

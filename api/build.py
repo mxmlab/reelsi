@@ -85,6 +85,9 @@ def _norm_build_jobs(jobs_in: Any) -> list[dict[str, Any]]:
             roto=bool(st.get("roto")), roto_bottom=_roto_bottom_safe(st),
             roto_device=jstr(j, "roto_device").strip().lower() or None,
             style=style or None,
+            # Тег спикера клипа: громкость голоса берётся из его профиля (scene_plan);
+            # ключ едет и в тело рендера (core/render_job → webrender), поэтому он в норме.
+            speaker=jstr(j, "speaker").strip() or None,
             music_db=float(st.get("music_db") if st.get("music_db") is not None else -20.0),
             music_random=bool(j.get("music_random")),
             # Цензура — ключ СТИЛЯ (styles.BASE["censor"], дефолт включён): поле клипа

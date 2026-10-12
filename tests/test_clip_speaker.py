@@ -203,6 +203,8 @@ ALLOWED: dict[str, set[str]] = {
     # 2026-10-11, решение владельца: «рилсы класть туда, где выбранный спикер и его камера 1».
     # Перевод подкаста в рилсы — вход НОВОЙ нарезки, как и сама нарезка берёт общий выбор.
     "45-podcast.js": {"podConvert", "podConvertAll"},
+    # Окно правки подкаста — та же дверь: без спикера рилс уходил в запасную папку (баг 2026-10-12).
+    "46-podcast-editor.js": {"podConvertPicked"},
     "95-styles.js": {
         "applySpeakerDirs", "spkEditUI", "spkDir", "jsxDirNote", "renderDirNote",
         "camDirApply", "camDirCommit", "saveSpeakerCamdirs", "onSpeakerChange",
@@ -210,6 +212,10 @@ ALLOWED: dict[str, set[str]] = {
     },
     "99-boot.js": {"stateObj"},
 }
+# Громкость голоса без открытого клипа — спикер шага 1 (новая нарезка); при открытом клипе
+# дверь берёт его тег (clipSpeaker). Единственное место, где громкость читает общий выбор,
+# — voiceDbSpeakerKey (95-styles.js).
+ALLOWED["95-styles.js"].add("voiceDbSpeakerKey")
 
 # Минимум, который сторож обязан увидеть: иначе он «зелёный» просто потому, что
 # разбор сломался и ни одной функции не нашёл.

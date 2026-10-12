@@ -145,7 +145,7 @@ is parsed from rclone's statistics.
 
 **Where:** the step 1 cut editor, the inserts preview on step 2, and the **Whole recording** timeline of the podcast window. All three are drawn by the same code.
 **How:** each one has the same header (the **!** hint, the title, **+ − ⛶**), the same ruler (tenths of a second when the step is under a second), a blue playhead with a flag, and a waveform that shows the peak of every pixel, so a loud moment is not lost when you zoom out.
-**Settings:** the gestures are the same everywhere. Click or drag on the field or the playhead to seek; dragging does not stop playback. Drag the ruler or use the middle button to scroll the view. The wheel zooms; Shift or a horizontal wheel scrolls. During playback the view follows the playhead, which stays 10 % from the left edge. When several things sit under the cursor, the order is: a piece edge, then the playhead, then the ruler, then the middle of a piece. **C** or **S** cuts, **D**, **Delete** or **Backspace** removes, and undo and redo (Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z) keep one history per timeline.
+**Settings:** the gestures are the same everywhere. Click or drag on the field or the playhead to seek; dragging does not stop playback. A left click on the ruler puts the playhead where you clicked; dragging the ruler or using the middle button scrolls the view. The wheel zooms; Shift or a horizontal wheel scrolls. During playback and on arrow keys the view stays where it is and the playhead runs off the edge. A jump from a list or a button (play piece, double click on an insert, a subtitle row) brings its target into view, 10 % from the left edge. When several things sit under the cursor, the order is: a piece edge, then the playhead, then the ruler, then the middle of a piece. **C** or **S** cuts, **D**, **Delete** or **Backspace** removes, and undo and redo (Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z) keep one history per timeline.
 **Limitations / price:** none new; this is one set of rules, so a change to one timeline changes the other two.
 **Code:** `static/app/00-core.js:207`, `static/app/00-core.js:321`, `static/app/00-core.js:365`, `static/app/00-core.js:290`, `static/app/00-core.js:307`, `static/app/00-core.js:394`, `static/app/00-core.js:446`, `static/app/00-core.js:480`
 
@@ -267,7 +267,7 @@ edit; the window warns before closing with unsaved changes.
 ### Speaker voice
 
 **Where:** step 1 › cut preview › the **Voice** panel (the speaker profile must have voice
-processing on); on steps 2–3 the same panel sits with the inserts preview.
+processing on); on steps 2–3 the same panel sits with the inserts preview. The same panel is also in the speaker profile (step 1 › **Speaker** › **Voice: processing**): there you change the denoiser, the plug-ins, the order and the speaker's volume without listening, and each change is saved to that speaker at once — the profile never touches another speaker's clip; listening (the live plug-in window, the baked preview) stays in the cut preview, so the profile's **Configure** and **Output device** are disabled there.
 **How:** 1. Turn on the **AI denoiser** in the speaker profile and/or add VST3 plug-ins.
 2. Open the preview — the processed voice track plays in the player. 3. Turn the denoiser
 and plug-in knobs by ear; **Configure** opens the plug-in window.
@@ -288,8 +288,8 @@ decision at every seam (the picture doubled → the voice does too; the picture 
 waits for `seeked`), and drift is killed with speed (±6 %), not with a seek. The rule that holds
 it: a double always plays the very same file as the live track, so the previous clip's voice can
 never sound on the next seam.
-**Volume sliders** — **Volume** in the panel (the clip style's `voice_db`, the same value
-as the **Voice** slider on steps 2–3) and the listening volume in the player row both act
+**Volume sliders** — **Volume** in the panel (the speaker's voice volume, one value for all
+of his clips and the same as the **Voice** slider on steps 2–3; saved to the speaker profile) and the listening volume in the player row both act
 on the live plug-in sound as well: the host's volume is the speaker's voice volume (dB)
 plus the listening volume. The live host plays at the device's rate and reports a failure
 in the panel, giving the sound back to the page; **Configure** opens the window of the host

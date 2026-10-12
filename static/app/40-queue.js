@@ -759,11 +759,13 @@ function renderClips2(){const h=$('clips2');if(!h)return;h.innerHTML='';
   // Блок клипа НЕ красим зелёным целиком (просьба юзера): и так видно по тегам, а
   // сплошная заливка глушила разницу между «готово» и «сейчас работаю».
   // Зелёные остаются только сами теги — мелкие маркеры «поработал».
+  // Имя — гибкая колонка (grow), ярлыки — фиксированный блок правее: их начало одно у всех
+  // клипов, а длинное имя обрезается многоточием, а не сталкивает ярлыки на вторую строку.
   CLIPS.forEach((c,i)=>{const el=document.createElement('div');el.className='clip'+lastClipCls(2,c);
     el.innerHTML='<label class="pickbox" data-t="'+t('Фазы разметки у выбранных клипов (пусто у всех = все). Отмеченное здесь — то же, что и на шаге сборки.')+'" onclick="event.stopPropagation()">'
       +'<input type="checkbox" data-ci="'+i+'" '+(c.sel?'checked':'')+' onchange="CLIPS['+i+'].sel=this.checked;pickClip('+i+',this.checked,SHIFT_HELD);saveState();syncBuildBtn();markupSelCount()"></label>'
-      +'<span class="idx">'+(i+1)+'</span><span class="nm" data-noi18n title="'+esc(c.xml)+'">'+esc(c.name)+'</span>'
-      +'<span class="st grow">'+statusTags(c,true)+'</span>'+clipActs(i,2);
+      +'<span class="idx">'+(i+1)+'</span><span class="nm grow" data-noi18n title="'+esc(c.xml)+'">'+esc(c.name)+'</span>'
+      +'<span class="st">'+statusTags(c,true)+'</span>'+clipActs(i,2);
     h.appendChild(el);});
   markupSelCount();syncDelSel();}
 // Счётчик «(N)» на кнопках фаз шага 2: сколько клипов уйдёт в фазу (не отмечено ни

@@ -67,7 +67,7 @@ def _modal_markup():
     return re.sub(r'<span data-ic="[^"]*"[^>]*></span>', '<svg class="ic" viewBox="0 0 24 24"></svg>', block)
 
 
-def _measure(width, height, cards, css_file=CSS, aemode=False):
+def _measure(width, height, cards, css_file=CSS, aemode=False, chips=6):
     """Собрать страницу с настоящей модалкой и настоящим CSS, замерить её в Chrome.
     width/height — как у окна Chrome (--window-size), отдаются в _run_chrome; видимую
     высоту страница берёт у браузера, height — только фолбэк. Размеров странице не
@@ -102,7 +102,7 @@ window.addEventListener('load',function(){
   if(AE){
     document.querySelector('#mbInserts .modal').classList.add('aemode');
     var w=document.getElementById('aewwords');
-    for(var j=0;j<6;j++)w.insertAdjacentHTML('beforeend',"<span class='chip'>слово"+j+"</span>");
+    for(var j=0;j<%d;j++)w.insertAdjacentHTML('beforeend',"<span class='chip'>слово"+j+"</span>");
   }
   var vh=(document.documentElement.clientHeight||%d);
   var g=function(id){var el=document.getElementById(id);var r=el.getBoundingClientRect();
@@ -114,6 +114,8 @@ window.addEventListener('load',function(){
   var res={vh:vh,innerH:window.innerHeight,modal:g('mbInserts'),tl:g('itl'),host:g('insHost'),
     side:g('inspart_inserts'),stage:g('ipvstage'),
     pv:gq('#mbInserts .inspv'),mid:gq('#aewpanel'),words:gq('#aewwords'),
+    chips:Array.prototype.map.call(document.querySelectorAll('#aewwords .chip'),function(e){var r=e.getBoundingClientRect();
+      return {top:r.top,bottom:r.bottom,left:r.left,right:r.right,height:r.height};}),
     box:gq('#mbInserts .inspv .ipvbox'),head:gq('#mbInserts .itlbar.tlhead'),audio:gq('#mbInserts .itlbar .pvaudio'),
     leftCtl:document.querySelectorAll('#mbInserts .inspv .pvtransport,#mbInserts .inspv .pvaudio,#mbInserts .inspv #ipvseek').length,
     page:{sw:document.documentElement.scrollWidth,cw:document.documentElement.clientWidth,
@@ -122,7 +124,7 @@ window.addEventListener('load',function(){
   document.body.appendChild(pre);
 });
 </script>
-</body></html>""" % (css_url, markup, "true" if aemode else "false", cards, height)
+</body></html>""" % (css_url, markup, "true" if aemode else "false", cards, chips, height)
     return page
 
 
@@ -188,6 +190,8 @@ def test_aemode_preview_layout_is_the_same_as_before_cc632e3(tmp_path):
     карточках вставок в стенде), а всю раскладку сверяем со стендом на прежнем CSS — там в
     сравнении и колонка карточек, и кадр: если они вернутся в раскладку шага 3, ширины
     разойдутся.
+    С 2026-10-12 колонку плеера шага 3 сверяем инвариантом (панель не уже 480 px), а не
+    прежними числами: владелец попросил колонку от высоты кадра.
 
     Мутация: снять `:not(.aemode)` с каркаса шага 2 — у превью AE лишняя колонка карточек и
     широкий плеер, первое же сравнение краснеет.
@@ -209,14 +213,18 @@ def test_aemode_preview_layout_is_the_same_as_before_cc632e3(tmp_path):
     # Кадр (stage) из сверки выведен намеренно: видео забирает всю высоту колонки и считается
     # от неё (правка владельца 2026-10-11), прежние 233×413 больше не ожидаются. Его сверяем
     # с колонкой ниже — см. assert про высоту кадра.
-    boxes = (("modal", "окно"), ("pv", "колонка плеера"),
-             ("side", "колонка вставок"), ("host", "список карточек"),
-             ("mid", "панель слов"), ("words", "список слов"), ("tl", "таймлайн"))
+    # Колонку плеера и панель слов шага 3 с прежним CSS НЕ сверяем: с 2026-10-12 колонка берёт
+    # ширину от высоты кадра (жалоба владельца на 2000×1125), и прежние числа станут ложью. Их
+    # держит инвариант: панель не уже 480 px (см. ниже). Окно, колонка карточек и таймлайн — как было.
+    boxes = (("modal", "окно"), ("side", "колонка вставок"), ("host", "список карточек"),
+             ("tl", "таймлайн"))
     for key, ru in boxes:
         for prop in ("left", "width", "height"):
             assert abs(now[key][prop] - before[key][prop]) <= 2, (
                 "раскладка шага 3 разошлась с прежней: у %s %s = %s, было %s"
                 % (ru, prop, now[key][prop], before[key][prop]))
+    assert now["mid"]["width"] >= 480 - 1, (
+        "панель слов превью AE уже 480 px: колонка плеера съела место (%s)" % now["mid"])
     # Шаг 3 видео тоже забирает всю высоту своей колонки (тот же блок .ipvbox, что у шага 2).
     st, bx = now["stage"], now["box"]
     assert abs(st["width"] / st["height"] - 9 / 16) < 0.01, "кадр превью AE потерял пропорцию 9:16: %s" % st
@@ -492,8 +500,17 @@ def test_step2_frame_does_not_touch_step3():
     m = re.search(r"\.modal\.aemode\.inspv\{([^}]+)\}", flat)
     assert m, "нет правила .modal.aemode .inspv (колонка плеера шага 3)"
     col = m.group(1)
-    assert "480px" in col and "360px" in col, (
-        "колонка плеера шага 3 ушла от прежних чисел (потолок 480px, вычет 360px): %s" % col)
+    # 2026-10-12: ширина колонки = высота кадра (от высоты ряда колонок превью), но не уже панели слов
+    # минус 480px. Прежняя формула (100vh - 360px, потолок 480px) угадывала высоту окна и давала
+    # кадр в 2/3 колонки на 2000×1125.
+    assert "100cqh" in col and "100cqw-498px" in col, (
+        "колонка плеера шага 3 не считается от высоты ряда колонок и не держит панель слов 480px: %s" % col)
+    # На окне ≤980px колонка уложена в поток, а basis там — высота плеера: прежняя формула осталась.
+    start = flat.index("@media(max-width:980px){")
+    end = flat.find("@media(", start + 1)
+    block = flat[start:end if end > 0 else len(flat)]
+    assert ".modal.aemode.inspv{flex:00clamp(200px,calc((100vh-360px)*var(--stage-ar,0.5625)),480px)}" in block, (
+        "на окне ≤980px колонка шага 3 ушла от прежней раскладки (basis — высота плеера)")
 
 
 def test_inserts_modal_width_is_the_same_as_step3():
@@ -520,3 +537,76 @@ def test_inserts_modal_width_is_the_same_as_step3():
     i = html.index('<div class="backdrop" id="mbInserts"')
     assert '<div class="modal wide ' in html[i:i + 400], (
         "модалка вставок потеряла .modal.wide — ширина шага 2 разошлась с шагом 3")
+
+
+def _chip_rows(chips):
+    """Строки чипов по top: близкие по top — одна строка (допуск 2 px)."""
+    rows = []
+    for c in sorted(chips, key=lambda c: c["top"]):
+        if rows and abs(c["top"] - rows[-1]["top"]) <= 2:
+            rows[-1]["bottom"] = max(rows[-1]["bottom"], c["bottom"])
+        else:
+            rows.append({"top": c["top"], "bottom": c["bottom"]})
+    return rows
+
+
+@chrome
+@pytest.mark.xdist_group("chrome")
+@pytest.mark.parametrize("width,height", [(2000, 1125), (2560, 1440)])
+def test_aemode_frame_fills_column_height_and_chips_stay_on_top(tmp_path, width, height):
+    """Превью AE: кадр 9:16 занимает >= 85 % высоты колонки видео, а строки чипов слов прижаты
+    кверху (промежуток между строками — не больше высоты чипа + 16 px). Окна — 2000×1125 (как у
+    владельца) и 2560×1440 (его экран).
+
+    Жалоба владельца (2026-10-12): колонка видео ~375 px, кадр занимает ~2/3 высоты колонки,
+    снизу пусто; чипы слов разнесены на ~85 px. Причина: ширина колонки считалась от 100vh - 360px
+    (угадайка), а у .words flex-wrap с фиксированной высотой растягивал строки (align-content).
+    На старом CSS замер такой: 2000×1125 — кадр 93 % (2/3 владельца здесь не воспроизводится, порог
+    85 % на этом окне не краснеет), 2560×1440 — 83 % (краснеет); промежуток чипов — 188 px и 286 px.
+
+    Мутация: вернуть ширину колонки `clamp(200px,calc((100vh - 360px)…),480px)` — на 2560×1440
+    кадр 83 %, краснеет; снять align-content:flex-start с .aewpanel .words — промежуток ~190–290 px.
+    """
+    m = _run_chrome(tmp_path, "ae_%dx%d.html" % (width, height),
+                    _measure(width, height, 6, aemode=True, chips=30), width, height)
+    if m is None:
+        pytest.skip("безголовый Chrome в песочнице не стартует (mojo/named pipes): "
+                    "геометрию превью AE прогнать не удалось")
+    st, box = m["stage"], m["box"]
+    assert st["height"] >= 0.85 * box["height"], (
+        "кадр 9:16 не занимает колонку видео по высоте: кадр %s при колонке %s" % (st, box))
+    assert abs(st["width"] / st["height"] - 9 / 16) < 0.01, "кадр потерял пропорцию 9:16: %s" % st
+    assert m["mid"]["width"] >= 480 - 1, (
+        "панель слов превью AE уже 480 px: %s" % m["mid"])
+
+    rows = _chip_rows(m["chips"])
+    assert len(rows) >= 2, (
+        "чипы легли в одну строку — проверка промежутка между строками пуста: %s" % rows)
+    gap = rows[1]["top"] - rows[0]["bottom"]
+    chip_h = m["chips"][0]["height"]
+    assert gap <= chip_h + 16, (
+        "строки чипов слов разнесены: промежуток %.1f px при высоте чипа %.1f px (нужно <= высота + 16)"
+        % (gap, chip_h))
+
+
+@chrome
+@pytest.mark.xdist_group("chrome")
+@pytest.mark.parametrize("width,height", [(1366, 768), (1920, 1080)])
+def test_aemode_frame_is_fully_visible_and_clear_of_words_panel(tmp_path, width, height):
+    """Превью AE на 1366×768 и 1920×1080: кадр целиком в окне и не заходит на панель слов.
+
+    Мутация: ширина колонки больше панели (например, без вычета 498px) — кадр наезжает на панель,
+    вторая проверка краснеет.
+    """
+    m = _run_chrome(tmp_path, "ae_%dx%d.html" % (width, height),
+                    _measure(width, height, 6, aemode=True, chips=30), width, height)
+    if m is None:
+        pytest.skip("безголовый Chrome в песочнице не стартует (mojo/named pipes): "
+                    "геометрию превью AE прогнать не удалось")
+    vh = m["innerH"] or m["vh"]
+    st = m["stage"]
+    assert st["top"] >= 0 and st["bottom"] <= vh + 1, (
+        "кадр превью AE не виден целиком при %dx%d: кадр %s, innerHeight %s" % (width, height, st, vh))
+    assert st["right"] <= m["mid"]["left"] + 1, (
+        "кадр превью AE заходит на панель слов при %dx%d: кадр %s, панель %s"
+        % (width, height, st, m["mid"]))

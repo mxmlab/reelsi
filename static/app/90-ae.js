@@ -193,7 +193,9 @@ function jobForBuild(c){const j=c.job||defJob();
     outdir:effOutdir(c)||'',
     highlights:j.highlights||[],hl_breaks:j.hl_breaks||[],hl_count:j.hl_count||[],hl_joins:j.hl_joins||[],inserts:(j.ins||[]).filter(r=>(r.media||'').trim()),
     intro:[],intro_remove:[],intro_splits:[],introRows:j.introRows||[],intro_mode:j.intromode||'word',
-    cams:clipNcams(c),style:styleForJob(j)};}
+    cams:clipNcams(c),style:styleForJob(j),
+    // Тег спикера клипа: громкость голоса берётся из его профиля (сервер, scene_plan).
+    speaker:clipSpeaker(c)};}
 // intro для сборки надо резолвить по словам ЭТОГО файла — делаем на бэке? нет: резолвим из introRows+загруженных слов текущего.
 // поэтому открытый клип резолвит introResolve() (captureAE), а набор — по сохранённым introRows и словам каждого (грузим).
 

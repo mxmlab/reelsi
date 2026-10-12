@@ -841,6 +841,21 @@ def _flag(d: dict[str, Any], key: str) -> bool:
     return v is True or str(v).lower() in ("true", "1")
 
 
+def _reel_sidecars(src: str) -> list[str]:
+    """Соседи рилса-исходника: `<стем>.reframe.json` и `.<стем>.crop.txt` (пишет
+    core/podcast_reframe.convert_segment рядом с mp4).
+
+    Рилс нарезки — это камера клипа. Если унести только mp4, в папке остаются план рамки и
+    sendcmd-файл без рилса (баг 2026-10-12): вернуть рилс из корзины можно, а рамка уже
+    не привязана к нему. Берём только существующие файлы.
+    """
+    folder, name = os.path.split(src)
+    stem = os.path.splitext(name)[0]
+    cands = [os.path.join(folder, stem + ".reframe.json"),
+             os.path.join(folder, "." + stem + ".crop.txt")]
+    return [p for p in cands if os.path.isfile(p)]
+
+
 def _clip_sharers(xml_dir: str, cam_rp: str, exclude_rp: set[str]) -> list[str]:
     """Имена (stem) ДРУГИХ клипов Reelsi из папки XML, которые ссылаются на тот же файл камеры.
 
@@ -1042,6 +1057,19 @@ def api_clip_delete() -> Response:
                                 "why": "нужен ещё клипам: " + ", ".join(s["shared_with"])})
             else:
                 source_files.append({"path": s["path"], "size": s["size"]})
+                # Соседи уходят с исходником, только если уходит он сам: общий исходник
+                # остаётся, и его рамка остаётся с ним. Общий путь — один раз (два исходника
+                # одного стема в одной папке дали бы одного соседа дважды).
+                for side in _reel_sidecars(s["path"]):
+                    rp = _rp(side)
+                    if rp in seen_paths:
+                        continue
+                    seen_paths.add(rp)
+                    try:
+                        sz = os.path.getsize(side)
+                    except OSError:
+                        sz = 0  # увидели, а размер не прочли — в объём не попадёт
+                    source_files.append({"path": side, "size": sz})
     if dry:
         files_to_delete = files_to_delete + source_files  # сухой прогон: показываем, что уйдёт
     total_bytes = sum(f["size"] for f in files_to_delete)

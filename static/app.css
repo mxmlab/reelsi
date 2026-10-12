@@ -376,7 +376,11 @@ summary:hover{color:var(--tx)}
 .clip{display:flex;align-items:center;gap:14px;border:1px solid var(--bd);border-radius:var(--r);padding:13px 15px;background:transparent}
 .clip .idx{font-family:ui-monospace,monospace;color:var(--mut);font-size:12px;width:20px}
 .clip .nm{font-weight:400;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.clip .st{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+/* Ярлыки статуса — одной строкой и не сжимаются. Раньше .st переносился (flex-wrap:wrap) и
+   при длинном имени клипа «ПРАВЛЕНО · СУБТИТРЫ · ЖЁЛТЫЕ» падал на вторую строку, а начало
+   ярлыков у разных клипов уезжало (жалоба владельца 2026-10-12). Имя (.nm.grow) забирает
+   всё, что осталось, и обрезается многоточием, поэтому ярлыки стоят одним столбцом. */
+.clip .st{display:flex;gap:7px;flex-wrap:nowrap;flex:none;align-items:center}
 .tag{font-size:11px;padding:3px 9px;border-radius:var(--r-sm);border:1px solid var(--bd2);color:var(--mut);white-space:nowrap;
   background:#1a1a1a;text-transform:uppercase;letter-spacing:.03em;display:inline-flex;align-items:center;gap:5px}
 /* зелёное = «над этим уже поработал» (маркер юзера): точка-пульс + зелёный текст */
@@ -515,6 +519,11 @@ summary:hover{color:var(--tx)}
 .setrow{display:flex;gap:12px;align-items:center}
 .setrow>label:first-child{margin:0;flex:0 0 176px;font-size:12px}
 .setrow>select,.setrow>input{flex:1;min-width:0}
+/* неактивный контрол панели голоса без звука клипа (профиль спикера): справка висит на
+   обёртке .vfxlock (tabindex, data-t). Chrome не шлёт мыши и фокус disabled-контролам, и
+   без этого правила hover уходил бы к самому контролу, а подсказка не всплывала бы. */
+.vfxlock{display:inline-flex;min-width:0}
+.vfxlock>:disabled{pointer-events:none}
 /* галки «Страница нарезки»: короткие подписи в одну строку (колонка подписи 176px) */
 .pgblk{white-space:nowrap}
 /* золото — только контуры иконок и «◆» (DESIGN): заголовок секции был им же, и это
@@ -1159,11 +1168,16 @@ canvas.ipvroto{position:absolute;inset:0;width:100%;height:100%;pointer-events:n
    как и до cc632e3. */
 /* Тело превью AE — прежние 20 px сверху и снизу: .tight у этого же тела нужен шагу 2 */
 .modal.aemode .mbody.fill.tight{padding-top:20px;padding-bottom:20px}
-.modal.aemode .inscols{flex:1;min-height:0;overflow:hidden}
-/* Колонка плеера шага 3 — прежние числа (до cc632e3): потолок 480px и вычет 360px.
-   min-width:0 пришло из тогдашнего общего .inspv{…min-width:0}, действовавшего и на шаг 3;
-   здесь оно то же, но уже не задевает шаг 2. */
-.modal.aemode .inspv{container-type:size;height:100%;min-width:0;flex:0 0 clamp(200px,calc((100vh - 360px) * var(--stage-ar, 0.5625)),480px);min-height:0;max-height:100%;display:flex;flex-direction:column}
+/* Ряд колонок — контейнер размера: колонка плеера берёт ширину от ВЫСОТЫ ряда (cqh), а не от высоты
+   окна браузера. Прежняя формула (100vh - 360px) была угадайкой: на окне 2000×1125 колонка выходила
+   ~375 px (жалоба владельца 2026-10-12). Контейнер — именно ряд, а не тело: под рядом в теле стоит
+   таймлайн, и от тела ширина считалась бы по высоте, которой у колонки нет. */
+.modal.aemode .inscols{flex:1;min-height:0;overflow:hidden;container-type:size}
+/* Колонка плеера шага 3: ширина = высота кадра (9:16 от высоты колонки, --stage-ar на .inspv),
+   но не уже панели слов минус 480px (498 = 480 + gap .inscols 18). Кадр растёт на всю высоту
+   колонки, а колонка — по ширине кадра; правая панель остаётся не уже 480px. Ширина от
+   cqh/cqw ряда колонок (см. .inscols выше). min-width:0 пришло из тогдашнего общего .inspv. */
+.modal.aemode .inspv{container-type:size;height:100%;min-width:0;flex:0 0 min(calc(100cqh * var(--stage-ar, 0.5625)),calc(100cqw - 498px));min-height:0;max-height:100%;display:flex;flex-direction:column}
 /* Под сценой — строка плеера и ползунки громкости (~175 px): высоту кадра считаем ЗА их вычетом,
    а сам кадр не сжимается флексом (flex:none) — иначе при низком окне он обрезался по высоте
    и терял пропорцию плана (1000×640: 272×186 вместо 9:16). */
@@ -1172,7 +1186,10 @@ canvas.ipvroto{position:absolute;inset:0;width:100%;height:100%;pointer-events:n
 .modal.aemode .insside{display:none}
 .aewpanel{flex:1;min-width:0;display:none}
 .modal.aemode .aewpanel{display:flex;flex-direction:column;align-self:stretch;min-height:0}
-.aewpanel .words{flex:1;min-height:0;max-height:none;overflow:auto;margin-top:8px}
+/* Строки чипов прижаты кверху: у flex-wrap с фиксированной высотой align-content:normal растягивает
+   строки на всю высоту панели, и между строками вырастали промежутки ~85 px (жалоба владельца
+   2026-10-12). Промежуток между строками — обычный gap .words, как между чипами. */
+.aewpanel .words{flex:1;min-height:0;max-height:none;overflow:auto;margin-top:8px;align-content:flex-start}
 /* вкладка «Стиль» в предпросмотре: занимает всю доступную высоту колонки */
 #aewstyle{display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;margin-top:10px;padding-right:6px}
 #aewstyle #stylebox{display:flex;flex-direction:column;flex:1;min-height:0;max-height:100%;overflow:hidden}
@@ -1200,6 +1217,9 @@ canvas.ipvroto{position:absolute;inset:0;width:100%;height:100%;pointer-events:n
 .itlblk.roto{top:17px;height:5px;background:var(--amber);opacity:.7;border:none;border-radius:0}
 .itlblk.lo{top:42px;height:36px}
 @media(max-width:980px){.inscols{flex-direction:column}.inspv{flex:none;width:100%}
+  /* В колонке basis — это ВЫСОТА плеера шага 3, а не ширина: прежняя формула (100vh - 360px)
+     держит её как было. Новая (от ширины панели) здесь раскладку бы сломала. */
+  .modal.aemode .inspv{flex:0 0 clamp(200px,calc((100vh - 360px) * var(--stage-ar, 0.5625)),480px)}
   /* колонкой кадр иначе растянулся бы на всю модалку и ушёл под сгиб;
      .modal.aemode в этой ширине кадр ужимает сам (calc(100cqh - 175px)).
      `.inshostscroll{max-height:44vh}` — правило из тех времён (до cc632e3): у шага 2 высоту

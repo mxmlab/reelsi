@@ -378,7 +378,7 @@ function ipvNowFrame(P){if(P.renderT!=null)return P.renderT;
 // «кадр уже на месте» не должно значить «кадр не считается».
 function ipvSeekTo(tm){if(!IPV.vids.length||!IPV.audio.length)return;tm=Math.max(0,Math.min(tm,IPV.dur));
   IPV.aidx=pvSegAt(IPV.audio,tm);IPV.vidx=-1;IPV.primed=-1;
-  spareIdle(IPV);camIdle(IPV);ipvApplyVisual(tm,false);ipvUI(tm);itlEnsure(tm);musicElSync();
+  spareIdle(IPV);camIdle(IPV);ipvApplyVisual(tm,false);ipvUI(tm);musicElSync();
   if(typeof vtTick==='function')vtTick(IPV,tm);   // дорожка обработанного голоса стоит на паузе — подводим к новому месту
   if(!ipvRenderMode())ipvVideoTo(IPV.vids[0],ipvLeadTime(tm));}
 // Исходное время ведущей камеры на момент tm — то, куда её ставить. Одна формула на
@@ -402,8 +402,7 @@ function ipvStep(){if(!IPV.playing)return;
   spareRollAt(IPV,st.tm);
   if(typeof vtTick==='function')vtTick(IPV,st.tm);   // дорожка обработанного голоса идёт за монтажом (и глушит звук камеры)
   if(typeof pvAudioLimit==='function')pvAudioLimit($('ipvstage'),IPV);   // строка про звук Firefox — по ходу игры
-  ipvUI(st.tm);
-  itlEnsure(st.tm);}   // лента едет за плейхедом во время игры (как окно подкаста)
+  ipvUI(st.tm);}   // лента при игре не едет за плейхедом: окно двигает только явный переход (itlRevealAt)
 // Следующий шаг ведёт ОБЩИЙ планировщик кадра (60-preview.js): видимая вкладка идёт на
 // rAF, скрытая — на таймер. Раньше здесь был только rAF, и в фоне предпросмотр вставок
 // игрался с вырезанным (шаг не приходил вовсе).
@@ -789,8 +788,9 @@ function musicElSync(){if(!musicEnsure())return;
 function ipvScrub(x){if(!IPV.vids.length)return;const tm=x/1000*IPV.dur;const was=IPV.playing;
   IPV.scrubbing=true;clearTimeout(IPV.scrubT);ipvPause();ipvSeekTo(tm);if(was)ipvPlay();
   IPV.scrubT=setTimeout(()=>{IPV.scrubbing=false;if(IPV.playing)sparePrime(IPV);},150);}
+// Двойной клик по вставке — явный переход к ней: окно показывает её начало (itlRevealAt).
 function ipvJump(i){const x=ipvIns()[i];if(!x||!IPV.vids.length)return;
-  ipvSeekTo(Math.max(0,insSD(x).s-1));ipvPlay();}
+  ipvSeekTo(Math.max(0,insSD(x).s-1));itlRevealAt(insSD(x).s);ipvPlay();}
 // ---- наезд и дрейф Камеры 1: ключи и кривые из плана (zoom.keys/ease/hold/fit) ----
 // Масштаб кадра от центра композиции; hold — джамп-кат без интерполяции. Преломление
 // кадра в кадр и дублёру: на стыке подмена меняет элементы местами, и вышедший в эфир
@@ -3648,12 +3648,13 @@ function itlDraw(){const el=$('itl'),inn=$('itlin');if(!el||!inn)return;
     bh.appendChild(b);});
   itlPh(IPV.vids.length?ipvNow():0);}
 function itlPh(tm){const p=$('itlph');if(p)p.style.left=((tm||0)*ITL.pps)+'px';}
-// Лента следует за плейхедом по общему правилу (tlFollowHead, 00-core.js): модель — секунды окна,
-// переводим из scrollLeft и обратно. Тянут плейхед — лента не догоняет (ITL.scrub).
-function itlEnsure(tm){const el=$('itl');const dur=IPV.contentDur||IPV.dur;
-  if(!el||!dur||!ITL.pps||ITL.scrub||tlPanning(el))return;   // тянут плейхед или ленту — лента не догоняет
+// Явный переход к вставке (двойной клик, строка списка): лента показывает t, если t вне видимого
+// окна (tlReveal, 00-core.js). Модель — секунды окна, переводим из scrollLeft и обратно. Игра,
+// перемотка и протяжка по самой ленте окно не двигают (решение владельца 2026-10-12).
+function itlRevealAt(tm){const el=$('itl');const dur=IPV.contentDur||IPV.dur;
+  if(!el||!dur||!ITL.pps||ITL.scrub||tlPanning(el))return;   // тянут плейхед или ленту — не перебиваем
   const v0=el.scrollLeft/ITL.pps, v1=(el.scrollLeft+el.clientWidth)/ITL.pps;
-  const r=tlFollowHead(v0,v1,tm,dur);
+  const r=tlReveal(v0,v1,tm,dur);
   if(r[0]!==v0)el.scrollLeft=r[0]*ITL.pps;}
 function itlBlockDown(e,i,mode){const x=ipvIns()[i];if(!x)return;
   e.preventDefault();e.stopPropagation();
@@ -3684,7 +3685,9 @@ function itlBlockDown(e,i,mode){const x=ipvIns()[i];if(!x)return;
 function itlMidPan(e){
   const el=$('itl');if(!el)return;
   e.preventDefault();
-  tlMidPan(el,e,{snap:()=>el.scrollLeft,apply:(dx,s)=>{el.scrollLeft=Math.max(0,s-dx);}});
+  // click — клик по линейке (левой, без протяжки): плейхед в точку клика, лента стоит (правило NF1)
+  tlMidPan(el,e,{snap:()=>el.scrollLeft,apply:(dx,s)=>{el.scrollLeft=Math.max(0,s-dx);},
+    click:cx=>{if(!IPV.vids.length||!ITL.pps)return;const r=$('itlin').getBoundingClientRect();ipvSeekTo((cx-r.left)/ITL.pps);}});
 }
 $('itlin').addEventListener('pointerdown',e=>{if(e.button===1){itlMidPan(e);return;}   // средняя — протяжка, раньше блока
   // линейка — протяжка ленты (как средняя кнопка), а не перемотка: плейхед остаётся на месте

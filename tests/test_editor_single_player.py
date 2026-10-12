@@ -52,6 +52,7 @@ sys.path.insert(0, str(ROOT))
 
 EDITOR_JS = ROOT / "static" / "app" / "70-editor.js"
 PREVIEW_JS = ROOT / "static" / "app" / "60-preview.js"
+STYLES_JS = ROOT / "static" / "app" / "95-styles.js"
 HTML = ROOT / "templates" / "index.html"
 
 node = pytest.mark.skipif(not shutil.which("node"), reason="стенд требует node в PATH")
@@ -62,7 +63,7 @@ EDITOR_FUNCS = ("edOpen", "edResize", "edTotal", "edBlockAt", "edCutTime", "edSr
                 "edS2X", "edX2S", "edUI",
                 "edWords", "edSeek", "edToggle", "edPlay", "edPause",
                 "edTake", "edJump", "edVideoSeek", "edFollow", "edArm", "edTick", "edBind",
-                "edSplit", "edDelSel", "edUndoUI", "edUndo", "edRedo", "edFollowView")
+                "edSplit", "edDelSel", "edUndoUI", "edUndo", "edRedo")
 PREVIEW_FUNCS = ("openPreview", "pvVideoTo", "pvWordAt", "pvSegAt", "bufMake", "bufIdle",
                  "bufSilent", "bufArm", "bufRoll", "bufTake",
                  "bufSwap", "spareLead", "spareIdle", "spareStop", "spareSwap", "spareRollAt",
@@ -138,8 +139,16 @@ def _bodies() -> str:
         out.append(src)
     for name in EDITOR_FUNCS:
         out.append(_func_src(editor, name))
+    # Громкость голоса — боевая дверь из 95-styles.js (eaGain её зовёт); контекст — заглушка:
+    # открытого клипа и спикера в этом стенде нет, значит громкость — от CURSTYLE.
+    styles = STYLES_JS.read_text(encoding="utf-8")
+    # `$` — из самого стенда (BY_ID): своя заглушка перекрыла бы её и уронила бы плеер.
+    out.append("let curAE=-1,CLIPS=[],SPEAKERS={};\n"
+               "function clipSpeaker(c){return (c&&c.job&&c.job.speaker)||'';}")
+    for name in ("voiceDbSpeakerKey", "voiceDbBySpeaker", "voiceDbOf"):
+        out.append(_func_src(styles, name))
     core = CORE_JS.read_text(encoding="utf-8")
-    for name in ("histStack", "tlClampView", "tlFollowHead", "tlPanning"):
+    for name in ("histStack", "tlClampView", "tlPanning"):
         out.append(_func_src(core, name))
     return "\n".join(out)
 

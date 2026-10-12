@@ -1260,9 +1260,13 @@ def test_style_sub_height_live_moves_preview_subtitle(js, html):
     assert field and field["ctl"] == "num" and field.get("conv") == "inv_pct", (
         "«Высота субтитров» пропала из схемы или потеряла пересчёт в % снизу")
     panel = _panel_js()
+    # Числовые поля идут через stFieldEdit: для обычных полей он зовёт stEdit() (превью живое),
+    # для громкости спикера — setVoiceDb. Проверяем всю цепочку, а не имя в теле drag.
     drag = _fn_body(panel, "function initNumDrag(")
-    assert "stEdit();" in drag, "перетаскивание числа не двигает превью вживую"
-    assert "stEdit();" in _fn_body(panel, "function stSliderInput("), (
+    assert "stFieldEdit(" in drag, "перетаскивание числа не двигает превью вживую"
+    assert "stEdit();" in _fn_body(panel, "function stFieldEdit("), (
+        "stFieldEdit не ведёт обычное поле в stEdit() — превью не оживёт")
+    assert "stFieldEdit(" in _fn_body(panel, "function stSliderInput("), (
         "ползунок не двигает превью вживую")
     assert "function styleSubPos()" in js and ".pvsub" in js[js.index("function styleSubPos()"):], (
         "позиция субтитров в превью больше не пересчитывается")
@@ -1395,8 +1399,10 @@ def test_preview_ducks_voice_on_censor_windows_from_the_plan(js):
     duck = _fn_body(js, "function vgDuck(")
     assert "plan.audio.censor" in duck, "окна цензуры берутся не из плана"
     assert "VG.gain.value=0" in duck, "внутри окна voiceGain не уводится в ноль"
-    assert "dbToGain(" in duck and "voice_db" in duck, (
-        "вне окна voiceGain не возвращается к voice_db — заглушка останется навсегда")
+    # Громкость голоса читается одной дверью (voiceDbOf: спикер клипа или стиль), а не из
+    # CURSTYLE.voice_db: иначе вне окна цензуры голос вернулся бы не к громкости спикера.
+    assert "dbToGain(voiceDbOf())" in duck, (
+        "вне окна voiceGain не возвращается к громкости голоса спикера — заглушка останется навсегда")
 
     # Шаг 1 плана сцены не знает вовсе: /api/aicut_preview отдаёт EDL, а не план сцены.
     # Пока панель слов предпросмотра нарезки существовала, вызов брал PVW.plan — он всегда
@@ -2165,8 +2171,18 @@ def test_style_panel_cp3_all_fields_call_stedit(html):
                    "function stColorSwatchChange(",
                    "function stToggleLayer(", "function stToggleGroup(",
                    "function createAngleDial(", "function stReset(", "function stResetKey("):
-        assert "stEdit()" in _fn_body(panel, header), (
-            "%s не ведёт в stEdit() — правка поля не доедет до стиля" % header)
+        body = _fn_body(panel, header)
+        assert "stEdit()" in body or "stFieldEdit(" in body, (
+            "%s не ведёт в stEdit() (напрямую или через stFieldEdit) — правка поля не доедет до стиля"
+            % header)
+
+    # stFieldEdit — дверь числовых полей: обычные поля ведут в stEdit() (правка стиля), а
+    # громкость голоса спикера — в свою дверь setVoiceDb (в стиль она не пишется).
+    fe = _fn_body(panel, "function stFieldEdit(")
+    assert "setVoiceDb(" in fe and "stEdit();" in fe, (
+        "stFieldEdit должен вести обычные поля в stEdit(), а громкость спикера — в setVoiceDb")
+    assert fe.index("setVoiceDb(") < fe.index("stEdit();"), (
+        "stFieldEdit: сначала ветка громкости спикера, потом общий путь через stEdit()")
 
     # простые контролы подключаются к stEdit прямо в разметке панели. У ручек выбора
     # трека (флаг track) — своя дверь musicFieldEdit: она решает, писать переопределение
@@ -2820,6 +2836,9 @@ def test_preview_modal_style_column_geometry_no_overlap(css, tmp_path):
     html_path = tmp_path / "geom_test.html"
     css_url = pathlib.Path(CSS).resolve().as_uri()
     rows = "\n".join(f"<div class='strow'>Row {i}</div>" for i in range(50))
+    # Оболочка — как у настоящего превью AE: .modal.fill94 (высота окна) и .mbody.fill (тело-колонка).
+    # Без них .inscols не получал высоты от тела, а container-type:size (ряд колонок превью) схлопывал
+    # его в ноль — стенд врал бы про таймлайн. Проверяется то же: колонка стиля не налезает на таймлайн.
     html_src = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -2831,9 +2850,9 @@ body {{ margin: 0; padding: 0; width: 1000px; height: 640px; overflow: hidden; }
 </head>
 <body>
 <div class='backdrop' id='mbInserts' style='display:flex'>
-  <div class='modal wide aemode' role='dialog'>
+  <div class='modal wide fill94 aemode' role='dialog'>
     <div class='mhead'><h2>Preview</h2></div>
-    <div class='mbody'>
+    <div class='mbody fill tight'>
       <div class='inscols'>
         <div class='inspv'>
           <div class='pvstage' id='ipvstage'></div>
@@ -3352,3 +3371,121 @@ def test_camera_rows_share_one_grid(js, css, html):
     assert "className='camrow'" in body, "buildCamRows строит не camrow"
     assert "marginBottom" not in body, "инлайновый margin-bottom строки вернулся — зазор задаёт row-gap"
     assert "$('camrows')" in body, "строки собираются не в #camrows"
+
+
+@pytest.mark.xdist_group("chrome")
+def test_clip_row_tags_stay_on_one_line_and_aligned_at_1200px(tmp_path):
+    """Строка клипа на шагах 1–3 в окне 1200 px: ярлыки в одну строку и с одной x у всех клипов.
+
+    Жалоба владельца (2026-10-12): у клипа с длинным именем ярлыки «ПРАВЛЕНО · СУБТИТРЫ · ЖЁЛТЫЕ 26»
+    встают на вторую строку, а начало ярлыков у разных клипов разное. Причина: на шаге 2 имя не
+    растягивалось (нет .grow), а .st переносился (flex-wrap:wrap) и сам делил строку с именем.
+
+    Стенд — реальный static/app.css и РЕАЛЬНЫЕ функции строки из static/app/40-queue.js (renderClips1/2/3,
+    statusTags, editedTag, clipActs, lastClipCls, clipReady) и esc из 00-core.js, вырезанные по балансу
+    скобок. Внешнее (t, ico, спикеры, aeDone, dlIcon) заглушено: им здесь не место, а раскладку строки
+    они не задают. Списки стоят в .wrap и .card, как на странице: иначе строка шире окна на 106 px,
+    и обрезки имени при 1200 px не будет.
+
+    Мутация: вернуть `.clip .st{flex-wrap:wrap}` или убрать grow с имени на шаге 2 — ярлыки ломаются,
+    первая же проверка одной строки краснеет.
+    """
+    import pathlib
+    chrome = shutil.which("chrome") or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+    if not os.path.exists(chrome):
+        return
+    wanted = ("renderClips1", "renderClips2", "renderClips3", "statusTags", "editedTag",
+              "clipActs", "lastClipCls", "clipReady")
+    bodies = {}
+    for fname, name, body in _app_functions():
+        if (fname == "40-queue.js" and name in wanted) or (fname == "00-core.js" and name == "esc"):
+            bodies[name] = body
+    missing = [n for n in wanted + ("esc",) if n not in bodies]
+    assert not missing, "в static/app/ не нашлись функции строки клипа: %s" % missing
+
+    long_name = "02_Как_бы_я_использовал_ААС_если_бы_начинал_сейчас_02.xml"
+    short_name = "02_Как_бы_я_использовал_ААС.xml"
+    clips = [{"xml": "C:/p/" + n, "name": n, "status": {"subs": 3, "colored": 26},
+              "inserts": [{"media": "a.jpg"}], "edited": True, "sel": False}
+             for n in (long_name, short_name)]
+    stubs = r"""
+function $(id){return document.getElementById(id);}
+function t(s,v){return v?String(s).replace(/\{(\w+)\}/g,function(m,k){return v[k];}):s;}
+function ico(n,cls){return '<svg class="ic'+(cls?' '+cls:'')+'" viewBox="0 0 24 24"></svg>';}
+function spkTagHTML(){return '';}
+function spkSelHTML(){return '<details class="spkpick"><summary>Спикер</summary></details>';}
+function aeDone(){return false;}
+function syncNav(){} function syncDelSel(){} function syncBuildBtn(){} function markupSelCount(){}
+function dlIcon(){return '';} function markupOneLabel(){return 'Разметить';}
+var LASTCLIP={}; var SEL_ANCHOR=-1;
+"""
+    measure = """
+function rowInfo(el){
+  var rr=el.getBoundingClientRect(), nm=el.querySelector('.nm'), acts=el.querySelector('.acts');
+  var nb=nm.getBoundingClientRect(), ab=acts?acts.getBoundingClientRect():null;
+  var tags=[].map.call(el.querySelectorAll('.st .tag'),function(e){var b=e.getBoundingClientRect();
+    return {l:b.left,t:b.top,b:b.bottom,r:b.right};});
+  return {name:nm.textContent,title:nm.getAttribute('title'),
+    row:{l:rr.left,r:rr.right,t:rr.top,b:rr.bottom},
+    nm:{l:nb.left,r:nb.right,w:nb.width,sw:nm.scrollWidth,cw:nm.clientWidth,ov:getComputedStyle(nm).textOverflow},
+    tags:tags,acts:ab?{l:ab.left,r:ab.right}:null};
+}
+var res={};
+[1,2,3].forEach(function(s){
+  res['s'+s]=[].map.call(document.querySelectorAll('#clips'+s+' .clip'),rowInfo);});
+var pre=document.createElement('pre');pre.id='geom';pre.textContent=JSON.stringify(res);
+document.body.appendChild(pre);
+"""
+    page = ("<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
+            "<link rel=\"stylesheet\" href=\"%s\">"
+            "<style>html,body{margin:0;padding:0}</style></head><body><div class=\"wrap\">"
+            "<div class=\"card\"><div id=\"clips1\" class=\"clips\"></div></div>"
+            "<div class=\"card\"><div id=\"clips2\" class=\"clips\"></div></div>"
+            "<div class=\"card\"><div id=\"clips3\" class=\"clips\"></div></div></div>"
+            "<script>%s\n%s\nvar CLIPS=%s;\nrenderClips1();renderClips2();renderClips3();\n%s</script>"
+            "</body></html>") % (
+        pathlib.Path(CSS).resolve().as_uri(), stubs, "\n".join(bodies[n] for n in bodies),
+        json.dumps(clips, ensure_ascii=False), measure)
+    html_path = tmp_path / "clip_row_1200.html"
+    html_path.write_text(page, encoding="utf-8")
+    cmd = [
+        chrome,
+        "--headless=new",
+        "--disable-gpu",
+        "--window-size=1200,800",
+        "--virtual-time-budget=2000",
+        "--dump-dom",
+        html_path.resolve().as_uri(),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+    assert proc.returncode == 0, f"Chrome failed: {proc.stderr}"
+    found = re.search(r'<pre id="geom">(.*?)</pre>', proc.stdout, re.DOTALL)
+    assert found, f"нет результата измерений в выводе Chrome: {proc.stdout[:500]}"
+    m = json.loads(found.group(1))
+
+    for step in ("s1", "s2", "s3"):
+        rows = m[step]
+        assert len(rows) == 2, "%s: строк клипа %d, ждали 2" % (step, len(rows))
+        for r in rows:
+            assert r["tags"], "%s: у клипа %s нет ярлыков в стенде" % (step, r["name"])
+            tops = [x["t"] for x in r["tags"]]
+            assert max(tops) - min(tops) <= 1, (
+                "%s: ярлыки клипа «%s» встали в две строки: tops=%s" % (step, r["name"], tops))
+            # Кнопки есть на шагах 1 и 2 (clipActs); на шаге 3 их нет — там клик по строке.
+            if r["acts"]:
+                assert r["tags"][-1]["r"] <= r["acts"]["l"] + 1, (
+                    "%s: ярлыки залезли на кнопки клипа «%s»" % (step, r["name"]))
+                assert r["row"]["r"] >= r["acts"]["r"] - 1, (
+                    "%s: кнопки клипа «%s» ушли за край строки" % (step, r["name"]))
+        lefts = [r["tags"][0]["l"] for r in rows]
+        assert max(lefts) - min(lefts) <= 1, (
+            "%s: ярлыки начинаются с разной x у разных клипов: %s" % (step, lefts))
+
+    # Длинное имя — многоточием и полным текстом в title; короткое целиком.
+    long_row = m["s2"][0]
+    assert long_row["title"] and long_name in long_row["title"], (
+        "шаг 2: полное имя не в title: %s" % long_row["title"])
+    assert long_row["nm"]["ov"] == "ellipsis", (
+        "шаг 2: имя клипа не обрезается многоточием: %s" % long_row["nm"])
+    assert long_row["nm"]["sw"] > long_row["nm"]["cw"], (
+        "шаг 2: длинное имя при 1200 px не обрезано — проверка многоточия пустая: %s" % long_row["nm"])

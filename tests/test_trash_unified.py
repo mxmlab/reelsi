@@ -190,6 +190,101 @@ def test_без_sources_камера_не_тронута(client, tmp_path):
     assert not (cam.parent / TRASH).exists()
 
 
+# --- рилс-исходник: его соседи (план рамки и sendcmd) уходят и возвращаются вместе с ним ---
+
+def _reel_with_sidecars(folder: Path, stem: str) -> tuple[Path, Path, Path]:
+    """Рилс `<stem>.mp4` и его соседи, как пишет core/podcast_reframe.convert_segment."""
+    folder.mkdir(parents=True, exist_ok=True)
+    reel = folder / f"{stem}.mp4"
+    reel.write_bytes(b"reel")
+    js = folder / f"{stem}.reframe.json"
+    js.write_text('{"plan": []}', encoding="utf-8")
+    crop = folder / f".{stem}.crop.txt"
+    crop.write_text("0 crop", encoding="utf-8")
+    return reel, js, crop
+
+
+def test_рилс_с_соседями_уходит_с_клипом_при_sources(client, tmp_path):
+    """sources: true — mp4 рилса и оба его соседа в корзине; dry показывает соседей в списке."""
+    out = tmp_path / "out"
+    out.mkdir()
+    reels = tmp_path / "камера1"
+    reel, js, crop = _reel_with_sidecars(reels, "vypusk_01")
+    xml = _cut(out, "01_a", [reel])
+
+    dry = _post(client, "/api/clip_delete", {"xml": str(xml), "dry": True, "sources": True})
+    dry_paths = {f["path"] for f in dry["files"]}
+    assert str(js) in dry_paths and str(crop) in dry_paths, "соседи рилса не видны в сухом прогоне"
+    assert reel.exists() and js.exists() and crop.exists()     # сухой прогон ничего не тронул
+
+    d = _post(client, "/api/clip_delete", {"xml": str(xml), "dry": False, "sources": True})
+    tid = d["trash"]
+    assert not reel.exists() and not js.exists() and not crop.exists()
+    stored = reels / TRASH / tid
+    assert (stored / js.name).read_text(encoding="utf-8") == '{"plan": []}'
+    assert (stored / crop.name).read_text(encoding="utf-8") == "0 crop"
+    meta = json.loads((out / TRASH / tid / "trash.json").read_text(encoding="utf-8"))
+    stored_recs = {r["name"] for r in meta["files"] if "stored" in r}
+    assert {reel.name, js.name, crop.name} <= stored_recs     # все три — записи с stored
+
+
+def test_возврат_рилса_возвращает_соседей_на_место(client, tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    reels = tmp_path / "камера1"
+    reel, js, crop = _reel_with_sidecars(reels, "vypusk_01")
+    xml = _cut(out, "01_a", [reel])
+    tid = _post(client, "/api/clip_delete", {"xml": str(xml), "dry": False, "sources": True})["trash"]
+
+    # До возврата: оба соседа ушли с места и лежат в корзине рилса под тем же id, что и клип.
+    # Без этой проверки тест проходит и на коде, где соседи вообще не трогались.
+    assert not js.exists() and not crop.exists()
+    stored = reels / TRASH / tid
+    assert (stored / js.name).read_text(encoding="utf-8") == '{"plan": []}'
+    assert (stored / crop.name).read_text(encoding="utf-8") == "0 crop"
+    meta = json.loads((out / TRASH / tid / "trash.json").read_text(encoding="utf-8"))
+    stored_recs = {rec["name"]: rec for rec in meta["files"] if "stored" in rec}
+    assert stored_recs[js.name]["stored"] == os.path.abspath(str(stored / js.name))
+    assert stored_recs[crop.name]["stored"] == os.path.abspath(str(stored / crop.name))
+
+    r = _post(client, "/api/trash_restore", {"root": str(out), "id": tid})
+    assert r["ok"] is True and r["skipped"] == []
+    assert reel.read_bytes() == b"reel"
+    assert js.read_text(encoding="utf-8") == '{"plan": []}'
+    assert crop.read_text(encoding="utf-8") == "0 crop"
+    assert not (reels / TRASH).exists()
+
+
+def test_без_sources_рилс_и_соседи_на_месте(client, tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    reels = tmp_path / "камера1"
+    reel, js, crop = _reel_with_sidecars(reels, "vypusk_01")
+    xml = _cut(out, "01_a", [reel])
+
+    dry = _post(client, "/api/clip_delete", {"xml": str(xml), "dry": True})
+    assert all(f["path"] not in (str(js), str(crop)) for f in dry["files"])
+    d = _post(client, "/api/clip_delete", {"xml": str(xml), "dry": False})
+    assert d["ok"] is True and not xml.exists()
+    assert reel.exists() and js.exists() and crop.exists()
+    assert not (reels / TRASH).exists()
+
+
+def test_общий_рилс_остаётся_вместе_со_своими_соседями(client, tmp_path):
+    """Рилс нужен и другому клипу: mp4 и его соседи остаются на месте, в корзину не уходят."""
+    out = tmp_path / "out"
+    out.mkdir()
+    reels = tmp_path / "камера1"
+    reel, js, crop = _reel_with_sidecars(reels, "vypusk_01")
+    x1 = _cut(out, "01_a", [reel])
+    _cut(out, "02_b", [reel])
+
+    real = _post(client, "/api/clip_delete", {"xml": str(x1), "dry": False, "sources": True})
+    assert real["ok"] is True
+    assert reel.exists() and js.exists() and crop.exists()
+    assert not (reels / TRASH).exists()
+
+
 # --- подкасты: та же корзина ---
 
 def test_подкаст_с_внешним_файлом_в_корзине_и_возврат(client, tmp_path):

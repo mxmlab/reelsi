@@ -176,11 +176,9 @@ function voiceWiring(v){if(!v||v.__wired)return;
   // Метка «стоял в документе» — при постановке, а не при разборе: дублёр дорожки голоса
   // (vtSpareOf) в документ не вставляется никогда и должен подключаться как раньше.
   if(VOICEPEND.indexOf(v)<0){v.__inDom=!!v.isConnected;VOICEPEND.push(v);}}
-// Правило «граф нужен по громкости»: громкость голоса стиля делает ТОЛЬКО VG.gain,
+// Правило «граф нужен по громкости»: громкость голоса клипа делает ТОЛЬКО VG.gain,
 // `volume` элемента больше 1 не умеет. Одно место правила — его зовут voiceWiring и applyDbGains.
-function voiceGraphNeeded(){
-  const s=(typeof CURSTYLE!=='undefined'&&CURSTYLE)?CURSTYLE:{};
-  return !!(s.voice_db!=null?s.voice_db:0);}
+function voiceGraphNeeded(){return !!voiceDbOf();}
 // Граф понадобился: подключить всё, что ждало, и разбудить контекст. Зовут те двери, где
 // обработка РЕАЛЬНО звучит (vtGate при открытом гейте, vtEl/vtSpareOf при создании дорожки),
 // и applyDbGains при громкости голоса не 0: её делает только VG.gain, `volume` элемента
@@ -196,24 +194,23 @@ function voiceEnsure(){
   audioWake();}
 function dbToGain(db){return Math.pow(10,(+db||0)/20);}
 function applyDbGains(){if(!VG||!MG)return;const s=(typeof CURSTYLE!=='undefined'&&CURSTYLE)?CURSTYLE:{};
-  VG.gain.value=dbToGain(s.voice_db!=null?s.voice_db:0);
+  VG.gain.value=dbToGain(voiceDbOf());
   MG.gain.value=dbToGain(s.music_db!=null?s.music_db:-20);
-  // При voice_db != 0 звук камеры обязан идти через граф — иначе «+3 дБ» в превью
+  // При громкости голоса != 0 звук камеры обязан идти через граф — иначе «+3 дБ» в превью
   // не слышно. Дверь та же — voiceEnsure, правило — voiceGraphNeeded.
   if(voiceGraphNeeded()&&typeof voiceEnsure==='function')voiceEnsure();
-  if(typeof eaGain==='function')eaGain();   // громкость голоса стиля — и звуку редактора шага 1
+  if(typeof eaGain==='function')eaGain();   // громкость голоса клипа — и звуку редактора шага 1
   // Живому хосту — итог этой громкости и громкости прослушивания (одна формула
   // живёт там же: 95-styles.js:voiceFxLiveOutDb).
   if(typeof voiceFxLiveGain==='function')voiceFxLiveGain();}
-// Цензура: в рендере голос ныряет voice_db→−100 на окнах audio.censor из плана
+// Цензура: в рендере голос ныряет громкость→−100 на окнах audio.censor из плана
 // сцены. Окна считает scene_plan — здесь только «внутри окна или нет» и увод VG в ноль;
-// вторую формулу не заводим. Вне окна возвращаем обычную громкость голоса из стиля.
+// вторую формулу не заводим. Вне окна возвращаем обычную громкость голоса клипа.
 function vgDuck(tm,plan){if(!VG)return;
   const cw=plan&&plan.audio&&plan.audio.censor;let mute=false;
   if(cw)for(const w of cw){if(tm>=w[0]&&tm<w[1]){mute=true;break;}}
   if(mute){VG.gain.value=0;return;}
-  const s=(typeof CURSTYLE!=='undefined'&&CURSTYLE)?CURSTYLE:{};
-  VG.gain.value=dbToGain(s.voice_db!=null?s.voice_db:0);}
+  VG.gain.value=dbToGain(voiceDbOf());}
 // Заголовок шага 1 — имя ОТКРЫТОГО файла (как оно видно в списке клипов), а не название
 // окна: у двух подряд открытых клипов заголовок был одинаковый и не говорил, что открыто.
 // aria-label — то же имя (диалог называется тем, что в нём открыто); статический
@@ -760,18 +757,26 @@ const EA_LEAD=0.03;   // через сколько после команды з�
 const EA_FADE=0.004;  // склейка на стыке, с: без неё на обрыве волны слышен щелчок
 let EA={xml:'',raw:null,rawUrl:'',rid:0,proc:null,procUrl:'',pid:0,
   nodes:[],segs:null,len:0,t0:0,clk:'',sig:'',gain:null};
-// Клип открыт: звук камеры 1 — в буфер. Тот же клип (повторный openPreview после
-// «Сохранить») буфер не перезагружает: камера та же.
+// Клип открыт: звук камеры 1 — в буфер. Звук у сервера спрашиваем всегда (файл назван по пути
+// и mtime исходника). Тот же url — буфер цел. Другой url или ошибка — звук гасим: чужой звук
+// под новым видео хуже тишины. Голос гасим, только если за запрос он не менялся (pid0): свежий
+// голос нового клипа не выкидываем.
 async function eaOpen(xml){
-  if(EA.xml===xml&&EA.rawUrl)return;
-  eaStop();EA.xml=xml;EA.raw=null;EA.rawUrl='';EA.proc=null;EA.procUrl='';
+  const pid0=EA.pid;
+  if(EA.xml!==xml){eaStop();EA.xml=xml;EA.raw=null;EA.rawUrl='';EA.proc=null;EA.procUrl='';}
   let d;
   try{d=await (await fetch('/api/preview_audio',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({xml})})).json();}
   catch(e){uiLog('preview_audio: '+e);return;}
   if(EA.xml!==xml)return;                 // пока вынимали, открыли другой клип
-  if(d.error){toast(errText(d));return;}
+  if(d.error){
+    eaStop();EA.raw=null;EA.rawUrl='';
+    if(EA.pid===pid0){EA.proc=null;EA.procUrl='';}
+    toast(errText(d));return;}
   const url='/api/media?path='+encodeURIComponent(d.path);
+  if(EA.rawUrl===url)return;              // тот же файл камеры: буфер и голос целы
+  eaStop();EA.raw=null;
+  if(EA.pid===pid0){EA.proc=null;EA.procUrl='';}
   EA.rawUrl=url;
   const buf=await eaDecode(url);
   if(EA.xml!==xml||EA.rawUrl!==url||!buf)return;
@@ -866,9 +871,8 @@ function eaSync(){
 function eaGain(){
   if(!AUDIO)return;
   if(!EA.gain){EA.gain=AUDIO.createGain();EA.gain.connect(AUDIO.destination);}
-  const s=(typeof CURSTYLE!=='undefined'&&CURSTYLE)?CURSTYLE:{};
   const live=typeof vtLiveOn==='function'&&typeof ED!=='undefined'&&vtLiveOn(ED);
-  EA.gain.gain.value=live?0:MEDIA_VOL*dbToGain(s.voice_db!=null?s.voice_db:0);}
+  EA.gain.gain.value=live?0:MEDIA_VOL*dbToGain(voiceDbOf());}
 
 // ===== Обработанный голос клипа: одна дорожка на ВСЕ превью =====
 // Включён ИИ-шумодав (или плагин цепочки) — панель «Голос» считает ОБРАБОТАННЫЙ голос
@@ -1626,13 +1630,20 @@ function vtRate(P,at){
 // у спикера, а кнопки «Сохранить у спикера» больше нет. Две задержки у одного
 // события, и обе нужны: сохранение — это файл профиля (быстро), пересчёт голоса —
 // минуты счёта (дорого), поэтому оно и уезжает отдельным вызовом.
-function pvVoiceTune(){
-  if(typeof voiceFxStatus==='function')voiceFxStatus($('pvvoice'),'');
-  if(typeof vtNote==='function'&&typeof ED!=='undefined')vtNote(ED,'');
-  const st=vtOf(ED);
-  clearTimeout(st.timer);
-  st.timer=setTimeout(()=>{st.timer=0;vtPrep(ED);},VT_QUIET);
-  if(typeof pvVoiceAuto==='function')pvVoiceAuto();}
+// `host` — панель, где правили (превью клипа или профиль спикера). Звук КЛИПА (пересчёт,
+// заметка про голос) трогаем только для панели превью: правка профиля без открытого клипа
+// этого спикера голоса клипа не касается. Сохранение — для любой панели: её спикер — свой.
+// Если правка профиля касается открытого клипа того же спикера, голос клипа пересчитает
+// pvVoiceSave (после записи), а не эта дверь — иначе счёт шёл бы по ещё не записанному.
+function pvVoiceTune(host){
+  const h=host||$('pvvoice');
+  if(typeof voiceFxStatus==='function')voiceFxStatus(h,'');
+  if(voiceFxIsClip(h)){
+    if(typeof vtNote==='function'&&typeof ED!=='undefined')vtNote(ED,'');
+    const st=vtOf(ED);
+    clearTimeout(st.timer);
+    st.timer=setTimeout(()=>{st.timer=0;vtPrep(ED);},VT_QUIET);}
+  if(typeof pvVoiceAuto==='function')pvVoiceAuto(h);}
 // «Сохранить у спикера» позвало: профиль записан, и по нему печётся `<стем>.voice.wav`.
 // Сборку превью-прокси при этом НЕ заказываем: прокси всегда со звуком камеры и от
 // настроек голоса не зависит. Раньше заказывали — и каждая правка ручки тянула за собой

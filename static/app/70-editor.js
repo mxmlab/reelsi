@@ -184,20 +184,14 @@ function edArm(){if(ED.raw||!ED.play)return;const i=edBlockAt(ED.cs);if(i<0)retu
   if(left>ED_ARM){bufIdle(sp);return;}
   bufArm(PV,sp,nb.s0);
   bufRoll(sp,left);}
-// Окно редактора едет за плейхедом — во время игры и при перемотке клавишами (как «Вся запись»).
-// Ручная протяжка по линейке (пан) окно не возвращает: пока её тянут, слежения нет.
-// Вернёт true, если окно сдвинулось (вызывающий перерисовывает).
-function edFollowView(){
-  if(tlPanning($('edtl')))return false;
-  const r=tlFollowHead(ED.v0,ED.v1,ED.cs,ED.dur,1.5);
-  if(r[0]===ED.v0&&r[1]===ED.v1)return false;
-  ED.v0=r[0];ED.v1=r[1];return true;}
+// Окно редактора НЕ едет за плейхедом: ни при игре, ни при перемотке стрелками, ни при клике или
+// протяжке по самому таймлайну (решение владельца 2026-10-12). Окно двигают только протяжка вида
+// (линейка, средняя кнопка), зум и явный переход; у редактора явного перехода в интерфейсе нет.
 function edTick(){if(!ED.play)return;
   // Плейхед — по звуку: что звучит сейчас, то и ED.cs. Конец очереди — конец клипа.
   const c=(typeof eaSync==='function')?eaSync():null;
   if(!c||c.end){edPause();if(!ED.raw)ED.cs=ED.blocks.length?ED.blocks[0].s0:0;edDraw();edUI();return;}
   ED.cs=c.cs;
-  edFollowView();
   edFollow();
   if(typeof vtOf==='function')vtTick(ED,ED.cs);   // живому хосту плагинов — позиция
   edArm();
@@ -240,7 +234,9 @@ function edBind(){const c=$('edtl');if(!c||c._bound)return;c._bound=1;
       tlMidPan(c,e,{snap:()=>({v0:ED.v0,v1:ED.v1}),apply:(dx,s)=>{
         const w=c.getBoundingClientRect().width||1, span=s.v1-s.v0;
         const r=tlClampView(s.v0-dx/w*span,s.v1-dx/w*span,ED.dur,0);
-        ED.v0=r.v0;ED.v1=r.v1;edDraw();}});}});
+        ED.v0=r.v0;ED.v1=r.v1;edDraw();},
+      // клик по линейке (без протяжки) — плейхед в точку клика; окно стоит (правило NF1)
+      click:cx=>{const r=c.getBoundingClientRect();edSeek(edX2S((cx-r.left)*(c.width/Math.max(1,r.width))));}});}});
   c.addEventListener('mousedown',e=>{if(!ED.dur)return;const x=px(e),y=py(e);const s=edX2S(x);
     if(e.button===1||y<=EDRULER*dpr())return;
     const br=edBreathAt(x,y);       // клик по оранжевой полоске = вырезать вздох
@@ -317,8 +313,7 @@ document.addEventListener('keydown',e=>{                    // хоткеи ре
   else if(ek==='split'){edSplit();}
   else if(ek==='delete'){edDelSel();}
   else if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();
-    const st=e.shiftKey?1:2/(ED.fps||60);edSeek(ED.cs+(e.key==='ArrowRight'?st:-st));
-    if(edFollowView())edDraw();}});
+    const st=e.shiftKey?1:2/(ED.fps||60);edSeek(ED.cs+(e.key==='ArrowRight'?st:-st));}});
 function edSplit(){const i=edBlockAt(ED.cs);if(i<0){toast(t('Поставь курсор на блок'));return;}const b=ED.blocks[i];
   if(ED.cs<=b.s0+0.05||ED.cs>=b.s1-0.05)return;
   ED.blocks.splice(i,1,{s0:b.s0,s1:ED.cs},{s0:ED.cs,s1:b.s1});ED.sel=i+1;ED_HIST.touch();edDraw();edUI();}

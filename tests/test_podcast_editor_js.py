@@ -587,6 +587,32 @@ def test_pick_buttons_exist_and_send_ids():
     assert "ids:ids" in src, "перевод выбранных должен слать ids на /api/podcast_convert"
 
 
+def test_every_podcast_convert_request_sends_the_speaker():
+    """Каждый POST на /api/podcast_convert(_all) несёт speaker в теле.
+
+    Без него сервер (`_cam1_dir`) кладёт рилсы в запасную папку подкаста, а не в папку камеры 1
+    спикера. Баг 2026-10-12: «В рилсы» из окна правки слало только dir и ids — рилсы уехали
+    в <подкаст>/reels. Сторож по тексту: тело запроса — от fetch до следующего catch."""
+    hits = []
+    for js in sorted(APP.glob("*.js")):
+        src = _read(js)
+        for m in re.finditer(r"fetch\('/api/podcast_convert(?:_all)?'", src):
+            tail = src[m.start():src.find("catch", m.start())]
+            hits.append((js.name, src[:m.start()].count("\n") + 1, "speaker" in tail))
+    assert hits, "не нашлось ни одного вызова /api/podcast_convert"
+    bad = [(name, line) for name, line, ok in hits if not ok]
+    assert not bad, f"вызов /api/podcast_convert без speaker в теле: {bad}"
+
+
+def test_picked_convert_shows_the_same_fallback_hint_as_the_list_button():
+    """«В рилсы» из окна правки показывает ту же подсказку про запасную папку, что и кнопка списка:
+    обе зовут одну podFallbackToast (45-podcast.js), копии текста нет."""
+    src = _read(EDITOR_JS)
+    body = _editor_fn(src, "async function podConvertPicked", "// Новый кусок")
+    assert "podFallbackToast(r)" in body, "podConvertPicked не показывает подсказку fallback"
+    assert "спикер не выбран" not in body, "текст подсказки продублирован в окне правки"
+
+
 # ---------- П15: прокси в окне — та же строка, что в превью шага 1; пан средней кнопкой ----------
 
 def _editor_fn(src: str, start: str, end: str) -> str:
@@ -682,7 +708,8 @@ def test_left_button_scrubs_playhead_and_empty_space_no_longer_pans():
 def test_timeline_tooltips_describe_playhead_seek_and_middle_pan():
     block = _pod_block()
     # жесты — одна формулировка на три полосы (00-core.js не разметка: фраза живёт в index.html)
-    phrase = "протяжка по полю и по плейхеду — перемотка · протяжка по линейке или средняя кнопка — прокрутка окна"
+    phrase = ("протяжка по полю и по плейхеду — перемотка · клик по линейке — плейхед в точку клика · "
+              "протяжка по линейке или средняя кнопка — прокрутка окна")
     assert block.count(phrase) == 1, "жесты «Вся запись» не совпадают с общей формулировкой трёх полос"
     assert "Shift+колесо или пустое место тяни" not in block, "старый тултип про пан пустым местом"
 

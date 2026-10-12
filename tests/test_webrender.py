@@ -445,7 +445,7 @@ function requestAnimationFrame(cb){return setTimeout(function(){cb(0);},0);}
 // Заглушка музыки названа по БОЕВОЙ двери предпросмотра (`musicElSync` в
 // 85-inserts-view.js): имя musicSync занято в 95-styles.js (сброс закреплённого трека
 // клипа), и стенд, оставшийся на старом имени, ронял отрисовку кадра ReferenceError'ом.
-function musicElSync(){}function spareIdle(){}function camIdle(){}function itlEnsure(){}
+function musicElSync(){}function spareIdle(){}function camIdle(){}
 function aewHighlight(){}function vgDuck(){}function introMarkPlaying(){}
 function uiLog(){}function toast(){}function lutApply(ci,v){return v;}function lutKS(){return [1,1];}
 // Переводчик: строки интерфейса стенду не нужны, ключ равен тексту (как в русском UI).

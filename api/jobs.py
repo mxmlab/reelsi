@@ -419,6 +419,9 @@ def run_omnicut_job(outdir: str, pairs: list[list[str]], model: str | None = Non
                 cmd += ["--no-breath"]
             if norm_stages.get("pauses") == "off":
                 cmd += ["--no-pauses"]
+            # Число камер — ДЛИНА ЭТОЙ пары, а не len(camdirs): в одной очереди бывают
+            # двухкамерные пары и однокамерный рилс подкаста (его запись — один абсолютный
+            # путь). Счёт из camdirs резал бы рилс как «две камеры» и искал бы второй файл.
             for c in cams_i:                       # аудио всегда с первой; assign_cameras сводит 2..N
                 if c:
                     cmd += ["--cam", c]
@@ -792,6 +795,9 @@ def api_cancel() -> Response:
     # Скачивание с гугл-диска живёт в GDJOB и процессе rclone:
     from .gdrive import gdrive_kill
     gdrive_kill()
+    # Подкаст: скачивание yt-dlp и ИИ-выбор кусков живут в своём PDJOB.
+    from .podcast import podcast_kill
+    podcast_kill()
     # Генерация видео живёт в своём VJOB, и раньше общая кнопка её не касалась: облачный
     # запрос молотил минуты и деньги, а остановить его было нечем вообще (F5 рвал только
     # опрос у клиента). Флаг ставим всегда — поток проверяет его между опросами статуса.
@@ -872,8 +878,16 @@ def api_status() -> Response:
             log = list(JOB["log"])
         else:
             log = list(JOB["log"][max(0, since - base):]) if since < total else []
+        # Номер в очереди прогона для каждого готового файла — ПАРАЛЛЕЛЬНЫЙ массив к results.
+        # Ролики идут параллельно (cut_parallel_width), и results копит их в порядке ГОТОВНОСТИ;
+        # клиенту нужен порядок очереди (items_init — в порядке набора). Берём его из items:
+        # путь у готового элемента тот же, что ушёл в results (см. item_done). Нет в очереди
+        # (драфт, старое задание) — null. Формат results не меняем: старые читатели целы.
+        queue_pos = {str(it.get("path")): i for i, it in enumerate(JOB.get("items") or [])
+                     if it.get("path")}
+        result_order = [queue_pos.get(str(p)) for p in JOB["results"]]
         return jsonify(running=JOB["running"], done=JOB["done"], log=log, log_total=total,
-                       results=JOB["results"], failed=JOB["failed"],
+                       results=JOB["results"], result_order=result_order, failed=JOB["failed"],
                        kind=JOB["kind"], label=JOB["label"], progress=JOB["progress"],
                        insmoved=JOB.get("insmoved") or {}, items=JOB.get("items") or [],
                        stalled=bool(JOB.get("stalled")),

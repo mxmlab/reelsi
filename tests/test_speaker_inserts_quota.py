@@ -235,7 +235,7 @@ def test_route_ai_inserts_passes_speaker(tmp_path: Path, monkeypatch: pytest.Mon
 
 
 def test_frontend_calls_and_target_fallback() -> None:
-    """7. Во всех 4 вызовах /api/ai_inserts на фронте есть speaker:, и в 80-inserts.js
+    """7. В обоих живых вызовах /api/ai_inserts (70-editor.js) есть speaker:, и в 80-inserts.js
     нет устаревшего Math.max(c.insTarget||0,13).
     """
     ed_js = (ROOT / "static/app/70-editor.js").read_text(encoding="utf-8")
@@ -246,7 +246,7 @@ def test_frontend_calls_and_target_fallback() -> None:
     matches_80 = rx.findall(ins_js)
 
     assert len(matches_70) == 2, f"Ожидалось 2 вызова в 70-editor.js, найдено: {len(matches_70)}"
-    assert len(matches_80) == 2, f"Ожидалось 2 вызова в 80-inserts.js, найдено: {len(matches_80)}"
+    assert len(matches_80) == 0, "вызовы /api/ai_inserts в 80-inserts.js вернулись — одиночные кнопки вставок удалены (кнопок нет, см. tests/test_gen_btn.py)"
 
     for body in matches_70 + matches_80:
         assert "speaker:" in body, f"Вызов без speaker: {body}"

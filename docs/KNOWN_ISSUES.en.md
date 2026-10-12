@@ -254,6 +254,44 @@ The behaviour of `rclone` when downloading from Google Drive has still not been 
 
 ---
 
+## Podcast: a wide shot where two people talk at once (laughter) — the speaker is chosen ambiguously
+
+**Symptom.** On a wide shot where both speak at the same time (laughter, interruptions), the reel's
+frame may stay on the previous speaker or switch to the second one without an obvious reason.
+
+**What is known.** The speaker is chosen by mouth movement (`core/podcast_reframe.py`,
+`mouth_activity`, `speakers_for_shot`): the frame difference in the lower half of the head window minus
+the upper half; the head with the maximum within 1 s speaks. When two people talk at once, both mouths
+move and the lead is small. The rules "a lead under 15 % keeps the previous speaker" and "a change at
+most once per 1.5 s" keep the frame from jittering, but on laughter the choice stays ambiguous.
+
+**Not checked.** No comparison with the owner's manual marking on an episode with interruptions. A wide
+shot with two speakers was checked on one episode (a 2:18 shot) and on synthetic data.
+
+## Podcast: a shared source is searched only among the clips of the same XML folder
+
+**Symptom.** Two clips use the same camera file but sit in different XML folders. Deleting one of them
+with "And sources" ticked takes the camera file away, and the second clip is left without its file.
+
+**What is known.** The check "do other clips need this source" (`_clip_sharers` in `api/files.py`) looks
+at the `*.xml` files of the first level of the XML folder, not at all clips of the program. Clips from
+other folders do not see it. The camera goes to the bin (the `_reelsi_trash` of its own folder) and comes
+back with "Restore".
+
+**Not checked.** Two XML folders with one camera were not reproduced; the conclusion comes from the code.
+
+## Podcast: old bin entries without trash.json are not shown
+
+**Symptom.** A podcast folder deleted before the podcast bin existed lies in `_reelsi_trash`, but it is
+not in the "Recycle bin" window and cannot be restored with the button. Emptying the bin does not see it either.
+
+**What is known.** A bin entry is shown only with `trash.json` (`core/clipstore.py`, `list_trash`). The old
+rule "a folder without `trash.json` is an entry" was removed in this release: a new entry always writes
+`trash.json`, and old folders stay on disk as they are.
+
+**Not checked.** There is no automatic restore for such folders, and none was made. They can be put back
+by hand: move the folder back to the podcast's place.
+
 ## Priority
 
 **Low, and that is the user's decision.** The main pipeline ends in After Effects, and
@@ -354,9 +392,6 @@ CVE-2025-3000, `torch.jit.script`, fixed in torch 2.13); Reelsi does not call `t
 **`camAt` in the `.jsx` template is dead code.** No function of the template calls it; the call-count
 measurement over the 34 functions of the template (`tests/test_jsx_stand_cover.py`) never reached it.
 
-**`aiInsertsRun` and `aiInsertsMore` in the front end are dead code.** They are not called from the interface
-(`static/app/*.js`).
-
 **Two pid tests of the model service fail under a venv on Windows.** The full suite in a new environment is
 green except for these two. The cause is a quirk of the venv launcher on Windows (noted during the torch
 update, commit 8c7d0f67).
@@ -445,3 +480,13 @@ update, commit 8c7d0f67).
   instead of it, and when nothing fit — the response has the code `whisper_gpu_fallback` with a
   translation. Out-of-memory exhaustion is recognised by the type or the text of the exception in one
   function (`core.device.is_oom_error`). The guard — `tests/test_gpu_budget.py`.
+
+### Closed 2026-10-10
+
+- **`aiInsertsRun`, `aiInsertsMore` and `spkInsTarget` in the front end are dead code** — closed:
+  the single AI-insert buttons had been removed from the interface earlier, and the functions were
+  left without a single call in `static/app/` and `templates/`; `spkInsTarget` was called only by
+  `aiInsertsMore`. All three are deleted from `static/app/80-inserts.js` together with the tests that
+  executed them (`tests/test_clip_speaker.py`, `tests/test_two_speakers.py`, `tests/test_ui_static.py`,
+  `tests/test_ui_behavior.py`). The guard — `tests/test_gen_btn.py`: the lines `function aiInsertsRun`,
+  `function aiInsertsMore`, `function spkInsTarget` are in no `static/app/*.js`.

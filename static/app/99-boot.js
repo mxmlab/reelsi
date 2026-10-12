@@ -8,6 +8,9 @@
 
 // ================= persistence =================
 const LSKEY='reelsi_state';
+// Метка «над этим клипом работал» на каждом шаге: путь XML клипа (не индекс — индекс уезжает
+// при удалении). Пишется в stateObj, переживает F5; рисуется в lastClipCls (40-queue.js).
+let LASTCLIP={1:'',2:'',3:''};
 // Прежнее общее значение «папка музыки» (aemusicdir). Поля в интерфейсе больше нет —
 // музыка переехала в стиль, — но само значение остаётся запасной ступенью лестницы
 // папок (musicPickDir, 90-ae.js): у владельца в нём рабочая папка с 21 треком, и
@@ -63,7 +66,16 @@ function stateObj(){return {
   CLIPS:CLIPS.map(c=>{const cc={...c};cc.inserts=(c.inserts||[]).map(x=>{const xx={...x};delete xx.genBusy;delete xx._typeBusy;return xx;});return cc;}),
   // speaker — общий выбор: новая нарезка/профиль, не клип: он переживает F5 вместе
   // с остальными полями шага 1, а спикер КЛИПА живёт в его собственном job.speaker.
-  curAE,styleSel:val('style'),CURSTYLE,STEP,subengine:val('subengine'),speaker:val('speaker'),
+  curAE,lastclip:LASTCLIP,cutrun:(typeof CUTRUN!=='undefined')?CUTRUN:null,styleSel:val('style'),CURSTYLE,STEP,subengine:val('subengine'),speaker:val('speaker'),
+  // блок «Подкаст → рилсы» на шаге 1: источник, ссылка, файл, папка, число рилсов (45-podcast.js)
+  podcast:(typeof podcastStateObj==='function')?podcastStateObj():undefined,
+  // папки, куда удаляли клипы и подкасты (TRASHROOTS, 40-queue.js): корзина клипа — в папке его
+  // XML, без этого поля после F5 такие корзины из окна «Удалённое» пропадают
+  trashroots:(typeof TRASHROOTS!=='undefined')?TRASHROOTS.slice():[],
+  // какие блоки показывать на странице нарезки (⚙ → «Нарезка» → «Страница нарезки», 10-settings.js).
+  // typeof — как у AEMUSICDIR выше: стенды вырезают stateObj вместе с функцией, а без
+  // 10-settings.js переменной PAGEBLOCKS нет; «ReferenceError» там — баг стенда, не приложения.
+  page:(typeof PAGEBLOCKS!=='undefined')?{gdrive:PAGEBLOCKS.gdrive,podcast:PAGEBLOCKS.podcast}:{gdrive:true,podcast:true},
   VID:vidStateObj()};}
 function saveState(){insHistTouch();   // единственная дверь истории правок вставок (см. 80-inserts.js)
   const s=JSON.stringify(stateObj());
@@ -129,7 +141,9 @@ function applyState(s){try{
   // выбранную радиокнопку и зовёт saveState (без него выбор так и остался бы в файле).
   if(s.rendengine!=null)rendEngineSet(s.rendengine);
   // s.aimodel (старый ключ) больше не читаем — выбор модели переехал в серверный ai_config.json
-  if(s.cams){const rb=document.querySelector('input[name=cams][value="'+s.cams+'"]');if(rb)rb.checked=true;}
+  // Восстановление числа камер — программная смена .checked (change не шлёт), без segUI
+  // пилюля оставалась на статичном «2» из разметки, пока другой вызов случайно не перерисует.
+  if(s.cams){const rb=document.querySelector('input[name=cams][value="'+s.cams+'"]');if(rb){rb.checked=true;segUI();}}
   if(Array.isArray(s.CAMDIRS))CAMDIRS=s.CAMDIRS;if(Array.isArray(s.CAMFILES))CAMFILES=s.CAMFILES;
   if(Array.isArray(s.CAMFROM))CAMFROM=s.CAMFROM;
   // s.CAMCUSTOM — ключ состояния, сохранённого ДО 2026-08-20 (булев «выбрана руками»):
@@ -149,7 +163,16 @@ function applyState(s){try{
     (CLIPS||[]).forEach(c=>{c.xml=clipPathFix(c.xml);
       (c.inserts||[]).forEach(x=>{delete x.genBusy;});});}
   if(typeof s.curAE==='number')curAE=s.curAE;
+  // база прогона нарезки (40-queue.js, cutAdopt): F5 посреди прогона не должен сбить порядок клипов
+  if(typeof CUTRUN!=='undefined')CUTRUN=(s.cutrun&&typeof s.cutrun.base==='number')?{base:Math.min(s.cutrun.base,CLIPS.length)}:null;
   if(curAE>=CLIPS.length)curAE=-1;      // состояние могло сохраниться с индексом длиннее списка
+  // Метки «работал» — по XML (см. LASTCLIP). Поля нет — старое состояние: шагу 3 ставим клип
+  // открытой панели (его метка и раньше была curAE), шаги 1 и 2 — пусто.
+  if(s.lastclip&&typeof s.lastclip==='object'){[1,2,3].forEach(k=>{const v=s.lastclip[k];LASTCLIP[k]=typeof v==='string'?clipPathFix(v):'';});}
+  else LASTCLIP={1:'',2:'',3:(curAE>=0&&CLIPS[curAE])?CLIPS[curAE].xml:''};
+  // папки корзин (TRASHROOTS, 40-queue.js); старое состояние без поля — список не трогаем
+  if(Array.isArray(s.trashroots)&&typeof TRASHROOTS!=='undefined')
+    TRASHROOTS=s.trashroots.filter(x=>typeof x==='string'&&x.trim()).slice(-50);
   if(s.CURSTYLE)CURSTYLE=stMigrateIntroCam2(stMigrateCam2Zoom(stMigrateIntroPos2(s.CURSTYLE)));if(s.styleSel)STYLESAVED=s.styleSel;
   // ПЕРЕЕЗД МУЗЫКИ (2026, «музыка в стиле»): режим/ссылка/папка были общими полями
   // шага 3 и жили в состоянии как musicmode/aemusic/aemusicdir. Теперь это ключи СТИЛЯ
@@ -174,6 +197,9 @@ function applyState(s){try{
   if(s.VID){VIDSAVED=s.VID;
     if(Array.isArray(s.VID.refs))VREFS=s.VID.refs;
     const tp=$('vid_prompt');if(tp&&s.VID.prompt!=null)tp.value=s.VID.prompt;}
+  if(s.podcast&&typeof podcastApplyState==='function')podcastApplyState(s.podcast);
+  // typeof — стенды гоняют restoreState/applyState без 10-settings.js (см. stateObj выше)
+  if(typeof pageBlocksFrom==='function'){PAGEBLOCKS=pageBlocksFrom(s);applyPageBlocks();}
   buildCamRows();renderQueue();renderRenderDirField();renderCutStagesUI();cutSummary();
 }catch(e){
   uiLog(t('⚠ состояние интерфейса не восстановлено: ')+e);
@@ -187,6 +213,10 @@ function applyState(s){try{
 function storedState(s){try{localStorage.setItem(LSKEY,s);}catch(e){}}
 function restoreState(){let s=null;   // локальная копия — только запасной путь
   try{s=JSON.parse(localStorage.getItem(LSKEY)||'null');}catch(e){}
+  // Блоки страницы — ещё до ответа сервера: из локальной копии (или по умолчанию), иначе
+  // скрытый блок мигнул бы на всё время запроса. Сервер поправит это в applyState.
+  // typeof — стенды вырезают restoreState без 10-settings.js (см. stateObj выше).
+  if(typeof pageBlocksFrom==='function'){PAGEBLOCKS=pageBlocksFrom(s);applyPageBlocks();}
   fetch('/api/ui_state').then(r=>r.json()).then(d=>{
     if(!d)throw new Error('пустой ответ');
     if(typeof d.rev==='number')SRVST_REV=d.rev;

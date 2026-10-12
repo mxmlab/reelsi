@@ -90,6 +90,7 @@ def queries_from_dirs(dirs: list[str], limit: int = DEFAULT_LIMIT) -> list[str]:
     out: list[str] = []
     for d in dirs:
         for root, _sub, files in os.walk(d):
+            _sub[:] = [x for x in _sub if x != "_reelsi_trash"]  # корзина — не материал
             for name in sorted(files):
                 if not name.endswith(".inserts.json"):
                     continue

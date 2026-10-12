@@ -9,8 +9,8 @@ import os, json, threading, time
 from typing import Any, cast
 import urllib.request
 from flask import Response, jsonify, request
-from ._core import (APP_NAME, APP_REFERER, LOG_CAP, bp, env, jstr, journal_interrupted,
-                    journal_write, umsg_err)
+from ._core import (APP_NAME, APP_REFERER, bp, env, job_log_add, job_log_since, jstr,
+                    journal_interrupted, journal_write, umsg_err)
 from core import paths
 from core.fileio import atomic_json_dump, quarantine_unreadable
 from core.umsg import ReelsiError, umsg
@@ -169,12 +169,9 @@ def vemit(line: Any, /, **vars: Any) -> None:
         except Exception:
             for key, value in vars.items():
                 line = line.replace("{" + str(key) + "}", str(value))
+    # строка уже подставлена (str): log_entry без переменных вернёт её как есть
+    job_log_add(VJOB, VLOCK, line)
     with VLOCK:
-        VJOB["log"].append(line)
-        over = len(VJOB["log"]) - LOG_CAP
-        if over > 0:
-            del VJOB["log"][:over]
-            VJOB["log_base"] += over
         key = VJOB.get("key")
     # id задачи у провайдера снимаем с лога: другого способа узнать его снаружи
     # gen_video не даёт, а если сервер убьют посреди генерации — только по нему и
@@ -384,9 +381,9 @@ def api_video_status() -> Response:
     except ValueError:
         since = 0
     with VLOCK:
-        start = max(0, since - VJOB["log_base"])
+        log, total = job_log_since(VJOB, since)
         return jsonify(running=VJOB["running"], done=VJOB["done"],
-                       log=VJOB["log"][start:], log_total=VJOB["log_base"] + len(VJOB["log"]),
+                       log=log, log_total=total,
                        result=VJOB["result"], error=VJOB["error"],
                        err=VJOB.get("err"), err_vars=VJOB.get("err_vars"),
                        key=VJOB.get("key"), context=VJOB.get("context") or "",

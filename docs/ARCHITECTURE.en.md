@@ -8,11 +8,14 @@ The UI is organized around a three-step batch pass: cutting, markup and After
 Effects assembly. Opening a single clip in the preview is optional and serves a
 spot check. On the AE step the checkboxes define the batch (an empty selection
 means the whole set), and a sticky panel after `#clips3` starts assembly or render
-for the same selection. The JSX mode choice and the "Current only" action remain
-local accelerators and do not change the batch semantics.
+for the same selection. The JSX mode choice remains a local accelerator; the render
+engine choice ("After Effects" or "Built-in") sits in the build panel right after
+"Build & render", not in the folders card. Neither changes the batch semantics.
 
-Google Drive import is the first but collapsed block of step 1; its `gdrive_*` ids
-are part of the UI contract. The speaker is stored in `clip.job.speaker` and edited
+Google Drive import is the first card of step 1; it is hidden by the ⚙ → “Cut” →
+“Cut page” checkbox. The “Podcast → reels” card below it is hidden by the same
+section with its own checkbox. Their `gdrive_*` and `podcast_*` ids are part of the
+UI contract. The speaker is stored in `clip.job.speaker` and edited
 by a compact expandable control in the AE clip row.
 
 > Read THIS file first in a new session. It holds the big picture, data contracts
@@ -607,6 +610,7 @@ by topic, and nothing changed from the outside (`import api`, `from api import b
 | `api/inserts.py` | insert library |
 | `api/videogen.py` | the "Video" tab (its own `VJOB` state, does not touch JOB) |
 | `api/previewproxy.py` | 720p 4:2:0 8-bit preview proxy for 4:2:2 10-bit sources (Sony/Canon) that the browser does not decode and 4K seeks hang: `/api/preview_proxy` + `/api/preview_proxy_status`, its own `PXJOB` state |
+| `api/podcast.py` | podcast → reels: checking YouTube tracks, download, transcription, AI choice of pieces, proxy, conversion to reels; its own job `PDJOB`, the heavy part under the shared lock |
 | `api/gdrive.py` | downloading material from Google Drive via `rclone`: `/api/gdrive_download` + `/api/gdrive_status`, its own job (does not take JOB), the progress is parsed from the rclone output; link parsing, the command and progress parsing are pure functions of `core/rclone.py` |
 | `api/render.py` | a thin HTTP module of ~162 lines: the routes `/api/render_run` and `/api/render_status`, the job instance (`RJOB`, `RLOCK`) and "Stop"; all orchestration was moved out into `core/render_job.py` |
 | `api/previewcalc.py` | the preview door "compute roto and tracking": `/api/preview_calc` (button, background computation via `core/xml2ae/precompute.py`), `/api/preview_calc_status` (progress by pieces and "what is already computed"), `/api/preview_calc_cancel`. Its own `PCJOB` state, a shared task lock (`_cross_lock_acquire`): the heavy GPU stage does not run at the same time as cutting, assembly and render. The body is the same as `/api/scene` and is normalized by the same door, otherwise the plan and the masks would diverge |
@@ -634,7 +638,7 @@ The translation dictionary (`static/i18n/en.json`) is always embedded in full (~
 including with the Russian interface), because a manual language choice in localStorage is stronger than
 the server default of `ui_lang()`, and loading it with fetch caused a race with the camera strings.
 Since 2026-08-06 the interface code is split into separate files `static/app/*.js` (`00-core.js`,
-`10-settings.js`, `20-widgets.js`, `30-video.js`, `40-queue.js`, `50-chrome.js`, `55-progress.js`,
+`10-settings.js`, `20-widgets.js`, `30-video.js`, `40-queue.js`, `45-podcast.js`, `46-podcast-editor.js`, `50-chrome.js`, `55-progress.js`,
 `60-preview.js`, `70-editor.js`, `80-inserts.js`, `85-inserts-view.js`, `86-lut.js`, `87-camframe.js`,
 `87-roto-preview.js`, `88-cams.js`, `90-ae.js`, `94-stylepanel.js`, `95-styles.js`, `99-boot.js`; it used
 to be one file of 3827 lines).
@@ -1151,6 +1155,15 @@ either branch.
 | `core/speakers.py` | speaker profiles: cutting thresholds + folder + style for a particular studio and speech (`speakers/*.json`). The defaults duplicate the `gigaam_cut` constants, verified by a test |
 | `core/roto.py` | RVM video matting of the character (alpha masks for roto); v2: streaming NVDEC→fp16→NVENC, ~10x faster than v1 |
 | `core/headtrack.py` | head track of the speaker by the RVM mask: RVM over the SHOWN segments of the source of the corresponding camera (`ffmpeg -ss … -to … -vf fps=10,scale=432:-2`, the recurrent state is reset on every segment), "head" = the X center of the upper strip of the silhouette (`[top, top+0.12h)`, no person — `hx=None`). Sidecars `<stem XML>.head.json` (camera 1) and `<stem XML>.head2.json` (camera 2) next to the XML (path, size, mtime, `ranges`): `load_cached` — ONE validity check (both `load_or_track` and `scene_plan` call it), `load_or_track` computes on a miss, `head_at` interpolates (it steps over gaps). It is computed at the start of `to_ae_full` (`cam1_head_follow`, `cam2_head_follow`), while `scene_plan` only reads the sidecar — a preview without GPU |
+| `core/podcast.py` | podcast: slug, `podcast.json` (`save_project`, `validate_segments`), yt-dlp audio tracks (`audio_tracks`), the probe and download commands (`probe_cmd`, `download_cmd`), progress lines |
+| `core/podcast_ai.py` | podcast: transcript as `[mm:ss]` phrases, the AI prompt and reply parsing (`choose`), snapping of the boundaries to words |
+| `core/podcast_cams.py` | podcast: camera analysis once per source → `cams.json` (`analyze`, `load`: shots, angles, heads) |
+| `core/podcast_reframe.py` | podcast: shots (`scene_cuts`, `shots`), angles, heads, the speaker by mouth movement, the 9:16 frame (`plan_crops`), baking the file (`bake_cmd`, `convert_segment`) |
+| `api/podcast.py` | podcast: routes (listed in the "API endpoints" section), the job `PDJOB`, the pipeline `_pipeline`, conversion to reels, the podcast bin (`_to_trash`) |
+| `core/jobproc.py` | watchdog of an external process (`run_watched`): output read by a background thread, stall, cancel, kill of the tree; shared by yt-dlp and rclone |
+| `core/clipstore.py` | clip snapshots (`<stem>.clip.json`) and the **bin** `_reelsi_trash`: `move_to_trash`, `list_trash`, `restore_trash`, `empty_trash` |
+| `static/app/00-core.js` | shared timeline and edit-history functions: `TL_COL`, `tlPaintWave`, `tlWheelBind`, `histStack` (see "Timelines") |
+| `static/app/45-podcast.js`, `static/app/46-podcast-editor.js` | the podcast block on step 1 (list, status, deleting) and the "Whole recording" piece editor |
 | `core/assets.py` | asset resolver (transitions, sounds) from `assets/assets.json` |
 | `core/fonts.py` | the list of installed fonts (PostScript name + family) |
 | `core/censor.py` + `xml2ae/layout.py:_censor_windows` | censoring: an asterisk instead of the middle letter in subtitles (`core/censor.py`) + voice mute windows on the same words (`layout.py:_censor_windows`). Two stem lists (substring match): `data/badwords.txt` — what to beep, `data/okwords.txt` — exceptions ("бля" catches "бляшка"). The files in the repository are SHARED; an edit from ⚙ → "Words" (`/api/censor_words`) lands next to them in `badwords.user.txt` / `okwords.user.txt` (in .gitignore, own `REELSI_BADWORDS`/`REELSI_OKWORDS`) and REPLACES the shipped list entirely — otherwise a stem could not be removed. It is re-read by mtime, no restart needed |
@@ -1217,6 +1230,146 @@ looked at ONLY between files — that is, the whole long piece was computed to t
 an existing folder with such a name is reused, so in "one .jsx for everything" mode all timelines put
 their stuff into the same bins.
 
+## Podcast → reels (`core/podcast*.py`, `api/podcast.py`)
+
+A long podcast is cut into N vertical reels. After conversion a reel is an ordinary one-camera
+clip: it joins the step 1 queue with an absolute path, and the AI cut is started by a person.
+The owner's decisions and the stages are in `docs/PODCAST_SPEC.en.md`; this section is how it works.
+
+### Pipeline and statuses
+
+The status lives in `podcast.json` (the `status` field) and is written to disk at once, so a server
+restart does not leave a podcast "running" forever. `_resume_step` (`api/podcast.py`) reads the
+status and decides where to continue: `new` → `downloading` → `downloaded` → `transcribing` →
+`transcribed` → `choosing` → `ready` → `converting` → `converted`; on a failure, `error`.
+
+`_pipeline` (`api/podcast.py`) goes step by step: download (YouTube only, `podcast.download_cmd`) →
+transcription (`audio16k.wav` → `words.json` through `asr_backends`, under the shared cross-process
+lock) → camera analysis (`cams.json`, if it is missing or stale, under the same lock) → the AI choice
+of pieces (`podcast_ai.choose`, without the GPU lock, cancelled through `aicut.cancel_call`).
+
+Progress belongs to its own job `PDJOB` (not the cutting `JOB`, like `GDJOB` for Google Drive): the
+fields are `stage` (`download`, `transcribe`, `cams`, `choose`, `convert`), `cur` (a line for people),
+`pct`, `i`/`n`, `reels`. The interface polls `/api/podcast_status`.
+
+### Data on disk
+
+The podcast folder is `<podcast folder>/<slug>/`. Files: `podcast.json` (the project), `source.<ext>`
+(the downloaded video; a local file is not copied, the project keeps only its path), `audio16k.wav`,
+`words.json` (words `[{"w","start","end"}]`, seconds from the start of the source), `cams.json`, and
+`reels/<slug>_<NN>.mp4` with `reels/<slug>_<NN>.reframe.json` next to it.
+
+`podcast.json`: `v`, `title`, `slug`, `url` (empty for a file), `source` (absolute path),
+`audio_track`, `duration`, `reels_wanted`, `status`, `error`, `asr_engine`, `lang`,
+`segments[{id, start, end, title, why, reel}]`. `podcast.validate_segments` checks the invariants:
+`0 <= start < end <= duration`, the pieces do not overlap, `id` stays the same when a boundary is
+edited, and after conversion `reel` is not empty. Writes go only through `fileio.atomic_json_dump`
+(`podcast.save_project`).
+
+`cams.json` (`core/podcast_cams.py`, `analyze`): the shots of the whole source, the angle of each,
+the confidence, the heads of the angles (`angle_info`) and the heads of unclear shots (`shot_heads`).
+The file is valid while the source has not changed (path, size, mtime): `podcast_cams.load` checks
+this and returns nothing for a stale analysis.
+
+### Converting to reels (`core/podcast_reframe.py`)
+
+Shots: `ffmpeg` with `select='gt(scene,0.1)'` over the whole source, once (`scene_cuts`); a shot
+shorter than 0.4 s merges with its neighbour (`shots`). Angles: thumbnails of the middle of each shot,
+64×36 in grey; a mean difference below 18 means one angle (`group_angles`); each shot moves to the
+angle with the nearest anchor, in two rounds (`reassign_nearest`). Heads: from the upper edge profile
+of the RVM mask (`heads_of_points`: crests at least 8 % of the width apart and 4 % of the height above
+the valley), not from connected components, because two figures standing side by side often merge into
+one blob of the mask. RVM is called at most twice per source (`headtrack.track`, `heads=True`): on the
+samples of the confident angles, and on the unclear shots. Converting the pieces does not call RVM.
+
+The speaker is found by mouth movement (`mouth_activity`, `speakers_for_shot`); the frame is a 9:16
+window that changes in steps (`plan_crops`), and a change of speaker inside a wide shot is a hard
+cut. The file is written in one `ffmpeg` pass (`bake_cmd`): `crop` plus `sendcmd` (`sendcmd_text`),
+`scale=1080:1920`, the video codec of the master profile, AAC 320k audio. The step 1 queue gets the
+reel as one camera with an absolute path: `api/jobs.py:build_pairs` joins `os.path.join(camdir, abs)`,
+which returns `abs` itself, so the entry survives a change of camera folders. The reels folder is
+`camdirs[0]` of the speaker's profile (`_cam1_dir`); without it, `reels/` inside the podcast folder,
+with `fallback: true` in the answer.
+
+### Jobs, locks and cancelling
+
+The yt-dlp download runs through `core/jobproc.py:run_watched`, the process watchdog shared with
+rclone: a background thread reads the output, the main thread polls the process, a cancel stops it
+within 0.5 s, and a stall (10 minutes without a change of progress) kills the whole process tree
+(`kill_tree`) with the code `STALLED_RC`. Transcription, camera analysis and conversion run under
+`_cross_lock_acquire` (the shared cross-process task lock, as the roto preview does); the AI choice
+runs without the GPU lock. "All reels to the queue" (`/api/podcast_convert_all`) is one job over all
+podcasts of the folder, in list order.
+
+## Trash (`core/clipstore.py`)
+
+One bin for clips and podcasts. An entry is the folder `<root>/_reelsi_trash/<YYYYmmdd-HHMMSS>_<name>/`
+(`new_trash_entry`; a free name comes from `fileio.unique_path`). A clip: the root is the folder of its
+XML, and the XML and sidecars move inside (`move_to_trash`). A podcast: the root is the podcast folder,
+and the whole podcast folder moves inside under its own name (`api/podcast.py:_to_trash`).
+
+### trash.json and sources
+
+`trash.json` (`write_trash_meta`): `kind` (`clip` or `podcast`), `xml` or `title`, `from`,
+`deleted_at` (ISO, UTC), `files: [{from, name}]`. A file outside the entry, a camera source or an
+external podcast source, is recorded with the field `stored`: its absolute path in the bin of its own
+folder (`<source folder>/_reelsi_trash/<entry id>/<name>`, `trash_move_in`). Entries without
+`trash.json` are not listed (`list_trash`).
+
+A source that other clips of the same XML folder need (compared by realpath, listed in `shared_with`)
+does not move and lands in `skipped` with the reason. The move uses `fileio.move_file` (`os.replace`;
+between disks, a copy). A busy file (on Windows the player holds `.voice.wav`) stays where it is and
+comes back as a `not_moved` reason; the others move.
+
+### Restore, emptying and walks
+
+`restore_trash` returns the files with `stored` and the plain files to `from`; it never overwrites a
+busy place (`skipped`); the name in `trash.json` must be plain (`name == basename`), and the id is
+checked by `_check_trash_id`. Empty entry folders and `_reelsi_trash` are removed (`_drop_empty_trash`).
+`empty_trash(roots, dry)` erases the entries with `trash.json` together with their files. Only a path
+that has a folder named `_reelsi_trash` at any level is erased (`_in_trash`, by realpath); a link or
+a junction inside an entry is not touched, or `rmtree` would go into another folder. `dry` (the default)
+returns `{entries, bytes}`.
+
+Routes: `/api/clip_delete` (with `sources` and `batch`), `/api/trash_list`, `/api/trash_restore`,
+`/api/trash_empty` (`api/files.py`), `/api/podcast_delete` (`api/podcast.py`). In the interface, the
+emptying is only in ⚙ → Cut, and the question first shows a dry run.
+
+Folder walks do not enter the bin: `core/insertlib.py` (`SKIP_DIR`, the insert index) and
+`tools/stock_compare.py`, `tools/intro_eval.py` drop `_reelsi_trash` in a recursive walk. A new walk of
+clip, result or podcast folders must do the same.
+
+## Timelines: shared functions (`static/app/00-core.js`)
+
+The three time strips — the step 1 cut editor (`70-editor.js`), the insert preview
+(`85-inserts-view.js`) and the podcast "Whole recording" (`46-podcast-editor.js`) — are drawn and
+controlled by the same functions. A fix in one place does not drift apart from the other two; the
+checks are in `tests/test_podcast_editor_js.py` and in the node stands.
+
+### What is shared
+
+- The colours `TL_COL` are read from the `--tl-*` CSS variables (`app.css`); fallback values serve
+  stands without styles. The tick step `tlTickStep`, the labels `tlRulerLabel`, the ruler
+  `tlPaintRuler`, the piece frames `tlDrawSpan`, the playhead with its flag `tlDrawPlayhead`, the
+  waveform `tlPaintWave` (the maximum of the peaks per pixel, not point sampling).
+- The view: `tlClampView` (clamps the window), `tlZoomSpan` (zoom to a point), `tlFollowHead` (the view
+  follows the playhead, which stays 10 % of the width from the left edge).
+- Gestures: `tlWheelBind` (the wheel: horizontal or Shift pans, vertical zooms; step `TL_ZOOM_STEP`),
+  `tlMidPan` (the middle button and dragging the ruler), `tlMidGuard` (stops the browser's autoscroll on
+  the middle button), `tlPanning`. The capture order is `tlHitOrder`: a piece edge, the playhead, the
+  ruler, the middle of a piece.
+- Editing and history: `tlEditKey` (C/S cut, D/Delete/Backspace remove), `histStack` — undo and redo
+  by a snapshot string: a step calls `touch()` after an edit, and `undo`/`redo` hand back the snapshot
+  through `apply`; `histKey` — the keys (including the Cyrillic "я" and "н" of the Russian layout).
+
+### Scope and stands
+
+All `static/app/*.js` files share one global scope. A function with the same name in another file
+silently overrides the first one: that is how the podcast row icons went empty. The guard is
+`tests/test_ui_js_redeclare.py`. Stands (node) cut functions out of the files, so an outside name that
+may be missing in a stand (for example `stateObj` or `restoreState` from `10-settings.js`) is checked
+with `typeof`.
+
 ## Input / Output
 
 **Input** — cameras 1–4 (`.mp4/.mov/.mxf`), camera 1 is the main one (audio always from it).
@@ -1227,6 +1380,8 @@ work roughly and are designed for 4 cameras.
 **Output path** — `Reelsi_out/` (the folder one level above `reelsi/`), names `NN_stem.xml`, sidecars
 (`.project.json`, `.cuts.json`, `.omni.json`, `<stem>.clip.json` with a snapshot of the clip state and the
 trash folder `_reelsi_trash/` for safe deletion and recovery).
+
+**Trash** — one trash for clips and podcasts (`core/clipstore.py`). A clip goes to `<XML folder>/_reelsi_trash/<id>/` with its XML and sidecars; with `sources: true` its source cameras go to `<camera folder>/_reelsi_trash/<id>/` under the same `<id>` (except those other clips in the folder still need: they stay, the reason is in `skipped`). A podcast goes whole to `<podcasts folder>/_reelsi_trash/<id>/<name>/`. The entry is described by `trash.json`: `kind` (`clip` or `podcast`), `files` with `from`, `name` and, for a file outside the entry, `stored`. Restore is `/api/trash_restore` (by `root` and `id`), emptying for good is `/api/trash_empty` (it erases only paths inside a `_reelsi_trash` folder). Recursive folder walks skip `_reelsi_trash`.
 
 **What is written atomically** — user data and files (sidecars, `ai_config.json`, style presets and
 speaker profiles, Premiere XML (cut output), user XML, `.jsx`, `.srt`, `.drp`) go through `core/fileio.py`
@@ -1476,6 +1631,32 @@ Plan fields (the preview only READS them and computes nothing on top):
 Windows paths → double backslashes. Multiline text (disclaimer) — `_js_multiline` (`\n`→`\r`).
 
 ## Gotchas (from real bugs)
+
+- **A function with the same name in `static/app/*.js` silently overrides the first one (2026-10-12).**
+  All interface files share one global scope, and a later declaration replaces an earlier one
+  without an error: that is how the podcast row icons went empty. The guard is
+  `tests/test_ui_js_redeclare.py`; give a new function the prefix of its module when its name is taken.
+- **A CSS class name that is already taken (2026-10-12).** `ipvtrans` already carries the insert
+  transition layer (`pointer-events:none`), so the preview's playback row got its own class,
+  `ipvtransport`. Before putting a class on an element, check it across the whole `static/app.css`.
+- **Stands cut out functions (2026-10-12).** A node stand loads not the whole interface but chosen
+  functions. When a module calls an outside name (for example `stateObj` or `restoreState` from
+  `10-settings.js`), the call must be checked with `typeof`: otherwise the stand fails where the
+  browser has everything.
+- **YouTube throttles a single request (2026-10-10).** One connection gets about 45 KiB/s: a
+  measurement gave an ETA of 8 hours for a 1.3 GiB video. So downloads run `-N 8 --http-chunk-size 10M`:
+  video at about 43 MiB/s, the audio track at 13.5 MiB/s.
+- **`--js-runtimes node` is passed explicitly (2026-10-10).** Both yt-dlp calls (the track check and
+  the download) pass `--js-runtimes node`: without a JavaScript runtime yt-dlp cannot solve YouTube's
+  JavaScript challenges, and some formats may be missing from the list.
+- **Shot threshold 0.1 on a dark studio (2026-10-10).** Real cuts score 0.22–0.24, the noise between
+  frames 0.017 or below. The threshold 0.1 lies between them.
+- **A stall is measured by change, not by a line (2026-10-12).** `jobproc.run_watched`: a statistics
+  line repeated by a timer does not count as activity, or a stuck transfer would look alive. If the
+  reading thread itself died, the process is not killed for the stall; one warning is written instead.
+- **The bin does not touch a shared source.** A camera source that another clip of the same folder
+  needs stays where it is and lands in `skipped`, with the names of those clips. Paths are compared
+  by realpath, case-insensitively: `C:\Cam\a.mp4` and `c:\cam\A.MP4` are one file.
 
 - **Two doors to one state is a bug, even if both "work" (2026-10-02).**
   On step 3 an insert lives in two places: in the PREVIEW list and in the clip card (what is
@@ -2816,6 +2997,15 @@ checkbox) generation of the remainder; it is called from all four paths: "Match 
 - `POST /api/cancel` — cancel the job.
 - `GET /api/status` — incremental polling (`since=N`).
 - `GET /api/clean_tmp` — cleanup of `_tmp`.
+
+**PODCAST** (`api/podcast.py`): `/api/podcast_probe` (YouTube tracks), `/api/podcast_create`,
+`/api/podcast_run` (the pipeline), `/api/podcast_status`, `/api/podcast_cancel`, `/api/podcast_list`,
+`/api/podcast_get`, `/api/podcast_save` (piece edits), `/api/podcast_convert` (convert pieces),
+`/api/podcast_convert_all` ("All reels to the queue"), `/api/podcast_delete` (to the bin),
+`/api/podcast_proxy`, `/api/podcast_proxy_status` (the 720p proxy for the window).
+
+**BIN** (`api/files.py`): `/api/trash_list` (clips of a folder and podcasts), `/api/trash_restore`,
+`/api/trash_empty` (a dry run by default).
 
 ## See also
 

@@ -12,6 +12,8 @@
 const CAMCOL=['#6ea8ff','#e0a865','#c98ade','#5fc9d6'];
 let CAMED={xml:'',i:-1,n:1,segs:[],assign:[],total:0,names:[]};
 async function openCamsFor(i){const c=CLIPS[i];CAMED={xml:c.xml,i,n:1,segs:[],assign:[],total:0,names:[]};
+  // typeof — стенды вырезают openCamsFor без 40-queue.js, где живёт markLastClip (как stateObj в 99-boot.js).
+  if(typeof markLastClip==='function')markLastClip(1,i);
   if(curAE!==i||AEXML!==c.xml)selectAE(i);
   $('camsname').textContent=c.name;$('camsres').textContent='';$('camsstrip').innerHTML='';$('camslegend').innerHTML='';$('camsswap').innerHTML='';
   $('camslist').innerHTML='<div class="empty">'+t('Загрузка…')+'</div>';cpvReset();openModal('mbCams');

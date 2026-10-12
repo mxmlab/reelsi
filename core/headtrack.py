@@ -70,12 +70,134 @@ def ranges_cover(cached_ranges: Sequence[Any], requested_ranges: Sequence[Any], 
     return True
 
 
-def track(video: str, ranges: Sequence[Any], emit: Callable[..., Any] | None = None, cancel: Callable[[], bool] | None = None, fps: int = 10) -> dict[str, Any]:
+# Ширина головы, если в разборе её нет (старые cams.json и треки без третьего числа).
+# Замер 2026-10-11 на подкасте владельца: лицо в общем плане ≈ 0.045 ширины кадра.
+HEAD_HW_DEFAULT = 0.045
+
+
+def head_hw(head: Any) -> float:
+    """Ширина головы (доля ширины кадра) из [hx, top, hw]; у двухэлементной головы — запасное значение."""
+    if len(head) >= 3 and head[2] is not None:
+        return float(head[2])
+    return HEAD_HW_DEFAULT
+
+
+def heads_from_mask(mask: Any, min_sep: float = 0.08, min_prom: float = 0.04, smooth: float = 0.02) -> list[list[float]]:
+    """Головы по профилю верхней кромки маски: [[hx, top, hw], ...] в долях кадра, слева направо.
+
+    Фигуры, сидящие рядом, часто сливаются в одно пятно маски (общее тело-стол снизу),
+    поэтому компоненты связности тут не годятся: берём профиль — для каждого столбца
+    индекс самой верхней строки маски (h, если столбец пуст), сглаженный скользящим
+    средним. Головы — локальные минимумы профиля («макушки»). Макушка засчитывается,
+    если выступает над седловиной не меньше min_prom*h: выступ = меньший из двух
+    подъёмов профиля от макушки до более высокой точки (или до края кадра) по обе
+    стороны. Одностороннее «ребро» (шум в пиксель над плечом) проходит только один
+    подъём и отсеивается. Две макушки ближе min_sep*w друг к другу — остаётся более высокая.
+    Центр головы — середина плато: непрерывного участка, где профиль не ниже
+    вершины на 0.03*h.
+
+    Ширина hw — ширина связного отрезка маски, который содержит центр головы, в строке
+    top + 0.04*h (чуть ниже макушки, где голова самая широкая). Окно лица для рта строится
+    по ней, а не по расстоянию между головами: иначе в общем плане окно захватывает руки
+    и грудь соседа (замер 2026-10-11, 1920×1080: правильное окно 0.045·W давало разделение,
+    окно 0.06·W — нет). Если в строке нет маски, берётся HEAD_HW_DEFAULT.
+    """
+    import numpy as np
+
+    m = np.asarray(mask).astype(bool)
+    if m.ndim != 2 or m.size == 0 or not m.any():
+        return []
+    h, w = m.shape
+    top = np.where(m.any(axis=0), np.argmax(m, axis=0), h).astype(float)
+    k = max(1, int(smooth * w))
+    pad_l = k // 2
+    q = np.convolve(np.pad(top, (pad_l, k - 1 - pad_l), mode="edge"), np.ones(k) / k, mode="valid")
+    q = np.round(q, 6)
+
+    # Вершины: плато локальных минимумов q (вершина — там, где профиль идёт вверх по
+    # обе стороны). Край кадра вершину не закрывает; ровный профиль без подъёмов — не вершина.
+    cands = []
+    i = 0
+    while i < w:
+        j = i
+        while j + 1 < w and q[j + 1] == q[i]:
+            j += 1
+        if not (i == 0 and j == w - 1):
+            left_ok = i == 0 or q[i - 1] > q[i]
+            right_ok = j == w - 1 or q[j + 1] > q[i]
+            if left_ok and right_ok:
+                cands.append((i + j) // 2)
+        i = j + 1
+
+    def prom(c: int) -> float:
+        # По каждой стороне — подъём профиля от вершины до первой более высокой точки
+        # (или до края); берём меньший. Сторона, пустая из-за края, не считается.
+        qc = q[c]
+        best = float("inf")
+        for step in (-1, 1):
+            i = c + step
+            if not 0 <= i < w:
+                continue
+            saddle = qc
+            while 0 <= i < w and q[i] >= qc:
+                saddle = max(saddle, q[i])
+                i += step
+            best = min(best, saddle - qc)
+        return best
+
+    thr = min_prom * h
+    order = sorted((c for c in cands if prom(c) >= thr), key=lambda c: (q[c], c))
+    sep = min_sep * w
+    kept: list[int] = []
+    for c in order:
+        if all(abs(c - o) >= sep for o in kept):
+            kept.append(c)
+
+    out: list[list[float]] = []
+    for c in kept:
+        lo = hi = c
+        while lo - 1 >= 0 and q[lo - 1] <= q[c] + 0.03 * h:
+            lo -= 1
+        while hi + 1 < w and q[hi + 1] <= q[c] + 0.03 * h:
+            hi += 1
+        mid = int(round((lo + hi) / 2.0))
+        hw = _mask_head_width(m, int(top[c]) + int(round(0.04 * h)), mid)
+        out.append([round((lo + hi) / 2.0 / w, 4), round(float(top[c]) / h, 4), round(hw, 4)])
+    out.sort(key=lambda p: p[0])
+    return out
+
+
+def _mask_head_width(m: Any, row: int, col: int) -> float:
+    """Ширина связного отрезка маски в строке row, содержащего col (доля ширины кадра).
+
+    col не в маске — берётся ближайший пиксель маски в той же строке. Если строка пуста —
+    HEAD_HW_DEFAULT: голова без ширины не должна превращаться в окно нулевой ширины."""
+    import numpy as np
+
+    h, w = m.shape
+    if not 0 <= row < h:
+        row = min(max(row, 0), h - 1)
+    line = m[row]
+    xs = np.flatnonzero(line)
+    if xs.size == 0:
+        return HEAD_HW_DEFAULT
+    j = int(xs[np.argmin(np.abs(xs - col))])
+    left = right = j
+    while left - 1 >= 0 and line[left - 1]:
+        left -= 1
+    while right + 1 < w and line[right + 1]:
+        right += 1
+    return (right - left + 1) / float(w)
+
+
+def track(video: str, ranges: Sequence[Any], emit: Callable[..., Any] | None = None, cancel: Callable[[], bool] | None = None, fps: int = 10, heads: bool = False) -> dict[str, Any]:
     """RVM-трекинг головы спикера по участкам исходника ranges ([(a, b), ...]).
 
     На кадр: alpha > 0.5, верхняя строка силуэта top, полоса [top, top + 0.12*h),
     hx = среднее X пикселей полосы / w. Нет человека — hx = None.
     Ответ: {"v": 1, "fps": 10, "w": w_src, "h": h_src, "pts": [[t_src, hx], ...]}.
+    heads=True: каждая точка — [t_src, hx, heads_from_mask(маска)], в ответе "heads": True.
+    Без heads ответ и формат точек прежние (на них держится кэш .head.json).
     """
     emit = wrap_emit(emit)
     video = os.path.abspath(video)
@@ -87,8 +209,9 @@ def track(video: str, ranges: Sequence[Any], emit: Callable[..., Any] | None = N
         raise Cancelled()
 
     merged = merge_ranges(ranges)
+    extra: dict[str, Any] = {"heads": True} if heads else {}
     if not merged:
-        return {"v": 1, "fps": fps, "w": w_src, "h": h_src, "pts": []}
+        return {"v": 1, "fps": fps, "w": w_src, "h": h_src, "pts": [], **extra}
 
     import numpy as np
     import torch
@@ -124,17 +247,10 @@ def track(video: str, ranges: Sequence[Any], emit: Callable[..., Any] | None = N
                                          bufsize=frame_bytes * (chunk + 1))
                 frame_idx = 0
                 try:
-                    while True:
+                    for batch in roto.iter_frames(p_dec.stdout, frame_bytes, chunk):
                         if cancel and cancel():
                             raise Cancelled()
-                        frames = []
-                        for _ in range(chunk):
-                            raw = roto._read_exact(p_dec.stdout, frame_bytes)
-                            if len(raw) < frame_bytes:
-                                break
-                            frames.append(np.frombuffer(raw, np.uint8).reshape(oh, ow, 3))
-                        if not frames:
-                            break
+                        frames = [np.frombuffer(raw, np.uint8).reshape(oh, ow, 3) for raw in batch]
                         src = torch.from_numpy(np.stack(frames)).to(dev)
                         src = src.permute(0, 3, 1, 2).unsqueeze(0).to(dtype).div_(255)
                         _fgr, pha, *rec = model(src, *rec, downsample_ratio)
@@ -153,7 +269,10 @@ def track(video: str, ranges: Sequence[Any], emit: Callable[..., Any] | None = N
                                     hx = None
                                 else:
                                     hx = round(float(np.mean(stripe_xs)) / ow, 4)
-                            pts.append([t_src, hx])
+                            if heads:
+                                pts.append([t_src, hx, heads_from_mask(mask)])
+                            else:
+                                pts.append([t_src, hx])
                         frame_idx += len(frames)
                 finally:
                     try:
@@ -177,7 +296,7 @@ def track(video: str, ranges: Sequence[Any], emit: Callable[..., Any] | None = N
             log.warning("RVM не выгрузился после трекинга головы: %s — "
                         "видеопамять остаётся занятой", ex)
 
-    return {"v": 1, "fps": fps, "w": w_src, "h": h_src, "pts": pts}
+    return {"v": 1, "fps": fps, "w": w_src, "h": h_src, "pts": pts, **extra}
 
 
 def head_cache_path(xml_path: str, cam: int = 1) -> str:

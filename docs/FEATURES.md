@@ -37,7 +37,7 @@ my_workspace/
 **Rescan folders** — Reelsi lists the camera folders it found.
 **Settings:** **Output folder** is where cut XML files and their sidecar files land. The
 `.jsx` folder is set on step 3.
-**Code:** `templates/index.html:52`, `api/files.py:30`, `webui.py:81`
+**Code:** `templates/index.html:80`, `api/files.py:30`, `static/app/40-queue.js:16`
 
 ### Speaker profiles
 
@@ -86,7 +86,7 @@ you pick. Local providers are free.
 diagnostics panel to see what previous calls cost.
 **Settings:** the panel groups calls by model, step and reasoning level and shows medians
 of tokens, reasoning share and time. Failed calls are counted separately.
-**Code:** `api/ai.py:245`, `api/ai.py:524`, `core/aicut/config.py:38`,
+**Code:** `api/ai.py:245`, `api/ai.py:524`, `templates/index.html:1117`,
 `core/aicut/catalog.py:22`
 
 ### Image and video generation: what is bundled
@@ -107,7 +107,47 @@ can plug in a local backend at the extension points `core/aicut/images.py` and
 your browser. The form keeps its state between sessions.
 **Limitations / price:** downloads go through `rclone`, so large files are fine; progress
 is parsed from rclone's statistics.
-**Code:** `api/gdrive.py:244`, `core/rclone.py:46`, `templates/index.html:32`
+**Code:** `api/gdrive.py:244`, `core/rclone.py:47`, `templates/index.html:32`
+
+### Podcast → reels: source and track
+
+**Where:** step 1 › **Podcast → reels** (a card under Google Drive; it can be hidden in ⚙ › **Cut** › **Cut page**).
+**How:** 1. Choose the source: **YouTube** (paste the link into **Link**; the audio tracks load by themselves) or **File** (a file already on disk; it is not copied, the project keeps its path). 2. For a link, pick the audio track: the original by default, or an auto-dubbed one. 3. Pick the **Podcast folder** (remembered) and the number of reels, then press **Parse** (**Разобрать**). The pipeline downloads, transcribes, analyses the camera angles and lets the AI pick the pieces; each step continues from where it stopped, also after a restart.
+**Settings:** ⚙ › **Podcast** sets the AI profile and reasoning level of the **Podcast** step, the transcription engine (the same list as for cutting) and the language (automatic by default). Each podcast gets its own folder under the podcast folder, named from its title.
+**Limitations / price:** a YouTube download needs `yt-dlp` (in `requirements-optional.txt`) and `node`, which yt-dlp uses as its JavaScript runtime. The download runs 8 parallel connections with 10 MB chunks, because one connection to YouTube is throttled to about 45 KiB/s. A download that prints nothing for 10 minutes is stopped with its process tree. A podcast longer than the context of the chosen model is refused with a hint to pick a larger one.
+**Code:** `static/app/45-podcast.js:264`, `api/podcast.py:635`, `api/podcast.py:129`, `core/podcast.py:257`, `core/podcast_ai.py:329`
+
+### Podcast → reels: the editing window
+
+**Where:** step 1 › **Podcast → reels** › **Edit** on a podcast row.
+**How:** the window is 16:9. It has the video (a 720p proxy, built once in the same progress line as the step 1 preview), the list of pieces, and the **Whole recording** timeline below: the waveform of the whole source with the transcript words as bubbles on a strip above it.
+**Settings:** drag the edges, or set them at the playhead with **I** (start) and **O** (end). **C** or **S** cuts a piece at the playhead, **D**, **Delete** or **Backspace** removes it, and a double click on empty space makes a new 60-second piece around the point. Several pieces can be selected for conversion or removal. Undo and redo work as in the cut editor. Changes are saved by themselves 0.6 s after the last edit. A piece is at least 5 s long and cannot move over its neighbour.
+**Limitations / price:** the window edits the pieces; the transcript words are there for reference. The timeline gestures are the same as in the other two timelines (see "One view for the three timelines").
+**Code:** `static/app/46-podcast-editor.js:773`, `static/app/46-podcast-editor.js:79`, `templates/index.html:374`
+
+### Podcast → reels: convert to reels
+
+**Where:** the **Convert to reels (N)** button of the editing window (the selected pieces; with none selected, all of them), and the **All reels to the queue** button under the podcast list on step 1 (every podcast of the folder that has pieces without a reel).
+**How:** 1. The whole source is cut into shots once (scene threshold 0.1: real cuts score 0.22–0.24 on dark studios, noise 0.017 or below). 2. Shots are grouped into camera angles by small thumbnails. 3. Heads are found with the head tracker (the RVM matting mask), and only on a few samples of each angle: an angle that agrees on the samples is confident and needs no more RVM calls. 4. For each piece, the crop follows the head of the speaker. When two people share a wide shot, the speaker is the one whose mouth moves; without speech in the window the previous speaker stays. 5. The piece is baked as a 1080×1920 file (video encoder from the master profile, AAC 320 kbit/s audio). 6. The reel joins the step 1 queue as a one-camera clip with its absolute path.
+**Settings:** reels go to the **camera 1 folder of the speaker** (the speaker's profile), so they sit with the speaker's footage. Without that folder they go to `reels/` inside the podcast folder, and the answer says so (`fallback`). Each reel is `<slug>_<NN>.mp4`, with `<slug>_<NN>.reframe.json` next to it (cuts, angles, heads, speakers and crops, for debugging).
+**Limitations / price:** the AI cut of a reel is not started by the conversion: start it yourself on the queue entry. A convert call does not touch the RVM tracker for the pieces themselves; it only uses the samples the analysis already made.
+**Code:** `api/podcast.py:729`, `api/podcast.py:760`, `core/podcast_cams.py:165`, `core/podcast_reframe.py:62`, `core/podcast_reframe.py:112`, `core/podcast_reframe.py:523`
+
+### Recycle bin and deleting
+
+**Where:** the **Recycle bin** button in the header of each of the three steps, the trash icon of a podcast row, and ⚙ › **Cut** › **Trash** (the size and **Empty trash**).
+**How:** 1. Tick clips and press **Delete the selected clips**, or press the trash icon of a podcast. 2. The dialog says what goes to the bin and how big it is. 3. Tick **And sources** to take the source camera files too; a source that another clip of the same folder still uses stays where it is, and the dialog names those clips. 4. Open **Recycle bin** to see the entries, clips and podcasts together, newest first, and press **Restore** to bring one back. 5. In ⚙ › **Cut**, **Empty trash** erases everything in the bin for good, after a confirmation with a count taken first.
+**Settings:** a podcast goes into the bin as a whole folder; its downloaded source is part of that folder, while a file picked from disk moves only with **And sources** (and only if no other podcast of the folder uses it). A reel that stands in the queue from the podcast's folder leaves the queue with it, and the dialog warns about it. Restoring never overwrites: if the original place is taken, the entry is kept and says why.
+**Limitations / price:** a move stays on the same disk; a source on another disk is copied and then removed from its place. Entries without the bin's own record (an old podcast folder without `trash.json`) are not shown; see the known issues.
+**Code:** `core/clipstore.py:217`, `core/clipstore.py:383`, `core/clipstore.py:526`, `api/podcast.py:823`, `api/podcast.py:884`, `api/files.py:868`, `static/app/40-queue.js:1102`, `static/app/40-queue.js:1168`
+
+### One view for the three timelines
+
+**Where:** the step 1 cut editor, the inserts preview on step 2, and the **Whole recording** timeline of the podcast window. All three are drawn by the same code.
+**How:** each one has the same header (the **!** hint, the title, **+ − ⛶**), the same ruler (tenths of a second when the step is under a second), a blue playhead with a flag, and a waveform that shows the peak of every pixel, so a loud moment is not lost when you zoom out.
+**Settings:** the gestures are the same everywhere. Click or drag on the field or the playhead to seek; dragging does not stop playback. Drag the ruler or use the middle button to scroll the view. The wheel zooms; Shift or a horizontal wheel scrolls. During playback the view follows the playhead, which stays 10 % from the left edge. When several things sit under the cursor, the order is: a piece edge, then the playhead, then the ruler, then the middle of a piece. **C** or **S** cuts, **D**, **Delete** or **Backspace** removes, and undo and redo (Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z) keep one history per timeline.
+**Limitations / price:** none new; this is one set of rules, so a change to one timeline changes the other two.
+**Code:** `static/app/00-core.js:207`, `static/app/00-core.js:321`, `static/app/00-core.js:365`, `static/app/00-core.js:290`, `static/app/00-core.js:307`, `static/app/00-core.js:394`, `static/app/00-core.js:446`, `static/app/00-core.js:480`
 
 ### Project, camera count and the queue
 
@@ -120,7 +160,7 @@ folders by audio correlation; the threshold was measured on real footage, so "no
 similar found" means exactly that. **Match all by audio** repeats that for the whole
 camera 1 folder, and **new only** skips takes that already have an XML in the output
 folder.
-**Code:** `templates/index.html:49`, `api/files.py:57`, `core/sync.py:113`,
+**Code:** `templates/index.html:49`, `api/files.py:57`, `core/sync.py:97`,
 `core/sync.py:26`
 
 ### Audio sync
@@ -201,7 +241,7 @@ never cut automatically. Retrain the model with `python tools/train_breath.py`.
 acoustics. If `silero-vad`, `transformers` or the model file is missing, the detector
 switches itself off and cutting proceeds as before.
 **Code:** `core/breath.py:40`, `core/breath.py:229`, `core/breath.py:254`,
-`api/editor.py:135`
+`static/app/70-editor.js:222`
 
 ### Cut editor
 
@@ -287,7 +327,7 @@ window floats above the other windows while the sound plays.
 **Limitations / price:** with two cameras the layout alternates strictly and both the first
 and the last piece stay on camera 1. Do the layout before markup: rebuilding the XML for it
 erases subtitles.
-**Code:** `core/align.py:14`, `api/build.py:340`, `templates/index.html:458`
+**Code:** `core/align.py`, `api/build.py:340`, `templates/index.html:458`
 
 ### Draft mp4
 
@@ -315,8 +355,8 @@ alone; preview proxies are a per-camera-file cache and are only removed if you s
 
 **Where:** step 1 › **Clips**.
 **How:** 1. Use **From output folder** to pick up every `.xml` in the output folder.
-2. Use **Add XML…** to bring in a timeline edited elsewhere. 3. The broom clears the list.
-4. Tick clips and press the trash button to delete them.
+2. Use **Add XML…** to bring in a timeline edited elsewhere.
+3. Tick clips and press the trash button to delete them.
 **Settings:** every clip carries a selection checkbox — the same one as in the step 2 and
 step 3 lists, because the choice is shared by all three. A click with Shift sets or clears
 the whole range from the last clicked checkbox to this one. The keyboard focus stays on the
@@ -324,16 +364,19 @@ checkbox: all three lists are redrawn on every pick, so the checkbox a person wa
 with is put back into its own list afterwards — Tab, Space and a Shift range taken from the
 keyboard go on walking the list in order; a focus that stood elsewhere is not moved. The trash
 button **Delete the selected clips** in the list header (disabled while nothing is ticked) opens
-the same dialog as the cross on a clip row: **Remove from the list** or **To trash (can be restored)…**; the second one
-shows the combined list of cut files with their sizes and then safely moves them into the `_reelsi_trash/`
-folder alongside the XML. Deleted clips can be restored at any time via the **Recycle Bin** modal.
-The source camera video is never touched, and one failing clip does not stop the others.
+the dialog at once: it shows the cut files that will go to the trash with their total size. The
+**And sources** checkbox (off by default) adds the source camera files that no other clip of the
+folder needs; a source still used by another clip is greyed out and stays. **Delete** moves
+everything into the `_reelsi_trash/` folder alongside the XML. Deleted clips and podcasts can be
+restored at any time via the **Recycle Bin** modal (the same modal on steps 1, 2 and 3). The trash
+is emptied for good only in ⚙ › **Cut** (block **Trash**), with a confirmation. One failing clip does
+not stop the others.
 Clip work is continuously saved to `<stem>.clip.json` on disk, allowing full state recovery
 (including intro, style, speaker, and inserts) even if the browser cache is wiped.
 **Limitations / price:** nothing ticked here does NOT mean "all", unlike the build: there is
 nothing to delete, so the button stays disabled.
-**Code:** `templates/index.html:112`, `static/app/40-queue.js:592`,
-`static/app/40-queue.js:720`, `api/files.py:534`
+**Code:** `templates/index.html:139`, `static/app/40-queue.js:910`,
+`static/app/40-queue.js:377`, `api/files.py:868`
 
 ## Step 2 — Markup and inserts
 
@@ -351,7 +394,7 @@ whole range — and the trash button in the list header deletes the ticked clips
 **Limitations / price:** clips without subtitles are skipped by the highlight and insert
 phases. Inserts target 10 photos and 3 videos per video, from 6 s and 10 s in.
 **Code:** `templates/index.html:122`, `static/app/70-editor.js:296`,
-`api/ai.py:32`, `api/ai.py:61`
+`templates/index.html:165`, `api/ai.py:61`
 
 ### Subtitles
 
@@ -366,7 +409,7 @@ style keys with fields in the same tab.
 **Limitations / price:** words longer than the reference blobs allow used to disappear from
 the XML; the template now grows for them, and anything still skipped is reported in the
 UI log. `.srt` files are written next to the XML.
-**Code:** `core/asr_backends.py:44`, `api/editor.py:398`, `core/align.py:355`,
+**Code:** `core/asr_backends.py`, `api/editor.py:398`, `core/align.py:355`,
 `static/app/70-editor.js:323`
 
 ### Word highlights
@@ -444,7 +487,7 @@ both image and video slots — that is what the numbers 1 and 2 choose.
 **Limitations / price:** this is the paid part: the provider bills per image and per video.
 The engine refuses to run without an image or video model, and generation is cancellable.
 Generated media is added to the insert library and is reused for free later.
-**Code:** `core/aicut/images.py:45`, `core/aicut/images.py:142`, `core/aicut/video.py:34`,
+**Code:** `core/aicut/images.py:172`, `core/aicut/images.py:142`, `core/aicut/video.py:34`,
 `api/ai.py:374`, `api/ai.py:435`
 
 ### Video tab
@@ -460,7 +503,7 @@ references are supported by Seedance 2.0 with up to 3 clips and 15 s in total.
 **Limitations / price:** generation runs in the cloud and takes minutes; the task list
 survives a page reload, and **Retry** puts a task's prompt and settings back into the
 form. Removing a task removes its file too.
-**Code:** `templates/index.html:240`, `core/aicut/video.py:16`,
+**Code:** `templates/index.html:240`, `core/aicut/video.py:930`,
 `api/videogen.py:218`, `api/videogen.py:348`
 
 ### Insert library
@@ -476,7 +519,7 @@ place and matching follows.
 fallback when no embedder is available. Service files are skipped: transitions, sounds,
 roto masks, drafts and camera sources.
 **Code:** `core/insertlib.py:1`, `api/inserts.py:89`, `api/inserts.py:208`,
-`api/inserts.py:177`, `templates/index.html:494`
+`api/inserts.py:93`, `templates/index.html:494`
 
 ### Stock photos and video
 
@@ -512,7 +555,7 @@ in the file name beats a name only in the description, and a main name beats a s
 than 4 s to another insert, the same name is used at most once per 20 s, and the photo lasts 2.5 s by
 default. Named inserts count in the photo quota and are not pushed out by it; when the photos exceed the
 quota, the weakest AI photos go first.
-**Code:** `core/aicut/commands.py:578`, `core/aicut/commands.py:285`, `core/insertlib.py:1015`
+**Code:** `core/aicut/commands.py:578`, `core/aicut/commands.py:285`, `core/insertlib.py:982`
 
 ### Background cut-out model
 
@@ -554,7 +597,7 @@ term. Terms are applied inside speech recognition, so every engine benefits and 
 timings are not touched; the self-check disables them, because it compares words one to
 one.
 **Code:** `core/terms.py:203`, `core/terms.py:268`, `core/asr_backends.py:116`,
-`api/presets.py:137`
+`api/presets.py:159`
 
 ### Video caption
 
@@ -591,9 +634,8 @@ motion still need a render to be judged. The end copy extends the comp by 1.35 s
 **How:** 1. Tick the clips that go into the build. 2. Nothing ticked means the whole set.
 3. Click a row to open the preview for that clip.
 **Settings:** the selection is the same as on steps 1 and 2 (a click with Shift takes the
-whole range), and the trash button **Delete the selected clips** next to the broom removes
-the ticked clips from the list or erases their files from disk. The broom removes ticked
-clips from the list only; files on disk stay.
+whole range), and the trash button **Delete the selected clips** moves the ticked clips to the
+recycle bin (they can be restored; the source files stay unless **And sources** is ticked).
 **Code:** `templates/index.html:151`, `static/app/90-ae.js:280`,
 `static/app/40-queue.js:640`
 
@@ -827,7 +869,7 @@ preview shows the same numbers.
 yellow word appears, its rise, its fade-in and its blur all come from the scene plan — the
 same numbers that go into the `.jsx`. With the stack checkbox off the `.jsx` is byte-for-byte
 what it was before.
-**Code:** `core/xml2ae/layout.py:143`, `core/xml2ae/layout.py:147`,
+**Code:** `core/xml2ae/layout.py:143`, `core/xml2ae/layout.py:292`,
 `core/xml2ae/plan_subs.py:402`, `core/xml2ae/template.py:254`,
 `static/app/85-inserts-view.js:838`, `core/style_schema.py:162`
 
@@ -1069,17 +1111,18 @@ snappy; until a proxy is ready the preview plays the original, and a block with 
 bar and a percent sits over the player while the build runs. Fonts for the preview come
 from the installed system fonts.
 **Code:** `api/build.py:639`, `static/app/85-inserts-view.js:55`,
-`api/previewproxy.py:66`, `api/files.py:261`, `static/app/60-preview.js:113`
+`api/previewproxy.py:66`, `api/files.py`, `static/app/60-preview.js:113`
 
 ### Exporting `.jsx`
 
 **Where:** step 3 › the sticky build bar.
 **How:** 1. Tick the clips. 2. Choose **Separate .jsx** or **One for all**. 3. Press
-**Build set**, or **Current only** for a single clip.
+**Build set**. The render engine (**After Effects** or **Built-in**) sits in the same bar,
+right after **Build & render**.
 **Settings:** the `.jsx` folder comes from the speaker profile when the clip has one, and
 from the shared field otherwise. An empty field puts the script next to its XML.
 **Code:** `templates/index.html:155`, `static/app/90-ae.js:140`,
-`api/build.py:178`, `core/xml2ae/__main__.py:19`
+`api/build.py:178`, `core/xml2ae/__main__.py:22`
 
 ### Premiere XML and DaVinci `.drp` export
 
@@ -1118,8 +1161,8 @@ better over time.
 headless run, so the job refuses to start. There is a stall watchdog, and an instant
 AfterFX exit is reported as a likely open AE copy. Rotoscoping runs during the build and is
 the longest stage.
-**Code:** `core/render_job.py:1483`, `core/aerender.py:34`, `core/render_job.py:1289`,
-`core/aerender.py:151`, `core/aerender.py:49`, `static/app/90-ae.js:176`
+**Code:** `core/render_job.py:1483`, `core/aerender.py:179`, `core/render_job.py:1289`,
+`core/aerender.py:151`, `core/aerender.py`, `static/app/90-ae.js:176`
 
 ### Progress, queue and logs
 
@@ -1197,7 +1240,7 @@ script, `python -m core.gigaam_cut` runs the cutting engine, and `python doctor.
 the environment.
 **Settings:** `reelsi.py --single` for one camera and `--no-cut` for subtitles only;
 `core.xml2ae` accepts music and a render folder.
-**Code:** `core/cutjob.py:245`, `core/aicut/__init__.py:11`, `core/xml2ae/__main__.py:19`,
+**Code:** `core/cutjob.py:245`, `core/aicut/__init__.py:11`, `core/xml2ae/__main__.py:22`,
 `core/gigaam_cut/__main__.py:1`
 
 ### Build verification (for developers)
@@ -1234,7 +1277,7 @@ to the source.
 server only answers with the list of files it would delete, so a stray call cannot wipe the
 cut. The AI settings file, which holds the provider keys, is written with owner-only
 permissions (0600) on macOS and Linux.
-**Code:** `api/_core.py:217`, `api/files.py:534`, `core/aicut/config.py:264`
+**Code:** `api/_core.py:118`, `api/_core.py:217`
 
 ## Limitations
 

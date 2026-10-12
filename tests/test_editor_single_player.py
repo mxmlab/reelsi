@@ -62,7 +62,7 @@ EDITOR_FUNCS = ("edOpen", "edResize", "edTotal", "edBlockAt", "edCutTime", "edSr
                 "edS2X", "edX2S", "edUI",
                 "edWords", "edSeek", "edToggle", "edPlay", "edPause",
                 "edTake", "edJump", "edVideoSeek", "edFollow", "edArm", "edTick", "edBind",
-                "edSplit", "edDelSel", "edPush", "edUndo")
+                "edSplit", "edDelSel", "edUndoUI", "edUndo", "edRedo", "edFollowView")
 PREVIEW_FUNCS = ("openPreview", "pvVideoTo", "pvWordAt", "pvSegAt", "bufMake", "bufIdle",
                  "bufSilent", "bufArm", "bufRoll", "bufTake",
                  "bufSwap", "spareLead", "spareIdle", "spareStop", "spareSwap", "spareRollAt",
@@ -82,7 +82,9 @@ PREVIEW_FUNCS = ("openPreview", "pvVideoTo", "pvWordAt", "pvSegAt", "bufMake", "
                  "pvSrc", "MEDIA_VOL")
 # Объявления из файлов (не копии): константы звука и видео-подгонки и состояние EA.
 PREVIEW_DECLS = ("EA_LEAD", "EA_FADE", "EA")
-EDITOR_DECLS = ("ED_V_SOFT", "ED_V_HARD", "ED_V_RATE", "ED_ARM")
+EDITOR_DECLS = ("ED_V_SOFT", "ED_V_HARD", "ED_V_RATE", "ED_ARM", "ED_HIST")
+# Стек правок — общая механика из 00-core.js (histStack); редактор без неё не заводится.
+CORE_JS = ROOT / "static" / "app" / "00-core.js"
 
 
 def _func_src(src: str, name: str) -> str:
@@ -136,6 +138,9 @@ def _bodies() -> str:
         out.append(src)
     for name in EDITOR_FUNCS:
         out.append(_func_src(editor, name))
+    core = CORE_JS.read_text(encoding="utf-8")
+    for name in ("histStack", "tlClampView", "tlFollowHead", "tlPanning"):
+        out.append(_func_src(core, name))
     return "\n".join(out)
 
 
@@ -288,7 +293,7 @@ let PV={vids:[],bufs:[],cams:null,segs:[],audio:[],words:[],dur:0,aidx:0,vidx:-1
   curCi:-1,rollCi:-1,scrubbing:false,scrubT:0,raf:0,xml:'',voicePanel:'pvvoice',silent:true};
 // Редактор: единственный плеер шага 1 (его поля ровно как в 70-editor.js)
 let ED={xml:'',blocks:[],fps:60,cam:'C:/cam1.mp4',dur:0,peaks:[],pps:80,sel:-1,play:false,raw:false,
-  raf:0,cs:0,drag:null,v0:0,v1:0,hist:[],cuts:[],br:[],brBand:0,seekLead:0.12};
+  raf:0,cs:0,drag:null,v0:0,v1:0,cuts:[],br:[],brBand:0,seekLead:0.12};
 // Что вернуть на двери открытия превью и загрузки редактора
 let CUT={audio:[{ts:0,te:70,src:0},{ts:70,te:120,src:80}],   // вырез 70..80 исходника
   cams:[{path:'C:/cam1.mp4',name:'A'}],segs:[{ts:0,te:70,src:0,ci:0},{ts:70,te:120,src:80,ci:0}],

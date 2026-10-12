@@ -191,3 +191,123 @@ def test_chrome_style_panel_controls_write_into_the_style(tmp_path):
     assert res["caseAfter"] == res["pickedCase"], res
     # цвет хранится как RGB-доли: #ff0000 -> [1, 0, 0]
     assert list(res["fill"]) == [1, 0, 0], res
+
+
+# ============== 7. ВЫПАДАЮЩИЕ МЕНЮ: ОДНА МЕХАНИКА ЗАКРЫТИЯ ==============
+# Список спикера клипа (.spkpick, нативный details) и меню дорожки подкаста (#podcast_track)
+# закрываются одинаково: клик мимо, Esc (фокус на кнопку), уход фокуса; открыт один.
+# Место «мимо меню»: фиксированный блок в правом нижнем углу, с полем для ухода фокуса.
+DD_OUT = """(()=>{
+  const out=document.createElement('div');out.id='ddout';
+  out.style.cssText='position:fixed;left:1000px;top:760px;width:80px;height:40px;z-index:70';
+  document.body.appendChild(out);
+  // поле отдельно от «мимо»-блока: клик по блоку не должен попадать в поле (иначе фокус уходит
+  // в другую сторону, и правило 85-inserts-view.js гасит поле на pointerdown)
+  const f=document.createElement('input');f.id='ddfocus';
+  f.style.cssText='position:fixed;left:1000px;top:820px;width:80px;z-index:70';
+  document.body.appendChild(f);return true;})()"""
+# Два списка спикера (как строки шага 1) в видимой части окна: клики по ним должны попадать.
+DD_SPK = """(()=>{
+  SPEAKERS={a:{label:'Аня'},b:{label:'Борис'}};
+  CLIPS=[{xml:'D:/p/A.xml',name:'A',job:defJob()},{xml:'D:/p/B.xml',name:'B',job:defJob()}];
+  // каждый список — в своей колонке: открытый список не должен накрывать сводку соседнего
+  [0,1].forEach(i=>{const w=document.createElement('div');w.id='spkw'+i;
+    w.style.cssText='position:fixed;left:'+(20+400*i)+'px;top:140px;width:200px;z-index:60';
+    w.innerHTML=spkSelHTML(i,CLIPS[i]);document.body.appendChild(w);});
+  return true;})()"""
+
+D1 = "#spkw0 > details"
+D2 = "#spkw1 > details"
+
+
+def _click(sel):
+    # Пауза после клика: правило 70-editor.js снимает фокус с кнопки и summary отложенным таймером
+    # (setTimeout 0). Без паузы он мог сработать уже после следующего шага и сбить фокус теста.
+    return [{"op": "mouse", "sel": sel, "fx": 0.5, "fy": 0.5, "type": "mousePressed", "button": "left"},
+            {"op": "mouse", "sel": sel, "fx": 0.5, "fy": 0.5, "type": "mouseReleased", "button": "left",
+             "after_ms": 60}]
+
+
+def test_chrome_speaker_list_closes_on_outside_click_esc_and_focus_out(tmp_path):
+    """Список спикера: клик мимо и уход фокуса закрывают; Esc закрывает и возвращает фокус на summary.
+
+    Esc не должен дойти до стека модалок: окно «Предпросмотр» под списком остаётся открытым.
+    """
+    steps = [{"op": "eval", "js": DD_SPK}, {"op": "eval", "js": DD_OUT}]
+    steps += _click(D1 + " > summary")
+    steps += [{"op": "eval", "name": "open1", "js": "document.querySelector(%r).open" % D1}]
+    steps += _click("#ddout")                                   # клик мимо
+    steps += [{"op": "eval", "name": "outside", "js": "document.querySelector(%r).open" % D1}]
+    steps += _click(D1 + " > summary")
+    # Окно под списком: модалка перекрывает страницу, поэтому открываем её уже после клика,
+    # фокус возвращаем на summary и жмём Esc. Esc закрывает список, а окно остаётся открытым.
+    # openModal сам переносит фокус отложенно, поэтому список открываем уже после паузы
+    steps += [{"op": "eval", "js": "openModal('mbPreview');true"}, {"op": "wait", "ms": 300},
+              {"op": "eval", "js": "document.querySelector(%r).open=true;"
+                                   "document.querySelector(%r+' > summary').focus();true" % (D1, D1)},
+              {"op": "wait", "ms": 50},
+              {"op": "key", "key": "Escape", "vk": 27},
+              {"op": "eval", "name": "esc", "js": (
+                  "[document.querySelector(%r).open,"
+                  " document.activeElement===document.querySelector(%r+' > summary'),"
+                  " $('mbPreview').classList.contains('on')]") % (D1, D1)},
+              {"op": "eval", "js": "closeModal('mbPreview');true"}]
+    steps += _click(D1 + " > summary")                          # открыли снова
+    steps += _click(D2 + " > summary")                          # второй — первый должен закрыться
+    steps += [{"op": "eval", "name": "second", "js": "[document.querySelector(%r).open,"
+                                                      " document.querySelector(%r).open]" % (D1, D2)}]
+    steps += _click(D2 + " .opts button[data-k=\"b\"]")          # пункт — спикер поставлен, список закрыт
+    steps += [{"op": "eval", "name": "picked", "js": "[CLIPS[1].job.speaker, document.querySelector(%r).open]" % D2}]
+    steps += _click(D2 + " > summary")
+    # фокус — внутри списка (на его сводке), потом уходит на поле вне меню
+    steps += [{"op": "eval", "js": "document.querySelector(%r+' > summary').focus();true" % D2},
+              {"op": "eval", "js": "document.getElementById('ddfocus').focus();true"},
+              {"op": "wait", "ms": 50},
+              {"op": "eval", "name": "focusOut", "js": "document.querySelector(%r).open" % D2}]
+    res = run_steps(tmp_path, steps)
+    assert res["open1"] is True, res
+    assert res["outside"] is False, res
+    assert res["esc"] == [False, True, True], res
+    assert res["second"] == [False, True], res
+    assert res["picked"] == ["b", False], res
+    assert res["focusOut"] is False, res
+
+
+def test_chrome_speaker_list_one_open_when_opened_from_script(tmp_path):
+    """Открытие с клавиатуры (атрибут open из кода) тоже закрывает предыдущий список — через toggle."""
+    res = run_steps(tmp_path, [
+        {"op": "eval", "js": DD_SPK},
+        {"op": "eval", "js": "document.querySelector(%r).open=true;true" % D1},
+        {"op": "wait", "ms": 50},
+        {"op": "eval", "js": "document.querySelector(%r).open=true;true" % D2},
+        {"op": "wait", "ms": 50},
+        {"op": "eval", "name": "oneOpen", "js": "[document.querySelector(%r).open,"
+                                                  " document.querySelector(%r).open]" % (D1, D2)},
+    ])
+    assert res["oneOpen"] == [False, True], res
+
+
+def test_chrome_track_menu_closes_the_same_way(tmp_path):
+    """Меню дорожки подкаста: клик мимо, Esc (фокус на кнопку, выбор не меняется), уход фокуса; строка внутри — не уход."""
+    steps = [{"op": "eval", "js": DD_OUT}]
+    steps += _click("#podcast_track")
+    steps += [{"op": "eval", "name": "tOpen", "js": "PODMENU"}]
+    steps += _click("#ddout")
+    steps += [{"op": "eval", "name": "tOutside", "js": "PODMENU"}]
+    steps += _click("#podcast_track")
+    steps += [{"op": "eval", "name": "selBefore", "js": "POD_TRACK_SEL"},
+              {"op": "eval", "js": "podFocusTrackRow();true"},
+              {"op": "key", "key": "Escape", "vk": 27},
+              {"op": "eval", "name": "tEsc", "js": "[PODMENU, document.activeElement.id, POD_TRACK_SEL]"}]
+    steps += _click("#podcast_track")
+    steps += [{"op": "eval", "js": "podFocusTrackRow();true"},
+              {"op": "eval", "name": "tInside", "js": "PODMENU"}]
+    steps += [{"op": "eval", "js": "document.getElementById('ddfocus').focus();true"},
+              {"op": "wait", "ms": 50},
+              {"op": "eval", "name": "tFocusOut", "js": "PODMENU"}]
+    res = run_steps(tmp_path, steps)
+    assert res["tOpen"] is True, res
+    assert res["tOutside"] is False, res
+    assert res["tEsc"] == [False, "podcast_track", res["selBefore"]], res
+    assert res["tInside"] is True, res
+    assert res["tFocusOut"] is False, res

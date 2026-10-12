@@ -77,8 +77,10 @@ PREVIEW_FUNCS = (
 EDITOR_FUNCS = (
     "edOpen", "edResize", "edTotal", "edBlockAt", "edCutTime", "edCutOf", "edS2X", "edX2S",
     "edUI", "edWords", "edSeek", "edToggle", "edPlay", "edPause",
-    "edTake", "edJump", "edVideoSeek", "edFollow", "edArm", "edTick",
+    "edTake", "edJump", "edVideoSeek", "edFollow", "edArm", "edTick", "edFollowView",
 )
+# Окно за плейхедом — общие правила из 00-core.js (edFollowView → tlFollowHead)
+CORE_FUNCS = ("tlClampView", "tlFollowHead", "tlPanning")
 
 
 def _func_src(src: str, name: str) -> str:
@@ -152,6 +154,8 @@ def _bodies() -> str:
         if name == "vtTick":              # боевую дорожку зовём из счётчика стенда
             src = src.replace("function vtTick(", "function realVtTick(", 1)
         out.append(src)
+    core = (ROOT / "static" / "app" / "00-core.js").read_text(encoding="utf-8")
+    out += [_func_src(core, n) for n in CORE_FUNCS]
     out += [_func_src(editor, n) for n in EDITOR_FUNCS]
     return "\n".join(out)
 

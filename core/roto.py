@@ -33,7 +33,7 @@ CLI (тест качества на одном видео/диапазоне):
 """
 from __future__ import annotations
 import os, subprocess, time
-from typing import Any, Callable, Sequence, cast
+from typing import Any, Callable, Iterator, Sequence, cast
 
 from core import paths
 from core.app_meta import env, console_emit, wrap_emit
@@ -242,6 +242,30 @@ def _read_exact(pipe: Any, n: int) -> bytes:
     return bytes(buf)
 
 
+def iter_frames(pipe: Any, frame_bytes: int, chunk: int) -> Iterator[list[bytes]]:
+    """Кадры из трубы ffmpeg пачками по `chunk`: каждый кадр — ровно frame_bytes байт.
+
+    Конец потока — первое чтение, не давшее полного кадра: `_read_exact` отдаёт b'' на EOF
+    (или короткий хвост оборванного кадра). Неполный кадр отбрасывается, полные из той же
+    пачки отдаются, и генератор кончается. Эту же петлю раньше держали три места (маска
+    RVM, трекинг голов, кадры лиц) — каждое своей копией, и правка одного не доходила до
+    других.
+    """
+    while True:
+        batch: list[bytes] = []
+        ended = False
+        for _ in range(chunk):
+            raw = _read_exact(pipe, frame_bytes)
+            if len(raw) < frame_bytes:
+                ended = True
+                break
+            batch.append(raw)
+        if batch:
+            yield batch
+        if ended:
+            return
+
+
 def _mask_scale_div(src_h: int) -> int:
     """Во сколько раз ужимать маску. 4K -> половина (1080p, для luma-матте хватает),
     FHD и меньше — как есть. env REELSI_ROTO_FULLRES=1 = всегда полное разрешение."""
@@ -310,15 +334,8 @@ def alpha_for_video(video: str, out_mask: str, downsample_ratio: float | None = 
     try:
         with torch.inference_mode():
             rec = [None] * 4
-            while True:
-                frames = []
-                for _ in range(chunk):
-                    raw = _read_exact(p_dec.stdout, frame_bytes)
-                    if len(raw) < frame_bytes:
-                        break
-                    frames.append(np.frombuffer(raw, np.uint8).reshape(oh, ow, 3))
-                if not frames:
-                    break
+            for batch in iter_frames(p_dec.stdout, frame_bytes, chunk):
+                frames = [np.frombuffer(raw, np.uint8).reshape(oh, ow, 3) for raw in batch]
                 src = torch.from_numpy(np.stack(frames)).to(dev)          # [T,H,W,3] u8
                 src = src.permute(0, 3, 1, 2).unsqueeze(0).to(dtype).div_(255)  # [1,T,3,H,W]
                 fgr, pha, *rec = model(src, *rec, downsample_ratio)

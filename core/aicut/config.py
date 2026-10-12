@@ -85,9 +85,9 @@ REASONING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
 # вставкам и интро думать НЕ надо — там reasoning жёг весь max_tokens впустую
 # (126с/out=12001 против 3.3с/out=192). Отсюда дефолты:
 STEP_REASONING_DEFAULT = {"cut": "medium", "yellow": "off", "inserts": "off",
-                          "intro": "off"}
+                          "intro": "off", "podcast": "medium"}
 STEP_TITLES = {"cut": "Нарезка", "yellow": "Жёлтые слова", "inserts": "Вставки",
-               "intro": "Интро"}
+               "intro": "Интро", "podcast": "Подкаст"}
 # Сколько токенов добавить на сами размышления (ответ считается отдельно).
 # max/xhigh/minimal — уровни из каталога models.dev (caps().efforts), у них есть
 # бюджет как у соседних знакомых уровней.
@@ -707,6 +707,39 @@ def cut_asr_engine(emit: Callable[..., Any] | None = None) -> str:
         log.warning("движок нарезки «%s» не проверен: %s — беру gigaam",
                     engine, ex)
     return "gigaam"
+
+
+def podcast_asr_engine(emit: Callable[..., Any] | None = None) -> str:
+    """Движок расшифровки подкаста (ai_config.json, active_podcast_asr), дефолт 'whisper'.
+
+    В отличие от нарезки, годится ЛЮБОЙ движок каталога: подкасту нужны слова с таймингами,
+    а не пригодность под резку (cut). Неизвестный id откатывается на 'whisper' с
+    предупреждением — молча менять выбор владельца нельзя."""
+    engine = load_ai_config().get("active_podcast_asr") or "whisper"
+    try:
+        from core import asr_backends
+        if asr_backends.engine_meta(engine):
+            return engine
+        msg = f"⚠ Движок расшифровки подкаста «{engine}» не найден в каталоге — откат на whisper"
+        if emit:
+            emit(msg)
+        else:
+            print(msg, flush=True)
+    except ReelsiError: raise
+    except Exception as ex:
+        log.warning("движок подкаста «%s» не проверен: %s — беру whisper", engine, ex)
+    return "whisper"
+
+
+def podcast_lang() -> str | None:
+    """Язык расшифровки подкаста (ai_config.json, podcast_lang): код или None = определить самому.
+
+    Пусто и «auto» → None: whisper сам определит язык. Любой другой текст — код языка как есть."""
+    raw = load_ai_config().get("podcast_lang")
+    lang = str(raw or "").strip()
+    if not lang or lang.lower() == "auto":
+        return None
+    return lang
 
 
 def cut_text_asr_engine(emit: Callable[..., Any] | None = None) -> str:

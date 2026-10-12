@@ -59,7 +59,7 @@ function camModeUI(){const one=(nCams()===1);
   [['autopair',!one],['cammatch',!one],['cammatchall',!one],['autoqueue',one]]
     .forEach(pair=>{const b=$(pair[0]);if(b)b.style.display=pair[1]?'':'none';});}
 function buildCamRows(){const n=nCams(),host=$('camrows');host.innerHTML='';
-  for(let k=0;k<n;k++){const row=document.createElement('div');row.className='row';row.style.marginBottom='8px';
+  for(let k=0;k<n;k++){const row=document.createElement('div');row.className='camrow';
     row.innerHTML='<div class="grow"><label for="camdir'+k+'">'+t('Папка камеры {n}',{n:k+1})+'</label><input id="camdir'+k+'" style="width:100%"></div>'+
       '<button class="sm" onclick="pickCamDir('+k+')">'+t('Выбрать…')+'</button>'+
       '<div><label for="sel'+k+'">'+(n===1?t('Видео'):t('Камера {n}',{n:k+1}))+'</label><select id="sel'+k+'"></select></div>';
@@ -72,14 +72,28 @@ async function pickCamDir(k){let d;try{d=await (await fetch('/api/pickdir')).jso
   CAMFILES[k]=fd.files||[];$('camdir'+k).value=d.path;fill('sel'+k,CAMFILES[k]);saveState();
   if(typeof camDirCommit==='function')camDirCommit(k);}   // выбрал спикер — спросить «сохранить в профиль?»
 let LASTCAMS=null;                       // чтобы вернуть радио, если юзер передумал
+// Абсолютный путь: буква диска, UNC или корень. Рилс подкаста кладётся в очередь именно так
+// (П7): такая запись не привязана к папкам камер и переживает смену их числа и папок.
+function isAbsPath(p){return /^([A-Za-z]:[\\/]|\\\\|\/)/.test(String(p||''));}
+// Рилс подкаста — пара из одних абсолютных путей (сейчас всегда одна запись).
+function isReelPair(p){return p.length>0&&p.every(isAbsPath);}
+// Очередь из одних рилсов папок камер не требует: без них пара — уже готовый путь.
+function queueNeedsCamDirs(){return QUEUE.some(p=>!isReelPair(p));}
+// Папки камер для запроса — ровно nCams() штук (пустые тоже). Короче списка — build_pairs
+// на сервере решит, что пара длиннее папок, и откажет, даже если все записи абсолютные.
+function camDirsArg(){const n=nCams();return Array.from({length:n},(_,k)=>CAMDIRS[k]||'');}
+function queueBaseName(p){return String(p||'').split(/[\\\/]/).pop();}
+
 async function setMode(){
-  // Смена числа камер пересобирает строки и обнуляет очередь. Раньше это происходило
-  // молча: набрал 12 пар «Авто-парами», ткнул «3» посмотреть — очередь пуста, undo нет.
-  if(QUEUE.length&&!await askConfirm(t('Сменить число камер? Очередь ({n} {pairs}) будет очищена.',{n:QUEUE.length,pairs:t(plur(QUEUE.length,'пара','пары','пар'))}))){
+  // Смена числа камер пересобирает строки и очищает пары очереди. Рилсы подкаста (абсолютные
+  // пути) при этом остаются: от папок камер они не зависят. Подтверждение считает только
+  // очищаемые пары — иначе оно пугало бы цифрой, в которую рилсы не входят.
+  const keep=QUEUE.filter(isReelPair),drop=QUEUE.length-keep.length;
+  if(drop&&!await askConfirm(t('Сменить число камер? Очередь ({n} {pairs}) будет очищена.',{n:drop,pairs:t(plur(drop,'пара','пары','пар'))}))){
     if(LASTCAMS!=null){const r=document.querySelector('input[name=cams][value="'+LASTCAMS+'"]');
-      if(r){r.checked=true;segUI();}}                 // segUI: вернуть подсветку пилюли
+      if(r){r.checked=true;segUI();}}                 // программная смена .checked change не шлёт — подсветку ставим сами
     return;}
-  LASTCAMS=nCams();QUEUE=[];buildCamRows();   // buildCamRows → camModeUI: кнопки под число камер
+  LASTCAMS=nCams();QUEUE=keep;buildCamRows();   // buildCamRows → camModeUI: кнопки под число камер
   saveState();}
 function curPick(){const n=nCams(),names=[];for(let k=0;k<n;k++){const s=$('sel'+k);if(!s||!s.value)return null;names.push(s.value);}return names;}
 function eqArr(a,b){return a.length===b.length&&a.every((x,i)=>x===b[i]);}
@@ -290,6 +304,10 @@ async function gdSpread(){
 async function clearQueue(){
   if(QUEUE.length>2&&!await askConfirm(t('Очистить очередь? В ней {n} {pairs}.',{n:QUEUE.length,pairs:t(plur(QUEUE.length,'пара','пары','пар'))})))return;
   QUEUE=[];renderQueue();saveState();}
+// Ячейка записи очереди: имя файла; рилс подкаста — имя с серой меткой, полный путь в title
+function queueCellName(x){
+  if(!isAbsPath(x))return esc(x);
+  return '<span title="'+esc(x)+'">'+esc(queueBaseName(x))+'</span> <span class="muted">'+t('подкаст')+'</span>';}
 function renderQueue(){const tb=document.querySelector('#qt tbody');if(!tb)return;
   // Пустая очередь — не пустая таблица с одной шапкой «# Камеры», а объяснение:
   // пары добавляются кнопками рядом. Как только пара появилась, таблица возвращается.
@@ -303,7 +321,7 @@ function renderQueue(){const tb=document.querySelector('#qt tbody');if(!tb)retur
   tb.innerHTML='';
   QUEUE.forEach((p,i)=>{const tr=document.createElement('tr');
     // tabindex/role: без них пару из очереди нельзя было убрать без мыши
-    tr.innerHTML='<td class="mono">'+(i+1)+'</td><td>'+esc(p.join('  +  '))+'</td>'
+    tr.innerHTML='<td class="mono">'+(i+1)+'</td><td>'+p.map(queueCellName).join('  +  ')+'</td>'
       +'<td class="x" tabindex="0" role="button" aria-label="'+t('Убрать пару из очереди')+'" data-t="'+t('Убрать пару из очереди')+'" '
       +'onclick="QUEUE.splice('+i+',1);renderQueue();saveState()">'+ico('x')+'</td>';tb.appendChild(tr);});}
 
@@ -312,7 +330,7 @@ let CLIPS=[];   // {xml,name,status:{subs,colored},inserts:[],job:{...}}
 // Отметка клипа галочкой — ОДНА на все три шага: галка на шаге 1 это та же
 // c.sel, что на разметке и сборке. SEL_ANCHOR — индекс последней кликнутой галки, от него
 // Shift считает диапазон; после удаления список перерисован и точки отсчёта больше нет —
-// сбрасывается в -1 (см. delClips и removeSelClips).
+// сбрасывается в -1 (см. delClipDiskExecute).
 let SEL_ANCHOR=-1;
 // Shift отслеживаем сами: у события change модификаторов нет (это не MouseEvent), а
 // синтетический клик, которым браузер помечает <label>, их теряет вовсе. Залипший Shift
@@ -351,8 +369,12 @@ function newClip(xml){const j=defJob();
     const p=SPEAKERS[spk];
     if(p&&p.style&&STYLES[p.style]){j.styleKey=p.style;}}
   return {xml,name:(xml||'').replace(/^.*[\\\/]/,''),status:{},inserts:[],job:j,edited:false};}
-function addExternal(){fetch('/api/pickfiles').then(r=>r.json()).then(d=>{
-  (d.paths||[]).forEach(x=>{if(!clipByXml(x))CLIPS.push(newClip(x));});renderClips1();saveState();refreshStatuses();});}
+// Добавить клипы по путям — ОДИН путь для «Добавить XML…» и для возврата клипа из корзины:
+// без дублей по пути, перерисовка всех трёх списков, сохранение состояния, статусы.
+function clipsAddPaths(paths){
+  (paths||[]).forEach(x=>{if(!clipByXml(x))CLIPS.push(newClip(x));});
+  renderClips1();renderClips2();renderClips3();saveState();refreshStatuses();}
+function addExternal(){fetch('/api/pickfiles').then(r=>r.json()).then(d=>clipsAddPaths(d.paths));}
 async function scanOutdir(){const dir=val('ai_outdir').trim();
   if(!dir){toast(t('Не задана папка результата'));return;}
   try{const d=await (await fetch('/api/scanxml',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dir})})).json();
@@ -396,24 +418,24 @@ async function runAI(){
   if(uiBusyGuard())return;
   if(!QUEUE.length){toast(t('Очередь пуста'));return;}
   if(!val('ai_outdir').trim()){toast(t('Не задана папка результата'));return;}
-  if(CAMDIRS.slice(0,nCams()).some(d=>!(d||'').trim())){toast(t('Не заданы папки камер'));return;}
+  if(queueNeedsCamDirs()&&CAMDIRS.slice(0,nCams()).some(d=>!(d||'').trim())){toast(t('Не заданы папки камер'));return;}
   cutBusy(true);CUTLABEL=t('ИИ-нарезка');progOpen({title:t('ИИ-нарезка')});
   // selfcheck не шлём: в режиме GigaAM (дефолт) этот путь не исполняется вовсе,
   // сервер сам ставит False (см. run_omnicut_job). Убрано 2026-08-11.
   // Общий выбор: новая нарезка/профиль, не клип — здесь собираются параметры НАРЕЗКИ.
-  const body={outdir:val('ai_outdir'),pairs:QUEUE,camdirs:CAMDIRS.slice(0,nCams()),
+  const body={outdir:val('ai_outdir'),pairs:QUEUE,camdirs:camDirsArg(),
     speaker:val('speaker'),
     review:$('chk_review')?$('chk_review').checked:false};
   let d;try{d=await (await fetch('/api/omnicut_run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();}
   catch(e){toast(t('Сервер не ответил: ')+e);cutBusy(false);hideProg();return;}
   if(d.error){toast(errText(d));cutBusy(false);hideProg();return;}
-  logReset();pollAI();
+  cutRunStart();logReset();pollAI();
 }
 async function runCustom(){
   if(uiBusyGuard())return;
   if(!QUEUE.length){toast(t('Очередь пуста'));return;}
   if(!val('ai_outdir').trim()){toast(t('Не задана папка результата'));return;}
-  if(CAMDIRS.slice(0,nCams()).some(d=>!(d||'').trim())){toast(t('Не заданы папки камер'));return;}
+  if(queueNeedsCamDirs()&&CAMDIRS.slice(0,nCams()).some(d=>!(d||'').trim())){toast(t('Не заданы папки камер'));return;}
 
   const pausesVal=(CUT_STAGES&&CUT_STAGES.pauses)||(CUT_DEFAULTS&&CUT_DEFAULTS.pauses)||'speech';
   const branch=(pausesVal==='loud')?'vad':'gigaam';
@@ -426,21 +448,21 @@ async function runCustom(){
       base:val('base'),
       outdir:val('ai_outdir'),
       pairs:QUEUE,
-      camdirs:CAMDIRS.slice(0,nCams()),
+      camdirs:camDirsArg(),
       stages:CUT_STAGES,
       thresholds:CUT_THRESHOLDS
     };
     let d;try{d=await (await fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();}
     catch(e){toast(t('Сервер не ответил: ')+e);cutBusy(false);hideProg();return;}
     if(d.error){toast(errText(d));cutBusy(false);hideProg();return;}
-    logReset();pollAI();
+    cutRunStart();logReset();pollAI();
   }else{
     cutBusy(true);CUTLABEL=t('Кастомная нарезка');progOpen({title:t('Кастомная нарезка')});
     // Общий выбор: новая нарезка/профиль, не клип — здесь собираются параметры НАРЕЗКИ.
     const body={
       outdir:val('ai_outdir'),
       pairs:QUEUE,
-      camdirs:CAMDIRS.slice(0,nCams()),
+      camdirs:camDirsArg(),
       speaker:val('speaker'),
       stages:CUT_STAGES,
       review:$('chk_review')?$('chk_review').checked:false
@@ -448,7 +470,7 @@ async function runCustom(){
     let d;try{d=await (await fetch('/api/omnicut_run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})).json();}
     catch(e){toast(t('Сервер не ответил: ')+e);cutBusy(false);hideProg();return;}
     if(d.error){toast(errText(d));cutBusy(false);hideProg();return;}
-    logReset();pollAI();
+    cutRunStart();logReset();pollAI();
   }
 }
 const runClassic=runCustom;
@@ -491,6 +513,31 @@ async function pollJob(self,title,eager,onDone,onTick){
   if(d.done){onDone(d);return;}
   setTimeout(self,1000);}
 
+// Порядок клипов прогона. Параллельные ролики отдают готовое в порядке ГОТОВНОСТИ, а в списке
+// клипы должны стоять в порядке ОЧЕРЕДИ (просьба владельца, 2026-10-11, для любой нарезки).
+// CUTRUN.base — длина списка ДО прогона: клипы с индексом >= base — клипы этого прогона и
+// только они сортируются по номеру очереди; клипы до base не двигаются. База живёт в
+// состоянии (stateObj/loadState), чтобы F5 посреди прогона не сбил порядок.
+// Номер очереди берём из /api/status: result_order — параллельный results (api/jobs.py).
+let CUTRUN=null;
+function cutRunStart(){CUTRUN={base:CLIPS.length};saveState();}
+// Вставка клипа прогона: перед первым клипом блока с БОЛЬШИМ номером очереди, иначе в конец
+// списка (блок прогона — его хвост). Индексы открытых клипов сдвигаем, как _spliceClip сдвигает
+// их при удалении: клип, на который они указывали, должен остаться тем же.
+function cutInsertRunClip(c,qi,qiOf){
+  const base=(typeof CUTRUN!=='undefined'&&CUTRUN)?CUTRUN.base:CLIPS.length;
+  let pos=CLIPS.length;
+  for(let i=base;i<CLIPS.length;i++){if(qiOf(CLIPS[i].xml)>qi){pos=i;break;}}
+  CLIPS.splice(pos,0,c);
+  if(typeof curAE!=='undefined'&&curAE>=pos)curAE++;
+  if(typeof curEdit!=='undefined'&&curEdit>=pos)curEdit++;
+  if(typeof curIns!=='undefined'&&curIns>=pos)curIns++;
+  if(typeof SEL_ANCHOR!=='undefined'&&SEL_ANCHOR>=pos)SEL_ANCHOR++;
+  // окно удаления держит свои индексы (DEL_CLIP_IDXS, открыто на q2 — после вставки q0 тот же клип)
+  // и окно выбора формата скачивания (DLFMT_WANT) — тот же принцип, что у curAE
+  if(typeof DEL_CLIP_IDXS!=='undefined')DEL_CLIP_IDXS=DEL_CLIP_IDXS.map(x=>x>=pos?x+1:x);
+  if(typeof DLFMT_WANT!=='undefined'&&DLFMT_WANT>=pos)DLFMT_WANT++;
+}
 // Клип попадает в список шага 1 СРАЗУ, как только он нарезан: сервер пополняет
 // JOB["results"] после каждого файла, а ждать конца всей очереди, чтобы начать
 // править, незачем (просьба юзера). Возвращает, сколько клипов добавилось.
@@ -498,10 +545,20 @@ function cutAdopt(d){
   // Папку НЕ подставляем: /api/status отдаёт в results ПОЛНЫЕ пути (их пишет сам
   // сервер), а склейка в JS своим разделителем ломалась на Linux — «<папка>\имя.xml»
   // там одно имя файла, и «файл не найден» было верным ответом не про тот файл.
+  // typeof: стенд вырезает эту функцию без CUTRUN, cutRunStart и cutInsertRunClip
+  // (tests/test_ui_fixes_linux.py) — без них «ReferenceError» вместо проверки; без них клип встаёт в конец
+  if(typeof CUTRUN!=='undefined'&&!CUTRUN&&typeof cutRunStart==='function')cutRunStart();   // F5 после прогона без записанной базы: база — текущая длина
+  const res=d.results||[],ord=Array.isArray(d.result_order)?d.result_order:[];
+  // номер очереди по пути: нет в ответе — Infinity, такой клип встаёт в конец блока (как раньше)
+  const qiByKey=new Map();
+  res.forEach((p,k)=>{if(typeof ord[k]==='number')qiByKey.set(clipKey(p),ord[k]);});
+  const qiOf=xml=>{const v=qiByKey.get(clipKey(xml));return v==null?Infinity:v;};
   let n=0;
-  (d.results||[]).forEach(full=>{
+  res.forEach(full=>{
     if(clipByXml(full))return;
-    CLIPS.push(newClip(full));n++;
+    const c=newClip(full),qi=qiOf(full);
+    if(typeof cutInsertRunClip==='function')cutInsertRunClip(c,qi,qiOf);else CLIPS.push(c);
+    n++;
     uiLog(t('нарезан: {x} — можно править, не дожидаясь остальных',
       {x:String(full||'').replace(/^.*[\\\/]/,'')}));});
   if(n){renderClips1();saveState();refreshStatuses();}
@@ -510,6 +567,7 @@ function cutAdopt(d){
 async function pollAI(){pollJob(pollAI,CUTLABEL,0.15,d=>{
     cutBusy(false);
     cutAdopt(d);
+    CUTRUN=null;   // прогон кончился: следующий порядок задаёт следующий прогон
     const n=(d.results||[]).length,bad=d.failed||[];
     bad.forEach(f=>uiLog(t('✗ не собрался {name}: {reason}',{name:f.name,reason:f.reason||t('см. логи')})));
     let msg=UICANCEL?t('Остановлено — готово клипов: ')+n:(n?t('Готово: {n} клип(ов)',{n:n}):(bad.length?'':t('Готово (файлов нет — см. логи)')));
@@ -553,7 +611,7 @@ function clipActs(i,step){const c=CLIPS[i];
     // не /api/media: export_xml на лету проставляет настоящие таймкоды исходников —
     // без них DaVinci Resolve раскладывает нарезку со сдвигом в часы (Премьеру всё равно)
     a+='<button class="icon" aria-label="'+t('Скачать XML')+'" data-t="'+t('Скачать XML — открывается и в Premiere, и в DaVinci Resolve')+'" onclick="dlXml(CLIPS['+i+'])" style="text-decoration:none;padding:5px 8px;color:var(--mut)">'+ico('dl')+'</button>';
-    a+='<button class="icon" aria-label="'+t('Удалить клип')+'" data-t="'+t('Удалить клип: убрать из списка или стереть с диска со всеми сайдкарами')+'" onclick="delClip('+i+')">'+ico('x')+'</button>';
+    // крестика нет: удаление — мусорка в шапке по галкам (#delSel1 → delSelClips), как на шагах 2 и 3
   }else if(step===2){
     a+='<button class="sm" onclick="markupOne('+i+')">'+ico('ai','gold')+' '+markupOneLabel(c)+'</button>';
     a+='<button class="icon" aria-label="'+t('Вставки')+'" data-t="'+t('Вставки: подбор ИИ, свой файл, база')+'" onclick="openInsertsFor('+i+')">'+ico('pencil')+'</button>';
@@ -623,6 +681,7 @@ function statusTags(c,del){
 async function clearPart(i,part){const c=CLIPS[i];if(!c)return;
   const NAME={subs:t('субтитры (и жёлтые вместе с ними)'),yellow:t('жёлтые слова'),inserts:t('все вставки')};
   if(!await askConfirm(t('Удалить {what} у «{name}»?',{what:NAME[part],name:c.name})))return;
+  if(typeof markLastClip==='function')markLastClip(2,i);   // крестик на теге шага 2 — работа с этим клипом, но только если подтвердили
   try{
     if(part==='inserts'){
       c.inserts=[];c.insTarget=0;if(c.job)c.job.ins=[];
@@ -678,9 +737,17 @@ function syncDelSel(){const n=CLIPS.filter(c=>c.sel).length;
   document.querySelectorAll('[data-delsel]').forEach(b=>{b.disabled=!n;});}
 // data-clips на контейнере — признак списка, в котором стоит галка: по нему pickClip после
 // перерисовки находит тот же список (галки трёх шагов живут в разных контейнерах).
+// Метка «над этим клипом работал» (класс .cur) — на каждом шаге своя. Сравниваем по XML:
+// индекс при удалении и перестановке уезжает, путь к клипу остаётся. Пустая метка ничего не красит.
+// typeof — стенды вырезают списки без 99-boot.js, где объявлен LASTCLIP (как AEMUSICDIR в stateObj).
+function lastClipCls(step,c){if(typeof LASTCLIP==='undefined')return '';return LASTCLIP[step]&&LASTCLIP[step]===c.xml?' cur':'';}
+// Запомнить клип, с которым работали на шаге step (шаги 1 и 2), и перерисовать его список.
+// Шаг 3 метку ставит selectAE: там же, где открывается панель клипа.
+function markLastClip(step,i){const c=CLIPS[i];if(!c||typeof LASTCLIP==='undefined')return;LASTCLIP[step]=c.xml;saveState();
+  if(step===1)renderClips1();else if(step===2)renderClips2();}
 function renderClips1(){const h=$('clips1');if(!h)return;h.innerHTML='';
   if(!CLIPS.length){h.innerHTML='<div class="empty">'+t('Пока пусто. Запусти ИИ-нарезку или добавь XML.')+'</div>';syncDelSel();syncNav();return;}
-  CLIPS.forEach((c,i)=>{const el=document.createElement('div');el.className='clip';
+  CLIPS.forEach((c,i)=>{const el=document.createElement('div');el.className='clip'+lastClipCls(1,c);
     el.innerHTML='<label class="pickbox" data-t="'+t('Выбор клипов — общий для всех шагов')+'" onclick="event.stopPropagation()">'
       +'<input type="checkbox" data-ci="'+i+'" '+(c.sel?'checked':'')+' onchange="CLIPS['+i+'].sel=this.checked;pickClip('+i+',this.checked,SHIFT_HELD);saveState();syncBuildBtn();markupSelCount()"></label>'
       +'<span class="idx">'+(i+1)+'</span><span class="nm grow" data-noi18n title="'+esc(c.xml)+'">'+esc(c.name)+'</span>'
@@ -692,7 +759,7 @@ function renderClips2(){const h=$('clips2');if(!h)return;h.innerHTML='';
   // Блок клипа НЕ красим зелёным целиком (просьба юзера): и так видно по тегам, а
   // сплошная заливка глушила разницу между «готово» и «сейчас работаю».
   // Зелёные остаются только сами теги — мелкие маркеры «поработал».
-  CLIPS.forEach((c,i)=>{const el=document.createElement('div');el.className='clip';
+  CLIPS.forEach((c,i)=>{const el=document.createElement('div');el.className='clip'+lastClipCls(2,c);
     el.innerHTML='<label class="pickbox" data-t="'+t('Фазы разметки у выбранных клипов (пусто у всех = все). Отмеченное здесь — то же, что и на шаге сборки.')+'" onclick="event.stopPropagation()">'
       +'<input type="checkbox" data-ci="'+i+'" '+(c.sel?'checked':'')+' onchange="CLIPS['+i+'].sel=this.checked;pickClip('+i+',this.checked,SHIFT_HELD);saveState();syncBuildBtn();markupSelCount()"></label>'
       +'<span class="idx">'+(i+1)+'</span><span class="nm" data-noi18n title="'+esc(c.xml)+'">'+esc(c.name)+'</span>'
@@ -706,7 +773,7 @@ function markupSelCount(){const n=CLIPS.filter(c=>c.sel).length||CLIPS.length;
 function renderClips3(){const h=$('clips3');if(!h)return;h.innerHTML='';
   if(!CLIPS.length){h.innerHTML='<div class="empty">'+t('Клипов нет — вернись на ')+'<span class="lnk" tabindex="0" role="button" onclick="goStep(1)">'+t('шаг 1')+'</span>'+t(' и запусти нарезку или подхвати XML кнопкой «Из папки результата».')+'</div>';syncBuildBtn();syncDelSel();return;}
   CLIPS.forEach((c,i)=>{const el=document.createElement('div');
-    el.className='clip pick'+(aeDone(c)?' done':clipReady(c)?' ready':'')+(i===curAE?' cur':'');
+    el.className='clip pick'+(aeDone(c)?' done':clipReady(c)?' ready':'')+lastClipCls(3,c);
     el.innerHTML='<label class="pickbox" data-t="'+t('В сборку набора (пусто у всех = собрать все)')+'" onclick="event.stopPropagation()">'
       +'<input type="checkbox" data-ci="'+i+'" '+(c.sel?'checked':'')+' onchange="CLIPS['+i+'].sel=this.checked;pickClip('+i+',this.checked,SHIFT_HELD);saveState();syncBuildBtn()"></label>'
       +'<span class="idx">'+(i+1)+'</span>'+spkSelHTML(i,c)
@@ -728,7 +795,19 @@ function spkSelHTML(i,c){const k=clipSpeaker(c);
   // Свой список кнопок вместо нативного селекта: у него варианты открывались ВТОРЫМ
   // кликом — системным чёрным попапом, который стилями не красится. Теперь один клик по
   // summary раскрывает список, второй клик — это уже сам выбор.
-  return '<details class="spkpick" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" aria-label="'+t('Спикер клипа')+'"><summary data-t="'+t('Спикер этого клипа: меняет его стиль, папку .jsx и пороги нарезки.')+'">'+esc(label)+'<span aria-hidden="true">⌄</span></summary><div class="opts" role="listbox" aria-label="'+t('Спикер клипа')+'" onclick="var b=event.target.closest(&quot;button&quot;);if(!b)return;setClipSpeaker('+i+',b.dataset.k);this.closest(&quot;details&quot;).open=false">'+o+'</div></details>';}
+  return '<details class="spkpick" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()" aria-label="'+t('Спикер клипа')+'"><summary data-t="'+t('Спикер этого клипа: меняет его стиль, папку .jsx и пороги нарезки.')+'">'+esc(label)+'<span aria-hidden="true">⌄</span></summary><div class="opts dd-panel" tabindex="-1" role="listbox" aria-label="'+t('Спикер клипа')+'" onclick="var b=event.target.closest(&quot;button&quot;);if(!b)return;setClipSpeaker('+i+',b.dataset.k);this.closest(&quot;details&quot;).open=false">'+o+'</div></details>';}
+// Список спикера — общая механика выпадающих меню (20-widgets.js). Строки шага 1 перерисовываются,
+// поэтому регистрируется не блок, а «открытый сейчас» .spkpick. Открытый — один: открытие второго
+// закрывает первого (toggle приходит и с клавиатуры, и мимо мыши). Выбор спикера — setClipSpeaker.
+const spkOpenBox=()=>document.querySelector('details.spkpick[open]');
+document.addEventListener('DOMContentLoaded',()=>{
+  dropdownBind(spkOpenBox,{isOpen:()=>!!spkOpenBox(),
+    close:back=>{const d=spkOpenBox();if(!d)return;d.open=false;if(back)d.querySelector('summary').focus();}});
+  document.addEventListener('toggle',e=>{const el=e.target;
+    if(!el.open||!el.classList||!el.classList.contains('spkpick'))return;
+    document.querySelectorAll('details.spkpick[open]').forEach(x=>{if(x!==el)x.open=false;});
+  },true);
+});
 // withName=false — только метки (шаг 3: имя уже видно по селектору спикера, дублировать
 // его тегом нельзя — юзер просил «не надо второй раз писать кто это»); на шагах 1-2
 // селектора нет, там имя остаётся.
@@ -773,7 +852,6 @@ function selClips(){const s=CLIPS.filter(c=>c.sel);return s.length?s:CLIPS;}
 function syncBuildBtn(){const n=CLIPS.filter(c=>c.sel).length;
   const b=$('buildbtn');if(b)b.textContent=n?t('Собрать выбранные ({n})',{n:n}):t('Собрать набор');
   const scope=$('buildscope');if(scope)scope.textContent=n?t('Выбрано {n} из {m}',{n:n,m:CLIPS.length}):t('Все {n} клипов',{n:CLIPS.length});
-  const rms=$('rmSelClips');if(rms)rms.disabled=!n;   // метла «убрать отмеченные» — только когда есть что убирать
   // Клипы ДВУХ спикеров в одном наборе собираются только по одному — каждый в свою
   // папку: «Собрать набор» и «Один на всё» для них не существуют.
   const sel=selClips();const spks=new Set(sel.map(c=>clipSpeaker(c)).filter(Boolean));
@@ -791,26 +869,27 @@ function syncNav(){const b=$('toStep2');if(b)b.disabled=!CLIPS.length;}
 // живут отдельно от списка: без правки они после splice показывали на чужой клип,
 // а с последнего — в пустоту (см. защиту в captureAE).
 function _spliceClip(i){
+  // Метка «работал» — по XML: убранный клип метку с собой уносит. Без сброса вернувшийся
+  // с тем же путём клип (добавили из папки заново) снова стал бы помеченным.
+  const gone=CLIPS[i]&&CLIPS[i].xml;
   CLIPS.splice(i,1);
+  // typeof — стенды вырезают _spliceClip без 99-boot.js (там LASTCLIP)
+  if(gone&&typeof LASTCLIP!=='undefined')[1,2,3].forEach(k=>{if(LASTCLIP[k]===gone)LASTCLIP[k]='';});
   if(curAE===i)curAE=-1;else if(curAE>i)curAE--;
   if(curEdit===i)curEdit=-1;else if(curEdit>i)curEdit--;
   if(curIns===i)curIns=-1;else if(curIns>i)curIns--;
+  // база прогона (см. cutAdopt): убрали клип ДО неё — граница съезжает на единицу
+  if(typeof CUTRUN!=='undefined'&&CUTRUN&&i<CUTRUN.base)CUTRUN.base--;
 }
 
 // Что удаляем: индексы, зафиксированные на момент открытия окна (галку могли снять, пока
 // окно открыто, — удаляем ровно то, что человек выбрал и увидел в окне).
 let DEL_CLIP_IDXS=[];
 function clipLabel(c){return (c&&(c.name||(c.xml?c.xml.split(/[/\\]/).pop():'')))||'';}
-// Одиночный крестик шага 1 — ТОТ ЖЕ путь, что у «Удалить выбранные»: список из одного
-// индекса. Второй копии логики нет.
-function delClip(i){
-  // curAE / curEdit / curIns правятся при удалении в _spliceClip (общий путь delClips)
-  delClips([i]);
-}
-// Окно удаления обобщено на список: заголовок — сколько клипов, в теле — их
-// имена. Дальше выбор один: убрать из списка (_spliceClip по убыванию индексов) или стереть
-// с диска (сухой прогон, потом удаление по каждому XML — бэкенд удаляет по одному).
-function delClips(idxs){
+// Одна механика на всех шагах: удалил — значит в корзину (файлы нарезки можно вернуть).
+// Окно открывается сразу и сразу делает сухой прогон по каждому клипу: что уйдёт и сколько.
+// Заголовок — сколько клипов, в теле — их имена. Галка «И исходники» по умолчанию снята.
+async function delClips(idxs){
   const list=(idxs||[]).filter(i=>i>=0&&i<CLIPS.length);
   if(!list.length)return;
   DEL_CLIP_IDXS=list;
@@ -818,9 +897,12 @@ function delClips(idxs){
     :t('Удалить {n} {clips}?',{n:list.length,clips:t(plur(list.length,'клип','клипа','клипов'))});
   $('delClipTitle').textContent=title;
   $('delClipName').textContent=list.map(i=>clipLabel(CLIPS[i])).join(', ');
-  $('delClipInitial').style.display='flex';
-  $('delClipConfirm').style.display='none';
+  $('delClipSrc').checked=false;
+  $('delClipSrcList').innerHTML='';
+  $('delClipInfo').textContent=t('Загрузка списка файлов…');
+  $('delClipDiskConfirmBtn').disabled=true;
   openModal('mbDelClip');
+  await delClipDiskPrepare();
 }
 
 // «Удалить выбранные» в шапке любого из трёх списков. Пусто у всех НЕ значит «все»
@@ -831,69 +913,57 @@ function delSelClips(){
   delClips(idx);
 }
 
-function delClipListOnly(){
-  const list=DEL_CLIP_IDXS.slice();DEL_CLIP_IDXS=[];
-  if(!list.length)return;
-  list.slice().sort((a,b)=>b-a).forEach(i=>_spliceClip(i));   // с конца: splice не съест соседей
-  SEL_ANCHOR=-1;   // список перерисован — прошлая кликнутая галка больше ни на что не указывает
-  closeModal('mbDelClip');
-  renderClips1();renderClips2();renderClips3();syncNav();
-  saveState();
+// Один запрос к удалению по клипу: сухой прогон (dry) или настоящий (sources — уносить ли
+// исходники). batch — все XML пачки: их исходники сервер не считает общими с пачкой.
+async function delClipCall(c,dry,sources,batch){
+  const res=await fetch('/api/clip_delete',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({xml:c.xml,jsxdir:(effOutdir(c)||'').trim(),dry:dry,sources:sources,batch:batch})
+  });
+  return res.json();
 }
 
-// Сухой прогон по КАЖДОМУ выбранному клипу: сводный список файлов и суммарный размер.
+// Сухой прогон по КАЖДОМУ выбранному клипу: сколько файлов нарезки уйдёт и какие исходники
+// есть на диске. Исходник, который нужен другому клипу папки, — серым с причиной и без галки.
 // Ошибка одного клипа не мешает прочитать остальные (в execute он всё равно попробуется).
 async function delClipDiskPrepare(){
   const list=DEL_CLIP_IDXS.slice();
   if(!list.length)return;
-  $('delClipInitial').style.display='none';
-  $('delClipConfirm').style.display='flex';
-  $('delClipCams').textContent=t('Загрузка списка файлов…');
-  $('delClipInfo').textContent='';
-  $('delClipList').innerHTML='';
-  $('delClipDiskConfirmBtn').disabled=true;
-  const files=[],cams=[],bad=[];
-  let bytes=0;
+  const batch=list.map(i=>CLIPS[i]&&CLIPS[i].xml).filter(Boolean);
+  let n=0,bytes=0;
+  const bad=[],srcs=[],byKey={};
   for(const i of list){
     const c=CLIPS[i];if(!c)continue;
-    const jsxdir=(effOutdir(c)||'').trim();
     try{
-      const res=await fetch('/api/clip_delete',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({xml:c.xml,jsxdir:jsxdir,dry:true})
-      });
-      const d=await res.json();
+      const d=await delClipCall(c,true,false,batch);
       if(d.error){bad.push(clipLabel(c)+': '+errText(d));continue;}
-      (d.cams||[]).forEach(n=>{if(cams.indexOf(n)<0)cams.push(n);});
-      (d.files||[]).forEach(f=>files.push(f));
-      bytes+=d.bytes||0;
+      n+=(d.files||[]).length;bytes+=d.bytes||0;
+      (d.sources||[]).forEach(s=>{
+        const key=String(s.path).toLowerCase();
+        if(!byKey[key]){byKey[key]={path:s.path,size:s.size||0,shared:[]};srcs.push(byKey[key]);}
+        (s.shared_with||[]).forEach(x=>{if(byKey[key].shared.indexOf(x)<0)byKey[key].shared.push(x);});
+      });
     }catch(e){bad.push(clipLabel(c)+': '+e);}
   }
-  $('delClipCams').textContent=cams.length
-    ?t('Исходник (НЕ трогаем): ')+cams.join(', ')
-    :t('Исходное видео: не трогаем (удаляются только файлы нарезки)');
-  const n=files.length;
-  const mb=(bytes/1048576).toFixed(2);
-  $('delClipInfo').textContent=t('Будет удалено файлов: {n} ({size} МБ)',{n:n,size:mb})
+  $('delClipInfo').textContent=t('Файлы нарезки: {n} ({size} МБ) — уйдут в корзину, можно вернуть',
+      {n:n,size:(bytes/1048576).toFixed(2)})
     +(bad.length?t(' · не прочитано клипов: {n}',{n:bad.length}):'');
-  if(n>0){
-    $('delClipList').innerHTML=files.map(f=>{
-      const name=f.path.split(/[/\\]/).pop();
-      const sz=(f.size>1048576?(f.size/1048576).toFixed(2)+t(' МБ'):(f.size/1024).toFixed(1)+t(' КБ'));
-      // имя файла приходит с диска (материал мог приехать с гугл-диска) — в разметку
-      // только через esc(): кавычка или «<» в имени иначе станут тегом
-      return '<div style="display:flex;justify-content:space-between;gap:8px"><span>'+esc(name)+'</span><span style="flex:none;color:var(--tx)">'+sz+'</span></div>';
-    }).join('');
-  }else{
-    $('delClipList').innerHTML='<div class="empty">'+t('Файлы нарезки не найдены на диске')+'</div>';
-  }
-  if(bad.length)uiLog(t('удаление с диска: не прочитано — ')+bad.join('; '));
+  if(bad.length)uiLog(t('удаление: не прочитано — ')+bad.join('; '));
+  // Галка доступна, только если есть исходник, который никто больше не держит
+  const free=srcs.filter(s=>!s.shared.length);
+  $('delClipSrc').disabled=!free.length;
+  $('delClipSrc').checked=false;
+  $('delClipSrcList').innerHTML=srcs.length?srcs.map(s=>{
+    const name=s.path.split(/[/\\]/).pop();
+    const sz=(s.size>1048576?(s.size/1048576).toFixed(2)+t(' МБ'):(s.size/1024).toFixed(1)+t(' КБ'));
+    // имя файла приходит с диска (материал мог приехать с гугл-диска) — в разметку
+    // только через esc(): кавычка или «<» в имени иначе станут тегом
+    const why=s.shared.length?'<div>'+esc(t('нужен ещё клипам: {n}, не удаляется',{n:s.shared.join(', ')}))+'</div>':'';
+    return '<div style="color:'+(s.shared.length?'var(--mut)':'var(--tx)')+'">'
+      +'<div style="display:flex;justify-content:space-between;gap:8px"><span>'+esc(name)+'</span><span style="flex:none">'+sz+'</span></div>'
+      +why+'</div>';
+  }).join(''):'<div class="empty">'+t('Исходное видео на диске не найдено')+'</div>';
   $('delClipDiskConfirmBtn').disabled=false;
-}
-
-function delClipDiskBack(){
-  $('delClipInitial').style.display='flex';
-  $('delClipConfirm').style.display='none';
 }
 
 // Удаление по каждому клипу: ошибка одного не прерывает остальные, итог — тост и журнал
@@ -902,66 +972,39 @@ function delClipDiskBack(){
 async function delClipDiskExecute(){
   const list=DEL_CLIP_IDXS.slice();DEL_CLIP_IDXS=[];
   if(!list.length)return;
+  // исходники уносим, только если галку поставили сами и она доступна: общий исходник
+  // (нужен другому клипу) не должен уехать в корзину вместе с клипом
+  const srcOn=!!$('delClipSrc').checked&&!$('delClipSrc').disabled;
+  const batch=list.map(i=>CLIPS[i]&&CLIPS[i].xml).filter(Boolean);
   $('delClipDiskConfirmBtn').disabled=true;
-  const bad=[];let nfiles=0,bytes=0;
+  const bad=[];let nclips=0,nfiles=0,bytes=0;
   for(const i of list){
     const c=CLIPS[i];if(!c)continue;
-    const jsxdir=(effOutdir(c)||'').trim();
     try{
-      const res=await fetch('/api/clip_delete',{
-        method:'POST',headers:{'Content-Type':'application/json'},
-        body:JSON.stringify({xml:c.xml,jsxdir:jsxdir,dry:false})
-      });
-      const d=await res.json();
+      const d=await delClipCall(c,false,srcOn,batch);
       if(d.error){bad.push(clipLabel(c)+': '+errText(d));continue;}
-      nfiles+=(d.files||[]).length;bytes+=d.bytes||0;
+      nclips++;nfiles+=(d.files||[]).length;bytes+=d.bytes||0;
+      trashRemember(trashDirOf(c.xml));   // корзина этого клипа — в папке его XML: запоминаем, чтобы видеть и стирать
     }catch(e){bad.push(clipLabel(c)+': '+e);}
   }
-  list.slice().sort((a,b)=>b-a).forEach(i=>_spliceClip(i));
-  SEL_ANCHOR=-1;
+  // открытый в панели шага 3 клип уходит — панель принадлежит ему, а _spliceClip лишь сбрасывает curAE
+  const openGone=curAE>=0&&list.includes(curAE);
+  list.slice().sort((a,b)=>b-a).forEach(i=>_spliceClip(i));   // с конца: splice не съест соседей
+  SEL_ANCHOR=-1;   // список перерисован — прошлая кликнутая галка больше ни на что не указывает
+  // Панель не должна хранить данные удалённого клипа: при живых клипах садим на первый, иначе
+  // прячем #aecfg и снимаем принадлежность (AEXML='') — как было в removeSelClips до переноса.
+  if(openGone){
+    if(CLIPS.length)selectAE(0);
+    else{$('aecfg').style.display='none';AEXML='';}
+  }
   closeModal('mbDelClip');
   renderClips1();renderClips2();renderClips3();syncNav();
   saveState();
   const mb=(bytes/1048576).toFixed(2);
-  toast(t('Удалено файлов: {n} ({size} МБ)',{n:nfiles,size:mb})
+  toast(t('В корзине: клипов {k}, файлов {n} ({size} МБ)',{k:nclips,n:nfiles,size:mb})
     +(bad.length?t(' · ошибок: {m}',{m:bad.length}):''));
-  uiLog(t('удаление с диска: убрано файлов {n} ({size} МБ)',{n:nfiles,size:mb})
+  uiLog(t('удаление в корзину: клипов {k}, файлов {n} ({size} МБ)',{k:nclips,n:nfiles,size:mb})
     +(bad.length?t(' · ошибки: ')+bad.join('; '):''));
-}
-
-// Метла в шапке списка клипов шага 1: убрать ВСЕ клипы из списка — ТОЛЬКО CLIPS/UI.
-// Это не delClip (тот чистит диск через API удаления): дисковые XML и сайдкары
-// остаются, список подхватывается заново кнопкой «Из папки результата». Поэтому и
-// подтверждение, и справка говорят об этом явно — иначе выглядит как удаление файлов.
-async function clearClipsList(){
-  if(!CLIPS.length)return;
-  if(!await askConfirm(t('Убрать все клипы из списка? Файлы нарезки на диске НЕ удаляются — список подхватится заново кнопкой «Из папки результата».')))return;
-  while(CLIPS.length)_spliceClip(0);   // индексы открытых клипов правит общий безопасный путь
-  SEL_ANCHOR=-1;                       // список перерисован — диапазон считать не от чего
-  renderClips1();renderClips2();renderClips3();syncNav();
-  saveState();
-  uiLog(t('список клипов очищен — файлы на диске остались'));
-}
-
-// Метла в шапке «Файлы набора» шага 3: убрать из списка ТОЛЬКО отмеченные (c.sel)
-// клипы. selClips() тут не годится — «пусто = все» это семантика СБОРКИ, а убрать
-// всё за разговором «убрать отмеченное» нельзя. API удаления не зовём: дисковые
-// файлы остаются, список подхватится «Из папки результата».
-async function removeSelClips(){
-  const idx=[];CLIPS.forEach((c,i)=>{if(c.sel)idx.push(i);});
-  if(!idx.length){toast(t('Ничего не отмечено — поставь галочки у клипов, которые убрать'));return;}
-  if(!await askConfirm(t('Убрать отмеченных клипов из списка: {n}? Файлы нарезки на диске НЕ удаляются.',{n:idx.length})))return;
-  idx.sort((a,b)=>b-a).forEach(i=>_spliceClip(i));   // индексы в обратном порядке — splice не съест соседей
-  SEL_ANCHOR=-1;                                     // список перерисован — диапазон считать не от чего
-  // Убрали и сам открытый в панели клип: после _spliceClip curAE=-1, а данные панели
-  // (AEXML/WORDS/INTRO) всё ещё про удалённый файл. При живых клипах панель
-  // пересаживается на живой клип (как goStep(3)); при пустом списке selectAE звать
-  // не на чем — явно прячем #aecfg и снимаем принадлежность панели (AEXML='').
-  if(curAE<0&&CLIPS.length)selectAE(0);
-  else if(curAE<0){$('aecfg').style.display='none';AEXML='';}
-  renderClips1();renderClips2();renderClips3();syncNav();
-  saveState();
-  uiLog(t('из списка убрано отмеченных: {n} (файлы на диске остались)',{n:idx.length}));
 }
 
 let REFRESHING=false,REFRESHWANT=false;
@@ -983,59 +1026,162 @@ async function refreshStatuses(){
   if(REFRESHWANT){REFRESHWANT=false;refreshStatuses();}
 }
 
+// Корзина: клипы папки результата и подкасты папки подкастов — одним списком. Пустая одна из
+// папок не мешает показать другую; тост «не задана папка» — только если нет ни той, ни другой.
+function trashRoots(){
+  return {dir:val('ai_outdir').trim(),
+    pod:typeof podcastRootVal==='function'?podcastRootVal():''};
+}
+// Папки, куда удаляли клипы и подкасты. Корзина клипа лежит в папке ЕГО XML (а не в папке
+// результата: «Добавить XML…», рилсы подкастов), поэтому одной папки результата мало —
+// помним все, куда удаляли. До 50 последних; сохраняется в состоянии (stateObj/applyState).
+let TRASHROOTS=[];
+// Папка файла: всё до последнего разделителя (C:/a/b.xml → C:/a).
+function trashDirOf(p){return String(p||'').replace(/[\\/][^\\/]*[\\/]*$/,'');}
+function trashRemember(dir){
+  const d=String(dir||'').trim().replace(/[\\/]+$/,'');
+  if(!d)return;
+  const k=d.replace(/\\/g,'/').toLowerCase();
+  TRASHROOTS=TRASHROOTS.filter(x=>x.replace(/\\/g,'/').toLowerCase()!==k);
+  TRASHROOTS.push(d);
+  if(TRASHROOTS.length>50)TRASHROOTS=TRASHROOTS.slice(-50);
+}
+// Запрос к корзине: папки — результат, все запомненные, папки XML всех клипов списка (без
+// дублей; сервер всё равно сводит по realpath). Папки подкастов ещё может не быть — сервер
+// её пропускает.
+async function trashCall(url,body){
+  const dirs=[],seen=new Set();
+  const add=p=>{const d=String(p||'').trim().replace(/[\\/]+$/,'');if(!d)return;
+    const k=d.replace(/\\/g,'/').toLowerCase();if(seen.has(k))return;seen.add(k);dirs.push(d);};
+  add(body.dir);
+  TRASHROOTS.forEach(add);
+  CLIPS.forEach(c=>add(trashDirOf(c.xml)));
+  return fetch(url,{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(Object.assign({},body,{dirs:dirs}))}).then(r=>r.json());
+}
+function trashNote(text){
+  const n=document.createElement('div');n.className='empty';n.textContent=text;return n;
+}
+// Время удаления — местное. Сервер пишет deleted_at в UTC с зоной (…+00:00, см. core/clipstore.py):
+// показать строку как есть значило бы выдать UTC за местное время (в 00:18 у владельца стояло «21:36»
+// прошлого дня). Строка без зоны — уже местная: new Date читает её как местную и выводит как есть.
+function trashWhen(s){
+  if(!s)return '';
+  const d=new Date(String(s));
+  if(isNaN(d.getTime()))return String(s).replace('T',' ').substring(0,19);
+  const p=n=>String(n).padStart(2,'0');
+  return p(d.getDate())+'.'+p(d.getMonth()+1)+'.'+d.getFullYear()+' '+p(d.getHours())+':'+p(d.getMinutes());
+}
+// Строка записи: название, серая метка «подкаст», дата · файлов · МБ, исходники, «Вернуть».
+// Текст — через textContent: названия и пути приходят с диска.
+function trashRow(it){
+  const row=document.createElement('div');
+  row.style.cssText='display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px;border-bottom:1px solid var(--bd)';
+  const info=document.createElement('div');
+  info.style.cssText='display:flex;flex-direction:column;gap:2px;overflow:hidden';
+  const name=document.createElement('span');
+  name.style.cssText='font-weight:500;word-break:break-all';
+  name.setAttribute('data-noi18n','');
+  name.textContent=it.title||it.stem||it.id;
+  if(it.kind==='podcast'){
+    const tag=document.createElement('span');tag.className='muted';tag.style.fontSize='11px';
+    tag.textContent=' '+t('подкаст');name.appendChild(tag);
+  }
+  const meta=document.createElement('span');meta.className='muted';meta.style.fontSize='11px';
+  const mb=((it.bytes||0)/1048576).toFixed(2);
+  const dt=trashWhen(it.deleted_at);
+  meta.textContent=dt+' · '+t('{n} файлов',{n:it.files||0})+' · '+mb+t(' МБ')
+    +(it.sources>0?' · '+t('+ исходники: {n}',{n:it.sources}):'');
+  info.appendChild(name);info.appendChild(meta);
+  const btn=document.createElement('button');btn.className='sm';btn.textContent=t('Вернуть');
+  btn.onclick=()=>restoreTrashItem(it.root,it.id,it.kind);
+  row.appendChild(info);row.appendChild(btn);
+  return row;
+}
+
 async function openTrash(){
-  const dir=val('ai_outdir').trim();
-  if(!dir){toast(t('Не задана папка результата'));return;}
-  $('trashList').innerHTML='<div class="muted">'+t('Загрузка корзины…')+'</div>';
+  const r=trashRoots();
+  if(!r.dir&&!r.pod){toast(t('Не задана папка результата'));return;}
+  const box=$('trashList');
+  box.innerHTML='';box.appendChild(trashNote(t('Загрузка корзины…')));
   openModal('mbTrash');
   try{
-    const res=await fetch('/api/trash_list',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({dir})
-    });
-    const d=await res.json();
-    if(d.error){
-      $('trashList').innerHTML='<div class="empty">'+errText(d)+'</div>';
-      return;
-    }
+    const d=await trashCall('/api/trash_list',{dir:r.dir,podcast_root:r.pod});
+    box.innerHTML='';
+    if(d.error){box.appendChild(trashNote(errText(d)));return;}
     const items=d.items||[];
-    if(!items.length){
-      $('trashList').innerHTML='<div class="empty">'+t('Корзина пуста')+'</div>';
-      return;
-    }
-    $('trashList').innerHTML=items.map(it=>{
-      const mb=((it.bytes||0)/1048576).toFixed(2);
-      const dt=it.deleted_at?it.deleted_at.replace('T',' ').substring(0,19):'';
-      return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px;border-bottom:1px solid var(--bd)">'
-        +'<div style="display:flex;flex-direction:column;gap:2px;overflow:hidden">'
-        +'<span style="font-weight:500;word-break:break-all">'+esc(it.stem||it.id)+'</span>'
-        +'<span class="muted" style="font-size:11px">'+esc(dt)+' · '+t('{n} файлов',{n:it.files||0})+' · '+mb+t(' МБ')+'</span>'
-        +'</div>'
-        +'<button class="sm" onclick="restoreTrashItem(\''+esc(it.id)+'\')">'+t('Вернуть')+'</button>'
-        +'</div>';
-    }).join('');
+    if(!items.length){box.appendChild(trashNote(t('Корзина пуста')));return;}
+    items.forEach(it=>box.appendChild(trashRow(it)));
   }catch(e){
-    $('trashList').innerHTML='<div class="empty">'+t('Ошибка загрузки корзины: ')+esc(String(e))+'</div>';
+    box.innerHTML='';box.appendChild(trashNote(t('Ошибка загрузки корзины: ')+e));
   }
 }
 
-async function restoreTrashItem(id){
-  const dir=val('ai_outdir').trim();
-  if(!dir){toast(t('Не задана папка результата'));return;}
+// Лежит ли хоть один из путей в папке результата (ai_outdir). Пути приходят с диска: слеши и регистр
+// не сравниваем строго, иначе клип из папки результата не попал бы в scanOutdir.
+function trashInOutdir(paths){
+  const n=s=>String(s||'').replace(/\\/g,'/').replace(/\/+$/,'').toLowerCase();
+  const out=n(val('ai_outdir').trim());
+  return !!out&&(paths||[]).some(p=>n(String(p).replace(/[\\\/][^\\\/]*$/,''))===out);
+}
+// «Вернуть»: клип — на старые места; из папки результата — перечитываем её, из другой папки —
+// добавляем в список по путям. Подкаст — папку на место и список подкастов перечитываем.
+async function restoreTrashItem(root,id,kind){
   try{
-    const res=await fetch('/api/trash_restore',{
-      method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({dir,id})
-    });
-    const d=await res.json();
+    const d=await (await fetch('/api/trash_restore',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({root:root,id:id})})).json();
     if(d.error){toast(errText(d));return;}
     const n=(d.restored||[]).length;
     const sk=(d.skipped||[]).length;
     toast(t('Восстановлено файлов: {n}',{n})+(sk?t(' · пропущено: {m}',{m:sk}):''));
+    if(sk)uiLog(t('корзина: не возвращено — ')+d.skipped.map(x=>x.path+': '+x.why).join('; '));
     closeModal('mbTrash');
-    scanOutdir();
+    if(kind==='podcast'){podcastList();return;}
+    // Клип из папки результата подхватывает scanOutdir: вставки и спикер там читаются с диска.
+    // Клип из другой папки (рилсы подкастов в cut_out, «Добавить XML…») в ней не лежит: его
+    // добавляем тем же путём, что и «Добавить XML…». Иначе он возвращён на диск, а в списке его нет.
+    // Если в ответе нет .xml, место клипа неизвестно: перечитываем папку результата, как и раньше.
+    const xmls=(d.restored||[]).filter(p=>/\.xml$/i.test(p));
+    if(!xmls.length||trashInOutdir(xmls))await scanOutdir();
+    clipsAddPaths(xmls);
   }catch(e){
     toast(t('Ошибка восстановления: ')+e);
   }
+}
+
+// Сводка корзины на ⚙ → «Нарезка»: сухой прогон по обеим папкам, без удаления.
+async function trashCountLoad(){
+  const sum=$('trashSum'),btn=$('trashEmptyBtn');
+  if(!sum||!btn)return;
+  const r=trashRoots();
+  if(!r.dir&&!r.pod){sum.textContent=t('Папка результата не задана');btn.disabled=true;return;}
+  try{
+    const d=await trashCall('/api/trash_empty',{dir:r.dir,podcast_root:r.pod,dry:true});
+    if(d.error){sum.textContent=errText(d);btn.disabled=true;return;}
+    sum.textContent=t('В корзине: {n} записей, {size} ГБ',{n:d.entries||0,size:((d.bytes||0)/1073741824).toFixed(2)});
+    btn.disabled=!d.entries;
+  }catch(e){sum.textContent=t('Корзина не прочитана: ')+e;btn.disabled=true;}
+}
+
+// Очистка корзины насовсем — только отсюда, с подтверждением. Сначала сухой прогон: в вопросе
+// должно стоять, сколько записей и байт уйдёт.
+async function trashEmpty(){
+  const r=trashRoots();
+  let d;
+  try{d=await trashCall('/api/trash_empty',{dir:r.dir,podcast_root:r.pod,dry:true});}
+  catch(e){toast(t('Сервер не ответил: ')+e);uiLog(t('корзина: ')+e);return;}
+  if(d.error){toast('⚠ '+errText(d));uiLog(t('корзина: ')+errText(d));return;}
+  if(!d.entries){trashCountLoad();return;}
+  const gb=((d.bytes||0)/1073741824).toFixed(2);
+  if(!await askConfirm(t('Удалить насовсем {n} записей ({size} ГБ)? Вернуть будет нельзя.',{n:d.entries,size:gb})))return;
+  let e;
+  try{e=await trashCall('/api/trash_empty',{dir:r.dir,podcast_root:r.pod,dry:false});}
+  catch(err){toast(t('Сервер не ответил: ')+err);uiLog(t('корзина: ')+err);trashCountLoad();return;}
+  if(e.error){toast('⚠ '+errText(e));uiLog(t('корзина: ')+errText(e));trashCountLoad();return;}
+  const bad=e.failed||[];
+  const freed=((e.bytes||0)/1073741824).toFixed(2);
+  toast(t('Освобождено {size} ГБ',{size:freed})+(bad.length?t(' · ошибок: {m}',{m:bad.length}):''));
+  if(bad.length)uiLog(t('корзина: не удалено — ')+bad.map(x=>x.path+': '+x.why).join('; '));
+  trashCountLoad();
 }
 

@@ -139,6 +139,24 @@ def test_panel_keeps_exactly_five_buttons():
     assert 'insGenTxt' not in _read(INSERTS_JS), "в JS остался мёртвый id подписи insGenTxt"
 
 
+def test_dead_insert_functions_stay_removed():
+    """Мёртвые одиночные ИИ-вставки не возвращаются ни в один модуль интерфейса.
+
+    Кнопки aiInsertsRun/aiInsertsMore убраны из интерфейса раньше, функции остались без
+    вызова; spkInsTarget звала только aiInsertsMore. Удалены целиком — сторож не даёт
+    объявить их снова ни в одном static/app/*.js.
+    """
+    app = os.path.join(ROOT, "static", "app")
+    dead = ("function aiInsertsRun", "function aiInsertsMore", "function spkInsTarget")
+    back = []
+    for name in sorted(os.listdir(app)):
+        if not name.endswith(".js"):
+            continue
+        src = _read(os.path.join(app, name))
+        back += ["%s: %s" % (name, d) for d in dead if d in src]
+    assert not back, "мёртвый код вернулся в интерфейс: %s" % back
+
+
 def test_gen_button_is_first_in_row_and_key_class():
     """Кнопка первая в ряду, в классе key и без primary — выделение положением и рамкой."""
     btn = _btn()
@@ -300,7 +318,7 @@ def test_panel_renders_five_buttons_with_names_and_a_live_count():
     assert out["buttons"] == 5, "после отрисовки панели кнопок не пять: %r" % out["handlers"]
     assert out["handlers"] == ["insGenMissing()", "insAdd('photo')", "insAdd('video')",
                                "insUndo()", "insRedo()"], (out["handlers"])
-    assert out["icons"] == ["ai", "plus", "plus", "undo", "refresh"], out["icons"]
+    assert out["icons"] == ["ai", "plus", "plus", "undo", "redo"], out["icons"]
     assert out["texts"] == ["", "фото", "видео", "", ""], out["texts"]
     assert out["first"] == "insGenBtn" and out["last"] == "insRedoBtn", (
         "генерация обязана быть первой, повтор — последним (отмена и повтор прижаты вправо): %r" % out)

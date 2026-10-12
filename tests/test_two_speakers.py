@@ -28,9 +28,8 @@ r"""Два клипа — два спикера: каждая фича берё�
 СПИСОК ФИЧ, ЗАВИСЯЩИХ ОТ СПИКЕРА (новая фича дописывается сюда же, вместе со своим
 тестом ниже — иначе она снова прочитает не того спикера):
 
-1. квота и цель ИИ-вставок + тела `/api/ai_inserts` — `spkInsTarget`,
-   `aiInsertsRun` (окно вставок), `markupClip` (разметка);
-   `test_inserts_quota_and_requests_use_the_speaker_of_the_clip`;
+1. квота ИИ-вставок + тело `/api/ai_inserts` — `markupClip` (разметка);
+   `test_inserts_requests_use_the_speaker_of_the_clip`;
 2. стиль клипа при смене спикера и в сборке — `setClipSpeaker`, `styleForJob`;
    `test_clip_style_follows_its_own_speaker_on_switch_and_in_build`;
 3. папка `.jsx` и папка рендера со всей лестницей — `effOutdir`, `effRenderdir`,
@@ -263,40 +262,26 @@ async function fetch(url,opts){return {json:async()=>({subs:12,colored:3,ncams:2
 
 
 @node
-def test_inserts_quota_and_requests_use_the_speaker_of_the_clip(tmp_path):
-    """1. Квота, окно вставок и разметка: спикер КЛИПА, квота ЕГО профиля.
+def test_inserts_requests_use_the_speaker_of_the_clip(tmp_path):
+    """1. Разметка клипа (через неё идёт квота ИИ-вставок): спикер КЛИПА.
 
-    `spkInsTarget` по профилю клипа: А 5 + 2 = 7, Б 7 + 4 = 11, а не 11 + 6 = 17
-    чужого спикера В; у клипа без тега профиля нет — дефолт 13. Тела
-    `/api/ai_inserts` (окно вставок, разметка и добор `aiInsertsMore`) несут
-    спикера клипа.
+    Тело `/api/ai_inserts` при разметке несёт спикера клипа: А — А, Б — Б, спикер В
+    нигде не появляется. Окно вставок и добор (`aiInsertsRun`/`aiInsertsMore`)
+    удалены как мёртвый код; цели `spkInsTarget` больше нет.
     """
     script = (HARNESS + _door()
-              + _funcs(INSERTS_JS, ("spkInsTarget", "aiInsertsRun", "aiInsertsMore"))
               + _funcs(EDITOR_JS, ("markupClip", "qClipSum")) + AI_STUBS
               + _tail(r"""(async()=>{
   const out={};
-  out.targets=[spkInsTarget(CLIPS[0]),spkInsTarget(CLIPS[1]),spkInsTarget(null)];
-  curIns=0;await aiInsertsRun();
-  curIns=1;await aiInsertsRun();
-  out.window=CALLS.splice(0);
   CLIPS[0].inserts=[];CLIPS[0].status={};
   CLIPS[1].inserts=[];CLIPS[1].status={};
   await markupClip(CLIPS[0]);
   await markupClip(CLIPS[1]);
   out.markup=CALLS.splice(0);
-  CLIPS[0].inserts=[];CLIPS[1].inserts=[];      // цель 7 и 11 — есть что добирать
-  curIns=0;await aiInsertsMore();
-  curIns=1;await aiInsertsMore();
-  out.more=CALLS.splice(0);
   console.log(JSON.stringify(out));
 """))
     res = _run_node(tmp_path, "twospk_inserts.js", script)
-    assert res["targets"] == [7, 11, 13], res["targets"]
-    assert [c["speaker"] for c in res["window"]] == ["СпикерА", "СпикерБ"], res["window"]
     assert [c["speaker"] for c in res["markup"]] == ["СпикерА", "СпикерБ"], res["markup"]
-    assert [c["speaker"] for c in res["more"]] == ["СпикерА", "СпикерБ"], res["more"]
-    assert [c["xml"] for c in res["window"]] == [c["xml"] for c in res["markup"]], res
     assert "СпикерВ" not in json.dumps(res, ensure_ascii=False), res
 
 

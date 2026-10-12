@@ -1745,9 +1745,14 @@ function pctToPxY(pct){return Math.round(((parseFloat(pct)||0)/100)*styleFrameDi
 // st_musicdb/st_voicedb: значение живёт в CURSTYLE, ползунок — ещё один способ его
 // поменять (и наоборот), отдельной переменной у него нет. applyDbGains — чтобы
 // сменивший уровень звучал сразу, без переоткрытия предпросмотра.
+// число справа от ползунков блока звука превью: «−20», «0», «+3» (знак минус настоящий; dB — в тултипе группы)
+function ipvDbText(db){const v=Math.round((+db||0)*2)/2;return (v<0?'−':v>0?'+':'')+Math.abs(v);}
 function syncDbSliders(){const s=CURSTYLE||{};
-  const m=$('ipvmusicdb');if(m)m.value=Math.round((s.music_db!=null?s.music_db:-20)*2)/2;
-  const v=$('ipvvoicedb');if(v)v.value=Math.round((s.voice_db!=null?s.voice_db:0)*2)/2;
+  const md=(s.music_db!=null?s.music_db:-20),vd=(s.voice_db!=null?s.voice_db:0);
+  const m=$('ipvmusicdb');if(m)m.value=Math.round(md*2)/2;
+  const v=$('ipvvoicedb');if(v)v.value=Math.round(vd*2)/2;
+  const mv=$('ipvmusicdbv');if(mv)mv.textContent=ipvDbText(md);
+  const vv=$('ipvvoicedbv');if(vv)vv.textContent=ipvDbText(vd);
   const pv=$('pvvoicedb');if(pv)pv.value=Math.round((s.voice_db!=null?s.voice_db:0)*2)/2;
   const pvv=$('pvvoicedbv');if(pvv){
     const val=(s.voice_db!=null?s.voice_db:0);
@@ -2209,6 +2214,9 @@ async function loadASREngines(){
   fillEngineSel($('subengine'),list.filter(e=>e&&e.subs),SUBWANT,'whisper:large-v3');
   if(typeof fillCutAsr==='function')fillCutAsr();
   if(typeof fillCutTextAsr==='function')fillCutTextAsr();
+  // движок подкаста берёт тот же список ASR_ENGINES: без этого вызова его селект остался бы пустым,
+  // если AICFG пришёл раньше каталога движков
+  if(typeof fillPodcastAsr==='function')fillPodcastAsr();
   cutSummary();markupSummary();
 }
 

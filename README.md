@@ -20,6 +20,7 @@ Reelsi is a local editing assistant for talking-head video. AI cuts footage by c
 - **Cut editor**: corrects the result by hand — the cursor, the block edges, the removed pieces brought back with a double click, the cut-out audio for listening, and saving back to the XML. With the second text pass on, a piece brought back gets its subtitles again from the source words.
 - **Batch queue**: many clips in one queue, cameras paired by name or by sound, and clips that already have a cut skipped.
 - **Draft mp4**: a quick draft of every cut, to preview the result before markup.
+- **Podcast → reels (step 1)**: a long podcast becomes vertical 1080×1920 reels. Take a local file or a YouTube link (best quality, with a choice of audio track), transcribe it, let the AI pick N self-contained pieces, adjust them in a 16:9 editor, then **Convert to reels**: the speaker stays centred, and each reel joins the step 1 queue as a one-camera clip, which you cut with AI yourself. YouTube downloads need `yt-dlp` and `node` (see Requirements). The block is an ordinary card under Google Drive; it can be hidden in ⚙ → Cut → Cut page.
 
 ### Preview and editing
 
@@ -27,7 +28,7 @@ Reelsi is a local editing assistant for talking-head video. AI cuts footage by c
 - **Camera layout**: chooses which camera is on screen for every piece, saves the layout and resets it to auto; a player lets you listen to another camera to check the sync.
 - **Batch markup**: subtitles run one clip after another on the GPU, and the cloud steps (highlights, inserts) start for a clip as soon as its own subtitles are ready, so a whole set is marked up in one pass.
 - **Insert editor**: timing, position and scale of every insert; a card keeps its identity even when several inserts share one file, and every edit can be undone and redone.
-- **Clip work kept on disk**: speaker, camera setup, inserts, style and intro of a clip come back after a reload or a rescan, and a deleted clip goes to a recycle bin from which it is restored.
+- **Clip work kept on disk**: speaker, camera setup, inserts, style and intro of a clip come back after a reload or a rescan, and a deleted clip or podcast goes to a recycle bin from which it is restored. The bin is emptied for good only in ⚙ → Cut.
 - **Roto and head tracking in the preview**: one button computes the speaker's cut-out figure and the head track on the GPU, with progress and Stop, and shows both in the preview.
 
 ### Sound
@@ -69,6 +70,8 @@ Reelsi is a local editing assistant for talking-head video. AI cuts footage by c
 5. **Markup and design**: subtitles, highlights, inserts, the intro and the camera work are computed per clip; assets come from the local library or from the AI provider.
 6. **Assembly and render**: the scene plan becomes a Premiere XML, an AE script, a Resolve project, or a finished clip from the built-in engine.
 
+A podcast takes its own path: **file or YouTube → transcript → AI picks N pieces → 16:9 editor → Convert to reels (angles, heads, speaker centred) → 1080×1920 file → step 1 queue**.
+
 Models — recognition, breaths, emotions, denoising — are computed by one local model service: it keeps the weights in memory instead of loading them per clip and counts several clips at once, up to a limit. Where it computes is a machine setting: the video card by default, the processor on a machine without a card or to keep the card free for a local LLM (LM Studio, Ollama). A render asks the service to release video memory before it starts.
 
 ## Requirements
@@ -81,7 +84,7 @@ Tested only on Windows 11 with an NVIDIA GPU and Adobe After Effects / Premiere 
 - An NVIDIA GPU with CUDA support is what the project is verified on; models can also be computed on the processor (⚙ → "Cut" → "Where models are computed"). On a card more recognitions run in parallel and it is faster, on the processor no video memory is taken at all.
 - A language model for the semantic steps — LM Studio or Ollama locally, or an API key for a cloud provider. The classic pause cutting with Whisper works without one.
 - Adobe After Effects is optional: it is needed for the headless AE render and for editing the built `.jsx` by hand, while the built-in engine renders without it. Adobe Premiere Pro is optional as well — it is only needed to open the exported XML, Reelsi itself does not call it.
-- Optional tools: `rclone` (Google Drive downloads), `yt-dlp` (music).
+- Optional tools: `rclone` (Google Drive downloads), `yt-dlp` (music and podcasts from YouTube). YouTube downloads also need `node` in PATH: yt-dlp runs with it as the JavaScript runtime.
 - Optional Python packages from `requirements-optional.txt` come one by one: every one enables exactly one feature and everything else keeps working (`pedalboard` — live monitoring through VST3 plug-ins and the output device list; `gigaam` — word-level cuts; `silero-vad`, `rembg`, `anthropic`, `yt-dlp`). `python doctor.py` names what is missing and what turns off without it.
 - The AI denoiser arrives on demand: the RoFormer engine is a separate environment with its own models, downloaded from the Voice panel, and without it the previous deep-filter binary is used.
 - Subtitle templates use SF Pro; rebuild them for another font via `python tools/harvest_good.py "path/to/reference.xml"`.

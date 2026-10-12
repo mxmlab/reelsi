@@ -71,6 +71,8 @@ function clearHl(c){if(!c||!c.job)return;
   return had;}
 function selectAE(i){if(curAE>=0&&curAE!==i)captureAE();curAE=i;const c=CLIPS[i];const j=c.job||defJob();c.job=j;
   AEXML=c.xml;                                          // с этого момента панель принадлежит клипу
+  // метка шага 3 — тот же клип, что curAE (см. lastClipCls). typeof — стенды вырезают selectAE без 99-boot.js (LASTCLIP там)
+  if(typeof LASTCLIP!=='undefined')LASTCLIP[3]=c.xml;
   // Карточка «Настройка» (#aecfg) на странице больше не показывается — стиль/интро/жёлтые/
   // вставки правятся в предпросмотре (клик по клипу → openAEFor → openAEPreview). DOM оставлен
   // скрытым: #stylebox всё так же переезжает во вкладку «Стиль» модалки и обратно (styleToModal/Home).
@@ -193,7 +195,7 @@ function jobForBuild(c){const j=c.job||defJob();
     intro:[],intro_remove:[],intro_splits:[],introRows:j.introRows||[],intro_mode:j.intromode||'word',
     cams:clipNcams(c),style:styleForJob(j)};}
 // intro для сборки надо резолвить по словам ЭТОГО файла — делаем на бэке? нет: резолвим из introRows+загруженных слов текущего.
-// поэтому перед сборкой текущего используем introResolve(); для набора — по сохранённым introRows и словам каждого (грузим).
+// поэтому открытый клип резолвит introResolve() (captureAE), а набор — по сохранённым introRows и словам каждого (грузим).
 
 // запуск фоновой сборки: лог в /api/status (модалка «Логи»), прогресс-оверлей, переживает F5
 // файлы вставок, ушедших в проект, бэкенд переносит из «Скаченного» в базу — старые
@@ -237,16 +239,6 @@ async function pollBuild(){pollJob(pollBuild,t('Сборка .jsx'),0.3,d=>{cons
     // этом прямо, и он же виден, когда окно прогресса свернули в чип.
     if(warn.length)toast(t('⚠ голос без обработки ({n}): {list}',{n:warn.length,list:fmt(warn)}));});}
 
-async function tojsx(){if(uiBusyGuard())return;if(curAE<0){toast(t('Выбери клип'));return;}captureAE();const c=CLIPS[curAE];const xml=c.xml;
-  const ir=introResolve();const j=c.job;
-  const body={xml,...musicJobFields(c),
-    outdir:effOutdir(c)||'',          // папка клипа — лестница профиля спикера
-    highlights:(HLXML===xml)?[...HL]:[],hl_breaks:(HLXML===xml)?[...BRK]:[],hl_count:(HLXML===xml)?[...CNT]:[],hl_joins:(HLXML===xml)?[...JNS]:[],inserts:INS.filter(r=>(r.media||'').trim()),
-    intro:ir.lines,intro_remove:ir.remove,intro_splits:ir.splits,intro_mode:val('intromode'),
-    cams:clipNcams(c),
-    style:styleForJob({styleKey:(val('style')==='__edit__'?STYLE_EDITING:val('style')),style:CURSTYLE})};
-  await startBuild([body],'separate');}
-
 // ================= безголовый рендер (шаг 3) =================
 // Кнопка «Собрать и отрендерить»: тот же джоб, что у сборки текущего. ДВИЖКА два:
 // «After Effects» — прежний путь (безголовый .jsx с очередью и save, verify_jsx ДО
@@ -276,8 +268,9 @@ function rendEngineLabel(){return RENDERENGINE==='builtin'?t('Рендер бе�
 // переключатель к тому моменту мог быть переставлен — подпись окна берём от джоба.
 let RENDERENGINE='ae';
 // «Собрать и отрендерить» идёт по отмеченным галочками, а НЕ по открытому клипу —
-// кнопка стояла вплотную к «Только текущий» и читалась как «текущий», хотя рендерила
-// CLIPS[curAE] (прогон 2026-08-14: галочка на 01, отрендерился 04).
+// кнопка раньше стояла рядом с одиночным «Только текущий» и читалась как «текущий», хотя
+// рендерила CLIPS[curAE] (прогон 2026-08-14: галочка на 01, отрендерился 04). Одиночной
+// сборки больше нет, но правило остаётся: рендер берёт набор, а не открытый клип.
 // Набор собирается той же функцией, что и «Собрать набор» — вторая копия тут
 // гарантированно даст «собралось одно, отрендерилось другое».
 async function startRender(){if(uiBusyGuard())return;const jobs=await collectJobs();if(jobs===null)return;
@@ -638,7 +631,7 @@ async function aiIntroOne(c,batch){
 }
 // Тонкая обёртка над resolveIntroFor (2026-08-14): своя копия обхода строк
 // здесь разошлась с близнецом и теряла gs группы — превью после рефетча плана возвращало
-// блок к 100%, а в сборку текущего клипа (tojsx/startRender) масштаб группы не уезжал.
+// блок к 100%, а в сборку (collectJobs → jobForBuild, через неё идут и «Собрать набор», и рендер) масштаб группы не уезжал.
 // introReorder() оставлен: панель интро сортирует INTRO по таймингу, и порядок строк
 // менять по-прежнему надо (resolveIntroFor сортирует только свою копию).
 function introResolve(){introReorder();return resolveIntroFor(INTRO,WORDS);}

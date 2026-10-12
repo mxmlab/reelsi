@@ -50,10 +50,11 @@ with this super true false null undefined import export
 # нельзя — для этого есть определение функцией в static/app/.
 BROWSER_GLOBALS = frozenset("""
 AbortController Array Audio Blob Boolean Date Error Function Map MutationObserver
-Number Promise RegExp Set String
+Number Promise RegExp ResizeObserver Set String
 Float32Array Float64Array Int8Array Int16Array Int32Array Uint8Array Uint8ClampedArray
 Uint16Array Uint32Array
-cancelAnimationFrame clearInterval clearTimeout decodeURIComponent encodeURIComponent fetch isFinite
+cancelAnimationFrame clearInterval clearTimeout decodeURIComponent encodeURIComponent fetch
+getComputedStyle isFinite
 isNaN parseFloat parseInt requestAnimationFrame setInterval setTimeout
 """.split())
 

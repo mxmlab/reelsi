@@ -287,7 +287,9 @@ def collect(paths: Sequence[str]) -> list[str]:
     """Все .intro.json под папками, по алфавиту (порядок прогона не должен плавать)."""
     out: list[str] = []
     for p in paths:
-        out += glob.glob(os.path.join(p, "**", "*.intro.json"), recursive=True)
+        # рекурсивный обход: записи корзины (`_reelsi_trash`) — не прогон
+        out += [f for f in glob.glob(os.path.join(p, "**", "*.intro.json"), recursive=True)
+                if "_reelsi_trash" not in os.path.normpath(f).split(os.sep)]
     return sorted(set(out))
 
 

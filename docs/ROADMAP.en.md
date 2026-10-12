@@ -10,6 +10,12 @@ Automated through the `core/roto.py` module (the local GPU model Robust Video Ma
 - The text pop is shifted by +4 frames.
 - The end of a title word is trimmed to the start of the next one (small "и/в" no longer overlap).
 
+## Podcast → reels and the one recycle bin — done (0.4.0-beta)
+A long podcast is cut into vertical reels from step 1: a file or a YouTube link, transcription, the AI
+picks the pieces, a 16:9 editing window, "Convert to reels" (angles, RVM heads on samples, the speaker in
+frame, a 1080×1920 file) → the step 1 queue. Deleting clips and podcasts is one bin with restore. The
+decisions and the order of work are in `docs/PODCAST_SPEC.en.md`, the structure in `docs/ARCHITECTURE.en.md`.
+
 ## AI markup — the `core/aicut/` package
 LLM calls have been moved into the `core/aicut/` package (`python -m core.aicut`): marking yellow words, selecting and generating inserts, the hook and the intro. Models and keys are configured through provider profiles in the UI (⚙ → "Models and connections", `ai_config.json`). Architecture and contracts — in `docs/ARCHITECTURE.md`.
 
@@ -163,3 +169,10 @@ What has to be decided before implementing:
   ASR and rendering are still one at a time, only the cloud decision step is parallelised, and it takes no GPU;
 - the ceiling of simultaneous requests to the provider and the behaviour on 429;
 - cancellation ("Stop") must take down all streams of the batch, not the current one.
+
+## Podcast: a wide shot with two speakers on a real episode — open
+
+**Status: open.** Choosing the speaker by mouth movement on a wide shot is checked on one episode and on
+synthetic data; with laughter and interruptions it is ambiguous (see `docs/KNOWN_ISSUES.en.md`). A real
+episode of the owner with two people in frame is needed: compare the reel's frame with a manual marking,
+and only then decide whether another speaker cue is needed besides mouth movement.

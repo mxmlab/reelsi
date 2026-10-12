@@ -65,6 +65,9 @@ async function main() {
     });
     await send('Page.enable');
     await send('Runtime.enable');
+    // Страница считает себя активной, даже если окно Chrome не в фокусе ОС. Иначе element.focus()
+    // меняет activeElement, но не шлёт focus/focusout, и тесты на уход фокуса мигают от запуска к запуску.
+    await send('Emulation.setFocusEmulationEnabled', { enabled: true });
     const loaded = waitEvent('Page.loadEventFired');
     await send('Page.navigate', { url: spec.url });
     await loaded;

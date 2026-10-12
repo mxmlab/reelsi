@@ -29,8 +29,8 @@
 <div class="step on" id="step1">
   <!-- Гугл-диск — ПЕРВЫМ на шаге: материал приезжает оттуда, и до него не с чем работать.
        Раньше блок стоял третьим, под очередью камер, — то есть после того, что он кормит. -->
-  <details class="card gdrive-card"><summary><span class="k">◆</span>Получить материал с Google Drive <span class="i" data-t="Скачай исходные файлы с Google Drive, затем выбери их в проекте. Состояние формы сохраняется.">!</span></summary>
-    <h2><span class="k">◆</span>Материал с гугл-диска <span class="i" data-t="Вставил ссылку на файл или папку гугл-диска — материал скачался на этот компьютер (через rclone, крупные файлы он умеет). Потом выбери скачанный файл камеры 1 и нажми «Разложить по камерам» — остальные подберутся по звуку. rclone настраивается один раз командой rclone config в консоли: вход в аккаунт делает браузер.">!</span></h2>
+  <div class="card" id="gdrive_card">
+    <h2><span class="k">◆</span>Материал с гугл-диска <span class="i" data-t="Вставил ссылку на файл или папку гугл-диска — материал скачался на этот компьютер (через rclone, крупные файлы он умеет). Потом выбери скачанный файл камеры 1 и нажми «Разложить по камерам» — остальные подберутся по звуку. rclone настраивается один раз командой rclone config в консоли: вход в аккаунт делает браузер. Состояние формы сохраняется.">!</span></h2>
     <div class="row">
       <div class="grow"><label for="gdrive_url">Ссылка</label><input id="gdrive_url" style="width:100%" placeholder="https://drive.google.com/file/d/…" oninput="saveState()"></div>
       <button class="sm" id="gd_go" onclick="gdDownload()">Скачать</button>
@@ -44,7 +44,35 @@
       <button class="sm" id="gd_spread" onclick="gdSpread()">Разложить по камерам</button>
     </div>
     <div id="gdrive_status" class="muted mono" style="margin-top:8px;font-size:12px"></div>
-  </details>
+  </div>
+
+  <!-- Подкаст → рилсы — сразу после гугл-диска: материал приезжает из него или по ссылке,
+       и рилсы потом встают в ту же очередь шага 1. Настройки шага (модель, ум, движок,
+       язык) — в ⚙ «Подкаст», здесь только сам разбор. -->
+  <div class="card" id="podcast_card">
+    <h2><span class="k">◆</span>Подкаст → рилсы <span class="i" data-t="Длинный подкаст режется на рилсы: скачивается по ссылке YouTube или берётся файл, его расшифровывают, ИИ выбирает куски, и каждый кусок переводится в вертикальный рилс. Рилсы попадают в очередь шага 1 как обычные клипы, нарезку по ним не запускаем. Модели и движок настраиваются в ⚙ на вкладке «Подкаст».">!</span></h2>
+    <div class="row">
+      <div class="seg" id="podcast_src"><label class="on"><input type="radio" name="podcast_src" value="url" checked onchange="podcastSrcUI()"> Ссылка YouTube</label><label><input type="radio" name="podcast_src" value="file" onchange="podcastSrcUI()"> Файл</label></div>
+    </div>
+    <div class="row" id="podcast_url_row">
+      <div class="grow"><label for="podcast_url">Ссылка</label><input id="podcast_url" style="width:100%" placeholder="https://youtu.be/…" oninput="podcastUrlEdit()"></div>
+      <div style="width:220px;flex:none"><label for="podcast_track" id="podcast_track_lbl">Звуковая дорожка</label><div class="podtrack-box" id="podcast_track_box"><button type="button" class="podtrack" id="podcast_track" aria-haspopup="listbox" aria-expanded="false" aria-controls="podcast_track_menu" aria-labelledby="podcast_track_lbl podcast_track_txt" onclick="podcastTrackOpen()" onkeydown="podTrackKey(event)"><span class="podtrack-txt" id="podcast_track_txt"></span><span class="podtrack-arr" aria-hidden="true">⌄</span></button><div class="podmenu dd-panel" id="podcast_track_menu" role="listbox" tabindex="-1" aria-labelledby="podcast_track_lbl" onkeydown="podTrackKey(event)"></div></div></div>
+    </div>
+    <div class="row" id="podcast_file_row" style="display:none">
+      <div class="grow"><label for="podcast_file">Файл подкаста</label><input id="podcast_file" style="width:100%" oninput="saveState()"></div>
+    </div>
+    <div class="row">
+      <div class="grow"><label for="podcast_root">Папка подкастов</label><input id="podcast_root" style="width:100%" oninput="saveState()"></div>
+      <button class="sm" onclick="podcastPickRoot()">Выбрать…</button>
+    </div>
+    <div class="row">
+      <div><label for="podcast_reels">Рилсов</label><input type="number" id="podcast_reels" min="1" max="30" value="5" style="width:90px" onchange="saveState()"></div>
+      <button class="primary" id="podcast_go" onclick="podcastGo()">Разобрать</button>
+      <button class="sm" id="podcast_stop" onclick="podcastStop()" style="display:none">Стоп</button>
+    </div>
+    <div id="podcast_status" class="muted mono" style="margin-top:8px;font-size:12px"></div>
+    <div id="podcast_list" class="podcast-list"></div><div class="podcast-all" id="podcast_all_row" style="display:none"><button class="primary" id="podcast_all" onclick="podConvertAll()" data-t="Переводит в рилсы куски без рилса у всех подкастов папки, потом все рилсы встают в очередь шага 1. ИИ-нарезку запускаешь сам.">Все рилсы в очередь</button></div>
+  </div>
 
   <div class="card">
     <h2><span class="k">◆</span>Проект</h2>
@@ -61,7 +89,7 @@
       <button onclick="loadCams()">Пересканировать папки</button>
     </div>
     <div id="caminfo" class="muted mono" style="margin-top:10px;font-size:12px"></div>
-    <div id="camrows" style="margin-top:12px"></div>
+    <div id="camrows" class="camgrid" style="margin-top:12px"></div>
     <div class="row" style="margin-top:4px">
       <button class="sm" onclick="addPair()"><span data-ic="plus"></span> В очередь</button>
       <button class="sm" id="autoqueue" onclick="autoQueue()" style="display:none" data-t="Одна камера: в очередь уходят все файлы папки, которых в ней ещё нет. С галочкой «только новые» — кроме тех, на которые в папке результата уже есть XML.">Все файлы в очередь</button>
@@ -107,11 +135,10 @@
   <div class="card">
     <h2><span class="k">◆</span>Клипы <span class="i" data-t="Готовые нарезки. Правка = предпросмотр + редактор нарезки. Можно дозалить внешние XML (скачал, поправил в другой программе, залил обратно). «Из папки результата» подхватывает все .xml из папки выхода — выручает, если список пропал (другой браузер, чистка localStorage).">!</span>
       <span class="grow"></span>
-      <button class="sm" onclick="openTrash()"><span data-ic="trash"></span> Корзина</button>
+      <button class="sm" onclick="openTrash()"><span data-ic="bin"></span> Корзина</button>
+      <button class="sm sq" id="delSel1" data-delsel onclick="delSelClips()" disabled aria-label="Удалить выбранные клипы" data-t="Удалить отмеченные галочками клипы в корзину: файлы нарезки можно вернуть. Без отмеченных кнопка не работает."><span data-ic="trash"></span></button>
       <button class="sm" onclick="scanOutdir()"><span data-ic="dl"></span> Из папки результата</button>
-      <button class="sm" onclick="addExternal()"><span data-ic="plus"></span> Добавить XML…</button>
-      <button class="icon" id="delSel1" data-delsel onclick="delSelClips()" disabled aria-label="Удалить выбранные клипы" data-t="Удалить отмеченные галочками клипы — убрать из списка или стереть с диска файлы нарезки. Без отмеченных кнопка не работает."><span data-ic="trash"></span></button>
-      <button class="icon" id="clipsClear" onclick="clearClipsList()" aria-label="Убрать все клипы из списка" data-t="Убрать все клипы из списка на этой странице. Файлы нарезки на диске НЕ удаляются — список подхватится заново кнопкой «Из папки результата»."><span data-ic="broom"></span></button></h2>
+      <button class="sm" onclick="addExternal()"><span data-ic="plus"></span> Добавить XML…</button></h2>
     <div id="clips1" class="clips" data-clips="1"></div>
     <div class="navbar">
       <button id="toStep2" onclick="goStep(2)">Далее → Разметка</button>
@@ -130,7 +157,8 @@
       <span class="muted mono" id="mkupsum" style="font-size:11px;max-width:150px;overflow:hidden;
         text-overflow:ellipsis;white-space:nowrap;font-weight:400"></span>
       <span class="lnk" tabindex="0" role="button" onclick="openAISettings('markup')" aria-label="Модели разметки" data-t="Модели разметки: ИИ-профиль, «ум» жёлтых слов, вставок и интро, а также движок субтитров."><span data-ic="gear"></span></span>
-      <button class="icon" id="delSel2" data-delsel onclick="delSelClips()" disabled aria-label="Удалить выбранные клипы" data-t="Удалить отмеченные галочками клипы — убрать из списка или стереть с диска файлы нарезки. Без отмеченных кнопка не работает."><span data-ic="trash"></span></button>
+      <button class="sm" onclick="openTrash()"><span data-ic="bin"></span> Корзина</button>
+      <button class="sm sq" id="delSel2" data-delsel onclick="delSelClips()" disabled aria-label="Удалить выбранные клипы" data-t="Удалить отмеченные галочками клипы в корзину: файлы нарезки можно вернуть. Без отмеченных кнопка не работает."><span data-ic="trash"></span></button>
       <button class="sm" onclick="markupPhase('subs')" data-t="Субтитры у отмеченных клипов (не отмечено ни одного = все): Whisper по набору, жёлтые и вставки не трогаются.">Субтитры (<span data-markupcnt></span>)</button>
       <button class="sm" onclick="markupPhase('yellow')" data-t="Жёлтые у отмеченных клипов (не отмечено ни одного = все): ИИ-разметка, субтитры и вставки не трогаются. Без субтитров клип пропускается.">Жёлтые (<span data-markupcnt></span>)</button>
       <button class="sm" onclick="markupPhase('inserts')" data-t="Вставки у отмеченных клипов (не отмечено ни одного = все): ИИ-подбор из базы, субтитры и жёлтые не трогаются. Без субтитров клип пропускается.">Вставки (<span data-markupcnt></span>)</button>
@@ -149,8 +177,8 @@
     <h2><span class="k">◆</span>Файлы набора
       <span class="i" data-t="Галочки слева — какие файлы уйдут в сборку и в пакетное ИИ-интро (не отмечено ни одного = все). Клик по строке открывает предпросмотр: стиль, интро, жёлтые, вставки.">!</span>
       <span class="grow"></span>
-      <button class="icon" id="delSel3" data-delsel onclick="delSelClips()" disabled aria-label="Удалить выбранные клипы" data-t="Удалить отмеченные галочками клипы — убрать из списка или стереть с диска файлы нарезки. Без отмеченных кнопка не работает."><span data-ic="trash"></span></button>
-      <button class="icon" id="rmSelClips" onclick="removeSelClips()" disabled aria-label="Убрать отмеченные клипы из списка" data-t="Убрать отмеченные галочками клипы из списка набора. Файлы нарезки на диске НЕ удаляются — подхватятся снова «Из папки результата». Без отмеченных кнопка не работает."><span data-ic="broom"></span></button>
+      <button class="sm" onclick="openTrash()"><span data-ic="bin"></span> Корзина</button>
+      <button class="sm sq" id="delSel3" data-delsel onclick="delSelClips()" disabled aria-label="Удалить выбранные клипы" data-t="Удалить отмеченные галочками клипы в корзину: файлы нарезки можно вернуть. Без отмеченных кнопка не работает."><span data-ic="trash"></span></button>
       <button class="sm" id="introall" onclick="aiIntroAll()" data-t="Разметить интро ИИ сразу во всех отмеченных файлах: строки за спиной + 2–3 акцента в середине. Уже размеченное интро будет заменено — спросим перед стартом."><span data-ic="ai" data-cls="gold"></span> ИИ интро (<span data-introcnt></span>)</button></h2>
     <div id="clips3" class="clips" data-clips="3"></div>
     <div class="ae-buildbar sticky-build" id="aebuildbar">
@@ -158,8 +186,9 @@
         <span id="buildscope" class="muted mono" aria-live="polite">Все клипы</span>
         <button class="primary" id="buildbtn" onclick="buildMulti()">Собрать набор</button>
         <button class="primary secondary" id="renderbtn" onclick="startRender()" data-t="Соберёт и отрендерит те же клипы, что и «Собрать набор».">Собрать и отрендерить</button>
+        <div class="seg" id="rendengine"><label class="on" data-t="Прежний путь рендера: безголовый прогон After Effects (сборка .aep + aerender). Нужен установленный After Effects; именно он даёт кадр в кадр с проектом AE."><input type="radio" name="rendengine" value="ae" checked onchange="rendEngineUI()"> After Effects</label><label data-t="Рендер без After Effects: кадры рисует наш же предпросмотр, звук сводится по плану сцены. Превью повторяется приблизительно — Glow, Lumetri и мозаика цензуры близко, motion blur нет. After Effects не нужен; на время съёмки поднимается несколько экземпляров Chrome."><input type="radio" name="rendengine" value="builtin" onchange="rendEngineUI()"> Встроенный</label></div>
         <div class="seg"><label class="on"><input type="radio" name="multimode" value="separate" checked onchange="segUI()"> Отдельные .jsx</label><label><input type="radio" name="multimode" value="combined" onchange="segUI()"> Один на всё</label></div>
-        <button class="sm" onclick="tojsx()">Только текущий</button><span id="aeres" class="ok"></span>
+        <span id="aeres" class="ok"></span>
       </div>
     </div>
   </div>
@@ -207,12 +236,9 @@
   <div class="card">
     <h2><span class="k">◆</span>Папки и параметры</h2>
     <div class="row" style="margin-top:8px;align-items:center">
-      <div class="grow"><label for="aerenderdir">Папка вывода рендера <span class="i" data-t="Куда уедет готовый ролик. Дефолт — папка exp рядом с репозиторием. Движок выбирается ниже: безголовый прогон After Effects или встроенный рендер, которому After Effects не нужен вовсе.">!</span></label><input id="aerenderdir" style="width:100%" oninput="renderDirSync(this)" onchange="renderDirCommit(this)"><span class="hint" id="aerenderdirnote" style="display:block;margin-top:4px"></span></div>
+      <div class="grow"><label for="aerenderdir">Папка вывода рендера <span class="i" data-t="Куда уедет готовый ролик. Дефолт — папка exp рядом с репозиторием. Движок выбирается рядом с кнопкой «Собрать и отрендерить»: безголовый прогон After Effects или встроенный рендер, которому After Effects не нужен вовсе.">!</span></label><input id="aerenderdir" style="width:100%" oninput="renderDirSync(this)" onchange="renderDirCommit(this)"><span class="hint" id="aerenderdirnote" style="display:block;margin-top:4px"></span></div>
       <button class="sm" onclick="pickdir('aerenderdir')">Выбрать…</button>
       <span id="aeresrend" class="muted"></span>
-    </div>
-    <div class="row" style="margin-top:8px;align-items:center">
-      <div class="seg" id="rendengine"><label class="on" data-t="Прежний путь рендера: безголовый прогон After Effects (сборка .aep + aerender). Нужен установленный After Effects; именно он даёт кадр в кадр с проектом AE."><input type="radio" name="rendengine" value="ae" checked onchange="rendEngineUI()"> After Effects</label><label data-t="Рендер без After Effects: кадры рисует наш же предпросмотр, звук сводится по плану сцены. Превью повторяется приблизительно — Glow, Lumetri и мозаика цензуры близко, motion blur нет. After Effects не нужен; на время съёмки поднимается несколько экземпляров Chrome."><input type="radio" name="rendengine" value="builtin" onchange="rendEngineUI()"> Встроенный</label></div>
     </div>
     <!-- Папки .jsx здесь больше нет: её задаёт профиль спикера (jsxdir → папка нарезки),
          а клип без спикера кладёт файл рядом со своим XML. Яркость, цензура и музыка
@@ -307,17 +333,22 @@
           </div>
           <div class="edgrp grow2">
             <div class="edlbl">Редактор <span class="i" data-t="Клик по таймлайну — курсор · играет один плеер: пробел, «играть», клик — одно состояние · тяни края блоков · двойной клик по серому — вернуть вырезанное · колесо — зум · Shift+колесо или линейка — прокрутка · ←/→ — покадрово">!</span></div>
-            <div class="row" style="align-items:center">
+            <div class="row pvtransport" style="align-items:center">
               <button class="sm" id="edplay" onclick="edToggle()" style="min-width:44px" aria-label="Воспроизвести / пауза" data-t="Воспроизвести / пауза"><span data-ic="play"></span></button>
               <span id="edtime" class="muted mono">0:00 / 0:00</span>
-              <span class="volctl" data-t="Громкость превью — общая для всех плееров"><span data-ic="sound"></span><input type="range" data-vol aria-label="Громкость превью" min="0" max="100" value="100" step="1" oninput="setMediaVol(this.value)" onpointerup="this.blur()"></span>
               <label class="hint" style="display:flex;gap:6px;align-items:center;margin:0;cursor:pointer"><input type="checkbox" onchange="ED.raw=this.checked"> слушать вырезанное</label>
+            </div>
+            <div class="pvaudio">
+              <span class="pvlbl" data-t="Громкость превью — общая для всех плееров">Громкость</span>
+              <span class="pvsl" data-t="Громкость превью — общая для всех плееров"><span data-ic="sound"></span><input type="range" data-vol aria-label="Громкость превью" min="0" max="100" value="100" step="1" oninput="setMediaVol(this.value)" onpointerup="this.blur()"></span>
+              <span class="pvval" data-volv data-noi18n>100</span>
             </div>
             <div id="edcam" class="muted" style="margin-top:6px;font-size:12px"></div>
             <div class="row" style="margin-top:10px">
               <button class="sm" onclick="edSplit()" data-t="Разрезать блок по курсору"><span data-ic="cut"></span> Резать<span class="kbd">C</span></button>
               <button class="sm" onclick="edDelSel()" data-t="Удалить выбранный блок"><span data-ic="trash"></span> Удалить<span class="kbd">D</span></button>
-              <button class="sm" onclick="edUndo()" data-t="Отменить последнее действие"><span data-ic="undo"></span> Отмена<span class="kbd">Ctrl+Z</span></button>
+              <button class="sm" id="edUndoBtn" onclick="edUndo()" disabled data-t="Отменить последнее действие (Ctrl+Z)"><span data-ic="undo"></span> Отмена<span class="kbd">Ctrl+Z</span></button>
+              <button class="sm" id="edRedoBtn" onclick="edRedo()" disabled data-t="Повторить отменённое действие (Ctrl+Y)"><span data-ic="redo"></span> Повтор<span class="kbd">Ctrl+Y</span></button>
             </div>
             <div class="row" style="margin-top:12px">
               <button class="primary" id="edsave" onclick="edSave()" style="flex:1"><span data-ic="save"></span> Сохранить в XML</button>
@@ -326,45 +357,84 @@
         </div>
       </div>
 
-      <div class="edtlbar">
-        <button class="icon" onclick="edZoom(1.35)" aria-label="Приблизить" data-t="Приблизить"><span data-ic="plus"></span></button>
-        <button class="icon" onclick="edZoom(1/1.35)" aria-label="Отдалить" data-t="Отдалить"><span data-ic="minus"></span></button>
-        <button class="icon" onclick="edZoomFit()" aria-label="Показать весь файл" data-t="Показать весь файл"><span data-ic="fit"></span></button>
+      <div class="edtlbar tlhead">
+        <span class="edlbl">Таймлайн</span>
+        <span class="i" data-t="Клик или протяжка по полю и по плейхеду — перемотка · протяжка по линейке или средняя кнопка — прокрутка окна · колесо — зум · Shift+колесо или горизонтальное колесо — прокрутка · тяни края блоков · двойной клик по серому — вернуть вырезанное · C или S — резать · D, Delete или Backspace — удалить · Ctrl+Z / Ctrl+Y — отмена и повтор">!</span>
         <span id="edcut" class="hint grow" style="text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span>
+        <button class="icon" onclick="edZoom(TL_ZOOM_STEP)" aria-label="Приблизить" data-t="Приблизить"><span data-ic="plus"></span></button>
+        <button class="icon" onclick="edZoom(1/TL_ZOOM_STEP)" aria-label="Отдалить" data-t="Отдалить"><span data-ic="minus"></span></button>
+        <button class="icon" onclick="edZoomFit()" aria-label="Показать весь файл" data-t="Показать весь файл"><span data-ic="fit"></span></button>
       </div>
-      <canvas id="edtl" style="width:100%;height:175px;background:#0d0d0d;border:1px solid var(--bd);border-radius:var(--r);cursor:text;display:block"></canvas>
+      <canvas id="edtl" style="width:100%;height:175px;background:var(--tl-bg);border:1px solid var(--bd);border-radius:var(--r);cursor:text;display:block"></canvas>
+    </div>
+  </div>
+</div>
+
+<!-- ============ MODAL: окно правки кусков подкаста (П5, 16:9) ============ -->
+<div class="backdrop" id="mbPod" onclick="podBackClose(event)">
+  <div class="modal wide pod-modal fill94" role="dialog" aria-modal="true" aria-label="Куски подкаста">
+    <div class="mhead"><span class="t" id="pod_title"></span>
+      <span class="grow"></span>
+      <button class="primary sm" id="pod_convert" onclick="podConvertPicked()" data-t="Нарежет в вертикальные рилсы выбранные куски, а если ни один не выбран — все. Склейки, ракурсы, спикер по центру. Рилсы встанут в очередь шага 1, ИИ-нарезку запускаешь сам."><span data-ic="film"></span> <span id="pod_conv_lbl">Перевести в рилсы</span></button>
+      <button class="icon" data-close aria-label="Закрыть" data-t="Закрыть" onclick="podClose()"><span data-ic="x"></span></button></div>
+    <div class="mbody fill scroll tight pod-body">
+      <div class="pod-top">
+        <div class="pod-left">
+          <div id="pod_stage" class="pod-stage"><video id="pod_video" class="pod-video" playsinline preload="auto"></video></div>
+          <div class="pod-transport">
+            <button class="sm" id="pod_play" onclick="podPlayPause()" aria-label="Играть / пауза" data-t="Играть / пауза — пробел"><span data-ic="play"></span></button>
+            <span id="pod_time" class="muted mono"></span>
+          </div>
+        </div>
+        <div class="pod-right">
+          <div class="pod-head"><span class="edlbl">Куски</span>
+            <span class="i" data-t="Начало и конец — мм:сс.с; можно и просто секунды или ч:мм:сс. Минимум 5 с, куски не наезжают друг на друга и не выходят за запись.">!</span></div>
+          <div class="pod-pickbar">
+            <button class="sm" id="pod_add" onclick="podAdd()" data-t="Новый кусок: 60 с от плейхеда, урезанный до свободного места до следующего куска."><span data-ic="plus"></span> Кусок</button>
+            <button class="sm" id="pod_conv_picked" onclick="podConvertPicked()" aria-label="В рилсы: выбранные" data-t="Переводит в рилсы только выбранные куски. Несохранённые правки сохраняются сначала."><span data-ic="film"></span> <span id="pod_conv_n">0</span></button>
+            <button class="sm" id="pod_del_picked" onclick="podDeletePicked()" aria-label="Удалить выбранные" data-t="Удаляет выбранные куски (галочки, Ctrl/⌘+клик, Shift+клик, Ctrl+A). Отмена — Ctrl+Z."><span data-ic="trash"></span> <span id="pod_del_n">0</span></button>
+            <span class="grow"></span>
+            <button class="sm" id="podUndoBtn" onclick="podUndo()" disabled aria-label="Отменить правку кусков" data-t="Отменить последнюю правку кусков (Ctrl+Z)"><span data-ic="undo"></span></button>
+            <button class="sm" id="podRedoBtn" onclick="podRedo()" disabled aria-label="Повторить правку кусков" data-t="Повторить отменённую правку кусков (Ctrl+Shift+Z или Ctrl+Y)"><span data-ic="redo"></span></button></div>
+          <div id="pod_segs" class="pod-segs"></div>
+        </div>
+      </div>
+      <!-- «Вся запись» забирает всё место, что осталось под куски: шапка + холст (flex в app.css) -->
+      <div class="pod-tlblock">
+        <div class="pod-tlhead tlhead"><span class="edlbl">Вся запись</span>
+          <span class="i" data-t="Лента сверху — слова расшифровки баблами: зумятся вместе с записью; если бабл не помещается — слово прячется до приближения. Тяни края кусков — границы (при отпускании прилипают к словам в пределах 1 с), середину — сдвиг; I/O — начало/конец по плейхеду. Клик или протяжка по полю и по плейхеду — перемотка · протяжка по линейке или средняя кнопка — прокрутка окна · колесо — зум · Shift+колесо или горизонтальное колесо — прокрутка · C или S — резать кусок под плейхедом, D, Delete или Backspace — удалить выбранные · Ctrl+Z / Ctrl+Y — отмена и повтор. Двойной клик по пустому месту — новый кусок там (вернуть вырезанное). Клик — выбрать кусок; Ctrl/⌘+клик — добавить или убрать, Shift+клик — диапазон.">!</span>
+          <button class="sm" id="pod_cut" onclick="podCut()" data-t="Разрезать кусок под плейхедом на два (C или S). Точка прилипает к концу ближайшего слова в пределах 1 с; оба куска — не короче 5 с."><span data-ic="cut"></span> Резать<span class="kbd">C</span></button>
+          <button class="sm" id="pod_del" onclick="podDelKey()" data-t="Удалить выбранные куски, а без выбора — активный (D, Delete или Backspace). Отмена — Ctrl+Z."><span data-ic="trash"></span> Удалить<span class="kbd">D</span></button>
+          <span class="grow"></span>
+          <button class="icon" onclick="podZoom(POD_ZOOM_STEP)" aria-label="Приблизить" data-t="Приблизить"><span data-ic="plus"></span></button>
+          <button class="icon" onclick="podZoom(1/POD_ZOOM_STEP)" aria-label="Отдалить" data-t="Отдалить"><span data-ic="minus"></span></button>
+          <button class="icon" onclick="podZoomFit()" aria-label="Показать всю запись" data-t="Показать всю запись"><span data-ic="fit"></span></button>
+        </div>
+        <div id="pod_tl" class="pod-tl"><canvas id="pod_tl_cv" class="pod-tlcv"></canvas></div>
+      </div>
     </div>
   </div>
 </div>
 
 <!-- ============ MODAL: inserts ============ -->
 <div class="backdrop" id="mbInserts" onclick="closeIfBack(event,'mbInserts')">
-  <div class="modal wide" role="dialog" aria-modal="true" aria-labelledby="mbInsTitle">
+  <div class="modal wide fill94 cropped" role="dialog" aria-modal="true" aria-labelledby="mbInsTitle">
     <div class="mhead"><span class="t" id="mbInsTitle">Вставки</span>
       <span class="mono muted" id="insname" data-noi18n style="margin-left:8px;font-size:12px"></span>
       <span class="grow"></span><button class="icon" data-close aria-label="Закрыть" data-t="Закрыть" onclick="closeModal('mbInserts')"><span data-ic="x"></span></button></div>
-    <div class="mbody">
+    <div class="mbody fill tight">
       <div class="inscols">
         <div class="inspv">
-          <div class="pvstage" id="ipvstage">
-            <div id="ipvtopline" class="ipvtopline" style="display:none"><div class="pvtl_track"></div><div class="pvtl_prog"></div></div>
-            <div id="ipvcaption" class="ipvcaption" data-noi18n style="display:none"><div class="pvcap_inner"></div><span class="pvcap_text"></span></div>
-            <div id="ipvdisc" class="ipvdisc" data-noi18n style="display:none"><span class="pvdis_text"></span></div>
-            <div id="ipvintro" class="ipvintro" data-noi18n></div>
-            <div id="ipvins" class="ipvins"></div>
-            <div id="ipvsub" class="pvsub" data-noi18n></div>
+          <div class="ipvbox">
+            <div class="pvstage" id="ipvstage">
+              <div id="ipvtopline" class="ipvtopline" style="display:none"><div class="pvtl_track"></div><div class="pvtl_prog"></div></div>
+              <div id="ipvcaption" class="ipvcaption" data-noi18n style="display:none"><div class="pvcap_inner"></div><span class="pvcap_text"></span></div>
+              <div id="ipvdisc" class="ipvdisc" data-noi18n style="display:none"><span class="pvdis_text"></span></div>
+              <div id="ipvintro" class="ipvintro" data-noi18n></div>
+              <div id="ipvins" class="ipvins"></div>
+              <div id="ipvsub" class="pvsub" data-noi18n></div>
+            </div>
           </div>
-          <div class="row" style="align-items:center;margin-top:10px">
-            <button class="sm" id="ipvplay" onclick="ipvToggle()" style="min-width:44px" aria-label="Воспроизвести / пауза" data-t="Воспроизвести / пауза"><span data-ic="play"></span></button>
-            <input type="range" id="ipvseek" aria-label="Перемотка предпросмотра" min="0" max="1000" value="0" step="1" class="grow" oninput="ipvScrub(this.value)" onpointerup="this.blur()" onchange="this.blur()">
-            <span id="ipvtime" class="muted mono" style="font-size:11px;white-space:nowrap">0:00 / 0:00</span>
-            <span class="volctl" data-t="Громкость превью — общая для всех плееров"><span data-ic="sound"></span><input type="range" data-vol aria-label="Громкость превью" min="0" max="100" value="100" step="1" oninput="setMediaVol(this.value)" onpointerup="this.blur()"></span>
-          </div>
-          <div class="row" style="margin-top:6px;align-items:center">
-            <label class="dbctl" data-t="Уровень музыки превью, dB — тот же, что MUSIC_DB в .jsx. «Случайно»: играет случайный трек из папки музыки, при сборке выберется другой — уровень от этого не зависит. Не путать с громкостью превью (та — ряд выше, 0–100)."><span data-ic="music" data-cls="gold"></span>Музыка <input type="range" id="ipvmusicdb" aria-label="Музыка, dB" min="-40" max="6" step="0.5" value="-20" oninput="setStyleDb('music',this.value)" onpointerup="this.blur()" onchange="this.blur()"></label>
-            <label class="dbctl" data-t="Громкость голоса (камера 1) превью, dB — тот же, что VOICE_DB в .jsx."><span data-ic="sound" data-cls="gold"></span>Голос <input type="range" id="ipvvoicedb" aria-label="Голос, dB" min="-40" max="6" step="0.5" value="0" oninput="setStyleDb('voice',this.value)" onpointerup="this.blur()" onchange="this.blur()"></label>
-          </div>
-          <div style="margin-top:8px"><span class="i" data-t="Монтаж со вставками, без рендера. Вставки — блоки на полосе внизу: тяни блок — двигаешь по времени, тяни края — длительность, двойной клик — посмотреть. Без выбранного файла показывается заглушка с запросом. Пробел — играть/пауза.">!</span></div>
         </div>
         <div class="insside">
           <div class="row" id="insparts" style="align-items:center;margin-bottom:8px">
@@ -381,7 +451,7 @@
               <span id="insres" class="ok"></span>
               <span class="grow"></span>
               <button class="sm" id="insUndoBtn" onclick="insUndo()" disabled aria-label="Отменить правку вставок" data-t="Отменить последнюю правку вставок (Ctrl+Z)"><span data-ic="undo"></span></button>
-              <button class="sm" id="insRedoBtn" onclick="insRedo()" disabled aria-label="Повторить правку вставок" data-t="Повторить отменённую правку вставок (Ctrl+Shift+Z или Ctrl+Y)"><span data-ic="refresh"></span></button>
+              <button class="sm" id="insRedoBtn" onclick="insRedo()" disabled aria-label="Повторить правку вставок" data-t="Повторить отменённую правку вставок (Ctrl+Shift+Z или Ctrl+Y)"><span data-ic="redo"></span></button>
             </div>
             <div id="insHost" class="inshostscroll"></div>
           </div>
@@ -428,12 +498,19 @@
           <div id="aewwords" class="words" data-noi18n></div>
         </div>
       </div>
-      <div class="itlbar">
-        <button class="icon" onclick="itlZoom(1.35)" aria-label="Приблизить" data-t="Приблизить"><span data-ic="plus"></span></button>
-        <button class="icon" onclick="itlZoom(1/1.35)" aria-label="Отдалить" data-t="Отдалить"><span data-ic="minus"></span></button>
-        <button class="icon" onclick="itlFit()" aria-label="Показать весь ролик" data-t="Показать весь ролик"><span data-ic="fit"></span></button>
+      <div class="itlbar tlhead" role="group" aria-label="Таймлайн">
+        <button class="sm" id="ipvplay" onclick="ipvToggle()" style="min-width:44px" aria-label="Воспроизвести / пауза" data-t="Воспроизвести / пауза"><span data-ic="play"></span></button>
+        <span id="ipvtime" class="muted mono" style="font-size:11px;white-space:nowrap">0:00 / 0:00</span>
+        <span class="pvaudio">
+          <span class="pvgrp" role="group" aria-label="Громкость" data-t="Громкость превью — общая для всех плееров"><span class="pvsl"><span data-ic="sound"></span><input type="range" data-vol aria-label="Громкость превью" min="0" max="100" value="100" step="1" oninput="setMediaVol(this.value)" onpointerup="this.blur()"></span><span class="pvval" data-volv data-noi18n>100</span></span>
+          <span class="pvgrp" role="group" aria-label="Музыка" data-t="Уровень музыки превью, dB — тот же, что MUSIC_DB в .jsx. «Случайно»: играет случайный трек из папки музыки, при сборке выберется другой — уровень от этого не зависит. Не путать с громкостью превью (та — первый ползунок, 0–100)."><span class="pvsl"><span data-ic="music" data-cls="gold"></span><input type="range" id="ipvmusicdb" aria-label="Музыка, dB" min="-40" max="6" step="0.5" value="-20" oninput="setStyleDb('music',this.value)" onpointerup="this.blur()" onchange="this.blur()"></span><span class="pvval" id="ipvmusicdbv" data-noi18n>−20</span></span>
+          <span class="pvgrp" role="group" aria-label="Голос" data-t="Громкость голоса (камера 1) превью, dB — тот же, что VOICE_DB в .jsx."><span class="pvsl"><span data-ic="mic" data-cls="gold"></span><input type="range" id="ipvvoicedb" aria-label="Голос, dB" min="-40" max="6" step="0.5" value="0" oninput="setStyleDb('voice',this.value)" onpointerup="this.blur()" onchange="this.blur()"></span><span class="pvval" id="ipvvoicedbv" data-noi18n>0</span></span>
+        </span>
         <span class="grow"></span>
-        <span class="i" data-t="Клик/протяжка по фону — перемотка (плейхед таскается) · тяни блок или его края · колесо — зум · Shift+колесо — прокрутка">!</span>
+        <span class="i" data-t="Монтаж со вставками, без рендера. Вставки — блоки на полосе внизу: тяни блок — двигаешь по времени, тяни края — длительность, двойной клик — посмотреть. Без выбранного файла показывается заглушка с запросом. Пробел — играть/пауза. Клик или протяжка по полю и по плейхеду — перемотка · протяжка по линейке или средняя кнопка — прокрутка окна · колесо — зум · Shift+колесо или горизонтальное колесо — прокрутка · Ctrl+Z / Ctrl+Y — отмена и повтор">!</span>
+        <button class="icon" onclick="itlZoom(TL_ZOOM_STEP)" aria-label="Приблизить" data-t="Приблизить"><span data-ic="plus"></span></button>
+        <button class="icon" onclick="itlZoom(1/TL_ZOOM_STEP)" aria-label="Отдалить" data-t="Отдалить"><span data-ic="minus"></span></button>
+        <button class="icon" onclick="itlFit()" aria-label="Показать весь ролик" data-t="Показать весь ролик"><span data-ic="fit"></span></button>
       </div>
       <div id="itl" class="itl"><div id="itlin" class="itlin">
         <div id="itlruler" class="itlruler"></div>
@@ -454,17 +531,21 @@
       <div class="edcols" style="margin-bottom:14px">
         <div class="pvstage" id="cpvstage" style="max-width:300px"><div id="cpvsub" class="pvsub" data-noi18n></div></div>
         <div class="edside" style="justify-content:flex-start">
-          <div class="row" style="align-items:center">
+          <div class="row pvtransport" style="align-items:center">
             <button class="sm" id="cpvplay" onclick="cpvToggle()" style="min-width:44px" aria-label="Воспроизвести / пауза" data-t="Воспроизвести / пауза"><span data-ic="play"></span></button>
             <input type="range" id="cpvseek" aria-label="Перемотка монтажа" min="0" max="1000" value="0" step="1" class="grow" oninput="cpvScrub(this.value)" onpointerup="this.blur()" onchange="this.blur()">
             <span id="cpvtime" class="muted mono" style="min-width:96px;text-align:right">0:00 / 0:00</span>
-            <span class="volctl" data-t="Громкость превью — общая для всех плееров"><span data-ic="sound"></span><input type="range" data-vol aria-label="Громкость превью" min="0" max="100" value="100" step="1" oninput="setMediaVol(this.value)" onpointerup="this.blur()"></span>
+            <span class="i" data-t="Картинка идёт по монтажу (какая камера назначена), а звук — с выбранной камеры. Клик по строке ниже — перейти к этому куску.">!</span>
+          </div>
+          <div class="pvaudio">
+            <span class="pvlbl" data-t="Громкость превью — общая для всех плееров">Громкость</span>
+            <span class="pvsl" data-t="Громкость превью — общая для всех плееров"><span data-ic="sound"></span><input type="range" data-vol aria-label="Громкость превью" min="0" max="100" value="100" step="1" oninput="setMediaVol(this.value)" onpointerup="this.blur()"></span>
+            <span class="pvval" data-volv data-noi18n>100</span>
           </div>
           <div class="row" style="align-items:center;margin-top:10px;gap:8px">
             <span class="muted" style="font-size:12px">Звук:</span>
             <span id="cpvaudio" class="seg" style="display:inline-flex"></span>
           </div>
-          <div style="margin-top:10px"><span class="i" data-t="Картинка идёт по монтажу (какая камера назначена), а звук — с выбранной камеры. Клик по строке ниже — перейти к этому куску.">!</span></div>
         </div>
       </div>
       <div id="camslegend" class="row" style="gap:14px;margin-bottom:10px"></div>
@@ -723,21 +804,29 @@
       <button class="icon" data-close aria-label="Закрыть" data-t="Закрыть" onclick="closeModal('mbDelClip')"><span data-ic="x"></span></button></div>
     <div class="mbody" style="display:flex;flex-direction:column;gap:10px">
       <div id="delClipName" data-noi18n style="font-size:13px;word-break:break-all;color:var(--tx);max-height:120px;overflow-y:auto"></div>
-      <div id="delClipInitial" style="display:flex;flex-direction:column;gap:10px">
-        <div class="muted" style="font-size:12px;line-height:1.5">Убрать клип только из списка интерфейса или отправить XML и все сопутствующие файлы нарезки в корзину (можно вернуть)? Исходное видео не затрагивается.</div>
-        <div class="row" style="gap:8px">
-          <button class="primary" style="flex:1" onclick="delClipListOnly()">Убрать из списка</button>
-          <button class="primary" style="flex:1" onclick="delClipDiskPrepare()">В корзину (можно вернуть)…</button>
-        </div>
+      <div id="delClipInfo" class="muted" style="font-size:12px;line-height:1.5"></div>
+      <label class="chk" style="margin:0;align-self:flex-start"><input type="checkbox" id="delClipSrc" disabled> И исходники</label>
+      <div id="delClipSrcList" style="max-height:140px;overflow-y:auto;background:var(--bg2);border:1px solid var(--bd);border-radius:var(--r);padding:8px;font-size:11px;font-family:ui-monospace,monospace;color:var(--mut);line-height:1.6;display:flex;flex-direction:column;gap:2px"></div>
+      <div class="row" style="gap:8px">
+        <button class="sm" style="flex:1" onclick="closeModal('mbDelClip')">Отмена</button>
+        <button class="primary" id="delClipDiskConfirmBtn" style="flex:1" onclick="delClipDiskExecute()" disabled>Удалить</button>
       </div>
-      <div id="delClipConfirm" style="display:none;flex-direction:column;gap:10px">
-        <div id="delClipCams" class="muted" style="font-size:12px;line-height:1.5;padding:6px 8px;background:var(--bg);border:1px solid var(--bd);border-radius:var(--r)"></div>
-        <div id="delClipInfo" class="muted" style="font-size:12px"></div>
-        <div id="delClipList" style="max-height:160px;overflow-y:auto;background:var(--bg2);border:1px solid var(--bd);border-radius:var(--r);padding:8px;font-size:11px;font-family:ui-monospace,monospace;color:var(--mut);line-height:1.6;display:flex;flex-direction:column;gap:2px"></div>
-        <div class="row" style="gap:8px">
-          <button class="sm" style="flex:1" onclick="delClipDiskBack()">Назад</button>
-          <button class="primary" id="delClipDiskConfirmBtn" style="flex:1" onclick="delClipDiskExecute()">В корзину (можно вернуть)</button>
-        </div>
+    </div>
+  </div>
+</div>
+
+<div class="backdrop" id="mbDelPodcast" onclick="closeIfBack(event,'mbDelPodcast')">
+  <div class="modal" style="max-width:520px" role="dialog" aria-modal="true" aria-label="Удалить подкаст">
+    <div class="mhead"><span class="t" id="delPodTitle">Удалить подкаст?</span>
+      <span class="grow"></span>
+      <button class="icon" data-close aria-label="Закрыть" data-t="Закрыть" onclick="closeModal('mbDelPodcast')"><span data-ic="x"></span></button></div>
+    <div class="mbody" style="display:flex;flex-direction:column;gap:10px">
+      <div id="delPodText" class="muted" style="font-size:12px;line-height:1.5"></div>
+      <label id="delPodSrcRow" class="chk" style="margin:0;align-self:flex-start;display:none"><input type="checkbox" id="delPodSrc"> И исходник</label>
+      <div id="delPodSrcName" data-noi18n class="muted" style="font-size:11px;word-break:break-all"></div>
+      <div class="row" style="gap:8px">
+        <button class="sm" style="flex:1" onclick="closeModal('mbDelPodcast')">Отмена</button>
+        <button class="primary" id="delPodOk" style="flex:1">Удалить</button>
       </div>
     </div>
   </div>
@@ -782,6 +871,7 @@
     <div class="tabs" id="aisTabs" role="tablist" aria-orientation="vertical">
       <button class="tab on" id="aistabbtn_models" aria-controls="aistab_models" aria-selected="true" data-tab="models" role="tab" onclick="aiSetTab('models')">Подключения</button>
       <button class="tab" id="aistabbtn_cut" aria-controls="aistab_cut" aria-selected="false" data-tab="cut" role="tab" onclick="aiSetTab('cut')">Нарезка</button>
+      <button class="tab" id="aistabbtn_podcast" aria-controls="aistab_podcast" aria-selected="false" data-tab="podcast" role="tab" onclick="aiSetTab('podcast')">Подкаст</button>
       <button class="tab" id="aistabbtn_markup" aria-controls="aistab_markup" aria-selected="false" data-tab="markup" role="tab" onclick="aiSetTab('markup')">Разметка</button>
       <button class="tab" id="aistabbtn_generation" aria-controls="aistab_generation" aria-selected="false" data-tab="generation" role="tab" onclick="aiSetTab('generation')">Генерация</button>
       <button class="tab" id="aistabbtn_words" aria-controls="aistab_words" aria-selected="false" data-tab="words" role="tab" onclick="aiSetTab('words')">Слова</button>
@@ -843,6 +933,40 @@
           <div class="setrow"><label for="vad_pad">Паддинг (с) <span class="i" data-t="Отступ с краёв кусков речи для сохранения окончаний. По умолчанию 0.08 с.">!</span></label>
             <input type="number" id="vad_pad" class="sm" style="max-width:100px" step="0.01" onchange="setVadThreshold('pad', this.value)"></div>
         </div>
+        <div class="sect">Страница нарезки <span class="i" data-t="Какие блоки показывать на странице нарезки. Снял галку — блока на странице нет вовсе; работа в нём (скачивание, подкасты на диске) не теряется — вернёшь галку, всё на месте.">!</span></div>
+        <div class="setrow"><label class="chk pgblk" style="gap:7px;align-items:center;margin:0"><input type="checkbox" id="show_gdrive" checked onchange="setPageBlock('gdrive', this.checked)"> Гугл-диск</label></div>
+        <div class="setrow"><label class="chk pgblk" style="gap:7px;align-items:center;margin:0"><input type="checkbox" id="show_podcast" checked onchange="setPageBlock('podcast', this.checked)"> Подкаст → рилсы</label></div>
+        <div class="sect">Корзина <span class="i" data-t="Удалённые клипы и подкасты лежат в корзине — их можно вернуть. На этих файлах (в них твои правки нарезки) программу можно дообучать. Не нужно — очисти: файлы удалятся насовсем.">!</span></div>
+        <div class="setrow" style="gap:8px;align-items:center;flex-wrap:wrap"><span id="trashSum" class="hint" style="flex:1 1 auto;font-size:12px">—</span>
+          <button class="sm" id="trashEmptyBtn" onclick="trashEmpty()" disabled>Очистить корзину</button></div>
+      </div>
+    </div>
+
+    <!-- ============ вкладка: подкаст ============ -->
+    <div class="aistab" id="aistab_podcast" role="tabpanel" aria-labelledby="aistabbtn_podcast" aria-hidden="true" style="display:none">
+      <div class="mbody" style="display:flex;flex-direction:column;gap:11px">
+        <div class="sect" style="margin-top:0">Шаг «Подкаст» <span class="i" data-t="Здесь выбирается, КТО работает на шаге «Подкаст → рилсы»: кто выбирает куски, кто расшифровывает и на каком языке. Сам разбор запускается на шаге 1, в блоке «Подкаст».">!</span></div>
+        <div class="setrow"><label>Модель выбора кусков <span class="i" data-t="Какая ИИ-модель (профиль) выбирает куски подкаста для рилсов. Профили заводятся в ⚙ «Подключения». В облако уходит только текст расшифровки.">!</span></label>
+          <select data-prof="podcast" aria-label="Модель выбора кусков" onchange="setStepProfile(this)"></select></div>
+        <div class="setrow"><label>Ум выбора кусков <span class="i" data-t="Какая модель и насколько думает, выбирая куски подкаста для рилсов. Off — отвечает сразу (быстро и дёшево); уровни — сначала рассуждает, потом отвечает (дольше, но точнее).">!</span></label>
+          <select data-reas="podcast" aria-label="Ум выбора кусков" onchange="setStepReasoning(this)"></select>
+          <span class="hint" id="reas_hint_podcast" style="display:none"></span></div>
+        <div class="setrow"><label for="podcast_asr">Движок расшифровки <span class="i" data-t="Кто расшифровывает подкаст в слова с таймингами; для не-русских — Whisper или многоязычные.">!</span></label>
+          <select id="podcast_asr" onchange="setPodcastAsr(this.value)"></select></div>
+        <div class="setrow"><label for="podcast_lang">Язык подкаста <span class="i" data-t="На каком языке говорят в подкасте. «Определить сам» — движок расшифровки угадает язык по звуку; выбери язык явно, если он угадывает не тот.">!</span></label>
+          <select id="podcast_lang" onchange="setPodcastLang(this.value)">
+            <option value="auto">Определить сам</option>
+            <option value="ru">Русский (ru)</option>
+            <option value="en">Английский (en)</option>
+            <option value="uk">Украинский (uk)</option>
+            <option value="de">Немецкий (de)</option>
+            <option value="es">Испанский (es)</option>
+            <option value="fr">Французский (fr)</option>
+            <option value="it">Итальянский (it)</option>
+            <option value="pt">Португальский (pt)</option>
+            <option value="pl">Польский (pl)</option>
+            <option value="tr">Турецкий (tr)</option>
+          </select></div>
       </div>
     </div>
 

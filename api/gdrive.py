@@ -11,10 +11,11 @@
 Почему именно rclone, а не своя качалка на requests — в докстроке `core/rclone.py`.
 """
 import os, shutil, subprocess, threading, time
-from typing import Any, Callable, cast
+from typing import Any, Callable
 from flask import Response, jsonify, request
-from ._core import LOG_CAP, bp, jstr, kill_tree, umsg_err, sysexit_text
+from ._core import bp, job_log_add, job_log_since, jstr, kill_tree, umsg_err, sysexit_text
 from core.applog import get_logger
+from core.jobproc import STALLED_RC, run_watched
 from core.rclone import (checks_fields, clean_line, is_noise, parse_gdrive_link,
                          progress_line, rclone_cmd, rclone_remote, stats_fields)
 from core.umsg import ReelsiError, umsg
@@ -23,7 +24,7 @@ log = get_logger("reelsi.gdrive")
 
 # Сторож простоя rclone: 10 минут тишины в stdout -> принудительное завершение
 RCLONE_STALL_SEC = 10 * 60
-_RCLONE_STALLED = -137
+_RCLONE_STALLED = STALLED_RC
 # Поля разобранного прогресса, по изменению которых видно, что передача идёт
 # `speed`/`eta` сюда не входят намеренно: они меняются
 # и у блока статистики, напечатанного по таймеру `--stats 2s`, когда передача уже встала.
@@ -50,52 +51,45 @@ def gdrive_kill() -> None:
         _kill_proc(p)
 
 
+def _set_gdproc(p: subprocess.Popen[str] | None) -> None:
+    global GDPROC
+    with GDLOCK:
+        GDPROC = p
+
+
+def _gd_cancelled() -> bool:
+    return bool(GDJOB.get("cancel"))
+
+
 def _run_rclone(args: list[str], emit: Callable[..., Any], stat: Callable[..., Any] | None = None) -> int:
-    """rclone копией сабпроцессом со сторожем простоя и поддержкой отмены.
+    """rclone копией сабпроцессом: разбор вывода здесь, запуск и сторож — `core.jobproc.run_watched`.
+
     Статистика уходит в `stat` (живой статус страницы), события — в `emit` (лог джоба).
 
     В лог прогресс дублируется раз в 10%: лог — это след событий, по которому
     потом видно, докуда дошло, а не лента процентов (наружу отдаются последние
     строки, и при статистике раз в 2 секунды в них не осталось бы ничего).
 
-    Вывод читает ФОНОВЫЙ поток (образец — `_run_proc_afx` в api/render.py): пока
-    главный поток сидит в `for line in p.stdout`, он не может ни заметить простой,
-    ни снять зависший процесс — а зависшая сеть держала «Скачивание уже идёт»
-    до перезапуска сервера. Все строки разбирает ОДИН обработчик `_handle`: если
-    разбирать хвост вывода второй копией (после выхода процесса), прогресс уедет
-    только в статус, а из лога конец передачи пропадёт.
+    Все строки разбирает ОДИН обработчик `_handle`: если разбирать хвост вывода второй
+    копией (после выхода процесса), прогресс уедет только в статус, а из лога конец
+    передачи пропадёт.
 
     Простой считается по ИЗМЕНЕНИЮ разобранного прогресса, а не по факту строки:
-    `--stats 2s` печатает блок статистики по таймеру, и раньше
-    вставшая передача выглядела живой. Исключение на строке ловится на САМОЙ строке —
-    поток чтения из-за одной непонятной строки больше не умирает.
+    `--stats 2s` печатает блок статистики по таймеру, и раньше вставшая передача
+    выглядела живой. Изменение значения ЛЮБОГО поля прогресса относительно его прежнего
+    значения (`last_stat[k]`), а не кортежа строки: строки блока статистики чередуются и
+    имеют разную форму. Скорость и ETA в ключ не входят — они меняются у блока статистики
+    сами по себе и «оживили» бы вставшую передачу.
     """
-    global GDPROC
-    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                         text=True, encoding="utf-8", errors="replace",
-                         bufsize=1, creationflags=flags)
-    with GDLOCK:
-        GDPROC = p
-    if GDJOB.get("cancel"):
-        _kill_proc(p)
-
     logged = -10          # -10, а не 0: первый же блок (0%) отмечает в логе старт передачи
-    # Время последней РЕАЛЬНОЙ активности: от него, а не от старта, считаем простой —
-    # большая папка качается минутами, и рубить её нельзя.
-    activity = [time.time()]
-    # Последний разобранный прогресс по полям: активность — изменение значения
-    # ЛЮБОГО поля прогресса относительно его прежнего значения (словарь last_stat[k]),
-    # а не кортежа строки. Строки блока статистики (--stats 2s) имеют
-    # разную форму и чередуются; раньше кортеж строки «менялся» на каждой строке
-    # при полностью замороженных значениях, и вставшая передача не снималась.
+    # Последний разобранный прогресс по полям (см. докстроку): словарь, а не кортеж строки.
     last_stat: dict[str, Any] = {}
 
-    def _handle(raw: str) -> None:
+    def _handle(raw: str) -> bool:
         nonlocal logged
         line = raw.rstrip()
         if not line.strip():
-            return
+            return False
         f = stats_fields(line)
         chk = None if f else checks_fields(line)
         prog = f or chk
@@ -103,79 +97,34 @@ def _run_rclone(args: list[str], emit: Callable[..., Any], stat: Callable[..., A
             if f and stat:
                 stat(f)
             # Прогресс изменился (байты/проценты/имя файла, счётчик файлов, проверки) —
-            # передача жива. Скорость и ETA в ключ НЕ входят: они меняются у блока статистики
-            # сами по себе и «оживили» бы вставшую передачу.
+            # передача жива.
             changed = False
             for k in _PROGRESS_KEYS:
                 if k in prog:
                     if k not in last_stat or last_stat[k] != prog[k]:
                         last_stat[k] = prog[k]
                         changed = True
-            if changed:
-                activity[0] = time.time()
             if f:
                 pct = f.get("pct")
                 if pct is not None and pct >= logged + 10:
                     logged = pct - pct % 10
                     emit(progress_line(line))
-            return
+            return changed
         if is_noise(line):
-            return                       # остальные строки блока статистики — не активность
-        activity[0] = time.time()        # не статистика — живое событие rclone
-        emit(clean_line(line))
+            return False                 # остальные строки блока статистики — не активность
+        emit(clean_line(line))           # не статистика — живое событие rclone
+        return True
 
-    # Исключение ловится НА СТРОКУ: раньше `except Exception` стоял вокруг всего цикла,
-    # поток чтения умирал на первой же неожиданной строке, активность замирала — и
-    # сторож снимал ЗДОРОВОЕ скачивание через 10 минут.
-    died: list[str | None] = [None]
-
-    def _pump() -> None:
-        try:
-            for line in cast(Any, p.stdout):
-                try:
-                    _handle(line)
-                except ReelsiError: raise
-                except Exception as e:
-                    log.warning("rclone: строка вывода не разобрана: %s: %s",
-                                type(e).__name__, e)
-        except ReelsiError: raise
-        except Exception as e:               # умерло само чтение потока, не разбор строки
-            died[0] = f"{type(e).__name__}: {e}"
-            log.warning("rclone: поток чтения вывода упал: %s", died[0])
-
-    pump = threading.Thread(target=_pump, daemon=True)
-    pump.start()
-
-    stalled = False
-    warned_dead = False
-    try:
-        while p.poll() is None:
-            now = time.time()
-            if died[0] is not None and not warned_dead:
-                # Активность больше неоткуда взять: по простою НЕ убиваем — процесс
-                # жив и может дописывать файл молча.
-                warned_dead = True
-                emit("⚠ поток чтения вывода rclone умер — активность не отслеживается, "
-                     "скачивание не снимаю по простою (снять — «Стоп»)")
-            if not warned_dead and now - activity[0] >= RCLONE_STALL_SEC:
-                emit(f"⚠ rclone не отвечает {int(RCLONE_STALL_SEC // 60)} минут — "
-                     f"скачивание снято (сторож простоя)")
-                _kill_proc(p)
-                stalled = True
-                break
-            if GDJOB.get("cancel"):
-                _kill_proc(p)
-                break
-            time.sleep(0.5)
-        rc = p.wait()
-        # Хвост вывода (последние строки rclone) читается ещё мгновение после выхода;
-        # ждём его, но не бесконечно: насос — демон и не должен держать джоб.
-        pump.join(timeout=10.0)
-    finally:
-        with GDLOCK:
-            if GDPROC is p:
-                GDPROC = None
-    return _RCLONE_STALLED if stalled else rc
+    return run_watched(
+        args, _handle, set_proc=_set_gdproc, cancelled=_gd_cancelled,
+        stall_sec=RCLONE_STALL_SEC,
+        on_stall=lambda: emit(f"⚠ rclone не отвечает {int(RCLONE_STALL_SEC // 60)} минут — "
+                              f"скачивание снято (сторож простоя)"),
+        # Активность больше неоткуда взять: по простою НЕ снимаем — процесс жив и может
+        # дописывать файл молча. Снимает только «Стоп».
+        on_dead=lambda: emit("⚠ поток чтения вывода rclone умер — активность не отслеживается, "
+                             "скачивание не снимаю по простою (снять — «Стоп»)"),
+        kill=_kill_proc)
 
 
 # failed: None пока идём, True/False по итогу — страница показывала «скачивание
@@ -192,13 +141,10 @@ GDJOB: dict[str, Any] = dict(GDFRESH, running=False, done=False, failed=None, lo
 GDLOCK = threading.Lock()
 
 
-def _gemit(line: Any) -> None:
-    with GDLOCK:
-        GDJOB["log"].append(str(line))
-        over = len(GDJOB["log"]) - LOG_CAP
-        if over > 0:
-            del GDJOB["log"][:over]
-            GDJOB["log_base"] += over
+def _gemit(line: Any, /, **vars: Any) -> None:
+    # Через log_entry, как лог остальных джобов: шаблон с переменными переводится на клиенте.
+    # Раньше здесь был str(line) — перевод в логе rclone не работал.
+    job_log_add(GDJOB, GDLOCK, line, vars)
 
 
 def _gstat(fields: dict[str, Any]) -> None:
@@ -307,9 +253,9 @@ def api_gdrive_status() -> Response:
     except ValueError:
         since = 0
     with GDLOCK:
-        start = max(0, since - GDJOB["log_base"])
+        log, total = job_log_since(GDJOB, since)
         d = {k: v for k, v in GDJOB.items() if k not in ("log", "log_base")}
-        d["log"] = GDJOB["log"][start:]
-        d["log_total"] = GDJOB["log_base"] + len(GDJOB["log"])
+        d["log"] = log
+        d["log_total"] = total
         d["elapsed"] = int(time.time()) - GDJOB["started"] if GDJOB["started"] else 0
     return jsonify(ok=True, **d)

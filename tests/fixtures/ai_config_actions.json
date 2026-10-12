@@ -10,6 +10,7 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
@@ -74,6 +75,7 @@
     }
    },
    "model_device": "auto",
+   "podcast_lang": "auto",
    "presets": {
     "anthropic": {
      "base_url": "https://api.anthropic.com",
@@ -178,6 +180,7 @@
     "cut": "medium",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_examples": [
@@ -237,12 +240,14 @@
     "cut": "Нарезка",
     "inserts": "Вставки",
     "intro": "Интро",
+    "podcast": "Подкаст",
     "yellow": "Жёлтые слова"
    },
    "reasoning_steps": {
     "cut": "medium",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -250,6 +255,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 1,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -257,12 +263,14 @@
     "cut": true,
     "inserts": true,
     "intro": true,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
     "intro": "Основной",
+    "podcast": "Основной",
     "yellow": "Основной"
    },
    "stock": {
@@ -747,12 +755,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -784,12 +794,14 @@
     "cut": "high",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "high",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -797,6 +809,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 1,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -804,12 +817,14 @@
     "cut": true,
     "inserts": true,
     "intro": true,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
     "intro": "Основной",
+    "podcast": "Основной",
     "yellow": "Основной"
    },
    "stock": {
@@ -875,12 +890,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -912,12 +929,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -925,6 +944,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 1,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -932,12 +952,14 @@
     "cut": true,
     "inserts": true,
     "intro": true,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
     "intro": "Основной",
+    "podcast": "Основной",
     "yellow": "Основной"
    },
    "stock": {
@@ -1039,12 +1061,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -1076,12 +1100,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -1089,6 +1115,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 1,
+    "podcast": 1,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -1096,12 +1123,14 @@
     "cut": true,
     "inserts": true,
     "intro": true,
+    "podcast": true,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
     "intro": "Основной",
+    "podcast": "Основной",
     "yellow": "Клод"
    },
    "stock": {
@@ -1170,12 +1199,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -1207,12 +1238,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -1220,6 +1253,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 1,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -1227,12 +1261,14 @@
     "cut": true,
     "inserts": true,
     "intro": true,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
     "intro": "Основной",
+    "podcast": "Основной",
     "yellow": "Основной"
    },
    "stock": {
@@ -1299,12 +1335,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -1336,12 +1374,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -1349,6 +1389,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 4,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -1356,12 +1397,14 @@
     "cut": true,
     "inserts": true,
     "intro": false,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
     "intro": "Аудио",
+    "podcast": "Основной",
     "yellow": "Основной"
    },
    "stock": {
@@ -1466,12 +1509,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -1503,12 +1548,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -1516,6 +1563,7 @@
     "cut": 2,
     "inserts": 1,
     "intro": 4,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {
@@ -1525,12 +1573,14 @@
     "cut": true,
     "inserts": true,
     "intro": false,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
     "intro": "Аудио",
+    "podcast": "Основной",
     "yellow": "Основной"
    },
    "stock": {
@@ -1602,12 +1652,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -1639,12 +1691,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -1652,6 +1706,7 @@
     "cut": 2,
     "inserts": 1,
     "intro": 4,
+    "podcast": 1,
     "yellow": 3
    },
    "step_concurrency_override": {
@@ -1662,12 +1717,14 @@
     "cut": true,
     "inserts": true,
     "intro": false,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
     "intro": "Аудио",
+    "podcast": "Основной",
     "yellow": "Основной"
    },
    "stock": {
@@ -1774,12 +1831,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -1811,12 +1870,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -1824,6 +1885,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 4,
+    "podcast": 1,
     "yellow": 3
    },
    "step_concurrency_override": {
@@ -1833,12 +1895,14 @@
     "cut": true,
     "inserts": true,
     "intro": false,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
     "intro": "Аудио",
+    "podcast": "Основной",
     "yellow": "Основной"
    },
    "stock": {
@@ -1910,12 +1974,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -1947,12 +2013,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -1960,6 +2028,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 4,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -1967,12 +2036,14 @@
     "cut": true,
     "inserts": true,
     "intro": false,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
     "intro": "Аудио",
+    "podcast": "Основной",
     "yellow": "Основной"
    },
    "stock": {
@@ -2040,12 +2111,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -2077,12 +2150,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -2090,6 +2165,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -2097,12 +2173,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -2187,12 +2265,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -2224,12 +2304,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -2237,6 +2319,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -2244,12 +2327,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -2318,12 +2403,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -2355,12 +2442,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -2368,6 +2457,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -2375,12 +2465,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -2498,12 +2590,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -2535,12 +2629,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -2548,6 +2644,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -2555,12 +2652,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -2647,12 +2746,14 @@
    "active_cut_text_asr": "whisper:large-v3-turbo",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -2684,12 +2785,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -2697,6 +2800,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -2704,12 +2808,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -2780,12 +2886,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -2817,12 +2925,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -2830,6 +2940,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -2837,12 +2948,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -2930,12 +3043,14 @@
    "active_cut_text_asr": "",
    "active_image": "Аудио",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -2967,12 +3082,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -2980,6 +3097,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -2987,12 +3105,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -3064,12 +3184,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -3101,12 +3223,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -3114,6 +3238,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -3121,12 +3246,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -3232,12 +3359,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "Аудио",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -3269,12 +3398,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -3282,6 +3413,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -3289,12 +3421,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -3367,12 +3501,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -3404,12 +3540,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -3417,6 +3555,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -3424,12 +3563,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -3536,12 +3677,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -3573,12 +3716,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -3586,6 +3731,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -3593,12 +3739,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -3691,12 +3839,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -3728,12 +3878,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -3741,6 +3893,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -3748,12 +3901,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -3828,12 +3983,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -3865,12 +4022,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -3878,6 +4037,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -3885,12 +4045,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -3965,12 +4127,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -4002,12 +4166,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -4015,6 +4181,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -4022,12 +4189,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -4102,12 +4271,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -4139,12 +4310,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -4152,6 +4325,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -4159,12 +4333,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -4239,12 +4415,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": false,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -4276,12 +4454,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -4289,6 +4469,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -4296,12 +4477,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -4377,12 +4560,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "builtin",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -4414,12 +4599,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -4427,6 +4614,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -4434,12 +4622,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -4515,12 +4705,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -4552,12 +4744,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -4565,6 +4759,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -4572,12 +4767,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -4672,12 +4869,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -4709,12 +4908,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "birefnet-general",
@@ -4722,6 +4923,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -4729,12 +4931,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -4830,12 +5034,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -4867,12 +5073,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -4880,6 +5088,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -4887,12 +5096,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -4970,12 +5181,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -5007,12 +5220,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -5020,6 +5235,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -5027,12 +5243,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -5111,12 +5329,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -5148,12 +5368,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -5161,6 +5383,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -5168,12 +5391,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -5252,12 +5477,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -5289,12 +5516,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -5302,6 +5531,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -5309,12 +5539,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -5412,12 +5644,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -5449,12 +5683,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -5462,6 +5698,7 @@
     "cut": 4,
     "inserts": 4,
     "intro": 4,
+    "podcast": 4,
     "yellow": 4
    },
    "step_concurrency_override": {},
@@ -5469,12 +5706,14 @@
     "cut": false,
     "inserts": false,
     "intro": false,
+    "podcast": false,
     "yellow": false
    },
    "step_profiles": {
     "cut": "Клод",
     "inserts": "Клод",
     "intro": "Аудио",
+    "podcast": "Клод",
     "yellow": "Клод"
    },
    "stock": {
@@ -5565,12 +5804,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -5612,12 +5853,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -5625,6 +5868,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 4,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -5632,12 +5876,14 @@
     "cut": true,
     "inserts": true,
     "intro": false,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Новый",
     "inserts": "Новый",
     "intro": "Аудио",
+    "podcast": "Новый",
     "yellow": "Новый"
    },
    "stock": {
@@ -5736,12 +5982,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -5779,12 +6027,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -5792,6 +6042,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 4,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -5799,12 +6050,14 @@
     "cut": true,
     "inserts": true,
     "intro": false,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Новый",
     "inserts": "Новый",
     "intro": "Аудио",
+    "podcast": "Новый",
     "yellow": "Новый"
    },
    "stock": {
@@ -5977,12 +6230,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -6020,12 +6275,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -6033,6 +6290,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 4,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -6040,12 +6298,14 @@
     "cut": true,
     "inserts": true,
     "intro": false,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Новый",
     "inserts": "Новый",
     "intro": "Аудио",
+    "podcast": "Новый",
     "yellow": "Новый"
    },
    "stock": {
@@ -6141,12 +6401,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -6184,12 +6446,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -6197,6 +6461,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 4,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -6204,12 +6469,14 @@
     "cut": true,
     "inserts": true,
     "intro": false,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Новый 2",
     "inserts": "Новый 2",
     "intro": "Аудио",
+    "podcast": "Новый 2",
     "yellow": "Новый 2"
    },
    "stock": {
@@ -6298,12 +6565,14 @@
    "active_cut_text_asr": "",
    "active_image": "Аудио",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -6341,12 +6610,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -6354,6 +6625,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 4,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -6361,12 +6633,14 @@
     "cut": true,
     "inserts": true,
     "intro": false,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Новый 2",
     "inserts": "Новый 2",
     "intro": "Аудио",
+    "podcast": "Новый 2",
     "yellow": "Новый 2"
    },
    "stock": {
@@ -6455,12 +6729,14 @@
    "active_cut_text_asr": "",
    "active_image": "Аудио",
    "active_omni": "Аудио",
+   "active_podcast_asr": "whisper",
    "active_video": "Аудио",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио": {
      "api_key": "•••3333",
@@ -6498,12 +6774,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -6511,6 +6789,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 4,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -6518,12 +6797,14 @@
     "cut": true,
     "inserts": true,
     "intro": false,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Новый 2",
     "inserts": "Новый 2",
     "intro": "Аудио",
+    "podcast": "Новый 2",
     "yellow": "Новый 2"
    },
    "stock": {
@@ -6619,12 +6900,14 @@
    "active_cut_text_asr": "",
    "active_image": "Аудио 2",
    "active_omni": "Аудио 2",
+   "active_podcast_asr": "whisper",
    "active_video": "Аудио 2",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио 2": {
      "api_key": "•••3333",
@@ -6662,12 +6945,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -6675,6 +6960,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 4,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -6682,12 +6968,14 @@
     "cut": true,
     "inserts": true,
     "intro": false,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Новый 2",
     "inserts": "Новый 2",
     "intro": "Аудио 2",
+    "podcast": "Новый 2",
     "yellow": "Новый 2"
    },
    "stock": {
@@ -6777,12 +7065,14 @@
    "active_cut_text_asr": "",
    "active_image": "Аудио 2",
    "active_omni": "Аудио 2",
+   "active_podcast_asr": "whisper",
    "active_video": "Аудио 2",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио 2": {
      "api_key": "•••3333",
@@ -6826,12 +7116,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -6839,6 +7131,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 4,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -6846,12 +7139,14 @@
     "cut": true,
     "inserts": true,
     "intro": false,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Новый 2",
     "inserts": "Новый 2",
     "intro": "Аудио 2",
+    "podcast": "Новый 2",
     "yellow": "Новый 2"
    },
    "stock": {
@@ -7014,12 +7309,14 @@
    "active_cut_text_asr": "",
    "active_image": "Аудио 2",
    "active_omni": "Аудио 2",
+   "active_podcast_asr": "whisper",
    "active_video": "Аудио 2",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио 2": {
      "api_key": "•••3333",
@@ -7057,12 +7354,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -7070,6 +7369,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 4,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -7077,12 +7377,14 @@
     "cut": true,
     "inserts": true,
     "intro": false,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Новый 2",
     "inserts": "Новый 2",
     "intro": "Аудио 2",
+    "podcast": "Новый 2",
     "yellow": "Новый 2"
    },
    "stock": {
@@ -7188,12 +7490,14 @@
    "active_cut_text_asr": "",
    "active_image": "Аудио 2",
    "active_omni": "Аудио 2",
+   "active_podcast_asr": "whisper",
    "active_video": "Аудио 2",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио 2": {
      "api_key": "•••3333",
@@ -7225,12 +7529,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -7238,6 +7544,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 4,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -7245,12 +7552,14 @@
     "cut": true,
     "inserts": true,
     "intro": false,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
     "intro": "Аудио 2",
+    "podcast": "Основной",
     "yellow": "Основной"
    },
    "stock": {
@@ -7333,12 +7642,14 @@
    "active_cut_text_asr": "",
    "active_image": "Аудио 2",
    "active_omni": "Аудио 2",
+   "active_podcast_asr": "whisper",
    "active_video": "Аудио 2",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Аудио 2": {
      "api_key": "•••3333",
@@ -7364,12 +7675,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -7377,6 +7690,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 4,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -7384,12 +7698,14 @@
     "cut": true,
     "inserts": true,
     "intro": false,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
     "intro": "Аудио 2",
+    "podcast": "Основной",
     "yellow": "Основной"
    },
    "stock": {
@@ -7466,12 +7782,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Основной": {
      "api_key": "•••1111",
@@ -7491,12 +7809,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -7504,6 +7824,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 1,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -7511,12 +7832,14 @@
     "cut": true,
     "inserts": true,
     "intro": true,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
     "intro": "Основной",
+    "podcast": "Основной",
     "yellow": "Основной"
    },
    "stock": {
@@ -7585,12 +7908,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Основной": {
      "api_key": "•••1111",
@@ -7603,12 +7928,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -7616,6 +7943,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 1,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -7623,12 +7951,14 @@
     "cut": true,
     "inserts": true,
     "intro": true,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
     "intro": "Основной",
+    "podcast": "Основной",
     "yellow": "Основной"
    },
    "stock": {
@@ -7706,12 +8036,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "cpu",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Основной": {
      "api_key": "•••1111",
@@ -7724,12 +8056,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -7737,6 +8071,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 1,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -7744,12 +8079,14 @@
     "cut": true,
     "inserts": true,
     "intro": true,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
     "intro": "Основной",
+    "podcast": "Основной",
     "yellow": "Основной"
    },
    "stock": {
@@ -7830,12 +8167,14 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
    "image_rembg": true,
    "model_device": "auto",
    "ok": true,
+   "podcast_lang": "auto",
    "profiles": {
     "Основной": {
      "api_key": "•••1111",
@@ -7848,12 +8187,14 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -7861,6 +8202,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 1,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -7868,12 +8210,14 @@
     "cut": true,
     "inserts": true,
     "intro": true,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
     "intro": "Основной",
+    "podcast": "Основной",
     "yellow": "Основной"
    },
    "stock": {
@@ -7964,6 +8308,7 @@
    "active_cut_text_asr": "",
    "active_image": "__off__",
    "active_omni": "__local__",
+   "active_podcast_asr": "whisper",
    "active_video": "__off__",
    "ae_build_workers": "auto",
    "glitch_glow": "deepglow2",
@@ -7989,6 +8334,7 @@
     }
    },
    "model_device": "auto",
+   "podcast_lang": "auto",
    "presets": {
     "anthropic": {
      "base_url": "https://api.anthropic.com",
@@ -8074,6 +8420,7 @@
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "reasoning_examples": [
@@ -8133,12 +8480,14 @@
     "cut": "Нарезка",
     "inserts": "Вставки",
     "intro": "Интро",
+    "podcast": "Подкаст",
     "yellow": "Жёлтые слова"
    },
    "reasoning_steps": {
     "cut": "max",
     "inserts": "off",
     "intro": "off",
+    "podcast": "medium",
     "yellow": "off"
    },
    "rembg_model": "u2net",
@@ -8146,6 +8495,7 @@
     "cut": 1,
     "inserts": 1,
     "intro": 1,
+    "podcast": 1,
     "yellow": 1
    },
    "step_concurrency_override": {},
@@ -8153,12 +8503,14 @@
     "cut": true,
     "inserts": true,
     "intro": true,
+    "podcast": true,
     "yellow": true
    },
    "step_profiles": {
     "cut": "Основной",
     "inserts": "Основной",
     "intro": "Основной",
+    "podcast": "Основной",
     "yellow": "Основной"
    },
    "stock": {

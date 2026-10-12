@@ -830,11 +830,49 @@ def api_waveform() -> Response | tuple[str, int]:
         return jsonify(**umsg_err(ReelsiError(umsg("waveform_failed", f"{type(e).__name__}: {e}"))))
 
 
+def _rp(p: str) -> str:
+    """Путь для сравнения: realpath в нижнем регистре (на Windows регистр и разделители не значат)."""
+    return os.path.realpath(p).lower()
+
+
+def _flag(d: dict[str, Any], key: str) -> bool:
+    """Булев флаг из тела запроса: true / "true" / "1" — да, всё прочее (и отсутствие) — нет."""
+    v = d.get(key)
+    return v is True or str(v).lower() in ("true", "1")
+
+
+def _clip_sharers(xml_dir: str, cam_rp: str, exclude_rp: set[str]) -> list[str]:
+    """Имена (stem) ДРУГИХ клипов Reelsi из папки XML, которые ссылаются на тот же файл камеры.
+
+    Клипы из пачки удаления (exclude_rp) не считаются: их исходник уйдёт вместе с ними.
+    Из-за этого исходник, общий с соседним клипом, в корзину не уносим.
+    """
+    names: list[str] = []
+    try:
+        entries = sorted(os.listdir(xml_dir))
+    except OSError:
+        return names  # папку не прочли — общих клипов не видно, но и переносить тогда не из-за чего
+    for fname in entries:
+        if not fname.lower().endswith(".xml"):
+            continue
+        p = os.path.join(xml_dir, fname)
+        if not os.path.isfile(p) or _rp(p) in exclude_rp:
+            continue
+        if not is_reelsi_target(p, "cut"):
+            continue
+        if any(c and _rp(str(c).strip().strip('"')) == cam_rp for c in _clip_cams(p)):
+            names.append(os.path.splitext(fname)[0])
+    return names
+
+
 @bp.route("/api/clip_delete", methods=["POST"])
 def api_clip_delete() -> Response:
-    """Удалить нарезку клипа целиком: XML и все его сайдкары, НЕ трогая исходное видео.
+    """Удалить нарезку клипа в корзину: XML и все его сайдкары.
 
-    dry: true — только проверка и список файлов на удаление без реального удаления.
+    Исходные камеры по умолчанию не трогаем. sources: true — уносим и их, кроме тех, что нужны
+    другим клипам папки (в ответе sources[].shared_with, в skipped — причина). batch — все XML,
+    которые удаляются этой пачкой (по умолчанию только xml): их исходники не считаются общими.
+    dry: true (по умолчанию) — только список, без переноса.
     """
     d = request.get_json(silent=True) or {}
     xml = jstr(d, "xml").strip().strip('"')
@@ -881,6 +919,34 @@ def api_clip_delete() -> Response:
             except Exception:
                 pass  # realpath не разрешился — базовое имя камеры уже в наборе защищённых
 
+    # Исходники камер клипа: только те, что есть на диске, без дублей. shared_with — кто ещё
+    # на них ссылается (клипы папки вне пачки удаления). Список отдаётся в ответе всегда,
+    # а переносится только при sources: true и пустом shared_with.
+    sources_on = _flag(d, "sources")
+    batch_rp = {_rp(xml_path)}
+    batch_in = d.get("batch")
+    if isinstance(batch_in, list):
+        for x in batch_in:
+            if isinstance(x, str) and x.strip():
+                batch_rp.add(_rp(x.strip().strip('"')))
+    src_items: list[dict[str, Any]] = []
+    seen_src: set[str] = set()
+    for c in cams:
+        c_str = str(c).strip().strip('"') if c and str(c).strip() else ""
+        if not c_str or not os.path.isfile(c_str):
+            continue
+        rp = _rp(c_str)
+        if rp in seen_src:
+            continue
+        seen_src.add(rp)
+        try:
+            sz = os.path.getsize(c_str)
+        except OSError:
+            sz = 0  # камеру видно, а размер не прочитали — в объём не попадёт
+        src_items.append({"path": c_str, "size": sz,
+                          "shared_with": _clip_sharers(xml_dir, rp, batch_rp)})
+    src_rps = {_rp(s["path"]) for s in src_items}
+
     prefix = stem.lower() + "."
     files_to_delete: list[dict[str, Any]] = []
     skipped: list[dict[str, str]] = []
@@ -910,6 +976,8 @@ def api_clip_delete() -> Response:
             skipped.append({"path": fpath, "why": "защищённый системный файл"})
             continue
         if base in cam_basenames or rp in cam_realpaths:
+            if sources_on and rp in src_rps:
+                continue  # исходник камеры: решает блок sources ниже (унести или оставить с причиной)
             skipped.append({"path": fpath, "why": "исходник камеры"})
             continue
 
@@ -965,17 +1033,30 @@ def api_clip_delete() -> Response:
             sz = 0
         files_to_delete.append({"path": fpath, "size": sz})
 
+    # Исходники, которые уйдут с клипом: sources: true и их никто больше не держит
+    source_files: list[dict[str, Any]] = []
+    if sources_on:
+        for s in src_items:
+            if s["shared_with"]:
+                skipped.append({"path": s["path"],
+                                "why": "нужен ещё клипам: " + ", ".join(s["shared_with"])})
+            else:
+                source_files.append({"path": s["path"], "size": s["size"]})
+    if dry:
+        files_to_delete = files_to_delete + source_files  # сухой прогон: показываем, что уйдёт
     total_bytes = sum(f["size"] for f in files_to_delete)
     trash_id = ""
 
     if not dry:
         paths_to_move = [f["path"] for f in files_to_delete]
+        src_paths = [f["path"] for f in source_files]
         try:
-            trash_id, moved, failed = clipstore.move_to_trash(xml_path, paths_to_move)
+            trash_id, moved, failed = clipstore.move_to_trash(xml_path, paths_to_move, sources=src_paths)
             moved_set = {os.path.realpath(p).lower() for p in moved}
             # deleted — только фактически перенесённое: занятый файл остался на диске,
             # в «удалённые» он не попадает, а уходит в skipped с причиной от clipstore.
-            deleted = [f for f in files_to_delete if os.path.realpath(f["path"]).lower() in moved_set]
+            deleted = [f for f in files_to_delete + source_files
+                       if os.path.realpath(f["path"]).lower() in moved_set]
             for rec in failed:
                 skipped.append({"path": rec["path"], "why": f"не перенесён: {rec['why']}"})
             files_to_delete = deleted
@@ -1004,24 +1085,53 @@ def api_clip_delete() -> Response:
         "bytes": total_bytes,
         "skipped": skipped,
         "cams": cam_names,
+        "sources": [{"path": s["path"], "size": s["size"], "shared_with": s["shared_with"]}
+                    for s in src_items],
     }
     if not dry:
         resp["trash"] = trash_id
     return jsonify(**resp)
 
 
+def _trash_roots(d: dict[str, Any]) -> list[str]:
+    """Папки корзин из тела запроса: `dir`, `podcast_root` и список `dirs` — без дублей.
+
+    Клип корзину держит в папке СВОЕГО XML (`<папка xml>/_reelsi_trash`), поэтому папок
+    может быть много: `dirs` — все, куда удаляли. Дубль — тот же каталог по realpath.
+    """
+    cands = [jstr(d, "dir"), jstr(d, "podcast_root")]
+    extra = d.get("dirs")
+    if isinstance(extra, list):
+        cands += [x for x in extra if isinstance(x, str)]
+    out: list[str] = []
+    seen: set[str] = set()
+    for c in cands:
+        p = c.strip().strip('"')
+        if not p:
+            continue
+        key = os.path.normcase(os.path.realpath(p))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+    return out
+
+
 @bp.route("/api/trash_list", methods=["POST"])
 def api_trash_list() -> Response:
-    """Список удалённых наборов в корзине папки."""
-    d = request.get_json(silent=True) or {}
-    dir_ = jstr(d, "dir").strip().strip('"')
-    if not dir_:
-        return jsonify(**umsg_err(ReelsiError(umsg("no_folder", "не указана папка"))))
-    if not os.path.isdir(dir_):
-        return jsonify(**umsg_err(ReelsiError(umsg("no_folder", f"Нет папки: {dir_}", path=dir_))))
+    """Удалённое: клипы и подкасты всех папок корзин — одним списком.
 
+    Папки: `dir` (результат), `podcast_root` (подкасты) и `dirs` (все папки, куда удаляли).
+    У каждой записи `root` — папка, где лежит её `_reelsi_trash` (по ней возвращают запись).
+    """
+    d = request.get_json(silent=True) or {}
+    roots = _trash_roots(d)
+    if not roots:
+        return jsonify(**umsg_err(ReelsiError(umsg("no_folder", "не указана папка"))))
+    # Несуществующая папка (подкасты ещё не заведены) — пропускается: в ней нет записей,
+    # и клипы из второй папки это не должно ронять.
     try:
-        items = clipstore.list_trash(dir_)
+        items = clipstore.list_trash_many(roots)
         return jsonify(ok=True, items=items)
     except ReelsiError: raise
     # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
@@ -1031,9 +1141,12 @@ def api_trash_list() -> Response:
 
 @bp.route("/api/trash_restore", methods=["POST"])
 def api_trash_restore() -> Response:
-    """Восстановить файлы клипа из корзины на исходные места."""
+    """Вернуть запись корзины (клип или подкаст) на старые места.
+
+    root — папка, где лежит `_reelsi_trash` записи (старое поле dir тоже принимаем).
+    """
     d = request.get_json(silent=True) or {}
-    dir_ = jstr(d, "dir").strip().strip('"')
+    dir_ = (jstr(d, "root") or jstr(d, "dir")).strip().strip('"')
     id_ = jstr(d, "id").strip().strip('"')
     if not dir_:
         return jsonify(**umsg_err(ReelsiError(umsg("no_folder", "не указана папка"))))
@@ -1049,5 +1162,28 @@ def api_trash_restore() -> Response:
     # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
     except Exception as e:
         return jsonify(**umsg_err(ReelsiError(umsg("trash_restore_failed", f"Ошибка восстановления из корзины: {e}", err=str(e)))))
+
+
+@bp.route("/api/trash_empty", methods=["POST"])
+def api_trash_empty() -> Response:
+    """Очистить корзину насовсем: все папки корзин (`dir`, `podcast_root`, `dirs`).
+
+    dry: true (по умолчанию) — только сколько записей и байт; false — стереть. Сам стирает
+    clipstore.empty_trash, здесь только разбор тела и проверка папок.
+    """
+    d = request.get_json(silent=True) or {}
+    dry = not (d.get("dry") is False or str(d.get("dry")).lower() in ("false", "0"))
+    roots = _trash_roots(d)
+    if not roots:
+        return jsonify(**umsg_err(ReelsiError(umsg("no_folder", "не указана папка"))))
+    # несуществующая папка пропускается (см. api_trash_list): очистке там нечего стирать
+
+    try:
+        return jsonify(**clipstore.empty_trash(roots, dry=dry))
+    except ReelsiError: raise
+    # ошибка уходит в ответ (umsg_err) и видна пользователю, журнал не дублируем
+    except Exception as e:
+        # код из уже переведённых (ERR_del_failed): новый код потребовал бы ключ в static/i18n
+        return jsonify(**umsg_err(ReelsiError(umsg("del_failed", f"Ошибка очистки корзины: {e}", err=str(e)))))
 
 

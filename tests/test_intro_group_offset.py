@@ -200,7 +200,7 @@ def test_scene_plan_carries_intro_scale(xml_subs):
 def test_frontend_intro_resolve_carries_gs_on_head_rows():
     """introResolve проносит gs на головных строках (2026-08-14): раньше
     терял — превью после рефетча плана возвращало блок к 100%, а в сборку текущего
-    клипа (tojsx/startRender) масштаб группы не уезжал. Теперь это обёртка над
+    клипа (сейчас — collectJobs → jobForBuild) масштаб группы не уезжал. Теперь это обёртка над
     resolveIntroFor, и числа те же, что у близнеца выше; поля середины отброшены."""
     src = app_meta.app_js_text()
     body = "\n".join(_func(src, n)

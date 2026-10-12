@@ -198,7 +198,308 @@ function nCams(){return parseInt(document.querySelector('input[name=cams]:checke
 function fmtT(s){s=Math.max(0,Math.floor(s));return Math.floor(s/60)+':'+String(s%60).padStart(2,'0');}
 function fmtIns(s){s=Math.round(Math.max(0,s)*10)/10;const m=Math.floor(s/60);const r=s-m*60;
   let sec=r.toFixed(1).replace(/\.0$/,'');if(r<10)sec='0'+sec;return m+':'+sec;}
+
+// ================= таймлайны: один вид на три полосы времени =================
+// Окно подкаста («Вся запись»), превью вставок и редактор нарезки рисуют одно и то же:
+// линейку, плейхед с флажком, значки зума и одну раскладку управления мышью. Общее — здесь.
+// Цвета: CSS-переменные --tl-* в :root (app.css) и TL_COL ниже читают их через
+// getComputedStyle; запасные значения — на случай, когда стилей нет (стенды в node).
+const TL_COL = (function(){
+  let cs = null;
+  try{ cs = getComputedStyle(document.documentElement); }catch(e){ cs = null; }
+  const g = (name, fb) => {
+    let v = '';
+    try{ v = cs ? cs.getPropertyValue(name) : ''; }catch(e){ v = ''; }
+    v = String(v || '').trim();
+    return v || fb;
+  };
+  return {
+    // общее для всех трёх полос
+    ph: g('--tl-ph', '#6ea8ff'),          // плейхед: синий, с флажком сверху
+    rule: g('--tl-rule-bg', '#0a0a0a'),   // фон линейки
+    ruleLine: g('--tl-rule-line', '#212121'),
+    tick: g('--tl-tick', '#2b2b2b'),      // риски линейки
+    tickTx: g('--tl-tick-tx', '#6f6f6f'), // подписи линейки
+    // фон полосы и волна — прежние цвета редактора шага 1 (70-editor.js), не данные типов
+    bg: g('--tl-bg', '#0d0d0d'),
+    ribbon: g('--tl-ribbon', '#101010'), bubble: g('--tl-bubble', '#141414'),
+    wave: '#6fce9e', waveSel: '#9fc0ff', waveOff: '#3f3f3f',
+    blkFill: 'rgba(60,160,110,.08)', blkEdge: '#3ca06e',
+    selFill: 'rgba(110,168,255,.14)', selEdge: '#6ea8ff',
+    active: '#e8e8e8'
+  };
+})();
+const TL_RULER_PX = 11;    // кегль подписей линейки, css px (ниже 11 не опускаем — DESIGN)
+const TL_TICK_MIN = 64;    // подписи линейки не теснее этого, css px
+const TL_STEPS = [0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+
+// Шаг подписей линейки, с: наименьший из набора, при котором подписи стоят не теснее
+// TL_TICK_MIN css px. spanSec — длина видимого окна, widthPx — его ширина в css px.
+// Пример: 2 ч на 1300 px → 600 с; 79 с на 1300 px → 5 с (тесты — test_podcast_editor_js.py).
+function tlTickStep(spanSec, widthPx){
+  const span = Number(spanSec), w = Number(widthPx);
+  const pps = (span > 0 && w > 0) ? w / span : 0;
+  return TL_STEPS.find(s => s * pps >= TL_TICK_MIN) || TL_STEPS[TL_STEPS.length - 1];
+}
+
+// Подпись линейки. totalSec — длина ВСЕЙ записи (не окна): формат не должен меняться
+// при зуме. От часа — h:mm:ss, короче — m:ss. stepSec — шаг рисок окна: меньше 1 с — с
+// десятыми (1:15.5). Раньше подпись округляла до целой секунды, и при шаге 0,5 с две риски
+// подряд получали одно и то же «1:15», «1:15», «1:16», «1:16». Без stepSec — как было.
+function tlRulerLabel(sec, totalSec, stepSec){
+  const fine = Number(stepSec) > 0 && Number(stepSec) < 1;
+  const tenths = fine ? Math.max(0, Math.round((Number(sec) || 0) * 10)) : Math.max(0, Math.floor(Number(sec) || 0)) * 10;
+  const x = Math.floor(tenths / 10);
+  const frac = fine ? '.' + (tenths % 10) : '';
+  if(Number(totalSec) >= 3600){
+    return Math.floor(x / 3600) + ':' + String(Math.floor(x / 60) % 60).padStart(2, '0') + ':' + String(x % 60).padStart(2, '0') + frac;
+  }
+  return fmtT(x) + frac;
+}
+
+// Окно [v0,v1] в пределах записи [0,dur]: длина не меньше minSpan (и не больше записи), сдвиг —
+// чтобы не выйти за края. Запись без длины (dur ≤ 0) — окно как есть. Минимум — у каждой полосы
+// свой: подкаст — POD_VIEW_MIN, редактор — 1.5 с. Возвращает {v0,v1}.
+function tlClampView(v0,v1,dur,minSpan){
+  const mn=Number(minSpan)||0;
+  let span=Number(v1)-Number(v0);
+  if(!isFinite(span)||span<=0)span=mn;
+  const D=dur>0?dur:span;
+  span=Math.min(D,Math.max(Math.min(mn,D),span));
+  let a=Number(v0);if(!isFinite(a))a=0;
+  a=Math.max(0,Math.min(a,D-span));
+  return {v0:a,v1:a+span};
+}
+// Масштаб окна: f > 1 — ближе, f < 1 — дальше. atF — доля ширины окна, где курсор (null — центр).
+// ПОЧЕМУ так: точка под курсором остаётся на месте, иначе колесо уводит запись из-под пальца.
+// minSpan — минимум окна полосы (подкаст — POD_VIEW_MIN, редактор — 1.5 с). Возвращает {v0,v1}.
+function tlZoomSpan(v0,v1,f,atF,dur,minSpan){
+  const mn=Number(minSpan)||0;
+  const span0=Number(v1)-Number(v0);
+  const D=dur>0?dur:span0;
+  const a=atF==null?0.5:Math.min(1,Math.max(0,Number(atF)||0));
+  let span=span0/(Number(f)||1);
+  span=Math.min(D,Math.max(Math.min(mn,D),span));
+  const s=Number(v0)+a*span0;          // время под курсором до зума
+  return tlClampView(s-a*span,s-a*span+span,dur,mn);
+}
+// Окно следует за плейхедом: now внутри окна — окно не трогаем; ушёл за край — окно встаёт так,
+// чтобы плейхед был на 10 % ширины от левого края. Окно шире записи или запись без длины — без
+// слежения. Окно не уходит за конец записи (tlClampView). Возвращает [v0,v1].
+// ПОЧЕМУ 10 %: плейхед при игре уходит к правому краю — слева остаётся место увидеть, что было.
+function tlFollowHead(v0,v1,now,dur,minSpan){
+  const span=Number(v1)-Number(v0);
+  if(!(dur>0)||!(span>0)||span>=dur)return [v0,v1];
+  if(now>=v0&&now<=v1)return [v0,v1];
+  const a=now-span*0.1;
+  const r=tlClampView(a,a+span,dur,minSpan);
+  return [r.v0,r.v1];
+}
+
+// Что захватывает курсор на таймлайне — один порядок для редактора шага 1 и для «Вся запись» подкаста:
+// край куска > плейхед > линейка > середина куска. Кандидаты — [{kind:'edge'|'head'|'ruler'|'mid', dist, ...}],
+// tol — допуски по видам (css px), у каждого таймлайна свои; вид без допуска в tol — без проверки
+// (линейка и середина — это «внутри», их кандидат и так внутри). Выигрывает самый приоритетный вид
+// в допуске; внутри вида — ближайший, при равенстве — первый в списке. Возвращает кандидата или null.
+// ПОЧЕМУ так: решение владельца — один порядок на оба таймлайна, как был у подкаста. Кусок в 3 px и
+// плейхед в 2 px — берётся край; плейхед выигрывает только тогда, когда края вне допуска.
+const TL_HIT_ORDER=['edge','head','ruler','mid'];
+function tlHitOrder(cands,tol){
+  let best=null,rank=TL_HIT_ORDER.length;
+  (cands||[]).forEach(c=>{
+    const r=TL_HIT_ORDER.indexOf(c.kind);
+    if(r<0)return;
+    const lim=tol?tol[c.kind]:undefined;
+    if(lim!==undefined&&!(c.dist<=lim))return;
+    if(r<rank||(r===rank&&c.dist<best.dist)){best=c;rank=r;}
+  });
+  return best;
+}
+
+// Линейка полосы времени: подложка, нижняя черта, риски и подписи. Шаг — tlTickStep по ширине окна.
+// o: {W,RH,dpr,v0,v1,total}; total — длина ВСЕЙ записи (от неё формат подписи, см. tlRulerLabel).
+function tlPaintRuler(g,o){
+  const C=TL_COL, W=o.W, RH=o.RH, dpr=o.dpr, v0=o.v0, v1=o.v1;
+  g.fillStyle=C.rule;g.fillRect(0,0,W,RH);
+  g.strokeStyle=C.ruleLine;g.lineWidth=1;g.beginPath();g.moveTo(0,RH+.5);g.lineTo(W,RH+.5);g.stroke();
+  const st=tlTickStep(v1-v0,W/dpr);
+  g.fillStyle=C.tickTx;g.font=(TL_RULER_PX*dpr)+'px ui-monospace,monospace';g.textBaseline='middle';
+  for(let k=Math.ceil(v0/st);k*st<=v1+1e-6;k++){
+    const tm=k*st, x=(tm-v0)/(v1-v0)*W;
+    g.strokeStyle=C.tick;g.beginPath();g.moveTo(x+.5,0);g.lineTo(x+.5,RH);g.stroke();
+    g.fillText(tlRulerLabel(tm,o.total,st),x+4*dpr,RH/2+dpr);
+  }
+}
+// Рамка куска/блока от top до низа: заливка (o.on — выбран), обводка и две ручки краёв цветом o.edge.
+// o.active — активный без выбора: обводка светлая. Подпись номера рисует вызывающий.
+function tlDrawSpan(g,x0,x1,top,H,dpr,o){
+  const C=TL_COL;
+  g.fillStyle=o.on?C.selFill:C.blkFill;g.fillRect(x0,top,x1-x0,H-top);
+  g.strokeStyle=(o.active&&!o.on)?C.active:o.edge;g.lineWidth=1;
+  g.strokeRect(x0+.5,top+.5,x1-x0-1,H-top-1);
+  g.fillStyle=o.edge;g.fillRect(x0,top,2*dpr,H-top);g.fillRect(x1-2*dpr,top,2*dpr,H-top);
+}
+
+// Плейхед на canvas: ОДНО рисование для окна подкаста и редактора нарезки. Рисуется ПОСЛЕДНИМ
+// (после блоков и кусков). Сначала тёмная подложка — линия на 2 px шире и флажок на 1 px шире
+// (#0d0d0d), потом синяя поверх: синий на синем блоке фото без обводки пропадал.
+// x и h — в пикселях канваса (уже умноженные на dpr), dpr — devicePixelRatio.
+function tlDrawPlayhead(ctx, x, h, dpr){
+  const d = Number(dpr) > 0 ? Number(dpr) : 1;
+  const lw = Math.max(1, 1.5 * d);
+  const dark = TL_COL.bg;
+  ctx.strokeStyle = dark; ctx.lineWidth = lw + 2 * d;
+  ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+  ctx.fillStyle = dark;
+  ctx.beginPath(); ctx.moveTo(x - 5 * d, 0); ctx.lineTo(x + 5 * d, 0); ctx.lineTo(x, 7 * d); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = TL_COL.ph; ctx.lineWidth = lw;
+  ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+  ctx.fillStyle = TL_COL.ph;
+  ctx.beginPath(); ctx.moveTo(x - 4 * d, 0); ctx.lineTo(x + 4 * d, 0); ctx.lineTo(x, 6 * d); ctx.closePath(); ctx.fill();
+}
+
+// Волна полосы времени: в каждом пикселе — МАКСИМУМ пиков на его отрезке времени. Одна точка на
+// пиксель (так было у редактора) на отдалении пропускала громкие места: пиксель «вся запись» — это
+// десятки секунд. o: {W,H,top,dpr,v0,v1,dur,peaks,pps,colorAt(s)}. colorAt — цвет в момент s; s растёт
+// по x, поэтому вызывающий может держать указатель по сегментам. Пустые пики — волны нет вовсе.
+function tlPaintWave(g,o){
+  const pk=o.peaks||[], pps=o.pps, W=o.W, H=o.H, top=o.top, dpr=o.dpr, v0=o.v0, v1=o.v1, dur=o.dur||0;
+  if(!pk.length)return;
+  const mid=top+(H-top)/2, amp=(H-top)*0.44;
+  let runColor=null;
+  g.lineWidth=1;g.beginPath();
+  for(let x=0;x<W;x++){
+    const s=v0+x/W*(v1-v0), s2=v0+(x+1)/W*(v1-v0);
+    if(s2<0||(dur>0&&s>dur))continue;
+    const col=o.colorAt(s);
+    if(col!==runColor){if(runColor)g.stroke();g.beginPath();g.strokeStyle=col;runColor=col;}
+    let p=0;
+    const i0=Math.max(0,Math.floor(s*pps)), i1=Math.min(pk.length,Math.max(i0+1,Math.floor(s2*pps)));
+    for(let i=i0;i<i1;i++){const q=Number(pk[i])||0;if(q>p)p=q;}
+    const h=Math.max(dpr,p*amp*2);
+    g.moveTo(x+.5,mid-h/2);g.lineTo(x+.5,mid+h/2);
+  }
+  if(runColor)g.stroke();
+}
+// Колесо: горизонтальный жест или Shift — прокрутка окна, иначе — зум. Возвращает дельту
+// прокрутки (по горизонтали — deltaX, иначе deltaY). Раньше у двух полос горизонтальное
+// колесо уходило в зум: deltaY = 0 — и окно отдалялось.
+function tlWheelIsPan(e){ return !!e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY); }
+function tlWheelDelta(e){ return Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY; }
+// Один щелчок колеса и кнопок «+»/«−» над полосами времени: множитель масштаба окна.
+const TL_ZOOM_STEP = 1.35;
+// Колесо на полосе времени — одна раскладка на три полосы: горизонтальный жест или Shift — протяжка
+// вида, иначе — зум к курсору. Страницу не прокручиваем. pan(dxCss) — сдвиг в css px (вправо > 0);
+// zoom(f, xCss) — множитель (больше 1 — ближе) и x курсора в css px от левого края полосы.
+function tlWheelBind(el,o){
+  el.addEventListener('wheel',e=>{
+    e.preventDefault();
+    if(tlWheelIsPan(e)){o.pan(tlWheelDelta(e));return;}
+    if(!e.deltaY)return;
+    const r=el.getBoundingClientRect();
+    o.zoom(e.deltaY<0?TL_ZOOM_STEP:1/TL_ZOOM_STEP,e.clientX-r.left);
+  },{passive:false});
+}
+
+// Протяжка вида: средняя кнопка (и левая на линейке) — окно или лента едет за курсором на пройденное
+// расстояние, из любой точки полосы. Общая для трёх таймлайнов.
+// el — элемент полосы; ev — событие нажатия. o.snap() — вид в момент нажатия; o.apply(dxCss, snap) —
+// вернуть вид на смещение dxCss (css px, вправо > 0). Курсор — grabbing, класс panning — тоже на время
+// тяги. Захват указателя — тяга не теряет вид за краем холста; pointercancel и потеря захвата кончают её.
+// Пока el._tlPan — слежение за плейхедом вид не возвращает (tlPanning).
+function tlMidPan(el,ev,o){
+  if(!el)return;
+  tlMidGuard(el);
+  const snap=o.snap?o.snap():null;
+  const x0=ev.clientX, cur=el.style.cursor;
+  el.style.cursor='grabbing';el.classList.add('panning');el._tlPan=true;
+  try{el.setPointerCapture(ev.pointerId);}catch(err){}
+  const mv=m=>{ if(m.pointerId!==ev.pointerId) return; o.apply(m.clientX-x0,snap); };
+  const up=m=>{ if(m&&m.pointerId!==undefined&&m.pointerId!==ev.pointerId) return;
+    el.removeEventListener('pointermove',mv);
+    el.removeEventListener('pointerup',up);
+    el.removeEventListener('pointercancel',up);
+    el.removeEventListener('lostpointercapture',up);
+    el.style.cursor=cur;el.classList.remove('panning');el._tlPan=false;
+    try{el.releasePointerCapture(ev.pointerId);}catch(err){} };
+  el.addEventListener('pointermove',mv);
+  el.addEventListener('pointerup',up);
+  el.addEventListener('pointercancel',up);
+  el.addEventListener('lostpointercapture',up);
+}
+// Средняя кнопка не включает автоскролл браузера: гасим mousedown и auxclick (однократно на элемент).
+// Ставится при инициализации полосы — mousedown уже прошёл бы к моменту старта тяги.
+function tlMidGuard(el){
+  if(!el||el._tlGuard)return;
+  el._tlGuard=true;
+  el.addEventListener('mousedown',e=>{if(e.button===1)e.preventDefault();});
+  el.addEventListener('auxclick',e=>{if(e.button===1)e.preventDefault();});
+}
+function tlPanning(el){ return !!(el&&el._tlPan); }
+
+// ================= отмена и повтор: одна механика на три таймлайна =================
+// Редактор нарезки, «Вся запись» подкаста и вставки ведут свои стеки правок, а механика одна:
+// снимок состояния — строка, сравниваемая с прошлой. Шаг пишет touch() ПОСЛЕ правки (если снимок
+// сменился); undo/redo переносят текущий снимок в противоположный стек и возвращают прежний через
+// apply(строка). rebase() — тихо сменить базу (нормализация сервера не должна стать шагом истории).
+// Стеки живут внутри замыкания: снаружи только методы, ни `undo.length`, ни прямой записи.
+function histStack(o){
+  const max = o.max || 100;
+  let undoS = [], redoS = [], last = null;
+  const snap = () => o.snapshot();
+  const ui = () => { if(o.onUi) o.onUi(); };
+  function step(from, to){
+    if(!from.length) return false;
+    to.push(snap()); if(to.length > max) to.shift();
+    o.apply(from.pop());
+    last = snap(); ui();
+    return true;
+  }
+  // Методы — стрелками, не сокращённой записью `name(){}`: сканер вызовов (tests/test_ui_js_calls.py)
+  // принял бы такую запись за вызов без определения.
+  return {
+    touch: () => {
+      const s = snap();
+      if(last === null){ last = s; return false; }   // первой базы шага нет — только запоминаем
+      if(s === last) return false;
+      undoS.push(last); if(undoS.length > max) undoS.shift();
+      redoS.length = 0;                               // новая правка убивает повтор
+      last = s; ui();
+      return true;
+    },
+    reset: () => { undoS = []; redoS = []; last = snap(); ui(); },
+    rebase: () => { last = snap(); },
+    undo: () => step(undoS, redoS),
+    redo: () => step(redoS, undoS),
+    canUndo: () => undoS.length > 0,
+    canRedo: () => redoS.length > 0
+  };
+}
+// Клавиши правки на полосах времени: резать — C, S (и русские «с», «ы»); удалить — D, «в», Delete,
+// Backspace. Сочетания с Ctrl/⌘/Alt — не наши (Ctrl+C не режет). Вернёт 'split' | 'delete' | null.
+function tlEditKey(e){
+  if(e.ctrlKey || e.metaKey || e.altKey) return null;
+  const k = (e.key || '').toLowerCase();
+  if(k === 'c' || k === 'с' || k === 's' || k === 'ы') return 'split';
+  if(k === 'd' || k === 'в' || e.key === 'Delete' || e.key === 'Backspace') return 'delete';
+  return null;
+}
+// Клавиши: Ctrl/⌘+Z и «я» (русская раскладка) — отмена; Ctrl/⌘+Y, «н» и Ctrl/⌘+Shift+Z — повтор.
+// Alt не считаем: это чужая комбинация. Вернёт 'undo' | 'redo' | null.
+function histKey(e){
+  if(!(e.ctrlKey || e.metaKey) || e.altKey) return null;
+  const k = (e.key || '').toLowerCase();
+  if(k === 'y' || k === 'н') return 'redo';
+  if(k === 'z' || k === 'я') return e.shiftKey ? 'redo' : 'undo';
+  return null;
+}
 function segUI(){document.querySelectorAll('.seg label').forEach(l=>l.classList.toggle('on',l.querySelector('input').checked));}
+// Подсветку пилюли .seg переставляет ОДИН общий обработчик, а не каждый onchange. Давний баг
+// «Камер»: выбрал 3 — число применилось, а подсветка осталась на 2, потому что обработчик
+// (setMode) забыл segUI() в успешной ветке. Любой переключатель с забытым вызовом застревал
+// так же. change всплывает от радио до document, поэтому срабатывает после inline-onchange.
+// Программная смена .checked change не шлёт: такие места зовут segUI() сами (setMode, applyState).
+document.addEventListener('change',e=>{if(e.target&&e.target.closest&&e.target.closest('.seg'))segUI();});
 // Фото или видео решает ТОЛЬКО расширение (тип вставки определяет всё поведение в AE).
 // Список один на весь фронт: он был скопирован в шести местах, и в пяти не было tiff —
 // .tif считался фото при выборе файла, но в превью уезжал в <video> и кадр был пустой.

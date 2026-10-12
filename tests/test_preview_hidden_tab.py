@@ -74,14 +74,16 @@ FRAME_FUNCS = ("pvFrameHidden", "pvFrameStop", "pvFramePlan", "pvFrameStart",
                "pvFrameOff", "pvFrameReplan")
 # Двери цикла редактора: пуск/пауза, часы (edTick), картинка за звуком (edFollow) и прыжок.
 EDITOR_FUNCS = ("edPlay", "edPause", "edSeek", "edTick", "edFollow", "edJump", "edVideoSeek",
-                "edBlockAt")
+                "edBlockAt", "edFollowView")
+# Окно за плейхедом — общие правила из 00-core.js (edTick зовёт edFollowView → tlFollowHead)
+CORE_FUNCS = ("tlClampView", "tlFollowHead", "tlPanning")
 EDITOR_DECLS = ("ED_V_SOFT", "ED_V_HARD", "ED_V_RATE")
 # Звук редактора (60-preview.js, блок `ea*`): очередь блоков и часы — боевые тела.
 EA_FUNCS = ("eaBuf", "eaSig", "eaPlan", "eaNow", "eaStop", "eaStart", "eaClock", "eaSync",
             "eaGain", "dbToGain")
 EA_DECLS = ("EA_LEAD", "EA_FADE")
 # Двери цикла предпросмотра вставок: свой шаг идёт через общий pvStep.
-VIEW_FUNCS = ("ipvStep", "ipvTick", "ipvPlay", "ipvPause")
+VIEW_FUNCS = ("ipvStep", "ipvTick", "ipvPlay", "ipvPause", "itlEnsure")
 PREVIEW_FUNCS = ("pvStep",)
 
 
@@ -118,10 +120,12 @@ def _bodies() -> str:
     preview = PREVIEW_JS.read_text(encoding="utf-8")
     editor = EDITOR_JS.read_text(encoding="utf-8")
     view = VIEW_JS.read_text(encoding="utf-8")
+    core = (ROOT / "static" / "app" / "00-core.js").read_text(encoding="utf-8")
     a = preview.index("let EA={")                 # литерал на две строки — до `};`
     return "\n".join([_decl(preview, c) for c in FRAME_CONSTS + EA_DECLS]
                      + [preview[a:preview.index("};", a) + 2]]
                      + [_decl(editor, c) for c in EDITOR_DECLS]
+                     + [_func_src(core, n) for n in CORE_FUNCS]
                      + [_func_src(preview, n) for n in EA_FUNCS]
                      + [_func_src(preview, n) for n in FRAME_FUNCS]
                      + [_func_src(preview, n) for n in PREVIEW_FUNCS]
@@ -267,6 +271,7 @@ let PV={vids:[CAM],bufs:[],cams:[{path:'C:/cam1.mp4',name:'A'}],segs:[],audio:[]
   voicePanel:'pvvoice',silent:true};
 // Предпросмотр вставок (IPV): два куска EDL с вырезом 2..5 исходника — прыжок есть.
 const IV=new El('video');IV.src='C:/cam1.mp4';
+let ITL={pps:0,scrub:false};   // лента вставок: itlEnsure (ipvStep) ведёт её за плейхедом
 let IPV={vids:[IV],bufs:[],scrubbing:false,scrubT:0,
   segs:[{ts:0,te:2,src:0,ci:0},{ts:2,te:4,src:5,ci:0}],
   audio:[{ts:0,te:2,src:0,ci:0},{ts:2,te:4,src:5,ci:0}],words:[],dur:4,contentDur:4,fps:60,aidx:0,

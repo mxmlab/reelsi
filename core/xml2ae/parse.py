@@ -6,7 +6,7 @@
 ПОСЛЕ ручной правки монтажа. Отсюда берут структуру и сборка .jsx, и правка слов.
 """
 import os, html
-from typing import Any
+from typing import Any, Callable
 import xml.etree.ElementTree as ET
 
 # HERE — корень репозитория, а НЕ папка пакета: assets/ лежат уровнем выше него.
@@ -20,6 +20,13 @@ from core.app_meta import is_out_dir   # noqa: F401  (переэкспорт д�
 class Cancelled(Exception):
     """Сборку прервали кнопкой «Стоп». Отдельный тип, а не общая ошибка: вызывающий
     пишет в лог «остановлено», а не «ОШИБКА» с трейсбеком, и не заносит файл в failed."""
+
+
+def raise_if_cancelled(cancel: Callable[[], bool] | None) -> None:
+    """Колбэк «нажали Стоп?» — если да, Cancelled. Одна проверка для модулей подкаста
+    (камеры, рефрейм), а не по копии в каждом."""
+    if cancel is not None and cancel():
+        raise Cancelled()
 
 
 def _txt(el: Any, tag: str, default: Any = None) -> Any:

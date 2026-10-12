@@ -293,7 +293,7 @@ async function ipvOpen(xml){
   const sb=$('ipvsub');sb.textContent='';sb.classList.remove('plan');
   sb.style.opacity='';sb.style.removeProperty('--subfs');sb.style.removeProperty('--subfc');sb.style.removeProperty('--subhl');sb.style.removeProperty('--subsh');
   const io=$('ipvintro');io.innerHTML='';io.style.display='none';
-  $('ipvtime').textContent='0:00 / 0:00';$('ipvseek').value=0;ITL.pps=0;ipvMarks();
+  $('ipvtime').textContent='0:00 / 0:00';ITL.pps=0;ipvMarks();
   if(!xml)return;
   let d;try{d=await (await fetch('/api/aicut_preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml})})).json();}
   catch(e){d={error:''+e};}
@@ -402,7 +402,8 @@ function ipvStep(){if(!IPV.playing)return;
   spareRollAt(IPV,st.tm);
   if(typeof vtTick==='function')vtTick(IPV,st.tm);   // дорожка обработанного голоса идёт за монтажом (и глушит звук камеры)
   if(typeof pvAudioLimit==='function')pvAudioLimit($('ipvstage'),IPV);   // строка про звук Firefox — по ходу игры
-  ipvUI(st.tm);}
+  ipvUI(st.tm);
+  itlEnsure(st.tm);}   // лента едет за плейхедом во время игры (как окно подкаста)
 // Следующий шаг ведёт ОБЩИЙ планировщик кадра (60-preview.js): видимая вкладка идёт на
 // rAF, скрытая — на таймер. Раньше здесь был только rAF, и в фоне предпросмотр вставок
 // игрался с вырезанным (шаг не приходил вовсе).
@@ -2237,7 +2238,7 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
 // перекрывал её, и ipvUI падал «t is not a function» на КАЖДОМ изменении счётчиков.
 // Из-за этого не работали протяжка плейхеда, ползунок перемотки и кнопка генерации
 // (см. ipvOverlay и insAdd — та же ловушка, тест test_time_var_never_shadows_t).
-function ipvUI(tm){const seek=$('ipvseek');if(seek&&document.activeElement!==seek)seek.value=IPV.dur?Math.round(tm/IPV.dur*1000):0;
+function ipvUI(tm){
   $('ipvtime').textContent=fmtT(tm)+' / '+fmtT(IPV.dur);
   vgDuck(tm,IPV.plan);
   let cur='',yel=false;
@@ -3613,8 +3614,9 @@ function itlDraw(){const el=$('itl'),inn=$('itlin');if(!el||!inn)return;
   if(!dur){inn.style.width='100%';$('itlblocks').innerHTML='';$('itlruler').innerHTML='';itlPh(0);return;}
   if(!ITL.pps)ITL.pps=itlFitPps();
   inn.style.width=Math.ceil(dur*ITL.pps)+'px';
-  const steps=[1,2,5,10,15,30,60,120];const st=steps.find(s=>s*ITL.pps>=70)||120;
-  let R='';for(let tm=0;tm<=dur;tm+=st)R+='<i style="left:'+(tm*ITL.pps)+'px">'+fmtT(tm)+'</i>';
+  // линейка — как у двух других полос времени: шаг и подписи из 00-core.js (tlTickStep, tlRulerLabel)
+  const st=tlTickStep(dur,dur*ITL.pps);
+  let R='';for(let tm=0;tm<=dur;tm+=st)R+='<i style="left:'+(tm*ITL.pps)+'px">'+tlRulerLabel(tm,dur,st)+'</i>';
   $('itlruler').innerHTML=R;
   const bh=$('itlblocks');bh.innerHTML='';
   const ae=(IPVMODE==='ae');
@@ -3639,14 +3641,20 @@ function itlDraw(){const el=$('itl'),inn=$('itlin');if(!el||!inn)return;
     b.style.left=(s*ITL.pps)+'px';b.style.width=Math.max(8,d*ITL.pps)+'px';
     b.dataset.t=fmtIns(s)+' — '+fmtIns(s+d)+' ('+(Math.round(d*10)/10)+t('с')+') · '+insLbl(x);
     b.innerHTML='<span class="eh l"></span><span class="lbl">'+esc(insLbl(x)||(x.type==='video'?t('видео'):t('фото')))+'</span><span class="eh r"></span>';
-    b.addEventListener('pointerdown',e=>{const eh=e.target.classList&&e.target.classList.contains('eh');
+    b.addEventListener('pointerdown',e=>{if(e.button!==0)return;   // средняя кнопка — протяжка ленты (itlin ниже)
+      const eh=e.target.classList&&e.target.classList.contains('eh');
       itlBlockDown(e,i,eh?(e.target.classList.contains('l')?'l':'r'):'move');});
     b.addEventListener('dblclick',e=>{e.preventDefault();ipvJump(i);});
     bh.appendChild(b);});
   itlPh(IPV.vids.length?ipvNow():0);}
 function itlPh(tm){const p=$('itlph');if(p)p.style.left=((tm||0)*ITL.pps)+'px';}
-function itlEnsure(tm){const el=$('itl');if(!el||!IPV.dur||ITL.scrub)return;const x=tm*ITL.pps;
-  if(x<el.scrollLeft+10||x>el.scrollLeft+el.clientWidth-10)el.scrollLeft=Math.max(0,x-el.clientWidth/3);}
+// Лента следует за плейхедом по общему правилу (tlFollowHead, 00-core.js): модель — секунды окна,
+// переводим из scrollLeft и обратно. Тянут плейхед — лента не догоняет (ITL.scrub).
+function itlEnsure(tm){const el=$('itl');const dur=IPV.contentDur||IPV.dur;
+  if(!el||!dur||!ITL.pps||ITL.scrub||tlPanning(el))return;   // тянут плейхед или ленту — лента не догоняет
+  const v0=el.scrollLeft/ITL.pps, v1=(el.scrollLeft+el.clientWidth)/ITL.pps;
+  const r=tlFollowHead(v0,v1,tm,dur);
+  if(r[0]!==v0)el.scrollLeft=r[0]*ITL.pps;}
 function itlBlockDown(e,i,mode){const x=ipvIns()[i];if(!x)return;
   e.preventDefault();e.stopPropagation();
   const sd0=insSD(x);const st={x0:e.clientX,s:sd0.s,d:sd0.d};
@@ -3671,17 +3679,30 @@ function itlBlockDown(e,i,mode){const x=ipvIns()[i];if(!x)return;
 // клик/протяжка по фону таймлайна = перемотка за курсором (плейхед таскается); колесо = зум (Shift = прокрутка)
 // .roto исключён из «занимаемых блоков»: полоса рото теперь hoverable (для тултипа), но
 // клик по ней должен перематывать, как по фону — иначе тонкая полоса съест перемотку.
-$('itlin').addEventListener('pointerdown',e=>{if(e.target.closest('.itlblk:not(.intro):not(.roto)'))return;
+// Средняя кнопка на таймлайне вставок — протяжка ленты: лента едет за курсором на пройденное
+// расстояние, из любой точки (и с блока тоже), как у окна подкаста. Курсор возвращаем прежний.
+function itlMidPan(e){
+  const el=$('itl');if(!el)return;
+  e.preventDefault();
+  tlMidPan(el,e,{snap:()=>el.scrollLeft,apply:(dx,s)=>{el.scrollLeft=Math.max(0,s-dx);}});
+}
+$('itlin').addEventListener('pointerdown',e=>{if(e.button===1){itlMidPan(e);return;}   // средняя — протяжка, раньше блока
+  // линейка — протяжка ленты (как средняя кнопка), а не перемотка: плейхед остаётся на месте
+  if(e.target.closest&&e.target.closest('#itlruler')){if(e.button===0)itlMidPan(e);return;}
+  if(e.target.closest('.itlblk:not(.intro):not(.roto)'))return;
   if(!IPV.vids.length||!ITL.pps)return;e.preventDefault();
-  const was=IPV.playing;ipvPause();ITL.scrub=true;
+  // Игра не останавливается: протяжка только переставляет позицию (ipvSeekTo на ходу работает).
+  // ITL.scrub — лента не догоняет плейхед, пока его тянут (как в подкасте).
+  ITL.scrub=true;
   const to=ev=>{const r=$('itlin').getBoundingClientRect();ipvSeekTo((ev.clientX-r.left)/ITL.pps);};
   to(e);
   const up=()=>{window.removeEventListener('pointermove',to);window.removeEventListener('pointerup',up);
-    ITL.scrub=false;if(was)ipvPlay();};
+    ITL.scrub=false;};
   window.addEventListener('pointermove',to);window.addEventListener('pointerup',up);});
-$('itl').addEventListener('wheel',e=>{e.preventDefault();const el=$('itl');
-  if(e.shiftKey){el.scrollLeft+=(e.deltaY||e.deltaX);return;}
-  const r=el.getBoundingClientRect();itlZoom(e.deltaY<0?1.35:1/1.35,e.clientX-r.left);},{passive:false});
+// Средняя кнопка: без этого Chrome/Firefox включают autoscroll на mousedown и показывают
+// значок прокрутки на auxclick — гасим оба (как в 46-podcast-editor.js и 70-editor.js).
+tlMidGuard($('itl'));   // средняя кнопка: без автоскролла браузера (mousedown и auxclick)
+tlWheelBind($('itl'),{pan:dx=>{$('itl').scrollLeft+=dx;},zoom:(f,x)=>itlZoom(f,x)});
 // Кнопок «±0.5с» и «посмотреть это место» в карточке больше нет: тайминг двигается
 // протяжкой блока по таймлайну вставок, туда же кликом ставится плейхед.
 // Клик мимо текстового поля = поле отпускает фокус. Таймлайн вставок и ползунок
@@ -3703,13 +3724,10 @@ document.addEventListener('keydown',e=>{if(!$('mbInserts').classList.contains('o
   const typing=(tg==='textarea')||(tg==='input'&&!['checkbox','radio','range','button'].includes(el.type));
   // Отмена/повтор правок вставок — Ctrl+Z, Ctrl+Shift+Z и Ctrl+Y, пока открыто окно
   // вставок или превью шага 3. В поле ввода их не перехватываем: там своя отмена текста.
-  // «я»/«н» — те же клавиши в русской раскладке (как хоткеи редактора нарезки, 70-editor.js).
-  if((e.ctrlKey||e.metaKey)&&!e.altKey&&!typing&&tg!=='select'){
-    const k=(e.key||'').toLowerCase();
-    if(k==='z'||k==='я'||k==='y'||k==='н'){
-      e.preventDefault();
-      if(k==='y'||k==='н'||e.shiftKey)insRedo();else insUndo();
-      return;}
+  // «я»/«н» — те же клавиши в русской раскладке (histKey в 00-core.js, как у редактора и подкаста).
+  if(!typing&&tg!=='select'){
+    const hk=histKey(e);
+    if(hk){e.preventDefault();hk==='redo'?insRedo():insUndo();return;}
   }
   if(e.key===' '&&!typing&&(tg==='input'||tg==='select')){e.preventDefault();el.blur&&el.blur();ipvToggle();return;}
   if(typing||tg==='select')return;

@@ -479,14 +479,26 @@ LOCK = threading.Lock()
 LOG_CAP = 4000          # ИИ-нарезка стримит тысячи строк — без кэпа лог растёт бесконечно
 
 
-def emit(line: str, /, **vars: Any) -> None:
-    with LOCK:
-        entry = log_entry(line, vars)
-        JOB["log"].append(entry)
-        over = len(JOB["log"]) - LOG_CAP
+def job_log_add(state: dict[str, Any], lock: threading.Lock, line: Any,
+                vars: dict[str, Any] | None = None) -> None:
+    """Строка в лог джоба: запись через log_entry (перевод шаблона и формат чисел на клиенте)
+    и потолок LOG_CAP со сдвигом log_base (для ?since=). Общая для всех джобов с логом."""
+    with lock:
+        state["log"].append(log_entry(str(line), vars))
+        over = len(state["log"]) - LOG_CAP
         if over > 0:
-            del JOB["log"][:over]
-            JOB["log_base"] += over
+            del state["log"][:over]
+            state["log_base"] += over
+
+
+def job_log_since(state: dict[str, Any], since: int) -> tuple[list[Any], int]:
+    """Срез лога для ?since=: (строки после since, общее число строк). Вызывать под замком джоба."""
+    start = max(0, since - state["log_base"])
+    return state["log"][start:], state["log_base"] + len(state["log"])
+
+
+def emit(line: str, /, **vars: Any) -> None:
+    job_log_add(JOB, LOCK, line, vars)
 
 
 # --- одиночные и параллельные ИИ-вызовы (жёлтые / вставки / интро) -----------------

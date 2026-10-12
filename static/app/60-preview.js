@@ -123,7 +123,10 @@ function setMediaVol(pct){MEDIA_VOL=Math.max(0,Math.min(1,(+pct||0)/100));
   // иначе ползунок строки плеера глушил бы всё, кроме голоса из плагинов.
   if(typeof voiceFxLiveGain==='function')voiceFxLiveGain();}
 function syncVolUI(){const p=Math.round(MEDIA_VOL*100);
-  document.querySelectorAll('input[data-vol]').forEach(s=>{if(+s.value!==p)s.value=p;});}
+  document.querySelectorAll('input[data-vol]').forEach(s=>{if(+s.value!==p)s.value=p;});
+  // число справа от ползунка громкости — в блоке звука каждого превью (шаг 1, раскладка камер,
+  // вставки); по классу, а не по id: три блока живут в DOM одновременно
+  document.querySelectorAll('[data-volv]').forEach(e=>{e.textContent=String(p);});}
 // ===== стилевые громкости (музыка/голос, dB) — как в рендере =====
 // Уровни MUSIC_DB/VOICE_DB из стиля звучат в превью сразу, чтобы не собирать проект
 // ради «не громко ли». Один AudioContext на всё. Источник создаётся ОДИН раз на элемент
@@ -219,7 +222,8 @@ function pvTitle(name){
   const ttl=$('mbPvTitle');if(!ttl)return;
   ttl.textContent=name||'';
   const dlg=ttl.closest('.modal');if(dlg&&name)dlg.setAttribute('aria-label',name);}
-async function openEditClip(i){curEdit=i;const xml=CLIPS[i].xml;pvTitle(clipLabel(CLIPS[i]));
+// typeof — стенды вырезают openEditClip без 40-queue.js, где живёт markLastClip (как stateObj в 99-boot.js).
+async function openEditClip(i){curEdit=i;if(typeof markLastClip==='function')markLastClip(1,i);const xml=CLIPS[i].xml;pvTitle(clipLabel(CLIPS[i]));
   if(curAE!==i||AEXML!==CLIPS[i].xml)selectAE(i);
   openModal('mbPreview');await openPreview(xml);await edOpen();
   // Панель «Голос» — ПОСЛЕ редактора, и это порядок, а не вкус: спикера она берёт по

@@ -291,6 +291,53 @@ function fillCutTextAsr(){
   list.forEach(e=>{const o=document.createElement('option');o.value=e.id;o.textContent=t(e.label);sel.appendChild(o);});
   sel.value=list.some(e=>e.id===cur)?cur:'';
 }
+// Подкаст: движок расшифровки — ВСЕ движки каталога (не только cut): подкаст часто не русский,
+// и годится Whisper, который тайминги для нарезки не даёт. Сервер проверяет имя по каталогу.
+async function setPodcastAsr(name){
+  let d;
+  try{d=await (await fetch('/api/ai_config',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'set_active_podcast_asr',name:name||'whisper'})})).json();}
+  catch(e){toast(t('Сервер не ответил: ')+e);fillPodcastAsr();return;}
+  if(d.error){toast('⚠ '+errText(d));fillPodcastAsr();return;}
+  AICFG.active_podcast_asr=d.active_podcast_asr||name;
+  fillPodcastAsr();
+  toast(t('движок подкаста: ')+engLabel(AICFG.active_podcast_asr));}
+function fillPodcastAsr(){
+  const sel=$('podcast_asr');if(!sel)return;
+  const list=(typeof ASR_ENGINES!=='undefined'?ASR_ENGINES:[]).filter(e=>e&&e.id);
+  // голое «whisper» (дефолт сервера) — тот же алиас, что у движка нарезки: whisper:large-v3
+  const cur=asrMigrate((AICFG&&AICFG.active_podcast_asr)||'whisper');
+  if(!list.length){
+    sel.innerHTML='<option value="whisper">'+t('Whisper')+'</option>';
+    sel.value='whisper';
+    return;
+  }
+  sel.innerHTML='';
+  [...new Set(list.map(e=>e.lang))].forEach(l=>{
+    const g=document.createElement('optgroup');g.label=LANGNAME[l]||l;
+    list.filter(e=>e.lang===l).forEach(e=>{
+      const o=document.createElement('option');o.value=e.id;o.textContent=t(e.label);g.appendChild(o);});
+    sel.appendChild(g);});
+  const exists=list.some(e=>e.id===cur);
+  sel.value=exists?cur:(list.some(e=>e.id==='whisper:large-v3')?'whisper:large-v3':list[0].id);
+}
+// Язык подкаста: «auto» — движок определит сам; код языка — расшифровывать на нём.
+async function setPodcastLang(lang){
+  let d;
+  try{d=await (await fetch('/api/ai_config',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({action:'set_podcast_lang',lang:lang||'auto'})})).json();}
+  catch(e){toast(t('Сервер не ответил: ')+e);fillPodcastLang();return;}
+  if(d.error){toast('⚠ '+errText(d));fillPodcastLang();return;}
+  AICFG.podcast_lang=d.podcast_lang||lang||'auto';
+  fillPodcastLang();
+  toast(t('язык подкаста: ')+(AICFG.podcast_lang==='auto'?t('определить сам'):AICFG.podcast_lang));}
+function fillPodcastLang(){
+  const sel=$('podcast_lang');if(!sel)return;
+  const cur=(AICFG&&AICFG.podcast_lang)||'auto';
+  sel.value=[...sel.options].some(o=>o.value===cur)?cur:'auto';
+}
 // ================= Ступени нарезки =================
 // Панель ступеней рисуется ПО ДАННЫМ С СЕРВЕРА (/api/cutstages).
 // Своей копии списка ступеней в JS нет — единственный источник правды cutstages.py.
@@ -495,8 +542,31 @@ function setVadThreshold(key,val){
     saveState();
   }
 }
+// ================= блоки страницы нарезки (⚙ → «Нарезка» → «Страница нарезки») =================
+// Вид страницы, а не настройка машины: живёт в stateObj (ключ page), не в ai_config.
+// Отсутствующее поле = блок показан: старое состояние не должно прятать гугл-диск и подкаст.
+let PAGEBLOCKS={gdrive:true,podcast:true};
+// Чистая функция (её берёт node-тест): что показать по состоянию. Прячет только явный false.
+function pageBlocksFrom(state){
+  const p=(state&&state.page)||{};
+  return {gdrive:p.gdrive!==false, podcast:p.podcast!==false};
+}
+// Скрытый блок — display:none, а не удаление: джобы гугл-диска и подкаста продолжают
+// писать статус в свои поля, те остаются в DOM, ошибок в консоли нет. Галки ⚙ — тут же.
+function applyPageBlocks(){
+  [['gdrive','gdrive_card','show_gdrive'],['podcast','podcast_card','show_podcast']].forEach(([k,cardId,chkId])=>{
+    const card=$(cardId),chk=$(chkId);
+    if(card)card.style.display=PAGEBLOCKS[k]?'':'none';
+    if(chk)chk.checked=PAGEBLOCKS[k];});
+}
+function setPageBlock(key,on){
+  PAGEBLOCKS[key]=!!on;
+  applyPageBlocks();
+  saveState();
+}
 function fillAIProfileSelects(){if(!AICFG)return;
   fillStepReasoning();fillStepProfiles();fillStepConcurrency();fillModelDevice();fillCutAsr();fillCutTextAsr();
+  fillPodcastAsr();fillPodcastLang();
   const om=$('omniprofile');
   if(om){const cur=AICFG.active_omni||'__local__';
     const LOCALS=['__local__','__gigaam__'];
@@ -643,7 +713,7 @@ async function setVideoProfile(name){
 // Вкладки настроек сгруппированы по задачам: подключения, шаги, генерация и инструменты. Всё, что здесь
 // выбрано, живёт на сервере (ai_config.json) или в состоянии UI — открыл ⚙, увидел то же.
 function aiSetTab(tab){
-  const allowed=['models','cut','markup','generation','words','tools'];
+  const allowed=['models','cut','podcast','markup','generation','words','tools'];
   if(tab==='common')tab='tools';
   if(!allowed.includes(tab))tab='models';
   document.querySelectorAll('#aisTabs .tab').forEach(b=>{const on=(b.dataset.tab===tab);
@@ -653,6 +723,8 @@ function aiSetTab(tab){
   // загрузку настроек: проба кодеков это микро-энкод, и платить за неё должен только
   // тот, кто открыл вкладку с этим выбором.
   if(tab==='tools')loadVideoEncoders();
+  // Сводка корзины (⚙ → «Нарезка») — сухой прогон на каждом заходе, чтобы цифра не врала
+  if(tab==='cut')trashCountLoad();
 }
 // Короткая сводка «что сейчас выбрано» прямо на странице — настройки уехали в ⚙,
 // и без неё было не видно, какой моделью считается нарезка/разметка.

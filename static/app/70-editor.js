@@ -15,7 +15,7 @@
 // `step` — токен шага планировщика кадра (60-preview.js:pvFramePlan): по нему сторож-таймер
 // и rAF гасят друг друга, чтобы на кадр пришёлся ровно один шаг.
 let ED={xml:'',blocks:[],fps:60,cam:'',dur:0,peaks:[],pps:80,sel:-1,play:false,raw:false,raf:0,step:0,
-  cs:0,drag:null,v0:0,v1:0,hist:[],cuts:[],br:[],brBand:0,
+  cs:0,drag:null,v0:0,v1:0,cuts:[],br:[],brBand:0,
   // Поля плеера для дорожки голоса (60-preview.js:vt*): `cams` ставит openPreview —
   // дорожка и живой хост берут файл камеры 1 через vtCam1(P); `voicePanel` — id панели
   // «Голос» этого плеера, по ней vtFx берёт ЖИВЫЕ ручки на экране, а vtNote пишет статус.
@@ -23,7 +23,13 @@ let ED={xml:'',blocks:[],fps:60,cam:'',dur:0,peaks:[],pps:80,sel:-1,play:false,r
   // Упреждение перемотки видео на промахе дублёра, с: пока декодер доезжает, звук уходит
   // вперёд, поэтому целимся туда, где звук будет. Подстраивается по замеру каждой перемотки.
   seekLead:0.12};
-const EDRULER=18;                                   // высота линейки, css px
+// История правок блоков: снимок — JSON блоков. Правка пишет ED_HIST.touch() ПОСЛЕ изменения
+// (см. histStack в 00-core.js); открытие и сохранение сбрасывают стек.
+const ED_HIST=histStack({max:60,
+  snapshot:()=>JSON.stringify(ED.blocks),
+  apply:s=>{ED.blocks=JSON.parse(s);if(ED.sel>=ED.blocks.length)ED.sel=-1;edDraw();edUI();},
+  onUi:edUndoUI});
+const EDRULER=18;                                  // высота линейки, css px
 // Видео догоняет звук (edFollow). Оно немое, поэтому скорость его подгонки не слышна —
 // в отличие от прежней подгонки звука скоростью, от которой голос «плыл».
 const ED_V_SOFT=0.04;   // расхождение видео со звуком меньше — не трогаем, с
@@ -36,7 +42,7 @@ async function edOpen(){const xml=PV.xml||(curEdit>=0?CLIPS[curEdit].xml:'')||ED
     if(d.error){toast(errText(d));return;}
     ED.blocks=(d.keep||[]).map(b=>({s0:b[0],s1:b[1]}));ED.fps=d.fps||60;ED.cam=d.cam;
     ED.orig=(d.keep||[]).map(b=>({s0:b[0],s1:b[1]}));   // раскладка ДО правки — для пересчёта таймингов вставок
-    ED.sel=-1;ED.cs=ED.blocks.length?ED.blocks[0].s0:0;ED.hist=[];ED.cuts=[];
+    ED.sel=-1;ED.cs=ED.blocks.length?ED.blocks[0].s0:0;ED_HIST.reset();ED.cuts=[];
     const w=await (await fetch('/api/waveform?pps=80&path='+encodeURIComponent(ED.cam))).json();
     ED.peaks=w.peaks||[];ED.pps=w.pps||80;ED.dur=w.dur||(ED.blocks.length?ED.blocks[ED.blocks.length-1].s1:0);
     ED.v0=0;ED.v1=ED.dur||1;
@@ -55,53 +61,42 @@ function edCutTime(s){let a=0;for(const b of ED.blocks){if(s>=b.s1)a+=b.s1-b.s0;
 // координаты: видимое окно [v0,v1] сек -> пиксели канваса (device px)
 function edS2X(s){const c=$('edtl');return (s-ED.v0)/(ED.v1-ED.v0)*c.width;}
 function edX2S(x){const c=$('edtl');return ED.v0+x/c.width*(ED.v1-ED.v0);}
-function edClampView(){const span=ED.v1-ED.v0;
-  if(ED.v0<0){ED.v0=0;ED.v1=span;}if(ED.v1>ED.dur){ED.v1=ED.dur;ED.v0=Math.max(0,ED.dur-span);}}
-function edZoom(f,atX){if(!ED.dur)return;const c=$('edtl');const ax=(atX!=null)?atX:c.width/2;const s=edX2S(ax);
-  let span=(ED.v1-ED.v0)/f;span=Math.max(1.5,Math.min(ED.dur,span));
-  ED.v0=s-(ax/c.width)*span;ED.v1=ED.v0+span;edClampView();edDraw();}
+// Окно редактора в пределах записи (общий зажим tlClampView; минимума у пана нет)
+function edClampView(){const r=tlClampView(ED.v0,ED.v1,ED.dur,0);ED.v0=r.v0;ED.v1=r.v1;}
+// Зум к курсору: минимум окна — 1.5 с (общая tlZoomSpan). atX — device px канваса, null — центр.
+function edZoom(f,atX){if(!ED.dur)return;const c=$('edtl');const ax=(atX!=null)?atX:c.width/2;
+  const r=tlZoomSpan(ED.v0,ED.v1,f,ax/c.width,ED.dur,1.5);ED.v0=r.v0;ED.v1=r.v1;edDraw();}
 function edZoomFit(){ED.v0=0;ED.v1=ED.dur||1;edDraw();}
-function edPush(){ED.hist.push(JSON.stringify(ED.blocks));if(ED.hist.length>60)ED.hist.shift();}
-function edUndo(){if(!ED.hist.length){toast(t('Нечего отменять'));return;}
-  ED.blocks=JSON.parse(ED.hist.pop());if(ED.sel>=ED.blocks.length)ED.sel=-1;edDraw();edUI();}
+// Кнопки «Отмена» и «Повтор» в ряду редактора: доступность — по стеку, без тоста на пустой
+function edUndoUI(){const b=$('edUndoBtn');if(b)b.disabled=!ED_HIST.canUndo();
+  const rb=$('edRedoBtn');if(rb)rb.disabled=!ED_HIST.canRedo();}
+function edUndo(){if(!ED_HIST.canUndo()){toast(t('Нечего отменять'));return;}ED_HIST.undo();}
+function edRedo(){if(!ED_HIST.canRedo()){toast(t('Нечего повторять'));return;}ED_HIST.redo();}
 function edDraw(){const c=$('edtl');if(!c||!ED.dur)return;const g=c.getContext('2d');const W=c.width,H=c.height;
-  const dpr=devicePixelRatio||1;const RH=Math.round(EDRULER*dpr);
-  g.clearRect(0,0,W,H);g.fillStyle='#0d0d0d';g.fillRect(0,0,W,H);
+  const dpr=devicePixelRatio||1;const RH=Math.round(EDRULER*dpr);const C=TL_COL;
+  g.clearRect(0,0,W,H);g.fillStyle=C.bg;g.fillRect(0,0,W,H);
   // волна ПО ВСЕМУ исходнику: оставленное зелёным, вырезанное серым (видно, что режем)
-  const mid=RH+(H-RH)/2,amp=(H-RH)*0.44;let bi=0,runColor=null;
-  g.lineWidth=1;g.beginPath();
-  for(let x=0;x<W;x++){const s=edX2S(x);if(s<0||s>ED.dur)continue;
-    while(bi<ED.blocks.length&&s>=ED.blocks[bi].s1)bi++;
-    const inb=bi<ED.blocks.length&&s>=ED.blocks[bi].s0;
-    const col=inb?((bi===ED.sel)?'#9fc0ff':'#6fce9e'):'#3f3f3f';
-    if(col!==runColor){if(runColor)g.stroke();g.beginPath();g.strokeStyle=col;runColor=col;}
-    const p=ED.peaks[Math.floor(s*ED.pps)]||0;const h=Math.max(dpr,p*amp*2);
-    g.moveTo(x+.5,mid-h/2);g.lineTo(x+.5,mid+h/2);}
-  if(runColor)g.stroke();
+  // Максимум пиков на пиксель — общая tlPaintWave (00-core.js), как у «Вся запись»
+  let bi=0;
+  tlPaintWave(g,{W:W,H:H,top:RH,dpr:dpr,v0:ED.v0,v1:ED.v1,dur:ED.dur,peaks:ED.peaks,pps:ED.pps,
+    colorAt:s=>{
+      while(bi<ED.blocks.length&&s>=ED.blocks[bi].s1)bi++;
+      const inb=bi<ED.blocks.length&&s>=ED.blocks[bi].s0;
+      return inb?((bi===ED.sel)?C.waveSel:C.wave):C.waveOff;}});
   // рамки блоков + ручки краёв
   ED.blocks.forEach((b,i)=>{const x0=edS2X(b.s0),x1=edS2X(b.s1);if(x1<0||x0>W)return;
-    g.fillStyle=(i===ED.sel)?'rgba(110,168,255,.14)':'rgba(60,160,110,.08)';g.fillRect(x0,RH,x1-x0,H-RH);
-    g.strokeStyle=(i===ED.sel)?'#6ea8ff':'#3ca06e';g.lineWidth=1;g.strokeRect(x0+.5,RH+.5,x1-x0-1,H-RH-1);
-    g.fillStyle=(i===ED.sel)?'#6ea8ff':'#3ca06e';g.fillRect(x0,RH,2*dpr,H-RH);g.fillRect(x1-2*dpr,RH,2*dpr,H-RH);});
+    const on=i===ED.sel;
+    tlDrawSpan(g,x0,x1,RH,H,dpr,{on:on,edge:on?C.selEdge:C.blkEdge,active:false});});
   // спорные вздохи/«кхе»: полоска под линейкой, клик по ней вырезает участок
   ED.brBand=Math.round(10*dpr);
   (ED.br||[]).forEach(m=>{if(edBlockAt((m.t0+m.t1)/2)<0)return;   // уже вырезано руками
     const x0=edS2X(m.t0),x1=edS2X(m.t1);if(x1<0||x0>W)return;
     g.fillStyle='rgba(224,138,60,.20)';g.fillRect(x0,RH,Math.max(2*dpr,x1-x0),H-RH);
     g.fillStyle='#e08a3c';g.fillRect(x0,RH,Math.max(2*dpr,x1-x0),ED.brBand);});
-  // линейка
-  g.fillStyle='#0a0a0a';g.fillRect(0,0,W,RH);
-  g.strokeStyle='#212121';g.beginPath();g.moveTo(0,RH+.5);g.lineTo(W,RH+.5);g.stroke();
-  const steps=[0.5,1,2,5,10,15,30,60,120,300];
-  const st=steps.find(s2=>s2/(ED.v1-ED.v0)*W>=64*dpr)||300;
-  g.fillStyle='#6f6f6f';g.font=(10*dpr)+'px ui-monospace,monospace';g.textBaseline='middle';
-  for(let tm=Math.ceil(ED.v0/st)*st;tm<=ED.v1+1e-6;tm+=st){const x=edS2X(tm);
-    g.strokeStyle='#2b2b2b';g.beginPath();g.moveTo(x+.5,0);g.lineTo(x+.5,RH);g.stroke();
-    g.fillText(fmtT(tm),x+4*dpr,RH/2+dpr);}
-  // плейхед (жёлтый, с флажком)
-  const cx=edS2X(ED.cs);
-  g.strokeStyle='#f5c518';g.lineWidth=Math.max(1,1.5*dpr);g.beginPath();g.moveTo(cx,0);g.lineTo(cx,H);g.stroke();
-  g.fillStyle='#f5c518';g.beginPath();g.moveTo(cx-4*dpr,0);g.lineTo(cx+4*dpr,0);g.lineTo(cx,6*dpr);g.closePath();g.fill();}
+  // линейка — общая tlPaintRuler (00-core.js), как у двух других полос времени
+  tlPaintRuler(g,{W:W,RH:RH,dpr:dpr,v0:ED.v0,v1:ED.v1,total:ED.dur});
+  // плейхед — последним, поверх блоков и кусков: синий с тёмной обводкой (tlDrawPlayhead, 00-core.js)
+  tlDrawPlayhead(g,edS2X(ED.cs),H,dpr);}
 function edUI(){const el=$('edtime');if(el)el.textContent=fmtIns(edCutTime(ED.cs))+' / '+fmtIns(edTotal());edWords();}
 // Слово под плейхедом и строка субтитра кадра. Плеер один — редактор, поэтому и панель
 // слов ведёт он (монтажного плеера, который вёл её раньше, больше нет). Считаем по
@@ -189,11 +184,20 @@ function edArm(){if(ED.raw||!ED.play)return;const i=edBlockAt(ED.cs);if(i<0)retu
   if(left>ED_ARM){bufIdle(sp);return;}
   bufArm(PV,sp,nb.s0);
   bufRoll(sp,left);}
+// Окно редактора едет за плейхедом — во время игры и при перемотке клавишами (как «Вся запись»).
+// Ручная протяжка по линейке (пан) окно не возвращает: пока её тянут, слежения нет.
+// Вернёт true, если окно сдвинулось (вызывающий перерисовывает).
+function edFollowView(){
+  if(tlPanning($('edtl')))return false;
+  const r=tlFollowHead(ED.v0,ED.v1,ED.cs,ED.dur,1.5);
+  if(r[0]===ED.v0&&r[1]===ED.v1)return false;
+  ED.v0=r[0];ED.v1=r[1];return true;}
 function edTick(){if(!ED.play)return;
   // Плейхед — по звуку: что звучит сейчас, то и ED.cs. Конец очереди — конец клипа.
   const c=(typeof eaSync==='function')?eaSync():null;
   if(!c||c.end){edPause();if(!ED.raw)ED.cs=ED.blocks.length?ED.blocks[0].s0:0;edDraw();edUI();return;}
   ED.cs=c.cs;
+  edFollowView();
   edFollow();
   if(typeof vtOf==='function')vtTick(ED,ED.cs);   // живому хосту плагинов — позиция
   edArm();
@@ -209,41 +213,45 @@ function edTick(){if(!ED.play)return;
 // следующего). После такой «правки» плеер честно играет то, что считалось вырезанным,
 // и к следующему блоку не переходит: переходить уже некуда (жалоба 2026-08-11).
 const EDGRAB=8;   // радиус захвата края/плейхеда, css px
-function edGrabAt(x){const tol=EDGRAB*(devicePixelRatio||1);let best=null;
-  ED.blocks.forEach((b,i)=>{[b.s0,b.s1].forEach((s,edge)=>{const d=Math.abs(x-edS2X(s));
-    if(d<tol&&(!best||d<best.d))best={i,edge,d};});});
-  const dh=Math.abs(x-edS2X(ED.cs));   // плейхед нарисован поверх — вничью берём его
-  if(dh<tol&&(!best||dh<=best.d))best={head:1,d:dh};
-  return best;}
+function edGrabAt(x){const tol=EDGRAB*(devicePixelRatio||1);const cands=[];
+  ED.blocks.forEach((b,i)=>{[b.s0,b.s1].forEach((s,edge)=>{cands.push({kind:'edge',dist:Math.abs(x-edS2X(s)),i,edge});});});
+  cands.push({kind:'head',dist:Math.abs(x-edS2X(ED.cs))});   // порядок общий с «Вся запись»: tlHitOrder (00-core.js)
+  const best=tlHitOrder(cands,{edge:tol,head:tol});
+  if(!best)return null;
+  return best.kind==='head'?{head:1,d:best.dist}:{i:best.i,edge:best.edge,d:best.dist};}
 function edBreathAt(x,y){const dpr=devicePixelRatio||1;const RH=Math.round(EDRULER*dpr);
   if(y<RH||y>RH+(ED.brBand||0))return null;
   return (ED.br||[]).find(m=>x>=edS2X(m.t0)-2&&x<=edS2X(m.t1)+2&&edBlockAt((m.t0+m.t1)/2)>=0)||null;}
 function edCutRange(t0,t1){       // вырезать участок: обрезать край блока или разрезать надвое
-  edPush();const out=[];
+  const out=[];
   for(const b of ED.blocks){
     if(t1<=b.s0||t0>=b.s1){out.push(b);continue;}
     if(t0>b.s0+0.05)out.push({s0:b.s0,s1:t0});
     if(t1<b.s1-0.05)out.push({s0:t1,s1:b.s1});}
-  ED.blocks=out;ED.sel=-1;edDraw();edUI();}
+  ED.blocks=out;ED.sel=-1;ED_HIST.touch();edDraw();edUI();}
 function edBind(){const c=$('edtl');if(!c||c._bound)return;c._bound=1;
   const px=e=>{const r=c.getBoundingClientRect();return (e.clientX-r.left)*(c.width/Math.max(1,r.width));};
   const py=e=>{const r=c.getBoundingClientRect();return (e.clientY-r.top)*(c.height/Math.max(1,r.height));};
   const dpr=()=>devicePixelRatio||1;
+  // Протяжка вида — средняя кнопка из любой точки и левая на линейке: общая tlMidPan (00-core.js).
+  // Нажатие ловит pointerdown; mousedown для таких нажатий уже не работает (см. ниже).
+  c.addEventListener('pointerdown',e=>{if(!ED.dur)return;const y=py(e);
+    if(e.button===1||(e.button===0&&y<=EDRULER*dpr())){
+      tlMidPan(c,e,{snap:()=>({v0:ED.v0,v1:ED.v1}),apply:(dx,s)=>{
+        const w=c.getBoundingClientRect().width||1, span=s.v1-s.v0;
+        const r=tlClampView(s.v0-dx/w*span,s.v1-dx/w*span,ED.dur,0);
+        ED.v0=r.v0;ED.v1=r.v1;edDraw();}});}});
   c.addEventListener('mousedown',e=>{if(!ED.dur)return;const x=px(e),y=py(e);const s=edX2S(x);
-    if(e.button===1){              // средняя кнопка: пан из любой точки таймлайна
-      e.preventDefault();           // браузерный middle autoscroll не должен стартовать
-      ED.drag={pan:1,x0:x,pv0:ED.v0,pv1:ED.v1,cursor:c.style.cursor};c.style.cursor='grabbing';return;}
-    if(y<=EDRULER*dpr()){ED.drag={pan:1,x0:x,pv0:ED.v0,pv1:ED.v1,cursor:c.style.cursor};c.style.cursor='grabbing';return;}
+    if(e.button===1||y<=EDRULER*dpr())return;
     const br=edBreathAt(x,y);       // клик по оранжевой полоске = вырезать вздох
     if(br){edCutRange(br.t0,br.t1);uiLog(t('вздох вырезан: ')+fmtT(br.t0)+' ('+br['класс']+', '+br.p+')');return;}
     const g=edGrabAt(x);
     if(g&&g.head){ED.drag={head:1};return;}
-    if(g){edPush();ED.drag={i:g.i,edge:g.edge};ED.sel=g.i;edDraw();return;}
-    ED.sel=edBlockAt(s);edSeek(s);});
+    if(g){ED.drag={i:g.i,edge:g.edge};ED.sel=g.i;edDraw();return;}
+    // пустое место: клик — перемотка, протяжка — перемотка за курсором (как у двух других полос)
+    ED.sel=edBlockAt(s);ED.drag={head:1};edSeek(s);});
   window.addEventListener('mousemove',e=>{
     if(ED.drag){const x=px(e);
-      if(ED.drag.pan){const ds=(ED.drag.x0-x)/c.width*(ED.drag.pv1-ED.drag.pv0);
-        ED.v0=ED.drag.pv0+ds;ED.v1=ED.drag.pv1+ds;edClampView();edDraw();return;}
       if(ED.drag.head){edSeek(edX2S(x));return;}
       let s=Math.max(0,Math.min(ED.dur,edX2S(x)));
       const {i,edge}=ED.drag;const b=ED.blocks[i];const MIN=0.08;
@@ -265,17 +273,20 @@ function edBind(){const c=$('edtl');if(!c||c._bound)return;c._bound=1;
         info.textContent=k?t('вырезано [{src}]: «{text}» — {reason}{rule}',{src:k.source||t('ИИ'),text:(k.text||'').slice(0,70),reason:(k.reason||'').slice(0,70),rule:k.rule?(' · '+k.rule):''})
                           :t('вырезанный кусок — двойной клик, чтобы вернуть');}
       else info.textContent='';}});
-  window.addEventListener('mouseup',()=>{if(!ED.drag)return;const d=ED.drag;ED.drag=null;if(d.pan)c.style.cursor=d.cursor;});
+  // Тяга края блока — ОДИН шаг истории по отпусканию (снимок до тяги сравнивается с итогом)
+  window.addEventListener('mouseup',()=>{if(!ED.drag)return;const d=ED.drag;ED.drag=null;
+    if(d.i!=null)ED_HIST.touch();});
   c.addEventListener('dblclick',e=>{if(!ED.dur)return;const s=edX2S(px(e));if(edBlockAt(s)>=0)return;
     let lo=0,hi=ED.dur;                              // вернуть вырезанную щель как блок
     for(const b of ED.blocks){if(b.s1<=s)lo=Math.max(lo,b.s1);if(b.s0>=s)hi=Math.min(hi,b.s0);}
-    if(hi-lo<0.05)return;edPush();ED.blocks.push({s0:lo,s1:hi});ED.blocks.sort((a,b2)=>a.s0-b2.s0);
-    ED.sel=ED.blocks.findIndex(b=>b.s0===lo);edDraw();edUI();});
-  c.addEventListener('wheel',e=>{e.preventDefault();if(!ED.dur)return;
-    if(e.shiftKey){const ds=(e.deltaY||e.deltaX)/Math.max(1,c.clientWidth)*(ED.v1-ED.v0);
-      ED.v0+=ds;ED.v1+=ds;edClampView();edDraw();}
-    else edZoom(e.deltaY<0?1.35:1/1.35,px(e));},{passive:false});
-  c.addEventListener('auxclick',e=>{if(e.button===1)e.preventDefault();});   // middle autoscroll в Chrome/FF гаснет и по auxclick
+    if(hi-lo<0.05)return;ED.blocks.push({s0:lo,s1:hi});ED.blocks.sort((a,b2)=>a.s0-b2.s0);
+    ED.sel=ED.blocks.findIndex(b=>b.s0===lo);ED_HIST.touch();edDraw();edUI();});
+  // Колесо: зум к курсору, Shift или горизонтальное — прокрутка (общая раскладка tlWheelBind)
+  tlWheelBind(c,{
+    pan:dx=>{if(!ED.dur)return;const ds=dx/Math.max(1,c.clientWidth)*(ED.v1-ED.v0);
+      ED.v0+=ds;ED.v1+=ds;edClampView();edDraw();},
+    zoom:(f,x)=>{if(!ED.dur)return;edZoom(f,x*(c.width/Math.max(1,c.getBoundingClientRect().width)));}});
+  tlMidGuard(c);   // средняя кнопка: без автоскролла браузера (mousedown и auxclick)
 }
 // Пробел, нажатый НА КНОПКЕ (в т.ч. на чипе слова — он role=button), принадлежит ей:
 // глобальный хендлер внизу файла кликает по такому элементу, и если модалка тем же
@@ -299,18 +310,20 @@ document.addEventListener('keydown',e=>{                    // хоткеи ре
   if(e.key===' '&&spaceOnControl(e))return;
   if(e.key===' '&&e.target&&e.target.type==='checkbox'){e.preventDefault();e.target.blur();edToggle();return;}
   const tg=(e.target.tagName||'').toLowerCase();if(tg==='input'||tg==='textarea'||tg==='select')return;
-  const k=e.key.toLowerCase();
+  // Отмена и повтор — раньше пробела и прочих клавиш: Ctrl+Y и русские «я»/«н» тоже сюда
+  const hk=histKey(e);if(hk){e.preventDefault();hk==='redo'?edRedo():edUndo();return;}
+  const ek=tlEditKey(e);   // резать / удалить — одна таблица клавиш на три полосы (00-core.js)
   if(e.key===' '){e.preventDefault();edToggle();}
-  else if(k==='c'||k==='с'||k==='s'||k==='ы'){edSplit();}
-  else if(k==='d'||k==='в'||e.key==='Delete'||e.key==='Backspace'){edDelSel();}
-  else if((e.ctrlKey||e.metaKey)&&k==='z'){e.preventDefault();edUndo();}
+  else if(ek==='split'){edSplit();}
+  else if(ek==='delete'){edDelSel();}
   else if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();
-    const st=e.shiftKey?1:2/(ED.fps||60);edSeek(ED.cs+(e.key==='ArrowRight'?st:-st));}});
+    const st=e.shiftKey?1:2/(ED.fps||60);edSeek(ED.cs+(e.key==='ArrowRight'?st:-st));
+    if(edFollowView())edDraw();}});
 function edSplit(){const i=edBlockAt(ED.cs);if(i<0){toast(t('Поставь курсор на блок'));return;}const b=ED.blocks[i];
-  if(ED.cs<=b.s0+0.05||ED.cs>=b.s1-0.05)return;edPush();
-  ED.blocks.splice(i,1,{s0:b.s0,s1:ED.cs},{s0:ED.cs,s1:b.s1});ED.sel=i+1;edDraw();edUI();}
-function edDelSel(){if(ED.sel<0){toast(t('Выбери блок (клик по нему)'));return;}edPush();
-  ED.blocks.splice(ED.sel,1);ED.sel=-1;edDraw();edUI();}
+  if(ED.cs<=b.s0+0.05||ED.cs>=b.s1-0.05)return;
+  ED.blocks.splice(i,1,{s0:b.s0,s1:ED.cs},{s0:ED.cs,s1:b.s1});ED.sel=i+1;ED_HIST.touch();edDraw();edUI();}
+function edDelSel(){if(ED.sel<0){toast(t('Выбери блок (клик по нему)'));return;}
+  ED.blocks.splice(ED.sel,1);ED.sel=-1;ED_HIST.touch();edDraw();edUI();}
 // монтажное время -> время исходника (по старой раскладке) и обратно (по новой):
 // так тайминги вставок переезжают на новую нарезку вместо того, чтобы молча съехать.
 function edSrcOf(blocks,tm){let a=0;for(const b of blocks){const d=b.s1-b.s0;if(tm<=a+d)return b.s0+Math.max(0,tm-a);a+=d;}return null;}
@@ -337,12 +350,14 @@ async function edSave(){const btn=$('edsave');const info=$('edtime');
         if(nhl)uiLog(t('жёлтые сброшены ({n}) — после пересборки индексы указывали бы на другие слова',{n:nhl}));
         c.status={};c.edited=true;saveState();syncClipLists();renderClips1();}  // субтитры/жёлтые стёрты пересборкой — статус сброшен; клип помечен «правлено»
       ED.orig=ED.blocks.map(b=>({s0:b.s0,s1:b.s1}));        // новая база для следующей правки в этой же сессии
-      ED.hist=[];                                           // сохранено — «несохранённых правок» больше нет
+      ED_HIST.reset();                                      // сохранено — «несохранённых правок» больше нет
       await openPreview(ED.xml);edUI();}
   }catch(e){toast(t('НЕ сохранил правку нарезки — сервер не ответил. XML не тронут, нажми «Сохранить» ещё раз'));uiLog('editor_save: '+e);}btn.disabled=false;}
 
 // ================= markup (step 2) =================
-async function markupOne(i){if(uiBusyGuard())return;const c=CLIPS[i];progOpen({title:t('Разметка')});uiBusySet(true);
+async function markupOne(i){if(uiBusyGuard())return;const c=CLIPS[i];
+  // typeof — стенды вырезают markupOne без 40-queue.js, где живёт markLastClip (как stateObj в 99-boot.js).
+  if(typeof markLastClip==='function')markLastClip(2,i);progOpen({title:t('Разметка')});uiBusySet(true);
   try{const ok=await markupClip(c);renderClips2();saveState();
     if(ok)progDone(t('Готово: ')+c.name);
     else progDone(t('Остановлено'),true);}   // список не закрываем сами: у окна есть «Закрыть»

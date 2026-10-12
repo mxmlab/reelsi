@@ -132,6 +132,8 @@ function subrowHighlight(tm){
 }
 function openInsertsFor(i){if(i==null||i<0||!CLIPS[i]){toast(t('Выбери клип'));return;}
   curIns=i;IPVMODE='clips';
+  // typeof — стенды вырезают openInsertsFor без 40-queue.js, где живёт markLastClip (как stateObj в 99-boot.js).
+  if(typeof markLastClip==='function')markLastClip(2,i);
   insEnsureUids(CLIPS[i]);insHistReset(CLIPS[i]);   // uid карточек + история правок — в рамках сеанса окна
   if(curAE!==i||AEXML!==CLIPS[i].xml)selectAE(i);
   $('mbInserts').querySelector('.modal').classList.remove('aemode');
@@ -341,56 +343,6 @@ function aewHighlight(tm){if(!aewOn()||!WORDS.length)return;   // подсвет
   const chips=$('aewwords').querySelectorAll('.chip');
   chips.forEach(ch=>ch.classList.toggle('cur',+ch.dataset.wi===k));}
 function syncClipLists(){renderClips2();renderClips3();}   // теги «вставок X из Y» в списках — сразу, без F5
-// Клип берём в переменную ОДИН РАЗ, как в aiInsertsMore: curIns меняется по клику в
-// списке, а ИИ думает секунды — читая CLIPS[curIns] после await, ответ про один клип
-// записывался в другой, открытый к тому моменту.
-async function aiInsertsRun(){if(curIns<0)return;const c=CLIPS[curIns];const xml=c.xml;const el=$('insres');
-  el.className='muted';el.textContent=t('подбираю…');uiLog(t('вставки (ИИ) для ')+c.name+t('…'));
-  try{const d=await aiFetch('/api/ai_inserts',{xml,rejected:c.ins_rejected||[],speaker:clipSpeaker(c)||undefined},'insStop','insres');
-    if(d.error){el.className='err';el.textContent='⚠ '+errText(d);uiLog(t('  ОШИБКА: ')+d.error);return;}
-    // media у ИИ-вставки пустое (файл подберёт insAfterAI), но вставка по названию приезжает
-    // с уже найденной картинкой (auto:'named'; 'drug' — старая метка) — её media терять нельзя.
-    c.inserts=(d.inserts||[]).map(x=>({...x,media:(x&&(x.auto==='named'||x.auto==='drug'))?(x.media||''):''}));insLog(d);
-    c.insTarget=Math.max(d.insTarget||0,c.inserts.length);   // цель «добрать» приезжает с бэкенда (от длины ролика), а не зашита в JS
-    const nv=c.inserts.filter(x=>x.type==='video').length;
-    const tail=await insAfterAI(c);   // файлы из базы + (по галке) генерация остатка
-    el.className='ok';el.textContent=c.inserts.length+t(' ({p} фото + {v} видео)',{p:c.inserts.length-nv,v:nv})+tail;
-    uiLog(t('  вставок: ')+c.inserts.length);
-    renderInsHost();syncClipLists();saveState();
-  }catch(e){if(aiAborted(e)){el.className='muted';el.textContent=t('⏹ остановлено');return;}
-    el.className='err';el.textContent='⚠ '+e;}}
-// Цель по числу вставок — для спикера КЛИПА (photo + video из его профиля; дефолт
-// 10 + 3 = 13). Клип без тега спикера общей квоты не получает: у него профиля нет.
-function spkInsTarget(c){
-  if(typeof SPEAKERS==='undefined')return 13;
-  const p=SPEAKERS[clipSpeaker(c)];
-  if(!p||!p.inserts)return 13;
-  const ph=(p.inserts.photo!=null&&!isNaN(parseInt(p.inserts.photo,10)))?parseInt(p.inserts.photo,10):10;
-  const vid=(p.inserts.video!=null&&!isNaN(parseInt(p.inserts.video,10)))?parseInt(p.inserts.video,10):3;
-  const total=ph+vid;
-  return total>=1?total:13;
-}
-// добрать недостающие: сгенерить (target - текущих) НОВЫХ, не повторяя оставленные (тайминги/темы)
-async function aiInsertsMore(){if(curIns<0)return;const c=CLIPS[curIns];const cur=c.inserts||[];
-  // цель — из профиля спикера ЭТОГО клипа; пересчитывается заново, чтобы правка в профиле действовала сразу
-  const target=spkInsTarget(c);const need=Math.max(0,target-cur.length);
-  const el=$('insres');
-  if(need<=0){el.className='muted';el.textContent=t('ничего добирать — удали лишние карточки сначала');return;}
-  el.className='muted';el.textContent=t('добираю {n}…',{n:need});uiLog(t('добор вставок ({n}) для {m}…',{n:need,m:c.name}));
-  const avoid=cur.map(x=>({start_sec:x.start_sec,type:x.type,query:x.query||''}));
-  try{const d=await aiFetch('/api/ai_inserts',{xml:c.xml,count:need,avoid,rejected:c.ins_rejected||[],speaker:clipSpeaker(c)||undefined},'insStop','insres');
-    if(d.error){el.className='err';el.textContent='⚠ '+errText(d);uiLog(t('  ОШИБКА: ')+d.error);return;}
-    insLog(d);
-    const fresh=(d.inserts||[]).map(x=>({...x,media:(x&&(x.auto==='named'||x.auto==='drug'))?(x.media||''):''}))
-      .filter(n=>!cur.some(o=>Math.abs((o.start_sec||0)-(n.start_sec||0))<1.0)).slice(0,need);
-    c.inserts=cur.concat(fresh).sort((a,b)=>(a.start_sec||0)-(b.start_sec||0));
-    const nv=c.inserts.filter(x=>x.type==='video').length;
-    const tail=await insAfterAI(c);              // файлы из базы + (по галке) генерация остатка
-    el.className='ok';el.textContent=t('добрано {f} · всего {t} ',{f:fresh.length,t:c.inserts.length})+t('({p} фото + {v} видео)',{p:c.inserts.length-nv,v:nv})+tail;
-    uiLog(t('  добрано вставок: ')+fresh.length);
-    renderInsHost();syncClipLists();saveState();
-  }catch(e){if(aiAborted(e)){el.className='muted';el.textContent=t('⏹ остановлено');return;}
-    el.className='err';el.textContent='⚠ '+e;}}
 function insAdd(type){if(curIns<0)return;const c=CLIPS[curIns];if(!c.inserts)c.inserts=[];
   const vid=type==='video';
   // at, а не t: имя t занято функцией перевода, а тост ниже её зовёт (см. ipvUI/ipvOverlay)
@@ -438,9 +390,20 @@ function insDel(i){const c=CLIPS[curIns];if(!c||!c.inserts)return;const x=c.inse
 // двери (удаление, выбор файла, тайминг, драг, маска, масштаб, стиль, отбраковка) не надо:
 // любая правка доходит до saveState — и попадает в историю. Стек на клип (по xml): открыт
 // один клип, а смена клипа в окне историю сбрасывает (insHistReset).
-const INS_HIST={},INS_HIST_LAST={},INS_HIST_MAX=100;
+const INS_HIST={},INS_HIST_MAX=100;
 let INS_HIST_APPLY=false;   // идёт применение снимка: saveState в историю не пишет
-function insHistFor(xml){return INS_HIST[xml]||(INS_HIST[xml]={undo:[],redo:[]});}
+// Стек на клип (ключ — xml) в общей механике histStack (00-core.js). Клип в замыкании берётся
+// из h.clip: его ставит каждый вызов, так что после пересборки списка клипов стек не смотрит в старый объект.
+function insHistFor(c){
+  let h=INS_HIST[c.xml];
+  if(!h){
+    h=INS_HIST[c.xml]=histStack({max:INS_HIST_MAX,
+      snapshot:()=>JSON.stringify(insHistState(h.clip)),
+      apply:s=>insHistApply(h.clip,JSON.parse(s)),
+      onUi:insUndoUI});
+  }
+  h.clip=c;
+  return h;}
 // genBusy/_typeBusy — мгновенные флаги (их не пишет и stateObj): в снимке они дали бы
 // «шаг истории» на каждое мерцание кнопки и залипшую «…» после отката.
 function insHistState(c){return {
@@ -460,26 +423,16 @@ function insHistTouch(c){
   if(INS_HIST_APPLY)return;
   c=c||insHistClip();
   if(!c||!c.xml)return;
-  const s=JSON.stringify(insHistState(c));
-  const last=INS_HIST_LAST[c.xml];
-  INS_HIST_LAST[c.xml]=s;
-  if(last===undefined||last===s)return;      // базы ещё нет или ничего не изменилось
-  const h=insHistFor(c.xml);
-  h.undo.push(last);                         // прежнее состояние — в стек отмены
-  if(h.undo.length>INS_HIST_MAX)h.undo.shift();
-  h.redo.length=0;                           // новая правка убивает повтор
-  insUndoUI();}
+  insHistFor(c).touch();}
 // Сброс истории при открытии окна/смене клипа: база — то, что было на экране.
 function insHistReset(c){
   if(!c||!c.xml)return;
-  INS_HIST[c.xml]={undo:[],redo:[]};
-  INS_HIST_LAST[c.xml]=JSON.stringify(insHistState(c));
-  insUndoUI();}
+  insHistFor(c).reset();}
 function insUndoUI(){
   const c=insHistClip();
-  const h=(c&&c.xml)?INS_HIST[c.xml]:null;
-  const b=$('insUndoBtn');if(b)b.disabled=!(h&&h.undo.length);
-  const rb=$('insRedoBtn');if(rb)rb.disabled=!(h&&h.redo.length);}
+  const h=(c&&c.xml)?insHistFor(c):null;
+  const b=$('insUndoBtn');if(b)b.disabled=!(h&&h.canUndo());
+  const rb=$('insRedoBtn');if(rb)rb.disabled=!(h&&h.canRedo());}
 // Применение снимка: вернуть поля клипу, перерисовать тем же путём, что правку
 // (ipvAfterEdit), и сохранить БЕЗ записи в историю — иначе откат сам стал бы шагом.
 function insHistApply(c,state){
@@ -494,25 +447,15 @@ function insHistApply(c,state){
   if(IPVMODE==='ae'&&curAE>=0&&CLIPS[curAE]===c&&typeof INS!=='undefined')
     INS=((c.job&&c.job.ins)||[]).map(x=>({...x}));
   INS_HIST_APPLY=true;
-  try{ipvAfterEdit();}finally{INS_HIST_APPLY=false;}
-  INS_HIST_LAST[c.xml]=JSON.stringify(insHistState(c));
-  insUndoUI();}
+  try{ipvAfterEdit();}finally{INS_HIST_APPLY=false;}}
+// Шаг стека делает histStack: текущий снимок уходит в противоположный стек, apply → insHistApply
+// (с флагом INS_HIST_APPLY внутри), кнопки обновляет insUndoUI.
 function insUndo(){
   const c=insHistClip();if(!c||!c.xml)return;
-  const h=insHistFor(c.xml);if(!h.undo.length)return;
-  const prev=h.undo.pop();
-  h.redo.push(JSON.stringify(insHistState(c)));      // текущее — в стек повтора
-  if(h.redo.length>INS_HIST_MAX)h.redo.shift();
-  insHistApply(c,JSON.parse(prev));                  // внутри: LAST и обновление кнопок
-  uiLog(t('вставки: правка отменена'));}
+  if(insHistFor(c).undo())uiLog(t('вставки: правка отменена'));}
 function insRedo(){
   const c=insHistClip();if(!c||!c.xml)return;
-  const h=insHistFor(c.xml);if(!h.redo.length)return;
-  const next=h.redo.pop();
-  h.undo.push(JSON.stringify(insHistState(c)));
-  if(h.undo.length>INS_HIST_MAX)h.undo.shift();
-  insHistApply(c,JSON.parse(next));
-  uiLog(t('вставки: правка повторена'));}
+  if(insHistFor(c).redo())uiLog(t('вставки: правка повторена'));}
 // Две кнопки генерации — по одной на личную приписку из профиля спикера («1» и «2»).
 // У фото и видео конфиги разные, но смысл одинаков: цифра — не декор, а выбор слота;
 // сама приписка видна в тултипе и финальный промпт собирает сервер.
@@ -556,11 +499,12 @@ function renderInsHost(){const host=$('insHost');if(!host)return;host.innerHTML=
   arr.forEach((x,i)=>{const vid=x.type==='video';const card=document.createElement('div');
     const fname=(x.media||'').replace(/^.*[\\\/]/,'');
     insScrubInit(x);                                  // скрабберы тянут значение объекта
-    // зелёная рамка — только у файла, выбранного ОСОЗНАННО: автоподбор из базы и
+    // зелёная полоска — только у файла, выбранного ОСОЗНАННО: автоподбор из базы и
     // генерация её не получают (у них свои теги «авто»/«ген»), иначе «зелёное = проверено»
     // теряет смысл — весь список загорался сам собой сразу после разметки
     const picked=fname&&!x.libAuto&&!x.genAuto;
-    card.className='inscard '+(vid?'tvideo':'tphoto')+(picked?' chosen':'');
+    // общая карточка с кусками подкаста (.edcard): фон, рамка, поля; выбор — .playing (.sel по смыслу)
+    card.className='edcard inscard '+(vid?'tvideo':'tphoto')+(picked?' chosen':'');
     card.innerHTML='<div class="top">'
       +'<span class="badge '+(vid?'video':'photo')+'" style="cursor:pointer" tabindex="0" role="button" aria-label="'+t('Переключить фото/видео')+'" data-t="'+t('Клик — переключить фото/видео')+'" onclick="insToggleType('+i+')">'+ico(vid?'film':'img','gold')+(vid?t('ВИДЕО'):t('ФОТО'))+'</span>'
       +'<span class="mono muted" style="min-width:70px">'+fmtIns(x.start_sec)+' ('+(Math.round((x.duration_sec||2)*10)/10)+t('с')+')</span>'
@@ -572,21 +516,25 @@ function renderInsHost(){const host=$('insHost');if(!host)return;host.innerHTML=
       // галка «на подложке» — рядом с mosaic, тот же путь сохранения: вставка
       // едет на картинке-подложке из стиля, фон с фото снимается, промпт — свой (pa/pb)
       +'<label class="chk" style="display:flex;gap:6px;align-items:center;margin:0" data-t="'+t('вставка встаёт на картинку-подложку из стиля («Подложка (файл)»), фон с фото снимается, а промпт генерации берётся из «Подложка: приписка к промпту 1/2» профиля спикера')+'"><input type="checkbox" '+(x.plate?'checked':'')+' onchange="CLIPS[curIns].inserts['+i+'].plate=this.checked;this.blur();saveState();ipvRefresh()"> '+t('на подложке')+'</label>'
-      +'<span class="grow"></span><span class="del" tabindex="0" role="button" aria-label="'+t('Удалить вставку')+'" data-t="'+t('Удалить вставку целиком')+'" onclick="insDel('+i+')">'+ico('x')+'</span></div>'
+      +'<span class="grow"></span><button class="icon" aria-label="'+t('Удалить вставку')+'" data-t="'+t('Удалить вставку целиком')+'" onclick="insDel('+i+')">'+ico('trash')+'</button></div>'
       +'<div style="display:flex;gap:8px;align-items:center"><input class="qedit" data-noi18n value="'+esc(x.query||'')+'" placeholder="'+t('что искать в базе / генерить — по-английски, 2–4 слова')+'"'
       +' aria-label="'+t('Описание вставки')+'" data-t="'+t('Описание для подбора и генерации')+'"'
       +' onchange="insQuery('+i+',this.value)" onkeydown="if(event.key===\'Enter\')this.blur()"></div>'
       +(x.prompt?'<div class="muted" data-noi18n style="margin-top:4px;font-size:12px">'+esc(x.prompt)+'</div>':'')
-      +'<div style="margin-top:6px;display:flex;gap:8px;align-items:center"><button class="sm" onclick="insPick('+i+')">'+t('Выбрать файл…')+'</button>'
+      +'<div class="insrow"><button class="sm" onclick="insPick('+i+')">'+t('Выбрать файл…')+'</button>'
       +'<button class="sm" onclick="insLibFor('+i+')" aria-label="'+t('Варианты из базы вставок')+'" data-t="'+t('Варианты из базы вставок')+'">'+ico('book')+'</button>'
       +'<button class="sm" onclick="insStockFor('+i+')" aria-label="'+t('Сток')+'" data-t="'+t('Кадры со стоков Pexels/Pixabay по запросу карточки')+'">'+t('Сток')+'</button>'
       +((vid?vidGenOn():imgGenOn())?insGenBtns(i,x):'')
       +(!vid&&fname?'<button class="sm" onclick="insRembg('+i+')" data-t="'+t('Убрать фон у этого файла (как Remove Background в фотошопе) — рядом ляжет прозрачный -nobg.png')+'"'+(x.genBusy?' disabled':'')+'>'+t('Фон долой')+'</button>':'')
       +'<button class="sm" onclick="insCopy('+i+')" data-t="'+t('Скопировать поисковый запрос')+'">'+t('Копировать')+'</button>'
-      +'<span class="'+(fname?'ok':'muted')+'" style="font-size:12px"'
+      // имя файла — отдельный элемент: одна строка с «…», полное имя в title; галочка и
+      // крестик «убрать» сидят в той же обёртке, чтобы не переноситься отдельно от имени
+      +'<span class="insfile '+(fname?'ok':'muted')+'"'
         +(!fname&&x.noAuto?' data-t="'+t('Файл убрали крестиком — автоподбор и автогенерация сюда больше не лезут. Поставь файл сам: варианты из базы, «Выбрать файл…» или генерация.')+'"':'')
-        +'>'+(fname?(ico('check')+' <span data-noi18n>'+esc(fname)+'</span>'):t('файл не выбран'))+'</span>'
-      +(fname?'<span class="del" tabindex="0" role="button" aria-label="'+t('Убрать файл')+'" onclick="insClearMedia('+i+')" data-t="'+t('Убрать файл (вставка останется)')+'">'+ico('x')+'</span>':'')
+        +'>'+(fname
+          ?(ico('check')+'<span class="insfname" data-noi18n title="'+esc(fname)+'">'+esc(fname)+'</span>'
+            +'<span class="del" tabindex="0" role="button" aria-label="'+t('Убрать файл')+'" onclick="insClearMedia('+i+')" data-t="'+t('Убрать файл (вставка останется)')+'">'+ico('x')+'</span>')
+          :t('файл не выбран'))+'</span>'
       +(x.libAuto?'<span class="tag on" data-t="'+t('Файл подобран из базы автоматически — проверь, замени или выбери файл вручную')+'">'+ico('book')+t('авто')+'</span>':'')
       +(x.genAuto?'<span class="tag on" data-t="'+t(vid?'Ролик сгенерирован ИИ и будет перенесён в базу при сборке':'Картинка сгенерирована ИИ (Nano Banana) и добавлена в базу вставок')+'">'+ico('ai')+t('ген')+'</span>':'')+'</div>'
       +(x.libShown?insLibRow(x,i):'')

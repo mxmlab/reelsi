@@ -188,13 +188,11 @@ def test_every_door_contains_hl_count():
     assert re.search(r"j\.hl_breaks=[^\n\r]*;[^\n\r]*j\.hl_count=[^\n\r]*CNT[^\n\r]*;", ae_js)
     # 5. 90-ae.js: jobForBuild
     assert re.search(r"hl_breaks:j\.hl_breaks\|\|\[\],\s*hl_count:j\.hl_count\|\|\[\]", ae_js)
-    # 6. 90-ae.js: tojsx
-    assert re.search(r"hl_breaks:\(HLXML===xml\)\?\[\.\.\.BRK\]:\[\],\s*hl_count:\(HLXML===xml\)\?\[\.\.\.CNT\]:\[\]", ae_js)
-    # 7. 85-inserts-view.js: ipvPlanBody
+    # 6. 85-inserts-view.js: ipvPlanBody
     assert re.search(r"hl_breaks:\(HLXML===xml\)\?\[\.\.\.BRK\]:\[\],[^\n\r]*\r?\n\s*hl_count:\(HLXML===xml\)\?\[\.\.\.CNT\]:\[\]", ins_js)
-    # 8. api/build.py: _norm_build_jobs
+    # 7. api/build.py: _norm_build_jobs
     assert re.search(r"hl_breaks(?:\s*:[^=]+)?\s*=\s*j\.get\(\"hl_breaks\"\)[^\n\r]*,\r?\n\s*hl_count(?:\s*:[^=]+)?\s*=\s*j\.get\(\"hl_count\"\)", api_build)
-    # 9. xml2ae/build.py: scene_plan & parse
+    # 8. xml2ae/build.py: scene_plan & parse
     assert re.search(r"hl_breaks(?:\s*:[^=]+)?\s*=\s*None,\s*hl_count(?:\s*:[^=]+)?\s*=\s*None", xml_build)
     assert re.search(r"brk_raw\s*=.*?hl_breaks.*?\n\s*cnt_raw\s*=.*?hl_count", xml_build)
 

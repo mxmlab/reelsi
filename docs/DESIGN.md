@@ -16,10 +16,10 @@ Russian version: [docs/DESIGN.ru.md](DESIGN.ru.md).
 дополнительным действием. Панель «Собрать» находится сразу после списка файлов,
 рядом с областью выбора, а папки и расширенные параметры — ниже.
 
-Google Drive остаётся первым на шаге «Нарезка», но по умолчанию свёрнут в
-«Получить материал с Google Drive». Вторичные действия (Видео, база вставок,
-очистка временных файлов) живут на отдельной вкладке «Инструменты» в настройках;
-шапка остаётся для навигации, логов, настроек и языка.
+Google Drive остаётся первым на шаге «Нарезка» обычной карточкой, не свёрнутой
+(`#gdrive_card`); скрывается в ⚙ → «Нарезка» → «Страница нарезки». Вторичные
+действия (Видео, база вставок, очистка временных файлов) живут на отдельной вкладке
+«Инструменты» в настройках; шапка остаётся для навигации, логов, настроек и языка.
 
 Модалка настроек — фиксированного responsive-размера: её шапка и навигация
 вкладок неподвижны, а прокручивается только содержимое выбранной вкладки.
@@ -205,6 +205,48 @@ name="aiswords"; одновременно открыта только одна �
   `currentColor` (chalk) или `.gold` (Compass Gold — ИИ-действия).
   **Эмодзи в хроме запрещены** (в логах/тостах-тексте — допустимы).
 
+## Unified look — owner rules
+
+Rules the owner checks by eye. Class and function names are taken from the code.
+
+### Timelines
+
+- One header: `[label !] … [+ − ⛶]`; "!" is single, to the right of the label; the word "Таймлайн" is not in the header; header buttons have one height; 6px from the header to the canvas frame. One header in the step-1 cut editor (`70-editor.js`), the insert preview (`85-inserts-view.js`) and the podcast "Вся запись" (`46-podcast-editor.js`).
+- Playhead is blue `var(--tl-ph)` with a dark outline. Only `tlDrawPlayhead` (`00-core.js`) draws it; colors come from `TL_COL`. There is no yellow playhead.
+- Ruler: step from `tlTickStep`, labels from `tlRulerLabel`: tenths when the step is under 1 s; labels do not repeat.
+- Playback and sound are in the timeline header; under the video there is only the video, full column width.
+- Editing: C or S — cut, D, Delete or Backspace — delete, Ctrl+Z / Ctrl+Y — undo and redo, double-click on empty space — new segment. Keys: `tlEditKey`. Undo and redo: one history per timeline, `histStack`; keys: `histKey` (also "я" and "н" in the Russian layout). The "Резать" and "Удалить" buttons are on the left, with `.kbd` (rule 2).
+- Gestures are the same on all three: click or drag the field or the playhead — seek (dragging does not pause playback); drag the ruler or use the middle button — scroll the view (`tlMidPan`, cursor grab / grabbing); wheel — zoom, Shift or horizontal wheel — scroll (`tlWheelBind`). Grab order is one for step 1 and "Вся запись" (`tlHitOrder`): the edge of a piece, then the playhead, then the ruler, then the middle of a piece.
+- Waveform — the peak maximum per pixel (`tlPaintWave`), not a point sample. Ruler and segment frames: `tlPaintRuler`, `tlDrawSpan`.
+- The view follows the playhead during playback and on keyboard seeks (`tlFollowHead`): the playhead goes to 10 % of the width from the left. A manual pan is not taken back while it is held.
+- Shared in `00-core.js`: `TL_COL`, `TL_ZOOM_STEP`, `tlTickStep`, `tlRulerLabel`, `tlPaintRuler`, `tlDrawSpan`, `tlPaintWave`, `tlDrawPlayhead`, `tlWheelIsPan`, `tlWheelDelta`, `tlWheelBind`, `tlMidPan`, `tlMidGuard`, `tlPanning`, `tlClampView`, `tlZoomSpan`, `tlFollowHead`, `tlHitOrder`, `tlEditKey`, `histStack`, `histKey`. New code shared by the timelines goes there.
+
+### Cards and selection
+
+- Edit card uses the shared class `.edcard` (inserts, podcast segments). Selected: `.edcard.sel` (for inserts — `.inscard.playing`): blue border and `rgba(110,168,255,.08)` highlight. Not yellow.
+- Blue is the color of selection and playhead, functional like timeline data colors. Blue is absent from the rest of the chrome: this refines the "синий в хроме нельзя" rule in "Можно / нельзя".
+- "Like X" = take exactly what is named (border, color, icon); do not change content or layout.
+
+### Deletion and trash
+
+- Delete = trash icon (`trash`). The `x` cross is only for "close window" and "remove a mark, tag or pair from the queue".
+- Clip-list rows have no own delete button: tick them → "Удалить выбранные" in the header. On steps 1, 2 and 3 one set in the header: "Корзина" (icon `bin` and text) and "Удалить выбранные" (square, `trash` icon), both in a frame.
+- Delete = always to trash, which can be restored; together with sources — optional. A source needed by other clips is not deleted. There is no "убрать из списка".
+- Emptying the trash permanently — only in ⚙ → "Нарезка": trash files are needed to retrain the program.
+
+### Lists
+
+- The "last worked" mark — class `.cur` (white stripe on the left) on clips at all three steps and on podcasts (`.podrow`); survives F5.
+- New clips join the list in queue order, not in readiness order.
+
+### Menus and fields
+
+- A dropdown is its own menu, not the system `<select>`, where styling or loading is needed: `.spkpick` (clip speaker), `.podmenu` (podcast track). An open menu sits above sticky panels: `z-index:var(--z-pop)`. Closing is one mechanism (`dropdownBind`, `20-widgets.js`): a click outside, Esc (focus goes back to the button) and focus moving to another element close it; only one menu is open at a time (the speaker list).
+- Rows of the same structure (camera folders) — one grid `.camgrid`; columns are the same for all rows.
+- Big windows (podcast, step-2 inserts, AE preview) share one shell: `.modal.fill94` (94vh, column) and `.mbody.fill`. Modifiers: `.cropped` — overflow hidden, only the step-2 inserts window (`:not(.aemode)`); `.scroll` — the podcast body scrolls; `.tight` — 12 px top and bottom (AE keeps 20). There are no copies of the window rule.
+- Cut-page blocks (Google Drive, podcast) — ordinary cards, not collapsible; hidden in ⚙ → "Нарезка" → "Страница нарезки".
+- "!" — centered in the circle: `.i{line-height:14px}`.
+
 ## Можно / нельзя
 
 **Можно (и нужно):**
@@ -217,7 +259,7 @@ name="aiswords"; одновременно открыта только одна �
 - Тени, градиенты, цветные заливки под текстом (кроме белой primary-пилюли,
   жёлтых чипов-слов и цветных блоков таймлайна — это данные).
 - Жирные заголовки; кегль <11px; инлайн-простыни справки.
-- Эмодзи-иконки; синий/мультиколор в хроме.
+- Эмодзи-иконки; синий/мультиколор в хроме (синий — только выбор и плейхед таймлайна, см. «Единый вид»).
 - Скругления >8px где угодно, кроме пилюль.
 - Новые пер-клип кнопки без явной просьбы юзера.
 

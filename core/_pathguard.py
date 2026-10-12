@@ -43,6 +43,16 @@ def safe_name(raw: object, fallback: str = "file") -> str:
     return text[:128]
 
 
+def is_within(path: str, folder: str) -> bool:
+    """Лежит ли `path` строго внутри `folder` (по realpath; регистр на Windows не важен).
+
+    Сравнение идёт по «папка + разделитель»: `C:\\ab\\x` НЕ внутри `C:\\a` (префикс-ловушка).
+    Сама папка внутри себя не считается.
+    """
+    base = os.path.normcase(os.path.realpath(folder)) + os.sep
+    return os.path.normcase(os.path.realpath(path)).startswith(base)
+
+
 def inside_dir(base: str, name: str) -> str:
     """Путь `base/name` — и он действительно внутри `base` (иначе `ValueError`).
 
@@ -51,6 +61,6 @@ def inside_dir(base: str, name: str) -> str:
     """
     root = os.path.realpath(base)
     path = os.path.realpath(os.path.join(root, name))
-    if path == root or not path.startswith(root + os.sep):
+    if path == root or not is_within(path, root):
         raise ValueError(f"путь вышел за пределы папки: {name!r}")
     return path

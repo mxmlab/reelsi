@@ -16,11 +16,12 @@
 1. Конвейер «Разметить все» (`markupAllRun`, `70-editor.js`) шлёт в `/api/ai_inserts`
    спикера КЛИПА; у клипа без тега поле пустое (запасного пути на общий выбор нет);
 2. одиночная разметка клипа (`markupClip`, `70-editor.js`) — то же самое;
-3. окно вставок (`aiInsertsRun`, `80-inserts.js`) — то же самое, а `spkInsTarget(clip)`
-   считает цель по профилю КЛИПА: спикер Б без квоты → 13, спикер А 5 + 2 → 7;
-4. сторож: `val('speaker')` в `static/app/*.js` встречается только в функциях белого
+3. сторож: `val('speaker')` в `static/app/*.js` встречается только в функциях белого
    списка (новая нарезка и профиль спикера) — имена функций, а не номера строк;
-5. сторож: каждый вызов `/api/ai_inserts` в `static/app/*.js` несёт `clipSpeaker`.
+4. сторож: каждый вызов `/api/ai_inserts` в `static/app/*.js` несёт `clipSpeaker`.
+
+Окно вставок (`aiInsertsRun`/`aiInsertsMore`/`spkInsTarget`) удалено: кнопок давно нет,
+функции были мёртвым кодом; тесты на них ушли вместе с ними.
 
 Запуск: python -m pytest tests/test_clip_speaker.py -q
 """
@@ -41,7 +42,6 @@ ROOT = HERE.parent
 APP = ROOT / "static" / "app"
 QUEUE_JS = APP / "40-queue.js"
 EDITOR_JS = APP / "70-editor.js"
-INSERTS_JS = APP / "80-inserts.js"
 
 node = pytest.mark.skipif(not shutil.which("node"),
                           reason="контракт фронта требует node в PATH")
@@ -95,24 +95,6 @@ async function aiPost(url,body,title){
   return {};
 }
 """
-
-INSERTS_HARNESS = HARNESS_HEAD + r"""
-let curIns=0;
-const ELS={};
-function $(id){if(!ELS[id])ELS[id]={id,className:'',textContent:'',innerHTML:''};return ELS[id];}
-function insLog(d){}
-function insAfterAI(c){return Promise.resolve('');}
-function renderInsHost(){}
-function syncClipLists(){}
-function saveState(){}
-function aiAborted(e){return false;}
-async function aiFetch(url,body,tag,res){
-  CALLS.push({url:url,
-    speaker:(body.speaker===undefined||body.speaker===null)?null:String(body.speaker)});
-  return {inserts:[{type:'photo',start_sec:1}]};
-}
-"""
-
 
 def _read(path: Path) -> str:
     return io.open(str(path), encoding="utf-8").read()
@@ -203,35 +185,6 @@ def test_single_clip_markup_sends_the_speaker_of_the_clip(tmp_path):
     assert by_xml == {"СпикерБ.xml": "СпикерБ", "безымянный.xml": None}, res["calls"]
 
 
-@node
-def test_inserts_window_and_target_use_the_speaker_of_the_clip(tmp_path):
-    """3. Окно вставок: запрос несёт спикера клипа, а цель — квоту ЕГО профиля.
-
-    `spkInsTarget(clip)` — цель по числу вставок: спикер Б без квоты → 13 (дефолт
-    10 + 3), спикер А 5 + 2 → 7, клип без тега → 13.
-    """
-    inserts = _read(INSERTS_JS)
-    script = (INSERTS_HARNESS + "\n" + _clip_speaker() + "\n"
-              + _func(inserts, "spkInsTarget") + "\n"
-              + _func(inserts, "aiInsertsRun") + "\n" + CLIPS_BODY + r"""
-(async()=>{
-  curIns=0;await aiInsertsRun();
-  curIns=1;await aiInsertsRun();
-  console.log(JSON.stringify({calls:CALLS,
-    tgt_b:spkInsTarget(CLIPS[0]),
-    tgt_none:spkInsTarget(CLIPS[1]),
-    tgt_a:spkInsTarget({job:{speaker:'СпикерА'}}),
-    tgt_null:spkInsTarget(null)}));
-})().catch(e=>{console.error(e);process.exit(1);});
-""")
-    res = _run_node(tmp_path, "clipspk_inswindow.js", script)
-    assert [c["speaker"] for c in res["calls"]] == ["СпикерБ", None], res["calls"]
-    assert res["tgt_b"] == 13, res
-    assert res["tgt_none"] == 13, res
-    assert res["tgt_a"] == 7, res
-    assert res["tgt_null"] == 13, res
-
-
 # ---- сторож: общий выбор остаётся только у нарезки и профиля (п. 3) ----
 VAL_SPEAKER = re.compile(r"val\(\s*'speaker'\s*\)")
 _FUNC_DECL = re.compile(r"(?:async\s+)?function\s+([A-Za-z_$][\w$]*)\s*\(")
@@ -247,6 +200,9 @@ _FUNC_EXPR = re.compile(
 ALLOWED: dict[str, set[str]] = {
     "10-settings.js": {"cutSummary"},
     "40-queue.js": {"newClip", "runAI", "runCustom"},
+    # 2026-10-11, решение владельца: «рилсы класть туда, где выбранный спикер и его камера 1».
+    # Перевод подкаста в рилсы — вход НОВОЙ нарезки, как и сама нарезка берёт общий выбор.
+    "45-podcast.js": {"podConvert", "podConvertAll"},
     "95-styles.js": {
         "applySpeakerDirs", "spkEditUI", "spkDir", "jsxDirNote", "renderDirNote",
         "camDirApply", "camDirCommit", "saveSpeakerCamdirs", "onSpeakerChange",
@@ -350,7 +306,9 @@ def test_every_ai_inserts_call_passes_the_clip_speaker():
             chunk = src[m.start():end if end is not None else m.end() + 400]
             if "clipSpeaker" not in chunk:
                 missing.append("%s: %s" % (path.name, chunk.splitlines()[0].strip()[:160]))
-    assert total >= 3, "вызовов /api/ai_inserts найдено меньше трёх — разбор сломался"
+    # Живых вызова два — разметка клипа и конвейер «Разметить все» (оба в 70-editor.js);
+    # меньше — значит разбор сломался, а не что вызовы пропали без следа.
+    assert total >= 2, "вызовов /api/ai_inserts найдено меньше двух — разбор сломался"
     assert not missing, "вызов /api/ai_inserts без спикера клипа: %s" % missing
 
 
@@ -360,13 +318,3 @@ def test_clip_speaker_reads_the_clip_tag_only():
     assert "val(" not in src, "clipSpeaker полез в общий селектор: %s" % src
     assert ".job.speaker" in src and "||''" in src, src
 
-
-def test_spk_ins_target_takes_a_clip():
-    """`spkInsTarget` принимает КЛИП: вызовов без аргумента быть не должно."""
-    src = _read(INSERTS_JS)
-    assert re.search(r"function\s+spkInsTarget\s*\(\s*c\s*\)", src), (
-        "spkInsTarget больше не принимает клип")
-    assert not re.search(r"spkInsTarget\s*\(\s*\)", src), (
-        "spkInsTarget зовут без клипа — цель посчитается по общему выбору")
-    assert "clipSpeaker(c)" in _func(src, "spkInsTarget"), (
-        "spkInsTarget читает спикера не у клипа")

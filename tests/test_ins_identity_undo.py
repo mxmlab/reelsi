@@ -46,6 +46,7 @@ JS85 = os.path.join(APP, "85-inserts-view.js")
 JS80 = os.path.join(APP, "80-inserts.js")
 JS90 = os.path.join(APP, "90-ae.js")
 JS99 = os.path.join(APP, "99-boot.js")
+JS00 = os.path.join(APP, "00-core.js")
 node = pytest.mark.skipif(not shutil.which("node"),
                           reason="контракт фронта требует node в PATH")
 
@@ -117,6 +118,7 @@ var CURSTYLE=null,STEP=2;
 var IPV={fps:60,dur:30,vids:[1],playing:false,plan:null,insShift:null,cur:-1};
 var ITL={pps:20};
 var CLIPS=[],curAE=-1,curIns=-1,IPVMODE='clips',INS=[];
+var LASTCLIP={1:'',2:'',3:''};   // метки «работал» — их stateObj кладёт в состояние (99-boot.js)
 function fmtIns(s){return String(s)+'s';}
 function insLbl(){return 'ins';}
 function insScrubInit(){}
@@ -162,6 +164,8 @@ def _stand():
         "normInsPath", "insEnsureUids", "insCardKey", "cardToIns", "insCardFor",
         "insSetSDCard", "insSetSD", "ipvIns", "ipvAfterEdit", "axisLock")]
     parts += [_func(ae, n) for n in ("defJob", "ensureJobs")]
+    # стек — общая механика из 00-core.js (histStack); история вставок строится на нём
+    parts.append(_func(_read(JS00), "histStack"))
     parts += [_func(a80, n) for n in (
         "insSetMedia", "insDel", "insHistFor", "insHistState", "insHistClip", "insHistTouch",
         "insHistReset", "insUndoUI", "insHistApply", "insUndo", "insRedo")]
@@ -331,17 +335,20 @@ CLIPS[0].inserts[1].x=42;CLIPS[0].inserts[1].y=-7;saveState();   // 4. x/y — �
 const S4=snap();
 CLIPS[0].ins_rejected=[{type:'photo',query:'sunset'}];saveState();   // 5. отбраковка
 const S5=snap();
-const depth5=INS_HIST['c.xml'].undo.length;
+// Глубины стеков стек не отдаёт (только canUndo/canRedo): считаем шагами и возвращаем состояние.
+function undoLen(){let n=0;while(INS_HIST['c.xml'].canUndo()){insUndo();n++;}for(let i=0;i<n;i++)insRedo();return n;}
+function redoLen(){let n=0;while(INS_HIST['c.xml'].canRedo()){insRedo();n++;}for(let i=0;i<n;i++)insUndo();return n;}
+const depth5=undoLen();
 for(let i=0;i<5;i++)insUndo();
-const afterUndo=snap(),undoLeft=INS_HIST['c.xml'].undo.length,redoLen=INS_HIST['c.xml'].redo.length;
+const afterUndo=snap(),undoLeft=undoLen(),redoLeft=redoLen();
 insRedo();insRedo();
 const afterRedo=snap();
 insUndo();
 CLIPS[0].inserts[0].x=9;saveState();                       // новая правка убивает повтор
-const redoAfterNew=INS_HIST['c.xml'].redo.length;
+const redoAfterNew=redoLen();
 for(let i=0;i<120;i++){CLIPS[0].inserts[0].x=i+100;saveState();}
-console.log(JSON.stringify({S0,S2,S5,afterUndo,undoLeft,redoLen,afterRedo,redoAfterNew,
-  depth5,depthCap:INS_HIST['c.xml'].undo.length,
+console.log(JSON.stringify({S0,S2,S5,afterUndo,undoLeft,redoLen:redoLeft,afterRedo,redoAfterNew,
+  depth5,depthCap:undoLen(),
   undoDisabled:$('insUndoBtn').disabled,redoDisabled:$('insRedoBtn').disabled,logs:LOGS}));
 """)
 
@@ -378,13 +385,17 @@ INS=[];
 ensureJobs();
 insHistReset(CLIPS[0]);
 CLIPS[0].inserts[0].x=5;saveState();                       // одна правка
-const u0=INS_HIST['c.xml'].undo.length;
+function undoLen(){let n=0;while(INS_HIST['c.xml'].canUndo()){insUndo();n++;}for(let i=0;i<n;i++)insRedo();return n;}
+function redoLen(){let n=0;while(INS_HIST['c.xml'].canRedo()){insRedo();n++;}for(let i=0;i<n;i++)insUndo();return n;}
+const u0=undoLen();
 insUndo();
-const u1=INS_HIST['c.xml'].undo.length,r1=INS_HIST['c.xml'].redo.length,x1=CLIPS[0].inserts[0].x;
-const lastOk=INS_HIST_LAST['c.xml']===snap();
+const x1=CLIPS[0].inserts[0].x;
+const u1=undoLen(),r1=redoLen();
+// последний снимок совпадает с состоянием: касание без изменений шага не пишет
+const lastOk=INS_HIST['c.xml'].touch()===false;
 insRedo();
 console.log(JSON.stringify({u0,u1,r1,x1,lastOk,
-  u2:INS_HIST['c.xml'].undo.length,r2:INS_HIST['c.xml'].redo.length,x2:CLIPS[0].inserts[0].x}));
+  u2:undoLen(),r2:redoLen(),x2:CLIPS[0].inserts[0].x}));
 """)
 
     assert out["u0"] == 1, "правка не попала в историю: %r" % out["u0"]

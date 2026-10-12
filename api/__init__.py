@@ -33,6 +33,7 @@
 | `voicefx` | обработка голоса спикера: список VST3, окно плагина, прослушивание |
 | `gdrive` | скачивание с гугл-диска по ссылке через rclone        |
 | `videogen` | вкладка «Видео»                                                 |
+| `podcast` | подкаст → рилсы: дорожки, создание, конвейер скачать→расшифровать→выбрать, правка кусков (/api/podcast_*) |
 
 Новый эндпоинт пишется в тот модуль, к чьей теме относится. Новая тема — новый модуль
 плюс строка импорта здесь: роут регистрируется самим фактом импорта модуля, забыть её
@@ -43,7 +44,7 @@
 ним модули, которые ни от кого не зависят, и только потом те, кто тянет соседей.
 """
 from . import _core                                   # noqa: F401  (первым — sys.path)
-from . import editor, files, gdrive, inserts, model_svc, presets, previewcalc, previewproxy, render, videogen, voicefx   # noqa: F401
+from . import editor, files, gdrive, inserts, model_svc, podcast, presets, previewcalc, previewproxy, render, videogen, voicefx   # noqa: F401
 from . import ai, build, jobs, webrender                                                       # noqa: F401
 
 # Имена, которые снаружи берут прямо из `api` — webui.py и тесты. Всё остальное

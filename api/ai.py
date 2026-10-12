@@ -178,6 +178,9 @@ def _ai_config_answer(cfg: dict[str, Any], full: bool = False) -> dict[str, Any]
         "active_omni": cfg.get("active_omni") or aicut.OMNI_LOCAL,
         "active_cut_asr": cfg.get("active_cut_asr") or "gigaam",
         "active_cut_text_asr": cfg.get("active_cut_text_asr") or "",
+        # подкаст: движок расшифровки (любой из каталога) и язык ("auto" — определит сам)
+        "active_podcast_asr": cfg.get("active_podcast_asr") or "whisper",
+        "podcast_lang": cfg.get("podcast_lang") or "auto",
         "active_image": cfg.get("active_image") or aicut.IMAGE_OFF,
         "active_video": cfg.get("active_video") or aicut.VIDEO_OFF,
         "video_model": aicut.video_model_cfg(),

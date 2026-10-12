@@ -286,6 +286,20 @@ def test_статус_отдаётся_целиком_и_с_инкремента
     gdrive.GDJOB.update(running=False, done=False, log=[])
 
 
+def test_строка_шаблон_лога_rclone_идёт_через_log_entry():
+    """Лог Google Drive пишет строки через log_entry, как остальные джобы: шаблон с
+    переменными уходит на клиент записью {t, v} (перевод и формат чисел работают).
+    Раньше _gemit клал str(line) — шаблон терял переменные и перевод."""
+    saved = list(gdrive.GDJOB["log"]), gdrive.GDJOB["log_base"]
+    try:
+        gdrive.GDJOB.update(log=[], log_base=0)
+        gdrive._gemit("скачано {x} МБ", x=3)
+        gdrive._gemit("без переменных")
+        assert gdrive.GDJOB["log"] == [{"t": "скачано {x} МБ", "v": {"x": 3}}, "без переменных"]
+    finally:
+        gdrive.GDJOB.update(log=saved[0], log_base=saved[1])
+
+
 def test_мусорная_ссылка_не_доходит_до_команды(tmp_path):
     """rclone_cmd — публичная функция; на не-ссылке она обязана падать внятно,
     а не с TypeError по None где-то внутри."""

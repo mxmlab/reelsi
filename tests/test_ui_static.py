@@ -57,7 +57,8 @@ def _schema_toggles():
 def test_batch_master_layout_contract(html, js, css):
     """Пакетные действия находятся сразу после списка файлов, а импорт и инструменты
     не занимают первый экран постоянно."""
-    assert '<details class="card gdrive-card">' in html
+    assert '<div class="card" id="gdrive_card">' in html   # П18: обычная карточка, не details
+    assert '<details class="card gdrive-card">' not in html
     assert '<details class="toptools">' not in html
     assert 'class="toolmenu"' not in html
     assert html.index('id="clips3"') < html.index('id="buildbtn"')
@@ -138,15 +139,19 @@ def test_insert_library_has_a_door_in_the_tools_tab(html, js):
         "можно только в самом окне)")
 
 
-def test_ai_settings_has_six_semantic_tabs_and_no_common(html, js):
+def test_ai_settings_has_seven_semantic_tabs_and_no_common(html, js):
     """Настройки имеют один стабильный набор вкладок; старое «Общее» не
-    остаётся отдельной панелью, но legacy-аргумент common не ломает переход."""
+    остаётся отдельной панелью, но legacy-аргумент common не ломает переход.
+
+    Семь, а не шесть: вкладка «Подкаст» (шаг `podcast` в ⚙ — профиль, ум, движок
+    расшифровки, язык) утверждена владельцем 2026-10-10. Её настройки не лежат ни в
+    «Нарезке», ни в «Разметке», поэтому встают отдельной вкладкой сразу после «Нарезки»."""
     tabs = re.findall(r'<button[^>]+data-tab="([^"]+)"[^>]*role="tab"', html)
-    assert tabs == ["models", "cut", "markup", "generation", "words", "tools"]
+    assert tabs == ["models", "cut", "podcast", "markup", "generation", "words", "tools"]
     assert 'id="aistabbtn_common"' not in html and 'id="aistab_common"' not in html
     assert "if(tab==='common')tab='tools'" in js
     body = _fn_body(js, "function aiSetTab(")
-    assert "allowed=['models','cut','markup','generation','words','tools']" in body
+    assert "allowed=['models','cut','podcast','markup','generation','words','tools']" in body
     assert "aria-hidden" in body
 
 
@@ -195,7 +200,7 @@ def test_batch_clip_controls_keep_speaker_and_markup_states(js):
     end = js.find('function ', start + len('function spkSelHTML'))
     fn_body = js[start:end] if end != -1 else js[start:]
     assert '<select' not in fn_body
-    assert 'class="opts"' in fn_body
+    assert 'class="opts dd-panel"' in fn_body, "список спикера не на общей панели dd-panel"
 
 
 def test_ae_words_help_and_style_default(html, js):
@@ -439,16 +444,31 @@ def test_editor_grabs_the_nearest_edge_not_the_first_one(js):
     в начало следующего, и щель съедается ЦЕЛИКОМ. После такой правки плеер играет то,
     что считалось вырезанным, и «не переходит к следующему блоку» — переходить некуда.
 
-    Плейхед участвует в том же сравнении и выигрывает только вничью: он нарисован
-    поверх, но забирать себе край, до которого дальше, он не должен.
+    Край и плейхед идут одним порядком с «Вся запись» подкаста (tlHitOrder, 00-core.js):
+    край впереди плейхеда; плейхед берётся, когда краёв в допуске нет.
     """
     assert "function edGrabAt(" in js, "выбор края под курсором пропал"
     body = js[js.index("function edGrabAt("):][:500]
-    assert "d<best.d" in body, "край выбирается не по минимуму расстояния — вернулся первый попавшийся"
-    assert "dh<=best.d" in body, "плейхед должен выигрывать только вничью"
+    assert "tlHitOrder(cands,{edge:tol,head:tol})" in body, (
+        "край и плейхед выбираются не общим порядком tlHitOrder — подкаст и редактор разъехались")
+    assert "kind:'edge'" in body and "kind:'head'" in body, "кандидаты края и плейхеда не собраны"
+    order = js[js.index("const TL_HIT_ORDER="):][:120]
+    assert "['edge','head','ruler','mid']" in order, "порядок видов захвата не край > плейхед > линейка > середина"
     down = js[js.index("c.addEventListener('mousedown'"):][:900]
     assert "edGrabAt(x)" in down, "mousedown ищет край мимо общего выбора"
     assert "edS2X(b.s0))<" not in down, "в mousedown вернулся посимвольный перебор краёв"
+
+
+def test_redo_buttons_share_the_redo_icon(html):
+    """«Повтор» — одна иконка redo у редактора шага 1, вставок и кусков подкаста (зеркально «Отмена»).
+
+    refresh («обновить») у повтора — чужая иконка: у «Обновить», списка моделей и «Продолжить
+    разбор» она своя и остаётся. Здесь только кнопки повтора.
+    """
+    for bid in ("edRedoBtn", "podRedoBtn", "insRedoBtn"):
+        m = re.search(r'<button[^>]*id="%s"[^>]*>(.*?)</button>' % bid, html, re.S)
+        assert m, "нет кнопки %s" % bid
+        assert 'data-ic="redo"' in m.group(1), "у %s иконка не redo: %s" % (bid, m.group(1)[:160])
 
 
 def test_cleared_insert_is_not_refilled_by_itself(js):
@@ -505,9 +525,9 @@ def test_curae_never_points_past_clips(js):
     cap = cap[:cap.index("\n//")]
     assert "if(!c){curAE=-1;return;}" in cap, "captureAE снова верит, что CLIPS[curAE] существует"
 
-    dele = js[js.index("function delClip("):]
+    dele = js[js.index("function _spliceClip("):]
     dele = dele[:dele.index("\n\n")]
-    assert "curAE" in dele, "delClip режет список, не поправив индекс открытого клипа"
+    assert "curAE" in dele, "_spliceClip (общий путь удаления) режет список, не поправив индекс открытого клипа"
 
     apply_ = js[js.index("function applyState(s)"):js.index("function restoreState()")]
     assert "if(curAE>=CLIPS.length)curAE=-1" in apply_, (
@@ -597,20 +617,11 @@ def test_ai_intro_answer_lands_in_the_clip_it_was_asked_for():
 def test_single_ai_doors_keep_their_clip_by_reference():
     """Соседние одиночные ИИ-двери держат клип ссылкой — тот же класс гонки, но их писать не надо.
 
-    Ответ висит минутами, клип за это время открывают другой. У вставок (aiInsertsRun,
-    aiInsertsMore) результат сразу пишется в объект клипа (`const c=CLIPS[curIns]` → `c.inserts`),
-    а панель рисуется из CLIPS[curIns], то есть по открытому клипу. У жёлтых — в `c.status`
-    и `clearHl(c)`, а панель слов грузится только под гвардией «этот клип открыт».
+    Ответ висит минутами, клип за это время открывают другой. У жёлтых результат пишется в
+    `c.status` и `clearHl(c)`, а панель слов грузится только под гвардией «этот клип открыт».
     Тест держит это свойство: новая правка не должна вернуть запись через CLIPS[curIns]/curAE.
+    (Одиночные ИИ-вставки aiInsertsRun/aiInsertsMore удалены как мёртвый код — их проверки ушли.)
     """
-    ins = _read(os.path.join(ROOT, "static", "app", "80-inserts.js"))
-    run = _func(ins, "aiInsertsRun")
-    assert "const c=CLIPS[curIns]" in run and "c.inserts=(d.inserts||[]).map" in run, (
-        "aiInsertsRun пишет ответ ИИ не в тот клип, для которого спрашивал")
-    more = _func(ins, "aiInsertsMore")
-    assert "const c=CLIPS[curIns]" in more and "c.inserts=cur.concat(" in more, (
-        "aiInsertsMore пишет ответ ИИ не в тот клип, для которого спрашивал")
-
     ed = _read(os.path.join(ROOT, "static", "app", "70-editor.js"))
     assert "c.status.colored=(d.colored||d.yellow||[]).length" in ed, (
         "жёлтые больше не пишутся в статус клипа")
@@ -1612,9 +1623,11 @@ def test_build_sends_style_name_not_copy(js):
     assert "style:j.style" not in jfb, "в сборку снова уходит копия стиля"
     assert "roto:!!j.roto" not in jfb, "рото из задания снова уходит в payload"
     assert "roto_bottom:j.roto_bottom" not in jfb, "рото-низ из задания снова в payload"
-    tjsx = _fn_body(js, "async function tojsx(")
-    assert "style:styleForJob(" in tjsx, "tojsx не шлёт имя стиля через styleForJob"
-    assert "style:CURSTYLE};" not in tjsx, "tojsx снова шлёт копию стиля напрямую в payload"
+    # Одиночная сборка «Только текущий» (tojsx) удалена; путь сборки набора и рендера —
+    # collectJobs → jobForBuild. Проверка переехала туда: там и должно стеречься имя стиля.
+    cj = _fn_body(js, "async function collectJobs(")
+    assert "jobForBuild(c)" in cj, "collectJobs не собирает задания через jobForBuild"
+    assert "style:CURSTYLE};" not in cj, "collectJobs снова шлёт копию стиля напрямую в payload"
 
 
 def test_restyle_mechanism_is_gone_from_app_scripts():
@@ -2473,72 +2486,24 @@ def test_editor_middle_button_pans_and_keeps_the_rest(js):
     на mousedown и auxclick; курсор grabbing — только на время пана и снимается.
     """
     bind = js[js.index("function edBind()"):js.index("function spaceOnControl(")]
-    down = bind[bind.index("addEventListener('mousedown'"):bind.index("addEventListener('wheel'")]
-    assert "e.button===1" in down, "средняя кнопка не обрабатывается в mousedown"
-    assert "ED.drag={pan:1,x0:x,pv0:ED.v0,pv1:ED.v1" in down, "средняя кнопка не заводит пан"
-    assert "preventDefault" in down, "средний клик не гасит autoscroll"
-    assert "c.style.cursor='grabbing'" in down, "курсор grabbing не ставится при пане"
+    # протяжка вида (средняя кнопка из любой точки и линейка) — pointerdown → общая tlMidPan
+    pd = bind[bind.index("addEventListener('pointerdown'"):bind.index("addEventListener('mousedown'")]
+    assert "e.button===1" in pd, "средняя кнопка не обрабатывается в pointerdown"
+    assert "tlMidPan(c,e" in pd, "средняя кнопка не заводит протяжку вида"
     # пан из любой точки: средний клик проверяется ДО ветки линейки (y<=EDRULER)
-    assert down.index("e.button===1") < down.index("if(y<=EDRULER"), (
+    assert pd.index("e.button===1") < pd.index("y<=EDRULER"), (
         "средняя кнопка проверяется после линейки — пан не из любой точки")
-    # прежний курсор canvas сохраняется в снимке и возвращается, а не снимается пустой
-    # строкой: у #edtl cursor задан inline, '' его убирает совсем
-    assert "cursor:c.style.cursor" in down, "пан не запоминает прежний курсор"
-    assert "auxclick" in bind, "middle autoscroll не глушится через auxclick"
+    down = bind[bind.index("addEventListener('mousedown'"):bind.index("tlWheelBind(c")]
+    assert "e.button===1||y<=EDRULER*dpr()" in down, "mousedown не отдаёт среднюю кнопку и линейку протяжке"
+    assert "tlMidGuard(c)" in bind, "middle autoscroll не глушится (mousedown и auxclick)"
+    # курсор grabbing, захват и возврат прежнего курсора — в общей tlMidPan
+    core = js[js.index("function tlMidPan("):js.index("function tlMidGuard(")]
+    assert "el.style.cursor='grabbing'" in core, "курсор grabbing не ставится при пане"
+    assert "const x0=ev.clientX, cur=el.style.cursor" in core, "пан не запоминает прежний курсор"
+    assert "el.style.cursor=cur" in core, "на отпускании курсор не возвращается к прежнему значению"
+    assert "setPointerCapture(" in core, "тяга не захватывает указатель"
     # существующие жесты сохранены
-    assert "e.shiftKey" in bind[bind.index("addEventListener('wheel'"):], "Shift+колесо пропало"
-    assert "if(y<=EDRULER*dpr()){ED.drag={pan:1" in down, "пан линейки пропал"
-    up = bind[bind.index("addEventListener('mouseup'"):]
-    assert "d.cursor" in up and "c.style.cursor=d.cursor" in up, (
-        "на mouseup курсор не возвращается к прежнему значению")
-
-
-def test_bulk_clear_list_only_never_touches_the_disk(js, html):
-    """Метла в шапке клипов шага 1 убирает ВСЕ клипы только из CLIPS/UI.
-
-    Дисковые XML и сайдкары не трогаем — это не delClip, тот чистит диск через
-    /api/clip_delete. Поэтому подтверждение и справка говорят, что файлы остаются и
-    список подхватится снова «Из папки результата», а индексы открытых клипов
-    сбрасываются общим безопасным путём _spliceClip.
-    """
-    assert 'id="clipsClear"' in html, "кнопки-метлы в шапке списка клипов нет"
-    btn = html[html.index('id="clipsClear"') - 140:html.index('id="clipsClear"') + 520]
-    assert 'data-ic="broom"' in btn, "кнопка не с метлой"
-    assert 'aria-label=' in btn and 'data-t=' in btn, "у кнопки нет имени/справки"
-    body = _fn_body(js, "async function clearClipsList(")
-    assert "askConfirm(" in body, "уборка ВСЕХ клипов без подтверждения — накликается случайно"
-    assert "_spliceClip" in body, "индексы открытых клипов не правятся общим путём"
-    assert "/api/clip_delete" not in body, "list-only очистка зовёт удаление с диска"
-    assert "renderClips1()" in body and "renderClips2()" in body and "renderClips3()" in body, (
-        "очистка не перерисовывает все списки")
-    assert "saveState()" in body, "очистка не сохраняет состояние"
-
-
-def test_remove_selected_works_only_on_checked_clips(js, html):
-    """Метла в шапке «Файлы набора» убирает ТОЛЬКО отмеченные (c.sel) клипы.
-
-    Пустой выбор НЕ означает «все»: это семантика selClips для СБОРКИ, а здесь она
-    опасна — «убрать отмеченное» с пустым выбором убрало бы всё. /api/clip_delete
-    не зовём: дисковые файлы остаются, список подхватится «Из папки результата».
-    Кнопка disabled, когда нечего убирать (ставит syncBuildBtn).
-    """
-    assert 'id="rmSelClips"' in html, "кнопки-метлы в шапке набора нет"
-    btn = html[html.index('id="rmSelClips"') - 140:html.index('id="rmSelClips"') + 560]
-    assert 'data-ic="broom"' in btn and 'aria-label=' in btn and 'data-t=' in btn, (
-        "кнопка не с метлой / без имени / без справки")
-    assert 'disabled' in html[html.index('id="rmSelClips"'):html.index('id="rmSelClips"') + 80], (
-        "кнопка не disabled при пустом выборе")
-    body = _fn_body(js, "async function removeSelClips(")
-    assert "c.sel" in body, "отбор идёт не по галочкам"
-    assert "selClips()" not in body, "семантика «пусто = все» просочилась в уборку"
-    assert "idx.sort((a,b)=>b-a)" in body, "удаление идёт не в обратном порядке"
-    assert "_spliceClip" in body, "индексы открытых клипов не правятся общим путём"
-    assert "/api/clip_delete" not in body, "уборка из списка зовёт удаление с диска"
-    assert "askConfirm(" in body and "Ничего не отмечено" in body, "нет подтверждения/сообщения без галочек"
-    assert "renderClips1()" in body and "renderClips2()" in body and "renderClips3()" in body
-    assert "saveState()" in body
-    sync = _fn_body(js, "function syncBuildBtn(")
-    assert "rmSelClips" in sync, "disabled кнопки не обновляется из syncBuildBtn"
+    assert "tlWheelBind(c" in bind, "колесо редактора не идёт через общую tlWheelBind (Shift+колесо — там)"
 
 
 def test_inserts_history_undo_redo_contract(js, html):
@@ -2574,15 +2539,19 @@ def test_inserts_history_undo_redo_contract(js, html):
     for fld in ("inserts", "ins_rejected", "insTarget", "job_ins"):
         assert fld in hist, "в снимок истории не попало поле " + fld
     touch = _fn_body(js, "function insHistTouch(")
-    assert "h.undo.push(last)" in touch and "h.redo.length=0" in touch, (
+    assert "insHistFor(c).touch()" in touch, (
+        "запись правки не идёт через общий стек histStack — новая правка не попадёт в отмену")
+    hf = _fn_body(js, "function insHistFor(")
+    assert "histStack(" in hf and "INS_HIST_MAX" in hf, "стек на клип не заведён с пределом глубины"
+    core = _read(os.path.join(ROOT, "static", "app", "00-core.js"))
+    hs = _fn_body(core, "function histStack(")
+    assert "undoS.push(last)" in hs and "redoS.length = 0" in hs, (
         "новая правка не уходит в стек отмены или не очищает стек повтора")
-    assert "INS_HIST_MAX" in touch, "глубина стека отмены не ограничена"
+    assert "undoS.shift()" in hs, "глубина стека отмены не ограничена"
     und = _fn_body(js, "function insUndo(")
-    assert "h.undo.pop()" in und and "h.redo.push(" in und, (
-        "отмена не перекладывает состояние в стек повтора")
+    assert ".undo()" in und, "отмена не идёт через общий стек"
     red = _fn_body(js, "function insRedo(")
-    assert "h.redo.pop()" in red and "h.undo.push(" in red, (
-        "повтор не возвращает состояние обратно в стек отмены")
+    assert ".redo()" in red, "повтор не идёт через общий стек"
     ap = _fn_body(js, "function insHistApply(")
     assert "INS_HIST_APPLY=true" in ap, (
         "применение снимка не защищено флагом — откат сам станет шагом истории")
@@ -2598,9 +2567,9 @@ def test_inserts_history_clip_and_depth_are_declared_once(js):
     """
     assert "INS_HIST={}" in js or "INS_HIST = {}" in js, "журнал истории не заведён"
     reset = _fn_body(js, "function insHistReset(")
-    assert "INS_HIST[c.xml]={undo:[],redo:[]}" in reset, (
-        "сброс истории не заводит пустые стеки отмены/повтора на клипе")
-    assert "INS_HIST_LAST[c.xml]=" in reset, "сброс истории не ставит базовый снимок"
+    assert "insHistFor(c).reset()" in reset, (
+        "сброс истории не идёт через стек клипа: база и пустые стеки не выставятся")
+    assert "INS_HIST_LAST" not in js, "вернулась отдельная база снимков мимо histStack"
     assert "INS_UNDO" not in js, "вернулась прежняя одноуровневая отмена (INS_UNDO)"
     assert js.count("INS_HIST_MAX=100") == 1, "предел глубины истории задан не одним числом"
 
@@ -2947,3 +2916,439 @@ window.addEventListener('load', () => {{
 
 
 
+# Строки камер шага 1 в настоящем Chrome: поля папок и select одной ширины, даже когда
+# у камер разная длина имён файлов. Разметка — та же, что строит buildCamRows (40-queue.js).
+@pytest.mark.xdist_group("chrome")
+def test_camera_rows_have_equal_folder_and_file_widths(css, tmp_path):
+    """Две камеры с разной длиной имён файлов: #camdir0/#camdir1 и #sel0/#sel1 одной ширины.
+
+    Раньше каждая строка была своим .row и мерила select по самому длинному имени файла
+    своей камеры — поля папок выходили разной длины. Общая сетка .camgrid держит колонки
+    общими для всех строк.
+    """
+    import pathlib
+    chrome = shutil.which("chrome") or r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+    if not os.path.exists(chrome):
+        return
+
+    css_url = pathlib.Path(CSS).resolve().as_uri()
+
+    def cam_row(k, name):
+        return (
+            f"<div class='camrow'>"
+            f"<div class='grow'><label for='camdir{k}'>Папка камеры {k + 1}</label>"
+            f"<input id='camdir{k}' style='width:100%'></div>"
+            f"<button class='sm'>Выбрать…</button>"
+            f"<div><label for='sel{k}'>Камера {k + 1}</label>"
+            f"<select id='sel{k}'><option>{name}</option></select></div>"
+            f"</div>"
+        )
+
+    html_path = tmp_path / "camgrid_test.html"
+    html_src = f"""<!DOCTYPE html>
+<html>
+<head>
+<meta charset='utf-8'>
+<link rel='stylesheet' href='{css_url}'>
+<style>
+body {{ margin: 0; padding: 0; width: 1000px; }}
+</style>
+</head>
+<body>
+<div id='camrows' class='camgrid' style='margin-top:12px'>
+{cam_row(0, 'GH010123_очень_длинное_имя_файла_первой_камеры_4k.mp4')}
+{cam_row(1, 'a.mp4')}
+</div>
+<pre id='result'></pre>
+<script>
+window.addEventListener('load', () => {{
+  const w = (id) => document.getElementById(id).getBoundingClientRect().width;
+  const res = {{ camdir0: w('camdir0'), camdir1: w('camdir1'), sel0: w('sel0'), sel1: w('sel1') }};
+  document.getElementById('result').textContent = JSON.stringify(res);
+}});
+</script>
+</body>
+</html>"""
+    html_path.write_text(html_src, encoding="utf-8")
+    cmd = [
+        chrome,
+        "--headless=new",
+        "--disable-gpu",
+        "--window-size=1000,640",
+        "--virtual-time-budget=2000",
+        "--dump-dom",
+        html_path.resolve().as_uri(),
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8")
+    assert proc.returncode == 0, f"Chrome failed: {proc.stderr}"
+    m = re.search(r'<pre id="result">(.*?)</pre>', proc.stdout, re.DOTALL)
+    assert m, f"нет результата измерений в выводе Chrome: {proc.stdout[:500]}"
+    data = json.loads(m.group(1))
+
+    assert data["camdir0"] > 100, f"поле папки не растянулось: {data}"
+    assert abs(data["camdir0"] - data["camdir1"]) <= 1, (
+        f"поля папок разной ширины: {data['camdir0']} и {data['camdir1']}")
+    assert abs(data["sel0"] - data["sel1"]) <= 1, (
+        f"select разной ширины: {data['sel0']} и {data['sel1']}")
+
+
+# ===== превью вставок (шаги 2/3): «!» в строке, блок звука сеткой; карточка вставки =====
+# Жалоба владельца 2026-10-11: «!» висела отдельной строкой, громкость уезжала на свою,
+# «Музыка» и «Голос» переносились по-разному; в карточке «Фон долой» ломал строку, имя файла
+# уходило в 3 строки. Каждый ассерт ниже — такой случай, а не покрытие.
+
+
+def _ipv_header_row(html):
+    """Шапка таймлайна превью вставок: от открывающего .itlbar.tlhead до его закрывающего div.
+
+    Воспроизведение, время и звук живут здесь (левая колонка — только видео, см. .ipvbox)."""
+    start = html.index('id="ipvplay"')
+    row_start = html.rindex('<div class="itlbar tlhead"', 0, start)
+    return html[row_start:html.index('</div>', start)]
+
+
+def _ipv_audio_block(html):
+    """Блок звука шапки: от class="pvaudio" до конца шапки (вложенных div в нём нет)."""
+    row = _ipv_header_row(html)
+    return row[row.index('class="pvaudio"'):row.index('<span class="grow">')]
+
+
+def test_ipv_info_mark_stays_in_header(html):
+    """«!» справки превью — в шапке таймлайна рядом с кнопкой воспроизведения, одной строкой."""
+    row = _ipv_header_row(html)
+    assert 'id="ipvtime"' in row and 'id="ipvplay"' in row, "шапка таймлайна разъехалась"
+    assert row.count('<span class="i"') == 1, (
+        "в шапке таймлайна должно быть одно «!»: справка превью и таймлайна объединены")
+    assert '<span class="i" data-t="Монтаж со вставками, без рендера.' in row, (
+        "«!» справки превью пропала из шапки таймлайна")
+    assert row.index('<span class="grow">') < row.index('<span class="i"') < row.index('data-ic="plus"'), (
+        "«!» должно стоять справа, перед значками, — после растяжки и до +/−/⛶")
+    assert 'class="edlbl"' not in row and ">Таймлайн<" not in row, (
+        "подпись «Таймлайн» должна уйти из шапки превью — кнопка ▶ идёт сразу за ней")
+    assert row.count("<div") == 1, "в шапке таймлайна появился вложенный блок — «!» уедет с него"
+
+
+def test_ipv_left_column_is_video_only(html):
+    """Под видео в левой колонке вставок — ТОЛЬКО кадр: ни транспорта, ни звука, ни полосы перемотки.
+
+    Владелец (2026-10-11): видео — во всю колонку и на всю высоту; управление — в шапке таймлайна."""
+    start = html.index('<div class="inspv">')
+    col = html[start:html.index('<div class="insside">', start)]
+    for bad in ("pvtransport", "pvaudio", "ipvseek", "ipvplay", "ipvtime", "data-vol",
+                "ipvmusicdb", "ipvvoicedb"):
+        assert bad not in col, f"в левой колонке вставок остался {bad} — под видео должно быть только видео"
+    assert 'class="ipvbox"' in col and 'id="ipvstage"' in col, "в колонке вставок пропал кадр видео"
+    assert 'id="ipvseek"' not in html, "полоса перемотки превью вернулась — перемотку делает таймлайн"
+
+
+def test_ipv_header_has_play_time_and_sound_controls(html):
+    """В шапке таймлайна — воспроизведение, время и три ползунка звука одной строкой."""
+    row = _ipv_header_row(html)
+    for need in ('id="ipvplay"', 'id="ipvtime"'):
+        assert need in row, f"в шапке таймлайна нет {need}"
+    block = _ipv_audio_block(html)
+    for need in ("data-vol", 'id="ipvmusicdb"', 'id="ipvvoicedb"', "data-volv",
+                 'id="ipvmusicdbv"', 'id="ipvvoicedbv"'):
+        assert need in block, f"в блоке звука шапки нет {need}"
+    assert block.count('<input type="range"') == 3, "в блоке звука шапки не три ползунка"
+    assert block.count('class="pvgrp"') == 3 and block.count('class="pvval"') == 3, (
+        "каждая группа звука — ползунок и значение справа")
+    assert 'data-ic="sound"' in block and 'data-ic="music"' in block, "нет иконок громкости/музыки"
+    assert 'data-ic="mic"' in block, "у голоса нет иконки микрофона (mic)"
+
+
+def test_ipv_audio_groups_have_names_but_no_visible_labels(html):
+    """Подписи «Громкость/Музыка/Голос» — не в виде, а в aria-label и data-t группы.
+
+    Строка звука в шапке тесная: слово перед каждым ползунком съедало место у самих ползунков."""
+    block = _ipv_audio_block(html)
+    for label in ("Громкость", "Музыка", "Голос"):
+        assert f'aria-label="{label}"' in block, f"у группы «{label}» нет aria-label"
+        assert f">{label}<" not in block, f"подпись «{label}» осталась видимой в шапке"
+    assert block.count('data-t="') == 3, "у каждой группы звука должна быть справка в data-t"
+    assert "dB<" not in block and ">dB" not in block, "«dB» в строке значений — единица уходит в тултип"
+
+
+def test_ipv_audio_is_one_row_with_fixed_sliders(css):
+    """Блок звука шапки — одна строка (inline-flex без переноса), ползунки фиксированной ширины ~90 px."""
+    rule = re.search(r"#mbInserts \.pvaudio\{([^}]*)\}", css)
+    assert rule, "нет правила #mbInserts .pvaudio для блока звука шапки"
+    assert "display:inline-flex" in rule.group(1) and "flex-wrap" not in rule.group(1), (
+        "блок звука шапки не в одну строку: %s" % rule.group(1))
+    slider = re.search(r"#mbInserts \.pvaudio \.pvsl input\[type=range\]\{([^}]*)\}", css)
+    assert slider and "width:90px" in slider.group(1), "ползунки звука шапки не фиксированы по ширине"
+
+
+def test_ipv_stage_fills_left_column_by_height(css):
+    """Кадр вставок: вся высота колонки; ширина = min(100cqw, 100cqh × ar) — без потолка в px."""
+    box = re.search(r"#mbInserts \.inspv \.ipvbox\{([^}]*)\}", css)
+    assert box, "нет правила #mbInserts .inspv .ipvbox (блок кадра левой колонки)"
+    assert "flex:1 1 0" in box.group(1) and "min-height:0" in box.group(1), (
+        "блок кадра не забирает всю высоту колонки: %s" % box.group(1))
+    assert "container-type:size" in box.group(1), "кадр не считается от высоты своего блока"
+    stage = re.search(r"#mbInserts \.inspv \.ipvbox>#ipvstage\{([^}]*)\}", css)
+    assert stage, "нет правила кадра #ipvstage внутри .ipvbox"
+    rule = stage.group(1)
+    assert "max-height:none" in rule, "у кадра вставок остался потолок по высоте: %s" % rule
+    assert "min(100cqw,calc(100cqh*var(--stage-ar" in rule.replace(" ", ""), (
+        "ширина кадра не min(колонка, высота×ar): %s" % rule)
+
+
+def test_ipv_transport_header_is_not_the_transition_layer(css):
+    """Шапка таймлайна НЕ абсолютна: класс слоя перехода ipvtrans (position:absolute;
+    pointer-events:none, 85-inserts-view.js) на ней накрывал ▶ и перемотку (приёмка 2026-10-11)."""
+    for sel_body in re.finditer(r"([^{}]*\.tlhead[^{}]*)\{([^}]*)\}", css):
+        assert "position:absolute" not in sel_body.group(2), (
+            f"правило {sel_body.group(1).strip()} делает шапку таймлайна абсолютной")
+        assert "pointer-events:none" not in sel_body.group(2), (
+            f"правило {sel_body.group(1).strip()} отключает клики по шапке таймлайна")
+
+
+def test_ipv_audio_values_are_updated_by_the_sliders(js):
+    """Значение справа от ползунка меняет общая функция показа — не разметка."""
+    assert "[data-volv]" in js and "'ipvmusicdbv'" in js and "'ipvvoicedbv'" in js, (
+        "значения блока звука превью не обновляются из JS")
+    assert "function ipvDbText(" in js
+
+
+def _pv_transport_row(html, anchor):
+    """Строка транспорта превью: от открывающего .row до первого закрывающего div после якоря."""
+    start = html.index(anchor)
+    row_start = html.rindex('<div class="row', 0, start)
+    return html[row_start:html.index('</div>', start)]
+
+
+PV_PREVIEWS = (
+    ("шаг 1", 'id="edplay"'),
+    ("раскладка камер", 'id="cpvplay"'),
+)
+
+
+def test_volume_is_in_its_own_audio_block_in_step1_and_cams(html):
+    """Громкость превью шага 1 и раскладки камер — в блоке звука ПОД строкой транспорта.
+
+    Строка транспорта без громкости: иначе в узкой колонке она уезжала на свою строку
+    (жалоба 2026-10-11). Блок звука сразу за строкой — класс pvaudio, подпись, ползунок data-vol
+    и значение data-volv. Вставки сюда не входят: их звук в шапке таймлайна (тесты выше)."""
+    assert html.count('data-volv') == 3, "значение громкости есть не у каждого блока звука"
+    for name, anchor in PV_PREVIEWS:
+        row = _pv_transport_row(html, anchor)
+        assert "pvtransport" in row.split(">")[0], f"{name}: у строки транспорта нет класса pvtransport"
+        assert "data-vol" not in row, f"{name}: громкость осталась в строке транспорта"
+        row_close = html.index('</div>', html.index(anchor))
+        block_open = html.index('class="pvaudio"', row_close)
+        assert re.fullmatch(r"</div>\s*<div ", html[row_close:block_open]), (
+            f"{name}: между строкой транспорта и блоком звука есть что-то ещё")
+        block = html[block_open:html.index('</div>', block_open)]
+        assert 'data-vol' in block, f"{name}: громкость превью не в блоке звука"
+        assert 'data-volv' in block, f"{name}: в блоке звука нет значения громкости"
+        assert 'class="pvlbl"' in block and ">Громкость</" in block, f"{name}: нет подписи «Громкость»"
+
+
+def test_cpv_info_mark_moved_into_transport_row(html):
+    """«!» раскладки камер стояла отдельной строкой под «Звук» — теперь в строке транспорта."""
+    row = _pv_transport_row(html, 'id="cpvplay"')
+    assert '<span class="i" data-t="Картинка идёт по монтажу' in row, (
+        "«!» раскладки камер не в строке транспорта")
+
+
+def test_pv_shared_classes_never_absolute_or_click_blocking(css):
+    """Общие классы трёх превью (урок U1): ни одно правило с ними не ставит absolute
+    и не отключает клики — иначе строка накроет кнопки, как накрыл ipvtrans."""
+    for cls in ("pvtransport", "pvaudio", "pvlbl", "pvsl", "pvval"):
+        assert re.search(r"\." + cls + r"[{ >]", css), f"класс .{cls} не стилизован"
+    for m in re.finditer(r"([^{}]*\.(?:pvtransport|pvaudio|pvlbl|pvsl|pvval)(?![\w-])[^{}]*)\{([^}]*)\}", css):
+        body = m.group(2)
+        assert "position:absolute" not in body, f"правило {m.group(1).strip()} делает блок абсолютным"
+        assert "pointer-events:none" not in body, f"правило {m.group(1).strip()} отключает клики"
+
+
+def test_pv_audio_block_is_capped_at_360px(css):
+    """Блок звука превью не шире 360 px.
+
+    В широкой панели редактора (превью шага 1, ~935 px) ползунок «Громкость» тянулся через
+    весь экран (приёмка U2, 2026-10-11); в превью вставок колонка ~340 px — там норма."""
+    m = re.search(r"\.pvaudio\{([^}]*)\}", css)
+    assert m, "нет правила .pvaudio"
+    mw = re.search(r"max-width:\s*(\d+)px", m.group(1))
+    assert mw, "у .pvaudio нет max-width — блок звука растягивается на всю широкую панель"
+    assert int(mw.group(1)) <= 400, f"max-width у .pvaudio {mw.group(1)}px — больше 400px"
+
+
+def test_inscard_buttons_do_not_wrap_their_text(css):
+    """Кнопки ряда файла карточки вставки — nowrap; ряд переносит кнопку целиком.
+
+    «Фон долой» в две строки и «Выбрать файл…» по частям — из-за отсутствия этого правила."""
+    assert re.search(r"\.inscard \.insrow\{[^}]*display:flex[^}]*flex-wrap:wrap", css), (
+        "ряд кнопок карточки вставки не переносится целиком (flex-wrap)")
+    assert re.search(r"\.inscard \.insrow>button\{[^}]*white-space:nowrap", css), (
+        "кнопки карточки вставки переносят текст (нет white-space:nowrap)")
+
+
+def test_inscard_filename_is_one_line_with_ellipsis(css):
+    """Имя файла карточки — одна строка с «…» и не выдавливает галочку с крестиком."""
+    m = re.search(r"\.inscard \.insfname\{([^}]*)\}", css)
+    assert m, "нет правила .inscard .insfname"
+    rule = m.group(1)
+    for decl in ("overflow:hidden", "text-overflow:ellipsis", "white-space:nowrap", "min-width:0",
+                 "flex:1 1 140px"):
+        assert decl in rule, f".insfname без «{decl}»"
+
+
+def test_inscard_js_puts_filename_in_insfname_with_title(js):
+    """80-inserts.js выводит имя файла в .insfname, полное имя — в title."""
+    assert 'class="insrow"' in js, "карточка вставки не собирает ряд файла в .insrow"
+    assert re.search(r'<span class="insfname"[^\n]*title="\'\+esc\(fname\)', js), (
+        "имя файла карточки вставки не выведено в .insfname с title")
+
+
+# ===== три таймлайна в одном виде (окно подкаста, превью вставок, редактор нарезки) =====
+# Решение владельца 2026-10-11: «унифицируем по виду, лучше получилось у подкаста; плейхед
+# синий, а не жёлтый; значки одинаковые; проверь, где ещё». Каждый ассерт — одно из правил.
+
+# класс tlhead целым словом: «pod-tlhead» (строка полосы слов) — не он
+TL_HEAD_RE = re.compile(r'<div class="(?:[^"]*\s)?tlhead(?:\s[^"]*)?"[^>]*>(.*?)</div>', re.S)
+
+
+def test_three_timeline_heads_share_label_info_and_icons(html):
+    """Строка над полосой: подпись и «!» слева, три значка plus/minus/fit справа, в этом порядке."""
+    heads = TL_HEAD_RE.findall(html)
+    assert len(heads) == 3, f"таймлайнов с общей строкой должно быть три, нашлось {len(heads)}"
+    for block in heads:
+        if 'id="ipvplay"' in block:
+            # шапка превью вставок: слово «Таймлайн» убрано, ▶ стоит первым (владелец 2026-10-11)
+            assert 'class="edlbl"' not in block, "в шапке превью вставок не должно быть подписи «Таймлайн»"
+        else:
+            assert 'class="edlbl"' in block, "в строке таймлайна нет подписи .edlbl"
+        assert re.search(r'<span class="i"[^>]*>!</span>', block), "в строке таймлайна нет «!»-справки"
+        icons = re.findall(r'<button class="icon"[^>]*>\s*<span data-ic="(\w+)"', block)
+        assert icons == ["plus", "minus", "fit"], f"значки строки таймлайна: {icons}"
+
+
+def test_podcast_words_are_a_row_of_the_timeline_not_a_strip(html):
+    """Слова подкаста — строка на «Вся запись» (одна полоса, одно окно): отдельной полосы «Слова» нет."""
+    block = html[html.index('id="mbPod"'):html.index("MODAL: inserts")]
+    assert '<span class="edlbl">Слова</span>' not in block
+    assert 'id="pod_zoom"' not in block
+
+
+def test_timeline_playhead_is_blue_token_everywhere(css, js):
+    """Плейхед синий: одна переменная --tl-ph (= --blue) в :root, DOM-плейхед и полоса слов
+    берут её; canvas рисует TL_COL.ph. Жёлтый #f5c518 в коде рисования плейхеда не остаётся."""
+    assert re.search(r":root\{[^}]*--tl-ph:var\(--blue\)", css), "--tl-ph не объявлен в :root"
+    assert re.search(r"\.itlph\{[^}]*background:var\(--tl-ph\)", css), "плейхед превью не синий"
+    assert re.search(r"\.itlph::after\{[^}]*background:var\(--tl-ph\)", css), "флажок плейхеда не синий"
+    assert re.search(r"\.itlph::before\{[^}]*background:var\(--tl-bg\)", css), "у флажка нет тёмной подложки"
+    assert not re.search(r"\.itlph[^{]*\{[^}]*var\(--dng\)", css), "плейхед превью всё ещё красный"
+    for name in ("function edDraw()", "function podRenderTl()"):
+        body = _fn_body(js, name)
+        assert "#f5c518" not in body, f"жёлтый плейхед остался в {name}"
+        assert "TL_COL" in body, f"{name} берёт цвета не из TL_COL"
+
+
+def _css_rule_z(css, sel):
+    """z-index правила, у которого селектор стоит ровно `sel` (без потомков и состояний)."""
+    m = re.search(r"(?:^|[}\n])" + re.escape(sel) + r"\{([^}]*)\}", css)
+    assert m, f"нет правила {sel}"
+    zm = re.search(r"z-index:(\d+)", m.group(1))
+    assert zm, f"у {sel} нет z-index"
+    return int(zm.group(1))
+
+
+def test_preview_playhead_is_above_blocks_and_outlined(css):
+    """Плейхед превью вставок поверх блоков (.itlblk и его состояний) и с тёмной обводкой:
+    синий на синем блоке фото без неё пропадал, блок выглядел поверх плейхеда."""
+    ph = _css_rule_z(css, ".itlph")
+    assert ph > _css_rule_z(css, ".itlblk"), "плейхед превью уходит под блоки"
+    assert ph > _css_rule_z(css, ".itlblk.cur"), "плейхед превью уходит под выбранный блок"
+    m = re.search(r"(?:^|[}\n])\.itlph\{([^}]*)\}", css)
+    assert m and "box-shadow:0 0 0 1px var(--tl-bg)" in m.group(1), "у линии плейхеда нет тёмной обводки"
+
+
+def test_timelines_share_ruler_steps_and_labels(js):
+    """Шаг подписей и формат линейки — одна функция на три полосы (00-core.js)."""
+    assert "function tlTickStep(" in js and "function tlRulerLabel(" in js
+    # редактор и «Вся запись» рисуют линейку одной tlPaintRuler (шаг и подписи — там)
+    ruler = _fn_body(js, "function tlPaintRuler(")
+    assert "tlTickStep(" in ruler and "tlRulerLabel(" in ruler, "tlPaintRuler не берёт шаг и подписи из общих функций"
+    for name in ("function edDraw()", "function podRenderTl()"):
+        assert "tlPaintRuler(g," in _fn_body(js, name), f"{name} не рисует линейку через tlPaintRuler"
+    body = _fn_body(js, "function itlDraw()")
+    assert "tlTickStep(" in body and "tlRulerLabel(" in body, "превью вставок не берёт шаг и подписи из общих функций"
+
+
+def test_every_timeline_wheel_pans_on_shift_and_horizontal(js):
+    """Колесо: зум к курсору; Shift или горизонтальное колесо — прокрутка (общий tlWheelIsPan)."""
+    assert js.count("tlWheelBind(") >= 4, "не у всех трёх полос колесо идёт через общую tlWheelBind"
+    wheel = js[js.index("function tlWheelBind("):js.index("function segUI(")]
+    assert "tlWheelIsPan(e)" in wheel and "o.pan(" in wheel and "o.zoom(" in wheel, (
+        "tlWheelBind не разводит горизонталь/Shift в протяжку и вертикаль в зум")
+
+
+def test_every_timeline_middle_button_pans_and_stops_autoscroll(js):
+    """Средняя кнопка — протяжка у всех трёх полос; autoscroll гасится на auxclick."""
+    # автоскролл гасит ОДНА функция tlMidGuard (mousedown и auxclick), её зовут все три полосы
+    guard = js[js.index("function tlMidGuard("):js.index("function tlPanning(")]
+    assert "addEventListener('auxclick',e=>{if(e.button===1)e.preventDefault()" in guard, (
+        "auxclick с preventDefault пропал из tlMidGuard")
+    assert js.count("tlMidGuard(") >= 4, "не у всех трёх полос есть tlMidGuard (определение + 3 вызова)"
+    pod = _fn_body(js, "function podHook()")
+    assert "podMid(e)" in pod and "tlMidGuard(tl)" in pod, "подкаст: средняя кнопка не тянет окно"
+    ed = js[js.index("function edBind()"):js.index("function spaceOnControl(")]
+    assert "e.button===1" in ed and "tlMidPan(c" in ed, "редактор: средняя кнопка не тянет"
+    itl_down = js[js.index("$('itlin').addEventListener('pointerdown'"):js.index("tlWheelBind($('itl')")]
+    assert "e.button===1" in itl_down and "itlMidPan(e)" in itl_down, "превью вставок: средней кнопки нет"
+
+
+def test_timeline_controls_have_one_zoom_pair_per_head(html):
+    """Значки ведут в те же функции зума, что и колесо: + и − к центру, ⛶ — вся длина."""
+    assert 'onclick="podZoom(POD_ZOOM_STEP)"' in html and 'onclick="podZoomFit()"' in html
+    assert 'onclick="edZoom(TL_ZOOM_STEP)"' in html and 'onclick="edZoomFit()"' in html
+    assert 'onclick="itlZoom(TL_ZOOM_STEP)"' in html and 'onclick="itlFit()"' in html
+
+
+# ===== выпадающие меню шага 3 и строки камер шага 1 =====
+
+
+def test_dropdowns_sit_above_sticky_bars_and_below_header(css):
+    """Открытое выпадающее меню — над липкими панелями страницы, под шапкой и модалками.
+
+    Список спикера (.spkpick[open] .opts) и меню дорожки подкаста (.podmenu) открываются
+    вниз из поля. Липкая панель «Собрать» (.ae-buildbar, 20) перекрывала их пункты:
+    elementFromPoint отдавал панель. Инвариант: .stactbar (5) < --z-pop < header.top (30).
+    """
+    start = css.index(":root{")
+    root = css[start:css.index("}", start)]
+    m = re.search(r"--z-pop:(\d+)", root)
+    assert m, "нет --z-pop в :root"
+    pop = int(m.group(1))
+    assert pop > _css_rule_z(css, ".ae-buildbar"), "меню не над панелью «Собрать»"
+    assert pop > _css_rule_z(css, ".stactbar"), "меню не над липкой панелью стиля"
+    assert pop < _css_rule_z(css, "header.top"), "меню поверх шапки"
+    # оба меню — на общей панели .dd-panel (z-index один и тот же правилом панели)
+    for sel in (".dd-panel",):
+        rule = re.search(r"(?:^|[}\n])" + re.escape(sel) + r"\{([^}]*)\}", css)
+        assert rule, f"нет правила {sel}"
+        zm = re.search(r"z-index:([^;}]+)", rule.group(1))
+        assert zm and zm.group(1).strip() == "var(--z-pop)", (
+            f"у {sel} z-index не var(--z-pop): {zm.group(1) if zm else 'нет'}")
+
+
+def test_camera_rows_share_one_grid(js, css, html):
+    """Строки камер шага 1 — одна сетка: поля папок и select одной ширины у всех камер.
+
+    Раньше каждая строка была своим .row и мерила select по самому длинному имени файла
+    своей камеры. Теперь #camrows — .camgrid, строки — .camrow (display:contents), их
+    ячейки встают в общие колонки; зазор между строками даёт row-gap.
+    """
+    assert 'id="camrows" class="camgrid"' in html, "#camrows не стал .camgrid"
+    grid = re.search(r"\.camgrid\{([^}]*)\}", css)
+    assert grid and "grid-template-columns:minmax(0,1fr) auto minmax(160px,auto)" in grid.group(1), (
+        "у .camgrid нет общей сетки колонок")
+    assert ".camgrid select{width:100%}" in css, "select не растягивается на свою колонку"
+    assert re.search(r"\.camrow\{display:contents\}", css), (
+        "у .camrow нет display:contents — строка перестала быть частью общей сетки")
+    body = js[js.index("function buildCamRows()"):js.index("async function pickCamDir(k)")]
+    assert "className='camrow'" in body, "buildCamRows строит не camrow"
+    assert "marginBottom" not in body, "инлайновый margin-bottom строки вернулся — зазор задаёт row-gap"
+    assert "$('camrows')" in body, "строки собираются не в #camrows"

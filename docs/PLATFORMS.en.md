@@ -146,6 +146,10 @@ inexplicable crashes. (Not yet written in install.ps1/install.sh — TODO.)
 scipy, numpy, silero-vad, the generation of FCP7 XML and `.jsx` — pure CPU. It works everywhere
 the same, nothing to touch.
 
+Podcast → reels: YouTube downloads need the `yt-dlp` package and `node` in PATH (`--js-runtimes node`),
+shot cuts and the crop use `ffmpeg`; other platforms need the same programs, and the heavy head tracking
+is the same RVM as in the rotoscope (item 3).
+
 ## 7. The pipeline's output
 
 - **macOS** — Premiere and After Effects are there, ExtendScript works. The only

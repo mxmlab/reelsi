@@ -19,6 +19,7 @@ core не имеет права зависеть от api — api импорти
 """
 import copy
 import json
+import re
 import urllib.request
 from typing import Any
 
@@ -213,6 +214,32 @@ def set_active_cut_text_asr(cfg: dict[str, Any], d: dict[str, Any]) -> None:
         raise ReelsiError(umsg("invalid_cut_text_asr",
                               f"Движок «{name}» не подходит для текста нарезки", name=name))
     cfg["active_cut_text_asr"] = name
+
+
+def set_active_podcast_asr(cfg: dict[str, Any], d: dict[str, Any]) -> None:
+    """Кто РАСШИФРОВЫВАЕТ подкаст (слова с таймингами). В отличие от нарезки годится любой
+    движок каталога: подкаст часто не русский, и Whisper там нужен, а он cut не помечен.
+    Дефолт "whisper"; неизвестное имя отказываем — иначе расшифровка молча упала бы."""
+    name = _s(d, "name") or "whisper"
+    from core import asr_backends
+    if not asr_backends.engine_meta(name):
+        raise ReelsiError(umsg("invalid_podcast_asr", f"Движок «{name}» не найден в каталоге",
+                              name=name))
+    cfg["active_podcast_asr"] = name
+
+
+# Код языка подкаста: «auto» или 2–5 латинских букв/дефис. Строже не нужно, а свободная строка
+# уходит дальше в движок расшифровки как есть — там её и принимать незачем.
+_PODCAST_LANG_RE = re.compile(r"[a-zA-Z-]{2,5}")
+
+
+def set_podcast_lang(cfg: dict[str, Any], d: dict[str, Any]) -> None:
+    """Язык расшифровки подкаста: "auto" (определит whisper) или код языка."""
+    lang = _s(d, "lang")
+    if lang != "auto" and not _PODCAST_LANG_RE.fullmatch(lang):
+        raise ReelsiError(umsg("invalid_podcast_lang",
+                              f"Некорректный код языка подкаста: «{lang}»", lang=lang))
+    cfg["podcast_lang"] = lang
 
 
 def set_active_image(cfg: dict[str, Any], d: dict[str, Any]) -> None:
@@ -505,6 +532,8 @@ ACTIONS = {
     "set_active_omni": set_active_omni,
     "set_active_cut_asr": set_active_cut_asr,
     "set_active_cut_text_asr": set_active_cut_text_asr,
+    "set_active_podcast_asr": set_active_podcast_asr,
+    "set_podcast_lang": set_podcast_lang,
     "set_active_image": set_active_image,
     "set_active_video": set_active_video,
     "set_video_model": set_video_model,

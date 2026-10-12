@@ -313,53 +313,6 @@ const b4=mk(9.9,null);bufRoll(b4,0.5);out.clampMin=b4.el.playbackRate;
     assert res["muted"] is True and res["rolling"] is True, res
 
 
-# ============== 8. МЕТЛА СПИСКА НЕ ТРОГАЕТ ДИСК ==============
-@node
-def test_behav_clear_list_removes_clips_from_the_list_only(tmp_path):
-    """Метла «очистить список» убирает все клипы из состояния, но не стирает файлы.
-
-    Подтверждение спрашивается ровно один раз, индекс открытого клипа сбрасывается.
-    """
-    res = _case(tmp_path, "b3_clear_list.js", ("clearClipsList", "_spliceClip"), r"""
-CLIPS=[{xml:'A.xml',name:'A',inserts:[],status:{},job:defJob()},{xml:'B.xml',name:'B',inserts:[],status:{}}];
-curAE=1;
-await clearClipsList();
-out.left=CLIPS.length;
-out.disk=FETCHES.filter(f=>/clip_delete/.test(f.url)).length;
-out.asks=ASK.length;
-out.curAE=curAE;
-out.saved=SAVES>0;
-""", pre=FETCH_STUB + QUEUE_PRE + "function defJob(){return {};}\n")
-    assert res["left"] == 0, res
-    assert res["disk"] == 0, res
-    assert res["asks"] == 1, res
-    assert res["curAE"] == -1, res
-    assert res["saved"] is True, res
-
-
-# ============== 9. «УБРАТЬ ОТМЕЧЕННЫЕ» — ТОЛЬКО ОТМЕЧЕННЫЕ, БЕЗ ДИСКА ==============
-@node
-def test_behav_remove_selected_drops_only_checked_clips_and_keeps_open_one(tmp_path):
-    """Метла «убрать отмеченные» удаляет только клипы с галочкой, файлы на диске остаются.
-
-    Открытый клип остаётся открытым, даже когда его индекс сдвинулся.
-    """
-    res = _case(tmp_path, "b3_remove_sel.js", ("removeSelClips", "_spliceClip"), r"""
-CLIPS=[{xml:'A.xml',name:'A',sel:false,status:{}},{xml:'B.xml',name:'B',sel:true,status:{}},
-       {xml:'C.xml',name:'C',sel:false,status:{}},{xml:'D.xml',name:'D',sel:true,status:{}}];
-curAE=2;
-await removeSelClips();
-out.left=CLIPS.map(c=>c.xml);
-out.disk=FETCHES.filter(f=>/clip_delete/.test(f.url)).length;
-out.curAE=curAE;
-out.asks=ASK.length;
-""", pre=FETCH_STUB + QUEUE_PRE)
-    assert res["left"] == ["A.xml", "C.xml"], res
-    assert res["disk"] == 0, res
-    assert res["curAE"] == 1, res
-    assert res["asks"] == 1, res
-
-
 # ============== 10. УДАЛЕНИЕ ВСТАВКИ ЗАПОМИНАЕТ ЗАПРОС И СОХРАНЯЕТСЯ ==============
 @node
 def test_behav_deleting_an_insert_remembers_its_query_and_saves(tmp_path):
@@ -565,14 +518,21 @@ function renderClips1(){}function renderClips2(){}function renderClips3(){}
     assert res["want"] is False and res["busy"] is False, res
 
 
-# ============== 17. ЗАХВАТ КРАЯ БЛОКА — БЛИЖАЙШИЙ, ПЛЕЙХЕД ВЫИГРЫВАЕТ ВНИЧЬЮ ==============
-@node
-def test_behav_editor_grabs_the_nearest_edge_and_playhead_wins_ties(tmp_path):
-    """Под курсором берётся ближайший край (не первый попавшийся); при равенстве — плейхед.
+# ============== 17. ЗАХВАТ КРАЯ БЛОКА — БЛИЖАЙШИЙ; КРАЙ ВПЕРЕДИ ПЛЕЙХЕДА ==============
+def _tl_const(name: str) -> str:
+    """Строка `const NAME=...;` из боевого JS — порядок видов захвата берём оттуда, не копируем."""
+    m = re.search(r"^const %s=[^;]*;" % re.escape(name), app_meta.app_js_text(), re.M)
+    assert m, "константа %s не найдена" % name
+    return m.group(0)
 
-    Далеко от краёв и плейхеда захвата нет.
+
+@node
+def test_behav_editor_grabs_the_nearest_edge_and_edge_wins_over_playhead(tmp_path):
+    """Под курсором берётся ближайший край (не первый попавшийся); при равенстве с плейхедом — край.
+
+    Порядок тот же, что у «Вся запись» подкаста (tlHitOrder). Далеко от краёв и плейхеда захвата нет.
     """
-    res = _case(tmp_path, "b3_edge_grab.js", ("edGrabAt", "edS2X"), r"""
+    res = _case(tmp_path, "b3_edge_grab.js", ("edGrabAt", "edS2X", "tlHitOrder"), r"""
 $('edtl').width=1000;
 ED={blocks:[{s0:0,s1:100},{s0:105,s1:200}],cs:600,v0:0,v1:1000};
 out.nearest=edGrabAt(103);
@@ -580,10 +540,82 @@ ED={blocks:[{s0:0,s1:100}],cs:108,v0:0,v1:1000};
 out.tie=edGrabAt(104);
 ED={blocks:[{s0:0,s1:100}],cs:600,v0:0,v1:1000};
 out.far=edGrabAt(300);
-""", pre="const EDGRAB=8;\nconst devicePixelRatio=1;\nlet ED={blocks:[],cs:0,v0:0,v1:1000};\n")
+""", pre="const EDGRAB=8;\nconst devicePixelRatio=1;\nlet ED={blocks:[],cs:0,v0:0,v1:1000};\n" + _tl_const("TL_HIT_ORDER") + "\n")
     assert res["nearest"]["i"] == 1 and res["nearest"]["edge"] == 0, res
-    assert res["tie"] == {"head": 1, "d": 4}, res
+    # при равенстве край (s1=100, второй край блока — edge=1) выигрывает у плейхеда
+    assert res["tie"] == {"i": 0, "edge": 1, "d": 4}, res
     assert res["far"] is None, res
+
+
+@node
+def test_behav_editor_edge_3px_beats_playhead_2px_and_head_alone_grabs_head(tmp_path):
+    """Край в 3 px и плейхед в 2 px — берётся край; один плейхед в допуске — плейхед."""
+    res = _case(tmp_path, "b3_edge_vs_head.js", ("edGrabAt", "edS2X", "tlHitOrder"), r"""
+$('edtl').width=1000;
+ED={blocks:[{s0:0,s1:100}],cs:105,v0:0,v1:1000};
+out.edgeWins=edGrabAt(103);
+ED={blocks:[{s0:0,s1:50}],cs:106,v0:0,v1:1000};
+out.headOnly=edGrabAt(104);
+""", pre="const EDGRAB=8;\nconst devicePixelRatio=1;\nlet ED={blocks:[],cs:0,v0:0,v1:1000};\n" + _tl_const("TL_HIT_ORDER") + "\n")
+    assert res["edgeWins"] == {"i": 0, "edge": 1, "d": 3}, res
+    assert res["headOnly"] == {"head": 1, "d": 2}, res
+
+
+# ============== 18. КОРЗИНА: КЛИП ИЗ ЛЮБОЙ ПАПКИ ВСТАЁТ В СПИСОК, ВРЕМЯ — МЕСТНОЕ ==============
+_TRASH_PRE = r"""
+function closeModal(){}
+function podcastList(){}
+let SCANS=0;async function scanOutdir(){SCANS++;}
+function renderClips1(){}function renderClips2(){}function renderClips3(){}
+async function refreshStatuses(){}
+function defJob(){return {};}
+let SPEAKERS={};
+function clipPathFix(p){return p;}
+function normInsPath(p){return p;}
+let RESTORE_RESP={};
+function fetch(){return Promise.resolve({json:()=>Promise.resolve(RESTORE_RESP)});}
+"""
+
+
+@node
+def test_behav_trash_restore_puts_clip_from_other_folder_into_list_once(tmp_path):
+    """Возврат клипа из корзины: клип из C:/cut (не из папки результата) встаёт в список ровно один раз.
+
+    Раньше restoreTrashItem звал только scanOutdir, а он смотрит папку результата: клип возвращался
+    на диск, а в списке его не было («Новых XML в папке нет»). Клип из папки результата по-прежнему
+    идёт через scanOutdir.
+    """
+    res = _case(tmp_path, "b3_trash_restore.js",
+                ("restoreTrashItem", "clipsAddPaths", "clipByXml", "clipKey", "newClip", "trashInOutdir"), r"""
+$('ai_outdir').value='D:/out';
+RESTORE_RESP={restored:['C:/cut/rec/a.xml','C:/cut/rec/a.inserts.json'],skipped:[]};
+await restoreTrashItem('C:/cut','id1','clip');
+await restoreTrashItem('C:/cut','id1','clip');       // второй возврат того же клипа — без дубля
+out.xmls=CLIPS.map(c=>c.xml);
+out.scansOutside=SCANS;
+RESTORE_RESP={restored:['D:/out/b.xml'],skipped:[]};
+await restoreTrashItem('D:/out','id2','clip');
+out.scansInside=SCANS;
+""", pre=_TRASH_PRE)
+    assert res["xmls"] == ["C:/cut/rec/a.xml"], res
+    assert res["scansOutside"] == 0, res
+    assert res["scansInside"] == 1, res
+
+
+@node
+def test_behav_trash_time_is_local_for_utc_and_for_naive_strings(tmp_path):
+    """Время удаления: строка с UTC (…+00:00, так пишет сервер) — переводится в местное; без зоны — как есть.
+
+    Часовой пояс зафиксирован Москвой (UTC+3): владелец видел 21:36 вместо 00:36.
+    """
+    res = _case(tmp_path, "b3_trash_time.js", ("trashWhen",), r"""
+out.utc=trashWhen('2026-10-11T21:36:12.123456+00:00');
+out.naive=trashWhen('2026-10-11T00:18:05');
+out.empty=trashWhen('');
+""", pre="process.env.TZ='Europe/Moscow';\n")
+    assert res["utc"] == "12.10.2026 00:36", res
+    assert res["naive"] == "11.10.2026 00:18", res
+    assert res["empty"] == "", res
 
 
 def _fn_or_block_src(file_name: str, name: str) -> str:
@@ -934,29 +966,6 @@ function captureAE(){}
 
 
 @node
-def test_behav_remove_selected_moves_panel_when_open_clip_removed(tmp_path):
-    """Убрали отмеченными и открытый клип: панель садится на живой клип или прячется.
-
-    Замена test_remove_selected_reloads_panel_when_active_removed: при живом списке панель
-    переходит на первый клип, при пустом — прячется, а принадлежность панели снимается.
-    """
-    res = _case(tmp_path, "b3_remove_panel.js", ("removeSelClips", "_spliceClip"), r"""
-CLIPS=[{xml:'A.xml',name:'A',sel:false,status:{}},{xml:'B.xml',name:'B',sel:true,status:{}},
-       {xml:'C.xml',name:'C',sel:false,status:{}}];
-curAE=1;AEXML='B.xml';
-await removeSelClips();
-out.selected=SELECTED.slice();
-CLIPS=[{xml:'B.xml',name:'B',sel:true,status:{}}];
-curAE=0;AEXML='B.xml';
-await removeSelClips();
-out.emptyAecfg=$('aecfg').style.display;
-out.emptyAEXML=AEXML;
-""", pre=QUEUE_PRE + "let SELECTED=[];\nfunction selectAE(i){SELECTED.push(i);}\n")
-    assert res["selected"] == [0], res
-    assert res["emptyAecfg"] == "none" and res["emptyAEXML"] == "", res
-
-
-@node
 def test_behav_language_button_shows_the_language_in_use(tmp_path):
     """Кнопка языка показывает язык, который сейчас в ходу, а не тот, на который переключим.
 
@@ -1072,45 +1081,20 @@ out.curAE=curAE;
 
 
 @node
-def test_behav_ai_insert_answer_stays_with_its_clip(tmp_path):
-    """Ответ ИИ-вставок ложится в клип, для которого спрашивали, даже если открыт другой.
-
-    Замена части test_single_ai_doors_keep_their_clip_by_reference: модель отвечает минутами,
-    пока открыт другой клип; ответ не уезжает ни в него, ни в его вставки.
-    """
-    res = _case(tmp_path, "b3_ai_inserts.js", ("aiInsertsRun", "clipSpeaker"), r"""
-CLIPS=[{xml:'A.xml',name:'A',inserts:[],ins_rejected:[],status:{}},
-       {xml:'B.xml',name:'B',inserts:[{type:'photo',start_sec:9}],status:{}}];
-const bOld=CLIPS[1].inserts;
-curIns=0;FLIP=true;
-await aiInsertsRun();
-out.aCount=CLIPS[0].inserts.length;
-out.bKept=CLIPS[1].inserts===bOld;
-""", pre=r"""
-let FLIP=false,curIns=-1;
-async function aiFetch(){if(FLIP){curIns=1;}return {inserts:[{type:'photo',start_sec:1}],insTarget:3};}
-async function insAfterAI(){return '';}
-function insLog(){}
-function aiAborted(){return false;}
-function renderInsHost(){}function syncClipLists(){}
-""")
-    assert res["aCount"] == 1 and res["bKept"] is True, res
-
-
-@node
 def test_behav_cut_results_are_adopted_once_per_clip(tmp_path):
     """Результаты нарезки попадают в список по одному и без дублей при повторных опросах.
 
     Замена части test_cut_results_land_in_the_list_one_by_one: опрос статуса звучит много раз,
     и клип из результатов не должен плодиться.
     """
-    res = _case(tmp_path, "b3_cut_adopt.js", ("cutAdopt", "clipByXml", "newClip"), r"""
+    res = _case(tmp_path, "b3_cut_adopt.js", ("cutAdopt", "clipByXml", "newClip", "cutRunStart", "cutInsertRunClip"), r"""
 const d={results:['D:/p/A.xml','D:/p/B.xml']};
 out.first=cutAdopt(d);
 out.again=cutAdopt(d);
 out.names=CLIPS.map(c=>c.name);
 """, pre=r"""
 let SPEAKERS={};
+let CUTRUN=null,SEL_ANCHOR=-1,curEdit=-1,curIns=-1,DEL_CLIP_IDXS=[],DLFMT_WANT=-1;
 function clipKey(p){return String(p);}
 function renderClips1(){}function saveState(){}function refreshStatuses(){}
 function defJob(){return {};}

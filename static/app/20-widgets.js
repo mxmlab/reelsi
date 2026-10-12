@@ -19,8 +19,10 @@ const IC={
  pause:'<path d="M8 4.5v15M16 4.5v15"/>',
  cut:'<circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M8.2 7.7 20 19M8.2 16.3 20 5"/>',
  trash:'<path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m3 0-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/>',
+ bin:'<path d="M3 4h18v4H3zM5 8v12h14V8M10 12h4"/>',
  copy:'<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
  undo:'<path d="M9 14 4 9l5-5"/><path d="M4 9h10a6 6 0 0 1 0 12h-3"/>',
+ redo:'<path d="M15 14 20 9l-5-5"/><path d="M20 9h-10a6 6 0 0 0 0 12h3"/>',
  save:'<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8M7 3v5h8"/>',
  ai:'<path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8Z"/><path d="M19 15l.8 2.4 2.4.8-2.4.8L19 21.5l-.8-2.5-2.4-.8 2.4-.8Z"/>',
  img:'<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-4.5-4.5L6 21"/>',
@@ -34,6 +36,7 @@ const IC={
  xfade:'<path d="M7 4v16M7 4 4 7m3-3 3 3M17 20V4m0 16 3-3m-3 3-3-3"/>',
  sound:'<path d="M11 5 6 9H2v6h4l5 4V5Z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13"/>',
  music:'<path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>',
+ mic:'<rect x="9" y="2.5" width="6" height="11.5" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M9 21h6"/>',
  refresh:'<path d="M20.5 12a8.5 8.5 0 1 1-2.5-6"/><path d="M21 3v6h-6"/>',
  arrow_up:'<path d="m18 15-6-6-6 6"/>',
  arrow_down:'<path d="m6 9 6 6 6-6"/>',
@@ -43,6 +46,17 @@ const IC={
  unlink:'<path d="m18.84 12.25 1.72-1.71a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="m5.16 11.75-1.72 1.71a5 5 0 0 0 7.07 7.07l1.72-1.71"/><line x1="2" y1="2" x2="22" y2="22"/>',
 };
 function ico(n,cls){return '<svg class="ic'+(cls?' '+cls:'')+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">'+(IC[n]||'')+'</svg>';}
+// Кнопка-иконка в строке (подкаст, куски): подпись — в aria-label. opts.title — подсказка браузера (title),
+// opts.tip — справка «!» (data-t), opts.stop — клик не всплывает к строке (onclick без аргументов).
+function iconBtn(icon,label,onclick,opts){
+  const o=opts||{};
+  const b=document.createElement('button');b.type='button';b.className='icon';
+  if(o.title)b.title=label;
+  b.setAttribute('aria-label',label);
+  if(o.tip)b.setAttribute('data-t',label);
+  b.innerHTML=ico(icon);
+  b.onclick=o.stop?(e)=>{e.stopPropagation();onclick();}:onclick;
+  return b;}
 
 // ================= скраббер-число (как в After Effects) =================
 // Разметка: <span class="scrub" data-o="ВЫРАЖЕНИЕ-ОБЪЕКТ" data-k="ключ" data-step="1" data-cb="колбэк()">0</span>
@@ -175,6 +189,51 @@ function syncSldnums(root){
     if(num.value!=='')rng.value=num.value;
     else if(rng.value!=='')num.value=rng.value;
   });
+}
+
+// ================= выпадающие меню: одна механика закрытия =================
+// Клик мимо, Esc и уход фокуса наружу закрывают открытое меню; открыто — не больше одного
+// (спикер клипа: 40-queue.js). Меню регистрируется здесь с тремя функциями: area() — контейнер
+// меню (элемент или функция, которая отдаёт сейчас открытый), isOpen(), close(backToBtn).
+// backToBtn=true возвращает фокус на кнопку (Esc, выбор строки); false фокус не трогает —
+// при клике мимо или уходе фокуса он уже у другого элемента.
+// Слушатели — на документе в фазе захвата: Esc гасим ЗДЕСЬ. Иначе он дошёл бы до стека
+// модалок (50-chrome.js), и Esc, закрывающий список внутри окна, закрыл бы и окно.
+const DD_LIST=[];
+function dropdownBind(box,o){
+  const area=typeof box==='function'?box:()=>box;
+  DD_LIST.push({area,isOpen:o.isOpen,close:o.close});
+  if(DD_LIST.length===1)ddInstall();
+}
+function ddInstall(){
+  document.addEventListener('mousedown',e=>{
+    DD_LIST.forEach(d=>{
+      if(!d.isOpen())return;
+      const a=d.area();
+      if(!a||!a.contains(e.target))d.close(false);
+    });
+  },true);
+  document.addEventListener('keydown',e=>{
+    if(e.key!=='Escape')return;
+    const d=DD_LIST.find(x=>x.isOpen());
+    if(!d)return;
+    e.preventDefault();e.stopPropagation();
+    d.close(true);
+  },true);
+  // relatedTarget=null — фокус ушёл «в никуда». Клик мимо это уже ловит mousedown выше, а
+  // правило 70-editor.js снимает фокус с кнопки и summary сразу после мышиного клика: если
+  // закрывать и по нему, список спикера гас бы сразу после открытия. Уход на другой элемент
+  // (Tab, фокус в поле) — закрывает.
+  document.addEventListener('focusout',e=>{
+    if(!e.relatedTarget)return;
+    DD_LIST.forEach(d=>{
+      if(!d.isOpen())return;
+      const a=d.area();
+      if(!a||!a.contains(e.target))return;
+      if(a.contains(e.relatedTarget))return;
+      d.close(false);
+    });
+  },true);
 }
 
 

@@ -32,6 +32,7 @@ from core.fileio import atomic_bytes_write, atomic_json_dump, quarantine_unreada
 from core.media import probe_duration
 
 from core import paths
+from core.clipstore import TRASH_DIR
 from core.app_meta import env, console_emit, http_req, wrap_emit
 from core.umsg import ReelsiError, cli_error
 from core.applog import get_logger
@@ -54,7 +55,7 @@ VID_EXT = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"}
 SKIP_NAME = re.compile(r"(quick\s*\d|whoosh|riser|highlight_pop|\.draft\.|_tmp|^roto_\d+|^mask_\d+"
                        r"|\.nobg\.png$"
                        r"|^(c\d{3,4}|dji_|img_|gx\d{6})[\w-]*\.(mp4|mov|mxf)$)", re.I)
-SKIP_DIR = re.compile(r"[\\/](roto|_tmp|\.git|__pycache__)([\\/]|$)", re.I)
+SKIP_DIR = re.compile(r"[\\/](roto|_tmp|\.git|__pycache__|_reelsi_trash)([\\/]|$)", re.I)  # корзина — не материал
 MAX_VIDEO_MB = 300                                   # видео-вставка больше — почти наверняка исходник
 
 
@@ -443,6 +444,7 @@ def scan(dirs: Sequence[str], emit: Any = None) -> dict[str, dict[str, Any]]:
             continue
         nx = nm = 0
         for root, _dn, fns in os.walk(d):
+            _dn[:] = [x for x in _dn if x != TRASH_DIR]  # удалённое в корзине — не материал и не клип
             for fn in fns:
                 p = os.path.join(root, fn)
                 if fn.lower().endswith(".xml"):
@@ -1546,7 +1548,8 @@ def _build_base_index(dest: str) -> dict[str, list[str]]:
         d = os.path.join(dest, sub)
         if not os.path.isdir(d):
             continue
-        for root, _, fns in os.walk(d):
+        for root, dns, fns in os.walk(d):
+            dns[:] = [x for x in dns if x != TRASH_DIR]  # удалённое в корзине — не база вставок
             for fn in fns:
                 idx.setdefault(fn.lower(), []).append(os.path.join(root, fn))
     return idx

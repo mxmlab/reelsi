@@ -59,7 +59,12 @@ def _modal_markup():
     i = html.index('<div class="backdrop" id="mbInserts"')
     tail = html[i:]
     end = tail.index("<!-- ============ MODAL: camera layout")   # следующий блок страницы
-    return tail[:tail.rindex("</div>", 0, end) + len("</div>")]
+    block = tail[:tail.rindex("</div>", 0, end) + len("</div>")]
+    # Иконки в приложении рисует JS (ico() → svg 16×16). Стенд JS не запускает, и пустая
+    # <span data-ic> делала button.icon на 10 px вместо ~27 px: строка над таймлайном
+    # меряла себя по подписи, а не по значкам, и геометрия шага 3 врала. Ставим svg-заглушку
+    # того же размера (`button.icon .ic`), иначе замер не отражает то, что видит пользователь.
+    return re.sub(r'<span data-ic="[^"]*"[^>]*></span>', '<svg class="ic" viewBox="0 0 24 24"></svg>', block)
 
 
 def _measure(width, height, cards, css_file=CSS, aemode=False):
@@ -79,7 +84,11 @@ def _measure(width, height, cards, css_file=CSS, aemode=False):
    1432x909, и прокрутку страницы давала арифметика самого стенда (sh=1000, sw=1440) —
    «модалка растянула страницу» краснело при любой геометрии окна. Вывод замеров — вне
    потока: длинная строка JSON не должна добавлять странице прокрутку. */
-#geom{position:absolute;left:0;top:0;width:0;height:0;overflow:hidden}</style></head>
+#geom{position:absolute;left:0;top:0;width:0;height:0;overflow:hidden}
+/* Замер снимается сразу после класса .on: окно ещё в анимации pop (масштаб ~0.985), и
+   прямоугольники на ~1.5%% меньше вёрстки (кадр 287 вместо 291.6 px). Гасим анимацию
+   только на странице стенда — раскладку она не меняет. */
+#mbInserts .modal{animation:none !important}</style></head>
 <body>
 %s
 <script>
@@ -105,6 +114,8 @@ window.addEventListener('load',function(){
   var res={vh:vh,innerH:window.innerHeight,modal:g('mbInserts'),tl:g('itl'),host:g('insHost'),
     side:g('inspart_inserts'),stage:g('ipvstage'),
     pv:gq('#mbInserts .inspv'),mid:gq('#aewpanel'),words:gq('#aewwords'),
+    box:gq('#mbInserts .inspv .ipvbox'),head:gq('#mbInserts .itlbar.tlhead'),audio:gq('#mbInserts .itlbar .pvaudio'),
+    leftCtl:document.querySelectorAll('#mbInserts .inspv .pvtransport,#mbInserts .inspv .pvaudio,#mbInserts .inspv #ipvseek').length,
     page:{sw:document.documentElement.scrollWidth,cw:document.documentElement.clientWidth,
           sh:document.documentElement.scrollHeight,ch:document.documentElement.clientHeight}};
   var pre=document.createElement('pre');pre.id='geom';pre.textContent=JSON.stringify(res);
@@ -195,7 +206,10 @@ def test_aemode_preview_layout_is_the_same_as_before_cc632e3(tmp_path):
     assert now["words"]["height"] > 200, (
         "список средней колонки превью AE сжался: %s" % now["words"])
 
-    boxes = (("modal", "окно"), ("pv", "колонка плеера"), ("stage", "кадр"),
+    # Кадр (stage) из сверки выведен намеренно: видео забирает всю высоту колонки и считается
+    # от неё (правка владельца 2026-10-11), прежние 233×413 больше не ожидаются. Его сверяем
+    # с колонкой ниже — см. assert про высоту кадра.
+    boxes = (("modal", "окно"), ("pv", "колонка плеера"),
              ("side", "колонка вставок"), ("host", "список карточек"),
              ("mid", "панель слов"), ("words", "список слов"), ("tl", "таймлайн"))
     for key, ru in boxes:
@@ -203,6 +217,13 @@ def test_aemode_preview_layout_is_the_same_as_before_cc632e3(tmp_path):
             assert abs(now[key][prop] - before[key][prop]) <= 2, (
                 "раскладка шага 3 разошлась с прежней: у %s %s = %s, было %s"
                 % (ru, prop, now[key][prop], before[key][prop]))
+    # Шаг 3 видео тоже забирает всю высоту своей колонки (тот же блок .ipvbox, что у шага 2).
+    st, bx = now["stage"], now["box"]
+    assert abs(st["width"] / st["height"] - 9 / 16) < 0.01, "кадр превью AE потерял пропорцию 9:16: %s" % st
+    assert abs(st["width"] - bx["width"]) <= 2 or abs(st["height"] - bx["height"]) <= 2, (
+        "кадр превью AE не заполнил колонку ни по ширине, ни по высоте: кадр %s, блок %s" % (st, bx))
+    assert st["height"] <= bx["height"] + 1 and st["width"] <= bx["width"] + 1, (
+        "кадр превью AE вылез из своей колонки: кадр %s, блок %s" % (st, bx))
 
 
 @chrome
@@ -285,6 +306,35 @@ def test_inserts_modal_fills_1080p_and_video_frame_is_large(tmp_path):
 
 @chrome
 @pytest.mark.xdist_group("chrome")
+def test_inserts_preview_video_fills_column_and_controls_are_in_header(tmp_path):
+    """1413×888 (окно владельца): видео во всю высоту колонки, ширина = min(колонка, высота×9/16);
+    воспроизведение, время и звук — в шапке таймлайна, в левой колонке их нет.
+
+    Жалоба владельца (2026-10-11): «основное видео не полностью по ширине растянуто». Прежний
+    замер: кадр 233×413 при колонке 297 — звук и транспорт под кадром съедали высоту.
+
+    Мутация: вернуть звук (или транспорт) под видео в левую колонку — блок кадра сжимается,
+    и первая же проверка (нет управления в колонке / ширина ≥ 290) краснеет.
+    """
+    m = _run_chrome(tmp_path, "ins_1413.html", _measure(1413, 888, 30), 1413, 888)
+    if m is None:
+        pytest.skip("безголовый Chrome в песочнице не стартует (mojo/named pipes): "
+                    "геометрию окна вставок прогнать не удалось")
+    st, box = m["stage"], m["box"]
+    assert m["leftCtl"] == 0, "в левой колонке вставок остался транспорт/звук — под видео только видео"
+    assert st["width"] >= 290, (
+        "видео вставок узкое: ширина %s при 1413×888 (нужно >= 290; было 233)" % st["width"])
+    assert abs(st["width"] / st["height"] - 9 / 16) < 0.01, "кадр потерял пропорцию 9:16: %s" % st
+    assert st["height"] <= box["height"] + 1, "кадр выше своего блока: %s при блоке %s" % (st, box)
+    assert box["height"] - st["height"] <= 2, (
+        "кадр не забирает высоту колонки: %s при блоке %s" % (st, box))
+    assert m["audio"]["height"] <= 26, "блок звука в шапке выше одной строки: %s" % m["audio"]
+    assert m["audio"]["top"] >= m["head"]["top"] - 1 and m["audio"]["bottom"] <= m["head"]["bottom"] + 1, (
+        "блок звука не в шапке таймлайна: звук %s, шапка %s" % (m["audio"], m["head"]))
+
+
+@chrome
+@pytest.mark.xdist_group("chrome")
 def test_inserts_modal_720p_keeps_timeline_in_window(tmp_path):
     """1280x720 — как было: таймлайн внутри окна и виден, прокрутки страницы нет.
 
@@ -313,8 +363,10 @@ def test_inserts_modal_720p_keeps_timeline_in_window(tmp_path):
 def test_inserts_modal_css_frame_is_fixed_by_height():
     """Каркас окна: модалка от окна браузера, прокрутка — только у списка карточек."""
     css = _read(CSS).replace(" ", "")
-    m = re.search(r"#mbInserts\.modal:not\(\.aemode\)\{([^}]+)\}", css)
-    assert m, "нет правила #mbInserts .modal:not(.aemode) (каркас постоянного размера)"
+    # Оболочка больших окон (.modal.fill94) задаёт высоту; рамка вставок — её модификатор .cropped
+    # (overflow:hidden), он стоит в разметке именно у окна вставок, а не у AE (см. ниже).
+    m = re.search(r"\.modal\.fill94\{([^}]+)\}", css)
+    assert m, "нет правила .modal.fill94 (оболочка больших окон — высота окна)"
     rule = m.group(1)
     # Высота — как у превью шага 3 (94vh), без потолка в пикселях: с min(720px,…) на 1080p
     # окно ужималось вдвое (жалоба владельца 03.10.2026).
@@ -322,7 +374,13 @@ def test_inserts_modal_css_frame_is_fixed_by_height():
         "высота окна не как у шага 3 (94vh): %s" % rule)
     assert "min(720px" not in rule, (
         "вернулся потолок 720px — на 1080p окно снова маленькое: %s" % rule)
-    assert "overflow:hidden" in rule, "у модалки нет overflow:hidden: %s" % rule
+    m = re.search(r"\.modal\.fill94\.cropped:not\(\.aemode\)\{([^}]+)\}", css)
+    assert m and "overflow:hidden" in m.group(1), (
+        "у модалки вставок нет overflow:hidden (модификатор .cropped): %s" % (m.group(1) if m else "правила нет"))
+    html = _read(HTML)
+    i = html.index('<div class="backdrop" id="mbInserts"')
+    assert '<div class="modal wide fill94 cropped"' in html[i:i + 400], (
+        "окно вставок не получило класс оболочки .fill94.cropped в разметке")
 
     # Колонка плеера: ширина считается от высоты окна, потолок 480px больше кадр не держит.
     m = re.search(r"#mbInserts\.modal:not\(\.aemode\)\.inspv\{([^}]+)\}", css)
@@ -367,8 +425,8 @@ def test_inserts_modal_css_frame_is_fixed_by_height():
     # Шаг 3 (aemode) открывает ту же модалку и держит СВОЙ каркас — 94vh. Каркас шага 2
     # помечен :not(.aemode) и до него не достаёт; страж селекторов — в
     # test_step2_frame_does_not_touch_step3, геометрия — в тесте aemode выше.
-    assert re.search(r"\.modal\.aemode\{[^}]*height:94vh", css), (
-        "у шага 3 отняли собственный каркас высоты")
+    assert re.search(r"\.modal\.fill94\{[^}]*height:94vh", css), (
+        "у шага 3 отняли высоту 94vh (общая оболочка .modal.fill94)")
     assert "#mbInserts.modal.aemode{" not in css, (
         "вернулся костыль #mbInserts .modal.aemode: каркас шага 2 снова метит в шаг 3")
 
@@ -398,15 +456,30 @@ def test_step2_frame_does_not_touch_step3():
     body = re.sub(r"/\*.*?\*/", "", css, flags=re.DOTALL)   # комментарии — не правила
     selectors = [s.strip() for s in re.findall(r"([^{}]*?)\{", body) if "#mbInserts" in s]
     assert selectors, "в app.css пропали правила окна вставок"
+    # Общие правила ПРЕВЬЮ вставок (кадр в .ipvbox, звук и шапка таймлайна): они одни и те же
+    # для шага 2 и шага 3 — владелец попросил «то же» для AE. Каркас окна (.modal …) — по-прежнему :not(.aemode).
+    shared = ("#mbInserts .inspv .ipvbox", "#mbInserts .pvaudio", "#mbInserts .itlbar.tlhead")
     for sel in selectors:
+        if any(p in sel for p in shared):
+            continue
         assert ":not(.aemode)" in sel, (
             "правило каркаса окна вставок действует и на шаге 3: %s" % sel)
 
-    # И сам каркас шага 3 — прежний: своя высота и прежние числа колонки плеера (до cc632e3).
+    # Рамка окна вставок (overflow:hidden модификатора .cropped) не должна касаться шага 3:
+    # каждое такое правило помечено :not(.aemode), а у AE overflow не ограничивается.
+    for sel, decl in re.findall(r"([^{}]*?)\{([^}]*)\}", body):
+        if "cropped" in sel and "overflow" in decl:
+            assert ":not(.aemode)" in sel.replace(" ", ""), (
+                "рамка вставок (.cropped) действует и на шаге 3: %s" % sel.strip())
+
+    # И сам каркас шага 3 — прежний: высота 94vh от общей оболочки .modal.fill94 (шаг 3 — то же окно,
+    # своего правила высоты у него нет) и прежние числа колонки плеера (до cc632e3).
     flat = css.replace(" ", "")
-    m = re.search(r"\.modal\.aemode\{([^}]+)\}", flat)
+    m = re.search(r"\.modal\.fill94\{([^}]+)\}", flat)
     assert m and "height:94vh" in m.group(1), (
-        "у шага 3 нет своей высоты 94vh: %s" % (m.group(1) if m else "правила нет"))
+        "у шага 3 нет высоты 94vh от оболочки .modal.fill94: %s" % (m.group(1) if m else "правила нет"))
+    assert not re.search(r"\.modal\.aemode\{", flat), (
+        "у шага 3 завелось своё правило окна — оболочка одна (.modal.fill94)")
     m = re.search(r"\.modal\.aemode\.inspv\{([^}]+)\}", flat)
     assert m, "нет правила .modal.aemode .inspv (колонка плеера шага 3)"
     col = m.group(1)
@@ -427,12 +500,14 @@ def test_inserts_modal_width_is_the_same_as_step3():
     wide = m.group(1)
     assert "1560px" in wide and "97vw" in wide, "у .modal.wide отняли ширину: %s" % wide
 
-    m = re.search(r"\.modal\.aemode\{([^}]+)\}", css)
-    assert m, "нет правила .modal.aemode"
-    assert "width" not in m.group(1), (
-        "у шага 3 завелось своё правило ширины — шаг 2 обязан повторить его: %s" % m.group(1))
+    # У шага 3 (.modal.aemode — тот же элемент) собственной ширины нет: ни одно правило, чей селектор —
+    # именно .modal.aemode, не задаёт width/max-width/min-width. Потомки (.modal.aemode .inspv с min-width:0)
+    # сюда не относятся — это колонки, а не ширина окна.
+    for m in re.finditer(r"(?:^|[};])\.modal\.aemode\{([^}]*)\}", css):
+        assert not re.search(r"(?<![-\w])(?:max-|min-)?width:", m.group(1)), (
+            "у шага 3 завелось своё правило ширины — шаг 2 обязан повторить его: %s" % m.group(1))
 
     html = _read(HTML)
     i = html.index('<div class="backdrop" id="mbInserts"')
-    assert '<div class="modal wide"' in html[i:i + 400], (
+    assert '<div class="modal wide ' in html[i:i + 400], (
         "модалка вставок потеряла .modal.wide — ширина шага 2 разошлась с шагом 3")

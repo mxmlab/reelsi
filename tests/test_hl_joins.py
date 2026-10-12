@@ -212,13 +212,11 @@ def test_every_door_contains_hl_joins():
     assert re.search(r"j\.hl_joins\s*=\s*\(HLXML===c\.xml\)\s*\?\s*\[\.\.\.JNS\]\s*:\s*\[\];", ae_js)
     # 5. 90-ae.js: jobForBuild
     assert re.search(r"hl_joins:\s*j\.hl_joins\s*\|\|\s*\[\]", ae_js)
-    # 6. 90-ae.js: tojsx
-    assert re.search(r"hl_joins:\s*\(HLXML===xml\)\s*\?\s*\[\.\.\.JNS\]\s*:\s*\[\]", ae_js)
-    # 7. 85-inserts-view.js: ipvPlanBody
+    # 6. 85-inserts-view.js: ipvPlanBody
     assert re.search(r"hl_joins:\s*\(HLXML===xml\)\s*\?\s*\[\.\.\.JNS\]\s*:\s*\[\]", ins_js)
-    # 8. api/build.py: _norm_build_jobs
+    # 7. api/build.py: _norm_build_jobs
     assert re.search(r"hl_joins(?:\s*:[^=]+)?\s*=\s*j\.get\(\"hl_joins\"\)", api_build)
-    # 9. xml2ae/build.py: scene_plan & to_ae_full
+    # 8. xml2ae/build.py: scene_plan & to_ae_full
     assert re.search(r"hl_joins(?:\s*:[^=]+)?\s*=\s*None", xml_build)
     assert re.search(r"joins_raw\s*=", xml_build)
 

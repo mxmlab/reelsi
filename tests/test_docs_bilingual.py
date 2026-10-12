@@ -59,6 +59,7 @@ _KNOWN_PAIRS = {
     "docs/INTRO_SPEC.md": "docs/INTRO_SPEC.en.md",
     "docs/KNOWN_ISSUES.md": "docs/KNOWN_ISSUES.en.md",
     "docs/PLATFORMS.md": "docs/PLATFORMS.en.md",
+    "docs/PODCAST_SPEC.md": "docs/PODCAST_SPEC.en.md",
     "docs/ROADMAP.md": "docs/ROADMAP.en.md",
     "docs/STOCK_PROVIDERS.md": "docs/STOCK_PROVIDERS.en.md",
     "docs/TRADEMARK.md": "docs/TRADEMARK.ru.md",

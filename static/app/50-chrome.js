@@ -127,7 +127,7 @@ function openModal(id){const bd=$(id);MODALBACK[id]=document.activeElement;bd.cl
 // Escape, клик по фону и крестик закрывали окно сразу — десять минут ручной подчистки
 // уходили в никуда (аудит 2026-07-23, B1/B2).
 function modalDirty(id){
-  if(id==='mbPreview')return ED.hist&&ED.hist.length>0;
+  if(id==='mbPreview')return ED_HIST.canUndo();
   if(id==='mbCams')return !!(CAMED.saved&&CAMED.assign&&CAMED.saved.join()!==CAMED.assign.join());
   return false;}
 function closeModal(id){
@@ -242,7 +242,7 @@ function closeIfBack(e,id){if(e.target===$(id)&&BACKDOWN===$(id))closeModal(id);
 // mbInsLib в списке не было: стоя в «Базе вставок» (она открывается ПОВЕРХ «Вставок»)
 // юзер жал Escape — база оставалась, а закрывалось окно под ней.
 // Порядок = порядок вложенности: база поверх вставок, вставки поверх предпросмотра.
-const MODAL_STACK=['mbConfirm','mbDelClip','mbInsLib','mbSpeaker','mbAISettings','mbCams','mbLog','mbInserts','mbPreview'];
+const MODAL_STACK=['mbConfirm','mbDelClip','mbDelPodcast','mbInsLib','mbSpeaker','mbAISettings','mbCams','mbLog','mbInserts','mbPreview'];
 document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;
   const top=MODAL_STACK.find(id=>$(id)&&$(id).classList.contains('on'));
   if(top)closeModal(top);});

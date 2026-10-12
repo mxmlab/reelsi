@@ -239,3 +239,32 @@ def move_file(src: str, dst: str) -> None:
             except OSError:
                 pass  # копию снести тоже не вышло — исходное исключение важнее
             raise
+
+
+def remove_quiet(path: str) -> None:
+    """Убрать файл; нет файла — и ладно (уборка временного хвоста: убирать тогда нечего)."""
+    try:
+        os.remove(path)
+    except OSError:
+        pass  # файла может не быть — тогда и убирать нечего
+
+
+def unique_path(folder: str, name: str, *, is_dir: bool = False,
+                busy: Callable[[str], bool] | None = None) -> str:
+    """Свободный путь `folder/name`; занят — `name_2`, `name_3`…
+
+    Файл (по умолчанию): суффикс ставится перед расширением (`talk_2.mp3`).
+    Папка (`is_dir=True`): суффикс в конце целого имени, расширение не отрезается
+    (`clip.v1_2`). busy — чем проверять занятость; по умолчанию os.path.exists.
+    """
+    taken = busy or os.path.exists
+    path = os.path.join(folder, name)
+    if not taken(path):
+        return path
+    stem, ext = (name, "") if is_dir else os.path.splitext(name)
+    c = 1
+    while True:
+        c += 1
+        path = os.path.join(folder, f"{stem}_{c}{ext}")
+        if not taken(path):
+            return path

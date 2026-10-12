@@ -142,6 +142,7 @@ import sys
 import textwrap
 import threading
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
@@ -158,6 +159,11 @@ os.environ.setdefault("REELSI_NO_BROWSER", "1")
 
 import conftest  # noqa: E402  (реестр процессов сервиса, поднятых этим прогоном)
 from core import model_service  # noqa: E402
+
+# Весь файл — в одном воркере xdist (`--dist loadgroup`): тесты поднимают настоящие процессы
+# сервиса (холодный старт — импорт ядра и torch) и слушатели в потоке. Под параллельной
+# нагрузкой их сроки ожидания не выдерживали, а общий воркер держит один процесс сервиса.
+pytestmark = pytest.mark.xdist_group("model_service")
 
 # Подмена головы GigaAM: считает загрузки, а параллельность видит по счётчику
 # «сколько моделей считают прямо сейчас». Считает не мгновенно (`configure(wait=…)`)
@@ -412,8 +418,211 @@ def _track_started_services() -> Any:
     global _TEST_KEY
     _TEST_KEY = ("test-key-%d-%d" % (os.getpid(), next(_KEY_COUNTER))).encode("ascii")
     _LIVE_SERVICES.clear()
+    _SPAWN_TRIPS.clear()
+    _CLIENT_LOG.clear()
+    real_spawn = model_service._spawn
+    model_service._spawn = _spawn_watchdog(real_spawn)
+    restore_log = _install_client_log()
     yield
     _stop_registered_services()
+    restore_log()
+    model_service._spawn = real_spawn
+    if _SPAWN_TRIPS:
+        pytest.fail("сторож сработал %d раз: %s" % (len(_SPAWN_TRIPS), _SPAWN_TRIPS[0]),
+                    pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def _client_ping_patience(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Срок `ping` клиента — `CLIENT_PING_PATIENCE_S` для ВСЕХ тестов файла.
+
+    Тесты с настоящим слушателем в потоке под нагрузкой (полный прогон `-n auto`)
+    не успевали получить ответ за 3 с: клиент сочёл сервис мёртвым и завёл свой
+    процесс (см. `CLIENT_PING_PATIENCE_S`). Тест, которому нужен именно короткий срок,
+    выставляет `PING_TIMEOUT_S` сам внутри.
+    """
+    monkeypatch.setattr(model_service, "PING_TIMEOUT_S", CLIENT_PING_PATIENCE_S)
+
+
+@pytest.fixture(autouse=True)
+def _client_start_patience(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Срок старта для `call` (через `ensure_started`) — CLIENT_START_PATIENCE_S во всех тестах.
+
+    Сигнатура `ensure_started(timeout=START_TIMEOUT_S, path=None)`: кортеж значений по
+    умолчанию — `(timeout, path)`. Под нагрузкой холодный старт процесса (импорт ядра и torch)
+    не укладывался в боевые 15 с, и клиент сдавался раньше, чем сервис поднимался.
+    """
+    monkeypatch.setattr(model_service.ensure_started, "__defaults__",
+                        (CLIENT_START_PATIENCE_S, None))
+
+
+_SPAWN_TRIP_MSG = ("клиент решил, что сервис мёртв, и завёл новый процесс — тест ушёл бы к чужому")
+_SPAWN_TRIPS: list[str] = []
+
+
+_CLIENT_LOG: list[str] = []       # журнал решений клиента в ЭТОМ тесте (по порядку)
+
+
+def _brief_addr(data: Any) -> str:
+    """Адрес без ключа — только его длина: что клиент держал в руках в момент решения."""
+    if not isinstance(data, dict):
+        return "нет"
+    return ("порт %s, pid %s, метка старта %s, версия %s, сборка %s, устройство %s, ключ длиной %d"
+            % (data.get("port"), data.get("pid"), data.get("created"), data.get("version"),
+               str(data.get("build") or "")[:12] or "нет", data.get("device"),
+               len(str(data.get("authkey") or ""))))
+
+
+def _install_client_log() -> Any:
+    """Записывать проверки живости клиента, пока тест идёт; вернуть функцию отката.
+
+    Снимаем, что клиент видел ДО своих действий: сам сторож приходит уже после того, как
+    `_stop_and_clear_stale` стёр «мёртвый» файл адреса. Обёртки только пишут в журнал и
+    отдают ровно то, что вернул настоящий вызов (исключения пробрасываются).
+    """
+    real_request = model_service._request
+    real_alive = model_service._settings_alive
+    real_clear = model_service._stop_and_clear_stale
+
+    def request(cmd: str, data: Any, *args: Any, **kwargs: Any) -> Any:
+        timeout = kwargs.get("timeout", "по умолчанию")
+        port = data.get("port") if isinstance(data, dict) else None
+        try:
+            resp = real_request(cmd, data, *args, **kwargs)
+        except BaseException as ex:
+            _CLIENT_LOG.append("    _request(%r, таймаут %s, порт %s) -> %s: %s"
+                               % (cmd, timeout, port, type(ex).__name__, str(ex)[:160]))
+            raise
+        _CLIENT_LOG.append("    _request(%r, таймаут %s, порт %s) -> ok=%s"
+                           % (cmd, timeout, port, resp.get("ok") if isinstance(resp, dict) else resp))
+        return resp
+
+    def alive(data: Any, *args: Any, **kwargs: Any) -> Any:
+        _CLIENT_LOG.append("  _settings_alive на адресе: %s" % _brief_addr(data))
+        ok = real_alive(data, *args, **kwargs)
+        _CLIENT_LOG.append("  _settings_alive -> %s" % ok)
+        return ok
+
+    def clear(path: str, build: str) -> Any:
+        try:
+            before = _brief_addr(model_service.read_settings(path))
+        except Exception as ex:
+            before = "не прочитан (%s)" % type(ex).__name__
+        _CLIENT_LOG.append("_stop_and_clear_stale: адрес на входе — %s" % before)
+        result = real_clear(path, build)
+        _CLIENT_LOG.append("_stop_and_clear_stale: файл после — %s"
+                           % os.path.exists(path))
+        return result
+
+    model_service._request = request
+    model_service._settings_alive = alive
+    model_service._stop_and_clear_stale = clear
+
+    def restore() -> None:
+        model_service._request = real_request
+        model_service._settings_alive = real_alive
+        model_service._stop_and_clear_stale = real_clear
+
+    return restore
+
+
+def _spawn_evidence() -> str:
+    """Улики для сторожа: что клиент видел, когда решил, что сервис мёртв. Не бросает исключений.
+
+    Клиент решает по `_settings_alive` (файл адреса → pid → ping). Срок ping здесь
+    30 с, так что «мёртв» означает либо отказ по сети, либо файл адреса, который
+    не сходится с живым слушателем этого теста (переписан, удалён, чужой ключ, чужой
+    порт). Снимаем всё это тем же путём, что клиент, и печатаем. Ключ — только длина.
+    """
+    lines: list[str] = ["(0) журнал решений клиента за тест (по порядку, последние 40):"]
+    lines.extend(_CLIENT_LOG[-40:] or ["  (журнала нет: клиент проверок не делал)"])
+    lines.append("(снимок после решения — файл мог быть уже стёрт клиентом):")
+
+    def add(label: str, fn: Any) -> None:
+        try:
+            value = fn()
+        except Exception as ex:                       # улики не должны ронять сторожа
+            value = "не снято (%s: %s)" % (type(ex).__name__, ex)
+        lines.append("%s: %s" % (label, value))
+
+    path = model_service._settings_path()
+    raw: dict[str, Any] | None = None
+    try:
+        raw = model_service.read_settings(path)
+    except Exception:
+        raw = None
+    my_ports = [s.port for s in _LIVE_SERVICES]
+    pid = int((raw or {}).get("pid") or 0)
+    add("(1) путь файла адреса", lambda: path)
+    add("    файл есть на диске", lambda: os.path.exists(path))
+    add("    содержимое (ключ — только длина)", lambda: _settings_brief(raw))
+    add("    порты слушателей этого теста", lambda: my_ports)
+    add("    порт из файла совпадает с нашим слушателем",
+        lambda: bool(raw) and (raw or {}).get("port") in my_ports)
+    add("(2) прямой ping _request(timeout=5, attempts=1)", lambda: _ping_result(raw))
+    add("(3) _pid_alive(pid из файла)", lambda: model_service._pid_alive(pid))
+    add("    _settings_mismatch(файл, текущая сборка)",
+        lambda: model_service._settings_mismatch(raw, model_service._code_fingerprint()))
+    add("    _pid_is_service(pid, файл)", lambda: model_service._pid_is_service(pid, raw))
+    add("    _settings_alive(файл) с боевым сроком", lambda: model_service._settings_alive(raw))
+    try:
+        frames = sys._current_frames()
+        for th in threading.enumerate():
+            if th is threading.main_thread():
+                continue
+            frame = frames.get(th.ident)
+            top = traceback.format_stack(frame)[-3:] if frame is not None else ["(нет кадра)\n"]
+            lines.append("(4) поток %r daemon=%s alive=%s\n%s"
+                         % (th.name, th.daemon, th.is_alive(), "".join(top).rstrip()))
+    except Exception as ex:
+        lines.append("(4) потоки не сняты (%s: %s)" % (type(ex).__name__, ex))
+    return "\n".join(lines)
+
+
+def _settings_brief(data: dict[str, Any] | None) -> Any:
+    """Файл адреса без ключа: версия, хост, порт, pid, метка старта, устройство, сборка."""
+    if not data:
+        return None
+    brief = {k: data.get(k) for k in ("version", "host", "port", "pid", "created", "idle", "device")}
+    brief["build"] = str(data.get("build") or "")[:12] or None
+    brief["authkey"] = "длина %d" % len(str(data.get("authkey") or ""))
+    return brief
+
+
+def _ping_result(data: dict[str, Any] | None) -> str:
+    if not data:
+        return "нет данных адреса — ping не посылали"
+    try:
+        return repr(model_service._request("ping", data, timeout=5, attempts=1))
+    except Exception as ex:
+        return "%s: %s" % (type(ex).__name__, ex)
+
+
+def _spawn_watchdog(real_spawn: Any) -> Any:
+    """Сторож от тихой подмены: запуск НАСТОЯЩЕГО процесса сервиса, пока в тесте поднят
+    слушатель потоком, — ошибка теста.
+
+    Такой процесс и ломал тесты под нагрузкой: клиент сочёл слушатель мёртвым, поднял
+    свой сервис, тот считал на подменных весах, которых в процессе pytest нет, а после
+    `stop()` на `ping` отвечал уже он. Причина видна только по «модуль не загружен».
+    Сторож ловит запуск в момент решения.
+
+    Сторожим `_spawn` (им `ensure_started` даёт процесс), а не `ensure_started`:
+    тесту с живым `_server` вызывать его законно — живой сервис подключается, ничего
+    не заводя. Тесты, которые САМИ поднимают процесс (`_spawn_service_process`) или
+    подменяют `_spawn`, сторож не задевает: он включается только при `_server`
+    (`_LIVE_SERVICES` непуст).
+
+    `_spawn_and_wait` глотает `Exception` («сервис не стартовал»), поэтому нарушение
+    запоминается в `_SPAWN_TRIPS`, а фикстура `_track_started_services` валит тест на выходе.
+    """
+    def guard(*args: Any, **kwargs: Any) -> Any:
+        if _LIVE_SERVICES:
+            msg = _SPAWN_TRIP_MSG + "\nулики:\n" + _spawn_evidence()
+            _SPAWN_TRIPS.append(msg)
+            raise AssertionError(msg)
+        return real_spawn(*args, **kwargs)
+    return guard
 
 
 def _kill_service_processes(spawned: list[Any]) -> None:
@@ -437,12 +646,12 @@ def _kill_service_processes(spawned: list[Any]) -> None:
         with contextlib.suppress(Exception):
             proc.kill()
         with contextlib.suppress(Exception):
-            proc.wait(timeout=10.0)  # дождаться выхода: иначе процесс живёт ещё миг
+            proc.wait(timeout=30.0)  # дождаться выхода: иначе процесс живёт ещё миг
 
 
 def _server(settings: Path, slots: int = 1, idle: float | None = None,
             authkey: bytes | None = None, pid: int | None = None,
-            created: float | None = None) -> Any:
+            created: float | None = None, thread_delay: float = 0.0) -> Any:
     """Слушатель в СВОЁМ потоке и файл адреса к нему — как у боевого сервиса.
 
     Файл адреса — ТОЙ ЖЕ формы, что пишет `main` боевого пути, включая версию кода,
@@ -459,6 +668,19 @@ def _server(settings: Path, slots: int = 1, idle: float | None = None,
     port = model_service._pick_port()
     key = authkey if authkey is not None else _TEST_KEY
     service = model_service._Service(port, key, idle_s=idle, slots=slots)
+    # Слушатель открываем ДО публикации адреса — как боевой путь (`open_listener` до записи
+    # файла адреса). Иначе адрес лежит в файле, а порт ещё никто не слушает: клиент под
+    # нагрузкой получает отказ соединения, решает «сервис мёртв» и заводит настоящий процесс
+    # (так сторож и ловил эту гонку). Поток приёма потом повторно слушатель не открывает.
+    service.open_listener()
+    if thread_delay > 0:
+        # Для теста позднего потока: приём стартует с опозданием, слушатель уже открыт.
+        real_serve = service.serve_thread
+
+        def late_serve() -> None:
+            time.sleep(thread_delay)
+            real_serve()
+        service.serve_thread = late_serve      # `start_thread` берёт цель по атрибуту
     model_service._write_settings(str(settings), {
         "version": model_service.SETTINGS_VERSION, "host": "127.0.0.1",
         "port": port, "pid": os.getpid() if pid is None else pid,
@@ -477,11 +699,11 @@ def _server(settings: Path, slots: int = 1, idle: float | None = None,
 def _join(service: Any) -> None:
     """Погасить слушатель и дождаться выхода потока (свои потоки не переживают тест)."""
     service.stop()
-    service.wait_until_stopped(timeout=10)
+    service.wait_until_stopped(timeout=30)
     _stop_registered_services()
 
 
-def _stop_registered_services(timeout: float = 10.0) -> None:
+def _stop_registered_services(timeout: float = 30.0) -> None:
     """Остановить сервисы ЭТОГО теста и дождаться РЕАЛЬНОГО выхода их потоков.
 
     `stop()` снимает приём и закрывает слушатель, но цикл приёма выходит не сразу:
@@ -510,7 +732,9 @@ def _warm_up(wav: str) -> Any:
     Модуль подмены кеширует сам сервис (`_subst_modules`) — до первого запроса
     его счётчики мерить нечего.
     """
-    assert model_service.transcribe(wav, "v3_ctc"), "сервис не посчитал"
+    got = model_service.transcribe(wav, "v3_ctc")
+    # Сторож мог погасить запуск процесса (его исключение клиент глотает): причину — сразу сюда.
+    assert got, "сервис не посчитал" + (" — сторож: " + _SPAWN_TRIPS[0] if _SPAWN_TRIPS else "")
     return _fake_state()
 
 
@@ -552,15 +776,21 @@ def _clear_settings(ws: dict[str, Any]) -> None:
 # Таймауты для тестов, поднимающих НАСТОЯЩИЙ процесс сервиса. Сроки короткие
 # нарочно: процесс без сторожа простоя не выйдет никогда, и тест обязан сказать
 # это утверждением, а не повиснуть на своём же ожидании.
-PROC_START_TIMEOUT_S = 15.0     # холодный старт сервиса: импорт ядра и torch
-PROC_EXIT_TIMEOUT_S = 8.0       # выход после idle=1 — секунды, не минуты
-PROC_IDLE_S = 1.0               # простой тестового процесса
-# Срок ответа на `ping` для тестов, где клиент говорит с НАСТОЯЩИМ слушателем под
-# нагрузкой. `call` перед каждым запросом шлёт `ping` с сроком `PING_TIMEOUT_S` (3 с).
-# На занятой машине (полный прогон `-n auto`) ответ мог не успеть: клиент решал,
-# что сервиса нет, и заводил новый процесс — счёт шёл уже в нём, а счётчики
-# подмены этого теста не менялись. Срок растянут, утверждения не трогаем: мёртвый
-# порт по-прежнему отказывает сразу (соединение не открывается).
+PROC_START_TIMEOUT_S = 60.0     # холодный старт сервиса: импорт ядра и torch (под нагрузкой — дольше 15 с)
+PROC_EXIT_TIMEOUT_S = 20.0      # выход после idle=1 — секунды даже под нагрузкой, не минуты
+CLIENT_START_PATIENCE_S = 60.0  # срок старта, с которым `call` ждёт настоящий процесс (боевой 15 с)
+PROC_IDLE_S = 1.0               # простой тестового процесса (тот, кто выходит БЕЗ запроса)
+# Простой процесса, который обязан СНАЧАЛА обслужить запрос. Путь до первого запроса (ожидание
+# адреса, подключение, ping, прогрев) под нагрузкой занимает больше секунды; при 1 с процесс
+# честно выходил по простою раньше запроса, и тест падал «боевой процесс не посчитал».
+PROC_IDLE_AFTER_REQ_S = 5.0
+# Срок ответа на `ping` для ВСЕХ тестов файла (autouse `_client_ping_patience`).
+# `call` перед каждым запросом шлёт `ping` с сроком `PING_TIMEOUT_S` (3 с — боевой).
+# Тесты со слушателем в потоке на занятой машине (полный прогон `-n auto`) не успевали
+# получить ответ: клиент решал, что сервиса нет, и заводил НАСТОЯЩИЙ процесс — счёт
+# шёл уже в нём, а счётчики подмены этого теста не менялись. Мёртвый порт по-прежнему
+# отказывает сразу (соединение не открывается). Боевой срок в `core/model_service.py`
+# не меняем: 3 с там правильные для интерфейса.
 CLIENT_PING_PATIENCE_S = 30.0
 
 
@@ -570,7 +800,8 @@ def _broken_subst(ws: dict[str, Any]) -> None:
                                                       _BROKEN_MODULE)
 
 
-def _spawn_service_process(ws: dict[str, Any], *args: str) -> subprocess.Popen[str]:
+def _spawn_service_process(ws: dict[str, Any], *args: str,
+                           idle: float = PROC_IDLE_S) -> subprocess.Popen[str]:
     """Поднять НАСТОЯЩИЙ процесс `python -m core.model_service --serve` — как бой.
 
     Стенд `_server` поднимает слушателя потоком, и цикл приёма в нём настоящий, а
@@ -583,24 +814,24 @@ def _spawn_service_process(ws: dict[str, Any], *args: str) -> subprocess.Popen[s
     env["REELSI_MODEL_SERVICE_STATE"] = str(ws["settings"])
     return subprocess.Popen(
         [sys.executable, "-m", "core.model_service", "--serve",
-         "--idle", str(PROC_IDLE_S), *args],
+         "--idle", str(idle), *args],
         cwd=ROOT, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
 
-def _wait_service_exit(proc: subprocess.Popen[str]) -> int:
+def _wait_service_exit(proc: subprocess.Popen[str], idle: float = PROC_IDLE_S) -> int:
     """Дождаться выхода процесса; не вышел — погасить по PID и сказать это тестом.
 
-    Срок короткий нарочно: процесс без сторожа простоя не выйдет никогда, и тест
-    обязан сказать это утверждением, а не повиснуть на своём же ожидании.
+    Срок — простой процесса плюс запас PROC_EXIT_TIMEOUT_S: процесс без сторожа простоя
+    не выйдет никогда, и тест обязан сказать это утверждением, а не повиснуть.
     """
     try:
-        return int(proc.wait(timeout=PROC_EXIT_TIMEOUT_S))
+        return int(proc.wait(timeout=idle + PROC_EXIT_TIMEOUT_S))
     except subprocess.TimeoutExpired:
         proc.kill()
-        proc.wait(timeout=10.0)
+        proc.wait(timeout=30.0)
         raise AssertionError(
             "процесс сервиса с простым %.0fс не вышел за %.0fс — выгрузки по простою "
-            "у боевого пути нет" % (PROC_IDLE_S, PROC_EXIT_TIMEOUT_S))
+            "у боевого пути нет" % (idle, idle + PROC_EXIT_TIMEOUT_S))
 
 
 def _wait_live_settings(ws: dict[str, Any], timeout: float = PROC_START_TIMEOUT_S
@@ -629,7 +860,7 @@ def _drop_service_process(proc: subprocess.Popen[str]) -> None:
     except subprocess.TimeoutExpired:
         pass
     proc.kill()
-    proc.wait(timeout=10.0)
+    proc.wait(timeout=30.0)
 
 
 def _occupied_port() -> Any:
@@ -677,10 +908,88 @@ def test_две_параллельные_транскрипции_грузят_�
     )
 
 
-@pytest.mark.xdist_group("model_service")
+def test_адрес_публикуется_после_слушателя_даже_при_позднем_потоке(ws: dict[str, Any]) -> None:
+    """Поток приёма стартует с опозданием в 5 с — первый запрос всё равно получает слова от СВОЕГО слушателя.
+
+    Гонка, которую ловил сторож: адрес записан, порт ещё никто не слушает, клиент получает
+    отказ соединения, решает «сервис мёртв» и заводит настоящий процесс. Боевой путь открывает
+    слушатель ДО записи адреса (`open_listener`), поток приёма лишь принимает соединения.
+    Здесь поток опаздывает на 5 с: слушатель уже открыт, ping ждёт в очереди, слова приходят,
+    процесс не заводится, адрес остаётся нашим.
+
+    Мутация: убрать `open_listener()` из `_server` — адрес уходит раньше слушателя, первый
+    ping получает отказ, клиент заводит процесс, сторож его не пускает, тест краснеет.
+    """
+    # Задержка 5 с, а не 2: отказ соединения на этой машине приходит лишь через ~2 с
+    # (замер WinError 10061 = 2.0 с). При задержке 2 с первый ping успевал «попасть» в
+    # слушатель, открытый ровно к этому сроку, и мутация не краснела.
+    service = _server(ws["settings"], slots=1, thread_delay=5.0)
+    try:
+        words = model_service.transcribe(ws["wav"], "v3_ctc")
+        settings = model_service.read_settings(str(ws["settings"])) or {}
+    finally:
+        _join(service)
+
+    assert words and words[0]["w"] == "v3_ctc_word", f"слова не от своего слушателя: {words}"
+    assert settings.get("pid") == os.getpid(), f"адрес сменил процесс: {settings}"
+
+
+PING_SLOW_S = 4.0     # ответ на `ping` дольше прежнего срока клиента (3 с)
+
+
+class _SlowPingConn:
+    """Соединение, на котором ответ на `ping` приходит с задержкой; всё остальное — как есть."""
+
+    def __init__(self, conn: Any, delay: float) -> None:
+        self._conn = conn
+        self._delay = delay
+        self._cmd: Any = None
+
+    def recv(self) -> Any:
+        msg = self._conn.recv()
+        self._cmd = msg[0] if isinstance(msg, tuple) and msg else None
+        return msg
+
+    def send(self, obj: Any) -> None:
+        if self._cmd == "ping":
+            time.sleep(self._delay)
+        self._conn.send(obj)
+
+    def close(self) -> None:
+        self._conn.close()
+
+
+def test_медленный_ping_не_заводит_чужой_процесс(ws: dict[str, Any]) -> None:
+    """Ответ на `ping` дольше прежних 3 с: клиент ждёт СВОЙ слушатель и процесс не заводит.
+
+    Это и есть сбой под нагрузкой, только детерминированно: ping не успевал за 3 с,
+    клиент сочёл сервис мёртвым и поднял настоящий процесс — тот считал бы на подменных
+    весах, которых в процессе pytest нет. Здесь ping идёт 4 с (срок клиента — из фикстуры
+    `_client_ping_patience`). Слова приходят от слушателя ЭТОГО теста (его подмена считала:
+    `max_concurrent == 1`), адрес остаётся наш (pid — этот процесс), сторож молчит.
+
+    Мутация: вернуть срок ping 3 с — клиент сочтёт слушатель мёртвым, `_spawn` запустит
+    процесс, сторож его не пустит, и тест краснеет.
+    """
+    service = _server(ws["settings"], slots=1)
+    real_handle = service.handle
+    service.handle = lambda conn: real_handle(_SlowPingConn(conn, PING_SLOW_S))
+    try:
+        _warm_up(ws["wav"])                     # грузит подмену в этом же процессе
+        _reset_fake()
+        words = model_service.transcribe(ws["wav"], "v3_ctc")
+        settings = model_service.read_settings(str(ws["settings"])) or {}
+    finally:
+        _join(service)
+
+    assert words and words[0]["w"] == "v3_ctc_word", f"слова не от своего слушателя: {words}"
+    assert _fake_state().max_concurrent == 1, "запрос обслужил не этот процесс"
+    assert settings.get("pid") == os.getpid(), f"адрес сменил процесс: {settings}"
+
+
 @pytest.mark.parametrize("slots,expected", [(1, 1), (2, 2)])
 def test_слоты_держат_потолок_одновременных(
-    ws: dict[str, Any], slots: int, expected: int, monkeypatch: pytest.MonkeyPatch
+    ws: dict[str, Any], slots: int, expected: int
 ) -> None:
     """`slots` одновременных распознаваний: N=1 — по одному, N=2 — разом.
 
@@ -690,7 +999,6 @@ def test_слоты_держат_потолок_одновременных(
     внутрь и уплотняются — потолок 2. Мутация: снять семафор — при `slots=1`
     счётчик покажет 2, и тест покраснеет.
     """
-    monkeypatch.setattr(model_service, "PING_TIMEOUT_S", CLIENT_PING_PATIENCE_S)
     service = _server(ws["settings"], slots=slots)
     try:
         _warm_up(ws["wav"])
@@ -764,7 +1072,7 @@ def test_второй_старт_подключается_к_живому(ws: di
     spawned: list[int] = []
     monkeypatch.setattr(model_service, "_spawn", lambda: spawned.append(1))
     try:
-        assert model_service.ensure_started(timeout=5.0) is True
+        assert model_service.ensure_started(timeout=60.0) is True
     finally:
         _join(service)
 
@@ -799,7 +1107,7 @@ def test_мёртвый_файл_адреса_даёт_новый_сервис(w
 
     monkeypatch.setattr(model_service, "_spawn", spawn)
     try:
-        assert model_service.ensure_started(timeout=10.0) is True
+        assert model_service.ensure_started(timeout=60.0) is True
         fresh = model_service.read_settings(str(ws["settings"])) or {}
         # Критерий «файл переписан ЖИВЫМ сервисом» — не номер порта: на Linux
         # освободившийся порт сразу выдаётся снова, и новый сервис законно
@@ -888,7 +1196,7 @@ def test_адрес_без_живого_порта_сервисом_не_счи�
 
     service = _server(ws["settings"], slots=1)
     try:
-        live = model_service._wait_settings(str(ws["settings"]), None, 5.0)
+        live = model_service._wait_settings(str(ws["settings"]), None, 30.0)
         assert live is not None, "живой сервис не дождались"
         assert int(live.get("port") or 0) != int(dead["port"]), live
     finally:
@@ -901,7 +1209,7 @@ def test_адрес_без_живого_порта_сервисом_не_счи�
 def test_простой_завершает_слушатель(ws: dict[str, Any]) -> None:
     """Простой больше `idle` — цикл приёма выходит (процесс отдаст VRAM и умрёт)."""
     service = _server(ws["settings"], slots=1, idle=0.4)
-    assert service.wait_until_stopped(timeout=10.0) is True, (
+    assert service.wait_until_stopped(timeout=30.0) is True, (
         "слушатель не завершился по простою"
     )
 
@@ -1138,7 +1446,7 @@ def test_выход_по_простою_не_зависит_от_закрыти�
             "приём вышел по таймауту опроса, а не по остановке: сервис перестал бы "
             "принимать соединения через %.1fс после старта" % model_service.POLL_ACCEPT_S
         )
-        assert service.wait_until_stopped(timeout=10.0) is True, (
+        assert service.wait_until_stopped(timeout=30.0) is True, (
             "слушатель не завершился по простою: выход зависит от того, прерывает "
             "ли ОС accept закрытием слушателя"
         )
@@ -1162,7 +1470,7 @@ def test_stop_гасит_службу_и_там_где_закрытие_не_б�
         service.start_thread()
         assert _wait_for(lambda: fake.stub.closed), "приём не обслужил первое соединение"
         service.stop()
-        assert service.wait_until_stopped(timeout=10.0) is True, (
+        assert service.wait_until_stopped(timeout=30.0) is True, (
             "явный `stop` не разбудил приём: выход остался за закрытием слушателя"
         )
         # Число вызовов accept не проверяем: если цикл увидел флаг до следующего
@@ -1212,7 +1520,7 @@ def test_остановка_снимает_приём_до_закрытия_сл
         late = _LateClient()
         state["late"] = late                # клиент приходит уже после `close()`
         service.stop()
-        assert service.wait_until_stopped(timeout=10.0) is True, (
+        assert service.wait_until_stopped(timeout=30.0) is True, (
             "поток приёма не завершился: остановка приёма не снята")
         assert not _wait_for(lambda: late.served, timeout=0.5), (
             "остановленный сервис обслужил новое подключение: приём не снят "
@@ -1243,7 +1551,7 @@ def test_остановленный_сервис_не_обслуживает_н�
         data = model_service.read_settings(str(ws["settings"]))
         assert data is not None, "файл адреса сервиса не прочитан"
         service.stop()
-        assert service.wait_until_stopped(timeout=10.0) is True, (
+        assert service.wait_until_stopped(timeout=30.0) is True, (
             "поток приёма не завершился: проверять «не обслуживает» не на чем")
         thread = service._accept_thread
         assert thread is not None and not thread.is_alive(), (
@@ -1297,14 +1605,14 @@ def test_остановка_дожидается_рабочих_потоков_�
         assert service.wait_until_stopped(timeout=2.0) is False, (
             "остановка объявлена завершённой, пока рабочий поток ещё читает веса")
         gate.set()
-        assert service.wait_until_stopped(timeout=10.0) is True, (
+        assert service.wait_until_stopped(timeout=30.0) is True, (
             "остановка не дождалась рабочего потока")
     finally:
         gate.set()
         state.set_gate(None)          # затвор — состояние подмены, общее на процесс
         service.stop()
-        service.wait_until_stopped(timeout=10.0)
-        client.join(timeout=10.0)
+        service.wait_until_stopped(timeout=30.0)
+        client.join(timeout=30.0)
 
     assert model_service._models == {}, (
         "остановленный сервис опубликовал модель в общий кэш: %r"
@@ -1353,7 +1661,7 @@ def test_опроса_достаточно_для_выхода_без_будил
         monkeypatch.setattr(service, "wake", lambda: None)   # будильник снят нарочно
         accept = service.start_thread()
         assert _wait_for(lambda: fake.stub.closed), "приём не обслужил первое соединение"
-        assert service.wait_until_stopped(timeout=10.0) is True, (
+        assert service.wait_until_stopped(timeout=30.0) is True, (
             "простой не завершил приём: выход держится на закрытии слушателя и "
             "будильнике, а не на опросе со сроком"
         )
@@ -1378,7 +1686,7 @@ def test_простой_считается_от_последнего_запро�
     service = _server(ws["settings"], slots=1, idle=0.5)
     try:
         assert model_service.transcribe(ws["wav"], "v3_ctc"), "запрос к сервису не прошёл"
-        assert service.wait_until_stopped(timeout=0.2 + 1.0) is True, (
+        assert service.wait_until_stopped(timeout=10.0) is True, (
             "после запроса сервис не вышел по простою"
         )
     finally:
@@ -1405,10 +1713,12 @@ def test_боевой_процесс_выходит_по_простою(ws: dict
     finally:
         if proc.poll() is None:
             proc.kill()
-            proc.wait(timeout=10.0)
+            proc.wait(timeout=30.0)
         model_service.clear_settings(str(ws["settings"]))
     assert code == 0, "боевой процесс завершился не штатно: код %s" % code
-    assert lived < 3.0, (
+    # Замер от старта процесса (включая холодный импорт) — порог с запасом: простой 1 с,
+    # боевой 300 с. Жизнь дольше 10 с значит, что простой не отсчитывался вовсе.
+    assert lived < 10.0, (
         "процесс с простым %.0fс жил %.1fс — простой не отсчитывался"
         % (PROC_IDLE_S, lived)
     )
@@ -1423,19 +1733,22 @@ def test_боевой_процесс_выходит_через_idle_после_�
     Сервис с одним роликом: запрос считается, после него отсчитывается простой, и
     процесс уходит. Ровно этого не делал боевой путь (сторожа не заводил никто),
     и забытый сервис держал видеопамять, которую просят рендер и AE.
+
+    Простой — PROC_IDLE_AFTER_REQ_S, а не PROC_IDLE_S: процесс обязан дождаться запроса,
+    а путь до него под нагрузкой дольше секунды. С 1 с процесс выходил раньше запроса.
     """
-    proc = _spawn_service_process(ws, "--slots", "1")
+    proc = _spawn_service_process(ws, "--slots", "1", idle=PROC_IDLE_AFTER_REQ_S)
     try:
         assert model_service._wait_settings(str(ws["settings"]), proc,
                                             PROC_START_TIMEOUT_S) is not None, (
             "боевой процесс не поднял слушателя"
         )
         assert model_service.transcribe(ws["wav"], "v3_ctc"), "боевой процесс не посчитал"
-        code = _wait_service_exit(proc)
+        code = _wait_service_exit(proc, idle=PROC_IDLE_AFTER_REQ_S)
     finally:
         if proc.poll() is None:
             proc.kill()
-            proc.wait(timeout=10.0)
+            proc.wait(timeout=30.0)
         model_service.clear_settings(str(ws["settings"]))
     assert code == 0, "боевой процесс завершился не штатно: код %s" % code
 
@@ -1446,7 +1759,7 @@ def test_shutdown_гасит_сервис(ws: dict[str, Any]) -> None:
     try:
         assert model_service.service_alive() is True
         assert model_service.shutdown() is True
-        assert service.wait_until_stopped(timeout=10.0) is True, "слушатель не закрылся"
+        assert service.wait_until_stopped(timeout=30.0) is True, "слушатель не закрылся"
         assert model_service.service_alive() is False, "сервис отвечает после shutdown"
     finally:
         _join(service)
@@ -1665,7 +1978,7 @@ def test_два_клиента_разом_заводят_один_сервис(
     results: list[bool] = []
 
     def client() -> None:
-        results.append(model_service.ensure_started(timeout=10.0))
+        results.append(model_service.ensure_started(timeout=60.0))
 
     threads = [threading.Thread(target=client) for _ in range(2)]
     for th in threads:
@@ -1704,7 +2017,7 @@ def test_брошенная_заявка_на_старт_не_блокирует
 
     monkeypatch.setattr(model_service, "_spawn", spawn)
     try:
-        assert model_service.ensure_started(timeout=10.0) is True, "заявка заблокировала старт"
+        assert model_service.ensure_started(timeout=60.0) is True, "заявка заблокировала старт"
     finally:
         _join(server["service"])
 
@@ -2385,7 +2698,6 @@ def test_вздохи_через_сервис_равны_локальным(ws: 
     )
 
 
-@pytest.mark.xdist_group("model_service")
 def test_эмоции_через_сервис_равны_локальным(ws: dict[str, Any],
                                              monkeypatch: pytest.MonkeyPatch) -> None:
     """Вероятности эмоций через сервис == локальным (подменённая голова `emo`).
@@ -2400,7 +2712,6 @@ def test_эмоции_через_сервис_равны_локальным(ws: 
     _fresh_caches(monkeypatch)
     loader = _fake_emo()
     monkeypatch.setattr("core.emphasis.load_emo_model_local", loader)
-    monkeypatch.setattr(model_service, "PING_TIMEOUT_S", CLIENT_PING_PATIENCE_S)
     window = np.zeros(int(0.8 * 22050), dtype="float32")
     window[200:900] = 0.4
 
@@ -2729,7 +3040,7 @@ def test_сервис_другой_версии_гасится_и_заводит
             "непроверенным")
 
         # Сервис ТОЙ ЖЕ версии — просто подключаемся, ничего не гасим.
-        assert model_service.ensure_started(timeout=5.0) is True
+        assert model_service.ensure_started(timeout=60.0) is True
         assert model_service.read_settings(str(ws["settings"])).get("pid") == old["pid"], (
             "живой сервис своей версии зачем-то перезапустили")
 
@@ -2737,7 +3048,7 @@ def test_сервис_другой_версии_гасится_и_заводит
         # `shutdown` и вышел сам), новый заводится с фальшивой головой GigaAM.
         stale = dict(old, build=old["build"] + "0" * 16)
         model_service._write_settings(str(ws["settings"]), stale)
-        assert model_service.ensure_started(timeout=20.0) is True
+        assert model_service.ensure_started(timeout=60.0) is True
         fresh = model_service.read_settings(str(ws["settings"])) or {}
         assert model_service.service_alive(), "новый сервис не отвечает"
     finally:
@@ -2856,7 +3167,7 @@ def test_чужой_процесс_по_pid_не_гасят(ws: dict[str, Any]) 
     finally:
         with contextlib.suppress(Exception):
             service.stop()
-            service.wait_until_stopped(timeout=10)
+            service.wait_until_stopped(timeout=30)
         stranger.kill()
         stranger.wait(timeout=10.0)
 

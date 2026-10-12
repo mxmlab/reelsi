@@ -69,6 +69,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Tests
 - The suite is 5837 passed, 16 skipped on Windows and green on Linux in Docker (Python 3.10); pip-audit finds no known vulnerabilities. The UI checks run on node and Chrome stands instead of matching source text, the AE template is executed by a stand against the scene plan, and the personal-files guard compares `ai_config.json`, `named_inserts.json` and `insertlib.json` before and after each run.
+- The first CI run of this release was red, and the cause was the test stands, not the code. The Chrome layout checks treated the browser frame as a fixed 91 px, and the runner's Chrome has a 95 px frame, so they now measure against the viewport they actually got. The model-service helper published the listener's address before the listener was open, so under load a client hit a refused port, decided the service was dead and started a real one; the helper now opens the listener first, as the service itself does. Process deadlines in those tests also have room for a loaded runner. After the fix: 5840 passed on Windows, 5801 passed on Linux in Docker with 4 CPUs.
 
 ## 0.3.1-beta — 2026-10-07
 

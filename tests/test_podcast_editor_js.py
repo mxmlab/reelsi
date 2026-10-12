@@ -1128,7 +1128,10 @@ def test_pod_timeline_takes_the_rest_of_window_height(tmp_path, width, height, r
     m = _pod_window_geometry(tmp_path, width, height, rows=rows)
     if m is None:
         pytest.skip("Chrome не запускается в этой песочнице (mojo/named pipes) — замер не снят")
-    assert abs(m["vh"] - height) <= 2, "стенд снял видимую область %s вместо %s: %r" % (m["vh"], height, m)
+    # Стенд должен снять видимую область около заданной, а не ровно её: рамка окна у разных версий
+    # Chrome разная (на windows-latest она на 4 px выше, чем у владельца). Проверка «ровно height»
+    # краснела из-за рамки, а не из-за раскладки. Промах на десятки px — уже сломанный стенд.
+    assert height - 16 <= m["vh"] <= height + 16, "стенд снял видимую область %s вместо %s: %r" % (m["vh"], height, m)
     assert m["cv"]["height"] >= 200, "холст «Вся запись» не растянулся по высоте окна: %r" % (m,)
     assert m["body"]["scrollH"] <= m["body"]["clientH"] + 1, "тело окна прокручивается: %r" % (m["body"],)
     assert m["modal"]["height"] >= 0.9 * m["vh"], "окно не занимает экран: %r" % (m["modal"],)

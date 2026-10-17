@@ -339,6 +339,17 @@ photos exceed the quota, the weakest AI inserts go first. The switch is the spea
 "Inserts by name" (key `named_inserts`, on by default). The old key `drug_inserts` is read as a fallback,
 and old inserts with `auto=drug` are understood as `auto=named`.
 
+## The AI sees the words without censorship — the `.words.json` sidecar
+
+The subtitles carry censorship: they contain "BPC-*57", "Т*500", "ПЕП*ИДЫ". Previously the model saw
+this mangled word, wrote "peptide vial" into the prompt, and the pass over the names dictionary did not find
+"bpc-157". Now `_words_for_ai` (`core/aicut/commands.py`) removes the "*" using `<stem>.words.json` — the
+transcript on the same timeline: a starred word is replaced by an entry of the same length that matches in
+all the other letters and starts no more than 0.08 s away from it. Words without "*" are never touched (the
+owner's text edits live in the XML). The subtitles in the XML stay censored; only what the AI inserts and
+the names dictionary see changes. The prompt additionally requires the drug's name to be written in the
+prompt and the query exactly as it is spelled.
+
 ## The background of a photo insert — the cut-out model
 
 A photo insert from a stock, or a generated one, gets its object without the background through rembg when

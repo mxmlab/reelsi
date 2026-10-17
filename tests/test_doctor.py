@@ -10,6 +10,7 @@
 
 Запуск:  python -m pytest reelsi/tests -q
 """
+import importlib.metadata
 import os
 import sys
 import types
@@ -151,3 +152,62 @@ def test_module_check_survives_broken_import(monkeypatch):
     ok, info = doctor._mod("что_угодно")
     assert not ok and info == "RuntimeError"
     assert boom is not None
+
+
+def _fake_onnxruntime(monkeypatch, providers):
+    """onnxruntime-заглушка с заданным списком провайдеров (настоящая видеокарта не нужна)."""
+    ort = types.ModuleType("onnxruntime")
+    ort.get_available_providers = lambda: list(providers)
+    monkeypatch.setitem(sys.modules, "onnxruntime", ort)
+
+
+def test_rembg_gpu_row_ok_when_cuda_present(monkeypatch):
+    _fake_onnxruntime(monkeypatch, ["CUDAExecutionProvider", "CPUExecutionProvider"])
+    doctor.check_rembg_gpu()
+    status, what, _ = doctor._rows[-1]
+    assert status == doctor.OK
+    assert what == doctor.t("снятие фона на видеокарте")
+
+
+def test_rembg_gpu_row_warns_with_reinstall_hint_without_cuda(monkeypatch):
+    """Нет CUDA — WARN, а не FAIL: фон снимается на процессоре. Команду печатаем текстом,
+    doctor её не выполняет."""
+    _fake_onnxruntime(monkeypatch, ["CPUExecutionProvider"])
+    doctor.check_rembg_gpu()
+    status, _, detail = doctor._rows[-1]
+    assert status == doctor.WARN
+    # Подсказка — кнопка в настройках, а не pip-команды: пакет ставится в свою папку и
+    # системный onnxruntime не трогает (core/ort_gpu.py). Сравниваем с переводом через t():
+    # язык словаря в соседних тестах меняется, и сырой русский текст тут не годится.
+    assert detail == doctor.t("CUDA нет, фон на процессоре (медленно). Чтобы на видеокарте: "
+                              "⚙ › Генерация › Снятие фона на видеокарте › Скачать")
+    assert "pip uninstall" not in detail
+
+
+def test_rembg_gpu_row_warns_without_onnxruntime(monkeypatch):
+    monkeypatch.setitem(sys.modules, "onnxruntime", None)
+    doctor.check_rembg_gpu()
+    status, _, _ = doctor._rows[-1]
+    assert status == doctor.WARN
+
+
+def test_rembg_gpu_row_ok_with_system_onnxruntime_gpu(monkeypatch):
+    """Владелец поставил onnxruntime-gpu по инструкции: дистрибутива `onnxruntime` нет, модуль
+    есть, CUDA работает. Строка OK, версия — из дистрибутива onnxruntime-gpu."""
+    dists = {"onnxruntime-gpu": "1.23.2"}
+    real_version = importlib.metadata.version
+
+    def fake_version(name):
+        if not name.startswith("onnxruntime"):
+            return real_version(name)
+        if name in dists:
+            return dists[name]
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(importlib.metadata, "version", fake_version)
+    _fake_onnxruntime(monkeypatch, ["TensorrtExecutionProvider", "CUDAExecutionProvider",
+                                    "CPUExecutionProvider"])
+    doctor.check_rembg_gpu()
+    status, _, detail = doctor._rows[-1]
+    assert status == doctor.OK
+    assert "1.23.2" in detail

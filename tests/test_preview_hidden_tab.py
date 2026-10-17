@@ -82,7 +82,7 @@ CORE_FUNCS = ("tlClampView", "tlPanning")
 EDITOR_DECLS = ("ED_V_SOFT", "ED_V_HARD", "ED_V_RATE")
 # Звук редактора (60-preview.js, блок `ea*`): очередь блоков и часы — боевые тела.
 EA_FUNCS = ("eaBuf", "eaSig", "eaPlan", "eaNow", "eaStop", "eaStart", "eaClock", "eaSync",
-            "eaGain", "dbToGain")
+            "eaGain", "eaOwner", "eaIsIpv", "eaPlanIpv", "eaCensor", "eaCensorGain", "eaPos", "dbToGain")
 EA_DECLS = ("EA_LEAD", "EA_FADE")
 # Двери цикла предпросмотра вставок: свой шаг идёт через общий pvStep.
 VIEW_FUNCS = ("ipvStep", "ipvTick", "ipvPlay", "ipvPause")

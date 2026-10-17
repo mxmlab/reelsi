@@ -63,7 +63,11 @@ function stateObj(){return {
   // flushSave успевает сохранить залипшую «…», и она переживает F5 навсегда —
   // гвардия двойного клика глотает нажатия, а снять некому (поймано 2026-08-10).
   // _typeBusy (переискивание при смене типа вставки) — та же история: только в памяти.
-  CLIPS:CLIPS.map(c=>{const cc={...c};cc.inserts=(c.inserts||[]).map(x=>{const xx={...x};delete xx.genBusy;delete xx._typeBusy;return xx;});return cc;}),
+  // stockOpts/stockShown (выдача стоков и «раскрыт ли ряд») — тоже только в памяти. Сервер сам
+  // кеширует выдачу (stock_cache.json, 24 ч), а в состоянии она жила вечно: вставки держали старую
+  // «только Pexels», и insStockFor не ходил за новой выдачей, пока stockOpts не пуст.
+  // libOpts/libShown сюда не относятся — это другой вопрос, их не трогаем.
+  CLIPS:CLIPS.map(c=>{const cc={...c};cc.inserts=(c.inserts||[]).map(x=>{const xx={...x};delete xx.genBusy;delete xx._typeBusy;delete xx.stockOpts;delete xx.stockShown;return xx;});return cc;}),
   // speaker — общий выбор: новая нарезка/профиль, не клип: он переживает F5 вместе
   // с остальными полями шага 1, а спикер КЛИПА живёт в его собственном job.speaker.
   curAE,lastclip:LASTCLIP,cutrun:(typeof CUTRUN!=='undefined')?CUTRUN:null,styleSel:val('style'),CURSTYLE,STEP,subengine:val('subengine'),speaker:val('speaker'),
@@ -160,8 +164,10 @@ function applyState(s){try{
     // И путь к XML чиним при загрузке: сохранённая чужая склейка («/home/out\1.xml»)
     // на Linux — имя файла с '\', которого нет (см. clipPathFix в 40-queue.js),
     // а список живёт в localStorage и такой путь переживает перезагрузку.
+    // Выдача стоков живёт только в памяти (см. stateObj), а старое состояние её уже сохранило:
+    // чистим и здесь, иначе старый список «только Pexels» держался бы вечно.
     (CLIPS||[]).forEach(c=>{c.xml=clipPathFix(c.xml);
-      (c.inserts||[]).forEach(x=>{delete x.genBusy;});});}
+      (c.inserts||[]).forEach(x=>{delete x.genBusy;delete x.stockOpts;delete x.stockShown;});});}
   if(typeof s.curAE==='number')curAE=s.curAE;
   // база прогона нарезки (40-queue.js, cutAdopt): F5 посреди прогона не должен сбить порядок клипов
   if(typeof CUTRUN!=='undefined')CUTRUN=(s.cutrun&&typeof s.cutrun.base==='number')?{base:Math.min(s.cutrun.base,CLIPS.length)}:null;

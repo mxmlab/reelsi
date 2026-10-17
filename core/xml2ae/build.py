@@ -37,8 +37,7 @@ from .plan_camera import CameraInputs, plan_camera
 # Выражения плашки и подписи переехали в plan_decor.py вместе с кодом, который их зовёт,
 # но остаются контрактом сборки: их берут снаружи по-прежнему из build — второй копии нет,
 # это те же объекты.
-from .plan_decor import (SH_SUB_DIR, SH_SUB_DIST, SH_SUB_OP, SH_SUB_SOFT,  # noqa: F401
-                         DecorInputs, _caption_bg_size_expr, _sub_bg_expr, plan_decor,
+from .plan_decor import (DecorInputs, _caption_bg_size_expr, _sub_bg_expr, plan_decor,  # noqa: F401
                          shadows_plan)
 from .plan_emph import EmphInputs, plan_emph
 from .plan_inserts import (InsertTimingInputs, InsertsInputs, plan_insert_timings,

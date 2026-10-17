@@ -7,7 +7,7 @@
 ответу (и без которых модель ставит вставки поверх речи).
 """
 from __future__ import annotations
-import os, re, json, math, time
+import bisect, os, re, json, math, time
 from typing import Any, Callable, Sequence, cast
 
 from .config import reason_budget, step_profile, step_reasoning
@@ -15,7 +15,7 @@ from .llm import _ask_json
 from .prompts import (INSERTS_SCHEMA, INSERTS_SYSTEM, INTRO_SCHEMA, INTRO_SYSTEM,
                       YELLOW_SCHEMA, YELLOW_SYSTEM)
 from core.app_meta import console_emit, env
-from core.fileio import atomic_json_dump
+from core.fileio import atomic_json_dump, json_load_soft
 from core import paths
 from core import styles as _styles
 from core.applog import get_logger
@@ -29,6 +29,87 @@ def _words_from_xml(xml_path: str) -> list[tuple[int, str, float, float]]:
     meta, cams, subs, _ = xml2ae.parse_full(xml_path)
     fps = meta["fps"]
     return [(k, w, s / fps, e / fps) for k, (s, e, w) in enumerate(subs)]
+
+
+def _same_but_stars(censored: str, real: str) -> bool:
+    """«Т*500» и «ТБ500» — одно слово (звёздочка на месте одной буквы), «Т*500» и «ТБ-500» — нет.
+
+    Сравнение без регистра; длины обязаны совпасть, иначе сдвиг букв съест чужое слово.
+    """
+    a, b = censored.upper(), real.upper()
+    return len(a) == len(b) and all(ca == "*" or ca == cb for ca, cb in zip(a, b))
+
+
+def _sidecar_words(xml_path: str) -> list[tuple[float, str]]:
+    """Расшифровка рядом с XML — `<stem>.words.json`: [(старт, слово)] по возрастанию старта.
+
+    Слова там — исходные, с пунктуацией и без цензуры; таймлайн тот же, что у XML (секунды).
+    Нет файла или он битый — пустой список (слова остаются такими, как в XML)."""
+    side = json_load_soft(os.path.splitext(xml_path)[0] + ".words.json", None)
+    out: list[tuple[float, str]] = []
+    for x in (side if isinstance(side, list) else []):
+        if not isinstance(x, dict) or not isinstance(x.get("w"), str):
+            continue
+        try:
+            out.append((float(x["start"]), str(x["w"])))
+        except (KeyError, TypeError, ValueError):
+            continue
+    out.sort(key=lambda c: c[0])
+    return out
+
+
+def _words_for_ai(xml_path: str) -> list[tuple[int, str, float, float]]:
+    """Слова ролика для ИИ-вставок: слова субтитров, у которых цензурная «*» снята по сайдкару расшифровки.
+
+    Почему: субтитры идут с цензурой («ПЕП*ИДЫ», «BPC-*57», «Т*500»), и модель видела искалеченное
+    слово — писала в prompt «peptide vial», а проход по словарю названий не находил «bpc-157».
+    Исходные слова лежат рядом с XML в `<stem>.words.json` (тот же таймлайн, секунды).
+    Субтитры остаются с цензурой, меняется только то, что видит ИИ. Слова без «*» не трогаем
+    никогда: правки текста владельцем живут в XML, сайдкар их не знает.
+    """
+    words = _words_from_xml(xml_path)
+    if not any("*" in w for _k, w, _s, _e in words):
+        return words
+    cands = _sidecar_words(xml_path)
+    out: list[tuple[int, str, float, float]] = []
+    for k, w, s, e in words:
+        if "*" in w:
+            # Ближайший по времени кандидат в пределах 0.08 с; сравнение — по буквам, без «*».
+            best = min((c for c in cands if abs(c[0] - s) <= 0.08 and _same_but_stars(w, c[1])),
+                       key=lambda c: abs(c[0] - s), default=None)
+            if best is not None:
+                w = best[1].upper()
+        out.append((k, w, s, e))
+    return out
+
+
+def _ends_sentence(text: str) -> bool:
+    """Слово кончает фразу, если после закрывающих кавычек и скобок стоит знак «.!?;»."""
+    t = text.rstrip(_CLOSING_MARKS)
+    return bool(t) and t[-1] in SENTENCE_END_CHARS
+
+
+def _sentence_ends(xml_path: str, words: Sequence[tuple[int, str, float, float]]) -> set[int]:
+    """Индексы слов ленты, на которых кончается фраза: по сайдкару расшифровки (слово «солей.»).
+
+    Слово ленты сопоставляется с записью сайдкара по времени старта, ±0.08 с, — как в
+    _words_for_ai; берётся ближайшая запись. Нет сайдкара — пустое множество (пункт тогда
+    кончается по паузе и по ENUM_MAX_WORDS, как раньше)."""
+    side = _sidecar_words(xml_path)
+    if not side:
+        return set()
+    starts = [s for s, _w in side]
+    out: set[int] = set()
+    for k, _w, s, _e in words:
+        i = bisect.bisect_left(starts, s - 0.08)
+        best: tuple[float, str] | None = None
+        while i < len(side) and side[i][0] <= s + 0.08:
+            if best is None or abs(side[i][0] - s) < abs(best[0] - s):
+                best = side[i]
+            i += 1
+        if best is not None and _ends_sentence(best[1]):
+            out.add(k)
+    return out
 
 
 def _word_lines(words: Sequence[tuple[int, str, float, float]]) -> str:
@@ -651,7 +732,7 @@ def cmd_inserts(xml_path: str, system: str | None = None, dry: bool = False, mod
     покрытия, что у «добор выброшенного», но для пустого хвоста ролика.
     rejected — память правок: предложения, которые юзер УДАЛЯЛ раньше
     ({type,start_sec,query}) — модель просим не повторять, похожие фильтруем кодом."""
-    words = _words_from_xml(xml_path)
+    words = _words_for_ai(xml_path)
     dur = words[-1][3] if words else 0
     ph_total, vid_total = ins_quota(speaker)
     target = ph_total + vid_total
@@ -933,7 +1014,10 @@ def _busy_windows_from_free(words: Sequence[tuple[int, str, float, float]], free
     return out
 
 
-INTRO_ROW_MAX_CHARS = 9       # длиннее — строка не влезает по ширине, рвём по словам
+# Лимит строки ПРИЗЫВА (_place_call_word) и потолок разреза по умолчанию в _split_words. Строки
+# АКЦЕНТОВ переносит _mid_lines: одно смысловое слово на строку, лимит им не нужен. Лимит хука —
+# отдельная ручка стиля (intro_row_max, см. INTRO_HOOK_ROW_MAX_CHARS).
+INTRO_ROW_MAX_CHARS = 14
 # Лимит переноса ДЛЯ ХУКА — ручка стиля «длина строки интро» (ключ intro_row_max, core/
 # styles.py, дефолт 20). Замер владельца по 48 роликам: его строки хука доходят до ~20
 # символов, когда фраза — одно смысловое целое («ни в коем случае»); прежние 14 рвали их
@@ -1133,6 +1217,17 @@ INTRO_PREFIX_WORDS = frozenset({
     "ПРИ", "ПРО", "С", "СО", "У", "ЗА", "ОТ", "НАД", "ПЕРЕД", "ЧЕРЕЗ",
     # указательные/определительные
     "ЭТИ", "ЭТОТ", "ЭТА", "ЭТО", "КАЖДОГО", "КАЖДЫЙ", "КАЖДАЯ", "КАЖДОЕ",
+    # падежные формы указательных (2026-10-17): «ЭТУ ПРОБЛЕМУ» не рвётся после «ЭТУ»
+    "ЭТУ", "ЭТОЙ", "ЭТОГО", "ЭТОМУ", "ЭТОМ", "ЭТИМ", "ЭТИХ", "ЭТИМИ",
+    # притяжательные — то же правило «указательное/определительное не отрывается от слова»:
+    # владелец собирал «СВОЕ ЗДОРОВЬЕ» в одну строку руками
+    "СВОЙ", "СВОЯ", "СВОЕ", "СВОЁ", "СВОИ", "СВОЮ", "СВОЕГО", "СВОЕЙ", "СВОЕМУ", "СВОИМ",
+    "СВОИХ", "СВОЕМ",
+    "ВАШ", "ВАША", "ВАШЕ", "ВАШЁ", "ВАШИ", "ВАШУ", "ВАШЕГО", "ВАШЕЙ", "ВАШЕМУ", "ВАШИМ",
+    "ВАШИХ", "ВАШЕМ",
+    "НАШ", "НАША", "НАШЕ", "НАШЁ", "НАШИ", "НАШУ", "НАШЕГО", "НАШЕЙ", "НАШЕМУ", "НАШИМ",
+    "НАШИХ", "НАШЕМ",
+    "МОЙ", "МОЯ", "МОЁ", "МОЕ", "МОИ", "МОЮ", "МОЕГО", "МОЕЙ", "МОИМ", "МОИХ",
 })
 
 
@@ -1256,19 +1351,258 @@ INTRO_EMPTY_WARN = 6.0
 INTRO_MAX_WORDS = 24
 
 
-def _place_mids(groups: list[tuple[Any, ...]], words: Sequence[tuple[int, str, float, float]], intro_len: int, busy: list[tuple[float, float]], emit: Callable[..., Any] = console_emit) -> list[dict[str, Any]]:
-    """Отбор и раскладка акцентов-групп: [(from, count, color, back)] -> строки INTRO.
+def _mid_glue(word: str) -> bool:
+    """Слово, которое приклеивается к СЛЕДУЮЩЕМУ слову строки: служебное (INTRO_GLUE_WORDS)
+    или число (есть цифра: «48», «2.5», «54»). Два содержательных слова так не склеиваются."""
+    w = _norm_particle(word)
+    return w in INTRO_GLUE_WORDS or any(ch.isdigit() for ch in w)
+
+
+def _mid_lines(ws: Sequence[str], row_max: int) -> list[list[str]]:
+    """Перенос акцента на строки: ОДНО содержательное слово на строку (правило владельца, 2026-10-17).
+
+    Служебное слово и число приклеиваются к следующему слову цепочкой: «ЗА 48 ЧАСОВ», «ТРЕМОР /
+    И ТУМАН», «ПАДАЕТ / В НОЛЬ». Два содержательных слова не склеиваются никогда: «КРОВЬ / ГУСТЕЕТ»,
+    «МЯГКО / ТОРМОЗИТ». Служебное в самом конце группы (следующего слова нет) уходит к предыдущей
+    строке («ДЕЛАЕТЕ ЕСЛИ НЕ»); если строк до него нет — остаётся своей строкой. Строка длиннее
+    row_max (ручка стиля) дорезается по словам (_split_words)."""
+    lines: list[list[str]] = []
+    chain: list[str] = []
+    for w in ws:
+        chain.append(w)
+        if not _mid_glue(w):
+            lines.append(chain)
+            chain = []
+    if chain:                                   # служебное в самом конце группы
+        if lines:
+            lines[-1].extend(chain)
+        else:
+            lines.append(chain)
+    out: list[list[str]] = []
+    for ln in lines:
+        if len(" ".join(ln)) > row_max:
+            out.extend(_split_words(ln, row_max))
+        else:
+            out.append(ln)
+    return out
+
+
+# Перечисления «1 — держите баланс солей» (2026-10-17). Номер пункта — цифра 1..20 или порядковое
+# слово; после номера берём до ENUM_MAX_WORDS слов, пока не пауза ≥ ENUM_PAUSE с.
+ENUM_MAX_NUMBER = 20
+ENUM_MAX_WORDS = 4
+ENUM_PAUSE = 0.35
+_ENUM_ORDINALS: dict[str, int] = {
+    "ПЕРВОЕ": 1, "ВТОРОЕ": 2, "ТРЕТЬЕ": 3, "ЧЕТВЕРТОЕ": 4, "ПЯТОЕ": 5, "ШЕСТОЕ": 6, "СЕДЬМОЕ": 7,
+    "ПЕРВЫЙ": 1, "ВТОРОЙ": 2, "ТРЕТИЙ": 3,
+    "ПЕРВАЯ": 1, "ВТОРАЯ": 2, "ТРЕТЬЯ": 3,
+    "ВО-ПЕРВЫХ": 1, "ВО-ВТОРЫХ": 2, "В-ТРЕТЬИХ": 3, "В-ЧЕТВЕРТЫХ": 4,
+}
+# Служебное слово, которое приклеивается к следующему слову (строка акцента и строка пункта): из
+# INTRO_PREFIX_WORDS («НА», «ЭТУ»…) и INTRO_FUNC_WORDS («И», «ИЛИ»…). Владелец склеивает «И ЭСТРАДИОЛА»
+# и «ТРЕМОР / И ТУМАН» — «И» из второго списка.
+INTRO_GLUE_WORDS: frozenset[str] = INTRO_PREFIX_WORDS | INTRO_FUNC_WORDS
+# Конец фразы — по знаку в сайдкаре расшифровки (слово «солей.»). Закрывающие кавычки и скобки
+# перед знаком не мешают: «солей.»» — тоже конец.
+SENTENCE_END_CHARS = ".!?;"
+_CLOSING_MARKS = "»\"”)'"
+
+
+def _enum_number(word: str) -> int | None:
+    """Номер пункта перечисления по слову: цифры 1..20 (с краевой пунктуацией: «1.», «2)», «1,»)
+    или порядковое («ПЕРВОЕ», «во-первых»…). Регистр и «ё» не важны. Иначе None."""
+    w = _norm_particle(word)
+    if re.fullmatch(r"[0-9]{1,2}", w):
+        n = int(w)
+        return n if 1 <= n <= ENUM_MAX_NUMBER else None
+    return _ENUM_ORDINALS.get(w)
+
+
+def _enum_chains(words: Sequence[tuple[int, str, float, float]], intro_len: int) -> list[list[int]]:
+    """Перечисления ПОСЛЕ интро: цепочки слов-номеров, по одной цепочке на перечисление.
+
+    Номера идут по возрастанию через 1 (1, 2, 3… или 2, 3), каждый следующий — позже предыдущего,
+    в цепочке не меньше двух пунктов. Одиночная цифра («за 48 часов», «2 раза») — не пункт.
+    Цепочки не пересекаются, идут по позиции в ролике.
+    """
+    cands = [(p, n) for p in range(intro_len, len(words))
+             if (n := _enum_number(words[p][1])) is not None]
+    chains: list[list[int]] = []
+    used: set[int] = set()
+    for i, (p, n) in enumerate(cands):
+        if p in used:
+            continue
+        chain, last_p, last_n = [p], p, n
+        for q, m in cands[i + 1:]:
+            if q > last_p and m == last_n + 1:
+                chain.append(q)
+                last_p, last_n = q, m
+        if len(chain) >= 2:
+            chains.append(chain)
+            used.update(chain)
+    return chains
+
+
+def _enum_heads(words: Sequence[tuple[int, str, float, float]], intro_len: int) -> list[int]:
+    """Слова-номера всех пунктов ПОСЛЕ интро по порядку: плоский список цепочек _enum_chains."""
+    return sorted(p for chain in _enum_chains(words, intro_len) for p in chain)
+
+
+def _enum_span(f: int, words: Sequence[tuple[int, str, float, float]], stop: set[int],
+               ends: set[int] | None = None) -> int:
+    """Сколько слов в группе-пункте: слово-номер и до ENUM_MAX_WORDS слов после него.
+
+    Главное — конец фразы: слово из ends (знак «.!?;» в сайдкаре) входит в пункт и на нём пункт
+    кончается. Запасные границы: пауза ≥ ENUM_PAUSE с и следующий пункт (stop — индексы слов-номеров).
+    Первое слово после номера берётся всегда, даже после паузы (минимум одно слово)."""
+    ends = ends or set()
+    c = 1
+    while c <= ENUM_MAX_WORDS and f + c < len(words):
+        j = f + c
+        if j in stop:
+            break
+        if c > 1 and words[j][2] - words[j - 1][3] >= ENUM_PAUSE:
+            break
+        c += 1
+        if j in ends:                           # фраза кончилась на этом слове
+            break
+    return c
+
+
+def _enum_cut_at_end(f: int, n: int, ends: set[int] | None) -> int:
+    """Число слов пункта от модели (n), обрезанное первым концом фразы внутри него.
+
+    Модель могла «перетянуть» пункт через точку («Точка входа. Не заходи…») — точка побеждает."""
+    for k in range(f + 1, f + n):
+        if ends and k in ends:
+            return k - f + 1
+    return n
+
+
+def _enum_rows(f: int, c: int, words: Sequence[tuple[int, str, float, float]]) -> list[dict[str, Any]]:
+    """Строки одного пункта «номер + суть» по правилу владельца: номер крупно слева (big, up),
+    затем по слову на строку столбиком (right). Служебное слово (предлог, «и», указательное)
+    склеивается со следующим словом — «3 / КОНТРОЛЬ / СНА / И ЭСТРАДИОЛА». Оформление уже
+    стоит в строках (enum=True): cmd_intro его не перетирает и ключ enum перед записью снимает."""
+    rows: list[dict[str, Any]] = [{"from": f, "count": 1, "color": "white", "break": True, "back": False,
+                                   "big": True, "anim": "up", "fx": "", "enum": True}]
+    k, end = f + 1, f + c
+    while k < end:
+        n = 2 if (_norm_particle(words[k][1]) in INTRO_GLUE_WORDS and k + 1 < end) else 1
+        rows.append({"from": None, "count": n, "color": "white", "break": False, "back": False,
+                     "anim": "right", "fx": "", "enum": True})
+        k += n
+    return rows
+
+
+def _enum_trim(f: int, n: int, words: Sequence[tuple[int, str, float, float]]) -> int:
+    """Служебное слово в хвосте пункта не висит концом строки: снимаем его с конца (номер — не трогаем)."""
+    while n > 1 and _norm_particle(words[f + n - 1][1]) in INTRO_GLUE_WORDS:
+        n -= 1
+    return n
+
+
+# Насколько from модели может отстоять от головы своей цепочки (в словах), чтобы считаться её перечислением.
+ENUM_FROM_SLACK = 3
+
+
+def _enum_chain_for(from_idx: int, chains: list[list[int]]) -> list[int] | None:
+    """Цепочка перечисления, которой принадлежит from модели.
+
+    from — голова цепочки: берём её. Иначе — цепочка, первая голова которой ближе всего к from,
+    но не дальше ENUM_FROM_SLACK слов (модель сдвигает from на слово-два назад). Не нашлась — None."""
+    for chain in chains:
+        if from_idx in chain:
+            return chain
+    best = min(chains, key=lambda c: abs(c[0] - from_idx), default=None)
+    if best is not None and abs(best[0] - from_idx) <= ENUM_FROM_SLACK:
+        return best
+    return None
+
+
+def _enum_digits_to_xml(xml_path: str, words: Sequence[tuple[int, str, float, float]], intro_len: int,
+                        digit_froms: list[int], emit: Callable[..., Any]) -> None:
+    """Перечисления, где модель решила «цифра» (enum_lists), переписываем в субтитрах: «ПЕРВОЕ» -> «1».
+
+    Решение принято на ВСЁ перечисление, а не на поставленный акцент: цифра пишется и там, где пункт
+    не поместился (под вставкой), поэтому здесь нет привязки к mids. Переписываются все головы цепочки,
+    где слово порядковое. Путь тот же, что у правки руками: xml2ae.edit_word по индексу слова (индекс —
+    порядок parse_full, см. _words_from_xml). Головное слово уже цифра («1», «2.») — не трогаем. Ошибку
+    правки пишем в журнал, а не роняем разметку: интро запишется, номер останется словом."""
+    from core import xml2ae
+    chains = _enum_chains(words, intro_len)
+    done: set[int] = set()          # первые головы цепочек, уже переписанных (два from в одну — один раз)
+    for f in digit_froms:
+        chain = _enum_chain_for(f, chains)
+        if chain is None:
+            emit("  перечисление с {from} не найдено", **{"from": f})
+            continue
+        if chain[0] in done:
+            continue
+        done.add(chain[0])
+        for h in chain:
+            word = words[h][1]
+            n = _enum_number(word)
+            if n is None or re.search(r"\d", word):
+                continue
+            res = xml2ae.edit_word(xml_path, h, str(n))
+            if res.get("error"):
+                emit("  номер пункта «{was}» не переписан: {err}", was=word, err=res["error"])
+            else:
+                emit("  номер пункта: «{was}» → «{n}»", was=word, n=n)
+
+
+def _drop_plain_in(mids: list[dict[str, Any]], words: Sequence[tuple[int, str, float, float]],
+                   t0: float, t1: float, emit: Callable[..., Any]) -> list[dict[str, Any]]:
+    """Обычные акценты, звучащие в [t0, t1], уходят: пункт перечисления важнее (гарантия кодом)."""
+    keep: list[dict[str, Any]] = []
+    for i0, i1, f, cnt in _mid_groups(mids):
+        a, b = words[f][2], words[min(f + cnt - 1, len(words) - 1)][3]
+        if not mids[i0].get("enum") and a < t1 and t0 < b:
+            emit("  акцент с «{word}» ({sec:.0f}с) уступил месту пункта перечисления",
+                 word=words[f][1], sec=a)
+            continue
+        keep.extend(mids[i0:i1])
+    return keep
+
+
+def _sort_mid_groups(mids: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Группы акцентов — по возрастанию from головной строки; строки внутри группы не переставляем."""
+    groups = [mids[i0:i1] for i0, i1, _f, _c in _mid_groups(mids)]
+    groups.sort(key=lambda g: int(g[0]["from"] or 0))
+    return [r for g in groups for r in g]
+
+
+def _place_mids(groups: list[tuple[Any, ...]], words: Sequence[tuple[int, str, float, float]], intro_len: int, busy: list[tuple[float, float]], emit: Callable[..., Any] = console_emit,
+                row_max: int = INTRO_HOOK_ROW_MAX_CHARS, ends: set[int] | None = None) -> list[dict[str, Any]]:
+    """Отбор и раскладка акцентов-групп: [(from, count, color, back[, enum])] -> строки INTRO.
 
     Выбрасываем группу, если она лезет в интро/за край, перекрыта вставкой (там кадр
     занят, текста за спиной не видно) или наезжает на предыдущий акцент. Всё, что
-    выброшено, пишем в лог: молчаливый `continue` скрывал главную потерю разметки."""
+    выброшено, пишем в лог: молчаливый `continue` скрывал главную потерю разметки.
+    row_max — потолок строки (ручка стиля); enum — группа модели помечена как пункт перечисления;
+    пункты раскладывает _enum_rows. ends — индексы слов, на которых кончается фраза (из сайдкара,
+    см. _sentence_ends): пункт перечисления кончается на них. Пункт, которого модель не прислала,
+    ставим кодом (см. гарантию в конце)."""
+    heads = _enum_heads(words, intro_len)
+    head_set = set(heads)
     mids, last_end = [], -1e9
-    pending = []
+    pending: list[tuple[Any, ...]] = []
+    handled: set[int] = set()        # головы пунктов, уже разобранные здесь (поставлены или в логе)
     for item in groups:
         f, c, color = item[0], item[1], item[2]
         has_back = len(item) > 3
         back = bool(item[3]) if has_back else False
+        enum_flag = len(item) > 4 and item[4] is True
         if f < intro_len or f + c > len(words):        # не лезем в интро и за край
+            continue
+        if _enum_number(words[f][1]) is not None and (enum_flag or f in head_set):
+            # пункт перечисления: число слов от модели (от 2) — но фраза кончается раньше → точка побеждает
+            if enum_flag and c >= 2:
+                n = _enum_cut_at_end(f, c, ends)
+            else:
+                n = _enum_span(f, words, head_set, ends)
+            pending.append((f, _enum_trim(f, n, words), "white", False, False, True))
             continue
         # «не»/предлог/указательное не отрываются от своего слова — ДО вставок и разреза
         # (2026-10-09). Правило одно для всех цветов (решение владельца 2026-10-09).
@@ -1284,10 +1618,12 @@ def _place_mids(groups: list[tuple[Any, ...]], words: Sequence[tuple[int, str, f
             c -= 1                                 # ролик кончился: снять служебное с конца
         if c == 0:
             continue
-        pending.append((f, c, color, back, has_back))
+        pending.append((f, c, color, back, has_back, False))
     # порядок — уже по скорректированным началам: сдвиг «не» назад мог поставить группу раньше
-    for f, c, color, back, has_back in sorted(pending, key=lambda x: x[0]):
+    for f, c, color, back, has_back, is_enum in sorted(pending, key=lambda x: x[0]):
         t, t_end = words[f][2], words[f + c - 1][3]
+        if is_enum:
+            handled.add(f)
         if any(a < t_end and t < b for a, b in busy):  # акцент только ТАМ, ГДЕ ВСТАВОК НЕТ
             emit("  акцент с «{word}» ({sec:.0f}с) отброшен: перекрыт вставкой",
                  word=words[f][1], sec=t)
@@ -1297,16 +1633,34 @@ def _place_mids(groups: list[tuple[Any, ...]], words: Sequence[tuple[int, str, f
                  word=words[f][1], sec=t)
             continue
         last_end = t_end
+        if is_enum:
+            mids.extend(_enum_rows(f, c, words))
+            continue
         # тот же перенос по словам, что и у интро: длинный акцент — стопка строк в одном
         # прекомпе. break=True только у головной строки (несёт `from`); продолжения
         # (break=False, from=None) добирают слова подряд и встают в тот же прекомп.
-        for ci, chunk in enumerate(_split_words([w[1] for w in words[f:f + c]])):
+        for ci, chunk in enumerate(_mid_lines([w[1] for w in words[f:f + c]], row_max)):
             row = {"from": (f if ci == 0 else None), "count": len(chunk),
                    "color": color, "break": (ci == 0)}
             if has_back:
                 row["back"] = back
             mids.append(row)
-    return mids
+    # Гарантия кодом: пункт перечисления, которого модель не прислала (или прислала с другим
+    # началом), ставим сами. Если на его время стоит обычный акцент — он уступает. Под вставкой
+    # пункт не ставим — строка в лог, как у прочих акцентов.
+    for h in heads:
+        if h in handled or h < intro_len:
+            continue
+        handled.add(h)
+        c = _enum_trim(h, _enum_span(h, words, head_set, ends), words)
+        t, t_end = words[h][2], words[h + c - 1][3]
+        if any(a < t_end and t < b for a, b in busy):
+            emit("  акцент с «{word}» ({sec:.0f}с) отброшен: перекрыт вставкой",
+                 word=words[h][1], sec=t)
+            continue
+        mids = _drop_plain_in(mids, words, t - INTRO_MID_GAP, t_end + INTRO_MID_GAP, emit)
+        mids.extend(_enum_rows(h, c, words))
+    return _sort_mid_groups(mids)
 
 
 # Слово-призыв («напишите мне слово «консультация»…») — то, что зритель должен унести с
@@ -1406,7 +1760,7 @@ def _place_call_word(mids: list[dict[str, Any]], words: Sequence[tuple[int, str,
             break
         keep = i1
     rows = []
-    for ci, chunk in enumerate(_split_words([str(w[1]) for w in words[a:b + 1]])):
+    for ci, chunk in enumerate(_split_words([str(w[1]) for w in words[a:b + 1]], INTRO_ROW_MAX_CHARS)):
         rows.append({"from": (a if ci == 0 else None), "count": len(chunk),
                      "color": "yellow", "break": ci == 0, "back": False})
     emit("  призыв: «{word}» — последний акцент", word=word)
@@ -1472,6 +1826,7 @@ def cmd_intro(xml_path: str, system: str | None = None, dry: bool = False, model
     row_max = _intro_row_max(style)
     intro_sys = (system or INTRO_SYSTEM).replace(INTRO_ROW_MAX_TOKEN, str(row_max))
     words = _words_from_xml(xml_path)
+    ends = _sentence_ends(xml_path, words)           # концы фраз из сайдкара: пункт кончается на них
     dur = words[-1][3] if words else 0
     if inserts is None:
         side = os.path.splitext(xml_path)[0] + ".inserts.json"
@@ -1569,11 +1924,23 @@ def cmd_intro(xml_path: str, system: str | None = None, dry: bool = False, model
             c = g.get("color")
             color = c if c in ("white", "yellow", "accent") else "white"
             groups.append((int(g.get("from") or 0), max(1, int(g.get("count") or 1)),
-                           color, bool(g.get("back"))))
+                           color, bool(g.get("back")), g.get("enum") is True))
         except (TypeError, ValueError, OverflowError):
             continue
-    mids = _place_mids(groups, words, intro_len, busy, emit=emit)   # «не»/предлог — внутри
+    # Решение «цифра или слово» принимается на всё перечисление (enum_lists), не на акцент:
+    # перечисление под вставкой акцента не даёт, а цифра в субтитрах нужна всё равно.
+    digit_froms: list[int] = []
+    for ent in (data.get("enum_lists") or []):
+        if not isinstance(ent, dict) or ent.get("digit") is not True:
+            continue
+        try:
+            digit_froms.append(int(ent.get("from") or 0))
+        except (TypeError, ValueError, OverflowError):
+            continue
+    mids = _place_mids(groups, words, intro_len, busy, emit=emit, row_max=row_max, ends=ends)   # «не»/предлог — внутри
     mids = _place_call_word(mids, words, intro_len, busy, emit=emit)   # призыв — последним акцентом
+    if digit_froms:                      # запись интро (dry вернулся выше): номера перечислений — цифрами
+        _enum_digits_to_xml(xml_path, words, intro_len, digit_froms, emit)
     # Оформление по группам: позиция строки и размер группы определяют анимацию.
     # Группа — строки между break (одна анимация на группу, где правило не говорит иного).
     for batch in (rows, mids):
@@ -1585,6 +1952,8 @@ def cmd_intro(xml_path: str, system: str | None = None, dry: bool = False, model
                 grp_end = i + 1
                 while grp_end < len(batch) and not batch[grp_end].get("break"):
                     grp_end += 1
+            if r.get("enum"):                # пункт перечисления: оформление уже стоит (_enum_rows)
+                continue
             r["anim"], r["fx"] = _intro_look(r.get("color"), r.get("back"),
                                               r.get("count", 1),
                                               group_pos=i - grp_start,
@@ -1602,6 +1971,8 @@ def cmd_intro(xml_path: str, system: str | None = None, dry: bool = False, model
     if ngrp < want - 3 or empty:                       # видно в логе, что модель поскупилась
         emit("  акцентов {ngrp} при цели ~{want} (модель прислала {groups}, пустых окон {empty})",
              ngrp=ngrp, want=want, groups=len(groups), empty=len(empty))
+    for r in mids:                                     # служебный ключ — фронту не нужен
+        r.pop("enum", None)
     out = os.path.splitext(xml_path)[0] + ".intro.json"
     atomic_json_dump(out, {"intro_rows": rows, "mid_groups": mids}, indent=1)
     emit("интро: {rows} строк ({words} слов) + {mids} акцентов посреди ролика",

@@ -246,6 +246,8 @@ def plan_insert_timings(inp: InsertTimingInputs) -> InsertTimings:
         # стиль «Кам 1» выставлен принудительно, а в кадре перебивка: в JSX такая вставка вешается
         # на отдельный нул (без зума Камеры 1, которой в кадре нет) и сдвигается общими INS_C1_ON2_X/Y
         x["oncam2"] = bool(sstyle == "cam1" and _act != 0)
+        # зеркально: стиль «Кам 2», а в кадре Камера 1 — своя точка покоя (insert_c2on1_x/y)
+        x["oncam1"] = bool(sstyle == "cam2" and _act == 0)
         # масштаб считаем по пропорциям картинки (см. _ins_scale), но РУЧНОЙ уже проставленный
         # scale не затираем — иначе правка из webui умирала на каждой пересборке.
         # Коробка карточки — пиксели кадра 1080: под кадр ролика их множит _px_k.
@@ -386,6 +388,18 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
                 # фотовставки в превью и в рендере без AE выходили с прямыми углами.
                 if style.insert_fx not in ("none", "white"):
                     out["mask_r"] = INS_MASK_R
+            # Фото стиля «Кам 2» на КАДРЕ КАМЕРЫ 1: своя точка покоя. Разность точек
+            # (insert_c2on1 − insert_c2) прибавляется к x/y ДО анимаций: ветка rise берёт
+            # ix = out["x"], а шаблон .jsx ставит [INS_C2_X+ix, INS_C2_Y+iy] без изменений.
+            # `c2d` — тот же сдвиг, нужен превью: там x/y правятся драгом в координатах карточки.
+            # Ручек в стиле нет — ни план, ни .jsx не меняются.
+            if (x.get("type") or "photo") != "video" and out["style"] == "cam2" \
+                    and x.get("oncam1") and style.insert_c2on1_set:
+                c2d_x = round(meta["w"] * (style.insert_c2on1_x - ins_c2x))
+                c2d_y = round(meta["h"] * (style.insert_c2on1_y - ins_c2y))
+                out["x"] = _r(float(out["x"] or 0) + c2d_x)
+                out["y"] = _r(float(out["y"] or 0) + c2d_y)
+                out["c2d"] = [c2d_x, c2d_y]
             # анимации вставок: готовые ключи вместо досчёта в ExtendScript (остаток).
             # Те же округлённые t0/t1 и en/ex, что ушли в JSX, — предпросмотр интерполирует их же.
             t0r, t1r = _r(t0), _r(t1)

@@ -236,6 +236,8 @@ let TIMERS=[];let NEXT=1;const SAVES=[];
 globalThis.setTimeout=(fn,ms)=>{const id=NEXT++;TIMERS.push({id,fn});return id;};
 globalThis.clearTimeout=(id)=>{TIMERS=TIMERS.filter(x=>x.id!==id);};
 globalThis.fetch=async(url,opts)=>{if(url==='/api/savespeaker')SAVES.push(JSON.parse(opts.body));
+  // Свежий профиль «с диска» — тот же, что в памяти: громкость берёт базу отсюда (speakerFresh)
+  if(url==='/api/speakers')return {json:async()=>({ok:true,speakers:JSON.parse(JSON.stringify(SPEAKERS))})};
   return {json:async()=>({ok:true,key:'Ivan'})};};
 async function flush(){const tm=TIMERS.splice(0);for(const x of tm)await x.fn();}
 // ---- боевой код ----
@@ -285,7 +287,7 @@ def _run_stand(tmp_path: Path) -> dict[str, Any]:
     # voiceFxPanelHosts/vfxEl — ползунки обеих панелей «Голос» (превью и профиль): в стенде
     # панелей нет, поэтому список пуст и до разметки дело не доходит
     for name in ("voiceDbSpeakerKey", "voiceDbBySpeaker", "voiceDbOf", "setVoiceDb",
-                 "voiceDbSaveSoon", "voiceDbSaveNow", "setStyleDb", "syncDbSliders",
+                 "voiceDbSaveSoon", "voiceDbSaveNow", "speakerFresh", "setStyleDb", "syncDbSliders",
                  "voiceFxPanelHosts", "vfxEl"):
         parts.append(_func_src(src, name))
     script = tmp_path / "voice_db_stand.js"
@@ -351,7 +353,9 @@ def test_front_step1_without_open_clip_uses_the_top_speaker(tmp_path_factory):
 # --------------------------------------------------------------------------- #
 # 5. Сторож по тексту: voice_db читается и пишется только в белом списке
 # --------------------------------------------------------------------------- #
-ALLOWED_VOICE_DB_FUNCS = {"voiceDbOf", "setVoiceDb", "setStyleDb"}
+# voiceDbSaveNow — запись громкости в профиль от свежей базы с диска: она и есть дверь
+# записи voice_db (поверх свежего профиля пишется только громкость).
+ALLOWED_VOICE_DB_FUNCS = {"voiceDbOf", "setVoiceDb", "setStyleDb", "voiceDbSaveNow"}
 
 
 def _enclosing_function(src: str, pos: int) -> str:

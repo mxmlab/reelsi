@@ -2162,6 +2162,13 @@ class EditorSession:
     states: list[dict[str, str]] = field(default_factory=list)   # последний dump_states
     states_seq: int = 0               # сколько событий `states` уже разобрано
     open_path: str = ""               # плагин, чьё окно открывали (путь, не индекс)
+    # Состояние, пришедшее событием `state` (окно закрыто), и путь ТОГО плагина, чьё оно:
+    # `state_new` — ещё не отдано на запись профиля (см. _watch_live).
+    state_path: str = ""
+    state_new: bool = False
+    # Сколько попыток записи профиля по этой сессии закончилось (успехом или нет): страница
+    # по росту этого счётчика понимает, что окно уже сохранено, и говорит честно.
+    save_seq: int = 0
     last_poll: float = 0.0            # когда страница в последний раз спрашивала о хосте
     stopped: bool = False             # хост снят НАМИ (`live_stop`), а не ушёл сам
 
@@ -2459,6 +2466,21 @@ def live_events(session: EditorSession) -> None:
                 rows.append({"path": path, "state_b64": state})
             session.states = rows
             session.states_seq += 1
+        elif name == "state":
+            # Окно плагина закрыто: его состояние и ПУТЬ плагина — из события. Путь берём
+            # из события, а не из `open_path` сессии: цепочку могли править, пока окно
+            # было открыто, и записать состояние одного плагина другому — тихо испортить
+            # его настройку. Битый base64 пропускаем (как в ветке `states`).
+            state = str(data.get("state_b64") or "")
+            try:
+                raw = base64.b64decode(state, validate=True)
+            except (binascii.Error, ValueError):
+                continue
+            if raw != session.state_seen:
+                session.state_seen = raw
+                session.state = state
+                session.state_path = str(data.get("path") or "")
+                session.state_new = True
         elif name == "editor_open":
             session.window = True
         elif name in ("editor_closed", "editor_failed"):
@@ -2572,7 +2594,7 @@ def _watch_live(session: EditorSession,
 
     Хост живёт всё время, пока открыто превью, и окно в нём открывают по команде
     (`live_open_editor`). Поэтому состояние плагина забирается СРАЗУ по закрытию
-    окна (`_state_now`), а не по выходу процесса: иначе настройки уехали бы в
+    окна (событие `state`, см. `live_events`), а не по выходу процесса: иначе настройки уехали бы в
     профиль спикера только тогда, когда превью закрыли, — то есть никогда, если
     человек закрыл только окно. Ради этого же опроса читается файл событий
     (`live_events`): по нему сервер узнаёт про пропущенный плагин и замечает, что
@@ -2588,10 +2610,11 @@ def _watch_live(session: EditorSession,
             # Страница молчит: вкладку закрыли, не погасив хост. Гасим сами, по PID.
             live_stop(session)
             return
-        fresh = _state_now(session.state_out)
-        if fresh and fresh != session.state_seen:
-            session.state_seen = fresh
-            session.state = base64.b64encode(fresh).decode("ascii")
+        # Состояние пришло событием `state` (live_events) — в момент закрытия окна.
+        # Файл `out.bin` живой сессии тут больше не источник: он общий для окон и
+        # не знает, ЧЕЙ плагин закрылся, а событие знает.
+        if session.state_new:
+            session.state_new = False
             session.exit_code = None              # хост жив: это не падение, а закрытие окна
             if on_close is not None:
                 on_close(session)

@@ -64,12 +64,14 @@ VOICE_FUNCS = (
     # громкость голоса: одна дверь чтения и одна записи (спикер клипа или стиль)
     "voiceDbSpeakerKey", "voiceDbBySpeaker", "voiceDbOf", "setVoiceDb", "voiceDbSaveSoon",
     "voiceDbSaveNow",
+    # свежий профиль с диска — база всех записей профиля (95-styles.js)
+    "speakerFresh",
 )
 PREVIEW_FUNCS = ("vtOf", "vtCam1", "vtSrcAt", "vtNow", "vtAudioCam", "vtPlaying", "vtEl", "vtGate",
                  "vtNote", "vtName", "vtProfileFx", "vtFx", "vtDetach", "vtStop", "vtPause",
                  "vtLiveOn", "vtSetMute", "vtLiveUpdate", "vtLiveRate", "vtLiveExpect", "vtLiveCmd",
                  "vtLiveSid", "vtLivePlay", "vtLivePause",
-                 "vtIsPv", "vtIsEd", "vtMuteHost", "vtStage", "vtHostLive", "vtLivePrep",
+                 "vtIsPv", "vtIsEd", "vtEa", "vtMuteHost", "vtStage", "vtHostLive", "vtLivePrep",
                  "vtStatesWait", "vtStatesTake", "vtHostDown",
                  "vtPrep", "vtVoiceShow", "vtVoiceWatch", "vtVoicePoll",
                  "pvProgRow", "pvProgDrop", "vtVoiceLine", "vtVoiceStop", "vtVoiceTake",

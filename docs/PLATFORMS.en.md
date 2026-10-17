@@ -141,6 +141,22 @@ the same imported module. **They must not be mixed in one venv.** This has to be
 in the installation instructions, otherwise a person installs the second package on top of the first and gets
 inexplicable crashes. (Not yet written in install.ps1/install.sh — TODO.)
 
+**Done (2026-10-17, branch `feat/nbg`): background removal on NVIDIA.** It is installed with the
+"Download" button in ⚙ → Generation (`core/ort_gpu.py`): the `onnxruntime-gpu` wheel of the same version goes
+into its own folder (`~/.reelsi/ort_gpu`, variable `REELSI_ORT_GPU`) and is put on `sys.path` ahead of the
+system onnxruntime. The system package is not touched: on Windows the server holds its DLLs, and
+`pip uninstall` from a running process fails. The path is set before onnxruntime is imported, and the status
+check puts it in place right after the install, so the card is used from the first cut-out. A restart is
+needed only if the system onnxruntime is already loaded in the process.
+When `onnxruntime-gpu` is installed, `core/insertlib.py` opens the session on CUDA with cuDNN options
+(`cudnn_conv_use_max_workspace`, `cudnn_conv_algo_search=HEURISTIC`) and keeps CPU as a fallback.
+BiRefNet at 1024×1024: 10.2 s on CPU, 3.6 s on CUDA with the default options, 0.27 s with the
+cuDNN options (measured on an RTX 4070 Ti SUPER). The CUDA and cuDNN DLLs come from `torch/lib`
+(torch cu126 ships them); that folder is attached before the session is created. A session on
+the GPU holds 1–2 GB of VRAM, so after a minute of idleness (`REMBG_GPU_IDLE_SEC`) it is unloaded;
+the CPU session stays as before. `doctor.py` shows a "background removal on GPU" row and the
+hint pointing to the install button when CUDA is missing.
+
 ## 6. Camera sync, VAD, XML assembly
 
 scipy, numpy, silero-vad, the generation of FCP7 XML and `.jsx` — pure CPU. It works everywhere

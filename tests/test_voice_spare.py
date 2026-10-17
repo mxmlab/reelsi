@@ -61,7 +61,7 @@ SPARE_FUNCS = ("bufSilent", "bufIdle", "liveOf", "bufArm", "bufRoll", "bufTake",
                "vtOf", "vtCam1", "vtSrcAt", "vtNow", "vtAudioCam", "vtPlaying", "vtGate",
                "vtSpareOf", "vtSpareLive", "vtSpareIdle", "vtSpareStop", "vtSpareSeg",
                "vtSpareAt", "vtSpareArm", "vtSpareRoll", "vtSpareTake", "vtSpareSwap",
-               "voicePrime", "vtSpareCtl", "vtIsEd",
+               "voicePrime", "vtSpareCtl", "vtIsEd", "vtEa",
                "vtPause", "vtSeek", "vtRate", "vtTick")
 # Константы порогов — тоже из файла: свои копии в стенде разъезжались бы с боевыми молча.
 CONSTS = ("PV_PREROLL", "PV_SWAP_LO", "PV_SWAP_HI", "VT_SWAP_LO", "VT_SWAP_HI",

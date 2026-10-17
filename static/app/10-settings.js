@@ -586,7 +586,10 @@ function fillAIProfileSelects(){if(!AICFG)return;
     // модель вырезания — рядом с галкой, видна вместе с ней
     const rm=$('ais_rembg_model');
     if(rm)rm.value=AICFG.rembg_model||'u2net';
-    $('ais_rembgModelRow').style.display=imgGenOn()?'flex':'none';}
+    $('ais_rembgModelRow').style.display=imgGenOn()?'flex':'none';
+    // снятие фона на видеокарте — строка под выбором модели, видна вместе с ней
+    $('ort_gpuRow').style.display=imgGenOn()?'flex':'none';
+    if(imgGenOn())ortGpuFill();}
   const gg=$('glitchglow');
   if(gg)gg.value=AICFG.glitch_glow||'builtin';
   const bw=$('aebuildworkers');
@@ -908,6 +911,70 @@ async function setRembgModel(v){
   catch(e){toast(t('Сервер не ответил: ')+e);fillAIProfileSelects();return;}
   if(d.error){toast('⚠ '+errText(d));fillAIProfileSelects();}
   else AICFG.rembg_model=d.rembg_model;}
+// Снятие фона на видеокарте (⚙ → Генерация): onnxruntime-gpu ставится из настроек в СВОЮ
+// папку, системный onnxruntime не трогается (core/ort_gpu.py). Строка говорит, что стоит и
+// что загружено в процессе: перезапуск нужен, только если системный onnxruntime уже загружен
+// (иначе пакет встаёт в путь сам и включится при первой вырезке). Ход установки — опрос
+// раз в секунду, пока задание идёт.
+//   ORTGPU       — последний ответ /api/ort_gpu (статус и ход установки);
+//   ORTGPU_TIMER — таймер опроса (0 — опроса нет).
+let ORTGPU=null,ORTGPU_TIMER=0;
+// Что написать в строке и видна ли кнопка. Зелёный — только «работает» (правило DESIGN).
+function ortGpuView(s){
+  const job=s.job||{};
+  if(job.running){
+    const last=(job.log||[]).slice(-1)[0];
+    return {text:last?fmtLog(last):t('ставлю onnxruntime-gpu…'),btn:true,busy:true,ok:false};}
+  // системный onnxruntime-gpu (стоит по инструкции): своя копия не нужна, кнопки нет
+  if(s.system_gpu){
+    if(s.cuda===false)return {text:t('Системный onnxruntime-gpu стоит, но видеокарта не подключилась — фон на процессоре'),btn:false,busy:false,ok:false};
+    return {text:t('Работает на видеокарте (системный onnxruntime-gpu)'),btn:false,busy:false,ok:true};}
+  if(s.gpu===false)return {text:t('Нет видеокарты NVIDIA'),btn:false,busy:false,ok:false};
+  if(s.cuda===true)return {text:t('Работает на видеокарте'),btn:false,busy:false,ok:true};
+  if(s.installed){
+    // перезапуск нужен, только если системный onnxruntime уже загружен в процессе
+    if(s.loaded_cpu)return {text:t('Скачано — перезапустите сервер'),btn:false,busy:false,ok:false};
+    if(s.cuda===false)return {text:t('Скачано, но видеокарта не подключилась — фон на процессоре'),btn:false,busy:false,ok:false};
+    return {text:t('Скачано — включится при первой вырезке'),btn:false,busy:false,ok:false};}
+  if(job.step==='fail')return {text:t('Не установилось: {err}',{err:job.error||''}),btn:true,busy:false,ok:false};
+  return {text:t('Не установлено'),btn:true,busy:false,ok:false};
+}
+function ortGpuApply(){
+  const st=$('ort_gpuState'),btn=$('ort_gpuBtn');
+  if(!st||!btn||!ORTGPU)return;
+  const v=ortGpuView(ORTGPU);
+  st.textContent=v.text;
+  st.style.color=v.ok?'var(--ok)':'var(--mut)';
+  btn.style.display=v.btn?'':'none';
+  btn.disabled=!!v.busy;
+  if(ORTGPU.job&&ORTGPU.job.running)ortGpuWatch();}
+// Возвращает true, если ответ пришёл: опрос без ответа не продолжаем (иначе вечный цикл).
+async function ortGpuFill(){
+  let d;
+  try{d=await (await fetch('/api/ort_gpu')).json();}
+  catch(e){uiLog('ort_gpu: '+e);return false;}
+  if(d&&d.error){uiLog('ort_gpu: '+errText(d));return false;}
+  ORTGPU=d;ortGpuApply();return true;}
+async function ortGpuInstall(){
+  const btn=$('ort_gpuBtn');if(btn)btn.disabled=true;
+  let d;
+  try{d=await (await fetch('/api/ort_gpu_install',{method:'POST'})).json();}
+  catch(e){toast(t('Установка не запустилась — сервер не ответил'));uiLog('ort_gpu_install: '+e);ortGpuFill();return;}
+  if(d&&d.error){toast(errText(d));uiLog('ort_gpu_install: '+JSON.stringify(d).slice(0,200));ortGpuFill();return;}
+  ortGpuWatch();}
+function ortGpuWatch(){
+  if(ORTGPU_TIMER)return;                                // опрос уже идёт
+  ORTGPU_TIMER=setTimeout(async()=>{
+    ORTGPU_TIMER=0;
+    const ok=await ortGpuFill();
+    const job=ok&&ORTGPU?ORTGPU.job:null;
+    if(!job||job.running)return;                          // ещё идёт — ortGpuApply взвёл следующий тик
+    if(job.step==='fail')toast(t('onnxruntime-gpu не установился: {err}',{err:job.error||''}));
+    else if(job.done){
+      // как в строке: перезапуск — только если системный onnxruntime уже загружен
+      if(ORTGPU&&ORTGPU.loaded_cpu)toast(t('onnxruntime-gpu стоит — перезапустите сервер, чтобы фон пошёл на видеокарте'));
+      else toast(t('onnxruntime-gpu стоит — фон пойдёт на видеокарте при первой вырезке'));}
+  },1000);}
 async function setGlitchGlow(v){
   let d;
   try{d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},

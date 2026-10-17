@@ -394,19 +394,30 @@ function progUpdate(){}
 
 
 # ============== 13. ПРОФИЛЬ СПИКЕРА НЕ ТЕРЯЕТ ПОЛЯ ВНЕ ОКНА ==============
+# «Диск» профилей: что отдаёт /api/speakers. По умолчанию — то же, что в памяти (SPEAKERS);
+# тест может положить туда профиль с полями, которых в памяти нет, и тогда сохранение
+# обязано взять базу именно с диска (speakerFresh).
 SAVE_SPK_PRE = FETCH_STUB + r"""
-let SPEAKERS={},SPKEDIT='',SPKSAVED='',SPKDEF={},SPKDEF_FORMAT='16:9';
+let SPEAKERS={},SPKEDIT='',SPKSAVED='',SPKDEF={},SPKDEF_FORMAT='16:9',DISK=null;
 async function loadSpeakers(){}
 async function onSpeakerChange(){}
 function closeModal(){}
+function fetch(url,opts){FETCHES.push({url:String(url),body:opts&&opts.body});
+  if(String(url)==='/api/speakers'){const src=DISK||SPEAKERS;
+    return Promise.resolve({json:()=>Promise.resolve({ok:true,speakers:JSON.parse(JSON.stringify(src))})});}
+  return Promise.resolve({ok:true,json:()=>Promise.resolve({ok:true,key:'Ан',path:'p',error:'',
+    subs:1,colored:0,ncams:2})});}
 """
 
 
 @node
 def test_behav_speaker_save_keeps_fields_the_window_does_not_show(tmp_path):
     """Сохранение профиля правит копию файла: поля, которых в окне нет (ref, breath_model), остаются."""
-    res = _case(tmp_path, "b3_save_speaker_keep.js", ("saveSpeaker", "clipSpeaker"), r"""
-SPEAKERS={'Ан':{label:'Ан',ref:['r1.jpg'],breath_model:'bm.json',outdir:'o'}};SPKEDIT='Ан';
+    res = _case(tmp_path, "b3_save_speaker_keep.js", ("speakerFresh", "speakerStyleFollow", "saveSpeaker", "clipSpeaker"), r"""
+// В памяти копия БЕЗ ref и breath_model (устарела), на диске — полный профиль:
+// поля вне окна должны прийти с диска, а не из копии.
+SPEAKERS={'Ан':{label:'Ан',outdir:'o'}};
+DISK={'Ан':{label:'Ан',ref:['r1.jpg'],breath_model:'bm.json',outdir:'o'}};SPKEDIT='Ан';
 $('spk_label').value='Ан';
 await saveSpeaker();
 const sent=JSON.parse(FETCHES.find(f=>/savespeaker/.test(f.url)).body).data;
@@ -419,7 +430,7 @@ out.ref=sent.ref;out.bm=sent.breath_model;
 @node
 def test_behav_speaker_save_writes_only_real_overrides_of_cuts(tmp_path):
     """Порог, равный общему значению, в профиль не пишется; отличающийся — пишется."""
-    res = _case(tmp_path, "b3_save_speaker_cut.js", ("saveSpeaker", "clipSpeaker"), r"""
+    res = _case(tmp_path, "b3_save_speaker_cut.js", ("speakerFresh", "speakerStyleFollow", "saveSpeaker", "clipSpeaker"), r"""
 SPEAKERS={'Ан':{label:'Ан'}};SPKEDIT='Ан';
 SPKDEF={gap:0.5,pad:0.2,flag:false};
 const CUT=[{dataset:{cut:'gap'},type:'number',value:'0.5'},

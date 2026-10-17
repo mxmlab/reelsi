@@ -108,7 +108,7 @@ def _run_node(tmp_path, name, body, with_styles=False):
 
 DOORS = r"""
 const CASES = ['select', 'font', 'file', 'textarea', 'num', 'color', 'bool'];
-const CONV_PROBE = { inv_pct: 0.4, pct_h: 700, pct_fx: 900, pct_fy: 800,
+const CONV_PROBE = { top_pct: 0.4, pct_h: 700, pct_fx: 900, pct_fy: 800,
                      frac_pct: 0.42, frac_pct_int: 0.42 };
 const PROBE = {
   select: (f) => (f.options && f.options.length ? f.options[0][0] : 'probe'),

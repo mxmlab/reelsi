@@ -153,8 +153,11 @@ def test_chrome_subtitle_height_field_moves_the_preview_line_live(tmp_path):
     ])
     sub_y, bottom = res["state"]
     assert sub_y is not None, res
+    # Поле — «Положение субтитров по Y, % кадра» (от ВЕРХА): 25 → доля 0.25, а низ строки в превью
+    # стоит на 75 % от низа кадра (CSS bottom). Раньше поле было «% снизу» — и наоборот.
+    assert abs(sub_y - 0.25) < 1e-9, res
     assert bottom == "%d%%" % round((1 - sub_y) * 100), res
-    assert bottom == "25%", res
+    assert bottom == "75%", res
 
 
 # ============== 5. ПАНЕЛЬ СТИЛЯ: ЧИСЛО, ГАЛКА, СПИСОК, ЦВЕТ ПИШУТ В СТИЛЬ ==============

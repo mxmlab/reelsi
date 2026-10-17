@@ -3,7 +3,7 @@
 """Стиль задуман в кадре 1080×1920, а собирается в кадре формата ролика.
 
 Стиль ОДИН на все форматы (9:16, 1:1, 4:5, 16:9), и числа в нём — пиксели
-кадре 1080×1920: «Высота субтитров 40 % снизу», «Интро по вертикали, px»,
+кадре 1080×1920: «Положение субтитров 59.6 % от верха», «Интро по вертикали, px»,
 «Сдвиг фотовставок Кам1 по X, px». В квадратном кадре те же числа значили бы
 другое: субтитры уезжали бы за нижний край, карточка вставки — за боковой.
 Поэтому при сборке стиль пересчитывается под кадр формата — здесь объявлено,
@@ -77,6 +77,9 @@ FIELD_KIND: dict[str, str] = {
     "sub_wbg_dy": Y,
     # Свечение текста: радиус Glo2 — px кадра (как intro_word_glow_rad у интро).
     "sub_glow_rad": SIZE,
+    # Тень текста субтитров: дистанция и мягкость — px кадра (как тень интро).
+    "sub_shadow_dist": SIZE,
+    "sub_shadow_soft": SIZE,
     # --- верхняя строка-прогресс ---
     # Высота линии в кадре, px от верха.
     "top_line_y": Y,
@@ -152,14 +155,14 @@ FIELD_KIND: dict[str, str] = {
 #   * секунды и кадры: start_blur_dur, sub_bg_anim, intro_fade, intro_sub_fade,
 #     intro_fx_hold_add, intro_last_hold, cam1_take_min, cam1_take_hold, pop_lead;
 #   * dB и проценты прозрачности: glitch_db, music_db, voice_db, pop_db,
-#     sub_bg_op, top_line_track_op, caption_bg_op, intro_shade_op;
+#     sub_bg_op, sub_shadow_op, top_line_track_op, caption_bg_op, intro_shade_op;
 #   * 0..255/0..10 у эффектов: intro_shadow_op, back_shadow_op,
 #     intro_word_glow_thr, intro_word_glow_int, intro_glow;
 #   * проценты непрозрачности тени прекомпа интро (в 0..255 их переводит план):
 #     intro_comp_shadow_opacity, intro_comp_shadow2_opacity;
 #   * цвет камер (Lumetri): экспозиция и ползунки цвета — безразмерные, как в AE;
 #   * ротоскоп: roto_bottom — доля низа кадра под маску (0..1);
-#   * углы: intro_shadow_dir, intro_comp_shadow_dir, cam1_rot;
+#   * углы: intro_shadow_dir, intro_comp_shadow_dir, sub_shadow_dir, cam1_rot;
 #   * безразмерные множители: caption_kx, caption_ky, hl_blur_amt (сила блюра
 #     появления задана относительно кегля субтитров, а не кадра), hl_size_k (кегль
 #     жёлтого слова — множитель базового);
@@ -182,6 +185,8 @@ FRAME_INDEPENDENT: frozenset[str] = frozenset({
     "sub_grad_angle",
     # субтитры: свечение текста — интенсивность Glo2 (0..10) и галка «только жёлтые»
     "sub_glow_amt",
+    # субтитры: тень текста — прозрачность (проценты) и угол (градусы), от кадра не зависят
+    "sub_shadow_op", "sub_shadow_dir",
     # верхняя строка
     "top_line_track_op",
     # подпись
@@ -206,6 +211,9 @@ FRAME_INDEPENDENT: frozenset[str] = frozenset({
     "cam1_zoom_big", "cam1_zoom_lo", "cam1_zoom_hi", "cam1_drift_lo",
     "cam1_drift_hi", "cam1_take_min", "cam1_take_lo", "cam1_take_hi",
     "cam1_take_hold", "cam1_take_out", "cam1_fit", "cam1_zoom_cx", "cam1_zoom_cy",
+    # паузы наездов Камеры 1, секунды. Камера 2 — None в BASE (пусто = как у Камеры 1),
+    # не число: сторож разметки её не требует, как back_step_after
+    "cam1_take_after_cut", "cam1_take_gap",
     # камера 2: своя точка наезда и настройки зума — зеркально Камере 1
     "cam2_zoom_cx", "cam2_zoom_cy",
     "cam2_zoom_big", "cam2_zoom_lo", "cam2_zoom_hi", "cam2_drift_lo",

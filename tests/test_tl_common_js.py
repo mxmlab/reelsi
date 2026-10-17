@@ -617,57 +617,70 @@ def test_reveal_is_called_only_from_the_explicit_doors():
             "новая дверь — внести сюда и в отчёт, иначе окно поедет за плейхедом")
 
 
-# --- линейка: клик ставит плейхед, протяжка прокручивает окно (NF2) -----------------------
-# Клик по линейке (левой, без протяжки дальше TL_CLICK_MAX_PX) — плейхед в точку клика; окно
-# стоит (правило NF1). Протяжка — окно едет, плейхед стоит. Средняя кнопка клика не даёт.
+# --- линейка: левая кнопка — плейхед за курсором, средняя — протяжка окна --------------
+# Решение владельца 2026-10-17: линейка работает как пустое поле — плейхед в точку нажатия и за
+# курсором, пока кнопка зажата; окно при этом стоит. Прокрутка окна — средняя кнопка и колесо.
+# Стенд: mousedown редактора регистрируем сами — tlMidGuard вешает свой mousedown на тот же
+# элемент и в заглушке затёр бы его (слот __h один на тип).
+
+_EDITOR_RULER_SETUP = _EDITOR_SETUP + """
+function pvVideoTo(){}
+ED.v0=0; ED.v1=20; ED.cs=40;
+const SEEKS=[];
+const _edSeek=edSeek; edSeek=function(s){SEEKS.push(s);_edSeek(s);};
+__ELS.edtl=__el(); const REC={};
+__ELS.edtl.addEventListener=(t,fn)=>{(REC[t]=REC[t]||[]).push(fn);};
+edBind();
+const ev=(x,y,b)=>({clientX:x,clientY:y,button:b===undefined?0:b,pointerId:1,shiftKey:false,ctrlKey:false,metaKey:false,preventDefault(){}});
+"""
+
 
 @node
 def test_editor_ruler_click_sets_the_head_and_keeps_the_window(tmp_path):
-    res = _run(tmp_path, [CORE_JS, EDITOR_JS], _EDITOR_SETUP + """
-function pvVideoTo(){}
-ED.v0=0; ED.v1=20; ED.cs=40;
-edBind();
-const c=__ELS.edtl, ev=(x,y,b)=>({clientX:x,clientY:y,button:b===undefined?0:b,pointerId:1,preventDefault(){}});
-c.__h.pointerdown(ev(200,5));                 // линейка, левая кнопка: 200 px из 400 = 10 с окна 0..20
-c.__h.pointerup(ev(200,5));                   // отпускание без движения — клик
-console.log(JSON.stringify({cs:ED.cs,v0:ED.v0,v1:ED.v1}));
+    res = _run(tmp_path, [CORE_JS, EDITOR_JS], _EDITOR_RULER_SETUP + """
+REC.mousedown[0](ev(200,5));                  // линейка, левая кнопка: 200 px из 400 = 10 с окна 0..20
+__HANDLERS['win:mouseup'].forEach(fn=>fn(ev(200,5)));   // отпускание без движения
+console.log(JSON.stringify({seeks:SEEKS,cs:ED.cs,v0:ED.v0,v1:ED.v1}));
 """)
-    assert res["cs"] == pytest.approx(10), f"клик по линейке не поставил плейхед в точку клика: {res}"
+    assert res["seeks"] == [pytest.approx(10)], f"клик по линейке не поставил плейхед в точку клика: {res}"
+    assert res["cs"] == pytest.approx(10), res
     assert res["v0"] == 0 and res["v1"] == 20, f"клик по линейке сдвинул окно: {res}"
 
 
 @node
-def test_editor_ruler_jitter_is_a_click_and_a_real_drag_is_not(tmp_path):
-    """Дрожь до 3 px — всё ещё клик; 4 px — протяжка: плейхед стоит, окно едет."""
-    res = _run(tmp_path, [CORE_JS, EDITOR_JS], _EDITOR_SETUP + """
-function pvVideoTo(){}
-ED.v0=0; ED.v1=20; ED.cs=40;
-edBind();
-const c=__ELS.edtl, ev=(x,y)=>({clientX:x,clientY:y,button:0,pointerId:1,preventDefault(){}});
-c.__h.pointerdown(ev(200,5)); c.__h.pointermove(ev(197,5)); c.__h.pointerup(ev(197,5));   // 3 px
-const jitterCs=ED.cs, jitterView=[ED.v0,ED.v1];
-ED.cs=40; ED.v0=0; ED.v1=20;
-c.__h.pointerdown(ev(200,5)); c.__h.pointermove(ev(196,5)); c.__h.pointerup(ev(196,5));   // 4 px
-console.log(JSON.stringify({jitterCs,jitterView,dragCs:ED.cs,dragView:[ED.v0,ED.v1]}));
+def test_editor_ruler_drag_follows_the_cursor_and_keeps_the_window(tmp_path):
+    """Левая кнопка на линейке: плейхед идёт за курсором по КАЖДОМУ движению, окно стоит,
+    отпускание снимает тягу (дальше движение плейхед не двигает)."""
+    res = _run(tmp_path, [CORE_JS, EDITOR_JS], _EDITOR_RULER_SETUP + """
+REC.mousedown[0](ev(200,5));                                  // 10 с
+__HANDLERS['win:mousemove'].forEach(fn=>fn(ev(240,5)));       // 12 с
+__HANDLERS['win:mousemove'].forEach(fn=>fn(ev(100,5)));       // 5 с
+__HANDLERS['win:mouseup'].forEach(fn=>fn(ev(100,5)));
+__HANDLERS['win:mousemove'].forEach(fn=>fn(ev(300,5)));       // тяги нет — плейхед стоит
+console.log(JSON.stringify({seeks:SEEKS,cs:ED.cs,v0:ED.v0,v1:ED.v1,drag:!!ED.drag}));
 """)
-    assert res["jitterCs"] == pytest.approx(10), f"дрожь 3 px не стала кликом: {res}"
-    assert res["jitterView"] == [0, 20], res
-    assert res["dragCs"] == 40, f"протяжка линейки 4 px поставила плейхед: {res}"
-    assert res["dragView"] != [0, 20] and res["dragView"][0] > 0, (
-        f"протяжка линейки не прокрутила окно: {res}")
+    assert res["seeks"] == [pytest.approx(10), pytest.approx(12), pytest.approx(5)], (
+        f"плейхед не шёл за курсором по каждому движению: {res}")
+    assert res["cs"] == pytest.approx(5), res
+    assert res["v0"] == 0 and res["v1"] == 20, f"протяжка линейки сдвинула окно: {res}"
+    assert res["drag"] is False, "отпускание не сняло тягу плейхеда"
 
 
 @node
-def test_editor_ruler_middle_button_never_clicks(tmp_path):
-    res = _run(tmp_path, [CORE_JS, EDITOR_JS], _EDITOR_SETUP + """
-function pvVideoTo(){}
-ED.v0=0; ED.v1=20; ED.cs=40;
-edBind();
-const c=__ELS.edtl, ev=(x,y,b)=>({clientX:x,clientY:y,button:b,pointerId:1,preventDefault(){}});
-c.__h.pointerdown(ev(200,50,1)); c.__h.pointerup(ev(200,50,1));   // средняя кнопка на полосе — только протяжка
-console.log(JSON.stringify({cs:ED.cs,v0:ED.v0,v1:ED.v1}));
+def test_editor_ruler_middle_button_pans_the_view_not_the_head(tmp_path):
+    """Средняя кнопка на линейке: окно едет за курсором, плейхед не ставится ни в pointerdown,
+    ни в mousedown, который браузер шлёт следом."""
+    res = _run(tmp_path, [CORE_JS, EDITOR_JS], _EDITOR_RULER_SETUP + """
+REC.pointerdown[0](ev(200,5,1));
+REC.mousedown[0](ev(200,5,1));
+REC.pointermove[REC.pointermove.length-1](ev(100,5,1));       // 100 px влево — окно на 5 с вправо
+REC.pointerup[REC.pointerup.length-1](ev(100,5,1));
+console.log(JSON.stringify({seeks:SEEKS,cs:ED.cs,v0:ED.v0,v1:ED.v1}));
 """)
-    assert res["cs"] == 40, f"средняя кнопка поставила плейхед кликом: {res}"
+    assert res["seeks"] == [], f"средняя кнопка поставила плейхед: {res}"
+    assert res["cs"] == 40, f"средняя кнопка сдвинула плейхед: {res}"
+    assert res["v0"] == pytest.approx(5) and res["v1"] == pytest.approx(25), (
+        f"средняя кнопка на линейке не протянула окно: {res}")
 
 
 @node
@@ -680,7 +693,7 @@ __ELS.pod_video=v;
 POD.open=true; POD.dur=100; POD.v0=0; POD.v1=50; POD.segs=[]; POD.words=[]; POD.picked=[];
 const ev=(x,y)=>({clientX:x,clientY:y,button:0,pointerId:1,shiftKey:false,ctrlKey:false,metaKey:false,preventDefault(){}});
 podDownTl(ev(200,5));                          // линейка: клик, не протяжка
-__ELS.pod_tl.__h.pointerup(ev(200,5));         // отпускание без движения
+__HANDLERS['pointerup'].forEach(fn=>fn(ev(200,5)));   // отпускание без движения (document)
 console.log(JSON.stringify({pos:v.currentTime,v0:POD.v0,v1:POD.v1,pauses:v.pauses}));
 """)
     assert res["pos"] == pytest.approx(25), f"клик по линейке не поставил плейхед в точку клика: {res}"
@@ -688,22 +701,27 @@ console.log(JSON.stringify({pos:v.currentTime,v0:POD.v0,v1:POD.v1,pauses:v.pause
 
 
 @node
-def test_podcast_ruler_drag_pans_the_window_not_the_head(tmp_path):
+def test_podcast_ruler_drag_moves_the_head_and_keeps_the_window(tmp_path):
+    """Левая кнопка на линейке «Вся запись»: плейхед за курсором по каждому движению, окно стоит."""
     res = _run(tmp_path, [CORE_JS, PODCAST_JS], """
 function ico(){ return ''; }
 const v={currentTime:40,paused:true,pauses:0,pause(){this.pauses++;this.paused=true;},
   play(){this.paused=false;return Promise.resolve();}};
 __ELS.pod_video=v;
 POD.open=true; POD.dur=100; POD.v0=0; POD.v1=50; POD.segs=[]; POD.words=[]; POD.picked=[];
+const SEEKS=[]; const _podSeek=podSeek; podSeek=function(t){SEEKS.push(t);return _podSeek(t);};
 const ev=(x,y)=>({clientX:x,clientY:y,button:0,pointerId:1,shiftKey:false,ctrlKey:false,metaKey:false,preventDefault(){}});
-podDownTl(ev(200,5));
-__ELS.pod_tl.__h.pointermove(ev(100,5));       // 100 px влево — протяжка
-__ELS.pod_tl.__h.pointerup(ev(100,5));
-console.log(JSON.stringify({pos:v.currentTime,v0:POD.v0,v1:POD.v1}));
+podDownTl(ev(200,5));                          // 25 с
+podMove(ev(100,5));                            // 12.5 с
+podMove(ev(300,5));                            // 37.5 с
+podUp();
+console.log(JSON.stringify({seeks:SEEKS,pos:v.currentTime,v0:POD.v0,v1:POD.v1,pauses:v.pauses,drag:!!POD.drag}));
 """)
-    assert res["pos"] == 40, f"протяжка линейки подкаста поставила плейхед: {res}"
-    assert res["v0"] == pytest.approx(12.5) and res["v1"] == pytest.approx(62.5), (
-        f"протяжка линейки подкаста не прокрутила окно: {res}")
+    assert res["seeks"] == [pytest.approx(25), pytest.approx(12.5), pytest.approx(37.5)], (
+        f"плейхед подкаста не шёл за курсором по каждому движению: {res}")
+    assert res["pos"] == pytest.approx(37.5), res
+    assert res["v0"] == 0 and res["v1"] == 50, f"протяжка линейки подкаста сдвинула окно: {res}"
+    assert res["pauses"] == 0 and res["drag"] is False, res
 
 
 @node
@@ -723,7 +741,7 @@ function ipvSeekTo(tm){SEEKS.push(tm);}
 const ruler={closest(sel){return sel==='#itlruler'?{}:null;}};
 const ev=(x,b)=>({button:b===undefined?0:b,clientX:x,pointerId:1,target:ruler,preventDefault(){}});
 __ELS.itlin.__h.pointerdown(ev(50));           // линейка, левая кнопка: 50 px при 10 px/с = 5 с
-__ELS.itl.__h.pointerup({pointerId:1});        // отпускание без движения — клик
+__HANDLERS['win:pointerup'].forEach(fn=>fn({pointerId:1,clientX:50}));   // отпускание без движения
 console.log(JSON.stringify({seeks:SEEKS,scroll:__ELS.itl.scrollLeft}));
 """)
     assert res["seeks"] == [5], f"клик по линейке вставок не поставил плейхед в точку клика: {res}"
@@ -731,7 +749,8 @@ console.log(JSON.stringify({seeks:SEEKS,scroll:__ELS.itl.scrollLeft}));
 
 
 @node
-def test_inserts_ruler_drag_pans_the_strip_not_the_head(tmp_path):
+def test_inserts_ruler_drag_moves_the_head_and_keeps_the_strip(tmp_path):
+    """Левая кнопка на линейке вставок: плейхед за курсором по каждому движению, лента стоит."""
     src = _read(APP / "85-inserts-view.js")
     start = src.index("$('itlin').addEventListener('pointerdown'")
     end = src.index("// Средняя кнопка: без этого Chrome", start)
@@ -743,16 +762,18 @@ const SEEKS=[];
 function ipvPause(){}
 function ipvPlay(){}
 function ipvSeekTo(tm){SEEKS.push(tm);}
-""" + _js_fn(src, "itlMidPan") + "\n" + block + """
+function itlMidPan(){}
+""" + block + """
 const ruler={closest(sel){return sel==='#itlruler'?{}:null;}};
 const ev=(x)=>({button:0,clientX:x,pointerId:1,target:ruler,preventDefault(){}});
-__ELS.itlin.__h.pointerdown(ev(200));
-__ELS.itl.__h.pointermove({pointerId:1,clientX:100});   // 100 px влево — протяжка ленты
-__ELS.itl.__h.pointerup({pointerId:1});
-console.log(JSON.stringify({seeks:SEEKS,scroll:__ELS.itl.scrollLeft}));
+__ELS.itlin.__h.pointerdown(ev(200));                                    // 20 с
+__HANDLERS['win:pointermove'].forEach(fn=>fn({pointerId:1,clientX:100}));   // 10 с
+__HANDLERS['win:pointerup'].forEach(fn=>fn({pointerId:1,clientX:100}));
+console.log(JSON.stringify({seeks:SEEKS,scroll:__ELS.itl.scrollLeft,scrub:ITL.scrub}));
 """)
-    assert res["seeks"] == [], f"протяжка линейки вставок поставила плейхед: {res}"
-    assert res["scroll"] == 100, f"протяжка линейки вставок не прокрутила ленту: {res}"
+    assert res["seeks"] == [20, 10], f"плейхед вставок не шёл за курсором по каждому движению: {res}"
+    assert res["scroll"] == 0, f"протяжка линейки вставок прокрутила ленту: {res}"
+    assert res["scrub"] is False, "отпускание не сняло перемотку полосы"
 
 
 # --- клавиши правки: резать и удалить --------------------------------------------------
@@ -816,58 +837,67 @@ console.log(JSON.stringify({afterCtrlC,afterS,afterBs}));
     assert res["afterBs"] == 1, "Backspace не удалил выбранный кусок"
 
 
-# --- линейка — протяжка вида, плейхед не двигается -----------------------------------
+# --- линейка: средняя кнопка двигает окно, плейхед не трогает -----------------------------
 
 @node
-def test_podcast_ruler_drag_pans_the_view_not_the_head(tmp_path):
+def test_podcast_ruler_middle_button_pans_the_view_not_the_head(tmp_path):
     res = _run(tmp_path, [CORE_JS, PODCAST_JS], """
 function ico(){ return ''; }
-const v={currentTime:40,paused:false,pauses:0,seeks:0,
-  pause(){this.pauses++;this.paused=true;},play(){this.paused=false;return Promise.resolve();}};
+const v={currentTime:40,paused:false,pauses:0,pause(){this.pauses++;this.paused=true;},
+  play(){this.paused=false;return Promise.resolve();}};
 __ELS.pod_video=v;
 POD.open=true; POD.dur=100; POD.v0=0; POD.v1=50; POD.segs=[]; POD.words=[]; POD.picked=[];
-const ev=(x,y)=>({clientX:x,clientY:y,button:0,pointerId:1,shiftKey:false,ctrlKey:false,metaKey:false,preventDefault(){}});
-podDownTl(ev(200,5));                   // линейка (y ≤ 18) — протяжка окна через tlMidPan
-__ELS.pod_tl.__h.pointermove(ev(100,5));  // тянем влево на 100 px из 400 при окне 50 с — окно уехало на 12.5 с
-const seekedAt=v.currentTime;
-__ELS.pod_tl.__h.pointerup(ev(100,5));
-console.log(JSON.stringify({v0:POD.v0,v1:POD.v1,pos:seekedAt,pauses:v.pauses,panning:tlPanning(__ELS.pod_tl),drag:!!POD.drag}));
+const SEEKS=[]; const _podSeek=podSeek; podSeek=function(t){SEEKS.push(t);return _podSeek(t);};
+const ev=(x,y,b)=>({clientX:x,clientY:y,button:b,pointerId:1,shiftKey:false,ctrlKey:false,metaKey:false,preventDefault(){}});
+podMid(ev(200,5,1));                           // средняя кнопка на линейке — протяжка окна
+__ELS.pod_tl.__h.pointermove(ev(100,5,1));     // тянем влево на 100 px из 400 при окне 50 с — окно уехало на 12.5 с
+__ELS.pod_tl.__h.pointerup(ev(100,5,1));
+console.log(JSON.stringify({v0:POD.v0,v1:POD.v1,seeks:SEEKS,pos:v.currentTime,pauses:v.pauses,
+  panning:tlPanning(__ELS.pod_tl),drag:!!POD.drag}));
 """)
     assert res["v0"] == pytest.approx(12.5) and res["v1"] == pytest.approx(62.5), (
-        f"протяжка линейки не сдвинула окно: {res}")
-    assert res["pos"] == 40, f"протяжка линейки перемотала плейхед: {res}"
+        f"средняя кнопка на линейке не сдвинула окно: {res}")
+    assert res["seeks"] == [] and res["pos"] == 40, f"средняя кнопка перемотала плейхед: {res}"
     assert res["pauses"] == 0 and res["panning"] is False and res["drag"] is False, res
 
 
 @node
-def test_inserts_ruler_pointerdown_starts_the_pan(tmp_path):
-    """Заглушка itlMidPan: pointerdown на линейке вставок запускает протяжку, а не перемотку."""
+def test_inserts_ruler_pointerdown_seeks_and_middle_button_pans(tmp_path):
+    """Линейка вставок: левая кнопка ставит плейхед (а не тянет ленту), средняя — тянет ленту."""
     src = _read(APP / "85-inserts-view.js")
     start = src.index("$('itlin').addEventListener('pointerdown'")
     end = src.index("// Средняя кнопка: без этого Chrome", start)
     block = src[start:end]
     res = _run(tmp_path, [CORE_JS], """
-__ELS.itlin = __el();
+__ELS.itlin = __el(); __ELS.itl = __el(); __ELS.itl.clientWidth = 200; __ELS.itl.scrollLeft = 0;
 let IPV={vids:[{}],playing:false}, ITL={pps:10,scrub:false};
-const SEEKS=[], PANS=[];
+const SEEKS=[];
 function ipvPause(){}
 function ipvPlay(){}
 function ipvSeekTo(tm){SEEKS.push(tm);}
-function itlMidPan(e){PANS.push(e.clientX);}
-""" + block + """
-const down=__ELS.itlin.__h.pointerdown;
-down({button:0,clientX:50,target:{closest(sel){return sel==='#itlruler'?{}:null;}},preventDefault(){}});
-console.log(JSON.stringify({seeks:SEEKS.length,pans:PANS}));
+""" + _js_fn(src, "itlMidPan") + "\n" + block + """
+const ruler={closest(sel){return sel==='#itlruler'?{}:null;}};
+const ev=(x,b)=>({button:b,clientX:x,pointerId:1,target:ruler,preventDefault(){}});
+__ELS.itlin.__h.pointerdown(ev(50,0));         // левая на линейке: плейхед на 5 с
+__HANDLERS['win:pointerup'].forEach(fn=>fn({pointerId:1,clientX:50}));
+const afterLeft={seeks:SEEKS.slice(),scroll:__ELS.itl.scrollLeft};
+SEEKS.length=0;
+__ELS.itlin.__h.pointerdown(ev(200,1));        // средняя на линейке: лента едет за курсором
+__ELS.itl.__h.pointermove({pointerId:1,clientX:100});
+__ELS.itl.__h.pointerup({pointerId:1});
+console.log(JSON.stringify({afterLeft,midSeeks:SEEKS,midScroll:__ELS.itl.scrollLeft}));
 """)
-    assert res["seeks"] == 0, "линейка перемотала плейхед, а должна протягивать ленту"
-    assert res["pans"] == [50], f"протяжка линейки не запущена: {res}"
+    assert res["afterLeft"]["seeks"] == [5], f"левая кнопка на линейке не поставила плейхед: {res}"
+    assert res["afterLeft"]["scroll"] == 0, f"левая кнопка на линейке сдвинула ленту: {res}"
+    assert res["midSeeks"] == [], f"средняя кнопка на линейке поставила плейхед: {res}"
+    assert res["midScroll"] == 100, f"средняя кнопка на линейке не протянула ленту: {res}"
 
 
 def test_three_timeline_hints_share_the_gesture_sentence():
     """Жесты трёх полос времени описаны одной фразой (правило части А): редактор, «Вся запись», вставки."""
     html = _read(ROOT / "templates" / "index.html")
-    gesture = ("Клик или протяжка по полю и по плейхеду — перемотка · клик по линейке — плейхед в точку клика · "
-               "протяжка по линейке или средняя кнопка — прокрутка окна · колесо — зум · "
+    gesture = ("Клик или протяжка по полю и по плейхеду — перемотка · клик или протяжка по линейке — плейхед за курсором · "
+               "средняя кнопка — прокрутка окна · колесо — зум · "
                "Shift+колесо или горизонтальное колесо — прокрутка")
     assert html.count(gesture) == 3, (
         "фраза жестов должна стоять в «!» всех трёх полос ровно по разу: нашлось %d" % html.count(gesture))

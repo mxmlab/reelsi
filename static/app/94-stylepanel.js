@@ -59,13 +59,16 @@ async function loadStyleSchema() {
 
 // Таблица пересчётов conv
 const stConv = {
-  inv_pct: {
-    toView: (v) => Math.round((1 - (v != null ? v : 0.5964)) * 100),
+  // Положение от ВЕРХА кадра, % (+ = вниз, как у всех ручек положения). Хранится доля от верха
+  // (sub_y, дефолт 0.5964 ≈ 59.6 %); в поле — проценты с одним знаком.
+  top_pct: {
+    toView: (v) => Math.round((v != null ? v : 0.5964) * 1000) / 10,
     toStore: (x) => {
       const n = parseFloat(x);
       if (isNaN(n)) return 0.5964;
-      if (Math.round(n) === 40) return 0.5964;
-      return Math.min(0.98, Math.max(0.05, 1 - n / 100));
+      // 59.6 % — это дефолт 0.5964: без особого случая круг «поле ↔ стиль» съезжал бы на 0.596
+      if (Math.round(n * 10) === 596) return 0.5964;
+      return Math.min(0.98, Math.max(0.02, n / 100));
     }
   },
   pct_h: {
@@ -137,8 +140,11 @@ function stView(field, stored) {
   const base = (STSCHEMA && STSCHEMA.base) || {};
   let baseDef = base[field.key];
   // Парная ручка: своего значения в стиле нет — показываем значение пары (back_step).
+  // Если и пары в стиле нет, берём BASE пары: именно его сервер подставит при сборке
+  // (plan_style._pair_sv). Иначе поле пусто, хотя сборка уже работает со значением пары.
   if (field.fallback_key && (stored === undefined || stored === null)) {
-    const pair = (typeof CURSTYLE !== 'undefined' && CURSTYLE) ? CURSTYLE[field.fallback_key] : null;
+    const pairStyle = (typeof CURSTYLE !== 'undefined' && CURSTYLE) ? CURSTYLE[field.fallback_key] : null;
+    const pair = pairStyle != null ? pairStyle : base[field.fallback_key];
     if (pair != null) {
       stored = pair;
       baseDef = pair;
@@ -1336,6 +1342,7 @@ function renderStylePanel() {
   if (ST_FOCUS_WANT) stFocusGroup(ST_FOCUS_WANT);
 }
 
+const ST_DRAG_PX = 4;   // пикселей мыши на один шаг поля: 1 px = 1 шаг было не попасть в значение
 function initNumDrag(span, input, field) {
   const step = field.step || (field.ctl === 'int' ? 1 : 0.1);
   const limMin = field.lim_min != null ? field.lim_min : (field.min != null ? field.min : -Infinity);
@@ -1421,11 +1428,16 @@ function initNumDrag(span, input, field) {
       const dx = ev.clientX - startX;
       if (!moved && Math.abs(dx) > 3) moved = true;
       if (moved) {
-        const mult = ev.shiftKey ? 10 : 1;
-        let v = viewVal + dx * step * mult;
+        // Тяга: один шаг на ST_DRAG_PX пикселей. Ctrl (или ⌘) — точно: шаг делится на 10.
+        // Целому полю тоньше единицы не бывает, поэтому там Ctrl шаг не меняет.
+        // Shift — крупно, ×10.
+        const fine = (ev.ctrlKey || ev.metaKey) && field.ctl !== 'int';
+        const base = fine ? step / 10 : step;
+        const unit = base * (ev.shiftKey ? 10 : 1);
+        let v = viewVal + Math.round(dx / ST_DRAG_PX) * unit;
         if (field.ctl === 'int') v = Math.round(v);
         else {
-          const dec = (step.toString().split('.')[1] || '').length;
+          const dec = (base.toString().split('.')[1] || '').length;
           v = parseFloat(v.toFixed(Math.max(dec, 1)));
         }
         v = Math.max(minB, Math.min(maxB, v));

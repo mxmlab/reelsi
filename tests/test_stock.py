@@ -307,6 +307,27 @@ def _coverr_videos() -> dict:
     ]}
 
 
+def _pixabay_photos_many(n: int) -> dict:
+    """Pixabay с n фото (id 200+i): для тестов выдачи по кругу, где двух кадров мало."""
+    return {"total": n, "hits": [
+        {"id": 200 + i, "pageURL": f"https://pixabay.com/photos/cat-{200 + i}/",
+         "tags": "cat, pet",
+         "previewURL": f"https://cdn.pixabay.com/{200 + i}_preview.jpg",
+         "webformatURL": f"https://cdn.pixabay.com/{200 + i}_web.jpg",
+         "largeImageURL": f"https://cdn.pixabay.com/{200 + i}_large.jpg",
+         "imageWidth": 4000, "imageHeight": 6000, "user": f"Автор {i}", "user_id": 50 + i}
+        for i in range(n)]}
+
+
+def _openverse_cc0_many(n: int) -> dict:
+    """Openverse с n кадрами лицензии CC0 (id ovk-i): проходят фильтр лицензий."""
+    return {"result_count": n, "results": [
+        {"id": f"ovk-{i}", "title": f"cat {i}", "creator": f"Автор ОВ {i}",
+         "url": f"https://cdn.openverse.org/ovk-{i}.jpg", "license": "cc0",
+         "license_version": "1.0", "foreign_landing_url": f"https://example.org/ovk-{i}"}
+        for i in range(n)]}
+
+
 def _cand(**extra) -> dict:
     """Кандидат, как его отдаёт поиск: минимум полей, нужных скачиванию."""
     c = {"provider": "pexels", "id": 101, "kind": "photo",
@@ -341,9 +362,10 @@ def test_pexels_photo_candidates(iso, monkeypatch):
     assert cands[0]["thumb"].endswith("medium.jpg")
     assert cands[0]["tags"] == ["cat number 0"] and cands[0]["query"] == "cat on the window"
     # ключ уходит заголовком Authorization — как в документации Pexels (без «Bearer»)
-    assert net.reqs[0].get_header("Authorization") == PEXELS_KEY
-    assert _params(net.calls[0])["per_page"] == "8"
-    assert net.calls[0].startswith("https://api.pexels.com/v1/search")   # Pexels первым
+    # Порядок ВЫЗОВОВ не проверяем: стоки опрашиваются параллельно, важен порядок ВЫДАЧИ.
+    req = net.reqs_for("api.pexels.com/v1/search")[0]
+    assert req.get_header("Authorization") == PEXELS_KEY
+    assert _params(req.full_url)["per_page"] == "8"       # на весь n, а не на остаток
 
 
 # --------------------------------------------------------------------------- #
@@ -401,26 +423,32 @@ def test_pixabay_photo_and_video(iso, monkeypatch):
 # --------------------------------------------------------------------------- #
 # 4. Порядок провайдеров и добор
 # --------------------------------------------------------------------------- #
-def test_order_pexels_first_then_pixabay(iso, monkeypatch):
-    """Pexels отдал 2 из 5 — остаток добираем у Pixabay."""
+def test_order_round_robin_pexels_then_pixabay(iso, monkeypatch):
+    """Pexels и Pixabay по 2 кадра при n=5: выдача по кругу — pexels, pixabay, pexels, pixabay.
+
+    Раньше Pixabay добирал только остаток (per_page 3), и до него дело доходило лишь
+    когда Pexels не набрал n. Теперь каждый сток спрашивается на весь n."""
     _write_cfg()
     net = FakeNet({"api.pexels.com/v1/search": _pexels_photos(2),
                    "pixabay.com/api/": _pixabay_photos()})
     monkeypatch.setattr(urllib.request, "urlopen", net)
 
     cands = stock.search("cat on the window", "photo", n=5)
-    # из 5 просимых нашлось 4 (у Pixabay в стенде всего 2 фото) — порядок: Pexels, потом Pixabay
-    assert [c["provider"] for c in cands] == ["pexels", "pexels", "pixabay", "pixabay"]
-    assert _params(net.urls("pixabay.com/api/?")[0])["per_page"] == "3"  # добор остатка
+    # у Pixabay в стенде всего 2 фото — кандидатов 4 из 5 просимых, порядок по кругу
+    assert [c["provider"] for c in cands] == ["pexels", "pixabay", "pexels", "pixabay"]
+    assert _params(net.urls("pixabay.com/api/?")[0])["per_page"] == "5"  # на весь n, не на остаток
+    assert _params(net.urls("api.pexels.com")[0])["per_page"] == "5"
 
 
-def test_pexels_short_then_unsplash_before_pixabay(iso, monkeypatch):
-    """Pexels отдал 2 из 5 — следующий опрашиваемый Unsplash, а не Pixabay.
+def test_round_robin_priority_pexels_unsplash_pixabay(iso, monkeypatch):
+    """Три стока при n=5: первый круг — pexels, unsplash, pixabay; во втором круге до
+    n=5 успевают pexels и unsplash, для pixabay места уже нет. Порядок в каждом круге —
+    приоритет стоков.
 
-    Порядок — по замеру 2026-10-10 (Pixabay на сложных запросах тянет чужие теги, а раньше
-    Unsplash забивал недобор Pexels худшими кадрами). Проверка по порядку обращений в сеть:
-    Unsplash спрошен раньше Pixabay, и добор остатка у Pixabay — на 3 (минимум у него).
-    Под старым порядком (pixabay раньше unsplash) этот тест краснеет."""
+    Порядок — по замеру 2026-10-10 (Pixabay на сложных запросах тянет чужие теги). Под
+    старым порядком (pixabay раньше unsplash) выдача стала бы pexels, pixabay, unsplash,
+    и этот тест краснеет. Порядок ОБРАЩЕНИЙ в сеть не проверяем: стоки опрашиваются
+    параллельно."""
     _write_cfg(unsplash=UNSPLASH_KEY)
     net = FakeNet({"api.pexels.com/v1/search": _pexels_photos(2),
                    "api.unsplash.com/search/photos": _unsplash_photos(2),
@@ -428,17 +456,15 @@ def test_pexels_short_then_unsplash_before_pixabay(iso, monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", net)
 
     cands = stock.search("cat on the window", "photo", n=5)
-    assert [c["provider"] for c in cands] == ["pexels", "pexels", "unsplash", "unsplash", "pixabay"]
-    first_uns = next(i for i, u in enumerate(net.calls) if "api.unsplash.com" in u)
-    first_pix = next(i for i, u in enumerate(net.calls) if "pixabay.com/api/" in u)
-    assert first_uns < first_pix
-    assert _params(net.urls("api.unsplash.com")[0])["per_page"] == "3"   # остаток после Pexels
-    assert _params(net.urls("pixabay.com/api/?")[0])["per_page"] == "3"  # добор остатка
+    assert [c["provider"] for c in cands] == ["pexels", "unsplash", "pixabay", "pexels", "unsplash"]
+    # каждый сток спрошен на весь n, а не на остаток после соседей
+    assert _params(net.urls("api.unsplash.com")[0])["per_page"] == "5"
+    assert _params(net.urls("pixabay.com/api/?")[0])["per_page"] == "5"
 
 
 def test_unsplash_429_falls_through_to_pixabay(iso, monkeypatch):
     """Demo-режим Unsplash: 50 запросов в час. Отказ 429 не валит поиск — Unsplash
-    пропускается с предупреждением, остаток добирает Pixabay."""
+    пропускается с предупреждением, остальные стоки продолжают выдачу по кругу."""
     _write_cfg(unsplash=UNSPLASH_KEY)
     net = FakeNet({"api.pexels.com/v1/search": _pexels_photos(2),
                    "api.unsplash.com/search/photos": urllib.error.HTTPError(
@@ -450,7 +476,7 @@ def test_unsplash_429_falls_through_to_pixabay(iso, monkeypatch):
                         lambda line="", **v: notes.append(line.format(**v) if v else line))
 
     cands = stock.search("cat on the window", "photo", n=5)
-    assert [c["provider"] for c in cands] == ["pexels", "pexels", "pixabay", "pixabay"]
+    assert [c["provider"] for c in cands] == ["pexels", "pixabay", "pexels", "pixabay"]
     assert net.urls("api.unsplash.com") != []                 # Unsplash спросили, он отказал
     assert net.urls("pixabay.com/api/") != []                 # и добор пошёл к Pixabay
     assert any("unsplash: HTTP 429" in n for n in notes), notes
@@ -482,6 +508,107 @@ def test_keyless_provider_covers_when_keyed_ones_absent(iso, monkeypatch):
     cands = stock.search("cat on the window", "photo", n=4)
     assert [c["provider"] for c in cands] == ["openverse", "openverse"]
     assert net.urls("pexels") == [] and net.urls("pixabay") == []
+
+
+# --------------------------------------------------------------------------- #
+# 4б. Выдача по кругу: в подборе все подключённые стоки, а не только первый
+# --------------------------------------------------------------------------- #
+def test_round_robin_all_four_stocks_two_each(iso, monkeypatch):
+    """Pexels, Unsplash и Pixabay с ключами и Openverse без ключа, у каждого по 4 кадра:
+    при n=8 — по 2 от каждого, по кругу в порядке приоритета: pexels, unsplash, pixabay,
+    openverse, и снова так же. Каждый сток спрошен на весь n, дублей нет."""
+    _write_cfg(unsplash=UNSPLASH_KEY)
+    net = FakeNet({"api.pexels.com/v1/search": _pexels_photos(4),
+                   "api.unsplash.com/search/photos": _unsplash_photos(4),
+                   "pixabay.com/api/": _pixabay_photos_many(4),
+                   "api.openverse.org/v1/images/": _openverse_cc0_many(4)})
+    monkeypatch.setattr(urllib.request, "urlopen", net)
+    monkeypatch.setenv("REELSI_STOCK_OFF", "")          # Openverse включён
+
+    cands = stock.search("cat on the window", "photo", n=8)
+    assert [c["provider"] for c in cands] == ["pexels", "unsplash", "pixabay", "openverse"] * 2
+    assert len({(c["provider"], c["id"]) for c in cands}) == 8
+    assert _params(net.urls("api.pexels.com")[0])["per_page"] == "8"
+    assert _params(net.urls("pixabay.com/api/?")[0])["per_page"] == "8"
+    assert _params(net.urls("api.openverse.org")[0])["page_size"] == "8"
+    assert net.urls("api.unsplash.com")
+
+
+def test_failing_stock_is_filled_by_the_others_round_robin(iso, monkeypatch):
+    """Pexels отвечает 500 — предупреждение, а n добирается по кругу из оставшихся:
+    при n=6 — unsplash, pixabay, unsplash, pixabay, unsplash, pixabay."""
+    _write_cfg(unsplash=UNSPLASH_KEY)
+    net = FakeNet({"api.pexels.com/v1/search": urllib.error.HTTPError(
+                       "https://api.pexels.com/v1/search", 500, "Server Error", None, None),
+                   "api.unsplash.com/search/photos": _unsplash_photos(4),
+                   "pixabay.com/api/": _pixabay_photos_many(4)})
+    monkeypatch.setattr(urllib.request, "urlopen", net)
+    notes: list[str] = []
+    monkeypatch.setattr(stock, "console_emit",
+                        lambda line="", **v: notes.append(line.format(**v) if v else line))
+
+    cands = stock.search("cat on the window", "photo", n=6)
+    assert [c["provider"] for c in cands] == ["unsplash", "pixabay"] * 3
+    assert any("pexels: HTTP 500" in n for n in notes), notes
+
+
+def test_short_stock_leaves_no_gap_and_no_duplicates(iso, monkeypatch):
+    """Pexels отдал один кадр, Unsplash и Pixabay — по четыре: при n=8 выдача без дыр и
+    дублей — pexels, unsplash, pixabay, unsplash, pixabay, unsplash, pixabay, unsplash.
+    У Pexels кончились кадры — в следующих кругах его просто пропускаем."""
+    _write_cfg(unsplash=UNSPLASH_KEY)
+    net = FakeNet({"api.pexels.com/v1/search": _pexels_photos(1),
+                   "api.unsplash.com/search/photos": _unsplash_photos(4),
+                   "pixabay.com/api/": _pixabay_photos_many(4)})
+    monkeypatch.setattr(urllib.request, "urlopen", net)
+
+    cands = stock.search("cat on the window", "photo", n=8)
+    assert [c["provider"] for c in cands] == ["pexels", "unsplash", "pixabay", "unsplash",
+                                              "pixabay", "unsplash", "pixabay", "unsplash"]
+    assert len({(c["provider"], c["id"]) for c in cands}) == 8
+
+
+def test_merge_round_robin_skips_repeats_and_exhausted_stocks():
+    """Слияние по кругу: повтор (провайдер, id) внутри одного стока второго кадра не даёт,
+    а кончившийся сток пропускается, пока у других кадры есть."""
+    a = [{"provider": "pexels", "id": 1}, {"provider": "pexels", "id": 1},
+         {"provider": "pexels", "id": 2}]
+    b = [{"provider": "pixabay", "id": 1}]
+    got = stock._merge_round_robin([a, b], 10)
+    assert [(c["provider"], c["id"]) for c in got] == [("pexels", 1), ("pixabay", 1),
+                                                       ("pexels", 2)]
+
+
+def test_result_order_ignores_which_stock_answers_first(iso, monkeypatch):
+    """Pexels отвечает последним (искусственная задержка) — выдача всё равно по приоритету:
+    при n=4 — pexels, unsplash, pixabay, pexels. Порядок ответов сети на выдачу не влияет."""
+    _write_cfg(unsplash=UNSPLASH_KEY)
+    net = FakeNet({"api.pexels.com/v1/search": _pexels_photos(4),
+                   "api.unsplash.com/search/photos": _unsplash_photos(4),
+                   "pixabay.com/api/": _pixabay_photos_many(4)})
+
+    def pexels_last(req, timeout=None):
+        if "api.pexels.com" in req.full_url:
+            time.sleep(0.3)
+        return net(req, timeout)
+
+    monkeypatch.setattr(urllib.request, "urlopen", pexels_last)
+    cands = stock.search("cat on the window", "photo", n=4)
+    assert [c["provider"] for c in cands] == ["pexels", "unsplash", "pixabay", "pexels"]
+
+
+def test_video_search_skips_photo_only_stocks(iso, monkeypatch):
+    """Видео не зовёт Unsplash и Openverse вовсе — у них нет видео. Pexels и Pixabay
+    отдают по кругу: при n=4 — pexels, pixabay, pexels, pixabay."""
+    _write_cfg(unsplash=UNSPLASH_KEY)
+    net = FakeNet({"api.pexels.com/videos/search": _pexels_videos(2),
+                   "pixabay.com/api/videos/": _pixabay_videos()})
+    monkeypatch.setattr(urllib.request, "urlopen", net)
+    monkeypatch.setenv("REELSI_STOCK_OFF", "")          # Openverse включён, но для видео не звался бы
+
+    cands = stock.search("cat on the window", "video", n=4)
+    assert [c["provider"] for c in cands] == ["pexels", "pixabay", "pexels", "pixabay"]
+    assert net.urls("api.unsplash.com") == [] and net.urls("api.openverse.org") == []
 
 
 # --------------------------------------------------------------------------- #
@@ -605,7 +732,8 @@ def test_unsplash_photo_candidates(iso, monkeypatch):
     _write_cfg(pexels=None, pixabay=None, unsplash=UNSPLASH_KEY)
     net = FakeNet({"api.unsplash.com/search/photos": _unsplash_photos(2)})
     monkeypatch.setattr(urllib.request, "urlopen", net)
-    monkeypatch.setenv("REELSI_STOCK_OFF", "")          # остальные стоки не мешают
+    # Openverse выключен фикстурой iso: поиск идёт только по Unsplash (без ключа он бы
+    # тоже опрашивался и шумел бы отказом сети в этом тесте)
 
     cands = stock.search("cat on the window", "photo", n=2)
     assert len(cands) == 2 and all(c["provider"] == "unsplash" for c in cands)

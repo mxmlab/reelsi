@@ -1003,6 +1003,7 @@ def test_preview_sends_live_commands_and_mutes_its_own_voice(tmp_path):
            + _func_src(preview, "vtLiveSid")
            + _func_src(preview, "vtLivePause")
            + _func_src(preview, "vtIsEd")
+           + _func_src(preview, "vtEa")
            + _func_src(preview, "vtMuteHost")
            + _func_src(styles, "voiceFxLiveOn"))
     body = r"""
@@ -1098,7 +1099,7 @@ def test_live_playback_does_not_seek_while_the_video_just_plays(tmp_path):
            + "".join(_func_src(preview, n) for n in (
                "vtOf", "vtSrcAt", "vtAudioCam", "vtPlaying", "vtDetach", "vtLiveOn", "vtLiveUpdate",
                "vtLiveRate", "vtLiveExpect", "vtLiveCmd", "vtLiveSid", "vtLivePause",
-               "vtIsEd", "vtMuteHost"))
+               "vtIsEd", "vtEa", "vtMuteHost"))
            + _func_src(styles, "voiceFxLiveOn"))
     body = r"""
 let NOW=1000;Date.now=()=>NOW;

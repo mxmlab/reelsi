@@ -172,10 +172,21 @@ def test_paths_come_from_paths_module_only():
     assert not bad, "папка модуля считается от __file__ вне core/paths.py:\n" + "\n".join(bad)
 
 
+# Где правка sys.path — сама функция, а не обход импорта модулей проекта.
+SYS_PATH_EXCEPTIONS = {
+    "core/ort_gpu.py": (
+        "папка со СВОЕЙ копией внешнего пакета onnxruntime-gpu встаёт перед системным "
+        "onnxruntime — в этом и смысл модуля; модулей проекта в папке нет, двойной загрузки "
+        "не бывает"),
+}
+
+
 def test_no_sys_path_edits_in_core():
     """В core/ и api/ нет sys.path.insert/append — иначе модуль грузится дважды."""
     bad = []
     for rel in _core_py_files():
+        if rel.replace("\\", "/") in SYS_PATH_EXCEPTIONS:
+            continue
         text = open(os.path.join(ROOT, rel), encoding="utf-8", errors="replace").read()
         for i, line in enumerate(text.splitlines(), 1):
             if _SYS_PATH_RE.search(line):

@@ -249,7 +249,7 @@ def test_gdrive_watchdog_and_cancel(client, monkeypatch):
     monkeypatch.setattr(gdrive, "_run_rclone", lambda *a, **k: gdrive._RCLONE_STALLED)
     with gdrive.GDLOCK:
         gdrive.GDJOB.update(gdrive.GDFRESH, running=True, done=False, failed=None, log=[])
-    gdrive._download_job(["fake", "rclone"], url)
+    gdrive._download_job([(["fake", "rclone"], None)], url)
     assert gdrive.GDJOB["cur"] == "нет данных 10 минут", gdrive.GDJOB["cur"]
     assert gdrive.GDJOB["failed"] is True and gdrive.GDJOB["done"] is True
 
@@ -257,7 +257,7 @@ def test_gdrive_watchdog_and_cancel(client, monkeypatch):
     with gdrive.GDLOCK:
         gdrive.GDJOB.update(gdrive.GDFRESH, running=True, done=False, failed=None, log=[])
         gdrive.GDJOB["cancel"] = True          # как его ставит gdrive_kill из /api/cancel
-    gdrive._download_job(["fake", "rclone"], url)
+    gdrive._download_job([(["fake", "rclone"], None)], url)
     assert gdrive.GDJOB["cur"] == "скачивание остановлено", gdrive.GDJOB["cur"]
 
 

@@ -69,6 +69,9 @@ r"""Два клипа — два спикера: каждая фича берё�
 17. ИИ-интро: длина строки интро — из СТИЛЯ клипа (тело
    `/api/ai_intro` несёт `styleForJob(job)`, как сборка) — `aiIntroRun`, `aiIntroOne`;
    `test_ai_intro_sends_the_style_of_the_clip`.
+18. смена стиля в профиле спикера переводит клипов, шедших за его стилем, — `speakerStyleFollow`
+   и вызов из `saveSpeaker`; `test_style_change_in_profile_moves_only_clips_that_followed_it`,
+   `test_saving_speaker_style_moves_its_clips_and_refreshes_open_clip`.
 
 ДЫРУ В ПОКРЫТИИ ВИДНО ТОЛЬКО МУТАЦИЕЙ. Место, не попавшее ни в одну проверку
 ниже, остаётся «зелёным», пока кто-нибудь не подменит в нём `clipSpeaker(...)`
@@ -990,6 +993,8 @@ async function fetch(url,opts){
   BODIES.push({url:url,body:JSON.parse((opts&&opts.body)||'{}')});
   if(url==='/api/savespeaker')return {json:async()=>({ok:true,key:LABEL,
     path:'D:\\spk\\'+LABEL+'.json'})};
+  // Свежий профиль с диска: редактируемый спикер на диске уже есть (saveSpeaker берёт базу отсюда)
+  if(url==='/api/speakers')return {json:async()=>({ok:true,speakers:{[SPKEDIT]:{label:SPKEDIT}}})};
   return {json:async()=>({ok:true})};}
 """
 
@@ -1003,7 +1008,7 @@ def test_renaming_a_speaker_retags_only_clips_of_that_speaker(tmp_path):
     КЛИПА, а не по общему селектору шага 1: клип другого спикера остаётся со своим тегом.
     """
     script = (HARNESS + _door() + SAVE_SPK_STUBS
-              + _funcs(STYLES_JS, ("saveSpeaker",))
+              + _funcs(STYLES_JS, ("speakerFresh", "speakerStyleFollow", "saveSpeaker"))
               + _tail(r"""(async()=>{
   const out={};
   SPKEDIT=SPK_A;
@@ -1111,3 +1116,111 @@ def test_ai_intro_sends_the_style_of_the_clip(tmp_path):
     assert [c["url"] for c in res["single"]] == ["/api/ai_intro"] * 2, res["single"]
     assert [c["style"] for c in res["single"]] == ["stA", "stB"], res["single"]
     assert [c["style"] for c in res["batch"]] == ["stA", "stB"], res["batch"]
+
+
+# ============ 18. СМЕНА СТИЛЯ В ПРОФИЛЕ СПИКЕРА ============
+@node
+def test_style_change_in_profile_moves_only_clips_that_followed_it(tmp_path):
+    """18. Смена стиля в профиле переводит клипы, которые шли за стилем спикера, и только их.
+
+    Клипы спикера А: со стилем stA и своей копией (переезжает, копия стирается), без ключа
+    (переезжает), со своим stV и с '__custom__' (остаются). Клип спикера Б со stA не трогается:
+    его стиль выбирает профиль Б. Чужой стиль в STYLES или тот же стиль — ничего не меняется.
+    """
+    script = (HARNESS + _door() + _funcs(AE_JS, ("defJob",))
+              + _funcs(STYLES_JS, ("speakerStyleFollow",))
+              + _tail(r"""(async()=>{
+  const out={};
+  const mk=(n,job)=>({xml:'D:\\out\\'+n+'.xml',name:n,status:{},inserts:[],job:job});
+  CLIPS.length=0;
+  CLIPS.push(mk('a1',{speaker:SPK_A,styleKey:'stA',style:{label:'копия'}}));
+  CLIPS.push(mk('a2',{speaker:SPK_A}));
+  CLIPS.push(mk('a3',{speaker:SPK_A,styleKey:'stV'}));
+  CLIPS.push(mk('a4',{speaker:SPK_A,styleKey:'__custom__'}));
+  CLIPS.push(mk('b1',{speaker:SPK_B,styleKey:'stA'}));
+  out.ret=speakerStyleFollow(SPK_A,'stA','stB');
+  out.keys=CLIPS.map(c=>c.job.styleKey||null);
+  out.hasStyle=CLIPS.map(c=>'style' in c.job);
+  const snap=JSON.stringify(CLIPS.map(c=>c.job));
+  out.unknown=speakerStyleFollow(SPK_A,'stB','нет такого стиля');
+  out.same=speakerStyleFollow(SPK_A,'stB','stB');
+  out.noChange=snap===JSON.stringify(CLIPS.map(c=>c.job));
+  // Клип без ключа, но со своей копией стиля — кастом: копию не стираем
+  CLIPS.length=0;
+  CLIPS.push(mk('a5',{speaker:SPK_A,style:{label:'свой кастом'}}));
+  out.custom=speakerStyleFollow(SPK_A,'','stB');
+  out.customKey=CLIPS[0].job.styleKey||null;
+  out.customHasStyle='style' in CLIPS[0].job;
+  console.log(JSON.stringify(out));
+"""))
+    res = _run_node(tmp_path, "twospk_style_follow.js", script)
+    assert res["ret"] == {"moved": 2, "kept": 2}, res["ret"]
+    assert res["keys"] == ["stB", "stB", "stV", "__custom__", "stA"], res["keys"]
+    assert res["hasStyle"] == [False] * 5, res["hasStyle"]
+    assert res["unknown"] == {"moved": 0, "kept": 0}, res["unknown"]
+    assert res["same"] == {"moved": 0, "kept": 0}, res["same"]
+    assert res["noChange"], res
+    assert res["custom"] == {"moved": 0, "kept": 1}, res["custom"]
+    assert res["customKey"] is None and res["customHasStyle"] is True, res
+
+
+SAVE_STYLE_STUBS = r"""
+const BODIES=[],CAPS=[],SELECTS=[];
+const SPKDEF={},SPKDEF_FORMAT='9:16';
+let SPKEDIT='',SPKSAVED='';
+const FORMS={spk_label:SPK_A,spk_style:'stB'};
+function val(id){return (id in FORMS)?FORMS[id]:(id==='speaker'?GENERAL:'');}
+function $(id){if(!ELS[id])ELS[id]={id:id,className:'',textContent:'',innerHTML:'',
+  value:'',style:{},dataset:{},checked:true,querySelectorAll:()=>[]};return ELS[id];}
+function captureAE(){CAPS.push(curAE);}
+function selectAE(i){SELECTS.push(i);curAE=i;}
+async function loadSpeakers(){}
+async function onSpeakerChange(){}
+function closeModal(id){}
+async function fetch(url,opts){
+  BODIES.push({url:url,body:JSON.parse((opts&&opts.body)||'{}')});
+  if(url==='/api/savespeaker')return {json:async()=>({ok:true,key:SPK_A,
+    path:'D:\\spk\\'+SPK_A+'.json'})};
+  // Профиль с диска: стиль на диске — stA, в окне выбран stB
+  if(url==='/api/speakers')return {json:async()=>({ok:true,speakers:{[SPK_A]:{label:SPK_A,style:'stA'}}})};
+  return {json:async()=>({ok:true})};}
+"""
+
+
+@node
+def test_saving_speaker_style_moves_its_clips_and_refreshes_open_clip(tmp_path):
+    """18. Сохранение профиля со сменой стиля доходит до клипов спикера.
+
+    Профиль А был на stA, в окне выбран stB. Клип А со stA переехал, клип А со своим stV и
+    клип Б — нет. Открытый на шаге 3 клип А переехал: его несохранённые правки уходят в задание
+    (captureAE) до переключения, а панель перечитывает стиль (selectAE). Сохранение без смены
+    стиля не трогает клипов и панели вовсе.
+    """
+    script = (HARNESS + _door() + _funcs(AE_JS, ("defJob",))
+              + _funcs(STYLES_JS, ("speakerFresh", "speakerStyleFollow", "saveSpeaker"))
+              + SAVE_STYLE_STUBS
+              + _tail(r"""(async()=>{
+  const out={};
+  const mk=(n,job)=>({xml:'D:\\out\\'+n+'.xml',name:n,status:{},inserts:[],job:job});
+  CLIPS.length=0;
+  CLIPS.push(mk('a1',{speaker:SPK_A,styleKey:'stA'}));
+  CLIPS.push(mk('a2',{speaker:SPK_A,styleKey:'stV'}));
+  CLIPS.push(mk('b1',{speaker:SPK_B,styleKey:'stA'}));
+  curAE=0;
+  SPKEDIT=SPK_A;
+  await saveSpeaker();
+  out.keys=CLIPS.map(c=>c.job.styleKey);
+  out.captured=CAPS.slice();
+  out.selected=SELECTS.slice();
+  // Тот же стиль, что уже в профиле, — ни клипов, ни панели
+  FORMS.spk_style='stA';
+  CAPS.length=0;SELECTS.length=0;
+  await saveSpeaker();
+  out.again={keys:CLIPS.map(c=>c.job.styleKey),captured:CAPS.slice(),selected:SELECTS.slice()};
+  console.log(JSON.stringify(out));
+"""))
+    res = _run_node(tmp_path, "twospk_save_style.js", script)
+    assert res["keys"] == ["stB", "stV", "stA"], res["keys"]
+    assert res["captured"] == [0], res["captured"]
+    assert res["selected"] == [0], res["selected"]
+    assert res["again"] == {"keys": ["stB", "stV", "stA"], "captured": [], "selected": []}, res["again"]

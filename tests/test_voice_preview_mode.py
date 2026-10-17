@@ -59,12 +59,12 @@ node = pytest.mark.skipif(not shutil.which("node"), reason="стенд треб�
 # сам себя). Порядок вырезки — как в файлах, чтобы вставки не мешали друг другу.
 VOICE_FUNCS = ("voiceFxHostOn", "voiceFxLiveOn", "voiceFxWindowOn", "voiceFxHasVst",
                "voiceFxHostKey", "voiceFxHostSync", "voiceFxHostStart", "voiceFxHostStop",
-               "voiceFxHostDump", "voiceFxStatesApply", "vfxEl")
+               "voiceFxHostDump", "voiceFxStatesApply", "vfxEl", "speakerFresh", "speakerRefresh")
 PREVIEW_FUNCS = ("vtOf", "vtCam1", "vtSrcAt", "vtNow", "vtAudioCam", "vtPlaying", "vtEl",
                  "vtGate", "vtNote", "vtProfileFx", "vtFx", "vtDetach", "vtStop",
                  "vtLiveOn", "vtSetMute", "vtLiveUpdate", "vtLiveRate", "vtLiveExpect",
                  "vtLiveCmd", "vtLiveSid", "vtLivePlay", "vtLivePause",
-                 "vtIsPv", "vtIsEd", "vtMuteHost", "vtStage", "vtHostLive", "vtLivePrep",
+                 "vtIsPv", "vtIsEd", "vtEa", "vtMuteHost", "vtStage", "vtHostLive", "vtLivePrep",
                  "vtStatesWait", "vtStatesTake", "vtHostDown", "vtPrep", "vtVoiceShow",
                  "vtVoiceWatch", "vtVoiceTake", "vtVoiceUse", "vtUse", "vtTick",
                  "vtVoiceLine", "vtVoiceStop", "vtSeek", "vtRate")

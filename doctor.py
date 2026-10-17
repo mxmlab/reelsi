@@ -261,6 +261,29 @@ def check_optional() -> None:
         row(OK if ok else WARN, name,
             info if ok else t("нет ({info}) — отключится: {feature}",
                               info=info, feature=t(feature)))
+    check_rembg_gpu()
+
+
+def check_rembg_gpu() -> None:
+    """Снятие фона на видеокарте (BiRefNet через onnxruntime-gpu). Без CUDA фон снимается
+    на процессоре: медленнее в разы, но работает, поэтому WARN, а не FAIL. Команду выводим
+    текстом и ничего не запускаем. Замер и причины — в docs/PLATFORMS.md, раздел 5."""
+    from core import ort_gpu
+    ort_gpu.activate()                                   # до импорта: своя папка onnxruntime-gpu (core/ort_gpu.py)
+    name = t("снятие фона на видеокарте")
+    ok, info = _mod("onnxruntime")
+    if not ok:
+        row(WARN, name, t("нет onnxruntime ({info}) — фон у картинок не снимается", info=info))
+        return
+    import onnxruntime
+    if "CUDAExecutionProvider" in onnxruntime.get_available_providers():
+        # Системный onnxruntime-gpu (его ставит инструкция) метаданных модуля `onnxruntime` не имеет:
+        # версию берём из того дистрибутива, который реально даёт модуль.
+        dist = ort_gpu.system_dist()
+        row(OK, name, t("CUDA доступна (onnxruntime {info})", info=dist[1] if dist else info))
+        return
+    row(WARN, name, t("CUDA нет, фон на процессоре (медленно). Чтобы на видеокарте: "
+                      "⚙ › Генерация › Снятие фона на видеокарте › Скачать"))
 
 
 # --------------------------------------------------------------------------- #

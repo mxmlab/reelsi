@@ -159,7 +159,10 @@ def test_intro_words_join_highlight_phrases(xml_subs):
     """Сборка с выделенной цветом строкой интро: её слова дают наезд, без строки — нет."""
     meta, cams, subs, _xi = xml2ae.parse_full(xml_subs)
     fps = meta["fps"]
-    st = {"cam1_zoom": "jump", "cam1_take_zoom": False, "cam1_yellow_zoom": True}
+    # Тест про фразу интро, не про паузы: старое правило пауз (0 с после склейки, 1 с между
+    # наездами) — иначе наезд на фразу у самой склейки встаёт на склейку + 1 с (test_take_pauses)
+    st = {"cam1_zoom": "jump", "cam1_take_zoom": False, "cam1_yellow_zoom": True,
+          "cam1_take_after_cut": 0.0, "cam1_take_gap": 1.0}
 
     # Пара соседних слов внутри длинного куска камеры 1: они обязаны собраться в одну
     # фразу (разрыв по времени <= 0.6 с), и наезд по ней обязан уместиться в кусок.

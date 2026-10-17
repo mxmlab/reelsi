@@ -75,10 +75,10 @@ PREVIEW_FUNCS = ("openPreview", "pvVideoTo", "pvWordAt", "pvSegAt", "bufMake", "
                  "camVisual", "camIdle", "camApply", "camTrack", "camDeltas", "camBufs",
                  "vtPlaying", "vtSrcAt", "vtNow", "vtAudioCam", "vtGate", "vtTick",
                  "vtSeek", "vtRate", "vtUse", "vtDetach",
-                 "vtIsPv", "vtIsEd", "vtMuteHost",
+                 "vtIsPv", "vtIsEd", "vtEa", "vtMuteHost",
                  # Звук редактора: буфер, очередь, часы, гейн — боевые тела.
                  "eaOpen", "eaDecode", "eaVoice", "eaBuf", "eaSig", "eaPlan", "eaNow", "eaStop",
-                 "eaStart", "eaClock", "eaSync", "eaGain", "dbToGain",
+                 "eaStart", "eaClock", "eaSync", "eaGain", "eaOwner", "eaIsIpv", "eaPlanIpv", "eaCensor", "eaCensorGain", "eaPos", "dbToGain",
                  "setMediaVol", "applyMediaVol", "syncVolUI",
                  "pvSrc", "MEDIA_VOL")
 # Объявления из файлов (не копии): константы звука и видео-подгонки и состояние EA.

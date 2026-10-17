@@ -10,20 +10,23 @@
 
 Почему именно rclone, а не своя качалка на requests — в докстроке `core/rclone.py`.
 """
-import os, shutil, subprocess, threading, time
+import json, os, shutil, subprocess, threading, time
 from typing import Any, Callable
 from flask import Response, jsonify, request
 from ._core import bp, job_log_add, job_log_since, jstr, kill_tree, umsg_err, sysexit_text
 from core.applog import get_logger
 from core.jobproc import STALLED_RC, run_watched
 from core.rclone import (checks_fields, clean_line, is_noise, parse_gdrive_link,
-                         progress_line, rclone_cmd, rclone_remote, stats_fields)
+                         progress_line, rclone_cmd, rclone_list_cmd, rclone_remote,
+                         stats_fields, top_folders)
 from core.umsg import ReelsiError, umsg
 
 log = get_logger("reelsi.gdrive")
 
 # Сторож простоя rclone: 10 минут тишины в stdout -> принудительное завершение
 RCLONE_STALL_SEC = 10 * 60
+# Листинг папки (rclone lsjson -R): большая папка — секунды, зависший rclone — минуту
+RCLONE_LIST_TIMEOUT_SEC = 60
 _RCLONE_STALLED = STALLED_RC
 # Поля разобранного прогресса, по изменению которых видно, что передача идёт
 # `speed`/`eta` сюда не входят намеренно: они меняются
@@ -133,9 +136,10 @@ def _run_rclone(args: list[str], emit: Callable[..., Any], stat: Callable[..., A
 # ключа — это 500 на ровном месте.
 # cancelled: «Стоп» нажал человек — это НЕ ошибка: раньше отмена
 # приезжала на страницу как failed=True и рисовалась красным тостом «не удалось».
+# part/parts — какая по счёту папка раскладки качается (в обычном скачивании parts=1)
 GDFRESH: dict[str, Any] = {"cur": "запуск rclone…", "i": 0, "n": 0, "pct": None, "bytes": "", "total": "",
            "speed": "", "eta": "", "file": "", "file_pct": None, "cancel": False,
-           "cancelled": False}
+           "cancelled": False, "part": 0, "parts": 0}
 GDJOB: dict[str, Any] = dict(GDFRESH, running=False, done=False, failed=None, log=[], log_base=0,
              url="", started=0)
 GDLOCK = threading.Lock()
@@ -153,12 +157,29 @@ def _gstat(fields: dict[str, Any]) -> None:
         GDJOB.update(fields)
 
 
-def _download_job(cmd: list[str], url: str) -> None:
+def _download_job(steps: list[tuple[list[str], tuple[str, dict[str, Any]] | None]], url: str) -> None:
+    """Скачивание: команды rclone по очереди, в одном потоке.
+
+    steps — (команда, подпись папки). Обычное скачивание — одна команда без подписи;
+    раскладка по папкам ссылки — по команде на папку, подпись («папка «X» → …») идёт в лог
+    перед каждой. «Стоп» рвёт текущую команду и следующие не запускает. Итог «не удалось» —
+    если упала хоть одна: ошибка одной папки не отменяет остальные, они качаются дальше.
+    """
     ok = False
     try:
         _gemit(f"качаю {url}")
-        code = _run_rclone(cmd, _gemit, _gstat)
-        ok = code == 0
+        codes: list[int] = []
+        for i, (cmd, label) in enumerate(steps, 1):
+            if _gd_cancelled():
+                break
+            with GDLOCK:
+                GDJOB["part"] = i
+            if label is not None:
+                _gemit(label[0], **label[1])
+            codes.append(_run_rclone(cmd, _gemit, _gstat))
+        bad = [c for c in codes if c != 0]
+        ok = not bad and len(codes) == len(steps)
+        code = bad[0] if bad else 0          # по первой упавшей команде — текст статуса
         if GDJOB.get("cancel"):
             cur = "скачивание остановлено"
         elif code == _RCLONE_STALLED:
@@ -192,14 +213,51 @@ def _download_job(cmd: list[str], url: str) -> None:
                          failed=(not ok) and not cancelled)
 
 
+def _map_steps(remote: str, url: str, raw_map: Any) -> list[tuple[list[str], tuple[str, dict[str, Any]] | None]]:
+    """Раскладка из запроса → команды rclone, по порядку.
+
+    Элемент {dir, dest}: dir — имя подпапки ссылки, "" — файлы самой ссылки. Пустой dest —
+    «не качать»: элемент пропускается. Папку назначения создаём здесь же, как dest обычного
+    скачивания. Битая форма отвечает внятной ошибкой gdrive_map_bad, а не 500.
+    """
+    if not isinstance(raw_map, list):
+        raise ReelsiError(umsg("gdrive_map_bad", "Раскладка по папкам задана неверно: {err}",
+                               err="ждали список"))
+    steps: list[tuple[list[str], tuple[str, dict[str, Any]] | None]] = []
+    try:
+        for el in raw_map:
+            if not isinstance(el, dict):
+                raise ValueError("элемент раскладки — не объект")
+            name, to = el.get("dir"), el.get("dest")
+            if not isinstance(name, str) or not isinstance(to, str):
+                raise ValueError("dir и dest — строки")
+            to = to.strip().strip('"')
+            if not to:
+                continue
+            cmd = rclone_cmd(remote, url, to, sub=name or None, root_only=not name)
+            os.makedirs(to, exist_ok=True)
+            label = (("папка «{dir}» → {dest}", {"dir": name, "dest": to}) if name
+                     else ("файлы корня ссылки → {dest}", {"dest": to}))
+            steps.append((cmd, label))
+    except ValueError as e:
+        raise ReelsiError(umsg("gdrive_map_bad", "Раскладка по папкам задана неверно: {err}",
+                               err=str(e)))
+    if not steps:
+        raise ReelsiError(umsg("gdrive_map_bad", "Раскладка по папкам задана неверно: {err}",
+                               err="ни одна папка не выбрана"))
+    return steps
+
+
 @bp.route("/api/gdrive_download", methods=["POST"])
 def api_gdrive_download() -> Response:
-    """Скачать материал по ссылке гугл-диска. body: {url, dest}.
+    """Скачать материал по ссылке гугл-диска. body: {url, dest, map?}.
+    map — раскладка по папкам ссылки (см. _map_steps). Нет map — всё одной командой, как раньше.
     Свой джоб (GDJOB), не общий JOB: нарезка не должна ждать гигабайт с диска —
     тот же образец, что у превью-прокси (PXJOB)."""
     d = request.get_json(silent=True) or {}
     url = jstr(d, "url").strip()
     dest = jstr(d, "dest").strip().strip('"')
+    raw_map = d.get("map")
     try:
         spec = parse_gdrive_link(url)
         if not spec:
@@ -220,21 +278,73 @@ def api_gdrive_download() -> Response:
             if not os.path.isdir(dest):
                 raise ReelsiError(umsg("no_dest", f"Не получается создать папку загрузки: {dest}",
                                       path=dest))
-            cmd = rclone_cmd(remote, url, dest)
+            steps: list[tuple[list[str], tuple[str, dict[str, Any]] | None]]
+            if raw_map is None:
+                steps = [(rclone_cmd(remote, url, dest), None)]
+            else:
+                steps = _map_steps(remote, url, raw_map)
         except OSError as e:
             raise ReelsiError(umsg("dest_error", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
         with GDLOCK:
             GDJOB.update(GDFRESH, running=True, done=False, failed=None, log=[], log_base=0,
-                         url=url, started=int(time.time()))
+                         url=url, started=int(time.time()), parts=len(steps))
         try:
-            threading.Thread(target=_download_job, args=(cmd, url), daemon=True).start()
+            threading.Thread(target=_download_job, args=(steps, url), daemon=True).start()
         except ReelsiError: raise
         except Exception:
             with GDLOCK:
                 GDJOB["running"] = False
             raise
-        return jsonify(ok=True, remote=remote, kind=spec["kind"], dest=dest)
+        return jsonify(ok=True, remote=remote, kind=spec["kind"], dest=dest, parts=len(steps))
+    except (ReelsiError, SystemExit) as e:
+        return jsonify(**umsg_err(e))
+
+
+@bp.route("/api/gdrive_list", methods=["POST"])
+def api_gdrive_list() -> Response:
+    """Что лежит в ссылке на папку: подпапки и файлы корня — до скачивания. body: {url}.
+
+    Нужно, чтобы спросить, куда класть каждую подпапку: папка с несколькими камерами
+    внутри раньше качалась одной кучей, и списки камер её подпапок не видели. Для ссылки
+    на файл rclone не запускаем — списывать нечего, отвечаем kind='file'.
+    """
+    d = request.get_json(silent=True) or {}
+    url = jstr(d, "url").strip()
+    try:
+        spec = parse_gdrive_link(url)
+        if not spec:
+            raise ReelsiError(umsg("bad_link", "Не похоже на ссылку гугл-диска (нужна ссылка "
+                                "на файл или папку)"))
+        if spec["kind"] == "file":
+            return jsonify(ok=True, kind="file")
+        if not shutil.which("rclone"):
+            raise ReelsiError(umsg("rclone_missing", "rclone не найден в PATH. Поставь rclone и один раз "
+                                "настрой гугл-диск: rclone config"))
+        try:
+            remote = rclone_remote()
+        except RuntimeError as e:
+            raise ReelsiError(umsg("rclone_not_configured", str(e), err=str(e)))
+        try:
+            proc = subprocess.run(rclone_list_cmd(remote, url), capture_output=True,
+                                  encoding="utf-8", errors="replace",
+                                  timeout=RCLONE_LIST_TIMEOUT_SEC,
+                                  creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except subprocess.TimeoutExpired:
+            raise ReelsiError(umsg("gdrive_list_timeout", "rclone не ответил за {sec} секунд: "
+                                   "папка большая или сеть медленная. Попробуй ещё раз",
+                                   sec=RCLONE_LIST_TIMEOUT_SEC))
+        if proc.returncode != 0:
+            lines = [x for x in (proc.stderr or "").splitlines() if x.strip()]
+            last = clean_line(lines[-1]) if lines else f"код {proc.returncode}"
+            raise ReelsiError(umsg("gdrive_list_failed", "Не получилось прочитать папку гугл-диска: "
+                                   "{err}", err=last))
+        try:
+            items = json.loads(proc.stdout or "[]")
+        except ValueError:
+            raise ReelsiError(umsg("gdrive_list_failed", "Не получилось прочитать папку гугл-диска: "
+                                   "{err}", err="rclone вернул не JSON"))
+        return jsonify(ok=True, kind="folder", **top_folders(items))
     except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 

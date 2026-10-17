@@ -508,14 +508,12 @@ function podTlWhere(clientX,clientY){
 }
 
 // Нажатие на «Вся запись». Край блока — тянуть границу, середина — сдвиг (как раньше).
-// Плейхед и пустое место — перемотка (линейка — протяжка вида, см. podMidDown): currentTime идёт за курсором, пока кнопка
-// зажата, без ожидания отпускания. Игра при этом НЕ останавливается: тяга только переставляет
-// позицию (как перемотка в редакторе шага 1). Пустое место окно не двигает: окно — средняя кнопка.
+// Плейхед, линейка и пустое место — перемотка: currentTime идёт за курсором, пока кнопка зажата, без
+// ожидания отпускания. Игра при этом НЕ останавливается: тяга только переставляет позицию (как перемотка
+// в редакторе шага 1). Окно при этом не двигается: прокрутка окна — средняя кнопка и колесо (podMid).
 function podDownTl(e){
   const wh=podTlWhere(e.clientX,e.clientY);
-  // Линейка — протяжка вида, а не перемотка (как у редактора шага 1): окно едет за курсором
-  if(wh&&wh.kind==='ruler'){podMid(e);e.preventDefault();return;}
-  if(!wh||wh.kind==='ph'){
+  if(!wh||wh.kind==='ph'||wh.kind==='ruler'){
     POD.drag={id:null,kind:'seek',t0:podT(e.clientX),moved:false,orig:null};
     podSeek(POD.drag.t0);
   }else{
@@ -529,10 +527,8 @@ function podDownTl(e){
   e.preventDefault();
 }
 
-// Средняя кнопка и линейка: протяжка окна — общая tlMidPan (00-core.js). Окно едет за курсором
-// ровно на пройденное расстояние; курсор захвачен, поэтому тяга не теряет окно за краем холста.
-// Линейка и средняя кнопка. Окно на всю запись тоже идёт сюда: протяжка там безвредна (окно не
-// сдвигается), а клик по линейке должен ставить плейхед и при полном окне.
+// Средняя кнопка: протяжка окна — общая tlMidPan (00-core.js). Окно едет за курсором ровно на
+// пройденное расстояние; курсор захвачен, поэтому тяга не теряет окно за краем холста.
 function podMid(e){
   if(!POD.dur)return;
   const el=$('pod_tl');if(!el)return;
@@ -540,15 +536,14 @@ function podMid(e){
     const cv=podTlCanvas();if(!cv)return;
     const w=cv.getBoundingClientRect().width||1;
     const r=podPanBy(s.v0,s.v1,-dx,w,POD.dur);     // podPanBy: dx > 0 — окно вправо, тянем вправо — окно назад
-    POD.v0=r[0];POD.v1=r[1];podRenderTl();},
-    click:cx=>podSeek(podT(cx))});                 // клик по линейке — плейхед в точку клика, окно стоит
+    POD.v0=r[0];POD.v1=r[1];podRenderTl();}});
 }
-// Курсор над плейхедом — ew-resize: за него тянут (см. podDownTl)
+// Курсор над плейхедом — ew-resize: за него тянут (см. podDownTl); над линейкой — тоже ew-resize
 function podTlHover(e){
   if(POD.drag||tlPanning($('pod_tl')))return;
   const tl=$('pod_tl');if(!tl)return;
   const wh=podTlWhere(e.clientX,e.clientY);
-  tl.style.cursor=(wh&&wh.kind==='ph')?'ew-resize':(wh&&wh.kind==='ruler')?'grab':'';
+  tl.style.cursor=(wh&&(wh.kind==='ph'||wh.kind==='ruler'))?'ew-resize':'';
 }
 
 // Двойной клик по пустому месту «Вся запись» — новый кусок там (так «возвращается вырезанное»).

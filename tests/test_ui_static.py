@@ -798,10 +798,14 @@ def test_speaker_editor_keeps_fields_it_does_not_show(js):
     В speakers/*.json есть то, чего в окне нет: `ref` (референсные кадры под
     автоопределение по лицу) и `breath_model`. Сборка «с нуля» стёрла бы их молча —
     вылезло бы только на следующем прогоне, уже без данных.
+
+    База копии — СВЕЖИЙ профиль с диска (speakerFresh), а не копия SPEAKERS: та отстаёт
+    от записи сервера при закрытии окна плагина (состояние voice_fx пишет сервер сам).
     """
     body = _save_speaker(js)
-    assert "JSON.parse(JSON.stringify(SPEAKERS[SPKEDIT]))" in body, (
-        "saveSpeaker собирает профиль заново — поля вне окна потеряются")
+    assert "speakerFresh(SPKEDIT)" in body and "JSON.parse(JSON.stringify(base))" in body, (
+        "saveSpeaker собирает профиль заново или берёт базу из копии SPEAKERS — "
+        "поля вне окна и свежие поля с диска потеряются")
     assert "d.key!==SPKEDIT" in body and "delspeaker" in body, (
         "после переименования старый файл остаётся вторым профилем в списке")
 
@@ -879,10 +883,17 @@ def test_preview_swaps_video_instead_of_seeking_at_the_cut(js):
     # шаг 1 — редактор: картинка догоняет звук, стык — через дублёра (edFollow -> edJump)
     follow = js[js.index("function edFollow()"):js.index("function edArm()")]
     assert "edJump(v,cs)" in follow, "редактор снова сеcит живой <video> прямо на стыке блока"
-    # шаг 3 и раскладка камер идут через один общий шаг (было три копии, и гонка правилась трижды)
-    for player, head in (("IPV", "function ipvStep()"), ("CPV", "function cpvStep()")):
-        body = js[js.index(head):js.index(head) + 300]
-        assert f"pvStep({player})" in body, f"{player}: стык не идёт через общий pvStep"
+    # раскладка камер идёт через общий шаг pvStep (было три копии, и гонка правилась трижды)
+    body = js[js.index("function cpvStep()"):js.index("function cpvStep()") + 300]
+    assert "pvStep(CPV)" in body, "CPV: стык не идёт через общий pvStep"
+    # превью вставок (шаги 2–3) с 2026-10-17 — как редактор: звук ведёт часы, картинка догоняет,
+    # стык — через дублёра (ipvFollow -> ipvVideoJump -> bufTake), а pvStep остался запасным путём
+    # страницы рендера (живое превью звука не играет через <video> вовсе)
+    ipv = js[js.index("function ipvStep()"):js.index("function ipvStep()") + 1600]
+    assert "ipvFollow(tm);ipvArm(tm);" in ipv, "IPV: картинка не догоняет звук / дублёр не взводится"
+    assert "pvStep(IPV)" in ipv, "IPV: у страницы рендера пропал прежний шаг"
+    jump = js[js.index("function ipvVideoJump(at)"):js.index("function ipvVideoSeek(v,at)")]
+    assert "bufTake(IPV,lead,lead.at)" in jump, "IPV: стык снова через перемотку живого <video>"
     assert "function pvTick(" not in js, "вернулся второй плеер шага 1 (pvTick)"
     # дублёр обязан жить ВНЕ P.vids: иначе pvVisual покажет его как отдельную камеру
     take = js[js.index("function bufTake(P,b,at)"):js.index("function spareLead(P)")]
@@ -911,8 +922,14 @@ def test_every_preview_player_uses_the_double_buffer(js, player, step, seek, pau
     pvs = js[js.index("function pvStep(P)"):js.index("// Своих часов воспроизведения")]
     assert "spareSwap(P)" in pvs, "pvStep: стык не идёт через подмену дублёром"
     assert "sparePrime(P)" in pvs, "pvStep: разбег к следующему стыку не готовится"
-    assert f"pvStep({player})" in body(step, 300), f"{player}: шаг не идёт через общий pvStep"
-    assert f"spareRollAt({player},st.tm)" in body(step, 300), f"{player}: дублёр не пускается вживую до стыка"
+    # у превью вставок общий шаг стоит после живой ветки «звук ведёт часы» (она взводит дублёров
+    # сама — ipvArm), поэтому окно поиска у него длиннее
+    n = 1600 if player == "IPV" else 300
+    assert f"pvStep({player})" in body(step, n), f"{player}: шаг не идёт через общий pvStep"
+    assert f"spareRollAt({player},st.tm)" in body(step, n), f"{player}: дублёр не пускается вживую до стыка"
+    if player == "IPV":
+        arm = js[js.index("function ipvArm(tm)"):js.index("function ipvStep()")]
+        assert "bufArm(IPV,b," in arm and "bufRoll(b,left)" in arm, "IPV: дублёр не взводится к стыку"
     assert f"spareIdle({player})" in body(seek), f"{player}: перемотка не сбрасывает дублёра"
     assert f"spareStop({player})" in body(pause), f"{player}: дублёр догорает на паузе"
     assert f"{player}.scrubbing=true" in body(scrub), (
@@ -944,7 +961,7 @@ def test_every_preview_switches_cameras_through_one_machine(js, player, apply_fn
            f"camApply({player},tm,play)" in body(apply_fn, 400), (
         f"{player}: переключение ракурса снова живёт своей копией алгоритма"
     )
-    open_body = js[js.index(opener):js.index(opener) + 2600]
+    open_body = js[js.index(opener):js.index(opener) + 3600]
     assert f"{player}.delta=camDeltas({player})" in open_body, f"{player}: камеры без оффсетов от ведущей"
     assert f"camBufs({player},stage,{before})" in open_body, f"{player}: камеры без дублёров — стык снова через seek"
     # camIdle у шага 1 зовёт ЕГО дверь показа кадра (pvVideoTo): отдельного pvSeekTo,
@@ -1254,11 +1271,11 @@ def test_style_sub_height_live_moves_preview_subtitle(js, html):
 
     Поле тянется мышью и уходит в stEdit на каждый шаг — строка слова в превью садится
     на те же проценты от низа, что AE поставит POSY. Маркер не нужен: сами слова и есть
-    подсказка. Поле строит панель по схеме (conv inv_pct), id старой разметки ушёл.
+    подсказка. Поле строит панель по схеме (conv top_pct), id старой разметки ушёл.
     """
     field = _schema_field("sub_y")
-    assert field and field["ctl"] == "num" and field.get("conv") == "inv_pct", (
-        "«Высота субтитров» пропала из схемы или потеряла пересчёт в % снизу")
+    assert field and field["ctl"] == "num" and field.get("conv") == "top_pct", (
+        "«Положение субтитров по Y» пропало из схемы или потеряло пересчёт в % от верха")
     panel = _panel_js()
     # Числовые поля идут через stFieldEdit: для обычных полей он зовёт stEdit() (превью живое),
     # для громкости спикера — setVoiceDb. Проверяем всю цепочку, а не имя в теле drag.
@@ -2502,15 +2519,16 @@ def test_editor_middle_button_pans_and_keeps_the_rest(js):
     на mousedown и auxclick; курсор grabbing — только на время пана и снимается.
     """
     bind = js[js.index("function edBind()"):js.index("function spaceOnControl(")]
-    # протяжка вида (средняя кнопка из любой точки и линейка) — pointerdown → общая tlMidPan
+    # протяжка вида — средняя кнопка из любой точки: pointerdown → общая tlMidPan.
+    # Левая кнопка на линейке в протяжку НЕ идёт: это плейхед за курсором (mousedown ниже).
     pd = bind[bind.index("addEventListener('pointerdown'"):bind.index("addEventListener('mousedown'")]
     assert "e.button===1" in pd, "средняя кнопка не обрабатывается в pointerdown"
     assert "tlMidPan(c,e" in pd, "средняя кнопка не заводит протяжку вида"
-    # пан из любой точки: средний клик проверяется ДО ветки линейки (y<=EDRULER)
-    assert pd.index("e.button===1") < pd.index("y<=EDRULER"), (
-        "средняя кнопка проверяется после линейки — пан не из любой точки")
+    assert "y<=EDRULER" not in pd, "pointerdown отдаёт линейку протяжке вида — левая должна ставить плейхед"
     down = bind[bind.index("addEventListener('mousedown'"):bind.index("tlWheelBind(c")]
-    assert "e.button===1||y<=EDRULER*dpr()" in down, "mousedown не отдаёт среднюю кнопку и линейку протяжке"
+    assert "if(e.button===1)return;" in down, "mousedown не отдаёт среднюю кнопку протяжке"
+    assert "if(y<=EDRULER*dpr()){if(e.button===0){ED.drag={head:1};edSeek(s);}return;}" in down, (
+        "линейка в mousedown не ставит плейхед за курсором (левая кнопка)")
     assert "tlMidGuard(c)" in bind, "middle autoscroll не глушится (mousedown и auxclick)"
     # курсор grabbing, захват и возврат прежнего курсора — в общей tlMidPan
     core = js[js.index("function tlMidPan("):js.index("function tlMidGuard(")]

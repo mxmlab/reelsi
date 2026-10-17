@@ -44,25 +44,27 @@ from .plan_subs import SubsPlan
 
 
 # Тени AE (Drop Shadow) в пикселях композиции: тень слов субтитров, тень вставок и тень
-# плашки под субтитрами. Числа стоят ЗДЕСЬ, а читают их обе стороны: подстановки .jsx
+# плашки под субтитрами. Тень субтитров теперь из стиля (sub_shadow_*, см. styles.py), а
+# тени вставок и плашки по-прежнему стоят ЗДЕСЬ. Читают их обе стороны: подстановки .jsx
 # (build.to_ae_full отдаёт SH_* в шаблон, INS_SH_* — литералы template.py) и план сцены —
 # из него превью рисует CSS-аналог (aeShadowCss в static/app/85-inserts-view.js).
 # op — непрозрачность в процентах ручки (0..100): в .jsx она умножается на 255/100, и
 # ровно это готовое число (шкала AE 0..255) отдаёт план полем op255.
-SH_SUB_OP, SH_SUB_DIR, SH_SUB_DIST, SH_SUB_SOFT = 68.0, 181.0, 5.0, 44.0
 INS_SH_OP, INS_SH_DIR, INS_SH_DIST, INS_SH_SOFT = 49.0, 135.0, 15.0, 70.0
 
 
-def shadows_plan() -> dict[str, dict[str, Any]]:
+def shadows_plan(stv: StyleValues) -> dict[str, dict[str, Any]]:
     """Тени AE для превью: {имя: {op255, dir, dist, soft, color}}.
 
+    Тень субтитров берётся из стиля `stv` (sub_shadow_*): те же числа уезжают в .jsx
+    (plan_ae), так что план и .jsx не расходятся.
     color — [r,g,b] 0..1, как у остальных цветов плана; все три тени чёрные (у субтитров
     цвет Drop Shadow не задан вовсе — это дефолт AE, у вставок и плашки в .jsx стоит
     [0,0,0]). Дистанция и мягкость — px кадра: превью множит их на пиксели превью.
     """
     return {
-        "sub": {"op255": round(SH_SUB_OP * 255 / 100, 1), "dir": SH_SUB_DIR,
-                "dist": SH_SUB_DIST, "soft": SH_SUB_SOFT, "color": [0.0, 0.0, 0.0]},
+        "sub": {"op255": round(stv.sub_shadow_op * 255 / 100, 1), "dir": stv.sub_shadow_dir,
+                "dist": stv.sub_shadow_dist, "soft": stv.sub_shadow_soft, "color": [0.0, 0.0, 0.0]},
         "ins": {"op255": round(INS_SH_OP * 255 / 100, 1), "dir": INS_SH_DIR,
                 "dist": INS_SH_DIST, "soft": INS_SH_SOFT, "color": [0.0, 0.0, 0.0]},
         "sub_bg": {"op255": SUB_BG_SH_OP, "dir": SUB_BG_SH_DIR, "dist": SUB_BG_SH_DIST,
@@ -262,8 +264,9 @@ def plan_decor(inp: DecorInputs) -> DecorPlan:
     # фон (плашка) под субтитрами (обновлено DL)
     sub_comp_name = f"Субтитры ({meta['name']})" if meta.get("name") else "Субтитры (текст)"
     sub_bg_on = bool(stv.sub_bg)
-    # Тень субтитров: при включённой плашке собственная тень текста снимается
-    sub_shadow = not sub_bg_on
+    # Тень субтитров: галка стиля, но при включённой плашке собственная тень текста снимается
+    # (плашка сама заменяет тень)
+    sub_shadow = bool(stv.sub_shadow) and not sub_bg_on
     sub_shadow_js = (
         '    var ds = subLayer.property("ADBE Effect Parade").addProperty("ADBE Drop Shadow");\n'
         '    ds.property("ADBE Drop Shadow-0002").setValue(SH_OPACITY/100*255);  // Opacity (percent in UI -> 0..255)\n'

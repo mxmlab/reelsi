@@ -104,7 +104,7 @@ can plug in a local backend at the extension points `core/aicut/images.py` and
 **How:** 1. Paste a Drive link into **Link**. 2. Pick the **Download folder**. 3. Press
 **Download**. 4. Pick the downloaded camera 1 file and press **Spread by cameras**.
 **Settings:** `rclone` must be configured once with `rclone config`; the sign-in happens in
-your browser. The form keeps its state between sessions.
+your browser. The form keeps its state between sessions. After a download the **Project** list updates itself, so the files show in the camera folders at once. If the link is a folder with subfolders, a window asks which folder goes to which camera; a folder with a camera number in its name goes to that camera by default.
 **Limitations / price:** downloads go through `rclone`, so large files are fine; progress
 is parsed from rclone's statistics.
 **Code:** `api/gdrive.py:244`, `core/rclone.py:47`, `templates/index.html:32`
@@ -145,7 +145,7 @@ is parsed from rclone's statistics.
 
 **Where:** the step 1 cut editor, the inserts preview on step 2, and the **Whole recording** timeline of the podcast window. All three are drawn by the same code.
 **How:** each one has the same header (the **!** hint, the title, **+ − ⛶**), the same ruler (tenths of a second when the step is under a second), a blue playhead with a flag, and a waveform that shows the peak of every pixel, so a loud moment is not lost when you zoom out.
-**Settings:** the gestures are the same everywhere. Click or drag on the field or the playhead to seek; dragging does not stop playback. A left click on the ruler puts the playhead where you clicked; dragging the ruler or using the middle button scrolls the view. The wheel zooms; Shift or a horizontal wheel scrolls. During playback and on arrow keys the view stays where it is and the playhead runs off the edge. A jump from a list or a button (play piece, double click on an insert, a subtitle row) brings its target into view, 10 % from the left edge. When several things sit under the cursor, the order is: a piece edge, then the playhead, then the ruler, then the middle of a piece. **C** or **S** cuts, **D**, **Delete** or **Backspace** removes, and undo and redo (Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z) keep one history per timeline.
+**Settings:** the gestures are the same everywhere. Click or drag on the field or the playhead to seek; dragging does not stop playback. A left click or drag on the ruler moves the playhead, as on the field. The middle button scrolls the view, and so do Shift+wheel and a horizontal wheel; the plain wheel zooms. During playback and on arrow keys the view stays where it is and the playhead runs off the edge. A jump from a list or a button (play piece, double click on an insert, a subtitle row) brings its target into view, 10 % from the left edge. When several things sit under the cursor, the order is: a piece edge, then the playhead, then the ruler, then the middle of a piece. **C** or **S** cuts, **D**, **Delete** or **Backspace** removes, and undo and redo (Ctrl+Z, Ctrl+Y, Ctrl+Shift+Z) keep one history per timeline.
 **Limitations / price:** none new; this is one set of rules, so a change to one timeline changes the other two.
 **Code:** `static/app/00-core.js:207`, `static/app/00-core.js:321`, `static/app/00-core.js:365`, `static/app/00-core.js:290`, `static/app/00-core.js:307`, `static/app/00-core.js:394`, `static/app/00-core.js:446`, `static/app/00-core.js:480`
 
@@ -248,7 +248,7 @@ switches itself off and cutting proceeds as before.
 **Where:** step 1 › clips list › **Edit** (the preview window, the left half).
 **How:** 1. Open a clip. 2. Click to place the cursor, drag block edges, double-click on
 grey to bring cut material back. 3. Press **Save to XML**.
-**Settings:** wheel zooms, Shift+wheel or the ruler scrolls, Space plays, arrows step
+**Settings:** wheel zooms, Shift+wheel or the middle button scrolls, a left click or drag on the ruler moves the playhead, Space plays, arrows step
 frame by frame. **Cut** (C), **Delete** (D) and **Undo** (Ctrl+Z) work on blocks. The
 **listen to the cut** checkbox plays the removed audio as well. There is now **one player
 here** — the editor: the "Montage" block with a second player is gone, and the volume and
@@ -392,7 +392,7 @@ and reasoning level for highlights, inserts and intro, plus the subtitle engine.
 column here is the same shared selection as on steps 1 and 3 — a click with Shift takes a
 whole range — and the trash button in the list header deletes the ticked clips.
 **Limitations / price:** clips without subtitles are skipped by the highlight and insert
-phases. Inserts target 10 photos and 3 videos per video, from 6 s and 10 s in.
+phases. Inserts target 10 photos and 3 videos per video, from 6 s and 10 s in. In the inserts phase the AI reads names without the censor stars (the original words sit next to the XML, in `<stem>.words.json`), so a drug or peptide name is searched for and written as it is; the subtitles stay censored.
 **Code:** `templates/index.html:122`, `static/app/70-editor.js:296`,
 `templates/index.html:165`, `api/ai.py:61`
 
@@ -454,7 +454,7 @@ hand or generated stays. The badge changes at once, and a second click during th
 does not switch back. Timing and duration adjusted by dragging in the step 3 preview are
 saved into the clip and survive a reopening. The **Inserts** window fills the screen and
 keeps one height for any number of inserts: the list of cards scrolls inside itself while
-the player, the buttons and the timeline stay put.
+the player, the buttons and the timeline stay put. If several inserts use one file, the highlight sits on the one you are working on, not on the first with that file.
 
 **On a plate.** The **on plate** checkbox next to the mosaic one puts that single photo
 insert on the plate image from the style (**Inserts** › **Photo** › **Plate (file)**,
@@ -527,14 +527,14 @@ roto masks, drafts and camera sources.
 candidates are shown for choice).
 **How:** 1. Press **Stock** on a card that has no file yet. 2. Look at the candidates. 3. Pick one: it is
 downloaded into the library, and the next clips find it there without a stock.
-**Settings:** the order is Pexels → Unsplash → Pixabay → Openverse → Coverr. The search walks the list
-until it has enough candidates; the order was chosen by a measurement on 30 of the owner's queries.
+**Settings:** all connected stocks are asked at once, and the choice goes round-robin: the first picture of each stock, then the second of each, and so on. The priority in the round is Pexels → Unsplash → Pixabay → Openverse → Coverr.
+this order was chosen by a measurement on 30 of the owner's queries.
 Keys are in ⚙ › **Generation** › **Stock**; Openverse needs no key. Coverr (video) stays behind
 `REELSI_STOCK_COVERR=1` until a live key has been checked, and `REELSI_STOCK_OFF` switches providers off.
 The query is written by the AI as the object and one or two visible features in English, without numbers,
 doses or labels: "syringe with small 250 mark" brought motorcycles from Pixabay.
 **Limitations / price:** search answers are cached for 24 hours. A refusal from a stock (Unsplash's demo
-limit, 429 or 403) moves the search on to the next stock. Openverse keeps only the licences that allow
+limit, 429 or 403) costs only that stock's pictures; the other stocks stay in the round. Openverse keeps only the licences that allow
 commercial use and modification. Each downloaded file gets a `.license.json` next to it with the provider,
 the author and the licence.
 **Code:** `core/stock.py:67`, `core/stock.py:171`, `api/inserts.py:316`, `static/app/80-inserts.js:804`
@@ -564,7 +564,7 @@ quota, the weakest AI photos go first.
 hair and small objects. 3. After a change, a picture is cut out again: the cache records which model made
 each file.
 **Settings:** the setting is `rembg_model` in `ai_config.json`. BiRefNet takes about 8 s a picture on a
-processor and downloads its model of about 1 GB into the rembg folder on first use.
+processor and downloads its model of about 1 GB into the rembg folder on first use. With `onnxruntime-gpu` on a video card a picture takes about 0.3 s, and the model leaves the card a minute after the last picture. Install it once from ⚙ → Generation → "Background removal on the video card" → "Download": it puts onnxruntime-gpu (about 250 MB) into its own folder and leaves the system onnxruntime alone. The card takes over at the first cut-out; restart the server only if it had already loaded onnxruntime. Without CUDA the cut-out runs on the processor, and `python doctor.py` shows which one is in use.
 **Limitations / price:** on 12 pictures of the library, BiRefNet did better on 3, worse on 1, and left less
 translucent haze on 9 of 12. A cache file without a model mark counts as u2net.
 **Code:** `core/aicut/images.py:58`, `core/insertlib.py:1115`, `core/stock.py:275`
@@ -654,13 +654,13 @@ words rises, a group of 4+ rows reveals the first row and moves the rest in from
 white row of 2–3 words rises, everything else has no animation. "Не", prepositions and
 dependent words stay with their word in a row and in accents. **Glow of accent rows** is a
 single style switch (see "Glitch glow" below): the style decides the glow of a row, not the
-AI's markup.
+AI's markup. The model decides for each whole enumeration: a rule or a step gets its numbers written into the subtitles as digits, also where the point sits under an insert, and a list of signs keeps the words.
 **Line length and the call word:** the style's **Intro line length** (group Intro, default 20 characters)
 sets how long a hook row may be. The AI breaks a hook row only when it is longer, and only between
 meaningful pieces; a hook ends on a finished thought, not on a conjunction, a preposition or a pronoun.
 "Не" and "ни" at the end of a row always move to their word; a preposition moves only before a row of
 another colour. If the video ends by asking the viewer to write a word in quotes, that word is the last
-accent, and nothing follows it.
+accent, and nothing follows it. Accents break by meaning: one content word per row, while a service word or a number sticks to the word after it. A numbered point (“1 …”) has its number large on the left and its words in a column.
 **Limitations / price:** already marked-up intro is replaced after a confirmation. Intro
 words are cut out of the subtitles, so they do not show up in the subtitle rows either; this
 works the same in the row mode and in the word-by-word mode.
@@ -698,7 +698,7 @@ start blur.
 the continuous rotoscope. **Layers** is the layer order, dragged with the mouse or moved
 with the arrow buttons. **Sound** holds music, voice, transition, glitch and pop levels,
 their files and their hit points.
-**Limitations / price:** editing a style's own template and saving it applies the change to
+Dragging a value with the mouse moves it one step per 4 px, as in After Effects; with Ctrl the step is ten times finer. **Subtitle position on Y, % of frame** counts from the top of the frame: “+” moves the subtitles down, as on every position field. **Limitations / price:** editing a style's own template and saving it applies the change to
 every file in the set that uses that style. Built-in styles cannot be deleted.
 **Code:** `core/styles.py:1`, `api/presets.py:15`, `templates/index.html:170`,
 `static/app/95-styles.js:496`
@@ -727,7 +727,7 @@ intro words coloured as accents): consecutive words count as ONE phrase, the app
 starts 0.1 s before the first word, and the hold lasts to the end of the last one plus
 **Hold, s**. The pullback is placed only when it fits entirely before the cut — otherwise
 the camera holds the zoom up to the cut. **Only strong highlights** zooms on the strongest
-phrases rather than on every one (see "Highlight strength"). **Limitations / price:** in a
+phrases rather than on every one (see "Highlight strength"). The two pauses sit in the **Push and return** group: **Pause after cut, s** (1 s by default) — a push-in cycle does not start before the cut plus this pause, and if a pulse sits on the cut, the pause counts from its end; **Pause between pushes, s** (2 s by default) — the next push-in comes no earlier than this pause after the end of the previous one. The drift goes on under the highlight push-ins, and with one camera the smooth push-in with recoil is placed on every cut of camera 1. **Limitations / price:** in a
 short take the hold of **Hold, s** is shorter.
 **Code:** `core/xml2ae/plan_camera.py:118`, `core/style_schema.py:1331`, `core/styles.py:184`
 
@@ -741,7 +741,7 @@ group has a link button in its header: linked keeps the fields grey and reading 
 colour, unlinked makes them its own.
 **Settings:** camera 2 has a full set of its own: the zoom keys are computed separately
 (zooms and jumps sit on the cuts onto camera 2, take and highlight zooms are camera 2's
-own); camera 1's settings no longer affect camera 2 and the other way round. The fill
+own); camera 1's settings no longer affect camera 2 and the other way round, with two exceptions. The **Pause after cut, s** and **Pause between pushes, s** fields of its **Push and return** group until you change them, they show and take camera 1's values; so do camera 2's highlight strength fields (see "Highlight strength" below). The fill
 multiplies the zoom keys; with "no zoom" the frame sits at the given scale. The offset goes
 into the Position of camera 2's null, the rotation turns its layers and its roto; the
 intro, the inserts and head tracking on camera 2 ride the frame. **Camera 2 is active**
@@ -754,11 +754,11 @@ not change.
 
 ### Highlight strength: zoom on strong words only
 
-**Where:** step 3 › style › **Frame** › **Highlight strength** (a group shared by both
-cameras).
+**Where:** step 3 › style › **Frame** › **Highlight strength** (the measurement is shared by both
+cameras; each camera has its own thresholds).
 **How:** 1. Turn on **Only strong highlights** for the camera you want (in its **Highlight**
 block). 2. Pick the **Measurement** — **by emotion** or **by voice**. 3. Set the
-**Strength threshold, %**, **Zooms per piece, max.** and **Second zoom — take from, s**.
+**Strength threshold, %**, **Push-ins per segment, max** and **Second push-in — segment from, s**.
 **Settings:** the strength of a word is computed automatically (the sidecar
 `<stem>.emph.json` next to the XML) and has two halves: the **emotion of the phrase** —
 GigaAM-Emo measures how non-neutral the phrase around the word is (a 2.5 s window, 65 ms
@@ -768,10 +768,10 @@ the way recomputes nothing, and in "by voice" mode the emotion model is not load
 The **Strength threshold, %** is a percentile of the CLIP's own highlight strengths: 70 (the
 default) zooms on words no weaker than the clip's p70, 50 is the median, 0 zooms on every
 phrase with highlights and 100 only on the clip's strongest word. The text stays yellow
-either way: the threshold is about the camera, not the colour. **Zooms per piece, max.**
-caps the zooms in one piece (1–3), and **Second zoom — take from, s** sets the take length
-from which a second zoom is allowed. A phrase is consecutive highlighted words and its
-strength is the maximum of its words; zooms are placed in timeline order.
+either way: the threshold is about the camera, not the colour. **Push-ins per segment, max**
+caps the push-ins in one segment (1–3), and **Second push-in — segment from, s** sets the segment length
+from which a second push-in is allowed. A phrase is consecutive highlighted words and its
+strength is the maximum of its words; zooms are placed in timeline order. Camera 2 has its own copies of the three fields, in its own **Highlight strength** group; until they are touched they show and use camera 1's values.
 **Limitations / price:** when the strength is not computed (no sound, no model, a word
 added by hand after the calculation), the rule behaves as before — a zoom on every phrase —
 and the log says "highlight strength not computed". The calculation runs after the
@@ -981,7 +981,7 @@ step 3.
 **How:** 1. Pick a speaker. 2. Their style is selected automatically. 3. Change the style
 on step 3 if you want a different one.
 **Settings:** one clip with several speakers uses the style of the first one; the build
-button warns about that.
+button warns about that. Changing the style in the profile moves this speaker's clips that followed the profile style to the new one; a clip with a style of its own keeps it.
 **Limitations / price:** the profile style is a default, not a binding: changing the style
 on step 3 does not write back into the profile.
 **Code:** `core/speakers.py:32`, `static/app/95-styles.js:228`,
@@ -1025,7 +1025,7 @@ with a fade, or none. 3. Pick the effect preset: the new one (black shadow plus 
 mask), the old one (white shadow plus choker) or none. 4. Adjust the resting position per
 camera in percent of frame.
 **Settings:** camera 1 inserts inherit the camera 1 zoom, so their offset scales with it.
-When the **Camera 1** style lands on a camera 2 piece, a separate offset applies.
+When the **Camera 1** style lands on a camera 2 piece, a separate offset applies. With the camera 2 style, the **“Cam 2” on camera 1 X, %** and **Y, %** fields (shown when camera 2 is picked) set its resting point on a camera 1 piece; until they are touched, it is the same point as **Inserts “Cam 2” X, %** and **Y, %**.
 **Plate (file)** and **Plate scale, %** set the plate image and its size for the inserts
 that carry the **on plate** checkbox (see the inserts editor above).
 **Limitations / price:** while a rising insert is on screen the subtitles step aside. A
@@ -1099,7 +1099,7 @@ cut-out figure above the intro in the style's layer order, in sync with the play
 tracking appears from the plan right after the calculation. The calculation takes the shared
 job lock, so it does not run on top of a cut, a build or a render, and the masks it computes
 are reused by the build. The subtitles do not drag with the
-mouse: their height is the style's **Subtitle height, % from bottom**. The style block moves
+mouse: their position is the style's **Subtitle position on Y, % of frame** (from the top: larger is lower). The style block moves
 into the preview's **Style** tab while it is open, and returns to the page when it closes;
 there the panel scrolls, so a long list of groups does not push the **Save** row out.
 Preview volume is shared by all players, and the music and voice levels in the preview are

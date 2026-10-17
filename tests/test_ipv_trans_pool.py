@@ -288,10 +288,11 @@ def test_ipv_open_frees_videos_repeated_calls(tmp_path):
     function pvApplyStageAspect(){{}}
     function ipvMarks(){{}}
     function voiceWiring(){{}}
-    function bufMake(P, st, io){{
+    // slot — как у боевого bufMake: по нему ipvOpen ставит дублёру метку «под какой файл»
+    function bufMake(P, st, io, slot){{
       const b = document.createElement('video');
       st.insertBefore(b, io);
-      P.bufs.push({{ el: b }});
+      P.bufs.push({{ el: b, slot: slot }});
     }}
     function camDeltas(){{ return [0, 0]; }}
     function camBufs(){{}}

@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.2-beta — 2026-10-17
+
+### Highlights
+- **Zoom-ins have pauses**: a pause after each cut and a pause between zoom-ins, set for each camera in the style. The gap between zoom-ins now defaults to 2 s (it was a fixed 1 s).
+- **Background cut-out on the video card**: BiRefNet runs on the GPU when onnxruntime-gpu is installed, about 0.3 s per picture instead of 10 s; without it, or if the card fails, it falls back to the processor, and the model is unloaded a minute after the last use.
+- **Timelines follow the left mouse button**: a click or drag on the ruler moves the playhead in every player, and the middle button scrolls.
+- **Stock photos and video from every connected library**: the search asks all connected libraries at once and shows their results in turn, not Pexels alone.
+- **Insert previews sound like the build**: steps 2 and 3 play on the same audio engine as the step 1 editor, so word endings at the joins are no longer cut, and censoring sounds as it does in the build.
+- **Voice plug-in settings stay saved**: the settings survive closing the plug-in window and reopening the preview, and the voice is recalculated at once when the window closes.
+- **Google Drive footage shows at once**: downloaded files appear in the camera lists right after the download, and a link with several subfolders asks where each one goes.
+
+### Fixed
+- **Plug-in settings came back as defaults**: after the preview was closed and opened again, the voice was rendered with the default plug-in mix (100 %) instead of the saved one (2 % in the test case), and the sound stayed old until the clip was reopened. The saved state is now written back to the speaker, and the voice is recalculated at once.
+- **Stock search showed only Pexels**: Pexels usually returned all its frames at once, so the other libraries never reached the results. The search now polls all connected libraries in parallel.
+- **Stale stock results kept forever**: in one project, 23 inserts held an old list of 183 Pexels frames and never asked the stock again. The stock list is no longer stored in the project state, and the server caches search results for 24 hours.
+- **Word endings cut at the joins in insert previews**: the sound of the insert previews now runs on the same clock as the step 1 editor. On the test clips the picture stayed within a median 25–35 ms of the sound.
+- **Insert preview re-seeked at every join**: the duplicate's source was reset on every frame; on the test bench all 4 of 4 joins needed a seek. It now moves to the proxy once.
+- **A long subtitle line ran off to the right**: a line wider than the frame, with no line breaks, stuck to the left edge and ran off to the right. It is now centred: on the test clip its centre moved from 217 px to 135 px (the frame centre is 132 px).
+- **Camera 2 style fields were blank**: paired settings such as the strength of the yellow words had no value for camera 2 until set by hand. They now take camera 1's values until camera 2 gets its own.
+- **Zoom drift and zoom-ins ignored each other**: drift started only after the first zoom-in, and a smooth zoom-in with a return did not work on a single camera. Drift now runs under the zoom-ins, and with one camera each cut gets a zoom pulse.
+- **AI inserts saw drug names with censor asterisks**: the model got the censored spelling. It now gets the exact name, and the prompt asks for the exact name.
+
+### Added
+- **Pauses around zoom-ins**: "Pause after cut" (1 s by default) and "Pause between zoom-ins" (2 s by default), set for each camera. Camera 2 uses camera 1's values until it gets its own, and its zoom-ins never run over camera 1's.
+- **Text shadow in the style**: on or off, opacity, angle, distance and softness, in a "Text shadow" group after the text glow. The shadow is off when the subtitle plate is on, and the defaults give the same look as before.
+- **Google Drive folder layout**: a link to a folder with several subfolders (for example, one folder per camera) asks where each subfolder is downloaded, in a window that shows the name and size of each on one line.
+- **Numbered lists: digit or word, decided by the AI**: for each spoken list ("first… second… third…") the AI intro decides whether the numbers become digits in the subtitles. Rules, steps and advice get "1, 2, 3"; a list of symptoms or a story keeps the words. The decision covers the whole list, including items under an insert where no accent fits.
+- **Background removal on the video card from the settings**: ⚙ → Generation → "Background removal on the video card" → "Download" installs onnxruntime-gpu into its own folder, and the system onnxruntime stays as it is. The card takes over at the first cut-out; a restart is needed only if the server had already loaded onnxruntime.
+
+### Changed
+- **Stock search order**: results rotate across the connected libraries in the order Pexels, Unsplash, Pixabay, Openverse, Coverr (Coverr stays behind its flag). A library without a key is skipped silently, and a network failure of one library is a warning, not a failed search.
+- **Style dragging**: one step per 4 px of mouse movement (it was 1 px); Ctrl (⌘) for fine steps, a tenth of a step; Shift for ten steps.
+- **Speaker style follows the profile**: changing the style in a speaker's profile moves the clips that followed the profile's style to the new style. Clips with their own style are not touched.
+- **Subtitle position**: "+" moves the subtitles down, as on all other knobs. The value is a percentage of the frame height from the top.
+- **Camera 2 insert point**: an insert on camera 1's frame has its own rest point for camera 2; blank means the same point as camera 2.
+- **Inserts that share one file**: the highlight marks the card you are working on.
+- **Intro text**: the AI puts one meaningful word on each line; a numbered list shows the number large on the left with the words in a column; the fallback line limit is 14 characters instead of 9, and function words stay with the word they belong to.
+
 ## 0.4.1-beta — 2026-10-12
 
 ### Highlights

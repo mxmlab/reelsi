@@ -17,7 +17,7 @@ import heapq
 import math
 import os
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence, cast
+from typing import Any, Callable, Mapping, Sequence, cast
 from core import fonts as _fonts
 from core import style_geometry as _style_geometry
 from .jsutil import _fill_js, _js, _r
@@ -1560,8 +1560,8 @@ def _cam1_pos_keys(t0: float, t1: float, noexit: bool, ix: float, iy: float, fps
 # • МУЛЬТИКАМ: авто — на каждом ВОЗВРАТЕ кам2→кам1 (конец включённой перебивки = кадр среза,
 #   где кам1 снова показывается) «большой» кейфрейм ровно в срезе, через ZOOM_PUNCH кадров «малый»;
 #   плюс ВСЕГДА такой импульс в самом начале (кадр 0). Между импульсами — медленный дрейф к большому.
-# • ОДНА КАМЕРА: фиксированный паттерн DEFAULT_CAM1_SCALE (медленный наезд → сброс на кате),
-#   правится вручную в AE под конкретное видео.
+# • ОДНА КАМЕРА: импульс на КАЖДОЙ склейке Камеры 1 (как у скачка, `_camera_cut_segments`), а не
+#   фиксированный паттерн: раньше мимо ручек «Масштаб, %» и склеек шёл жёсткий шаблон.
 ZOOM_BIG, ZOOM_SMALL, ZOOM_PUNCH = 182.0, 100.0, 62   # 182%→100% за 62 кадра (bezier 0.35,0.01,0.10,0.99)
 # Сняты с эталона C1456-011: заход 98 кадров, наезд 96, отъезд 88 при 60 fps
 TAKE_LEAD_S = 1.6
@@ -1585,13 +1585,6 @@ TAKE_YELLOW_IN_S = 0.6
 # Слова хайлайта группируются во фразы: следующее слово начинает НОВУЮ фразу, если его
 # индекс не соседний (разрыв > 1) или между концом предыдущего и его началом больше 0.6 с.
 TAKE_PHRASE_GAP_S = 0.6
-
-DEFAULT_CAM1_SCALE = [
-    (0, 100), (562, 110.9), (987.004, 125), (1074, 100),
-    (2169, 139), (2231.01, 100), (2969, 139), (3292, 100),
-    (4060, 139), (4383, 100), (4931.03, 125), (5018.03, 100), (5263.03, 116),
-]
-
 
 def _hl_phrases(items: Sequence[tuple[int, float, float]], fps: float) -> list[tuple[float, float]]:
     """Фразы хайлайта из слов [(индекс, начало, конец)] в кадрах.
@@ -1748,7 +1741,7 @@ def _build_take_cycle(
         hold_f = round(nom_hold_s * fps)
         a = int(round(t_start - TAKE_YELLOW_LEAD_S * fps))
         if a < cur_ref:
-            # Камера ещё занята прошлым циклом (отъезд + 1 с — «повтор не раньше 1 с»):
+            # Камера ещё занята прошлым циклом (отъезд + «Пауза между наездами»):
             # наезд начнётся, как только она освободится, но только если фраза с её
             # удержанием к тому моменту не кончилась — иначе наезжать не на что.
             if int(round(t_end)) + hold_f < cur_ref:
@@ -1899,6 +1892,20 @@ def _build_center_take_cycle(
     return (a, b, c, d_out)
 
 
+def _after_cut_ref(f: int, lead_min_frame: int, after: int) -> int:
+    """Опора первого цикла наезда после склейки куска (кадр склейки — `f`).
+
+    Если на склейке было движение камеры — импульс «плавного наезда с откатом» или стартовый
+    наезд, — его конец и есть `lead_min_frame` (> f). Пауза «после склейки» тогда отсчитывается
+    от КОНЦА движения: сразу после отката импульса камера ещё стоит `after` кадров. Иначе
+    (движения не было) — от самой склейки, как раньше. Замер владельца: импульс 1371→1433,
+    наезд на жёлтое в 1434 — пауза 1 с с отсчётом от склейки была съедена длиной импульса.
+    """
+    if lead_min_frame > f:
+        return lead_min_frame + after
+    return max(lead_min_frame, f + after)
+
+
 def _take_zoom_segment_keys(
     f: int,
     seg_end: int,
@@ -1907,8 +1914,12 @@ def _take_zoom_segment_keys(
     take: dict[str, Any],
     trng: Any,
     lead_min_frame: int,
+    base_at: Callable[[float], float] | None = None,
 ) -> list[tuple[float, float, int, int]]:
     """Ключи наезда в тейке внутри отрезка [f, seg_end] для любого режима зума.
+
+    `base_at` — линия дрейфа куска (кадр -> значение, см. `_cam1_drift_keys`): без неё
+    наезд идёт от постоянного `v` (как раньше), с ней — от линии в кадре каждого ключа.
 
     Цикл наезда — подъезд (a), пик (b) и, ТОЛЬКО если полный отъезд помещается до конца
     куска, отъезд (c, d). Цикл без отъезда отдаёт два ключа: пик держится до склейки
@@ -1924,6 +1935,9 @@ def _take_zoom_segment_keys(
       (`yellow_min_pct`), предел наездов на кусок (`yellow_max_per_piece`) и порог длины
       для второго наезда (`yellow_second_min_s`) — ручки стиля;
     - take_zoom (long_on): наезд в длинном куске (>= min_s), центр удержания в середине куска/промежутка.
+    Паузы (ручки стиля, их кладёт plan_camera): `after_cut_s` — цикл не раньше склейки + N с,
+    `gap_s` — следующий не раньше конца прошлого + N с, `busy` — окна циклов всех камер
+    (общий список; камера 2 не лезет поверх камеры 1). Без них — прежнее поведение.
     """
     fps = float(fps)
     min_s = float(take.get("min_s", 8.0))
@@ -1987,6 +2001,22 @@ def _take_zoom_segment_keys(
     nom_hold_s = float(take.get("hold_s", 2.0))
     nom_out_s = float(take.get("out_s", 2.4))
     tail_f = round(TAKE_MIN_TAIL_S * fps)
+    # Паузы наездов (ручки стиля, их кладёт plan_camera): `after` — от склейки куска до
+    # первого цикла, `gap` — между циклами, `busy` — окна уже поставленных циклов ВСЕХ
+    # камер (камера 2 не наезжает поверх камеры 1). Дефолты — прежнее поведение: без
+    # паузы после склейки и с паузой между циклами 1 с.
+    after = round(float(take.get("after_cut_s", 0.0)) * fps)
+    gap = round(float(take.get("gap_s", 1.0)) * fps)
+    busy: list[tuple[int, int]] | None = take.get("busy")
+
+    def _opora(t: int, ref: int) -> int:
+        """Опора цикла, который начинается около кадра `t`: не раньше конца последнего окна
+        (любой камеры), начавшегося раньше `t`, плюс пауза `gap`. Окон нет — `ref` как есть."""
+        if not busy:
+            return ref
+        ends = [e for s, e in busy if s < t]
+        return max(ref, max(ends) + gap) if ends else ref
+
     yellow_cycles: list[tuple[int, int, int, int | None]] = []
     if yellow_on:
         # «Наезд только на сильные жёлтые»: силы фраз из сайдкара (core/emphasis.py) и
@@ -2002,7 +2032,9 @@ def _take_zoom_segment_keys(
                 int(take.get("yellow_max_per_piece", HL_ZOOM_MAX_PER_PIECE)),
                 float(take.get("yellow_second_min_s", HL_ZOOM_SECOND_MIN_S)),
                 seg_end - f, fps)
-        cur_ref = lead_min_frame
+        # Первый цикл куска — не раньше склейки + «Пауза после склейки» (стоящая на склейке
+        # камера не наезжает сразу); если на склейке был импульс — от его конца, см. _after_cut_ref.
+        cur_ref = _after_cut_ref(f, lead_min_frame, after)
         is_seg_start = True
         for _ts, _te in phrases:
             if yellow_cycles and yellow_cycles[-1][3] is None:
@@ -2015,63 +2047,90 @@ def _take_zoom_segment_keys(
                 _d: int | None = None if _d_full > seg_end - tail_f else _d_full
                 yellow_cycles[-1] = (_pa, _pb, _c, _d)
                 continue
-            cycle = _build_take_cycle((_ts, _te), cur_ref, seg_end, fps, nom_hold_s, is_seg_start, nom_out_s=nom_out_s)
+            cycle = _build_take_cycle((_ts, _te), _opora(int(round(_ts)), cur_ref), seg_end, fps, nom_hold_s, is_seg_start, nom_out_s=nom_out_s)
             if cycle is not None:
                 yellow_cycles.append(cycle)
-                cur_ref = (cycle[3] if cycle[3] is not None else cycle[2]) + round(1.0 * fps)
+                # Следующий наезд — не раньше конца этого (а без отъезда — до конца куска) + пауза
+                cur_ref = (cycle[3] if cycle[3] is not None else seg_end) + gap
                 is_seg_start = False
 
     long_cycle: tuple[int, int, int, int | None] | None = None
     if long_on and (seg_end - f) >= min_s * fps - 1e-4:
+        # Длинный кусок — тот же отступ: первый промежуток не раньше склейки (или конца её импульса)
+        # + «после склейки», промежутки между жёлтыми циклами и после них — на «Паузу между
+        # наездами» (раньше 1 с).
+        first_st = _after_cut_ref(f, lead_min_frame, after)
         if not yellow_cycles:
-            long_cycle = _build_center_take_cycle(lead_min_frame, seg_end, fps, nom_hold_s, nom_out_s, is_seg_start=True, is_seg_end=True)
+            st0 = _opora(first_st, first_st)
+            if st0 < seg_end:
+                long_cycle = _build_center_take_cycle(st0, seg_end, fps, nom_hold_s, nom_out_s, is_seg_start=True, is_seg_end=True)
         else:
             spans: list[tuple[int, int, bool, bool]] = []
             # 1) До первого жёлтого цикла
             first_a = yellow_cycles[0][0]
-            s0_end = first_a - round(1.0 * fps)
-            if s0_end > lead_min_frame:
-                spans.append((lead_min_frame, s0_end, True, False))
+            s0_end = first_a - gap
+            if s0_end > first_st:
+                spans.append((first_st, s0_end, True, False))
             # 2) Между жёлтыми циклами
             for i in range(len(yellow_cycles) - 1):
                 _prev_d = yellow_cycles[i][3]
                 if _prev_d is None:
                     break                      # без отъезда бывает только последний цикл
-                s_st = _prev_d + round(1.0 * fps)
-                s_en = yellow_cycles[i + 1][0] - round(1.0 * fps)
+                s_st = _prev_d + gap
+                s_en = yellow_cycles[i + 1][0] - gap
                 if s_en > s_st:
                     spans.append((s_st, s_en, False, False))
             # 3) После последнего жёлтого цикла
             last_d = yellow_cycles[-1][3]
             if last_d is not None:
-                send_st = last_d + round(1.0 * fps)
+                send_st = last_d + gap
                 if seg_end > send_st:
                     spans.append((send_st, seg_end, False, True))
 
-            if spans:
-                for st, en, is_start, is_end in sorted(spans, key=lambda s: s[1] - s[0], reverse=True):
-                    cand = _build_center_take_cycle(st, en, fps, nom_hold_s, nom_out_s, is_start, is_end, strict=True)
-                    if cand is not None:
-                        long_cycle = cand
-                        break
+            # Опора каждого промежутка — не раньше окон камеры 2 (см. _opora)
+            spans = [(_opora(st, st), en, is_start, is_end) for st, en, is_start, is_end in spans]
+            for st, en, is_start, is_end in sorted(spans, key=lambda s: s[1] - s[0], reverse=True):
+                if en <= st:
+                    continue
+                cand = _build_center_take_cycle(st, en, fps, nom_hold_s, nom_out_s, is_start, is_end, strict=True)
+                if cand is not None:
+                    long_cycle = cand
+                    break
 
     all_cycles = list(yellow_cycles)
     if long_cycle is not None:
         all_cycles.append(long_cycle)
     all_cycles.sort(key=lambda c: c[0])
+    if busy is not None:
+        # Окно цикла — от подъезда до конца отъезда; без отъезда камера держит пик до конца куска
+        busy.extend((a, d if d is not None else seg_end) for a, _b, _c, d in all_cycles)
 
     out_keys: list[tuple[float, float, int, int]] = []
     for a, b, c, d in all_cycles:
         dm = trng.uniform(take_lo, take_hi) if trng else 25.0
-        vm = round(v * (1.0 + dm / 100.0), 1)
+        if base_at is None:
+            vm = round(v * (1.0 + dm / 100.0), 1)
+            out_keys.extend([
+                (float(a), v, 1, 0),
+                (float(b), vm, 2, 1),
+            ])
+            if d is not None:
+                out_keys.extend([
+                    (float(c), vm, 3, 0),
+                    (float(d), v, 3, 1),
+                ])
+            continue
+        # Наезд от ЛИНИИ дрейфа (`base_at`): база берётся в кадре каждого ключа, поэтому
+        # ключи подъезда и отъезда ложатся на дрейф, а пик — на тот же процент над ним.
+        k = 1.0 + dm / 100.0
         out_keys.extend([
-            (float(a), v, 1, 0),
-            (float(b), vm, 2, 1),
+            (float(a), round(base_at(a), 1), 1, 0),
+            (float(b), round(base_at(b) * k, 1), 2, 1),
         ])
         if d is not None:
             out_keys.extend([
-                (float(c), vm, 3, 0),
-                (float(d), v, 3, 1),
+                (float(c), round(base_at(c) * k, 1), 3, 0),
+                (float(d), round(base_at(d), 1), 3, 1),
             ])
 
     return out_keys
@@ -2086,19 +2145,19 @@ def _cam1_zoom_keys(cams: Sequence[dict[str, Any]], big: float = ZOOM_BIG, small
     ПЕРВЫЙ импульс = `big` (крупный наезд в начале / при первом входе), последующие возвраты/входы =
     случайный пик в [lo,hi]% (не 182 каждый раз — юзер задавал интервал), всегда откат к `small` (100).
     Если start=False — в первом срезе один ключ с small (100) без наезда и отката.
-    Одна камера (перебивок нет): для cam=0 -> фиксированный DEFAULT_CAM1_SCALE (если take=None),
-    для cam>0 -> пустой список.
-    При переданном `take` добавляются наезды в длинных тейках.
+    Одна камера (перебивок нет): для cam=0 импульс ставится на КАЖДОЙ склейке Камеры 1
+    (`_camera_cut_segments`, как у «скачка»), а не по фиксированному шаблону; для cam>0 -> пустой список.
+    При переданном `take` добавляются наезды в длинных тейках (для одной камеры — в отрезках между склейками).
     -> [(frame, percent, ...), ...]."""
     import random as _rnd
     fps = float(fps) or 60.0
     punch = int(punch)
     if cam == 0:
         returns = _cam1_return_frames(cams)              # срезы перебивка→кам1 (реальные смены кадра)
-        if not returns and take is None:                 # одна камера без наездов — фикс-паттерн
-            k = float(fps) / 60.0
-            return [(round(f * k, 2), v) for f, v in DEFAULT_CAM1_SCALE]
-        frames = sorted(set([0] + returns))
+        if returns:
+            frames = sorted(set([0] + returns))
+        else:                                            # одна камера: импульсы на склейках кам1
+            frames = sorted(set([0] + _camera_cut_segments(cams, cam=0, fps=fps)[0]))
         seed = ",".join(str(f) for f in frames)
     else:
         segs = _show_segments(cams)
@@ -2131,8 +2190,14 @@ def _cam1_zoom_keys(cams: Sequence[dict[str, Any]], big: float = ZOOM_BIG, small
     # take is not None:
     tseed = ("t," if cam == 0 else f"t{cam + 1},") + ",".join(str(f) for f in frames)
     trng = _rnd.Random(tseed)
-    segs = _show_segments(cams)
-    cam_segs = [(s[0], s[1]) for s in segs if s[2] == cam and s[1] > s[0]]
+    if cam == 0 and not returns:
+        # Одна камера: куски — отрезки между склейками Камеры 1, импульс на каждой (а не один
+        # кусок на весь ролик, в котором импульса на склейке не было бы вовсе)
+        cut_fr, cut_ends = _camera_cut_segments(cams, cam=0, fps=fps)
+        cam_segs = [(float(a), float(b)) for a, b in zip(cut_fr, cut_ends)]
+    else:
+        segs = _show_segments(cams)
+        cam_segs = [(s[0], s[1]) for s in segs if s[2] == cam and s[1] > s[0]]
     if not cam_segs and cam == 0:
         dur = max((cl[1] for c in cams for cl in c["clips"] if cl[4]), default=fps * 10)
         cam_segs = [(0.0, float(dur))]
@@ -2437,6 +2502,19 @@ def _camera_cut_segments(cams: Sequence[dict[str, Any]], cam: int, fps: float = 
     return frames_out, seg_ends_out
 
 
+def _drift_line(f0: float, v0: float, f1: float, v1: float) -> Callable[[float], float]:
+    """Линия дрейфа куска: значение в кадре t — линейно от v0 (кадр f0) до v1 (кадр f1).
+    Вырожденный отрезок (f1 не позже f0) — константа v1: цели нет, дрейфовать не к чему."""
+    span = float(f1) - float(f0)
+
+    def at(t: float) -> float:
+        if span <= 0:
+            return float(v1)
+        return float(v0) + (float(v1) - float(v0)) * (float(t) - float(f0)) / span
+
+    return at
+
+
 def _cam1_drift_keys(cams: Sequence[dict[str, Any]], lo: float = 100.0, hi: float = 160.0, min_diff: float = 10.0, fps: float = 60.0,
                      big: float | None = None, punch: int | None = None, start: bool = True,
                      cam: int = 0, take: dict[str, Any] | None = None) -> list[Any]:
@@ -2518,17 +2596,23 @@ def _cam1_drift_keys(cams: Sequence[dict[str, Any]], lo: float = 100.0, hi: floa
             keys.append((f, v, 0, 0))
             pe_frame = None
 
+        # Дрейф ПОД наездами: цель дрейфа w выбирается до наездов (тот же порядок чтения
+        # зерна, что был после них), а наезды куска считаются от линии дрейфа s0→tgt.
+        # Раньше наезды шли от постоянного v, дрейфа до первого наезда не было вовсе, и цель
+        # ставилась только после последнего. Кусок без наездов — прежние ключи.
+        after_ref = pe_frame if pe_frame is not None else f
+        w = _pick() if tgt > after_ref + 1 else v
+        base_at = _drift_line(after_ref, v, tgt, w)
         lead_min_frame = int(round(pe_frame + 1)) if pe_frame is not None else int(round(f))
-        t_keys = _take_zoom_segment_keys(int(round(f)), seg_end, v, float(fps), take, trng, lead_min_frame)
+        t_keys = _take_zoom_segment_keys(int(round(f)), seg_end, v, float(fps), take, trng, lead_min_frame,
+                                         base_at=base_at)
         if t_keys:
             keys.extend(t_keys)
             last_d = int(round(t_keys[-1][0]))
             if tgt > last_d:
-                keys.append((tgt, _pick(), 0, 0))
-        else:
-            after_ref = pe_frame if pe_frame is not None else f
-            if tgt > after_ref + 1:
-                keys.append((tgt, _pick(), 0, 0))
+                keys.append((tgt, w, 0, 0))
+        elif tgt > after_ref + 1:
+            keys.append((tgt, w, 0, 0))
     return keys
 
 

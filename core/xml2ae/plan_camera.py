@@ -294,16 +294,17 @@ def _yellow_strong_on(style: Any, prefix: str) -> bool:
 def _yellow_knob(style: Any, key: str, default: Any) -> Any:
     """Ручка силы жёлтых из структуры стиля (или сырого словаря) с дефолтом.
 
-    Ручки общие для обеих камер (`hl_zoom_*`): способ оценки, порог силы, предел наездов
-    на кусок и порог длины для второго наезда. Сырой словарь — тот же путь для тестов и
-    вызовов мимо `read_style`.
+    Способ оценки (`hl_zoom_strength`) общий для обеих камер; порог силы, предел наездов на
+    кусок и порог длины для второго наезда — свои у каждой камеры (`hl_zoom_*` у Камеры 1,
+    `cam2_hl_zoom_*` у Камеры 2, см. `_take_yellow`). Сырой словарь — тот же путь для тестов
+    и вызовов мимо `read_style`.
     """
     v = style.get(key) if isinstance(style, dict) else getattr(style, key, None)
     return default if v is None else v
 
 
 def _take_yellow(take: dict[str, Any], groups: Any, scores: Any, strong: bool,
-                 clip_scores: Any = None, style: Any = None) -> None:
+                 clip_scores: Any = None, style: Any = None, prefix: str = "cam1") -> None:
     """Дописать в `take` правило силы жёлтых: силы фраз и ручки правила.
 
     `groups` — фразы хайлайта с составом (`_yellow_phrase_groups`: та же группировка,
@@ -313,7 +314,8 @@ def _take_yellow(take: dict[str, Any], groups: Any, scores: Any, strong: bool,
     клипа: по ним правило считает порог силы (ручка «Порог силы, %»).
 
     Ручки правила (`style`: `hl_zoom_min_pct`, `hl_zoom_max_per_piece`,
-    `hl_zoom_second_min_s`) уезжают в `take` — их читает `_take_zoom_segment_keys`.
+    `hl_zoom_second_min_s`; для камеры 2 с `prefix="cam2"` — `cam2_hl_zoom_*`) уезжают в
+    `take` — их читает `_take_zoom_segment_keys`.
     Ключа стиля нет — берётся дефолт правила (бывшие константы `HL_ZOOM_*`; у порога силы
     это p70 жёлтых клипа, замер 02.10.2026).
 
@@ -330,11 +332,14 @@ def _take_yellow(take: dict[str, Any], groups: Any, scores: Any, strong: bool,
             take["yellow_clip_scores"] = [float(v) for v in (clip_scores or {}).values()]
     take["yellow_strong"] = bool(strong)
     if style is not None:
-        # Дефолты ручек — константы правила из layout (в модуль уже импортированы).
-        take["yellow_min_pct"] = float(_yellow_knob(style, "hl_zoom_min_pct", HL_ZOOM_MIN_PCT))
-        take["yellow_max_per_piece"] = int(_yellow_knob(style, "hl_zoom_max_per_piece",
+        # Ручки правила — свои у каждой камеры: у Камеры 1 `hl_zoom_*`, у Камеры 2 `cam2_hl_zoom_*`
+        # (в стиле пусто = значение Камеры 1, это уже подставил plan_style). Дефолты — константы
+        # правила из layout (в модуль уже импортированы).
+        pre = "" if prefix == "cam1" else f"{prefix}_"
+        take["yellow_min_pct"] = float(_yellow_knob(style, f"{pre}hl_zoom_min_pct", HL_ZOOM_MIN_PCT))
+        take["yellow_max_per_piece"] = int(_yellow_knob(style, f"{pre}hl_zoom_max_per_piece",
                                                        HL_ZOOM_MAX_PER_PIECE))
-        take["yellow_second_min_s"] = float(_yellow_knob(style, "hl_zoom_second_min_s",
+        take["yellow_second_min_s"] = float(_yellow_knob(style, f"{pre}hl_zoom_second_min_s",
                                                         HL_ZOOM_SECOND_MIN_S))
 
 
@@ -417,6 +422,10 @@ def plan_camera(inp: CameraInputs) -> CameraPlan:
     # сопоставления «строка интро -> слово subs» нет).
     _intro_hl = _intro_hl_words(inp.intro_groups, inp.intro_remove, inp.subs_all)
     _c1zoom = style.cam1_zoom         # pulse = наезд с откатом | jump = резкие скачки | drift = скачок+плавный дрейф 100–160% | none = нет зума
+    # Окна уже поставленных циклов наезда ОБЕИХ камер — один список на оба словаря `take`
+    # (камера 1 идёт первой, камера 2 видит её окна): наезд камеры 2 не начнётся раньше,
+    # чем через «Пауза между наездами» после конца окна камеры 1.
+    _take_busy: list[tuple[int, int]] = []
     if cam1_scale is None:                             # авто-зум по сменам кам1→кам2
         _zstart = style.cam1_zoom_start
         _zbig = style.cam1_zoom_big
@@ -432,6 +441,9 @@ def plan_camera(inp: CameraInputs) -> CameraPlan:
                 "out_s": style.cam1_take_out,
                 "long_on": bool(style.cam1_take_zoom),
                 "yellow_on": bool(style.cam1_yellow_zoom),
+                "after_cut_s": style.cam1_take_after_cut,
+                "gap_s": style.cam1_take_gap,
+                "busy": _take_busy,
             }
             if style.cam1_yellow_zoom:
                 _yellow_groups = _yellow_phrase_groups(subs, hl, _intro_hl, _fps0)
@@ -519,6 +531,9 @@ def plan_camera(inp: CameraInputs) -> CameraPlan:
                 "out_s": style.cam2_take_out,
                 "long_on": bool(style.cam2_take_zoom),
                 "yellow_on": bool(style.cam2_yellow_zoom),
+                "after_cut_s": style.cam2_take_after_cut,
+                "gap_s": style.cam2_take_gap,
+                "busy": _take_busy,
             }
             if style.cam2_yellow_zoom:
                 _yellow_groups2 = _yellow_phrase_groups(subs, hl, _intro_hl, _fps0)
@@ -526,7 +541,8 @@ def plan_camera(inp: CameraInputs) -> CameraPlan:
                 _take_yellow(_z2take, _yellow_groups2,
                              _yellow_scores_map(inp.emph, _yellow_need(subs, hl, _intro_hl)),
                              _yellow_strong_on(style, "cam2"),
-                             clip_scores=getattr(inp.emph, "scores", None), style=style)
+                             clip_scores=getattr(inp.emph, "scores", None), style=style,
+                             prefix="cam2")
         if _c2zoom == "none":
             if _z2start or _z2take:
                 cam2_scale = _cam1_jump_keys(cams, lo=100.0, hi=100.0, fps=meta["fps"], start=_z2start, big=_z2big, take=_z2take, cam=1)

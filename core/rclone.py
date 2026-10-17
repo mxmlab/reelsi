@@ -103,11 +103,82 @@ def rclone_remote(conf: str | None = None) -> str:
                        f"({', '.join(remotes)}) — задай имя через {REMOTE_ENV}")
 
 
-def rclone_cmd(remote: str, url: str, dest: str) -> list[str]:
+def rclone_list_cmd(remote: str, url: str) -> list[str]:
+    """Аргументы `rclone lsjson` для ССЫЛКИ НА ПАПКУ: все файлы с путями, чтобы до
+    скачивания увидеть, какие подпапки лежат в ссылке. Для ссылки на файл списывать
+    нечего — ValueError.
+
+    `--files-only`: пустые подпапки в список не попадают, выбирать из них нечего.
+    `--` перед удалённым путём — та же защита разбора, что у `rclone_cmd`.
+    """
+    spec = parse_gdrive_link(url)
+    if not spec:
+        raise ValueError("не ссылка гугл-диска: " + str(url)[:80])
+    if spec["kind"] != "folder":
+        raise ValueError("список подпапок есть только у ссылки на папку")
+    args = ["rclone", "--config", rclone_conf(), "lsjson", "-R", "--files-only",
+            "--drive-root-folder-id", spec["id"]]
+    if spec["resource_key"]:
+        args += ["--drive-resource-key", spec["resource_key"]]
+    return args + ["--", remote + ":"]
+
+
+def _natural_key(name: str) -> list[Any]:
+    """Ключ естественного порядка: «Камера 2» раньше «Камера 10» (цифровые куски — числами)."""
+    return [int(p) if p.isdecimal() else p.casefold() for p in re.split(r"(\d+)", name)]
+
+
+def top_folders(items: list[dict[str, Any]]) -> dict[str, Any]:
+    """Ответ `rclone lsjson` → подпапки верхнего уровня и файлы самой ссылки.
+
+    Группировка по первой части пути: «Камера 1/IMG.MOV» относит файл к папке
+    «Камера 1», а вложенность глубже (…/sub/x.mov) уходит в ту же верхнюю папку.
+    Файлы без папки отделены в root_files/root_bytes: иначе файл из корня уехал бы
+    в чью-то камеру. Размер -1 (документы Google) считаем нулём.
+    """
+    dirs: dict[str, list[int]] = {}
+    root_files = 0
+    root_bytes = 0
+    for it in items or []:
+        if not isinstance(it, dict) or it.get("IsDir"):
+            continue
+        # rclone пишет пути через «/» всегда; «\» в имени файла — обычный символ
+        parts = [p for p in str(it.get("Path") or "").split("/") if p]
+        if not parts:
+            continue
+        size = max(0, int(it.get("Size") or 0))
+        if len(parts) == 1:
+            root_files += 1
+            root_bytes += size
+        else:
+            acc = dirs.setdefault(parts[0], [0, 0])
+            acc[0] += 1
+            acc[1] += size
+    ordered = sorted(dirs.items(), key=lambda kv: (_natural_key(kv[0]), kv[0]))
+    return {"dirs": [{"name": k, "files": v[0], "bytes": v[1]} for k, v in ordered],
+            "root_files": root_files, "root_bytes": root_bytes}
+
+
+def _sub_name(sub: str) -> str:
+    """Имя подпапки ссылки — одно имя, не путь. «-» в начале rclone принял бы за опцию,
+    «..» и разделители вывели бы источник за корень ссылки. Проверка та же, что у `dest`."""
+    if not sub or sub.startswith(("-", "..")) or "/" in sub or "\\" in sub:
+        raise ValueError("имя подпапки не может начинаться с «-» или «..» и содержать "
+                         "разделители пути: " + sub[:80])
+    return sub
+
+
+def rclone_cmd(remote: str, url: str, dest: str, sub: str | None = None,
+               root_only: bool = False) -> list[str]:
     """Аргументы rclone для ссылки. Файл — backend copyid (документированный
     доступ по ID), папка — copy с --drive-root-folder-id (то же по-другому:
     папка становится корнем remote). Список, без shell: путь из ссылки не может
-    стать аргументом оболочки."""
+    стать аргументом оболочки.
+
+    sub — имя подпапки ссылки: качаем только её (источник remote:sub).
+    root_only — только файлы самой ссылки, без подпапок (--max-depth 1).
+    Оба — только для ссылки на папку.
+    """
     spec = parse_gdrive_link(url)
     if not spec:
         raise ValueError("не ссылка гугл-диска: " + str(url)[:80])
@@ -117,6 +188,8 @@ def rclone_cmd(remote: str, url: str, dest: str) -> list[str]:
     # токены, `--dry-run` сделал бы вид, что скачали. Отказываем до всякого rclone.
     if dest.startswith("-"):
         raise ValueError("путь назначения не может начинаться с «-»: " + dest[:80])
+    if spec["kind"] == "file" and (sub is not None or root_only):
+        raise ValueError("подпапки и файлы корня есть только у ссылки на папку")
     # -v обязателен. rclone логирует статистику на уровне INFO (--stats-log-level,
     # по умолчанию INFO), а порог вывода по умолчанию — NOTICE, то есть с одним
     # --stats в лог не попадёт НИ ОДНОЙ строки прогресса и скачивание гигабайтов
@@ -138,7 +211,10 @@ def rclone_cmd(remote: str, url: str, dest: str) -> list[str]:
         args += ["copy", "--drive-root-folder-id", spec["id"]]
         if spec["resource_key"]:
             args += ["--drive-resource-key", spec["resource_key"]]
-        args += ["--", remote + ":", dest]
+        if root_only:
+            args += ["--max-depth", "1"]          # только файлы корня, подпапки — мимо
+        src = (remote + ":" + _sub_name(sub)) if sub is not None else (remote + ":")
+        args += ["--", src, dest]
     return args
 
 

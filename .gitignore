@@ -111,6 +111,8 @@ job.lock.gpu
 job.test.lock.gpu
 # окружение RoFormer-шумодава тестового профиля (core/voicefx_sep.py, ~2 ГБ)
 _voice_sep.test/
+# папка onnxruntime-gpu тестового профиля (core/ort_gpu.py) и её временные копии при установке
+_ort_gpu.test*/
 # копии рабочего состояния для тестового профиля (launch.json, порт 5098) — заводятся сами
 ai_config.test.json
 insertlib.test.json

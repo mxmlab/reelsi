@@ -58,6 +58,16 @@ def _sv_or(st: Mapping[str, Any], key: str) -> Any:
     return st.get(key) or _styles.BASE[key]
 
 
+def _pair_sv(st: Mapping[str, Any], key: str, pair_key: str) -> Any:
+    """Парная ручка: ключа в стиле нет (None) — значение ручки-пары (камера 1).
+
+    Так же, как back_step_after ← back_step: пустое в стиле значит «как у пары»,
+    а не дефолт из BASE. Ноль — заданное значение, его не подменяем.
+    """
+    v = st.get(key)
+    return _sv(st, pair_key) if v is None else v
+
+
 # Tritone выбеливает яркие цвета: при яркости цвета мидтонов (Rec.709,
 # 0.2126R+0.7152G+0.0722B по значениям 0–1) выше порога не ставим. Замер 2026-09-18:
 # жёлтый интро Джаггера 0.91, жёлтый по умолчанию 0.87 — выкл; голубой 0.61,
@@ -159,6 +169,11 @@ class StyleValues:
     sub_glow_amt: float
     sub_glow_rad: float
     sub_glow_fill: list
+    sub_shadow: bool                       # галка: тень текста субтитров
+    sub_shadow_op: float                   # прозрачность тени, проценты 0..100
+    sub_shadow_dir: float                  # направление тени, градусы
+    sub_shadow_dist: float                 # дистанция тени, px
+    sub_shadow_soft: float                 # мягкость тени, px
     # верхняя строка-прогресс
     top_line: Any
     top_line_y: float
@@ -290,6 +305,11 @@ class StyleValues:
     insert_c1_y: float
     insert_c2_x: float
     insert_c2_y: float
+    # Точка покоя «Кам 2» на кадре Камеры 1: пусто в стиле = как у «Кам 2» (см. _pair_sv).
+    # `insert_c2on1_set` — задана ли хоть одна ручка: без неё план и .jsx прежние байт в байт.
+    insert_c2on1_x: float
+    insert_c2on1_y: float
+    insert_c2on1_set: bool
     insert_c1on2_x: float
     insert_c1on2_y: float
     plate_path: str                        # бывшее _plate_path: insert_plate_file, strip
@@ -308,6 +328,9 @@ class StyleValues:
     cam1_take_hi: float
     cam1_take_hold: float
     cam1_take_out: float
+    # Паузы наездов, с: после склейки и между наездами (0 — как раньше, см. layout)
+    cam1_take_after_cut: float
+    cam1_take_gap: float
     cam1_take_yellow_mode: str
     cam1_take_yellow: bool
     cam1_yellow_zoom: bool
@@ -321,6 +344,10 @@ class StyleValues:
     hl_zoom_min_pct: float
     hl_zoom_max_per_piece: int
     hl_zoom_second_min_s: float
+    # Ручки правила силы жёлтых Камеры 2: пусто в стиле = значение Камеры 1 (см. _pair_sv)
+    cam2_hl_zoom_min_pct: float
+    cam2_hl_zoom_max_per_piece: int
+    cam2_hl_zoom_second_min_s: float
     cam1_fit: float
     cam1_zoom_cx: float
     cam1_zoom_cy: float
@@ -338,6 +365,9 @@ class StyleValues:
     cam2_take_hi: float
     cam2_take_hold: float
     cam2_take_out: float
+    # Паузы наездов Камеры 2: пусто в стиле = значение Камеры 1 (см. _pair_sv)
+    cam2_take_after_cut: float
+    cam2_take_gap: float
     cam2_take_yellow_mode: str
     cam2_take_yellow: bool
     cam2_yellow_zoom: bool
@@ -524,6 +554,11 @@ def read_style(st: Mapping[str, Any], w: Any = None, h: Any = None) -> StyleValu
         sub_glow_amt=float(_sv(st, "sub_glow_amt")),
         sub_glow_rad=float(_sv(st, "sub_glow_rad")),
         sub_glow_fill=list(_sv(st, "sub_glow_fill")),
+        sub_shadow=bool(_sv(st, "sub_shadow")),
+        sub_shadow_op=float(_sv(st, "sub_shadow_op")),
+        sub_shadow_dir=float(_sv(st, "sub_shadow_dir")),
+        sub_shadow_dist=float(_sv(st, "sub_shadow_dist")),
+        sub_shadow_soft=float(_sv(st, "sub_shadow_soft")),
         top_line=st.get("top_line"),
         top_line_y=float(_sv(st, "top_line_y")),
         top_line_w=float(_sv(st, "top_line_w")),
@@ -623,6 +658,10 @@ def read_style(st: Mapping[str, Any], w: Any = None, h: Any = None) -> StyleValu
         insert_c1_y=float(_sv_or(st, "insert_c1_y")),
         insert_c2_x=float(_sv(st, "insert_c2_x")),
         insert_c2_y=float(_sv(st, "insert_c2_y")),
+        insert_c2on1_x=float(_pair_sv(st, "insert_c2on1_x", "insert_c2_x")),
+        insert_c2on1_y=float(_pair_sv(st, "insert_c2on1_y", "insert_c2_y")),
+        insert_c2on1_set=(st.get("insert_c2on1_x") is not None
+                          or st.get("insert_c2on1_y") is not None),
         insert_c1on2_x=float(_sv_or(st, "insert_c1on2_x")),
         insert_c1on2_y=float(_sv_or(st, "insert_c1on2_y")),
         plate_path=_plate_path,
@@ -641,6 +680,9 @@ def read_style(st: Mapping[str, Any], w: Any = None, h: Any = None) -> StyleValu
         cam1_take_hi=float(_sv_or(st, "cam1_take_hi")),
         cam1_take_hold=float(_sv_or(st, "cam1_take_hold")),
         cam1_take_out=float(_sv_or(st, "cam1_take_out")),
+        # _sv, не _sv_or: ноль паузы — заданное значение («как раньше»), а не пусто
+        cam1_take_after_cut=float(_sv(st, "cam1_take_after_cut")),
+        cam1_take_gap=float(_sv(st, "cam1_take_gap")),
         cam1_take_yellow_mode=str(_sv_or(st, "cam1_take_yellow_mode") or "off"),
         cam1_take_yellow=bool(_sv(st, "cam1_take_yellow")),
         cam1_yellow_zoom=bool(_sv(st, "cam1_yellow_zoom")),
@@ -649,6 +691,11 @@ def read_style(st: Mapping[str, Any], w: Any = None, h: Any = None) -> StyleValu
         hl_zoom_min_pct=float(_sv(st, "hl_zoom_min_pct")),
         hl_zoom_max_per_piece=int(float(_sv(st, "hl_zoom_max_per_piece"))),
         hl_zoom_second_min_s=float(_sv(st, "hl_zoom_second_min_s")),
+        cam2_hl_zoom_min_pct=float(_pair_sv(st, "cam2_hl_zoom_min_pct", "hl_zoom_min_pct")),
+        cam2_hl_zoom_max_per_piece=int(float(_pair_sv(st, "cam2_hl_zoom_max_per_piece",
+                                                      "hl_zoom_max_per_piece"))),
+        cam2_hl_zoom_second_min_s=float(_pair_sv(st, "cam2_hl_zoom_second_min_s",
+                                                 "hl_zoom_second_min_s")),
         cam1_fit=float(_sv_or(st, "cam1_fit")),
         cam1_zoom_cx=float(_sv(st, "cam1_zoom_cx")),
         cam1_zoom_cy=float(_sv(st, "cam1_zoom_cy")),
@@ -665,6 +712,8 @@ def read_style(st: Mapping[str, Any], w: Any = None, h: Any = None) -> StyleValu
         cam2_take_hi=float(_sv_or(st, "cam2_take_hi")),
         cam2_take_hold=float(_sv_or(st, "cam2_take_hold")),
         cam2_take_out=float(_sv_or(st, "cam2_take_out")),
+        cam2_take_after_cut=float(_pair_sv(st, "cam2_take_after_cut", "cam1_take_after_cut")),
+        cam2_take_gap=float(_pair_sv(st, "cam2_take_gap", "cam1_take_gap")),
         cam2_take_yellow_mode=str(_sv_or(st, "cam2_take_yellow_mode") or "off"),
         cam2_take_yellow=bool(_sv(st, "cam2_take_yellow")),
         cam2_yellow_zoom=bool(_sv(st, "cam2_yellow_zoom")),

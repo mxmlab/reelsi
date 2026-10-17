@@ -36,6 +36,7 @@
   через запятую): у Openverse ключа нет, и без выключателя его нельзя ни убрать из
   выдачи, ни проверить отказ «нет ни одного стока».
 """
+import concurrent.futures
 import datetime
 import json
 import os
@@ -168,12 +169,20 @@ def has_keys() -> bool:
     return bool(ready_providers())
 
 
-def search(query: str, kind: str, n: int = 8, fmt: Any = None) -> list[dict[str, Any]]:
-    """Кандидаты со стоков: опрашиваем провайдеров по порядку, пока не набрано `n`.
+def search(query: str, kind: str, n: int = 12, fmt: Any = None) -> list[dict[str, Any]]:
+    """Кандидаты со стоков: опрашиваем ВСЕХ готовых провайдеров с этим `kind`.
 
-    Провайдер без ключа пропускается молча (ключ может быть только у одного), а
-    сетевой отказ провайдера — предупреждение и следующий: частичная выдача лучше
-    пустой, и 401 у одного стока не должен отменять второй. `kind` — "photo" | "video".
+    Порядок — приоритет ПОКАЗА: выдача идёт по кругу от каждого подключённого стока
+    (первый кадр Pexels, первый Unsplash, первый Pixabay, … потом вторые и так далее),
+    чтобы в подборе были все стоки, а не один. Раньше поиск шёл по списку «пока не
+    набрано n»: Pexels почти всегда сразу отдавал все кадры, и до остальных дело не
+    доходило — в подборе висел только Pexels.
+
+    Каждый провайдер спрашивается на `n` кандидатов, чтобы отказ одного не оставлял
+    дыру: остальные добирают по кругу. Опрос параллельный (пул — только скорость):
+    порядок выдачи от того, кто ответил первым, не зависит. Провайдер без ключа
+    пропускается молча (ключ может быть только у одного), сетевой отказ провайдера —
+    предупреждение, а не отказ всего поиска. `kind` — "photo" | "video".
 
     `fmt` — формат кадра ролика (ключ `frame.FORMATS`) или None: у него берутся
     ориентация поиска (в вертикальный ролик нужен вертикальный кадр) и целевой
@@ -191,26 +200,62 @@ def search(query: str, kind: str, n: int = 8, fmt: Any = None) -> list[dict[str,
     prov_keys = keys()
     size = _target_size(fmt)
     orient = frame.orientation(fmt)
+    # У Unsplash нет видео, у Coverr — фото: такого провайдера в поиск не зовём вовсе.
+    asked = [p for p in ready if kind in PROVIDER_META[p]["kinds"]]
+    if not asked:
+        return []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(asked)) as pool:
+        futures = [pool.submit(_search_one, prov, prov_keys.get(prov) or "", q, kind,
+                               n, size, orient)
+                   for prov in asked]
+        # Порядок результатов — порядок `asked` (приоритет), а не порядок ответов сети.
+        # ReelsiError любого стока всплывает здесь, как и раньше.
+        results = [f.result() for f in futures]
+    return _merge_round_robin(results, n)
+
+
+def _search_one(prov: str, key: str, query: str, kind: str, n: int,
+                size: tuple[int, int], orient: str) -> list[dict[str, Any]]:
+    """Кандидаты одного стока для `search`. Сетевой отказ — предупреждение и пустой
+    список: частичная выдача лучше пустой, а 401 у одного стока не отменяет второй.
+    `ReelsiError` пробрасывается — это ошибка запроса или настроек, не сети."""
+    try:
+        return _provider_search(prov, key, query, kind, n, size, orient)
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            console_emit("  ⚠ ключ {provider} не принят (HTTP {code})",
+                         provider=prov, code=e.code)
+        else:
+            console_emit("  ⚠ {provider}: HTTP {code}", provider=prov, code=e.code)
+    except ReelsiError:
+        raise
+    except Exception as e:
+        console_emit("  ⚠ {provider}: {err}", provider=prov, err=e)
+    return []
+
+
+def _merge_round_robin(lists: list[list[dict[str, Any]]], n: int) -> list[dict[str, Any]]:
+    """Слить выдачи стоков ПО КРУГУ: первый кандидат от каждого, затем второй от каждого
+    и так далее, без дублей по (провайдер, id), до `n` штук.
+
+    Сток, у которого кандидаты кончились, в следующих кругах пропускается — остальные
+    добирают. Порядок `lists` — приоритет стоков (`PROVIDERS`)."""
     out: list[dict[str, Any]] = []
-    for prov in ready:
-        if len(out) >= n:
-            break
-        if kind not in PROVIDER_META[prov]["kinds"]:
-            continue                       # у Unsplash нет видео, у Coverr — фото
-        try:
-            out.extend(_provider_search(prov, prov_keys.get(prov) or "", q, kind,
-                                        n - len(out), size, orient))
-        except urllib.error.HTTPError as e:
-            if e.code in (401, 403):
-                console_emit("  ⚠ ключ {provider} не принят (HTTP {code})",
-                             provider=prov, code=e.code)
-            else:
-                console_emit("  ⚠ {provider}: HTTP {code}", provider=prov, code=e.code)
-        except ReelsiError:
-            raise
-        except Exception as e:
-            console_emit("  ⚠ {provider}: {err}", provider=prov, err=e)
-    return out[:n]
+    seen: set[tuple[str, str]] = set()
+    depth = max((len(lst) for lst in lists), default=0)
+    for i in range(depth):
+        for lst in lists:
+            if i >= len(lst):
+                continue
+            c = lst[i]
+            key = (str(c.get("provider") or ""), str(c.get("id")))
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(c)
+            if len(out) >= n:
+                return out
+    return out
 
 
 def download(cand: dict[str, Any], dest_dir: str, emit: Any = console_emit) -> str:

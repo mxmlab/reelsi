@@ -27,6 +27,16 @@ paths = [
   # tests/test_gdrive.py:58 — фиктивный resourcekey=0-ABCDEFGHIXJQpIGqBJq3MC внутри
   # тестовой ссылки Google Drive: разбор ссылки, к реальному диску не ходим.
   '''tests/test_gdrive\.py''',
+  # tests/test_gdrive_folders.py:149 — тот же фиктивный resourcekey в тестовой ссылке
+  # на папку (разбор ссылки и команды rclone, к диску не ходим).
+  '''tests/test_gdrive_folders\.py''',
+  # tests/test_style_pair_base_fallback.py:60 — «key: 'insert_c2on1_y'» в стенде панели
+  # стиля: имя поля схемы, как в core/style_schema.py, а не ключ доступа.
+  '''tests/test_style_pair_base_fallback\.py''',
+  # Байткод: slice_check сканирует каталог среза ПОСЛЕ шага pytest, и в __pycache__ лежат те же
+  # строки тестов в скомпилированном виде (.pyc в git не попадает — .gitignore). Исходники
+  # проверяются отдельно, по своим путям выше.
+  '''(^|/)__pycache__/''',
   # tests/test_security_fixes.py:73, 277 — подставное значение заголовка
   # «abcdef123456»: в фикстуре ai_config (X-Token) и в проверке resolve_header_mask.
   # Строка выдумана в тесте, никуда не отправляется и секретом быть не может.

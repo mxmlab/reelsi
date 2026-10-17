@@ -38,12 +38,13 @@ Reelsi is a local editing assistant for talking-head video. AI cuts footage by c
 
 ### Design
 
-- **Word-level subtitles**: animated subtitle graphics with per-word highlights, smart line wrapping and a background plate, plus plain `.srt`.
+- **Word-level subtitles**: animated subtitle graphics with per-word highlights, smart line wrapping, a background plate and a text shadow (all set in the style), plus plain `.srt`.
 - **Word highlights**: the AI picks the key words; yellow words rise, fade and blur in as they are spoken, stack one word at a time in a row, and a camera zoom lands only on the strongest ones.
 - **Intro**: a hook and animated title cards built from the transcript, with accent rows, glow, shadow, per-camera position, scale and edge margins. The length of a title row is a style setting (20 characters by default), and a call word in quotes at the end of the video becomes the last accent.
 - **Camera work**: zoom animation (smooth, jumps, drift), zoom-ins inside long takes and on highlighted words, framing by hand (fill, zoom point, frame offset, horizon) and head follow — with two cameras that each have their own zoom, framing, colour and intro.
-- **Inserts**: photo and video assets matched from a local library by meaning or generated with an AI provider, or taken from the stock libraries Pexels, Unsplash, Pixabay and Openverse in that order (Coverr behind a flag); a plate mode cuts the photo's background out, and censoring hides a region with a mosaic. A word from your personal `named_inserts.json` dictionary (repository root; the shared example is `data/named_inserts.example.json`) puts its library picture on that word.
-- **Background cut-out model**: u2net (fast, the default, about 0.7 s per picture) or BiRefNet (cleaner edges, about 8 s per picture on a processor), chosen in ⚙ → Generation; BiRefNet downloads its ~1 GB model on first use.
+- **Pauses around zoom-ins**: a pause after each cut and a pause between zoom-ins, set for each camera in the style ("Pause after cut" and "Pause between pushes").
+- **Inserts**: photo and video assets matched from a local library by meaning or generated with an AI provider, or taken from the stock libraries Pexels, Unsplash, Pixabay and Openverse, all connected ones at once and shown in turn (Coverr behind a flag); a plate mode cuts the photo's background out, and censoring hides a region with a mosaic. A word from your personal `named_inserts.json` dictionary (repository root; the shared example is `data/named_inserts.example.json`) puts its library picture on that word.
+- **Background cut-out model**: u2net (fast, the default, about 0.7 s per picture) or BiRefNet (cleaner edges; with onnxruntime-gpu it runs on the video card, about 0.3 s per picture, and without it about 8 s on a processor), chosen in ⚙ → Generation; BiRefNet downloads its ~1 GB model on first use.
 - **Roto**: GPU background matting puts the speaker's cut-out figure above the intro and the inserts.
 - **Speaker and project styling**: a style panel with every knob, presets, a style bound to a speaker, and the layer order of the assembled scene.
 - **Text extras**: a glossary of terms for recognition, censor word lists with a whole-word option, a caption under the video, and a disclaimer whose scale and position are adjusted in the preview.
@@ -59,7 +60,7 @@ Reelsi is a local editing assistant for talking-head video. AI cuts footage by c
 
 - **Interface language**: Russian and English, switched in the header.
 - **Command line**: cutting, highlights and the After Effects script are also available from the console, without the web interface.
-- **Footage from Google Drive**: downloads source files from a shared link (`rclone`) and lays them out into camera folders.
+- **Footage from Google Drive**: downloads source files from a shared link (`rclone`) and lays them out into camera folders; a link to several subfolders asks where each one goes.
 
 ## How processing works
 

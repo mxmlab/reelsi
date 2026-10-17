@@ -636,7 +636,11 @@ summary:hover{color:var(--tx)}
 #ipvsub .pvsub_bg{position:absolute;left:50%;transform:translate(-50%,50%);
   box-shadow:0 0.463cqw 4.074cqw rgba(0,0,0,0.68);pointer-events:none;z-index:0;
   transition:width .22s cubic-bezier(.165,.84,.44,1)}
-#ipvsub .pvsubw{position:absolute;left:0;right:0;text-align:center;z-index:1;
+/* Строка шире кадра (длинная склейка без переносов, и ещё при масштабе субтитров < 100 %, где
+   слой ужат transform'ом) с nowrap вылезала ВПРАВО: text-align:center не центрирует то, что не
+   влезло, — начало строки прибито к левому краю. Коробка вдвое шире кадра с тем же центром —
+   строка до двух ширин кадра стоит по центру, как точечный текст в AE (жалоба 2026-10-17). */
+#ipvsub .pvsubw{position:absolute;left:-50%;right:-50%;text-align:center;z-index:1;
   font-size:21px;font-size:var(--subfs,7.7cqw);line-height:1;color:var(--subfc,#fff);text-shadow:var(--subsh,0 2px 7px #000,0 0 3px #000);padding:0;white-space:nowrap}
 /* опора базовой линии для замера в ipvSubs: строка садится по POSY, а это базовая
    линия текстового слоя в AE, не низ коробки — тот же приём, что у интро и подписи */
@@ -1018,8 +1022,8 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 .itlbar{margin-top:14px}
 .itl{margin-top:6px;border:1px solid var(--bd);border-radius:var(--r);background:var(--bg2);overflow-x:auto;overflow-y:hidden;height:88px}
 .itlin{position:relative;height:100%;min-width:100%}
-.itlruler{position:absolute;top:0;left:0;right:0;height:18px;background:var(--tl-rule-bg);border-bottom:1px solid var(--tl-rule-line);cursor:grab}
-/* Протяжка вида (линейка, средняя кнопка): курсор «захвачено» везде внутри полосы, даже над подписями */
+.itlruler{position:absolute;top:0;left:0;right:0;height:18px;background:var(--tl-rule-bg);border-bottom:1px solid var(--tl-rule-line);cursor:ew-resize}
+/* Протяжка вида (средняя кнопка): курсор «захвачено» везде внутри полосы, даже над подписями */
 .panning,.panning *{cursor:grabbing!important}
 /* было 9px/#6f6f6f (4.0:1) — кегль ниже минимума DESIGN и нечитаемый тайм-код */
 .itlruler i{position:absolute;top:0;height:18px;border-left:1px solid var(--tl-tick);color:var(--tl-tick-tx);font-size:11px;font-style:normal;padding-left:4px;line-height:18px;white-space:nowrap}

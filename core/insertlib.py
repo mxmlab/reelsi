@@ -24,14 +24,14 @@ CLI:  python insertlib.py scan <dir1> <dir2> ...
       python insertlib.py describe
       python insertlib.py stats
 """
-import os, re, json, math, threading, time, urllib.request
+import gc, os, re, json, math, threading, time, urllib.request
 from collections import Counter
 from typing import Any, Sequence, cast
 import numpy as np
 from core.fileio import atomic_bytes_write, atomic_json_dump, quarantine_unreadable
 from core.media import probe_duration
 
-from core import paths
+from core import paths, ort_gpu
 from core.clipstore import TRASH_DIR
 from core.app_meta import env, console_emit, http_req, wrap_emit
 from core.umsg import ReelsiError, cli_error
@@ -1116,30 +1116,131 @@ _RB_LOCK = threading.Lock()                              # создание се
 # до выбора модели была только она, такие кэши не пересчитываем.
 REMBG_TAG = "reelsi_rembg_model"
 
+# Сессия на видеокарте держит ~1–2 ГБ VRAM, а на Windows переполнение VRAM вешает машину
+# (правило проекта: держать запас). Поэтому простой дольше этого срока выгружает сессию;
+# следующий вызов откроет её заново (1–2 с).
+REMBG_GPU_IDLE_SEC = 60
+_RB_SESSION_GPU = False                                  # сессия открыта на видеокарте, а не на CPU
+_RB_IDLE_TIMER: threading.Timer | None = None            # таймер выгрузки сессии с видеокарты
+_RB_IDLE_GEN = 0                                         # поколение таймера: сработавший устаревший молчит
+_CUDA_DLLS_DONE = False                                  # DLL CUDA из torch подключены (раз за процесс)
+_CUDA_DLL_DIRS: list[Any] = []                           # хэндлы add_dll_directory: держим их живыми
+# Опции CUDA — из замера (RTX 4070 Ti SUPER, birefnet-general, вход 1024×1024): CPU 10.2 с,
+# CUDA с опциями по умолчанию 3.6 с, CUDA с cuDNN-опциями 0.27 с. Без них в 13 раз медленнее.
+_CUDA_OPTIONS = {"cudnn_conv_use_max_workspace": "1", "cudnn_conv_algo_search": "HEURISTIC"}
+
+
+def _rembg_providers() -> list:
+    """Провайдеры onnxruntime для сессии rembg. Если onnxruntime видит CUDA (стоит
+    onnxruntime-gpu) — CUDA с cuDNN-опциями первым и CPU вторым: CPU нужен, если сессия
+    на видеокарте не поднимется. Иначе — только CPU. Причина опций — у `_CUDA_OPTIONS`."""
+    ort_gpu.activate()                                   # до импорта: своя папка onnxruntime-gpu (core/ort_gpu.py)
+    try:
+        import onnxruntime
+    except ImportError:                                  # без onnxruntime rembg не работает вовсе; причина видна в doctor
+        return ["CPUExecutionProvider"]
+    if "CUDAExecutionProvider" in onnxruntime.get_available_providers():
+        return [("CUDAExecutionProvider", dict(_CUDA_OPTIONS)), "CPUExecutionProvider"]
+    return ["CPUExecutionProvider"]
+
+
+def _cuda_dll_dirs() -> None:
+    """DLL CUDA/cuDNN для onnxruntime-gpu берём из `torch/lib`: torch cu126 несёт их с собой.
+    Без них сессия на видеокарте не создаётся — Windows не находит библиотеки cuDNN.
+    Добавляем один раз за процесс. На не-Windows `os.add_dll_directory` нет — пропуск.
+    Ошибка не фатальна: сессия откатится на CPU (см. `_open_rb_session`)."""
+    global _CUDA_DLLS_DONE
+    if _CUDA_DLLS_DONE:
+        return
+    _CUDA_DLLS_DONE = True
+    add = getattr(os, "add_dll_directory", None)
+    if add is None:
+        return
+    try:
+        import torch
+        lib = os.path.join(os.path.dirname(torch.__file__), "lib")
+        if os.path.isdir(lib):
+            _CUDA_DLL_DIRS.append(add(lib))
+    except Exception as e:                               # torch не импортируется — сессия попробует без него и откатится
+        log.warning("DLL CUDA из torch не подключены (%s)", e)
+
+
+def _is_cuda(providers: list) -> bool:
+    first = providers[0]
+    return (first[0] if isinstance(first, tuple) else first) == "CUDAExecutionProvider"
+
+
+def _open_rb_session(new_session: Any, name: str, providers: list) -> tuple[Any, bool]:
+    """Открыть сессию rembg. Если на видеокарте не поднялась (нет DLL, не та версия cuDNN,
+    сбой драйвера), причину пишем в журнал и открываем на CPU: CPU-путь обязан работать
+    всегда. Возвращает (сессия, на_видеокарте)."""
+    if _is_cuda(providers):
+        _cuda_dll_dirs()
+        try:
+            return new_session(name, providers=providers), True
+        except ReelsiError:
+            raise
+        except Exception as e:
+            log.warning("фон на видеокарте не открылся (%s: %s) — откат на процессор",
+                        type(e).__name__, e)
+    return new_session(name, providers=["CPUExecutionProvider"]), False
+
+
+def _rb_arm_idle_timer() -> None:
+    """Перезапустить таймер выгрузки сессии с видеокарты. Вызывать под `_RB_LOCK`.
+    Старый таймер отменяем; поколение отсекает его, если он уже сработал и ждёт лок."""
+    global _RB_IDLE_TIMER, _RB_IDLE_GEN
+    _RB_IDLE_GEN += 1
+    if _RB_IDLE_TIMER is not None:
+        _RB_IDLE_TIMER.cancel()
+    timer = threading.Timer(REMBG_GPU_IDLE_SEC, _rb_idle_unload, args=(_RB_IDLE_GEN,))
+    timer.daemon = True
+    _RB_IDLE_TIMER = timer
+    timer.start()
+
+
+def _rb_idle_unload(gen: int) -> None:
+    """Выгрузить сессию с видеокарты после простоя, чтобы отдать VRAM. Сработавший таймер
+    устаревшего поколения (вызов успел перезапустить таймер, пока он ждал лок) ничего не делает."""
+    global _RB_SESSION, _RB_SESSION_NAME, _RB_SESSION_GPU, _RB_IDLE_TIMER
+    with _RB_LOCK:
+        if gen != _RB_IDLE_GEN:
+            return
+        _RB_IDLE_TIMER = None
+        _RB_SESSION = None
+        _RB_SESSION_NAME = None
+        _RB_SESSION_GPU = False
+        gc.collect()
+
 
 def remove_bg(img_bytes: bytes, trim: bool = True, emit: Any = None) -> bytes:
     """«Remove Background» как в фотошопе: PNG с настоящей альфой вместо белого фона.
-    Модель — из общих настроек (`rembg_model`: u2net или birefnet-general), onnx на CPU;
+    Модель — из общих настроек (`rembg_model`: u2net или birefnet-general), onnx на видеокарте
+    (если стоит onnxruntime-gpu), иначе на CPU;
     качается один раз в ~/.u2net при первом вызове этой модели.
     trim — обрезать полностью прозрачные поля (генератор оставляет широкие пустые
     рамки, а вставка в AE масштабируется по кадру — без обрезки предмет мелкий).
     Если модель съела всё (пустая альфа) — возвращаем исходник, лучше фон чем дырка."""
     emit = wrap_emit(emit)
     import io
+    ort_gpu.activate()                                   # rembg сам тянет onnxruntime: путь — до его импорта
     try:
         from rembg import remove, new_session
     except ImportError:
         raise ReelsiError("для снятия фона нужен пакет rembg — «pip install rembg» "
                          "(или сними галку «убирать фон» в ⚙)")
     from core import aicut                               # ленивый: aicut тянет настройки ИИ, ядру вставок не нужны
-    global _RB_SESSION, _RB_SESSION_NAME
+    global _RB_SESSION, _RB_SESSION_NAME, _RB_SESSION_GPU
     name = aicut.rembg_model()
+    providers = _rembg_providers()
     with _RB_LOCK:                                       # одна сессия на модель
         if _RB_SESSION is None or _RB_SESSION_NAME != name:
             _RB_SESSION = None                           # старую отпускаем до загрузки новой
-            _RB_SESSION = new_session(name)
+            _RB_SESSION, _RB_SESSION_GPU = _open_rb_session(new_session, name, providers)
             _RB_SESSION_NAME = name
         session, used = _RB_SESSION, _RB_SESSION_NAME
+        if _RB_SESSION_GPU:                              # простой на видеокарте — выгрузка через REMBG_GPU_IDLE_SEC
+            _rb_arm_idle_timer()
     from PIL import Image
     from PIL.PngImagePlugin import PngInfo
     im = Image.open(io.BytesIO(remove(img_bytes, session=session))).convert("RGBA")
@@ -1175,7 +1276,7 @@ def nobg_path(media: str, emit: Any = None) -> str:
 
     Галка стиля «без фона»: и сборка (.jsx), и предпросмотр (/api/media?nobg=1)
     ходят сюда — снятие фона одно на оба, второй копии правила нет. Кэш обязателен: rembg
-    это onnx-модель на CPU, 1-2 с на картинку, а вставок в ролике десятки.
+    это onnx-модель: на видеокарте при onnxruntime-gpu ~0.3 с на картинку, на процессоре — секунды, а вставок в ролике десятки.
 
     Кэш НОВЕЕ исходника — берём его. Исходник перегенерировали/поправили — считаем заново:
     иначе на экране осталась бы прошлая картинка. Кэш сделан ДРУГОЙ моделью, чем выбрана

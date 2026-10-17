@@ -134,10 +134,15 @@ async function renderDirCommit(el){const sp=openClipSpeaker();
     saveSpeakerRenderdir(sp,el.value);
   else renderRenderDirField();}
 async function saveSpeakerRenderdir(sp,dir){
-  const data=JSON.parse(JSON.stringify(sp));data.renderdir=dir.trim();
+  // Ключ профиля — тот, под которым sp лежит в SPEAKERS (подпись могла переименоваться).
+  const key=Object.keys(SPEAKERS).find(k=>SPEAKERS[k]===sp)||sp.label;
+  // База — свежий профиль с диска; поле папки — своё, поверх.
+  const data=await speakerFresh(key);
+  if(!data){toast(t('Папка не сохранена — сервер не ответил'));renderRenderDirField();return;}
+  data.renderdir=dir.trim();
   let d;
   try{d=await (await fetch('/api/savespeaker',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({name:data.label,data})})).json();}
+    body:JSON.stringify({name:key,data})})).json();}
   catch(e){toast(t('Папка не сохранена — сервер не ответил'));uiLog(t('savespeaker(renderdir): ')+e);renderRenderDirField();return;}
   if(!d.ok){toast(errText(d)||t('Папка не сохранена'));renderRenderDirField();return;}
   SPEAKERS[d.key]=data;
@@ -180,7 +185,9 @@ async function camDirCommit(k){
     saveSpeakerCamdirs(k,cur);}
 async function saveSpeakerCamdirs(k,dir){
   // Общий выбор: новая нарезка/профиль, не клип — сохраняем профиль выбранного спикера.
-  const sp=JSON.parse(JSON.stringify(SPEAKERS[val('speaker')]));
+  // База — свежий профиль с диска (копия SPEAKERS могла отстать); поле папки — своё.
+  const sp=await speakerFresh(val('speaker'));
+  if(!sp){toast(t('Папка камер не сохранена — сервер не ответил'));return;}
   const cds=(sp.camdirs||[]).slice();cds[k]=dir;sp.camdirs=cds;
   let d;
   try{d=await (await fetch('/api/savespeaker',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -912,8 +919,9 @@ function voiceFxSepWatch(host){
 //   VFXHOST.key   — что хост знает о цепочке (по нему решаем, слать ли `chain`);
 //   VFXHOST.seq   — счётчик «поколений»: погашенный хост не оживает от запоздавшего ответа;
 //   VFXHOST.row   — строка цепочки, чьё окно открыли (туда вернётся состояние плагина);
-//   VFXHOST.state — состояние плагина, уже принятое от сервера (без повторных тостов).
-let VFXHOST={timer:0,key:'',seq:0,starting:null,row:null,state:'',skip:''};
+//   VFXHOST.state — состояние плагина, уже принятое от сервера (без повторных тостов);
+//   VFXHOST.saveSeq — последний принятый итог записи профиля (см. voiceFxHostPoll).
+let VFXHOST={timer:0,key:'',seq:0,starting:null,row:null,state:'',skip:'',saveSeq:0};
 // Ключ цепочки: путь, имя, галка и состояние. Состояние в ключе НУЖНО: правка ручки в
 // окне меняет строку панели, и без него ключ не менялся бы, а хост о ней не узнал.
 function voiceFxHostKey(fx){
@@ -972,6 +980,8 @@ function voiceFxHostStart(fx,key){
     // Хост уже был на сервере (страницу перезагрузили): цепочку он знает по прежнему
     // заданию, поэтому ключ пуст, и следующая сверка пошлёт актуальную.
     VFXHOST.key=d.fresh?key:'';VFXHOST.state='';VFXHOST.skip='';
+    // Счётчик итогов записи — свой у каждого хоста: сервер ведёт его по сессии хоста.
+    VFXHOST.saveSeq=0;
     if(typeof voiceFxStatus==='function')voiceFxStatus($('pvvoice'),'');
     if(typeof vtNote==='function')vtNote(P,'');
     VOICEFXLIVE={sid:d.sid,running:true,track_ready:!!d.track_ready,window:!!d.window,
@@ -1012,8 +1022,20 @@ function voiceFxHostPoll(){
       // оно возвращается здесь — иначе следующее автосохранение панели вернуло бы прежнее.
       VFXHOST.state=d.state;
       const row=VFXHOST.row;
-      if(row&&row.isConnected)row.dataset.state=d.state;
-      toast(t('Настройки плагина сохранены'));}
+      if(row&&row.isConnected)row.dataset.state=d.state;}
+    // Тост — по РЕЗУЛЬТАТУ записи, а не по новому состоянию: состояние уходит в строку
+    // и тогда, когда профиль не записался (нет спикера, сбой файла), и «сохранено» врало бы.
+    // save_seq растёт на каждую законченную попытку (api/voicefx.py:_save_live_done).
+    const saveSeq=Number(d.save_seq)||0;
+    if(saveSeq>VFXHOST.saveSeq){
+      VFXHOST.saveSeq=saveSeq;
+      if(d.saved){
+        toast(t('Настройки плагина сохранены'));
+        // Профиль на диске уже новее копии в SPEAKERS — подтянуть, иначе следующая запись откатит
+        if(VOICEFXSPK)speakerRefresh(VOICEFXSPK);}
+      else{
+        const msg=t('Настройки плагина не сохранены: {err}',{err:d.error||''});
+        voiceFxStatus($('pvvoice'),msg);toast(msg);}}
     if(was.window&&!d.window){
       // Закрыли ПОСЛЕДНЕЕ окно плагина: живой звук больше не нужен, и правило одно —
       // настройки всех плагинов уезжают в профиль, хост гаснет, а плееры заказывают
@@ -1022,6 +1044,9 @@ function voiceFxHostPoll(){
       // подогнать к картинке точнее 0,4 с.
       const host=$('pvvoice');
       voiceFxHostSync(host?voiceFxRead(host):null,{player:P});
+      // Трек, который играет, посчитан ДО закрытия окна (под прежние плагины): «тот же
+      // трек» тут не довод — иначе vtPrep вышел бы ранним return и голос остался бы старым.
+      if(P&&P.vt)vtOf(P).stale=true;
       if(P&&typeof vtPrep==='function')vtPrep(P);}
     voiceFxHostPoll(P);},500);}
 // Что не так с хостом — словами в панель: плагин не загрузился (с ИМЕНЕМ) или звук
@@ -1101,6 +1126,10 @@ async function voiceFxHostDump(P){
   const d=await voiceFxHostPost('/api/voicefx_live',{sid:L.sid,cmd:'dump_states'});
   const list=(d&&Array.isArray(d.states))?d.states:[];
   voiceFxStatesApply(list);
+  // Сервер только что записал состояния плагинов в профиль (dump_states, api/voicefx.py):
+  // копия в SPEAKERS устарела, и её нельзя отдать следующей записи. Ждём — vtPrep сразу после
+  // гашения хоста берёт настройки именно из SPEAKERS.
+  if(list.length>0&&VOICEFXSPK)await speakerRefresh(VOICEFXSPK);
   // Разбудить ждущего (60-preview.js:vtStatesWait): состояния мы уже взяли, и ждать
   // ему больше нечего. Ответа сервера о событии `states` тут не бывает — оно ушло в
   // файл событий хоста, и его разобрал сам сервер.
@@ -1196,6 +1225,20 @@ function pvVoiceAuto(host){
     const key=h?(h.dataset.spk||''):'';
     if(key&&key===VOICEFXSPK&&voiceFxWindowOn())return;
     pvVoiceSave(null,{bake:true,host:h});},VFX_SAVE_QUIET);}
+// Свежий профиль спикера С ДИСКА — одна дверь для всех записей профиля. Копия в SPEAKERS
+// может отстать: сервер пишет состояние плагина при закрытии окна (api/voicefx.py), и
+// запись от старой копии откатила бы его назад. null — сервер не ответил или профиля нет.
+async function speakerFresh(key){
+  try{const cur=await (await fetch('/api/speakers')).json();
+    return (cur&&cur.speakers&&cur.speakers[key])||null;}
+  catch(e){return null;}}
+// Подтянуть из диска в копию SPEAKERS ТОЛЬКО voice_fx — после того как сервер записал
+// состояния плагинов сам. Остальные поля копии не трогаем: сервер пишет только voice_fx, а
+// локальные несохранённые правки (громкость спикера, ждёт voiceDbSaveSoon 400 мс)
+// целиком затёрла бы копия с диска.
+async function speakerRefresh(key){const p=await speakerFresh(key);if(!p)return;
+  if(SPEAKERS[key]){if(p.voice_fx)SPEAKERS[key].voice_fx=p.voice_fx;else delete SPEAKERS[key].voice_fx;}
+  else SPEAKERS[key]=p;}
 // Записать профиль под ТЕКУЩИЕ значения панели. Профиль читаем СВЕЖИМ с сервера и
 // правим в нём ОДНО поле: правки чужих полей (LUT, рамка кадра, папки), сделанные
 // в соседних панелях, не затираются. `bake` — пересчитать ли голос клипа сразу, и
@@ -1213,11 +1256,9 @@ async function pvVoiceSave(btn,opts){
   if(voiceFxRead(host)==null&&!(SPEAKERS[key]&&SPEAKERS[key].voice_fx))return;
   const fx=voiceFxRead(host);
   voiceFxStatus(host,t('сохраняю профиль…'));
-  let cur;
-  try{cur=await (await fetch('/api/speakers')).json();}
-  catch(e){voiceFxStatus(host,t('профиль не сохранён — сервер не ответил'));uiLog('savespeaker(voice_fx): '+e);return;}
-  const prof=(cur&&cur.speakers&&cur.speakers[key])||SPEAKERS[key];
-  if(!prof){voiceFxStatus(host,t('профиль спикера не найден — сохранять некуда'));return;}
+  // База — свежий профиль с диска. Копию SPEAKERS сюда не берём: она могла отстать.
+  const prof=await speakerFresh(key);
+  if(!prof){voiceFxStatus(host,t('профиль не сохранён — сервер не ответил'));uiLog('savespeaker(voice_fx): профиль не прочитан');return;}
   const data=JSON.parse(JSON.stringify(prof));
   if(fx)data.voice_fx=fx;else delete data.voice_fx;
   let d;
@@ -1241,12 +1282,30 @@ function voiceFxSyncPanels(key,src,fx){
     voiceFxRender(h,fx,{mode:'panel',spk:key,audio:voiceFxIsClip(h)});
     vstFxList(h,false);
     voiceFxSepFill(h);});}
+// Стиль в профиле спикера сменили: клипы этого спикера, которые шли за его стилем, переезжают на новый.
+// «Шли за стилем спикера» = styleKey пустой или равен ПРЕЖНЕМУ стилю профиля. Клип со своим (другим)
+// стилем и безымянный кастом с несохранёнными правками ('__custom__') не трогаем — это решение человека.
+// Клип без ключа, но с собственной копией стиля (job.style) — тот же кастом, копию не стираем.
+function speakerStyleFollow(key,oldStyle,newStyle){
+  if(!key||!newStyle||oldStyle===newStyle||typeof STYLES==='undefined'||!STYLES[newStyle])return {moved:0,kept:0};
+  let moved=0,kept=0;
+  CLIPS.forEach(c=>{if(clipSpeaker(c)!==key)return;
+    c.job=c.job||defJob();const k=c.job.styleKey||'';
+    if((!k&&!c.job.style)||(k&&k===oldStyle)){c.job.styleKey=newStyle;delete c.job.style;moved++;}
+    else kept++;});
+  return {moved,kept};}
 async function saveSpeaker(){
   const label=val('spk_label').trim();
   if(!label){toast(t('Дай спикеру имя'));$('spk_label').focus();return;}
   // Правим КОПИЮ профиля, а не собираем с нуля: в файле есть поля, которых в окне нет
-  // (ref, breath_model) — пересборка их бы стёрла.
-  const data=SPKEDIT?JSON.parse(JSON.stringify(SPEAKERS[SPKEDIT])):{};
+  // (ref, breath_model) — пересборка их бы стёрла. Копия — СВЕЖАЯ, с диска: в ней уже
+  // может лежать состояние плагина, записанное сервером при закрытии окна (voice_fx).
+  let base={};
+  if(SPKEDIT){
+    const fresh=await speakerFresh(SPKEDIT);
+    if(!fresh){toast(t('Профиль не сохранён — сервер не ответил'));return;}
+    base=fresh;}
+  const data=JSON.parse(JSON.stringify(base));
   data.label=label;data.outdir=val('spk_outdir').trim();data.jsxdir=val('spk_jsxdir').trim();data.renderdir=val('spk_renderdir').trim();data.style=val('spk_style');
   // Формат кадра: пустой или дефолтный — поля в профиле нет (как у lut и voice_fx):
   // «профиль без правок» не должен обзаводиться записью про формат, и старый
@@ -1340,6 +1399,19 @@ async function saveSpeaker(){
     try{await fetch('/api/delspeaker',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({name:SPKEDIT})});}
     catch(e){uiLog(t('старый профиль ')+SPKEDIT+t(' не удалён: ')+e);}}
+  // Стиль в профиле сменили — клипы спикера, шедшие за его стилем, переезжают на новый.
+  // Открытый клип этого спикера сперва уходит в задание: selectAE ниже перечитал бы задание без
+  // несохранённых правок панели. Старый стиль — с диска (base); у нового спикера base пуст.
+  const oldSt=base.style||'';
+  const openC=(curAE>=0&&CLIPS[curAE]&&clipSpeaker(CLIPS[curAE])===d.key)?CLIPS[curAE]:null;
+  if(openC&&data.style&&data.style!==oldSt&&STYLES[data.style])captureAE();
+  const openBefore=openC?openC.job.styleKey:null;
+  const fol=speakerStyleFollow(d.key,oldSt,data.style);
+  if(fol.moved){
+    uiLog(t('стиль спикера «{n}» сменился на «{s}»: клипов переведено {m}',{n:label,s:data.style,m:fol.moved}));
+    if(fol.kept)uiLog(t('клипов со своим стилем оставлено: {k}',{k:fol.kept}));
+    if(openC&&openC.job.styleKey!==openBefore)selectAE(curAE);   // панель перечитает стиль клипа
+    renderClips3();saveState();}
   SPKSAVED=d.key;await loadSpeakers();
   const sel=$('speaker');if(sel)sel.value=d.key;
   await onSpeakerChange();                // подставить папку и стиль сразу, а не со следующего выбора
@@ -1879,7 +1951,11 @@ async function voiceDbSaveNow(){
   keys.forEach(k=>{delete VOICEDB_PENDING[k];});
   for(const k of keys){
     const p=(SPEAKERS&&SPEAKERS[k])||null;if(!p)continue;
-    const data=JSON.parse(JSON.stringify(p));
+    // База — свежий профиль с диска: в копии SPEAKERS могло отстать состояние плагина.
+    // Поверх — только громкость, её и меняли.
+    const data=await speakerFresh(k);
+    if(!data){toast(t('Громкость голоса не сохранена — сервер не ответил'));uiLog('savespeaker(громкость): профиль не прочитан');continue;}
+    data.voice_db=p.voice_db;
     let d;
     // Имя — КЛЮЧ профиля, а не подпись: подпись могла переименоваться, и сохранение по ней
     // завело бы второй файл рядом со старым (как и у сохранения voice_fx: pvVoiceSave).

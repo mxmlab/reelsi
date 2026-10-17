@@ -624,7 +624,7 @@ by topic, and nothing changed from the outside (`import api`, `from api import b
 | `api/videogen.py` | the "Video" tab (its own `VJOB` state, does not touch JOB) |
 | `api/previewproxy.py` | 720p 4:2:0 8-bit preview proxy for 4:2:2 10-bit sources (Sony/Canon) that the browser does not decode and 4K seeks hang: `/api/preview_proxy` + `/api/preview_proxy_status`, its own `PXJOB` state |
 | `api/podcast.py` | podcast → reels: checking YouTube tracks, download, transcription, AI choice of pieces, proxy, conversion to reels; its own job `PDJOB`, the heavy part under the shared lock |
-| `api/gdrive.py` | downloading material from Google Drive via `rclone`: `/api/gdrive_download` + `/api/gdrive_status`, its own job (does not take JOB), the progress is parsed from the rclone output; link parsing, the command and progress parsing are pure functions of `core/rclone.py` |
+| `api/gdrive.py` | downloading material from Google Drive via `rclone`: `/api/gdrive_list` (the subfolders of a folder link, `rclone lsjson`), `/api/gdrive_download` (with `map` — the layout by camera folders: one command per folder, in turn) + `/api/gdrive_status`, its own job (does not take JOB), the progress is parsed from the rclone output; link parsing, the command, the subfolder list and progress parsing are pure functions of `core/rclone.py` |
 | `api/render.py` | a thin HTTP module of ~162 lines: the routes `/api/render_run` and `/api/render_status`, the job instance (`RJOB`, `RLOCK`) and "Stop"; all orchestration was moved out into `core/render_job.py` |
 | `api/previewcalc.py` | the preview door "compute roto and tracking": `/api/preview_calc` (button, background computation via `core/xml2ae/precompute.py`), `/api/preview_calc_status` (progress by pieces and "what is already computed"), `/api/preview_calc_cancel`. Its own `PCJOB` state, a shared task lock (`_cross_lock_acquire`): the heavy GPU stage does not run at the same time as cutting, assembly and render. The body is the same as `/api/scene` and is normalized by the same door, otherwise the plan and the masks would diverge |
 | `api/voicefx.py` | speaker voice: denoiser, VST chain, live host (`/api/voicefx_live`, commands `play`/`seek`/`pause`/`track`/`chain`/`gain`/`dump_states`), plugin window (`/api/voicefx_host`, `_host_edit`, `_host_stop`), baking the final voice (`<stem>.voice.<key8>.wav` + the sidecar `.voice.json`; `/api/voicefx_bake`, `..._status`, `..._cancel`). The sound is computed by `core/voicefx.py`, the live host by `core/voicefx_editor.py` (its own process per clip, only while the plugin window is open) |
@@ -780,10 +780,26 @@ recomputed…"; when done — the `<audio>` source is swapped without a pause. T
 track, if it is enabled and already computed; the raw sound is left only to those who have nothing else to
 play (no cache — while RoFormer is computing, the person needs to hear the voice, not silence).
 
-Sync of its own track in the step 3 preview (`vtTick`, `static/app/60-preview.js`): a discrepancy of
-0.03–0.25 s is damped by SPEED (`playbackRate` ±6 %, like the cameras — `camTrack`), more than 0.25 s — by
-seeking, while on pause and scrub the position is set exactly and immediately. Seeking every 0.15 s was
-what sounded like "played in the wrong place".
+**The inserts preview (steps 2 and 3) uses the same "sound drives the clock" machine (2026-10-17).**
+The live preview (`IPV.ea`, everything except the AE-less render page) plays sound through a Web Audio
+queue, like the step 1 editor: the queue owner is `EA.P` (ED or IPV), the preview position is MONTAGE time
+(`IPV.tm`), the blocks are the `IPV.audio` EDL (`eaPlanIpv`: a camera 1 source span plus its montage start
+`t0`), and the clock returns both source and montage time. The buffer is the same (`eaOpen`: camera 1
+audio, `eaVoice`: the final voice; `vtUse`/`vtDetach`/`vtTick` branch on `vtEa(P)`); censoring uses the
+plan's `audio.censor` windows scheduled into the queue with their own gain (`eaCensorGain`) instead of
+ducking `VG` per frame. All preview `<video>` elements are muted (`IPV.silent`) and the picture follows the
+sound (`ipvFollow`/`ipvVideoJump`/`ipvArm` in `85-inserts-view.js`: ±10 % speed inside a block, the spare at
+a cut, a seek with `IPV.seekLead` lead on a miss). Reason: the owner heard word endings cut at cuts in the
+second and third players but not in the first — the old machine swapped `<video>` elements at a cut and
+paused the previous one together with sound already sent to the output. Measured on the owner's clips
+after the change: 5/5 and 7/7 cuts by the spare, 0 seeks, picture-to-sound offset median 25–35 ms (about a
+frame). The render page (`IPV_BODY`) plays no sound and keeps the old machine (`pvStep`), as does the
+camera layout (`CPV`): its sound may come from camera 2 while the buffer is camera 1.
+
+Sync of its own track (`vtTick`, `static/app/60-preview.js`) is now needed only by players on the old
+machine (camera layout): a discrepancy of 0.03–0.25 s is damped by SPEED (`playbackRate` ±6 %, like the
+cameras — `camTrack`), more than 0.25 s — by seeking, while on pause and scrub the position is set exactly
+and immediately. Seeking every 0.15 s was what sounded like "played in the wrong place".
 
 **Step 1: the sound is the clock, the video is mute (2026-10-09).** In the step 1 editor the sound is played
 NOT by an element but by a Web Audio buffer (the `ea*` block in `60-preview.js`). The clip's whole sound
@@ -998,7 +1014,7 @@ name to take. The style is resolved at assembly time: `_norm_build_jobs` (`api/b
 for assembly, render and `/api/scene` — calls `styles.resolve(job.style)` (it accepts both a name and a
 dict) and takes `roto`, `roto_bottom`, `music_db` from the result. Roto is a property of the STYLE, not of
 the clip (decision 2026-08-22): the fields `job.roto`/`job.roto_bottom` are gone from the job, and if a
-unique roto is needed for one clip, the style is saved under another name ("Save as…").
+unique roto is needed for one clip, the style is saved under another name ("Save as…"). A change of the style in a speaker's profile moves the clips of that speaker that followed the speaker's style (`speakerStyleFollow`, `static/app/95-styles.js`), and leaves clips with their own style alone.
 
 Why exactly so: a copy of the style in the job was a source of desync. An edit of the template did not reach
 finished jobs — two clips on one style were assembled differently, one correctly, the second with the old
@@ -1372,10 +1388,10 @@ checks are in `tests/test_podcast_editor_js.py` and in the node stands.
   window stays. Explicit jumps: `podPlaySeg` ("play piece"), `ipvJump` (double click on an insert),
   `subrowGo` (a row of the subtitle list).
 - Gestures: `tlWheelBind` (the wheel: horizontal or Shift pans, vertical zooms; step `TL_ZOOM_STEP`),
-  `tlMidPan` (the middle button and dragging the ruler; a left click on the ruler without a drag beyond
-  `TL_CLICK_MAX_PX` = 3 px puts the playhead at the click through the `click` callback, the window stays), `tlMidGuard` (stops the browser's autoscroll on
-  the middle button), `tlPanning`. The capture order is `tlHitOrder`: a piece edge, the playhead, the
-  ruler, the middle of a piece.
+  `tlMidPan` (the middle button pans the window; the `TL_CLICK_MAX_PX` = 3 px threshold separates jitter from
+  a drag), `tlMidGuard` (stops the browser's autoscroll on the middle button), `tlPanning`. A left press on the
+  ruler puts the playhead under the cursor, as on the field (the owner's decision, 2026-10-17; the window stays).
+  The capture order is `tlHitOrder`: a piece edge, the playhead, the ruler, the middle of a piece.
 - Editing and history: `tlEditKey` (C/S cut, D/Delete/Backspace remove), `histStack` — undo and redo
   by a snapshot string: a step calls `touch()` after an edit, and `undo`/`redo` hand back the snapshot
   through `apply`; `histKey` — the keys (including the Cyrillic "я" and "н" of the Russian layout).
@@ -1567,6 +1583,18 @@ AND (one file cut into ≥ `CAM_MIN_CLIPS=5` clips OR covering ≥40% of the tim
   `scores`/`uncomputed` — the word strengths from the sidecar. The `min_pct` threshold is a percentile of
   the strengths of the highlights OF THE CLIP (`layout._percentile`), a phrase is strong by the maximum of
   its words, and the cycles are counted by the edit, not by strength: the push-ins are in time order.
+- **Push-in pauses** (`layout._take_zoom_segment_keys`; the knobs `camN_take_after_cut` and `camN_take_gap`):
+  a push-in (on a highlight and in a long segment) starts no earlier than the segment's cut + "Pause after
+  cut" (default 1 s). If the camera was moving on the cut (a pulse of the "smooth push with pull-back" or
+  a start push — its end is `lead_min_frame`), the pause counts from the END of that movement
+  (`_after_cut_ref`): right after the pulse's pull-back the camera still stands for 1 s; without movement it
+  counts from the cut itself. The next push-in starts no earlier than the end of the previous one + "Pause between
+  push-ins" (default 2 s; it used to be a hard 1 s). The end of the previous cycle is its pull-back, and
+  without a pull-back it is the end of the segment. The windows of the cycles already placed for BOTH
+  cameras lie in one shared list `take["busy"]`, which `plan_camera` creates once for both cameras (camera 1
+  goes first), so a push-in of camera 2 does not land on top of camera 1. Cut keys (jump, drift) are not
+  affected by the pauses. The knobs of camera 2 are empty (`None`): they take the value of camera 1
+  (`plan_style._pair_sv`; the schema uses `fallback_key`, as `back_step_after` does); zero is an own value.
 - Style: `font, hl_font, hl_bold, hl_fill, sub_fill, sub_case ('upper' | 'lower' |
   'sentence'), intro_font, intro_hl_font, transition,
   transition_sfx, pop, music_db, roto, roto_bottom, roto_device, roto_video,
@@ -1579,8 +1607,10 @@ AND (one file cut into ≥ `CAM_MIN_CLIPS=5` clips OR covering ≥40% of the tim
   subtitles").
   The highlight strength controls — `cam1_yellow_zoom_strong` / `cam2_yellow_zoom_strong` ("Only strong
   highlights"), `hl_zoom_strength` ("by emotion" / "by voice"), `hl_zoom_min_pct` (70 — p70 of the
-  highlights of the clip), `hl_zoom_max_per_piece` (2) and `hl_zoom_second_min_s` (8); the group is shared
-  by both cameras because the highlight words of a video are the same (see `docs/HIGHLIGHT_SPEC.md`).
+  highlights of the clip), `hl_zoom_max_per_piece` (2) and `hl_zoom_second_min_s` (8). The scoring method is
+  shared by both cameras (the highlight words of a video are the same); the threshold, the push-in limit and
+  the second push-in are per camera: camera 2 has `cam2_hl_zoom_*`, empty = the camera 1 value (as
+  `back_step_after`; `plan_style`, `plan_camera._take_yellow(prefix=…)`). See `docs/HIGHLIGHT_SPEC.md`.
   `caption` defines a single visual caption of the video with a configurable plate-background over the
   whole timeline (the text is taken from `<stem>.caption.json`). `sub_fill` — the color of the base
   subtitles `[r,g,b] 0..1` (default `[1,1,1]`, highlights take `hl_fill`), `sub_case` — the case of the
@@ -2147,6 +2177,9 @@ Windows paths → double backslashes. Multiline text (disclaimer) — `_js_multi
   the cut where cam1 is visible again) + **always on frame 0**. `182%→100%` over 62 frames, the
   curve `cubic-bezier(0.35,0.01,0.10,0.99)` on "big→small" segments (via
   `HL_EASE_OUT=35`/`HL_EASE_IN=90`).
+  One camera (no returns): the pulse is placed on **each cut of Camera 1** (`_camera_cut_segments`), as the
+  jump does; the old fixed template `DEFAULT_CAM1_SCALE` is gone. Drift with push-ins on highlights: a push-in
+  of a segment is computed from the drift line (`_drift_line`), and the drift target is set before the push-ins.
 - **Roto is CONTINUOUS for the whole timeline (2026-07-12):** NO more layout by insert windows
   (there were distribution bugs there). `_span_roto_plan(cams, 0, dur, fps)` = the whole visible
   EDL; every piece = a copy of ITS OWN camera + a luma matte, bound to the null of ITS OWN camera

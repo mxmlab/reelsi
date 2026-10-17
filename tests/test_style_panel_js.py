@@ -161,9 +161,10 @@ def test_every_field_survives_the_round_trip(tmp_path):
 CONVS = r"""
 const H=1920, W=1080;
 const out={};
-out.inv_pct=[stConv.inv_pct.toView(0.5964),stConv.inv_pct.toStore(40),
-             stConv.inv_pct.toView(0.5),stConv.inv_pct.toStore(50),
-             stConv.inv_pct.toView(0.75),stConv.inv_pct.toStore(25)];
+out.top_pct=[stConv.top_pct.toView(0.5964),stConv.top_pct.toStore(59.6),
+             stConv.top_pct.toView(0.5),stConv.top_pct.toStore(50),
+             stConv.top_pct.toView(0.75),stConv.top_pct.toStore(25),
+             stConv.top_pct.toStore(200),stConv.top_pct.toStore(0),stConv.top_pct.toStore('abc')];
 out.pct_h=[stConv.pct_h.toView(0,H),stConv.pct_h.toStore(0,H),
            stConv.pct_h.toView(768,H),stConv.pct_h.toStore(40,H),
            stConv.pct_h.toView(-960,H),stConv.pct_h.toStore(-50,H),
@@ -190,7 +191,8 @@ def test_all_six_convs_on_frame_bounds(tmp_path):
     res = _run_node(tmp_path, "panel_convs.js", CONVS)
     assert sorted(res) == _schema_convs(), (
         "проверены не те conv, что есть в схеме: %s" % sorted(res))
-    assert res["inv_pct"] == [40, 0.5964, 50, 0.5, 25, 0.75], res["inv_pct"]
+    # top_pct: доля от ВЕРХА в процентах с одним знаком; 59.6 ↔ 0.5964 (дефолт), зажим 2…98 %, нечисло — дефолт
+    assert res["top_pct"] == [59.6, 0.5964, 50, 0.5, 75, 0.25, 0.98, 0.02, 0.5964], res["top_pct"]
     assert res["pct_h"] == [0, 0, 40, 768, -50, -960, 100, 1920], res["pct_h"]
     assert res["pct_fx"] == [0, 0, 50, 540, 100, 1080], res["pct_fx"]
     assert res["pct_fy"] == [0, 0, 50, 960, 100, 1920], res["pct_fy"]

@@ -242,7 +242,7 @@ function closeIfBack(e,id){if(e.target===$(id)&&BACKDOWN===$(id))closeModal(id);
 // mbInsLib в списке не было: стоя в «Базе вставок» (она открывается ПОВЕРХ «Вставок»)
 // юзер жал Escape — база оставалась, а закрывалось окно под ней.
 // Порядок = порядок вложенности: база поверх вставок, вставки поверх предпросмотра.
-const MODAL_STACK=['mbConfirm','mbDelClip','mbDelPodcast','mbInsLib','mbSpeaker','mbAISettings','mbCams','mbLog','mbInserts','mbPreview'];
+const MODAL_STACK=['mbConfirm','mbGdMap','mbDelClip','mbDelPodcast','mbInsLib','mbSpeaker','mbAISettings','mbCams','mbLog','mbInserts','mbPreview'];
 document.addEventListener('keydown',e=>{if(e.key!=='Escape')return;
   const top=MODAL_STACK.find(id=>$(id)&&$(id).classList.contains('on'));
   if(top)closeModal(top);});

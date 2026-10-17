@@ -420,6 +420,27 @@ def _get_test_mutation(k, item, base_val, tmp_path):
         # и числа полки в нём не остаётся (до этого они лежали в INTRO_FX, но INTRO_SUB_FX
         # всё равно побеждал). Снимаем галку: проверяется сама ручка.
         st_setup["intro_sub_cut"] = False
+    elif k in ("cam1_take_after_cut", "cam1_take_gap"):
+        # Паузы наездов: без длинного куска наездов нет, и пауза не на что влиять.
+        # Сторож самих правил — tests/test_take_pauses.py.
+        st_setup["cam1_take_zoom"] = True
+        st_setup["cam1_take_min"] = 3.0
+        # Пауза между наездами — 10 с (максимум шкалы): пауза после импульса отодвигает первый
+        # цикл куска на lead + after, и 5 с уже не связывают соседние куски на фикстуре.
+        return st_setup, (3.0 if k == "cam1_take_after_cut" else 10.0)
+    elif k in ("cam2_take_after_cut", "cam2_take_gap"):
+        st_setup["cam2_zoom"] = "jump"
+        st_setup["cam2_take_zoom"] = True
+        st_setup["cam2_take_min"] = 3.0
+        return st_setup, (3.0 if k == "cam2_take_after_cut" else 5.0)
+    elif k in ("cam1_yellow_zoom_strong", "cam2_yellow_zoom_strong"):
+        # Паузы наездов (своя ручка, сторож — tests/test_take_pauses.py) здесь не проверяются:
+        # цикл без отъезда держит пик до склейки, и пауза «между наездами» переносит наезд
+        # следующего куска на склейку + пауза — обе фразы сходятся в один кадр, и галка
+        # «только сильные» на кадре не видна. Пауза 0 возвращает разницу к фразам.
+        st_setup.update({"cam1_take_after_cut": 0.0, "cam1_take_gap": 0.0,
+                         "cam2_take_after_cut": 0.0, "cam2_take_gap": 0.0})
+        return st_setup, not bool(styles.BASE[k])
     elif k in ("cam1_take_min", "cam1_take_lo", "cam1_take_hi", "cam1_take_hold", "cam1_take_out", "cam1_take_yellow", "cam1_take_yellow_mode", "cam1_yellow_zoom"):
         st_setup["cam1_take_zoom"] = True
         st_setup["cam1_take_min"] = 3.0
@@ -526,6 +547,25 @@ def _get_test_mutation(k, item, base_val, tmp_path):
     elif k == "insert_plate_scale":
         # файл подложки в контексте, отличие — масштаб плашки
         return {"insert_plate_file": _knob_png(tmp_path, "plate_scale.png", 800, 800)}, 105.0
+    elif k in ("insert_c2on1_x", "insert_c2on1_y"):
+        # Точка покоя «Кам 2» на кадре Камеры 1: видна у фото стиля «Кам 2», которое стоит на
+        # кадре Камеры 1 (фото кладёт тело теста ниже; стиль «Кам 2» ставит галка-условие show_if).
+        return st_setup, 0.3 if k == "insert_c2on1_x" else 0.2
+    elif k in ("cam2_hl_zoom_min_pct", "cam2_hl_zoom_max_per_piece", "cam2_hl_zoom_second_min_s"):
+        # «Сила жёлтых» Камеры 2: пусто = как у Камеры 1. Ручка видна в .jsx, когда у камеры 2
+        # включены наезды по жёлтым с галкой «только сильные» и есть сайдкар силы (его кладёт
+        # тест ниже, по жёлтым куска камеры 2). Предел наездов виден только в куске от своей
+        # длины: её ставим здесь, иначе второй наезд у фикстуры не помещается ни при каком значении.
+        st_setup["cam2_zoom"] = "jump"
+        st_setup["cam2_yellow_zoom"] = True
+        st_setup["cam2_yellow_zoom_strong"] = True
+        st_setup["cam2_take_min"] = 3.0
+        if k in ("cam2_hl_zoom_min_pct", "cam2_hl_zoom_max_per_piece"):
+            # Два наезда в куске нужны и порогу: при одном наезде на кусок самое сильное слово
+            # проходит любой порог, и 70 с 100 дают один и тот же .jsx.
+            st_setup["cam2_hl_zoom_second_min_s"] = 3.0
+        return st_setup, {"cam2_hl_zoom_min_pct": 100.0, "cam2_hl_zoom_max_per_piece": 1,
+                          "cam2_hl_zoom_second_min_s": 3.0}[k]
     elif k in ("hl_zoom_strength", "hl_zoom_min_pct", "hl_zoom_max_per_piece",
                "hl_zoom_second_min_s"):
         # Ручки правила силы жёлтых: влияют на .jsx, только когда у камеры
@@ -770,6 +810,16 @@ def test_each_knob_affects_assembly(knob_key, xml_subs, music_file, tmp_path, mo
         emo = {k: round(0.10 + 0.08 * (len(hl) - 1 - i), 3) for i, k in enumerate(hl)}
         _emph_sidecar(xml_subs, hl, stress, emo=emo)
         ref_st["cam1_take_min"] = test_st["cam1_take_min"] = 3.0
+    if knob_key in ("insert_c2on1_x", "insert_c2on1_y"):
+        # Фото стиля «Кам 2» в первой секунде — на кадре Камеры 1 (там ручка и живёт)
+        ins = [{"type": "photo", "style": "cam2", "media": _knob_png(tmp_path, "c2on1.png", 320, 240),
+                "start_s": 1, "dur_s": 2}]
+    if knob_key in ("cam2_hl_zoom_min_pct", "cam2_hl_zoom_max_per_piece",
+                    "cam2_hl_zoom_second_min_s"):
+        # Сайдкар силы — по жёлтым КУСКА КАМЕРЫ 2 (та же «лестница», что у ручек камеры 1):
+        # порог и предел видны, только когда сильные и слабые фразы стоят в одном куске камеры 2.
+        hl = _emph_hl(xml_subs, 1)
+        _emph_sidecar(xml_subs, hl, {k2: round(0.10 + 0.08 * i, 3) for i, k2 in enumerate(hl)})
     if knob_key == CAM2_TAKE_HOLD:
         # Удержание видно в ключах, только когда наезд успевает вернуться до среза, а самый
         # длинный кусок перебивки в фикстуре — 5.65 с: с хвостом 2 с возврат не влезает ни

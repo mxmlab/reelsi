@@ -112,7 +112,7 @@ function edWords(){
 // звука ставим на место клика сразу, без ожидания следующего кадра.
 function edSeek(s){ED.cs=Math.max(0,Math.min(ED.dur,s));
   pvVideoTo(ED.cs);
-  if(ED.play&&typeof eaStart==='function')eaStart(ED.cs);
+  if(ED.play&&typeof eaStart==='function')eaStart(ED.cs,ED);
   if(typeof vtOf==='function')vtTick(ED,ED.cs);   // живому хосту плагинов — новое место
   edDraw();edUI();}
 function edToggle(){ED.play?edPause():edPlay();}
@@ -129,7 +129,7 @@ function edPlay(){const v=PV.vids&&PV.vids[0];if(!v){toast(t('нет видео 
   pvVideoTo(ED.cs);
   v.muted=true;v.volume=MEDIA_VOL;v.style.opacity='1';v.style.zIndex='2';PV.vids.forEach((o,i)=>{if(i)o.style.zIndex='1';});
   v.play().catch(()=>{});
-  if(typeof eaStart==='function')eaStart(ED.cs);    // очередь звука — с этого места
+  if(typeof eaStart==='function')eaStart(ED.cs,ED);    // очередь звука — с этого места (хозяин — редактор)
   vtLivePlay(ED);   // окно плагина открыто — команда «играть» уходит ему, с этого кадра
   // Следующий кадр планирует ОБЩИЙ помощник кадра (60-preview.js): видимая вкладка — rAF,
   // скрытая — таймер. Звуку он не нужен (очередь стоит заранее), он нужен картинке.
@@ -186,7 +186,7 @@ function edArm(){if(ED.raw||!ED.play)return;const i=edBlockAt(ED.cs);if(i<0)retu
   bufRoll(sp,left);}
 // Окно редактора НЕ едет за плейхедом: ни при игре, ни при перемотке стрелками, ни при клике или
 // протяжке по самому таймлайну (решение владельца 2026-10-12). Окно двигают только протяжка вида
-// (линейка, средняя кнопка), зум и явный переход; у редактора явного перехода в интерфейсе нет.
+// (средняя кнопка), зум и явный переход; у редактора явного перехода в интерфейсе нет.
 function edTick(){if(!ED.play)return;
   // Плейхед — по звуку: что звучит сейчас, то и ED.cs. Конец очереди — конец клипа.
   const c=(typeof eaSync==='function')?eaSync():null;
@@ -227,18 +227,19 @@ function edBind(){const c=$('edtl');if(!c||c._bound)return;c._bound=1;
   const px=e=>{const r=c.getBoundingClientRect();return (e.clientX-r.left)*(c.width/Math.max(1,r.width));};
   const py=e=>{const r=c.getBoundingClientRect();return (e.clientY-r.top)*(c.height/Math.max(1,r.height));};
   const dpr=()=>devicePixelRatio||1;
-  // Протяжка вида — средняя кнопка из любой точки и левая на линейке: общая tlMidPan (00-core.js).
-  // Нажатие ловит pointerdown; mousedown для таких нажатий уже не работает (см. ниже).
-  c.addEventListener('pointerdown',e=>{if(!ED.dur)return;const y=py(e);
-    if(e.button===1||(e.button===0&&y<=EDRULER*dpr())){
+  // Протяжка вида — средняя кнопка из любой точки: общая tlMidPan (00-core.js). Нажатие ловит
+  // pointerdown; mousedown для средней уже не работает (см. ниже). Левая кнопка на линейке — плейхед
+  // за курсором, как на поле: это mousedown и окно mousemove/mouseup ниже, вид не двигается.
+  c.addEventListener('pointerdown',e=>{if(!ED.dur)return;
+    if(e.button===1){
       tlMidPan(c,e,{snap:()=>({v0:ED.v0,v1:ED.v1}),apply:(dx,s)=>{
         const w=c.getBoundingClientRect().width||1, span=s.v1-s.v0;
         const r=tlClampView(s.v0-dx/w*span,s.v1-dx/w*span,ED.dur,0);
-        ED.v0=r.v0;ED.v1=r.v1;edDraw();},
-      // клик по линейке (без протяжки) — плейхед в точку клика; окно стоит (правило NF1)
-      click:cx=>{const r=c.getBoundingClientRect();edSeek(edX2S((cx-r.left)*(c.width/Math.max(1,r.width))));}});}});
+        ED.v0=r.v0;ED.v1=r.v1;edDraw();}});}});
   c.addEventListener('mousedown',e=>{if(!ED.dur)return;const x=px(e),y=py(e);const s=edX2S(x);
-    if(e.button===1||y<=EDRULER*dpr())return;
+    if(e.button===1)return;
+    // линейка (левая кнопка): плейхед в точку нажатия и за курсором, пока кнопка зажата
+    if(y<=EDRULER*dpr()){if(e.button===0){ED.drag={head:1};edSeek(s);}return;}
     const br=edBreathAt(x,y);       // клик по оранжевой полоске = вырезать вздох
     if(br){edCutRange(br.t0,br.t1);uiLog(t('вздох вырезан: ')+fmtT(br.t0)+' ('+br['класс']+', '+br.p+')');return;}
     const g=edGrabAt(x);
@@ -261,7 +262,7 @@ function edBind(){const c=$('edtl');if(!c||c._bound)return;c._bound=1;
     if(brh){c.style.cursor='pointer';const inf=$('edcut');
       if(inf)inf.textContent=t('похоже на «{k}» ({p}%) — клик, чтобы вырезать',{k:brh['класс'],p:Math.round(brh.p*100)});
       return;}
-    if(y<=EDRULER*dpr())cur='grab';
+    if(y<=EDRULER*dpr())cur='ew-resize';   // линейка — плейхед за курсором (см. mousedown)
     else{const gr=edGrabAt(x);if(gr)cur=gr.head?'ew-resize':'col-resize';}   // курсор показывает ровно то, что схватится
     c.style.cursor=cur;
     const info=$('edcut');if(info){

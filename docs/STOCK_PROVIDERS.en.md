@@ -5,18 +5,24 @@ providers return for your own queries with the `tools/stock_compare.py` stand.
 
 ## Providers and order
 
-The order in `PROVIDERS` is the query priority: the search walks the list until enough
-candidates are collected. A provider without a key is simply skipped, so "no key" never
-cancels the search at the others.
+The order in `PROVIDERS` is the display priority: the search goes round robin across every
+connected stock — the first frame from Pexels, the first from Unsplash, the first from
+Pixabay, then the second from each, and so on, without duplicates, until the requested
+number of frames is reached. This way every stock shows up in the picker, not just the
+first one. Before, the search walked the list "until enough were collected": Pexels almost
+always returned all the frames at once, so the others were never reached. Each stock is
+asked for the full number of frames, and the requests run in parallel, so the order of the
+results does not depend on which answer came back first. A provider without a key is
+simply skipped, so "no key" never cancels the search at the others.
 
 The order was chosen by a measurement of 2026-10-10: 30 of the owner's queries, results
 checked by eye. Pexels and Unsplash almost always give 3–4 relevant frames out of 4.
 Pixabay on complex queries pulls in foreign tags (giraffes, COVID covers, motorbikes for
-"250"), and when it stood ahead of Unsplash it filled Pexels' shortfall with the worst
-frames — so it is now third. Openverse mostly returns junk, and Coverr is a video stock
-with the least verified results: both come last. Unsplash in demo mode allows 50 requests
-per hour: when it refuses (429 or 403), the search does not fail but moves on to the next
-stock, and Pixabay fills the rest.
+"250"), and when it stood ahead of Unsplash its worst frames came higher in the picker —
+so it is now third. Openverse mostly returns junk, and Coverr is a video stock with the
+least verified results: both come last. Unsplash in demo mode allows 50 requests per hour:
+when it refuses (429 or 403), the search does not fail; the other stocks keep filling the
+picker round robin, and they make up the missing frames.
 
 | Provider | Type | Key | What we take |
 |---|---|---|---|

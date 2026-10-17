@@ -267,7 +267,7 @@ def plan_scene(inp: SceneInputs) -> ScenePlan:
     # превью переводит их в CSS своей единственной дверью aeShadowCss, своих чисел
     # тени у фронта нет. op255 — шкала AE 0..255 (в .jsx проценты ручки умножаются
     # на 255/100), color — [r,g,b] 0..1, как у остальных цветов плана.
-    "shadows": shadows_plan(),
+    "shadows": shadows_plan(stv),
     "back_scale": stv.back_scale,
     "back_step": stv.back_step,
     # Шаг от заднего плана к обычной строке для предпросмотра: None —

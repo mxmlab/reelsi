@@ -34,7 +34,7 @@ from .layout import (EASE_DEFAULT, HL_EASE_IN, HL_EASE_OUT, INS_MASK_R, INTRO_LI
                      hl_size_decl)
 from .plan_audio import AudioPlan
 from .plan_camera import CameraPlan
-from .plan_decor import SH_SUB_DIR, SH_SUB_DIST, SH_SUB_OP, SH_SUB_SOFT, DecorPlan
+from .plan_decor import DecorPlan
 from .plan_inserts import InsertsPlan
 from .plan_intro import IntroPlan
 from .plan_intro_tpl import IntroTpl
@@ -565,9 +565,10 @@ def plan_ae(inp: AeInputs) -> AePlan:
     # (golden_geometry.jsx). Считает его layout: выражения циклов и объявление
     # берутся из одного места.
     hl_size_decl=hl_size_decl(stv.hl_size_k),
-    # Тень слов субтитров: числа — из plan_decor (SH_SUB_*) и оттуда же в план
-    # (plan["shadows"]["sub"]), поэтому у .jsx и превью одна и та же тень.
-    sh_op=SH_SUB_OP, sh_dir=SH_SUB_DIR, sh_dist=SH_SUB_DIST, sh_soft=SH_SUB_SOFT,
+    # Тень слов субтитров: числа — из стиля (sub_shadow_*) и оттуда же в план
+    # (shadows_plan(stv) → plan["shadows"]["sub"]), поэтому у .jsx и превью одна и та же тень.
+    sh_op=stv.sub_shadow_op, sh_dir=stv.sub_shadow_dir, sh_dist=stv.sub_shadow_dist,
+    sh_soft=stv.sub_shadow_soft,
     ins_fx=_js(stv.insert_fx),
     # Радиус скругления маски фотовставки — ОДНО число на .jsx и план (превью):
     # раньше оно стояло константой в шаблоне, и у превью радиуса не было вовсе.

@@ -316,8 +316,10 @@ def api_insertlib_items() -> Response:
 def api_stock_search() -> Response:
     """Кандидаты со стоков по запросу карточки: {query, type} -> {ok, results}.
 
-    Порядок провайдеров — приоритет (Pexels, затем Unsplash, затем Pixabay: см.
-    `core.stock.PROVIDERS`). Кеш ответов — 24 ч
+    Выдача идёт по кругу от каждого подключённого стока: первый кадр Pexels, первый
+    Unsplash, первый Pixabay, потом вторые и так далее (приоритет показа — порядок
+    `core.stock.PROVIDERS`; см. `core.stock.search`), чтобы в подборе были все стоки,
+    а не один. Кеш ответов — 24 ч
     (условие обоих стоков), поэтому повторный поиск по тому же запросу сети не
     касается. Скачивания тут нет: сначала юзер смотрит превью глазами.
     """
@@ -375,6 +377,45 @@ def api_stock_pick() -> Response:
         except ReelsiError: raise
         except Exception as e:
             raise ReelsiError(umsg("stock_pick_failed", f"{type(e).__name__}: {e}",
+                                  err=f"{type(e).__name__}: {e}"))
+    except (ReelsiError, SystemExit) as e:
+        return jsonify(**umsg_err(e))
+
+
+@bp.route("/api/ort_gpu")
+def api_ort_gpu() -> Response:
+    """Снятие фона на видеокарте: что стоит (своя папка onnxruntime-gpu) и ход установки.
+
+    Ничего не запускает и не импортирует onnxruntime: только смотрит файлы и состояние
+    процесса (см. core/ort_gpu.py). Панель настроек опрашивает его, пока идёт установка.
+    """
+    try:
+        try:
+            from core import ort_gpu
+            return jsonify(ok=True, **ort_gpu.status(), job=ort_gpu.job_status())
+        except ReelsiError: raise
+        except Exception as e:
+            raise ReelsiError(umsg("ort_gpu_failed", f"{type(e).__name__}: {e}",
+                                  err=f"{type(e).__name__}: {e}"))
+    except (ReelsiError, SystemExit) as e:
+        return jsonify(**umsg_err(e))
+
+
+@bp.route("/api/ort_gpu_install", methods=["POST"])
+def api_ort_gpu_install() -> Response:
+    """Поставить onnxruntime-gpu в свою папку (фоном) — кнопка «Скачать» в настройках.
+
+    Ответ сразу: колесо ~250 МБ качается минутами. Ход работы панель читает `/api/ort_gpu`
+    (`job` в ответе). Второй установки поверх первой не поднимаем — `started` равно false.
+    Отказы без пакета onnxruntime или без видеокарты приходят ошибкой с понятным текстом.
+    """
+    try:
+        try:
+            from core import ort_gpu
+            return jsonify(ok=True, started=ort_gpu.start_install())
+        except ReelsiError: raise
+        except Exception as e:
+            raise ReelsiError(umsg("ort_gpu_install_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
     except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))

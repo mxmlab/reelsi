@@ -59,7 +59,7 @@ node = pytest.mark.skipif(not shutil.which("node"), reason="стенд треб�
 PREVIEW_FUNCS = ("bufMake", "bufIdle", "bufSilent", "bufArm", "bufRoll", "bufTake", "bufSwap",
                  "liveOf", "spareLead", "segGap", "spareSwap", "voicePrime",
                  "vtOf", "vtCam1", "vtSrcAt", "vtNow", "vtAudioCam", "vtPlaying", "vtGate",
-                 "vtIsPv", "vtIsEd", "vtMuteHost",
+                 "vtIsPv", "vtIsEd", "vtEa", "vtMuteHost",
                  "vtSpareOf", "vtSpareLive", "vtSpareIdle", "vtSpareStop", "vtSpareSeg",
                  "vtSpareAt", "vtSpareArm", "vtSpareRoll", "vtSpareTake", "vtSpareSwap",
                  "vtSpareCtl", "vtPause", "vtSeek", "vtRate", "vtTick")

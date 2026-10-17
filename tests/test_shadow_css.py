@@ -257,3 +257,35 @@ def test_render_stand_knows_the_function():
     m = re.search(r"FUNCS85 = \((.*?)\n\)", src, re.S)
     assert m, "в tests/test_webrender.py не нашёлся список функций FUNCS85"
     assert '"aeShadowCss"' in m.group(1), "стенд рендера не знает aeShadowCss"
+
+
+def test_sub_shadow_style_reaches_jsx_and_plan(xml_subs, tmp_path):
+    """Ручки тени субтитров из стиля доходят и до .jsx, и до плана (превью)."""
+    style = {"sub_shadow_op": 50, "sub_shadow_dir": 90, "sub_shadow_dist": 12,
+             "sub_shadow_soft": 30}
+    plan = _plan(xml_subs, style)
+    jsx = _jsx(xml_subs, tmp_path, "shadow_style.jsx", style)
+    assert "var SH_OPACITY = 50, SH_DIR = 90, SH_DIST = 12, SH_SOFT = 30" in jsx
+    assert plan["shadows"]["sub"]["op255"] == 127.5
+    assert plan["shadows"]["sub"]["dir"] == 90
+    assert plan["shadows"]["sub"]["dist"] == 12
+    assert plan["shadows"]["sub"]["soft"] == 30
+    assert plan["sub_shadow"] is True
+
+
+def test_sub_shadow_off(xml_subs, tmp_path):
+    """Галка выключена, либо включена вместе с плашкой: тени текста субтитров нет."""
+    line = 'subLayer.property("ADBE Effect Parade").addProperty("ADBE Drop Shadow")'
+    plan = _plan(xml_subs, {"sub_shadow": False})
+    assert plan["sub_shadow"] is False
+    assert line not in _jsx(xml_subs, tmp_path, "shadow_off.jsx", {"sub_shadow": False})
+    plan = _plan(xml_subs, {"sub_shadow": True, "sub_bg": True})
+    assert plan["sub_shadow"] is False
+    assert line not in _jsx(xml_subs, tmp_path, "shadow_bg.jsx",
+                            {"sub_shadow": True, "sub_bg": True})
+
+
+def test_sub_shadow_defaults_are_old_numbers(xml_subs, tmp_path):
+    """Умолчания стиля дают ровно прежние константы тени субтитров."""
+    jsx = _jsx(xml_subs, tmp_path, "shadow_defaults.jsx", {})
+    assert "var SH_OPACITY = 68, SH_DIR = 181, SH_DIST = 5, SH_SOFT = 44;" in jsx

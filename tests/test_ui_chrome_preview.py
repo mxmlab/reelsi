@@ -139,7 +139,9 @@ def test_chrome_proxy_arrives_at_a_seam_and_never_into_the_live_video(tmp_path):
                              "ipvPlay();true;})()"},
         {"op": "wait", "ms": 800},
         *VS.proxy_steps(fx, ready=True),
-        {"op": "eval", "js": "(async()=>{window.MARK=performance.now();await pvProxyPoll();return true;})()"},
+        # живой элемент берём в момент приезда прокси, а не на старте: живое превью ведёт звук,
+        # и стык мог пройти раньше (тогда стартовый элемент уже дублёр — ему src менять можно)
+        {"op": "eval", "js": "(async()=>{window.LIVE=IPV.vids[0];window.MARK=performance.now();await pvProxyPoll();return true;})()"},
         {"op": "wait", "ms": 15000},
         {"op": "eval", "js": "clearInterval(window.IV);ipvPause();true"},
         {"op": "eval", "name": "st", "js": (

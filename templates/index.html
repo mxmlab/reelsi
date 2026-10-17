@@ -30,7 +30,7 @@
   <!-- Гугл-диск — ПЕРВЫМ на шаге: материал приезжает оттуда, и до него не с чем работать.
        Раньше блок стоял третьим, под очередью камер, — то есть после того, что он кормит. -->
   <div class="card" id="gdrive_card">
-    <h2><span class="k">◆</span>Материал с гугл-диска <span class="i" data-t="Вставил ссылку на файл или папку гугл-диска — материал скачался на этот компьютер (через rclone, крупные файлы он умеет). Потом выбери скачанный файл камеры 1 и нажми «Разложить по камерам» — остальные подберутся по звуку. rclone настраивается один раз командой rclone config в консоли: вход в аккаунт делает браузер. Состояние формы сохраняется.">!</span></h2>
+    <h2><span class="k">◆</span>Материал с гугл-диска <span class="i" data-t="Вставил ссылку на файл или папку гугл-диска — материал скачался на этот компьютер (через rclone, крупные файлы он умеет). Потом выбери скачанный файл камеры 1 и нажми «Разложить по камерам» — остальные подберутся по звуку. rclone настраивается один раз командой rclone config в консоли: вход в аккаунт делает браузер. Состояние формы сохраняется. Ссылка на папку с несколькими подпапками (например, по папке на камеру) — спросит, куда скачать каждую.">!</span></h2>
     <div class="row">
       <div class="grow"><label for="gdrive_url">Ссылка</label><input id="gdrive_url" style="width:100%" placeholder="https://drive.google.com/file/d/…" oninput="saveState()"></div>
       <button class="sm" id="gd_go" onclick="gdDownload()">Скачать</button>
@@ -332,7 +332,7 @@
             <div id="pvvoice"></div>
           </div>
           <div class="edgrp grow2">
-            <div class="edlbl">Редактор <span class="i" data-t="Клик по таймлайну — курсор · играет один плеер: пробел, «играть», клик — одно состояние · тяни края блоков · двойной клик по серому — вернуть вырезанное · колесо — зум · Shift+колесо или линейка — прокрутка · ←/→ — покадрово">!</span></div>
+            <div class="edlbl">Редактор <span class="i" data-t="Клик по таймлайну — курсор · играет один плеер: пробел, «играть», клик — одно состояние · тяни края блоков · двойной клик по серому — вернуть вырезанное · колесо — зум · Shift+колесо или средняя кнопка — прокрутка · ←/→ — покадрово">!</span></div>
             <div class="row pvtransport" style="align-items:center">
               <button class="sm" id="edplay" onclick="edToggle()" style="min-width:44px" aria-label="Воспроизвести / пауза" data-t="Воспроизвести / пауза"><span data-ic="play"></span></button>
               <span id="edtime" class="muted mono">0:00 / 0:00</span>
@@ -359,7 +359,7 @@
 
       <div class="edtlbar tlhead">
         <span class="edlbl">Таймлайн</span>
-        <span class="i" data-t="Клик или протяжка по полю и по плейхеду — перемотка · клик по линейке — плейхед в точку клика · протяжка по линейке или средняя кнопка — прокрутка окна · колесо — зум · Shift+колесо или горизонтальное колесо — прокрутка · тяни края блоков · двойной клик по серому — вернуть вырезанное · C или S — резать · D, Delete или Backspace — удалить · Ctrl+Z / Ctrl+Y — отмена и повтор">!</span>
+        <span class="i" data-t="Клик или протяжка по полю и по плейхеду — перемотка · клик или протяжка по линейке — плейхед за курсором · средняя кнопка — прокрутка окна · колесо — зум · Shift+колесо или горизонтальное колесо — прокрутка · тяни края блоков · двойной клик по серому — вернуть вырезанное · C или S — резать · D, Delete или Backspace — удалить · Ctrl+Z / Ctrl+Y — отмена и повтор">!</span>
         <span id="edcut" class="hint grow" style="text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span>
         <button class="icon" onclick="edZoom(TL_ZOOM_STEP)" aria-label="Приблизить" data-t="Приблизить"><span data-ic="plus"></span></button>
         <button class="icon" onclick="edZoom(1/TL_ZOOM_STEP)" aria-label="Отдалить" data-t="Отдалить"><span data-ic="minus"></span></button>
@@ -402,7 +402,7 @@
       <!-- «Вся запись» забирает всё место, что осталось под куски: шапка + холст (flex в app.css) -->
       <div class="pod-tlblock">
         <div class="pod-tlhead tlhead"><span class="edlbl">Вся запись</span>
-          <span class="i" data-t="Лента сверху — слова расшифровки баблами: зумятся вместе с записью; если бабл не помещается — слово прячется до приближения. Тяни края кусков — границы (при отпускании прилипают к словам в пределах 1 с), середину — сдвиг; I/O — начало/конец по плейхеду. Клик или протяжка по полю и по плейхеду — перемотка · клик по линейке — плейхед в точку клика · протяжка по линейке или средняя кнопка — прокрутка окна · колесо — зум · Shift+колесо или горизонтальное колесо — прокрутка · C или S — резать кусок под плейхедом, D, Delete или Backspace — удалить выбранные · Ctrl+Z / Ctrl+Y — отмена и повтор. Двойной клик по пустому месту — новый кусок там (вернуть вырезанное). Клик — выбрать кусок; Ctrl/⌘+клик — добавить или убрать, Shift+клик — диапазон.">!</span>
+          <span class="i" data-t="Лента сверху — слова расшифровки баблами: зумятся вместе с записью; если бабл не помещается — слово прячется до приближения. Тяни края кусков — границы (при отпускании прилипают к словам в пределах 1 с), середину — сдвиг; I/O — начало/конец по плейхеду. Клик или протяжка по полю и по плейхеду — перемотка · клик или протяжка по линейке — плейхед за курсором · средняя кнопка — прокрутка окна · колесо — зум · Shift+колесо или горизонтальное колесо — прокрутка · C или S — резать кусок под плейхедом, D, Delete или Backspace — удалить выбранные · Ctrl+Z / Ctrl+Y — отмена и повтор. Двойной клик по пустому месту — новый кусок там (вернуть вырезанное). Клик — выбрать кусок; Ctrl/⌘+клик — добавить или убрать, Shift+клик — диапазон.">!</span>
           <button class="sm" id="pod_cut" onclick="podCut()" data-t="Разрезать кусок под плейхедом на два (C или S). Точка прилипает к концу ближайшего слова в пределах 1 с; оба куска — не короче 5 с."><span data-ic="cut"></span> Резать<span class="kbd">C</span></button>
           <button class="sm" id="pod_del" onclick="podDelKey()" data-t="Удалить выбранные куски, а без выбора — активный (D, Delete или Backspace). Отмена — Ctrl+Z."><span data-ic="trash"></span> Удалить<span class="kbd">D</span></button>
           <span class="grow"></span>
@@ -507,7 +507,7 @@
           <span class="pvgrp" role="group" aria-label="Голос" data-t="Громкость голоса спикера, dB — одна на всех его клипов: правка сохраняется в профиль спикера. Тот же уровень, что VOICE_DB в .jsx."><span class="pvsl"><span data-ic="mic" data-cls="gold"></span><input type="range" id="ipvvoicedb" aria-label="Голос, dB" min="-60" max="12" step="0.5" value="0" oninput="setVoiceDb(this.value)" onpointerup="this.blur()" onchange="this.blur()"></span><span class="pvval" id="ipvvoicedbv" data-noi18n>0</span></span>
         </span>
         <span class="grow"></span>
-        <span class="i" data-t="Монтаж со вставками, без рендера. Вставки — блоки на полосе внизу: тяни блок — двигаешь по времени, тяни края — длительность, двойной клик — посмотреть. Без выбранного файла показывается заглушка с запросом. Пробел — играть/пауза. Клик или протяжка по полю и по плейхеду — перемотка · клик по линейке — плейхед в точку клика · протяжка по линейке или средняя кнопка — прокрутка окна · колесо — зум · Shift+колесо или горизонтальное колесо — прокрутка · Ctrl+Z / Ctrl+Y — отмена и повтор">!</span>
+        <span class="i" data-t="Монтаж со вставками, без рендера. Вставки — блоки на полосе внизу: тяни блок — двигаешь по времени, тяни края — длительность, двойной клик — посмотреть. Без выбранного файла показывается заглушка с запросом. Пробел — играть/пауза. Клик или протяжка по полю и по плейхеду — перемотка · клик или протяжка по линейке — плейхед за курсором · средняя кнопка — прокрутка окна · колесо — зум · Shift+колесо или горизонтальное колесо — прокрутка · Ctrl+Z / Ctrl+Y — отмена и повтор">!</span>
         <button class="icon" onclick="itlZoom(TL_ZOOM_STEP)" aria-label="Приблизить" data-t="Приблизить"><span data-ic="plus"></span></button>
         <button class="icon" onclick="itlZoom(1/TL_ZOOM_STEP)" aria-label="Отдалить" data-t="Отдалить"><span data-ic="minus"></span></button>
         <button class="icon" onclick="itlFit()" aria-label="Показать весь ролик" data-t="Показать весь ролик"><span data-ic="fit"></span></button>
@@ -858,6 +858,21 @@
   </div>
 </div>
 
+<div class="backdrop" id="mbGdMap" onclick="closeIfBack(event,'mbGdMap')">
+  <div class="modal" style="max-width:720px" role="dialog" aria-modal="true" aria-labelledby="gdMapTitle">
+    <div class="mhead"><span class="t" id="gdMapTitle"></span>
+      <span class="grow"></span>
+      <button class="icon" data-close aria-label="Закрыть" data-t="Закрыть" onclick="closeModal('mbGdMap')"><span data-ic="x"></span></button></div>
+    <div class="mbody" style="display:flex;flex-direction:column;gap:12px">
+      <div id="gdMapRows" style="display:flex;flex-direction:column;gap:10px"></div>
+      <div class="row" style="gap:8px">
+        <button class="primary" style="flex:1" id="gdMapOk">Скачать</button>
+        <button style="flex:1" id="gdMapCancel">Отмена</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="backdrop" id="mbAISettings" onclick="closeIfBack(event,'mbAISettings')">
   <div class="modal" style="max-width:900px" role="dialog" aria-modal="true" aria-label="Настройки">
     <div class="mhead"><span class="t">Настройки</span> <span class="i" data-t="Здесь хранятся профили ИИ, рабочие параметры и инструменты. Выбор запоминается и действует на всех страницах.">!</span>
@@ -998,6 +1013,9 @@
           <label class="chk" style="gap:7px;align-items:center;margin:0"><input type="checkbox" id="ais_rembg" aria-label="Убирать фон" onchange="setImageRembg(this.checked)"> прозрачный PNG вместо белого фона</label></div>
         <div class="setrow" id="ais_rembgModelRow" style="display:none"><label for="ais_rembg_model">Модель вырезания фона <span class="i" data-t="u2net — быстрая модель по умолчанию (~0.7 с на картинку, ~176 МБ). BiRefNet — чище края у волос и мелких предметов, но на процессоре ~8 с на картинку и ~1 ГБ: при первом выборе она скачивается в папку моделей rembg, если её там нет. Смена модели действует со следующей вырезки; уже вырезанные картинки пересчитываются, когда понадобятся.">!</span></label>
           <select id="ais_rembg_model" aria-label="Модель вырезания фона" onchange="setRembgModel(this.value)"><option value="u2net">u2net — быстро (≈0.7 с)</option><option value="birefnet-general">BiRefNet — чище края, медленнее (≈8 с на процессоре)</option></select></div>
+        <div class="setrow" id="ort_gpuRow" style="display:none"><label>Снятие фона на видеокарте <span class="i" data-t="BiRefNet на видеокарте: ~0.3 с на картинку вместо ~8–10 с на процессоре. Качает onnxruntime-gpu (~250 МБ) в свою папку, системные пакеты не трогает. Включается при первой вырезке; перезапуск сервера нужен, только если onnxruntime в нём уже загружен.">!</span></label>
+          <span id="ort_gpuState" style="flex:1;min-width:0;font-size:12px;color:var(--mut)"></span>
+          <button type="button" id="ort_gpuBtn" onclick="ortGpuInstall()" style="display:none">Скачать</button></div>
         <div class="sethdr">Стоки</div>
         <div class="setrow"><label for="stk_pexels">Ключ Pexels <span class="i" data-t="Ключи стоков. Бесплатные: pexels.com/api, pixabay.com/api/docs, unsplash.com/developers, coverr.co (Openverse работает без ключа). Хранятся только в ai_config.json. Скачанное со стока ложится в базу вставок с файлом лицензии — автором, ссылкой и лицензией. Сток без ключа просто не ищется.">!</span></label>
           <input type="password" id="stk_pexels" aria-label="Ключ Pexels" onchange="saveStockKeys()"></div>

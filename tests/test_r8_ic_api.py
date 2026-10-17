@@ -249,7 +249,7 @@ def test_gdrive_cancel_is_not_failure(monkeypatch):
     with gdrive.GDLOCK:
         gdrive.GDJOB.update(gdrive.GDFRESH, running=True, done=False, failed=None, log=[])
         gdrive.GDJOB["cancel"] = True
-    gdrive._download_job(["rclone"], "https://drive.google.com/file/d/abcdefghijkl/view")
+    gdrive._download_job([(["rclone"], None)], "https://drive.google.com/file/d/abcdefghijkl/view")
     assert gdrive.GDJOB["cur"] == "скачивание остановлено"
     assert gdrive.GDJOB["failed"] is False
     assert gdrive.GDJOB["cancelled"] is True
@@ -260,7 +260,7 @@ def test_gdrive_failure_still_failure(monkeypatch):
     monkeypatch.setattr(gdrive, "_run_rclone", lambda *a, **k: 3)
     with gdrive.GDLOCK:
         gdrive.GDJOB.update(gdrive.GDFRESH, running=True, done=False, failed=None, log=[])
-    gdrive._download_job(["rclone"], "https://drive.google.com/file/d/abcdefghijkl/view")
+    gdrive._download_job([(["rclone"], None)], "https://drive.google.com/file/d/abcdefghijkl/view")
     assert gdrive.GDJOB["failed"] is True
     assert gdrive.GDJOB["cancelled"] is False
 

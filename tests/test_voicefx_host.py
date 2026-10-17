@@ -937,7 +937,7 @@ def test_page_returns_its_own_sound_when_the_host_audio_fails(tmp_path: Path) ->
     src = "\n".join(_func_src(prev, n) for n in (
         "vtOf", "vtAudioCam", "vtPlaying", "vtSrcAt", "vtLiveOn", "vtLiveUpdate", "vtLiveExpect",
         "vtLiveRate", "vtLiveCmd", "vtLiveSid", "vtGate", "vtTick", "vtSeek", "vtRate",
-        "vtIsEd", "vtMuteHost"))
+        "vtIsEd", "vtEa", "vtMuteHost"))
     src += "\n" + "\n".join(_func_src(styles, n) for n in (
         "voiceFxLiveOn", "voiceFxHostPoll", "voiceFxHostNotes", "voiceFxHostGone"))
     lets = re.search(r"let VFXHOST=\{[^\n]*\};", styles)

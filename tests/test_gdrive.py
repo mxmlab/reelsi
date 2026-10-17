@@ -256,7 +256,7 @@ def test_упавший_rclone_не_считается_успехом(monkeypatc
     monkeypatch.setattr(gdrive.subprocess, "Popen",
                         lambda *a, **k: _FakeProc(["2026/08/12 12:00:00 ERROR : failed"], 3))
     gdrive.GDJOB.update(running=True, done=False, failed=None, log=[], log_base=0)
-    gdrive._download_job(["rclone"], "https://drive.google.com/file/d/x/view")
+    gdrive._download_job([(["rclone"], None)], "https://drive.google.com/file/d/x/view")
     assert gdrive.GDJOB["failed"] is True and gdrive.GDJOB["done"] is True
     assert "3" in gdrive.GDJOB["cur"]
     assert any("failed" in l for l in gdrive.GDJOB["log"])

@@ -405,41 +405,35 @@ function tlWheelBind(el,o){
   },{passive:false});
 }
 
-// Протяжка вида: средняя кнопка (и левая на линейке) — окно или лента едет за курсором на пройденное
-// расстояние, из любой точки полосы. Общая для трёх таймлайнов.
+// Протяжка вида: средняя кнопка — окно или лента едет за курсором на пройденное расстояние, из любой
+// точки полосы. Общая для трёх таймлайнов. Левая кнопка на линейке — плейхед за курсором (решение
+// владельца 2026-10-17), сюда не приходит: окно стоит, а прокрутка — средняя кнопка и колесо.
 // el — элемент полосы; ev — событие нажатия. o.snap() — вид в момент нажатия; o.apply(dxCss, snap) —
 // вернуть вид на смещение dxCss (css px, вправо > 0). Курсор — grabbing, класс panning — тоже на время
 // тяги. Захват указателя — тяга не теряет вид за краем холста; pointercancel и потеря захвата кончают её.
 // Пока el._tlPan — слежение за плейхедом вид не возвращает (tlPanning).
-// Порог клика по полосе времени (css px): отпускание, если указатель за всё нажатие не ушёл дальше
-// этого от точки нажатия, — клик (плейхед в точку), дальше — протяжка (окно едет). Рука дрожит на
-// 1–2 px, и без порога каждая протяжка ставила бы плейхед туда, где кончилась.
+// Порог протяжки полосы времени (css px): пока указатель за всё нажатие не ушёл дальше этого от точки
+// нажатия, вид стоит. Рука дрожит на 1–2 px, и без порога каждая тяга сдвигала бы окно на дрожь.
 const TL_CLICK_MAX_PX=3;
-// o.click(clientX) — необязательный колбэк клика: зовётся на отпускании левой кнопки, если указатель
-// не ушёл дальше TL_CLICK_MAX_PX. Передаётся точка НАЖАТИЯ. Средняя кнопка и отмена захвата клика не
-// дают. Колбэк ставит плейхед своей перемоткой и окно НЕ двигает (правило NF1, решение 2026-10-12).
 function tlMidPan(el,ev,o){
   if(!el)return;
   tlMidGuard(el);
   const snap=o.snap?o.snap():null;
   const x0=ev.clientX, cur=el.style.cursor;
-  let far=0;   // дальше всего от нажатия за всё движение: по нему клик отличается от протяжки
+  let far=0;   // дальше всего от нажатия за всё движение: до порога окно не двигаем
   el.style.cursor='grabbing';el.classList.add('panning');el._tlPan=true;
   try{el.setPointerCapture(ev.pointerId);}catch(err){}
-  // Пока указатель в пределах порога, окно не двигаем: иначе дрожь сдвинула бы окно, и клик
-  // поставил бы плейхед не туда, где нажали (мапинг клика — по окну на момент нажатия).
   const mv=m=>{ if(m.pointerId!==ev.pointerId) return; far=Math.max(far,Math.abs(m.clientX-x0));
     if(far>TL_CLICK_MAX_PX)o.apply(m.clientX-x0,snap); };
-  const done=(m,clicked)=>{
+  const done=()=>{
     el.removeEventListener('pointermove',mv);
     el.removeEventListener('pointerup',onUp);
     el.removeEventListener('pointercancel',onCancel);
     el.removeEventListener('lostpointercapture',onCancel);
     el.style.cursor=cur;el.classList.remove('panning');el._tlPan=false;
-    try{el.releasePointerCapture(ev.pointerId);}catch(err){}
-    if(clicked&&o.click&&ev.button===0&&far<=TL_CLICK_MAX_PX)o.click(x0); };
-  const onUp=m=>{ if(m&&m.pointerId!==undefined&&m.pointerId!==ev.pointerId) return; done(m,true); };
-  const onCancel=m=>{ if(m&&m.pointerId!==undefined&&m.pointerId!==ev.pointerId) return; done(m,false); };
+    try{el.releasePointerCapture(ev.pointerId);}catch(err){} };
+  const onUp=m=>{ if(m&&m.pointerId!==undefined&&m.pointerId!==ev.pointerId) return; done(); };
+  const onCancel=m=>{ if(m&&m.pointerId!==undefined&&m.pointerId!==ev.pointerId) return; done(); };
   el.addEventListener('pointermove',mv);
   el.addEventListener('pointerup',onUp);
   el.addEventListener('pointercancel',onCancel);

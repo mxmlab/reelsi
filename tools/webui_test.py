@@ -66,6 +66,9 @@ _own("REELSI_VST3_SCAN", "vst3_scan.test.json")
 # своё, иначе кнопка «Установить RoFormer» в тестовом профиле ставила бы окружение
 # в боевой каталог ~/.reelsi/voice_sep, а он рабочий
 os.environ["REELSI_VOICE_SEP"] = paths.root("_voice_sep.test")
+# папка onnxruntime-gpu (снятие фона на видеокарте): тестовый профиль ставит её в свою
+# копию, иначе кнопка «Скачать» качала бы ~250 МБ в боевую папку ~/.reelsi/ort_gpu
+os.environ["REELSI_ORT_GPU"] = paths.root("_ort_gpu.test")
 os.environ.setdefault("PORT", "5098")
 os.environ.setdefault("REELSI_NO_BROWSER", "1")
 

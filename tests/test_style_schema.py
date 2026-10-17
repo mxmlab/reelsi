@@ -25,7 +25,7 @@ from core import style_schema, styles  # noqa: E402
 
 H = {"Host": "127.0.0.1:5001"}
 
-VALID_CONVS = {"inv_pct", "pct_h", "pct_fx", "pct_fy", "frac_pct", "frac_pct_int"}
+VALID_CONVS = {"top_pct", "pct_h", "pct_fx", "pct_fy", "frac_pct", "frac_pct_int"}
 
 # Одна величина — две ручки: тумблер слоя «Дисклеймер» (значение "disc") и textarea его
 # текста делят ключ disclaimer. Всякое другое повторение ключа в схеме — дубль-опечатка:
@@ -117,8 +117,8 @@ def _apply_conv(val, conv, w=1080, h=1920):
     """Применение conv из Таблицы 2 для проверки диапазонов UI."""
     if conv is None:
         return val
-    if conv == "inv_pct":
-        return round((1 - val) * 100)
+    if conv == "top_pct":
+        return round(val * 1000) / 10
     if conv == "pct_h":
         return round((val / h) * 100)
     if conv == "pct_fx":

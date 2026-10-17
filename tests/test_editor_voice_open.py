@@ -64,7 +64,7 @@ PREVIEW_FUNCS = (
     "vtSpareOf", "vtSpareLive", "vtSpareIdle", "vtSpareStop", "vtSpareAt", "vtSpareArm",
     "vtSpareRoll", "vtSpareTake", "vtSpareSwap", "vtSpareCtl", "voicePrime",
     "camVisual", "camIdle", "camApply", "camTrack", "camDeltas", "camBufs",
-    "vtOf", "vtCam1", "vtSrcAt", "vtNow", "vtAudioCam", "vtPlaying", "vtIsPv", "vtIsEd",
+    "vtOf", "vtCam1", "vtSrcAt", "vtNow", "vtAudioCam", "vtPlaying", "vtIsPv", "vtIsEd", "vtEa",
     "vtMuteHost", "vtStage", "vtEl", "vtNote", "vtName", "vtProfileFx", "vtFx", "vtDetach",
     "vtStop", "vtPause", "vtGate", "vtLiveOn", "vtSetMute", "vtLiveUpdate", "vtLiveRate", "vtLiveExpect",
     "vtLiveCmd", "vtLiveSid", "vtLivePlay", "vtLivePause", "vtPrep", "vtVoiceShow",
@@ -72,7 +72,7 @@ PREVIEW_FUNCS = (
     "vtUse", "vtTick", "vtSeek", "vtRate",
     # Звук редактора шага 1: буфер Web Audio, очередь блоков, часы, гейн.
     "eaOpen", "eaDecode", "eaVoice", "eaBuf", "eaSig", "eaPlan", "eaNow", "eaStop",
-    "eaStart", "eaClock", "eaSync", "eaGain", "dbToGain",
+    "eaStart", "eaClock", "eaSync", "eaGain", "eaOwner", "eaIsIpv", "eaPlanIpv", "eaCensor", "eaCensorGain", "eaPos", "dbToGain",
     "vtHostLive", "vtLivePrep", "vtStatesWait", "vtHostDown", "pvProgRow", "pvProgDrop",
 )
 # Единственный плеер шага 1 — редактор (70-editor.js)

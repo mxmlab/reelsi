@@ -764,6 +764,22 @@ def _save_live_dump(session: Any, states: list[dict[str, str]]) -> None:
 
 
 def _save_live_done(session: Any, state_b64: str, code: int | None) -> None:
+    """Одна попытка записи по окну: сбросить итог, записать, засчитать попытку.
+
+    `save_seq` растёт на КАЖДУЮ законченную попытку — и на успех, и на отказ, и на ранний
+    выход: страница по его росту видит, что запись кончилась, и показывает результат
+    (`saved` или `error`). Без счётчика тост «сохранено» показывали бы по самому
+    состоянию, и он врал бы, когда профиль не записан.
+    """
+    session.saved = False
+    session.error = ""
+    try:
+        _save_live_write(session, state_b64, code)
+    finally:
+        session.save_seq += 1
+
+
+def _save_live_write(session: Any, state_b64: str, code: int | None) -> None:
     """Записать состояние плагина в профиль спикера клипа (окно закрылось).
 
     Тот же путь, что у прежней кнопки «Сохранить у спикера», и это нарочно: профиль
@@ -779,7 +795,9 @@ def _save_live_done(session: Any, state_b64: str, code: int | None) -> None:
     собран под ПРЕЖНИЕ настройки, и следующий заход превью (или сборка) видит
     расхождение ключа кеша и печёт трек заново (`ensure_final_voice`).
     """
-    want = _session_open_path(session)
+    # Путь плагина — из события состояния (см. core/voicefx.py:live_events): окно того
+    # плагина, чьё оно. Открытый путь сессии — запасной, если события не было.
+    want = str(getattr(session, "state_path", "") or "") or _session_open_path(session)
     if code not in (0, None) or not state_b64:
         session.error = str(umsg("voicefx_no_state",
                                  "Плагин закрылся, не отдав состояние"))
@@ -900,6 +918,9 @@ def _live_payload(session: Any) -> dict[str, Any]:
         "running": not session.done,
         "done": session.done,
         "saved": session.saved,
+        # Счётчик законченных попыток записи (см. _save_live_done): страница по его росту
+        # решает, что результат записи уже пришёл, и показывает ЕГО, а не состояние.
+        "save_seq": session.save_seq,
         "track_ready": session.track_ready,
         "state": session.state,
         "error": session.error,

@@ -211,7 +211,7 @@ ALWAYS as yellow, and all the manual topping up went through exactly that. Now t
 deliberately, with the "yellow" checkbox in the group's row.
 
 The intro cap `INTRO_MAX_WORDS` = 24 (was 20): in the reference the intro reaches 21 words.
-The accent line length is aligned with the code — `INTRO_ROW_MAX_CHARS` = 9; about the hook's lines and
+The cue line length is `INTRO_ROW_MAX_CHARS` = 14 (the accent lines are split by the one-word rule, see «Line breaks of accents»); about the hook's lines and
 precomps — the paragraph below.
 
 ### Line styling: `_intro_look` (re-taken from the manual edits of 2026-10-02)
@@ -251,6 +251,55 @@ cut right after "не"/a preposition and does not leave such a word alone in a c
 admissible cut, the line is not split. The same rule stands verbatim in the prompt (`INTRO_SYSTEM`) — the
 model no longer tears the particle off by itself. The previous `_intro_defunc` (a function word not at the
 end of a line) remains a separate step and works before the transfer.
+
+### Line breaks of accents — one meaningful word per line (2026-10-17)
+
+Previously a group-accent was cut by `_split_words` with a 9-character limit ("РЕШАЕТ ЭТУ ПРОБЛЕМУ" came
+out as three one-word lines), then by a 14-character limit and the model's split. The owner breaks lines
+differently: a line is ONE meaningful word. A function word and a number stick to the NEXT word: "ЗА 48
+ЧАСОВ", "ТРЕМОР / И ТУМАН", "ПАДАЕТ / В НОЛЬ", "ПО 8 ЧАСОВ", "СОХРАНИТЬ / СВОЕ ЗДОРОВЬЕ", "НА ЛИЧНОЕ /
+ВЕДЕНИЕ", "54 %". Two meaningful words are never glued: "КРОВЬ / ГУСТЕЕТ", "МЯГКО / ТОРМОЗИТ", "СЕРЬЕЗНЫЕ /
+ДЕНЬГИ / ВПУСТУЮ". A function word at the very end of a group goes to the previous line ("ДЕЛАЕТЕ ЕСЛИ
+НЕ"). This is `_mid_lines` (`core/aicut/commands.py`). It no longer uses the `lines` split from the model:
+the field is removed from the schema and from the prompt. A line longer than the style handle
+`intro_row_max` is cut by words. The architect's measurement on 49 of the owner's groups: the AI answers
+laid out by the previous `_place_mids` matched his result in 35 of 49 groups and differed in 14. One of the
+two causes is the gluing of two meaningful words (fixed by this rule); the other is an enumeration point
+running past the end of the phrase (see below). There was no full measurement after the fix; the owner's
+examples are fixed by `tests/test_intro_lines.py`.
+
+### Enumerations "number + the point" — the number large on the left, the words in a column (2026-10-17)
+
+The owner placed enumerations by hand: "1 / ДЕРЖИТЕ / БАЛАНС / СОЛЕЙ" — the number large (`big`, the
+"big on the left" layout, `anim up`), the words of the point one per line (`anim right`). Now the code
+does it. The model marks a point with the field `enum: true` (the prompt: 2–4 words after the number up
+to the end of the phrase). The lines of a point come from `_enum_rows` (`core/aicut/commands.py`): the
+number is a separate head line, a function word ("И") is glued to the next word. A number is a digit 1..20
+or an ordinal ("первое", "во-первых"). A point is only a run of numbers ascending by 1 (`_enum_heads`):
+a lone digit ("за 48 часов", "2 раза") does not become a point. How many words follow the number comes from
+the model's answer. A point ends at the END OF THE PHRASE: a sign «.!?;» in the transcript sidecar
+(`<stem>.words.json`, the word "солей.") — `_sentence_ends`, matched by start time within ±0.08 s. The word
+with such a sign is included in the point and the point ends on it. If the model sent more words than the
+phrase has, the point is cut at the period (`_enum_cut_at_end`). The fallback limits: a pause ≥ 0.35 s, the
+next point, and at most 4 words after the number (`_enum_span`). A function word at the tail of a point is
+dropped (`_enum_trim`), also in a point the code places itself. The owner's examples: "1 / ТОЧКА / ВХОДА"
+("Точка входа. Не заходи…"), "2 / ТОЛЬКО / ЦИТАТ", "1 / ДЕРЖИТЕ / БАЛАНС / СОЛЕЙ", "3 / КОНТРОЛЬ / СНА / И
+ЭСТРАДИОЛА". A point the model did not send, the code places itself: an ordinary accent at its
+time gives way, a point under an insert is not placed (a line in the log). The service key `enum` is removed
+from `.intro.json`; the front end does not change (`introRowsFromAI` already carries `big` and `anim`).
+
+Digit or word is the model's decision for the WHOLE enumeration, not for the placed accent. The answer carries the
+field `enum_lists`: one entry `{from, digit}` for EVERY enumeration in the video, even when its accents did not fit
+under an insert (`from` is the word index of the first point's number). `digit: true` is a rule, a step or advice
+in the imperative ("three rules", "1 ДЕРЖИТЕ БАЛАНС СОЛЕЙ"); `digit: false` is a list of signs or symptoms, or a
+story, where "first" is a part of speech. The code finds the enumeration's chain (`_enum_chains`, the same chains as
+`_enum_heads`): `from` is its head, or the chain whose first head is nearest to `from` within three words. If found,
+on write (dry does not reach it) ALL heads of the chain where the word is an ordinal ("ПЕРВОЕ") are rewritten in the
+XML subtitles as digits by the same path as a manual edit (`xml2ae.edit_word` by the word index,
+`_enum_digits_to_xml`). The digit is written even where the point is not placed (under an insert): the subtitles are
+visible under an insert too. A head word that is already a digit is left alone; no chain is a log line
+"enumeration from {from} not found"; an edit error is a log line and does not break the markup. A missing
+`enum_lists` (an answer of an older model) changes nothing; none of this is written to `.intro.json`.
 
 ### Line glow — only from the style (`intro_accent_glow`)
 

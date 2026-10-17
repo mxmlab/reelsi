@@ -623,6 +623,10 @@ def _open_editor(loaded: list[tuple[dict[str, Any], Any]], index: int,
     """
     global _WINDOW_OPEN
     target = open_target(loaded, index, path)
+    # Путь открытого плагина — в событие состояния: индекс и путь сессии сервера могут
+    # разойтись (цепочку правили, пока окно было открыто), а записать состояние надо
+    # ТОМУ плагину, чьё окно закрылось.
+    target_path = next((str(it.get("path") or "") for it, p in loaded if p is target), "")
     _emit_event("editor_open", index=int(index))
     _WINDOW_OPEN = True
     try:
@@ -631,7 +635,7 @@ def _open_editor(loaded: list[tuple[dict[str, Any], Any]], index: int,
         _WINDOW_OPEN = False
     raw = bytes(target.raw_state)
     _write_state(state_out, raw)
-    _emit_event("state", index=int(index),
+    _emit_event("state", index=int(index), path=target_path,
                 state_b64=base64.b64encode(raw).decode("ascii"))
     _emit_event("editor_closed", index=int(index))
 

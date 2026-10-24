@@ -47,62 +47,6 @@ def test_needs_text_false_if_either_field_is_fit():
     assert insertlib.needs_text({"desc": "", "vis": "", "desc_src": "user", "path": p}) is False
 
 
-def test_needs_vis_true_for_record_with_desc_but_no_vis():
-    """needs_vis истинно у записи с готовым desc, но без vis: vision должен дописать
-    зрительное описание и к исходной фразе."""
-    p = "C:/x/money-bills-flushed-down-toilet.png"
-    assert insertlib.needs_vis({"desc": "money bills flushed down toilet", "path": p}) is True
-    assert insertlib.needs_vis({"desc": "money bills flushed down toilet", "vis": "", "path": p}) is True
-    assert insertlib.needs_vis({"desc": "money bills flushed down toilet",
-                                "vis": "toilet bowl with paper money", "path": p}) is False
-
-
-def test_auto_describe_writes_vis_and_keeps_desc(tmp_path, monkeypatch):
-    """auto_describe(only_missing=True) НЕ трогает desc у записи с исходной фразой,
-    а пишет vis."""
-    idx_path = str(tmp_path / "test_idx.json")
-    monkeypatch.setattr(insertlib, "INDEX_PATH", idx_path)
-    insertlib._CACHE["data"] = None
-
-    img_file = tmp_path / "money-bills-flushed-down-toilet.png"
-    img_file.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 32)
-
-    items = [{
-        "path": str(img_file),
-        "name": "money-bills-flushed-down-toilet.png",
-        "type": "photo",
-        "used": 1,
-        "desc": "money bills flushed down toilet",      # исходная фраза сценариста
-        "desc_src": "generated",
-        "ru": "",
-        "emb": None,
-    }]
-    json.dump({"items": items, "dirs": [str(tmp_path)], "emb_model": "mock-emb",
-               "emb_tag": insertlib.EMB_TAG},
-              open(idx_path, "w", encoding="utf-8"))
-
-    try:
-        from core import aicut
-        monkeypatch.setattr(aicut, "ensure_loaded", lambda model: None)
-    except Exception:
-        pass
-
-    monkeypatch.setattr(insertlib, "_vision_model", lambda: "mock-vl")
-    monkeypatch.setattr(insertlib, "describe_file",
-                        lambda path, model: "toilet bowl with paper money inside")
-    monkeypatch.setattr(insertlib, "_emb_model", lambda: "mock-emb")
-    monkeypatch.setattr(insertlib, "_emb_docs", lambda texts, model: [[0.5, 0.5, 0.5] for _ in texts])
-
-    res = insertlib.auto_describe(only_missing=True)
-    assert res.get("count") == 1
-
-    entry = insertlib._load()["items"][0]
-    assert entry["desc"] == "money bills flushed down toilet"      # исходная фраза цела
-    assert entry["desc_src"] == "generated"                        # не тронут
-    assert entry["vis"] == "toilet bowl with paper money inside"   # vision пишет в vis
-    assert entry["emb"] == [0.5, 0.5, 0.5]                         # пересчитан с vis в документе
-
-
 def test_migration_moves_ai_desc_to_vis(tmp_path, monkeypatch):
     """Запись desc_src='ai' без vis после build_index: vis = старый desc, desc пустой,
     desc_src='name'. Повторный build_index ничего не меняет (идемпотентность)."""
@@ -164,18 +108,6 @@ def test_is_refusal_recognizes_model_refusals():
     for t in ("money bills flushed down toilet",
               "toilet bowl with paper money"):
         assert not insertlib._is_refusal(t), t
-
-
-def test_needs_vis_true_for_refusal_in_vis():
-    """needs_vis считает отказ модели в vis отсутствием описания: запись попадёт в
-    auto_describe(only_missing=True) и переопишется обычным «Обновить базу»."""
-    p = "C:/x/cancer-cells-dividing.png"
-    assert insertlib.needs_vis({"desc": "cancer cells dividing", "path": p}) is True
-    assert insertlib.needs_vis({"desc": "cancer cells dividing",
-                                "vis": "None of the objects depicted are real-world items",
-                                "path": p}) is True
-    assert insertlib.needs_vis({"desc": "cancer cells dividing",
-                                "vis": "cells dividing under a microscope", "path": p}) is False
 
 
 def test_migration_cleans_ai_desc_even_with_vis(tmp_path, monkeypatch):

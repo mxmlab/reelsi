@@ -118,7 +118,7 @@ function scrubXY(objExpr,x,y,cb,save){const o={cb,save};
 // xml2ae сам). У фото авторасчёт режет всё не-ультравайдное в квадрат, а предмет в квадрат
 // лезет не всегда; у видео 100 = весь кадр исходника. Маска РЕЖЕТ, а не масштабирует —
 // крупность предмета меняется скраббером «масштаб» рядом.
-function scrubMask(objExpr,mw,mh,cb,save){const o={cb,save,min:20,max:300};
+function scrubMask(objExpr,mw,mh,cb,save){const o={cb,save,min:20,max:1000};
   return '<span class="xy" data-t="'+t('Маска: ширина и высота карточки, % от авто — режет кадр, крупность не меняет (тяни мышкой, двойной клик — ввод)')+'">'
     +'<b>'+t('Ш')+'</b>'+scrubSpan(objExpr,'mw',mw==null?100:mw,o)+'<b>'+t('В')+'</b>'+scrubSpan(objExpr,'mh',mh==null?100:mh,o)+'</span>';}
 // масштаб вставки, % от АВТО (100 = как считает xml2ae сам). У фото множит посчитанную под

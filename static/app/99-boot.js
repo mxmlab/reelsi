@@ -288,7 +288,6 @@ if(bootRaw==='video')openVideo(); else goStep(CLIPS.length?bootStep:1);
     insVideoForgetPending();}
 }catch(e){}})();
 if(CLIPS.length)refreshStatuses();   // подтянуть ncams/статусы для восстановленных клипов (влияет на кнопку раскладки камер шага 1)
-illHdrPoll();                        // если описание базы уже идёт (запущено до F5) — показать прогресс в шапке
 // если на сервере уже крутится задача (F5 посреди сборки/нарезки) — подхватываем её индикацию
 (async()=>{try{const d=await (await fetch('/api/status')).json();
   queueRender(d);   // очередь этапов: после F5 виден и итог уже закончившейся

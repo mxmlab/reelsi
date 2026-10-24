@@ -550,7 +550,6 @@ STAND_STATE = r"""
 // Заглушки соседних дверей. Пороги синхрона подставляются ИЗ ФАЙЛА (см. `_sync_consts`):
 // свои копии разъезжались бы с боевыми молча.
 let MEDIA_VOL=1;
-function voiceWiring(){}
 function t(s,vars){return String(s).replace(/\{(\w+)\}/g,(m,k)=>
   (vars&&vars[k]!=null)?String(vars[k]):m);}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
@@ -593,7 +592,7 @@ def _sync_consts() -> str:
     """
     preview = PREVIEW_JS.read_text(encoding="utf-8")
     out = []
-    for name in ("VT_SOFT", "VT_DRIFT", "VT_RATE", "VT_QUIET", "VT_POLL"):
+    for name in ("VT_QUIET", "VT_POLL"):
         m = re.search(r"^const %s=.*$" % name, preview, re.M)
         assert m is not None, f"в 60-preview.js нет const {name}"
         out.append(m.group(0))
@@ -614,57 +613,6 @@ def _run_node(tmp_path: Path, body: str, name: str = "stand.js") -> Any:
     lines = [line.strip() for line in proc.stdout.strip().splitlines() if line.strip()]
     assert lines, "стенд ничего не напечатал"
     return json.loads(lines[-1])
-
-
-@node
-def test_seek_does_not_unmute_raw_camera(tmp_path: Path) -> None:
-    """Перемотка: пока дорожка обработанного голоса наша, камера 1 молчит даже в seek.
-
-    Было «muted = live && readyState>=2»: на перемотке `<audio>` падал в readyState<2,
-    гейт открывался — и было слышно СЫРОЙ голос камеры. Теперь глушит сама
-    подключённая дорожка (`st.on`), а короткая тишина на догоне — не беда.
-    """
-    body = r"""
-PV.audio=[{ts:0,te:10,src:100}];
-const v1=document.createElement('video'),v2=document.createElement('video');
-v1.readyState=4;v1.currentTime=100;v2.readyState=4;PV.vids=[v1,v2];
-PV.cams=[{path:'C:/cam1.mp4'},{path:'C:/cam2.mp4'}];
-PV.xml='C:/out/01_clip.xml';PV.playing=true;
-const st=vtOf(PV);st.on=true;st.path='C:/_voicefx/aaa.wav';
-const el=vtEl(PV);el.src='/api/media?path=C%3A%2F_voicefx%2Faaa.wav';el.readyState=4;
-vtTick(PV,3);
-const playing={mute:!!PV.voiceMute,cam1:!!v1.muted,cam2:!!v2.muted};
-// ПЕРЕМОТКА: <audio> догружается (readyState<2). Плеер при драге ползунка СТАВИТСЯ
-// на паузу, но кадры продолжают идти — и на них камера обязана молчать: было
-// `muted = live && readyState>=2`, и на этих кадрах было слышно СЫРОЙ голос камеры.
-el.readyState=1;el.seeking=true;el.paused=true;PV.playing=false;PV.scrubbing=true;
-vtTick(PV,5);
-const seek={mute:!!PV.voiceMute,cam1:!!v1.muted,cam2:!!v2.muted,voicePaused:el.paused};
-// ...и на кадре, который «играет» ровно в этот момент (гонка seek и VT_DRIFT) — тоже
-PV.playing=true;vtTick(PV,5);
-const seekPlaying={mute:!!PV.voiceMute,cam1:!!v1.muted,voicePaused:el.paused};
-PV.playing=false;
-// Пауза без дорожки (выключили обработку) возвращает звук камере
-st.on=false;vtTick(PV,5);
-const off={mute:!!PV.voiceMute,cam1:!!v1.muted};
-// ...а слушают камеру 2 — её никто не глушит, дорожка камеры 1 молчит
-st.on=true;PV.audioCi=1;vtTick(PV,5);
-const cam2={mute:!!PV.voiceMute,cam2:!!v2.muted,voicePaused:el.paused,cam1:!!v1.muted};
-console.log(JSON.stringify({playing:playing,seek:seek,seekPlaying:seekPlaying,off:off,cam2:cam2}));
-"""
-    res = _run_node(tmp_path, body)
-
-    assert res["playing"]["mute"] is True and res["playing"]["cam1"] is True, res["playing"]
-    assert res["seek"]["mute"] is True, "на перемотке гейт открылся — слышно сырой голос"
-    assert res["seek"]["cam1"] is True, "камера 1 зазвучала во время seek"
-    assert res["seek"]["voicePaused"] is True, "дорожка играла на паузе"
-    assert res["seekPlaying"]["mute"] is True and res["seekPlaying"]["cam1"] is True, \
-        "на догрузке посреди игры камера снова зазвучала: %s" % res["seekPlaying"]
-    assert res["off"]["mute"] is False and res["off"]["cam1"] is False, \
-        "дорожки нет — звук камеры обязан вернуться"
-    assert res["cam2"]["mute"] is False and res["cam2"]["cam2"] is False, res["cam2"]
-    assert res["cam2"]["voicePaused"] is True, \
-        "дорожка камеры 1 играет, хотя слушают камеру 2: %s" % res["cam2"]
 
 
 @node
@@ -713,7 +661,7 @@ async function waitFor(cond,triesMs){
   const html=line?String(line.innerHTML):'';
   console.log(JSON.stringify({asked:asked,polls:polls,
     opened:PROGCALLS.filter(c=>c[0]==='open').map(c=>c[1]),
-    on:PV.vt.on,path:PV.vt.path,src:PV.vt.el?PV.vt.el.src:'',
+    on:PV.vt.on,path:PV.vt.path,
     lineHtml:html,mid:mid,id:line?line.id:'',inStage:midIn,
     stopShown:html.indexOf('data-vtstop')>=0,display:line?String(line.style.display):'',
     note:(STATUS.textContent||'')}));
@@ -728,7 +676,6 @@ async function waitFor(cond,triesMs){
     assert "голос обрабатывается" in res["mid"], res["mid"]
     assert "data-vtstop" in res["mid"], "у строки хода нет кнопки «Стоп»: %s" % res["mid"]
     assert res["on"] is True and res["path"] == "C:/_voicefx/deadbeef.wav", res
-    assert res["src"].startswith("/api/media?path="), res["src"]
     assert res["display"] == "none", "строка хода осталась висеть после конца счёта"
     assert res["note"] == "обработанный голос клипа готов", res["note"]
 

@@ -287,7 +287,6 @@ def test_ipv_open_frees_videos_repeated_calls(tmp_path):
     function ipvPause(){{ IPV.playing = false; }}
     function pvApplyStageAspect(){{}}
     function ipvMarks(){{}}
-    function voiceWiring(){{}}
     // slot — как у боевого bufMake: по нему ipvOpen ставит дублёру метку «под какой файл»
     function bufMake(P, st, io, slot){{
       const b = document.createElement('video');

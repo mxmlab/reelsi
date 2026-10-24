@@ -60,14 +60,14 @@ node = pytest.mark.skipif(not shutil.which("node"), reason="стенд треб�
 VOICE_FUNCS = ("voiceFxHostOn", "voiceFxLiveOn", "voiceFxWindowOn", "voiceFxHasVst",
                "voiceFxHostKey", "voiceFxHostSync", "voiceFxHostStart", "voiceFxHostStop",
                "voiceFxHostDump", "voiceFxStatesApply", "vfxEl", "speakerFresh", "speakerRefresh")
-PREVIEW_FUNCS = ("vtOf", "vtCam1", "vtSrcAt", "vtNow", "vtAudioCam", "vtPlaying", "vtEl",
-                 "vtGate", "vtNote", "vtProfileFx", "vtFx", "vtDetach", "vtStop",
-                 "vtLiveOn", "vtSetMute", "vtLiveUpdate", "vtLiveRate", "vtLiveExpect",
+PREVIEW_FUNCS = ("vtOf", "vtCam1", "vtSrcAt", "vtNow", "vtAudioCam", "vtPlaying",
+                 "vtNote", "vtProfileFx", "vtFx", "vtDetach", "vtStop",
+                 "vtLiveOn", "vtLiveUpdate", "vtLiveRate", "vtLiveExpect",
                  "vtLiveCmd", "vtLiveSid", "vtLivePlay", "vtLivePause",
                  "vtIsPv", "vtIsEd", "vtEa", "vtMuteHost", "vtStage", "vtHostLive", "vtLivePrep",
                  "vtStatesWait", "vtStatesTake", "vtHostDown", "vtPrep", "vtVoiceShow",
                  "vtVoiceWatch", "vtVoiceTake", "vtVoiceUse", "vtUse", "vtTick",
-                 "vtVoiceLine", "vtVoiceStop", "vtSeek", "vtRate")
+                 "vtVoiceLine", "vtVoiceStop")
 
 
 def _func_src(src: str, name: str) -> str:
@@ -122,7 +122,6 @@ function esc(s){return String(s);}
 function t(s,vars){return String(s).replace(/\{(\w+)\}/g,(m,k)=>
   (vars&&vars[k]!=null)?String(vars[k]):m);}
 function $(id){return globalThis.__byId&&globalThis.__byId[id]||null;}
-function voiceWiring(){}
 function voiceFxStatus(){}
 // Клип по XML: настройки голоса берутся из профиля спикера клипа (vtProfileFx) —
 // панели у стенда нет, и это та же ветка, что у превью шага 3.
@@ -204,8 +203,7 @@ def _run_node(tmp_path: Path, body: str, name: str = "vpmode.js") -> Any:
     """Прогнать стенд под node и вернуть разобранный JSON с последней строки."""
     preview = PREVIEW_JS.read_text(encoding="utf-8")
     script = (STUBS + "\n" + DOM + "\n" + STATE + "\n"
-              + "\n".join(_const(preview, c) for c in ("VT_DRIFT", "VT_SOFT", "VT_RATE",
-                                                       "VT_QUIET", "VT_POLL"))
+              + "\n".join(_const(preview, c) for c in ("VT_QUIET", "VT_POLL"))
               + "\n" + _src(*(VOICE_FUNCS + PREVIEW_FUNCS)) + "\n" + body)
     path = tmp_path / name
     path.write_text(script, encoding="utf-8")
@@ -359,88 +357,6 @@ globalThis.fetch=async(url,opt)=>{const u=String(url);
         "старая дорожка снята с воспроизведения: %s" % res["mid"]
     assert res["after"]["path"] == "C:/cache/old.wav", \
         "трек пропал после ответа «считается»: %s" % res["after"]
-
-
-# --------------------------------------------------------------------------- #
-# 2. Синхрон дорожки: скорость вместо перемотки
-# --------------------------------------------------------------------------- #
-def _tick_body(drift: float, playing: bool = True) -> str:
-    """Кадр плеера с заданным расхождением звука и картинки.
-
-    `drift` — насколько дорожка ОТСТАЁТ от картинки (положительное — надо догнать).
-    Плеер по EDL (превью шага 3): монтаж 5 с = исходник 105 с (кусок `src:100`), поэтому
-    расхождение задаётся относительно 105-й секунды исходника.
-    """
-    return """
-const P=P_();
-P.playing=%s;P.play=%s;        // играем (у шага 3 это P.playing)
-P.vids=[new El('video')];P.vids[0]._ct=5+100;   // камера на 5-й секунде монтажа
-P.vt={on:true,el:null,path:'C:/cache/dn.wav',fin:false,seq:0,timer:0,poll:0,want:'',
-  note:'',vtq:false,vtend:false,live:null,dn:JSON.stringify(%s.denoise),wantDn:'',
-  wantFinal:false,warn:'',statesWait:null};
-const el=new El('audio');P.vt.el=el;
-el.currentTime=%s-%s;          // расхождение заданной величины
-el.seeks.length=0;             // считаем только перемотки САМОГО кадра
-el.paused=!%s;el.readyState=4;
-vtTick(P,5);
-console.log(JSON.stringify({rate:el.playbackRate,ct:el.currentTime,
-  seeks:el.seeks.length,seeksDone:el.seeks,pauses:el.pauses,
-  muted:P.vids[0].muted}));
-""" % ("true" if playing else "false", "true" if playing else "false",
-       json.dumps(FX, ensure_ascii=False),
-       "105", json.dumps(drift), "true" if playing else "false")
-
-
-@node
-def test_small_drift_is_fixed_by_rate(tmp_path: Path) -> None:
-    """Расхождение 0,1 с → меняется СКОРОСТЬ, `currentTime` не трогается.
-
-    Перемотка — это провал в звуке и сброс хвоста плагинов; на расхождении в десятые
-    доли секунды её делать нельзя. ±6 % на слух незаметны (у камер ровно тот же приём).
-    """
-    res = _run_node(tmp_path, _tick_body(0.1))
-
-    assert res["rate"] > 1.0, "отстающую дорожку не разогнали: %s" % res
-    assert abs(res["rate"] - 1.06) < 1e-9, res["rate"]
-    assert res["seeks"] == 0, "перемотали там, где хватало скорости: %s" % res
-    assert res["ct"] == 104.9, "кадр тронул currentTime: %s" % res
-    # Звук камеры заглушен, пока играет дорожка: иначе слышно два голоса разом.
-    assert res["muted"] is True, "звук камеры не заглушен под дорожкой: %s" % res
-
-
-@node
-def test_big_drift_is_fixed_by_seek(tmp_path: Path) -> None:
-    """Расхождение 0,5 с → перемотка (скоростью такое не догнать)."""
-    res = _run_node(tmp_path, _tick_body(0.5))
-
-    assert res["seeksDone"] == [105], "дорожку не перемотали на место: %s" % res
-    assert res["rate"] == 1, "перемотка оставила скорость задранной: %s" % res
-
-
-@node
-def test_pause_places_the_track_exactly(tmp_path: Path) -> None:
-    """Пауза ставит дорожку РОВНО, без ожидания порога: подъезжать на паузе некуда.
-
-    (Прыжок через вырез у шага 1 больше не дело дорожки: звук там — очередь блоков в
-    буфере Web Audio, tests/test_editor_single_player.py.)
-    """
-    body = """
-const P=P_();                  // плеер по EDL (шаг 3), стоим на 5-й секунде монтажа
-P.vids=[new El('video')];P.vids[0]._ct=105;
-P.vt={on:true,el:null,path:'C:/cache/dn.wav',fin:false,seq:0,timer:0,poll:0,want:'',
-  note:'',vtq:false,vtend:false,live:null,dn:JSON.stringify(%s.denoise),wantDn:'',
-  wantFinal:false,warn:'',statesWait:null};
-const el=new El('audio');P.vt.el=el;el.readyState=4;
-// Пауза: расхождение 0,2 с скоростью гасить нельзя — стоим ровно на месте
-el.currentTime=104.8;el.seeks.length=0;el.paused=true;el.playbackRate=1.06;
-vtTick(P,5);
-const onPause={rate:el.playbackRate,ct:el.currentTime,seeks:el.seeks.slice()};
-console.log(JSON.stringify({onPause:onPause}));
-""" % json.dumps(FX, ensure_ascii=False)
-    res = _run_node(tmp_path, body)
-
-    assert res["onPause"]["ct"] == 105, "на паузе дорожка стоит не на месте: %s" % res
-    assert res["onPause"]["rate"] == 1, "на паузе скорость осталась задранной: %s" % res
 
 
 # --------------------------------------------------------------------------- #

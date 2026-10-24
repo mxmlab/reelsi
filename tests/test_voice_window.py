@@ -953,12 +953,11 @@ function uiLog(m){LOGS.push(String(m));}
 function $(id){return null;}
 globalThis.fetch=async(url,opt)=>{SENT.push([String(url),opt?JSON.parse(opt.body):null]);
   return {json:async()=>({ok:true,running:true,sent:true})};};
-const VT_DRIFT=0.15,VT_QUIET=400,VT_POLL=1000;
+const VT_QUIET=400,VT_POLL=1000;
 // Пороги живого звука — те же числа, что в 60-preview.js: стенд проверяет
 // поведение, а не настройку порогов.
 const VT_LIVE_DRIFT=0.4,VT_LIVE_MS=250;
 let MEDIA_VOL=1;
-function voiceWiring(){}
 function t(s,vars){return String(s).replace(/\{(\w+)\}/g,(m,k)=>
   (vars&&vars[k]!=null)?String(vars[k]):m);}
 function errText(d){return (d&&(d.error||d.err))||'';}
@@ -983,7 +982,7 @@ def test_preview_sends_live_commands_and_mutes_its_own_voice(tmp_path):
     """Пока окно открыто, превью шлёт play/seek/pause и глушит СВОЙ голос.
 
     Видео остаётся хозяином: команды считаются от его позиции (`vtSrcAt`), а
-    звук камеры 1 и дорожка `vt` молчат — иначе слышно два голоса разом. Камеру 2
+    звук камеры 1 молчит — иначе слышно два голоса разом. Камеру 2
     никто не глушит: окно обрабатывает только голос камеры 1.
     """
     styles = STYLES_JS.read_text(encoding="utf-8")
@@ -995,7 +994,6 @@ def test_preview_sends_live_commands_and_mutes_its_own_voice(tmp_path):
            + _func_src(preview, "vtPlaying")
            + _func_src(preview, "vtDetach")
            + _func_src(preview, "vtLiveOn")
-           + _func_src(preview, "vtSetMute")
            + _func_src(preview, "vtLiveUpdate")
            + _func_src(preview, "vtLiveRate")
            + _func_src(preview, "vtLiveExpect")
@@ -1009,25 +1007,24 @@ def test_preview_sends_live_commands_and_mutes_its_own_voice(tmp_path):
     body = r"""
 let VOICEFXLIVE={sid:'42',running:true};
 const P={audio:[{ts:0,te:10,src:100}],aidx:0,playing:false,scrubbing:false,vids:[],
-  vt:{on:true,el:{paused:false,pause:function(){this.paused=true;}},path:'C:/v.wav'}};
+  vt:{on:true,path:'C:/v.wav'}};
 const cam1=new El('video'),cam2=new El('video');P.vids=[cam1,cam2];
 // Пауза: команда «pause», свой голос не глушим — на паузе слышно, что делает ручка
 vtLiveUpdate(P,3);
-const paused={sent:SENT.slice(),mute:cam1.muted,voiceMute:!!P.voiceMute};
+const paused={sent:SENT.slice(),mute:cam1.muted};
 // Играем: команда идёт через живое окно, звук камеры 1 заглушён, камера 2 — нет
 P.playing=true;
 vtLiveUpdate(P,3);
-const playing={sent:SENT.slice(),mute:cam1.muted,cam2:cam2.muted,voice:!!P.voiceMute,
-  trackPaused:P.vt.el.paused,voiceMute:!!P.voiceMute};
+const playing={sent:SENT.slice(),mute:cam1.muted,cam2:cam2.muted};
 // Стык монтажа: другой кусок — позиция прыгает, уходит seek, а не play
 P.audio=[{ts:0,te:10,src:100},{ts:10,te:20,src:300}];P.aidx=1;P.vids[0].currentTime=300;
 vtLiveUpdate(P,10.5);
 const splice={sent:SENT.slice()};
-// Окно закрылось: звук возвращается дорожке vt, и команд больше не шлём
+// Окно закрылось: глушение камеры снято, и команд больше не шлём
 VOICEFXLIVE=null;
 const before=SENT.length;
 vtLiveUpdate(P,12);
-const closed={mute:cam1.muted,voice:!!P.voiceMute,added:SENT.length-before,
+const closed={mute:cam1.muted,added:SENT.length-before,
   liveOn:vtLiveOn(P)};
 console.log(JSON.stringify({paused:paused,playing:playing,splice:splice,closed:closed}));
 """
@@ -1048,8 +1045,6 @@ console.log(JSON.stringify({paused:paused,playing:playing,splice:splice,closed:c
     assert [c[1]["cmd"] for c in playing["sent"]] == ["pause", "play"], playing["sent"]
     assert playing["mute"] is True, "звук камеры 1 не заглушён — слышно два голоса"
     assert playing["cam2"] is False, "заглушили камеру 2, а её окно не обрабатывает"
-    assert playing["trackPaused"] is True, "дорожка обработанного голоса продолжает играть"
-    assert playing["voiceMute"] is False, "флаг дорожки спорит с живым окном"
     # Стык: seek на позицию НОВОГО куска (10.5 с монтажа = 300.5 с исходника),
     # а не продолжение с прежней
     cmds = [c[1] for c in res["splice"]["sent"]]
@@ -1057,7 +1052,7 @@ console.log(JSON.stringify({paused:paused,playing:playing,splice:splice,closed:c
     # Окно закрылось: команды прекратились, звук вернулся дорожке
     closed = res["closed"]
     assert closed["added"] == 0, "после закрытия окна превью всё ещё шлёт команды"
-    assert closed["mute"] is False, "звук не вернулся дорожке vt"
+    assert closed["mute"] is False, "после закрытия окна звук камеры остался заглушён"
     assert closed["liveOn"] is False, res
 
 

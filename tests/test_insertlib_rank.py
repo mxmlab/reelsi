@@ -76,7 +76,7 @@ def test_lexical_rank_rare_word_boost(tmp_path, monkeypatch):
     insertlib._CACHE["data"] = None
 
     # Мокаем _emb_queries
-    monkeypatch.setattr(insertlib, "_emb_queries", lambda queries, model: [v_q])
+    monkeypatch.setattr(insertlib, "_emb_queries", lambda queries: [v_q])
 
     results = insertlib.match_many(["retatrutide pen"], k=5)[0]
 
@@ -113,7 +113,7 @@ def test_score_equals_pure_cosine_and_lex_separated(tmp_path, monkeypatch):
     monkeypatch.setattr(insertlib, "INDEX_PATH", str(idx_path))
     insertlib._CACHE["data"] = None
 
-    monkeypatch.setattr(insertlib, "_emb_queries", lambda queries, model: [[1.0, 0.0]])
+    monkeypatch.setattr(insertlib, "_emb_queries", lambda queries: [[1.0, 0.0]])
 
     results = insertlib.match_many(["injection pen"], k=1)[0]
     assert len(results) == 1
@@ -147,7 +147,7 @@ def test_equal_cosine_tie_breaking(tmp_path, monkeypatch):
     monkeypatch.setattr(insertlib, "INDEX_PATH", str(idx_path))
     insertlib._CACHE["data"] = None
 
-    monkeypatch.setattr(insertlib, "_emb_queries", lambda queries, model: [v])
+    monkeypatch.setattr(insertlib, "_emb_queries", lambda queries: [v])
 
     results = insertlib.match_many(["syringe"], k=2)[0]
     assert len(results) == 2
@@ -163,11 +163,11 @@ def test_equal_cosine_tie_breaking(tmp_path, monkeypatch):
 
 def test_auto_threshold_embedding_mode(tmp_path, monkeypatch):
     """Поле auto (bool) в режиме эмбеддинга:
-    - cos >= AUTO_COS (0.30) -> True
+    - cos >= AUTO_COS (0.83) -> True
     - cos < AUTO_COS, но lex >= AUTO_LEX (0.20) -> True (точное попадание по имени)
     - cos < AUTO_COS и lex < AUTO_LEX -> False
     """
-    assert insertlib.AUTO_COS == 0.30
+    assert insertlib.AUTO_COS == 0.83
     assert insertlib.AUTO_COS_TOK == 0.5
     assert insertlib.AUTO_LEX == 0.20
 
@@ -179,11 +179,11 @@ def test_auto_threshold_embedding_mode(tmp_path, monkeypatch):
         p.write_text("fake")
 
     # Вектор запроса = [1.0, 0.0]
-    # high_cos: cos = 0.50, lex = 0.0 -> auto = True (cos >= 0.30)
-    # exact_name: cos = 0.25, lex = 0.35 -> auto = True (lex >= 0.20, cos < 0.30)
-    # low_match: cos = 0.25, lex = 0.0 -> auto = False (cos < 0.30 and lex < 0.20)
+    # high_cos: cos = 0.90, lex = 0.0 -> auto = True (cos >= 0.83)
+    # exact_name: cos = 0.25, lex = 0.35 -> auto = True (lex >= 0.20, cos < 0.83)
+    # low_match: cos = 0.25, lex = 0.0 -> auto = False (cos < 0.83 and lex < 0.20)
     v_q = [1.0, 0.0]
-    v_high = [0.50, 0.866025]
+    v_high = [0.90, 0.435890]
     v_low = [0.25, 0.968246]
 
     items = [
@@ -206,23 +206,23 @@ def test_auto_threshold_embedding_mode(tmp_path, monkeypatch):
     monkeypatch.setattr(insertlib, "INDEX_PATH", str(idx_path))
     insertlib._CACHE["data"] = None
 
-    monkeypatch.setattr(insertlib, "_emb_queries", lambda queries, model: [v_q])
+    monkeypatch.setattr(insertlib, "_emb_queries", lambda queries: [v_q])
 
     results = insertlib.match_many(["revolver cylinder"], k=3)[0]
     assert len(results) == 3
 
     by_path = {r["path"]: r for r in results}
 
-    # high_cos: cos 0.50 >= 0.30 -> auto True
-    assert by_path[str(p_high_cos)]["score"] == 0.50
+    # high_cos: cos 0.90 >= 0.83 -> auto True
+    assert by_path[str(p_high_cos)]["score"] == 0.90
     assert by_path[str(p_high_cos)]["auto"] is True
 
-    # exact_name: cos 0.25 < 0.30, но lex 0.35 >= 0.20 -> auto True
+    # exact_name: cos 0.25 < 0.83, но lex 0.35 >= 0.20 -> auto True
     assert by_path[str(p_exact_name)]["score"] == 0.25
     assert by_path[str(p_exact_name)]["lex"] >= 0.20
     assert by_path[str(p_exact_name)]["auto"] is True
 
-    # low_match: cos 0.25 < 0.30, lex 0.0 < 0.20 -> auto False
+    # low_match: cos 0.25 < 0.83, lex 0.0 < 0.20 -> auto False
     assert by_path[str(p_low_match)]["score"] == 0.25
     assert by_path[str(p_low_match)]["lex"] < 0.20
     assert by_path[str(p_low_match)]["auto"] is False

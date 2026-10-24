@@ -78,14 +78,24 @@ def test_gdrive_and_podcast_cards_are_plain_cards_not_details(html):
     assert "</details>" not in step1, "свёрнутых блоков на шаге 1 больше нет"
 
 
-@pytest.mark.parametrize("element_id", [
-    "gdrive_url", "gdrive_dest", "gdrive_cam1", "gd_go", "gd_spread", "gdrive_status",
-])
+@pytest.mark.parametrize("element_id", ["gdrive_url", "gd_go", "gdrive_status"])
 def test_gdrive_card_contract_ids(html, element_id):
-    """Контракт UI: все gdrive_*-id (и кнопки) на месте в новой карточке."""
+    """Контракт UI: ссылка, «Скачать» и статус — на месте в карточке."""
     start = html.index('<div class="card" id="gdrive_card">')
     block = html[start:html.index('<div class="card" id="podcast_card">', start)]
     assert f'id="{element_id}"' in block
+
+
+def test_gdrive_card_has_no_folder_or_spread_rows(html):
+    """В карточке нет папки загрузки и «Разложить по камерам»: папка загрузки — в окне
+    «Куда что качать», раскладку делает само окно."""
+    start = html.index('<div class="card" id="gdrive_card">')
+    block = html[start:html.index('<div class="card" id="podcast_card">', start)]
+    for gone in ('id="gdrive_dest"', 'id="gdrive_cam1"', 'id="gd_spread"'):
+        assert gone not in block, gone
+    window = html[html.index('id="mbGdMap"'):html.index('id="mbAISettings"')]
+    assert 'id="gdrive_dest"' in window, "папки загрузки нет в окне «Куда что качать»"
+    assert "Куда что качать" in window
 
 
 def test_cut_tab_has_page_blocks_section_with_two_checkboxes(html):

@@ -639,7 +639,7 @@ def test_get_ai_config_stock_fields_only_for_keyed_providers():
     app.config["TESTING"] = True
     js = app.test_client().get("/api/ai_config").get_json()
     want = {p + "_key" for p in stock.PROVIDERS if stock.PROVIDER_META[p]["keyed"]}
-    assert set(js["stock"]) == want
+    assert set(js["stock"]) == want | {"off"}      # off — список галок, не ключ
     assert "openverse_key" not in js["stock"]
     assert js["stock"]["pexels_key"] == "•••1234"
 

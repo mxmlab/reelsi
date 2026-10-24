@@ -18,6 +18,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 EDITOR_JS = ROOT / "static" / "app" / "70-editor.js"
 QUEUE_JS = ROOT / "static" / "app" / "40-queue.js"
+INSERTS_JS = ROOT / "static" / "app" / "80-inserts.js"
 
 node = pytest.mark.skipif(not shutil.which("node"), reason="контракт фронта требует node в PATH")
 
@@ -25,7 +26,7 @@ node = pytest.mark.skipif(not shutil.which("node"), reason="контракт ф�
 def _func(src: str, name: str) -> str:
     """Вырезать функцию целиком по балансу фигурных скобок."""
     m = re.search(r"(?:async\s+)?function\s+%s\s*\(" % re.escape(name), src)
-    assert m, f"в 70-editor.js не нашлась функция {name}"
+    assert m, f"в исходнике фронта не нашлась функция {name}"
     i = src.index("{", m.end() - 1)
     depth = 0
     for j in range(i, len(src)):
@@ -47,7 +48,10 @@ def _extracted_js() -> str:
     """Извлечь боевые функции конвейера из 70-editor.js."""
     src = io.open(str(EDITOR_JS), encoding="utf-8").read()
     names = ["markupPlan", "markupAllRun", "markupClip", "qClipSum", "aiStepConc", "runPool"]
-    return _clip_speaker() + "\n\n" + "\n\n".join(_func(src, n) for n in names)
+    # Приёмка ответа ИИ-вставок (insFromAI) живёт в 80-inserts.js: её зовёт шаг вставок.
+    inserts_src = io.open(str(INSERTS_JS), encoding="utf-8").read()
+    return (_clip_speaker() + "\n\n" + "\n\n".join(_func(src, n) for n in names)
+            + "\n\n" + _func(inserts_src, "insFromAI"))
 
 
 def _run_pipeline_stand(scenario_cfg: dict[str, Any], fail_yellow_clip: str | None = None) -> dict[str, Any]:

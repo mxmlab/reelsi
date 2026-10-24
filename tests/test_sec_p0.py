@@ -232,10 +232,3 @@ def test_waveform_non_int_pps_not_500(client):
     assert d and (d.get("err") == "no_file" or "error" in d)
 
 
-def test_insertlib_describe_status_non_int_since_not_500(client):
-    """/api/insertlib_describe_status?since=abc не должен падать в HTML-500."""
-    r = client.get("/api/insertlib_describe_status?since=abc",
-                   headers={"Host": "127.0.0.1:5001"})
-    assert r.status_code == 200
-    d = r.get_json()
-    assert d and "running" in d

@@ -26,79 +26,98 @@ async function openCamsFor(i){const c=CLIPS[i];CAMED={xml:c.xml,i,n:1,segs:[],as
   }catch(e){toast(t('Не загрузил раскладку камер — сервер не ответил. Проверь, что webui запущен'));uiLog(t('cams_load: ')+e);}}
 
 // ---- мини-плеер раскладки камер (CPV): монтаж по видео, звук — выбранная камера (К1/К2/…) ----
-// клонирован из IPV, но: свой audioCi (какую камеру слушать), звук выбранной камеры играет
-// НЕПРЕРЫВНО (постоянный оффсет delta[k] от аудио кам1), даже когда её картинки на экране нет.
-let CPV={vids:[],bufs:[],scrubbing:false,scrubT:0,
-  segs:[],audio:[],words:[],dur:0,aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,playing:false,raf:0,itv:0,xml:'',audioCi:0,delta:[]};
-function cpvReset(){cpvPause();if(typeof vtStop==='function')vtStop(CPV);CPV={vids:[],bufs:[],scrubbing:false,scrubT:0,
-  segs:[],audio:[],words:[],dur:0,aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,playing:false,raf:0,itv:0,xml:'',audioCi:0,delta:[]};
+// Звук — очередь Web Audio, как у вставок и шага 1: К1 — звук камеры 1 или обработанный голос,
+// К2/К3 — звук своей камеры (eaOpenCam) со сдвигом delta[k]. Все <video> немые и догоняют звук.
+function cpvBlank(){return {vids:[],bufs:[],scrubbing:false,scrubT:0,ea:true,silent:true,tm:0,seekLead:0.12,
+  segs:[],audio:[],words:[],dur:0,aidx:0,vidx:-1,primed:-1,curCi:-1,rollCi:-1,playing:false,raf:0,xml:'',
+  audioCi:0,delta:[],stats:{styk:0,swap:0,seek:0,cam:0,stale:0,back:0}};}
+let CPV=cpvBlank();
+function cpvReset(){cpvPause();if(typeof vtStop==='function')vtStop(CPV);
+  if(typeof EA!=='undefined'&&EA.P===CPV){if(typeof eaStop==='function')eaStop();EA.P=null;}
+  CPV=cpvBlank();
   const st=$('cpvstage');if(st)[...st.querySelectorAll('video')].forEach(v=>mediaFree(v));
   $('cpvsub').textContent='';$('cpvtime').textContent='0:00 / 0:00';$('cpvseek').value=0;$('cpvaudio').innerHTML='';}
 async function cpvOpen(xml){
+  CPV.xml=xml;
   let d;try{d=await (await fetch('/api/aicut_preview',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({xml})})).json();}
   catch(e){d={error:''+e};}
+  if(CPV.xml!==xml)return;   // окно закрыли или открыли другое, пока ждали ответа
   if(d.error||!(d.cams||[]).length||!d.cams[0].path){uiLog(t('раскладка камер: предпросмотр — ')+(d.error||t('нет камер')));return;}
-  CPV.xml=xml;CPV.segs=d.segs||[];CPV.audio=(d.audio&&d.audio.length?d.audio:d.segs)||[];
-  CPV.words=d.words||[];CPV.dur=d.dur||(CPV.audio.length?CPV.audio[CPV.audio.length-1].te:0);CPV.audioCi=0;
+  CPV.segs=d.segs||[];CPV.audio=(d.audio&&d.audio.length?d.audio:d.segs)||[];
+  CPV.words=d.words||[];CPV.dur=d.dur||(CPV.audio.length?CPV.audio[CPV.audio.length-1].te:0);CPV.audioCi=0;CPV.tm=0;
   CPV.cams=d.cams;   // дублёру нужны пути камер, чтобы переезжать на прокси
   const stage=$('cpvstage');[...stage.querySelectorAll('video')].forEach(v=>mediaFree(v));
   const px=await pvProxyLoad(xml,true);pvProxyMerge(px);   // прокси камер: без него 4:2:2 10 бит встаёт на каждом стыке
+  if(CPV.xml!==xml)return;   // то же после ожидания прокси
   CPV.vids=d.cams.map((c,ix)=>{const v=document.createElement('video');
-    v.src=pvSrc(c.path);v.preload='auto';v.muted=(ix!==0);v.playsInline=true;
+    v.src=pvSrc(c.path);v.preload='auto';v.muted=true;v.playsInline=true;
     v.volume=MEDIA_VOL;v.style.zIndex=(ix===0)?'2':'1';stage.insertBefore(v,$('cpvsub'));return v;});
   // Оффсеты и дублёры — общие (camDeltas/camBufs): раньше дублёр был только у звуковой камеры
   // и пересоздавался при смене К1/К2/К3, теперь он есть у КАЖДОЙ камеры с самого открытия —
   // все они непрерывные дорожки, и звуковая среди них ничем не выделена.
   CPV.bufs=[];bufMake(CPV,stage,$('cpvsub'),0,0);
   CPV.delta=camDeltas(CPV);camBufs(CPV,stage,$('cpvsub'));
+  // Очередь звука — этому плееру (как у вставок): звук камеры 1 и голос уходят в буфер.
+  if(typeof eaOpen==='function'){if(EA.P&&EA.P!==CPV)eaStop();EA.P=CPV;eaOpen(xml);}
   // кнопки выбора звука
   $('cpvaudio').innerHTML=d.cams.map((c,ix)=>'<label class="'+(ix===0?'on':'')+'"><input type="radio" name="cpvaud" '+(ix===0?'checked':'')+' onchange="cpvAudio('+ix+')"> '+t('К')+(ix+1)+'</label>').join('');
   cpvSeekTo(0);
   if(typeof vtPrep==='function')vtPrep(CPV);
   if(px&&px.building){PVPX.xml=xml;pvProxyWatch('cpvstage');}   // прокси готовятся — догнать их на переезде
 }
-// Смена «слушаем К1/К2/К3»: дублёр звуковой камере больше не нужен отдельно — он у неё уже
-// есть (camBufs делает его каждой камере при открытии), поменять надо только кто звучит.
-// Без своего дублёра её на каждой склейке дёргал cpvSyncAudioCam (допуск 0.25с), то есть
-// звук вставал ровно там же, где раньше вставала картинка.
+// Смена «слушаем К1/К2/К3»: очередь звука пересобирается с того, что звучит, уже из буфера
+// новой камеры (eaBuf берёт буфер по CPV.audioCi). Буфер К2/К3 декодируется один раз на клип
+// (eaOpenCam); пока не приехал — тишина, а не звук К1.
 function cpvAudio(k){CPV.audioCi=k;
   document.querySelectorAll('#cpvaudio label').forEach((l,i)=>l.classList.toggle('on',i===k));
   if(!CPV.vids.length)return;
-  if(CPV.vids[k])CPV.vids[k].playbackRate=1;   // звуковой камере скорость не правим: с неё идёт звук
-  // мгновенно применить: перемотать выбранную камеру к текущему моменту и (пере)запустить
-  const tm=cpvNow();cpvApply(tm,CPV.playing);if(CPV.playing){cpvSyncAudioCam();sparePrime(CPV);}
-  if(typeof vtTick==='function')vtTick(CPV,cpvNow());}
-function cpvSyncAudioCam(){const k=CPV.audioCi;if(k<=0||!CPV.vids[k])return;   // подвести звуковую камеру к моменту кам1
-  const want=CPV.vids[0].currentTime+(CPV.delta[k]||0);
-  if(Math.abs(CPV.vids[k].currentTime-want)>0.25){try{CPV.vids[k].currentTime=want;}catch(e){}}}
-// Картинка ракурса — общая машина всех плееров (camApply в 60-preview.js). Звуковая камера
-// (CPV.audioCi) — отдельная непрерывная дорожка: её время ведёт cpvSyncAudioCam, машина
-// ракурсов только показывает её и не трогает ни seek, ни скорость (иначе поехал бы звук).
-function cpvApply(tm,play){camApply(CPV,tm,play);if(play)cpvSyncAudioCam();if(typeof vtTick==='function')vtTick(CPV,tm);}
+  if(k>0&&typeof eaOpenCam==='function')eaOpenCam(CPV.xml,k);   // звук камеры — в буфер (один раз)
+  // Играем — очередь сразу с того, что звучит, но уже другой камерой. Звук ещё декодируется —
+  // тишина; приедет — очередь пересоберёт сверка подписи (eaSync).
+  if(CPV.playing&&typeof eaStart==='function')eaStart(CPV.tm,CPV);
+  cpvApply(CPV.tm,CPV.playing);}
+// Картинка ракурса — общая машина всех плееров (camApply в 60-preview.js). Звука у <video>
+// больше нет: звук играет очередь ea*, все камеры немые и ведутся по часам.
+function cpvApply(tm,play){camApply(CPV,tm,play);if(typeof vtTick==='function')vtTick(CPV,tm);}
 function cpvSeekTo(tm){if(!CPV.vids.length||!CPV.audio.length)return;tm=Math.max(0,Math.min(tm,CPV.dur));
-  CPV.aidx=pvSegAt(CPV.audio,tm);CPV.vidx=-1;CPV.primed=-1;const a=CPV.audio[CPV.aidx];
-  try{CPV.vids[0].currentTime=a.src+Math.max(0,tm-a.ts);}catch(e){}
-  spareIdle(CPV);camIdle(CPV);cpvApply(tm,false);cpvSyncAudioCam();cpvUI(tm);if(typeof vtTick==='function')vtTick(CPV,tm);}
-function cpvNow(){const a=CPV.audio[CPV.aidx];return (a&&CPV.vids.length)?a.ts+(CPV.vids[0].currentTime-a.src):0;}
-// Дублёр подменяет ВЕДУЩУЮ камеру (слот 0) — она же таймбаза. Если звук слушают с другой
-// камеры (К2/К3), её всё равно подтягивает cpvSyncAudioCam по допуску 0.25с, и вот там
-// seek на стыке остаётся: под неё нужен второй дублёр. По умолчанию звук с К1 — этот
-// случай подмена закрывает целиком.
+  CPV.tm=tm;
+  CPV.aidx=pvSegAt(CPV.audio,tm);CPV.vidx=-1;CPV.primed=-1;
+  // Играем — очередь звука встаёт с нового места (протяжка по ленте игру не останавливает).
+  if(CPV.playing&&typeof eaStart==='function')eaStart(tm,CPV);
+  const lt=eaLeadAt(CPV,tm);if(lt!=null){try{CPV.vids[0].currentTime=lt;}catch(e){}}
+  spareIdle(CPV);camIdle(CPV);cpvApply(tm,false);cpvUI(tm);}
+// Часы раскладки — звук (очередь ea*), а не currentTime <video>: картинка догоняет звук.
+function cpvNow(){return Math.max(0,+CPV.tm||0);}
+// Шаг игры — как у вставок: часы — звук (eaSync), картинка догоняет звук (eaFollow), дублёры
+// взводит eaArm. Конец очереди — конец раскладки.
 function cpvStep(){if(!CPV.playing)return;
-  const st=pvStep(CPV);if(!st)return;
-  if(st.end){cpvPause();cpvSeekTo(0);return;}
-  cpvApply(st.tm,true);spareRollAt(CPV,st.tm);
-  if(typeof pvAudioLimit==='function')pvAudioLimit($('cpvstage'),CPV);   // строка про звук Firefox — по ходу игры
-  cpvUI(st.tm);}
-function cpvTick(){if(!CPV.playing)return;cpvStep();CPV.raf=requestAnimationFrame(cpvTick);}
+  const c=(typeof eaSync==='function')?eaSync():null;
+  if(!c||c.end){cpvPause();cpvSeekTo(0);return;}
+  const tm=Math.max(0,Math.min(c.tm!=null?c.tm:CPV.tm,CPV.dur));
+  CPV.tm=tm;
+  const ai=pvSegAt(CPV.audio,tm);if(ai!==CPV.aidx){CPV.aidx=ai;CPV.stats.styk++;}
+  eaFollow(CPV,tm);eaArm(CPV,tm);
+  cpvApply(tm,true);
+  cpvUI(tm);}
+function cpvTick(){if(!CPV.playing)return;cpvStep();if(typeof pvFramePlan==='function')pvFramePlan(CPV,cpvTick);}
 function cpvPlay(){if(!CPV.vids.length)return;CPV.playing=true;$('cpvplay').innerHTML=ico('pause');
   if(typeof audioWake==='function')audioWake();   // граф будится одной дверью — из обработчика нажатия
-  CPV.vids[0].play().catch(()=>{});cpvApply(cpvNow(),true);sparePrime(CPV);
-  if(typeof vtTick==='function')vtTick(CPV,cpvNow());
-  CPV.raf=requestAnimationFrame(cpvTick);clearInterval(CPV.itv);CPV.itv=setInterval(cpvStep,120);}
+  // Голос клипа в прошлый раз не посчитался — «Играть» пробует снова (как у вставок).
+  if(typeof vtOf==='function'&&vtOf(CPV).failed){vtOf(CPV).failed=false;vtPrep(CPV);}
+  const v=CPV.vids[0];v.muted=true;
+  const lt=eaLeadAt(CPV,CPV.tm);if(lt!=null){try{v.currentTime=lt;}catch(e){}}
+  v.play().catch(()=>{});
+  spareIdle(CPV);                                    // дублёры взводит eaArm по ходу игры
+  if(typeof eaStart==='function')eaStart(CPV.tm,CPV);   // очередь звука — с этого места
+  cpvApply(CPV.tm,true);
+  if(typeof pvFrameStart==='function')pvFrameStart(CPV,cpvTick);}
 function cpvPause(){if(!CPV||!CPV.vids)return;CPV.playing=false;const b=$('cpvplay');if(b)b.innerHTML=ico('play');
-  cancelAnimationFrame(CPV.raf);clearInterval(CPV.itv);CPV.vids.forEach(v=>v.pause());spareStop(CPV);camIdle(CPV);
-  if(typeof vtPause==='function')vtPause(CPV);}
+  if(typeof pvFrameOff==='function')pvFrameOff(CPV);   // пауза снимает и rAF, и таймер
+  if(typeof EA!=='undefined'&&EA.P===CPV&&typeof eaStop==='function')eaStop();   // звук — очередь, она и стоит
+  CPV.vids.forEach(v=>v.pause());spareStop(CPV);camIdle(CPV);
+  if(typeof vtPause==='function')vtPause(CPV);
+  // На паузе кадр встаёт ровно туда, где плейхед (картинка догоняла звук и могла отстать).
+  if(CPV.vids[0]&&CPV.audio.length){CPV.aidx=pvSegAt(CPV.audio,CPV.tm);const lt=eaLeadAt(CPV,CPV.tm);if(lt!=null){try{CPV.vids[0].currentTime=lt;}catch(e){}}}}
 function cpvToggle(){CPV.playing?cpvPause():cpvPlay();}
 // разбег готовим один раз, когда протяжка улеглась (см. pvScrub — та же причина)
 function cpvScrub(x){if(!CPV.vids.length)return;const tm=x/1000*CPV.dur;const was=CPV.playing;

@@ -8,6 +8,7 @@
 """
 import json
 import os
+import re
 import shutil
 import sys
 
@@ -301,13 +302,34 @@ def insertlib(tmp_path, monkeypatch):
     return _il
 
 
-def test_crop_of_ignores_default_and_junk(insertlib):
+def test_memo_mask_ignores_default_and_junk(insertlib):
     """100/100 — «как считает JSX сам», запоминать нечего. Мусор и выход за пределы
-    скраббера (20..300) в индекс попасть не должны."""
-    assert insertlib._crop_of({"mw": 100, "mh": 100}) is None
-    assert insertlib._crop_of({"mw": None, "mh": 80}) is None
-    assert insertlib._crop_of({"mw": 4000, "mh": 80}) is None
-    assert insertlib._crop_of({"mw": 72, "mh": 118}) == (72, 118)
+    скраббера (20..1000 %) в индекс попасть не должны. Проверки — одни для правки и для
+    сборки (_memo_apply), второй копии правил маски нет."""
+    def stored(fields):
+        it = {}
+        insertlib._memo_apply(it, fields)
+        return (it.get("mw"), it.get("mh")) if "mw" in it else None
+
+    assert stored({"mw": 100, "mh": 100}) is None
+    assert stored({"mw": None, "mh": 80}) is None
+    assert stored({"mw": 4000, "mh": 80}) is None
+    assert stored({"mw": 72, "mh": 118}) == (72, 118)
+    # до 1000 % включительно, 1001 — уже за пределом
+    assert stored({"mw": 1000, "mh": 1000}) == (1000, 1000)
+    assert stored({"mw": 1001, "mh": 80}) is None
+
+
+def test_scrub_mask_js_bounds_match_insertlib(insertlib):
+    """Скраббер маски в браузере (scrubMask) и база держат одни границы: сторож на случай,
+    если одну из сторон правят отдельно. Числа — MASK_PCT_MIN/MASK_PCT_MAX (их читает _memo_apply)."""
+    with open(os.path.join(ROOT, "static", "app", "20-widgets.js"), encoding="utf-8") as f:
+        src = f.read()
+    start = src.index("function scrubMask(")
+    end = src.index("\nfunction ", start + 1)
+    m = re.search(r"min:(\d+),max:(\d+)", src[start:end])
+    assert m, "в scrubMask не нашлось min/max"
+    assert (int(m.group(1)), int(m.group(2))) == (insertlib.MASK_PCT_MIN, insertlib.MASK_PCT_MAX)
 
 
 def test_adopt_remembers_crop_and_match_returns_it(insertlib, tmp_path):

@@ -100,14 +100,22 @@ can plug in a local backend at the extension points `core/aicut/images.py` and
 
 ### Downloading footage from Google Drive
 
-**Where:** step 1 › **Get material from Google Drive** (a collapsed block at the top).
-**How:** 1. Paste a Drive link into **Link**. 2. Pick the **Download folder**. 3. Press
-**Download**. 4. Pick the downloaded camera 1 file and press **Spread by cameras**.
+**Where:** step 1 › **Material from Google Drive** (the card at the top).
+**How:** 1. Paste a Drive link into **Link**. 2. Press **Download**: the app first looks at
+what the link holds. 3. The **Where to put what** window opens every time: each subfolder and
+each group of files at the top of the link (files that share a name prefix, usually one camera)
+gets its own choice — a camera folder, the **Download folder**, or **Don't download**. 4. The
+progress shows in the status line under the button; at the end it says where the files went,
+for example “Camera 1 — 4 files · 2.10 GB; download folder — 1 file”.
 **Settings:** `rclone` must be configured once with `rclone config`; the sign-in happens in
-your browser. The form keeps its state between sessions. After a download the **Project** list updates itself, so the files show in the camera folders at once. If the link is a folder with subfolders, a window asks which folder goes to which camera; a folder with a camera number in its name goes to that camera by default.
+your browser. The form keeps its state between sessions; the **Download folder** is set in the
+window. After a download the **Project** list updates itself, so the files show in the camera
+folders at once. By default a subfolder with a camera number in its name goes to that camera,
+the rest take the free cameras in order, and whatever does not fit goes to the download folder.
 **Limitations / price:** downloads go through `rclone`, so large files are fine; progress
-is parsed from rclone's statistics.
-**Code:** `api/gdrive.py:244`, `core/rclone.py:47`, `templates/index.html:32`
+is parsed from rclone's statistics. The summary after a download is kept in the page memory:
+after a reload (F5) the status line only says “download finished”.
+**Code:** `api/gdrive.py:270`, `core/rclone.py:47`, `templates/index.html:32`, `static/app/40-queue.js:212`
 
 ### Podcast → reels: source and track
 
@@ -481,8 +489,8 @@ fill every photo card that has no file. 4. For video, use the same numbered butt
 video card, or the **Video** tab.
 **Settings:** the image profile needs an image model; the video profile needs a provider
 and a video model. **Remove background** in the settings cuts the subject out of every
-generated image with `rembg` and saves a transparent PNG; **Remove background** does the same
-for one file on a card. The speaker profile can add a suffix or prefix to the prompt for
+generated image with `rembg` and saves a transparent PNG; the **Remove background** button on a card
+toggles the cut-out for that one picture, and the setting is remembered with the picture. The speaker profile can add a suffix or prefix to the prompt for
 both image and video slots — that is what the numbers 1 and 2 choose.
 **Limitations / price:** this is the paid part: the provider bills per image and per video.
 The engine refuses to run without an image or video model, and generation is cancellable.
@@ -509,16 +517,16 @@ form. Removing a task removes its file too.
 ### Insert library
 
 **Where:** the insert editor › **Library**, and the clip row in the inserts window.
-**How:** 1. Press **Scan** to index past projects and media folders. 2. Search by name or
-description. 3. Press **Describe with AI** to have a vision model write descriptions for
-files that have none. 4. Use **Import** to move downloaded media into your library folder.
+**How:** 1. Press **Scan** to index past projects and media folders; the scan also computes the
+search vectors. 2. Search by name or description. 3. A file that has no description is matched by
+its picture. 4. Use **Import** to move downloaded media into your library folder.
 **Settings:** scanned folders are typed one per line. **auto-pick after AI** makes
 generation pick a library file when it can. Descriptions are just text — edit them in
 place and matching follows.
-**Limitations / price:** matching is semantic through LM Studio embeddings, with a token
-fallback when no embedder is available. Service files are skipped: transitions, sounds,
+**Limitations / price:** matching is semantic through the EmbeddingGemma 2 embedder in the model
+service (no LM Studio needed), with a token fallback when the service is not available. Service files are skipped: transitions, sounds,
 roto masks, drafts and camera sources.
-**Code:** `core/insertlib.py:1`, `api/inserts.py:89`, `api/inserts.py:208`,
+**Code:** `core/insertlib.py:1`, `api/inserts.py:89`,
 `api/inserts.py:93`, `templates/index.html:494`
 
 ### Stock photos and video
@@ -860,7 +868,7 @@ keyframes as the rise; the default **Blur amount** is 70.4. **consecutive yellow
 (the `hl_row_stack` key, off by default) takes a run of two or more yellow words in a row out
 of the rows and stacks them one word at a time, exactly as in the word-by-word mode — the
 same rise, the same stack step, one common end for the run; a lone yellow word stays in its
-row. The entrance itself — the rise, the fade-in and the blur — lasts min(0.35 s, 60 % of the
+row. **Yellow stack spacing, %** (the `hl_step_pct` key, default 100 = as before) scales the distance between stacked yellow words, the same in both modes. The entrance itself — the rise, the fade-in and the blur — lasts min(0.35 s, 60 % of the
 time the word is visible), so a short word finishes its animation instead of going out in the
 middle of it; this holds in the one-word mode, for a yellow word inside a multi-word row,
 for a run of consecutive yellows stacked out of the rows and for joined words alike, and the

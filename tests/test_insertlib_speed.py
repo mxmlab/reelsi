@@ -232,7 +232,7 @@ def test_matrix_and_old_cos_produce_identical_ranking(tmp_path, monkeypatch):
               open(idx_path, "w", encoding="utf-8"))
 
     query_vec = [0.6, 0.2, 0.3, 0.4]
-    monkeypatch.setattr(insertlib, "_emb_queries", lambda qs, m: [query_vec for _ in qs])
+    monkeypatch.setattr(insertlib, "_emb_queries", lambda qs: [query_vec for _ in qs])
 
     # 1. Считаем эталонные score через старый insertlib._cos
     expected_scores = []
@@ -271,7 +271,7 @@ def test_match_many_sequential_disk_check_returns_full_k(tmp_path, monkeypatch):
     # Записи 0..5: score от 0.99 до 0.94, файлов на диске нет, gone не проставлен
     # Записи 6..7: score 0.80 и 0.70, файлы на диске есть
     query_vec = [1.0, 0.0, 0.0]
-    monkeypatch.setattr(insertlib, "_emb_queries", lambda qs, m: [query_vec for _ in qs])
+    monkeypatch.setattr(insertlib, "_emb_queries", lambda qs: [query_vec for _ in qs])
 
     items = []
     for i in range(6):

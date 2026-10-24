@@ -20,13 +20,13 @@ let IPVMODE='clips';
 // нормализация пути вставки (Windows: слеши и регистр) — ОДИН источник для ensureJobs,
 // applyInsMoved, сопоставления плана и драга в предпросмотре
 function normInsPath(s){return (s||'').replace(/\//g,'\\').toLowerCase();}
-// Ключ сопоставления вставки плана с карточкой списка. У вставки «на подложке» план несёт
-// путь КЭША <стем>.<расш>.nobg.png (подмену делает план сцены), а карточка хранит
-// исходник — сравниваем без суффикса кэша, иначе подсветка играющей карточки гасла бы.
-// Файл для показа берётся из ПЛАНА как есть: второй копии правила «где лежит кэш» нет.
+// Ключ сопоставления вставки плана с карточкой списка. У вставки «на подложке» и «без фона»
+// план несёт путь КЭША <стем>.<расш>.nobg.png (подмену делает план сцены, метка nobg в плане),
+// а карточка хранит исходник — сравниваем без суффикса кэша, иначе подсветка играющей карточки
+// гасла бы. Файл для показа берётся из ПЛАНА как есть: второй копии правила «где лежит кэш» нет.
 function insCardKey(x){
   const p=normInsPath(x&&x.media);
-  return (x&&x.plate)?p.replace(/\.nobg\.png$/,''):p;}
+  return (x&&(x.plate||x.nobg))?p.replace(/\.nobg\.png$/,''):p;}
 // URL картинки-вставки для предпросмотра. У вставки с галкой «на подложке» просим тот же
 // кэш <стем>.nobg.png, что уедет в сборку (core/insertlib.nobg_path) — снятие фона одно на
 // превью и AE, второго расчёта в JS нет. Нужен он только там, где на руках
@@ -52,6 +52,8 @@ function cardToIns(x,was){
     start_s:Math.round((x.start_sec||0)*100)/100,start_f:0,
     dur_s:Math.round((x.duration_sec||2)*100)/100,dur_f:0,
     scale:(was.scale!=null?was.scale:44),mosaic:!!x.mosaic,plate:!!x.plate,
+    // «без фона» — флаг САМОЙ вставки: план сцены и превью читают его отсюда, про спикера не знают
+    nobg:x.nobg,
     x:x.x||0,y:x.y||0,kx:kx,ky:ky,sc:x.sc||100,mw:x.mw||100,mh:x.mh||100,sin:x.sin||0,
     ...(was.noexit?{noexit:was.noexit}:{})};}
 // ---- план сцены: предпросмотр РИСУЕТ то, что прислал /api/scene ----
@@ -313,15 +315,14 @@ async function ipvOpen(xml){
     v.src=pvSrc(c.path);v.preload='auto';v.muted=(ix!==0)||IPV.silent;v.playsInline=true;
     v.volume=MEDIA_VOL;v.style.zIndex=(ix===0)?'2':'1';   // ракурс переключается порядком слоёв, см. camVisual
     if(ix===0)v.onerror=()=>uiLog(t('предпросмотр: не открылся исходник камеры 1 — ')+c.path);
-    // немой кадр в граф не заявляется вовсе: звук у него свой (очередь ea*), как у шага 1
-    stage.insertBefore(v,io);if(!IPV.silent)voiceWiring(v);return v;});
+    stage.insertBefore(v,io);return v;});
   // Звук камеры 1 — в буфер заранее, пока человек смотрит на клип: к «Играть» он уже
   // декодирован (та же дверь и тот же кэш, что у редактора шага 1).
   if(IPV.ea&&typeof eaOpen==='function'){if(EA.P&&EA.P!==IPV)eaStop();EA.P=IPV;eaOpen(xml);}
   // каждая камера — непрерывная дорожка со своим оффсетом и дублёром на склейки (camApply)
   IPV.bufs=[];bufMake(IPV,stage,io,0,0);
   IPV.delta=camDeltas(IPV);camBufs(IPV,stage,io);
-  // Метка «под какой файл стоит элемент» (её сверяет ipvArm при переезде на прокси): с ней
+  // Метка «под какой файл стоит элемент» (её сверяет eaArm при переезде на прокси): с ней
   // нормализация адреса браузером не выглядит сменой файла.
   IPV.vids.forEach((v,ix)=>{v.__srcFor=pvSrc(d.cams[ix].path);});
   IPV.bufs.forEach(b=>{b.el.__srcFor=pvSrc(d.cams[b.slot].path);});
@@ -356,9 +357,7 @@ async function ipvOpen(xml){
   // Обработанный голос клипа — ТОЙ ЖЕ дорожкой и той же дверью, что шаг 1 (vtPrep):
   // панели «Голос» у этого превью нет, поэтому настройки берутся из профиля спикера
   // клипа (vtFx) — ровно те, по которым соберётся проект. Страница рендера без AE сюда
-  // не ходит: см. ipvRenderPage. Элемент дорожки переживает переоткрытие клипа
-  // (`tra` выше): он не в DOM, а второй createMediaElementSource на тот же звук завёл
-  // бы вторую дорожку мимо регулятора громкости.
+  // не ходит: см. ipvRenderPage.
   if(!ipvRenderPage()&&typeof vtPrep==='function')vtPrep(IPV);
 }
 // Закрытие превью шага 3: освободить видео камер, буферов, переходов и вставок
@@ -404,7 +403,7 @@ function ipvSeekTo(tm){if(!IPV.vids.length||!IPV.audio.length)return;tm=Math.max
   if(!ipvRenderMode())ipvVideoTo(IPV.vids[0],ipvLeadTime(tm));}
 // Исходное время ведущей камеры на момент tm — то, куда её ставить. Одна формула на
 // живую протяжку и на рендер: второй копии «что играет» быть не должно.
-function ipvLeadTime(tm){const a=IPV.audio[IPV.aidx];return a?a.src+Math.max(0,tm-a.ts):null;}
+function ipvLeadTime(tm){return eaLeadAt(IPV,tm);}
 // Поставить <video> на время, если оно уже не стоит. Порог — одна миллисекунда с
 // хвостиком: у играющего <video> время меняется каждый кадр, и «ставить всегда» значило
 // бы сбрасывать декодер 60 раз в секунду. Дробное сравнение тут НЕ про кадр исходника:
@@ -413,75 +412,6 @@ function ipvLeadTime(tm){const a=IPV.audio[IPV.aidx];return a?a.src+Math.max(0,t
 function ipvVideoTo(v,want){if(!v||want==null)return;
   if(Math.abs((+v.currentTime||0)-want)<=1e-4)return;
   try{v.currentTime=want;}catch(e){}}
-// ===== Живое превью: звук ведёт часы (как редактор шага 1) =====
-// Звук клипа — очередь Web Audio по кускам EDL (eaPlanIpv): блоки ставятся с точностью до
-// сэмпла, и концы слов на стыках доигрывают целиком. Картинка немая и ДОГОНЯЕТ звук: внутри
-// куска — скоростью ±10 % (её не видно), на стыке — дублёром, взведённым за ED_ARM, при промахе —
-// перемоткой с упреждением (IPV.seekLead подстраивается замером). Раньше часами был <video>
-// камеры 1: на стыке его подменял дублёр, прежний вставал на паузу вместе со звуком, уже
-// ушедшим в вывод, — и конец слова обрезался (жалоба владельца 2026-10-17).
-const IPV_V_SOFT=0.04;   // расхождение картинки со звуком меньше — не трогаем, с
-const IPV_V_HARD=0.5;    // больше — скоростью не догнать, прыжок
-const IPV_V_RATE=0.1;    // насколько ускоряем/замедляем картинку
-function ipvFollow(tm){
-  const v=IPV.vids[0];if(!v)return;
-  const want=ipvLeadTime(tm);if(want==null)return;
-  if(v.seeking){v.playbackRate=1;return;}
-  const a=IPV.audio[IPV.aidx];
-  const d=v.currentTime-want,ad=Math.abs(d);
-  // Картинка ещё в прежнем куске (или в вырезанном) — это стык, скоростью его не пройти.
-  const inSeg=!!a&&v.currentTime>=a.src-0.02&&v.currentTime<=a.src+(a.te-a.ts)+0.02;
-  if((!inSeg&&ad>0.06)||ad>IPV_V_HARD){v.playbackRate=1;
-    const live=ipvVideoJump(want)||IPV.vids[0];
-    if(live&&live.paused)live.play().catch(()=>{});
-    return;}
-  if(v.paused)v.play().catch(()=>{});
-  v.playbackRate=(ad<=IPV_V_SOFT)?1:(d<0?1+IPV_V_RATE:1-IPV_V_RATE);}
-// Прыжок картинки на стык: дублёр, взведённый на этот стык, — подмена элементом (машина
-// bufTake общая со всеми плеерами); промах — перемотка с упреждением (звук за это время уйдёт
-// вперёд). Звук тут не трогается: он уже на месте, очередь стоит заранее.
-function ipvVideoJump(at){
-  const lead=spareLead(IPV);
-  if(lead&&lead.at!=null&&at>=lead.at-0.05&&at-lead.at<0.3&&bufTake(IPV,lead,lead.at)){
-    IPV.stats.swap++;
-    // Вторые камеры проходят тот же стык своими дублёрами (взведены тем же ipvArm).
-    (IPV.bufs||[]).forEach(b=>{if(b!==lead&&b.at!=null)bufTake(IPV,b,b.at);});
-    IPV.vids.forEach(v=>{if(v)v.muted=true;});
-    return IPV.vids[0];}
-  IPV.stats.seek++;
-  ipvVideoSeek(IPV.vids[0],at+(IPV.playing?IPV.seekLead:0));
-  return IPV.vids[0];}
-// Перемотка живой картинки с замером: сколько декодер доезжал — столько и упреждение дальше.
-function ipvVideoSeek(v,at){
-  if(!v)return;
-  try{v.currentTime=Math.max(0,at);}catch(e){return;}
-  const t0=performance.now();
-  v.addEventListener('seeked',()=>{
-    const dt=(performance.now()-t0)/1000;
-    IPV.seekLead=Math.max(0.03,Math.min(0.5,0.7*IPV.seekLead+0.3*dt));},{once:true});}
-// Разбег дублёров к ближайшему стыку: за ED_ARM до него (перемотка 4K-дублёра сама стоит
-// 0,2–0,4 с, и потом ему ещё PV_PREROLL разбега). Стыка впереди нет (последний кусок или куски
-// встык) — дублёров гасим: лишний декод рядом с живым и есть то, из-за чего стыки дёргаются.
-function ipvArm(tm){
-  const bs=IPV.bufs||[];
-  const a=IPV.audio[IPV.aidx],nx=IPV.audio[IPV.aidx+1];
-  if(!a||!nx||segGap(IPV.audio,IPV.aidx)<=0.06){bs.forEach(bufIdle);return;}
-  const left=a.te-tm;
-  if(left>ED_ARM){bs.forEach(bufIdle);return;}
-  bs.forEach(b=>{
-    // Переезд на прокси: дублёру src меняем когда угодно (он немой и под всеми камерами) —
-    // взведётся на следующем кадре, когда метаданные приедут (bufRoll/bufTake сами откажут
-    // по readyState, стык тогда пройдёт перемоткой).
-    // Сравнение по запомненному «под что взведён» (__srcFor), а не только по src элемента: браузер
-    // нормализует адрес (кодировку пути), и сравнение «как записали» с «как прочитали» на каждом
-    // кадре сбрасывало бы src снова и снова — дублёр не успевал бы ни разу (замер на стенде:
-    // 4 стыка из 4 перемоткой). Метка — на ЭЛЕМЕНТЕ, не на дублёре: на стыке элементы меняются
-    // местами, и метка дублёра соврала бы про бывший живой (он остался бы на исходнике).
-    const want=(IPV.cams&&IPV.cams[b.slot]&&IPV.cams[b.slot].path)?pvSrc(IPV.cams[b.slot].path):'';
-    if(want&&b.el.__srcFor!==want&&b.el.src.split(location.origin).pop()!==want){
-      b.el.src=want;b.el.__srcFor=want;b.at=null;b.rolling=false;return;}
-    if(want)b.el.__srcFor=want;
-    bufArm(IPV,b,nx.src+b.off);bufRoll(b,left);});}
 function ipvStep(){if(!IPV.playing)return;
   if(IPV.ea){
     const c=(typeof eaSync==='function')?eaSync():null;
@@ -489,7 +419,7 @@ function ipvStep(){if(!IPV.playing)return;
     const tm=Math.max(0,Math.min(c.tm!=null?c.tm:IPV.tm,IPV.dur));
     IPV.tm=tm;
     const ai=pvSegAt(IPV.audio,tm);if(ai!==IPV.aidx){IPV.aidx=ai;IPV.stats.styk++;}
-    ipvFollow(tm);ipvArm(tm);
+    eaFollow(IPV,tm);eaArm(IPV,tm);
     ipvApplyVisual(tm,true);
     ipvUI(tm);
     return;}
@@ -510,23 +440,21 @@ function ipvTick(){if(!IPV.playing)return;ipvStep();
   if(typeof pvFramePlan==='function')pvFramePlan(IPV,ipvTick);}
 function ipvPlay(){if(!IPV.vids.length)return;IPV.playing=true;$('ipvplay').innerHTML=ico('pause');
   // Граф Web Audio будится ОДНОЙ дверью на все плееры (audioWake) — и из обработчика
-  // нажатия, а не побочно через музыку (`musicElSync` в конце): звук камеры идёт только
-  // через граф, и приостановленный AudioContext глушил бы шаг 3 молча.
+  // нажатия, а не побочно через музыку (`musicElSync` в конце): очередь звука играет через
+  // AudioContext, и приостановленный контекст глушил бы шаг 3 молча.
   if(typeof audioWake==='function')audioWake();
   if(IPV.ea){
     // Голос клипа в прошлый раз не посчитался — «Играть» пробует снова (как у шага 1).
     if(typeof vtOf==='function'&&vtOf(IPV).failed){vtOf(IPV).failed=false;vtPrep(IPV);}
     const v=IPV.vids[0];v.muted=true;
     ipvVideoTo(v,ipvLeadTime(IPV.tm));v.play().catch(()=>{});
-    spareIdle(IPV);                                   // дублёры взводит ipvArm по ходу игры
+    spareIdle(IPV);                                   // дублёры взводит eaArm по ходу игры
     if(typeof eaStart==='function')eaStart(IPV.tm,IPV);   // очередь звука — с этого места
     ipvApplyVisual(IPV.tm,true);
     if(typeof pvFrameStart==='function')pvFrameStart(IPV,ipvTick);
     musicElSync();
     return;}
-  // Звук камеры глушим, если играет обработанный голос (IPV.voiceMute): ту же галку
-  // ставит и снимает vtTick — здесь она важна в первый кадр, до тика.
-  IPV.vids[0].muted=!!IPV.voiceMute;IPV.vids[0].play().catch(()=>{});sparePrime(IPV);ipvApplyVisual(ipvNow(),true);
+  IPV.vids[0].muted=false;IPV.vids[0].play().catch(()=>{});sparePrime(IPV);ipvApplyVisual(ipvNow(),true);
   if(typeof vtTick==='function')vtTick(IPV,ipvNow());
   // Шаг ведёт ОДИН планировщик кадра (60-preview.js): страховочный setInterval убран —
   // скрытую вкладку он больше не закрывает (её ведёт таймер планировщика), а в видимой
@@ -2355,7 +2283,6 @@ function ipvSubs(tm){const el=$('ipvsub');if(!el)return;
 // (см. ipvOverlay и insAdd — та же ловушка, тест test_time_var_never_shadows_t).
 function ipvUI(tm){
   $('ipvtime').textContent=fmtT(tm)+' / '+fmtT(IPV.dur);
-  vgDuck(tm,IPV.plan);
   let cur='',yel=false;
   for(let k=0;k<IPV.words.length;k++){const w=IPV.words[k];
     if(tm>=w.s&&tm<w.e){cur=w.w;yel=(IPVMODE==='ae'&&typeof HL!=='undefined'&&HL.has(k));break;}}
@@ -2551,7 +2478,7 @@ function ipvOverlay(tm){const ov=$('ipvins');if(!ov)return;
           // окна (object-fit:cover), и у горизонтальных снимков уменьшение «В» уменьшало
           // ВСЮ картинку вместо того, чтобы срезать верх/низ, как маска в AE.
           const mk=document.createElement('div');mk.className='insmask';
-          const im=document.createElement('img');im.src=insImgURL(x.media,x.plate);
+          const im=document.createElement('img');im.src=insImgURL(x.media,x.plate||x.nobg);
           mk.appendChild(im);wr.appendChild(mk);}
         else{const iv=insVideoEl(x.media,usedVid);wr.appendChild(iv);}}
       else{const ph=document.createElement('div');ph.className='ph';
@@ -3920,6 +3847,8 @@ $('ipvins').addEventListener('pointerdown',e=>{
     if(card){if(onPlate){card.kx=nx;card.ky=ny;}
               else{card.x=nx;card.y=ny;}}
     captureAE();ipvPlanSoon();
+    // точка покоя фото запоминается к картинке; у подложки двигается вся плашка (kx/ky) — не память фото
+    if(!onPlate)insMemoSave(card||INS[real]);
     if(x.card&&x.style==='cam1'&&!x.oncam2){
       // кам1 рисуется из ПЕЧЁНЫХ ключей anim.position (старых x/y) — до прихода нового плана
       // держим сдвиг поверх них, иначе она отпрыгнет назад на ~0.7с пока план пересчитается

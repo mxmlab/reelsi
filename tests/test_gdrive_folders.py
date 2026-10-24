@@ -29,7 +29,8 @@ sys.path.insert(0, ROOT)
 os.environ.setdefault("REELSI_NO_BROWSER", "1")
 
 import api.gdrive as gdrive  # noqa: E402
-from core.rclone import rclone_cmd, rclone_list_cmd, top_folders  # noqa: E402
+from core.rclone import (_glob_escape, rclone_cmd, rclone_list_cmd,  # noqa: E402
+                         root_groups, top_folders)
 
 FILE = "https://drive.google.com/file/d/1AbC_dEfGhI1234567890/view?usp=sharing"
 FOLDER = "https://drive.google.com/drive/folders/1XyfxxxxxxxxxxxxxxxxxxxxxxxxxKHCh"
@@ -89,9 +90,73 @@ def test_top_folders_файлы_корня_отдельно():
 
 
 def test_top_folders_пустой_ответ_и_папки_без_файлов():
-    assert top_folders([]) == {"dirs": [], "root_files": 0, "root_bytes": 0}
+    assert top_folders([]) == {"dirs": [], "root_files": 0, "root_bytes": 0, "root": []}
     assert top_folders([{"Path": "Пусто", "IsDir": True}]) == \
-        {"dirs": [], "root_files": 0, "root_bytes": 0}
+        {"dirs": [], "root_files": 0, "root_bytes": 0, "root": []}
+
+
+def test_top_folders_корень_с_именами_и_байтами():
+    """Файлы корня отдаются по имени (с байтами) в естественном порядке: группы строятся
+    из этого списка, а не из счётчика. Размер -1 — ноль."""
+    r = top_folders(LSJSON)
+    assert r["root"] == [{"name": "Документ", "bytes": 0}, {"name": "общий.txt", "bytes": 10}]
+    assert r["root_files"] == len(r["root"]) == 2
+
+
+ROOT_FILES = [
+    {"name": "IMG_1234.mov", "bytes": 10},
+    {"name": "C1653.MP4", "bytes": 20},
+    {"name": "001.mov", "bytes": 1},
+    {"name": "GX010123.MP4", "bytes": 30},
+    {"name": "c1654.mp4", "bytes": 5},
+    {"name": "DSC_0001.MOV", "bytes": 7},
+    {"name": "2024-10-01 12.mp4", "bytes": 2},
+    {"name": "IMG_2.mov", "bytes": 3},
+]
+
+
+def test_группы_по_приставке_до_первой_цифры():
+    """Приставка — текст до первой цифры: у каждой камеры своя (группа ≈ камера)."""
+    groups = root_groups(ROOT_FILES)
+    by = {g["prefix"]: g for g in groups}
+    assert by["DSC_"]["files"] == ["DSC_0001.MOV"]
+    assert by["GX"]["files"] == ["GX010123.MP4"]
+    assert by["IMG_"]["files"] == ["IMG_2.mov", "IMG_1234.mov"]   # естественный порядок
+    assert by["IMG_"]["bytes"] == 13
+
+
+def test_группы_без_учёта_регистра_и_имена_без_букв_в_начале():
+    """«C1653.MP4» и «c1654.mp4» — одна камера. Имя, начинающееся не с буквы («2024-…»,
+    «001.mov»), уходит в группу с пустой приставкой: своей камеры у него нет."""
+    groups = root_groups(ROOT_FILES)
+    by = {g["prefix"]: g for g in groups}
+    assert by["C"]["files"] == ["C1653.MP4", "c1654.mp4"]
+    assert by["C"]["bytes"] == 25
+    assert by[""]["files"] == ["001.mov", "2024-10-01 12.mp4"]
+    assert by[""]["bytes"] == 3
+    assert root_groups([{"name": "_1.mp4", "bytes": 1}])[0]["prefix"] == ""
+
+
+def test_группы_идут_по_первому_файлу_в_естественном_порядке():
+    groups = root_groups(ROOT_FILES)
+    assert [g["prefix"] for g in groups] == ["", "C", "DSC_", "GX", "IMG_"]
+    assert root_groups([]) == []
+    # имя без цифр — отрезать нечего: целиком приставка и один файл в группе
+    assert root_groups([{"name": "Видео.mov", "bytes": 4}]) == \
+        [{"prefix": "Видео", "files": ["Видео.mov"], "bytes": 4}]
+
+
+def test_приставка_берётся_из_основы_без_расширения():
+    """Расширение в приставку не входит: в «.mp4» есть цифра 4, и по полному имени
+    «clip.mp4» дал бы приставку «clip.mp», а «clip2.mp4» и «clip.mp4» — разные группы.
+    По основе это одна камера «clip»."""
+    groups = root_groups([{"name": "clip.mp4", "bytes": 1}, {"name": "clip2.mp4", "bytes": 2}])
+    assert len(groups) == 1
+    assert groups[0]["prefix"] == "clip"
+    assert sorted(groups[0]["files"]) == ["clip.mp4", "clip2.mp4"]
+    assert groups[0]["bytes"] == 3
+    assert root_groups([{"name": "C1653.MP4", "bytes": 1}])[0]["prefix"] == "C"
+    assert root_groups([{"name": "Видео.mov", "bytes": 1}])[0]["prefix"] == "Видео"
 
 
 # --------------------------------------------------------------------------- #
@@ -131,6 +196,39 @@ def test_подпапка_и_корень_у_ссылки_на_файл_отка
         rclone_cmd("gdrive", FILE, str(tmp_path), sub="Камера 1")
     with pytest.raises(ValueError):
         rclone_cmd("gdrive", FILE, str(tmp_path), root_only=True)
+
+
+def test_группа_файлов_корня_include_с_якорем_и_экранированием(tmp_path):
+    """Группа = только свои файлы корня: --max-depth 1 и по --include на файл.
+    «/» — якорь к корню (файл с тем же именем в подпапке не попадёт), `[A] x.mp4`
+    без экранирования стал бы классом символов и не нашёл бы файл."""
+    args = rclone_cmd("gdrive", FOLDER, str(tmp_path), root_only=True,
+                      files=["C1653.MP4", "[A] x.mp4"])
+    assert args[args.index("--max-depth") + 1] == "1"
+    incl = [args[i + 1] for i, a in enumerate(args) if a == "--include"]
+    assert incl == ["/C1653.MP4", "/\\[A\\] x.mp4"]
+    assert max(i for i, a in enumerate(args) if a == "--include") < args.index("--")
+    i = args.index("--")
+    assert args[i + 1] == "gdrive:" and args[i + 2] == str(tmp_path)
+
+
+def test_экранирование_шаблона_rclone():
+    assert _glob_escape("a*b?c{d}[e]\\f") == "a\\*b\\?c\\{d\\}\\[e\\]\\\\f"
+    assert _glob_escape("обычное имя.mp4") == "обычное имя.mp4"
+
+
+def test_файлы_корня_отказы(tmp_path):
+    """Файлы без root_only и на ссылке на файл — отказ; пустой список — отказ (без фильтра
+    rclone скачал бы всё в корне); имя с «/» или пустое — тоже отказ до запуска rclone."""
+    with pytest.raises(ValueError):
+        rclone_cmd("gdrive", FOLDER, str(tmp_path), files=["C1653.MP4"])
+    with pytest.raises(ValueError):
+        rclone_cmd("gdrive", FILE, str(tmp_path), root_only=True, files=["C1653.MP4"])
+    with pytest.raises(ValueError):
+        rclone_cmd("gdrive", FOLDER, str(tmp_path), root_only=True, files=[])
+    for bad in ("a/b.mp4", "/x.mp4", ""):
+        with pytest.raises(ValueError):
+            rclone_cmd("gdrive", FOLDER, str(tmp_path), root_only=True, files=[bad])
 
 
 # --------------------------------------------------------------------------- #
@@ -258,6 +356,24 @@ def test_gdrive_list_папка_отдаёт_подпапки(client, monkeypatc
     assert len(calls) == 1 and "lsjson" in calls[0]
 
 
+def test_gdrive_list_отдаёт_группы_файлов_корня(client, monkeypatch):
+    """Файлы корня приходят группами по приставке (окно раскладки берёт группу целиком)."""
+    items = [
+        {"Path": "C1653.MP4", "Name": "C1653.MP4", "Size": 100, "IsDir": False},
+        {"Path": "c1654.mp4", "Name": "c1654.mp4", "Size": 50, "IsDir": False},
+        {"Path": "IMG_1234.mov", "Name": "IMG_1234.mov", "Size": 7, "IsDir": False},
+        {"Path": "Камера 1/IMG_0001.MOV", "Name": "IMG_0001.MOV", "Size": 4, "IsDir": False},
+    ]
+    _fake_list(monkeypatch, stdout=json.dumps(items))
+    r = client.post("/api/gdrive_list", json={"url": FOLDER}).get_json()
+    assert r["kind"] == "folder"
+    assert [g["prefix"] for g in r["groups"]] == ["C", "IMG_"]
+    assert r["groups"][0] == {"prefix": "C", "files": ["C1653.MP4", "c1654.mp4"], "bytes": 150}
+    assert r["groups"][1] == {"prefix": "IMG_", "files": ["IMG_1234.mov"], "bytes": 7}
+    assert [f["name"] for f in r["root"]] == ["C1653.MP4", "c1654.mp4", "IMG_1234.mov"]
+    assert [d["name"] for d in r["dirs"]] == ["Камера 1"]
+
+
 def test_gdrive_list_файл_без_rclone(client, monkeypatch):
     calls = _fake_list(monkeypatch, stdout="[]")
     r = client.post("/api/gdrive_list", json={"url": FILE}).get_json()
@@ -321,6 +437,37 @@ def test_download_map_файлы_корня_одной_командой(client, 
     assert cmd[cmd.index("--") + 1] == "gdrive:"
 
 
+def test_download_map_группа_файлов_корня_include_и_подпись(client, tmp_path, monkeypatch, job_env):
+    """Элемент {files, prefix, dest}: команда только с include своих файлов, в подписи —
+    приставка группы; пустая приставка — «прочие файлы корня»."""
+    c1, other = tmp_path / "c1", tmp_path / "other"
+    calls = _fake_popen(monkeypatch, [_Proc(), _Proc()])
+    body = {"url": FOLDER, "dest": str(tmp_path / "dl"),
+            "map": [{"files": ["C1653.MP4", "[A] x.mp4"], "prefix": "C", "dest": str(c1)},
+                    {"files": ["001.mov"], "prefix": "", "dest": str(other)}]}
+    r = client.post("/api/gdrive_download", json=body).get_json()
+    assert r["ok"] is True and r["parts"] == 2
+    first = calls[0]
+    assert "--max-depth" in first
+    assert [first[i + 1] for i, a in enumerate(first) if a == "--include"] == \
+        ["/C1653.MP4", "/\\[A\\] x.mp4"]
+    i = first.index("--")
+    assert first[i + 1] == "gdrive:" and first[i + 2] == str(c1)
+    assert c1.is_dir() and other.is_dir()
+    log = _gd_state()["log"]
+    assert {"t": "файлы «{prefix}…» → {dest}", "v": {"prefix": "C", "dest": str(c1)}} in log
+    assert {"t": "прочие файлы корня → {dest}", "v": {"dest": str(other)}} in log
+
+
+def test_download_map_группа_пустой_dest_пропускается(client, tmp_path, monkeypatch, job_env):
+    calls = _fake_popen(monkeypatch, [_Proc()])
+    body = {"url": FOLDER, "dest": str(tmp_path / "dl"),
+            "map": [{"files": ["C1653.MP4"], "prefix": "C", "dest": ""},
+                    {"dir": "Камера 2", "dest": str(tmp_path / "c2")}]}
+    r = client.post("/api/gdrive_download", json=body).get_json()
+    assert r["parts"] == 1 and len(calls) == 1 and "gdrive:Камера 2" in calls[0]
+
+
 def test_download_map_стоп_после_первой_вторая_не_запускается(client, tmp_path, monkeypatch, job_env):
     calls = _fake_popen(monkeypatch, [_Proc(cancel_after=True), _Proc()])
     body = {"url": FOLDER, "dest": str(tmp_path / "dl"),
@@ -350,6 +497,10 @@ def test_download_map_упавшая_папка_не_отменяет_остал
     [{"dir": "Камера 1", "dest": "-config"}],                     # dest с дефиса — опция rclone
     [{"dir": "Камера 1", "dest": ""}],                            # всё «не качать»
     [7],                                                          # элемент — не объект
+    [{"files": [], "prefix": "C", "dest": "C:/x"}],               # группа без файлов
+    [{"files": ["a/b.mp4"], "dest": "C:/x"}],                     # имя с «/» — не имя файла
+    [{"files": "C1653.MP4", "dest": "C:/x"}],                     # files — не список
+    [{"files": ["C1653.MP4"], "prefix": 5, "dest": "C:/x"}],      # приставка — не строка
 ])
 def test_download_map_битая_форма_внятная_ошибка(client, tmp_path, monkeypatch, job_env, bad_map):
     calls = _fake_popen(monkeypatch, [])

@@ -423,3 +423,57 @@ def test_word_stem_compares_words_by_their_basis():
     # Одностороннего совпадения по началу мало: «кофе» — не «кофемашина».
     assert insertlib.stem_match("кофемашина", "кофе") is False
     assert insertlib.stem_match("кофе машина", "кофе") is False
+
+
+# ================== 6. ПАМЯТЬ КАРТИНКИ ЕДЕТ С ВСТАВКОЙ ==================
+def test_named_insert_carries_the_picture_memory(tmp_path, monkeypatch):
+    """Вставка по названию несёт `memo` — память картинки из базы (sc, x, nobg — что записано).
+
+    Картинка берётся из базы как прежде, а память фронт применяет той же дверью, что и выбор
+    из базы. Полей, которых в базе нет (mw, mh, y), в memo нет. У ИИ-вставок memo не бывает.
+    """
+    _library(tmp_path, monkeypatch, [{"name": MACHINE, "sc": 70, "x": 12, "nobg": True}])
+    words = _words([("кофемашины", 34.2), ("закончили", 120.0)])
+    res, _em = _run(tmp_path, monkeypatch, words)
+    got = _named(res)
+    assert len(got) == 1, res["inserts"]
+    assert got[0]["memo"] == {"sc": 70, "x": 12, "nobg": True}, got[0]
+    assert all("memo" not in x for x in res["inserts"] if x.get("auto") != "named"), res["inserts"]
+
+
+def test_named_insert_keeps_nobg_false_in_memo(tmp_path, monkeypatch):
+    """«Фон оставить» (nobg=False) — тоже память: поле переносится, а не теряется как пустое."""
+    _library(tmp_path, monkeypatch, [{"name": MACHINE, "nobg": False}])
+    words = _words([("кофемашины", 34.2), ("закончили", 120.0)])
+    res, _em = _run(tmp_path, monkeypatch, words)
+    got = _named(res)
+    assert len(got) == 1, res["inserts"]
+    assert got[0]["memo"] == {"nobg": False}, got[0]
+
+
+def test_named_insert_without_memory_has_empty_memo(tmp_path, monkeypatch):
+    """Картинка без памяти: memo есть, но пустой — фронт получает объект и в сеть не ходит."""
+    _library(tmp_path, monkeypatch, [{"name": MACHINE}])
+    words = _words([("кофемашины", 34.2), ("закончили", 120.0)])
+    res, _em = _run(tmp_path, monkeypatch, words)
+    got = _named(res)
+    assert len(got) == 1, res["inserts"]
+    assert got[0]["memo"] == {}, got[0]
+
+
+def test_sidecar_has_no_memo_but_the_answer_has(tmp_path, monkeypatch):
+    """Снимок памяти (memo) уходит фронту в ОТВЕТ, а в сайдкар .inserts.json не пишется.
+
+    Сайдкар переживает разметку, и при восстановлении клипа память вернулась бы такой, какой
+    была в момент разметки. Остальные поля вставки в сайдкаре те же, что в ответе.
+    """
+    _library(tmp_path, monkeypatch, [{"name": MACHINE, "sc": 70, "x": 12, "nobg": True}])
+    words = _words([("кофемашины", 34.2), ("закончили", 120.0)])
+    res, _em = _run(tmp_path, monkeypatch, words)
+    answer = _named(res)
+    assert len(answer) == 1 and answer[0]["memo"] == {"sc": 70, "x": 12, "nobg": True}, answer
+    saved = json.loads((tmp_path / "clip.inserts.json").read_text(encoding="utf-8"))
+    assert all("memo" not in x for x in saved["inserts"]), saved["inserts"]
+    side = [x for x in saved["inserts"] if x.get("auto") == "named"]
+    assert len(side) == 1, saved["inserts"]
+    assert side[0]["media"] == answer[0]["media"] and side[0]["start_sec"] == 34.2, side[0]

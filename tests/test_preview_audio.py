@@ -5,22 +5,16 @@
 
 Три вещи, каждая из которых ломается МОЛЧА (все — с живого прогона):
 
-1. **Тишина на шаге 1.** `createMediaElementSource` — дверь НЕОБРАТИМАЯ: после неё
-   элемент звучит только через граф, а приостановленный `AudioContext` (браузер
-   держит его в `suspended`, пока не было живого жеста) глушит этот путь целиком —
-   без ошибки в консоли. Плеер шага 3 звучал потому, что `ipvPlay` в конце звал
-   `musicSync`, то есть граф будился ПОБОЧНО через музыку, а шаг 1 не будил никто.
-   Теперь есть `audioWake()`, и её зовут все запуски воспроизведения — но она ТОЛЬКО
-   будит контекст: очередь на подключение разбирает `voiceEnsure` (см. ниже). Пуск,
-   который заодно подключал бы всех ждавших, утаскивал бы в граф и звук камеры.
-2. **Спикер без обработки.** Звук камеры заводился в граф БЕЗУСЛОВНО, ещё и при
-   создании элемента, — поэтому «плагинов нет, шумодав выключен» всё равно зависело
-   от состояния `AudioContext`. Теперь камера уходит в граф ЛЕНИВО: только когда
-   обработка реально звучит (`vtGate`/`vtSpareOf`/`vtEl`) или когда громкость голоса
-   стиля не 0 — её делает только `VG.gain`, `volume` элемента больше 1 не умеет.
-   Все эти двери ведут в одну — `voiceEnsure`. Про громкость стиля спрашивает ОДНА
-   функция-правило `voiceGraphNeeded()`: `applyDbGains` (граф поднялся позже стиля)
-   и `voiceWiring` (элемент создан позже графа — дублёр стыка, плеер раскладки).
+1. **Тишина на шаге 1.** Приостановленный `AudioContext` (браузер держит его в
+   `suspended`, пока не было живого жеста) глушит звук целиком — без ошибки в консоли.
+   Плеер шага 3 звучал потому, что `ipvPlay` в конце звал `musicSync`, то есть граф
+   будился ПОБОЧНО через музыку, а шаг 1 не будил никто. Теперь `audioWake()` — ОДНА
+   дверь пробуждения контекста, и её зовут все запуски воспроизведения.
+2. **Звук элементов в граф не заводится вовсе.** Все плееры со звуком немые (`silent`):
+   звук шага 1 и голос (громкость, цензура) играет очередь Web Audio `ea*`. `<video>`
+   через `createMediaElementSource` в граф не подключается; единственный вход в граф —
+   музыка (`musicEnsure`). Громкость голоса стиля (`eaGain`) — гейн очереди, а не
+   `VG.gain`: дорожка `<audio>` голоса снята 2026-10-23, и граф для голоса не нужен.
 3. **Звука нет, и никто не говорит почему.** Материал камер пишет `pcm_s16be` в MP4:
    Chromium эту дорожку читает, Firefox — нет и молча. Звуковой прокси под это был
    костылём и в Chromium играл ПОВЕРХ звука камеры (двойной голос у владельца) —
@@ -265,7 +259,7 @@ def test_run_preview_proxy_takes_only_the_video_plan(monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# 4. node-стенды: audioWake и ленивый граф (браузер подменён)
+# 4. node-стенды: audioWake и граф (браузер подменён)
 # --------------------------------------------------------------------------- #
 # Заглушки ровно под то, что зовут проверяемые двери: DOM, звук, лог.
 _AUDIO_STAND = r"""
@@ -277,18 +271,16 @@ function $(id){return null;}
 function applyDbGains(){}
 """
 
-_AUDIO_FUNCS = ("audioGraph", "voiceGraphWire", "voiceWiring", "voiceEnsure", "audioWake",
-                "voiceGraphNeeded")
+_AUDIO_FUNCS = ("audioGraph", "audioWake")
 
-# Подмена AudioContext: считает подключённые элементы (`created`) и пробуждения
-# (`resumed`). Одна на стенды про граф — свои копии разъехались бы с проверками.
+# Подмена AudioContext: считает пробуждения (`resumed`). Одна на стенды про граф —
+# свои копии разъехались бы с проверками.
 _FAKE_AUDIO = r"""
-const created=[];let resumed=0;
+let resumed=0;
 function AudioContext(){
   this.state='suspended';
   this.destination={};
   this.createGain=()=>({connect(){},gain:{value:1}});
-  this.createMediaElementSource=(el)=>{created.push(el.id);return {connect(){}};};
   this.resume=()=>{resumed++;this.state='running';return Promise.resolve();};
 }
 global.window=global;
@@ -318,8 +310,7 @@ def _audio_stand(tmp_path: Path, name: str, body: str,
     styles = _read(STYLES_JS)
     funcs = tuple(_AUDIO_FUNCS) + tuple(extra)
     script = ("const assert=require('assert');\n" + _AUDIO_STAND
-              + "let AUDIO=null,VG=null,MG=null;\n"
-              + "let VOICEPEND=[];\n"
+              + "let AUDIO=null,MG=null;\n"
               + "let MEDIA_VOL=1;\n"
               + _VOICE_DOOR_STAND
               + "\n".join(_func_src(styles, n) for n in _VOICE_DOOR_FUNCS) + "\n"
@@ -329,44 +320,19 @@ def _audio_stand(tmp_path: Path, name: str, body: str,
 
 
 @node
-def test_graph_wakes_once_and_only_for_what_needs_it(tmp_path):
-    """Граф будится ОДНОЙ дверью (audioWake) и подключает к нему только тех, кто
-    его ждал. Обычный звук камеры (спикер без обработки) в граф не попадает:
-    `createMediaElementSource` необратим, и приостановленный AudioContext глушил бы
-    его навсегда — ровно дефект «видео играет, звука нет, ошибок нет»."""
-    res = _audio_stand(tmp_path, "audio_wake.js", r"""
-let resumed=0; const created=[];
-function AudioContext(){
-  this.state='suspended';
-  this.destination={};
-  this.createGain=()=>({connect(){},gain:{value:1}});
-  this.createMediaElementSource=(el)=>{created.push(el.id);return {connect(){}};};
-  this.resume=()=>{resumed++;this.state='running';return Promise.resolve();};
-}
-global.window=global;
-global.AudioContext=AudioContext;
-window.AudioContext=AudioContext;
-const cam={id:'cam1'};            // <video> камеры: спикер БЕЗ обработки
-voiceWiring(cam);
-assert.strictEqual(created.length,0,
-  'звук камеры ушёл в граф ещё на создании элемента: приостановленный контекст глушит его молча');
-assert.strictEqual(AUDIO,null,'граф поднялся без нужды');
-
-// Обработка включилась: дорожка голоса просит граф — вот тут он и нужен.
-const track={id:'voice'};
-voiceWiring(track);
-voiceEnsure();
-assert.deepStrictEqual(created,['cam1','voice'],
-  'граф подключил не всех, кто его ждал: '+JSON.stringify(created));
+def test_graph_wakes_once(tmp_path):
+    """Контекст будится ОДНОЙ дверью (audioWake) и только один раз: повторный пуск не зовёт
+    `resume()` снова. Приостановленный AudioContext без этой двери молчит целиком."""
+    res = _audio_stand(tmp_path, "audio_wake.js", _FAKE_AUDIO + r"""
+audioWake();                     // первый пуск: граф поднят, контекст будится
+assert.strictEqual(AUDIO!==null&&AUDIO.state==='running',true,'audioWake не разбудил контекст');
 assert.strictEqual(resumed,1,'контекст не разбужен: '+resumed);
-
-// audioWake идемпотентна: повторный пуск не плодит источники и не будит дважды.
+// audioWake идемпотентна: повторный пуск не будит контекст второй раз.
 audioWake();
 assert.strictEqual(resumed,1,'audioWake будит контекст повторно');
-assert.strictEqual(created.length,2,'повторное подключение того же элемента');
-console.log('OK: graph wakes once, camera stays direct');
+console.log('OK: graph wakes once');
 """)
-    _assert_node(res, "OK: graph wakes once, camera stays direct")
+    _assert_node(res, "OK: graph wakes once")
 
 
 @node
@@ -411,68 +377,24 @@ def test_edPlay_and_ipvPlay_wake_the_graph(tmp_path):
 
 
 @node
-def test_camera_is_not_forced_into_the_graph(tmp_path):
-    """Камера шага 1 в граф не идёт вовсе: её <video> немые, звук шага 1 играет буфер
-    редактора (блок `ea*`). Подключение к графу у остальных плееров живёт в одной двери
-    (`voiceGraphWire`), а заявка (`voiceWiring`) элемент на месте не подключает."""
-    prev = _read(PREVIEW_JS)
-    assert "__wired" in prev, "пропал признак «источник уже создан»"
-    open_src = _func_src(prev, "openPreview")
-    assert "voiceWiring(v)" not in open_src, (
-        "камера шага 1 заявлена на граф: `createMediaElementSource` необратим, а звука у неё нет")
-    assert "createMediaElementSource" not in open_src, (
-        "камера подключается к графу прямо в openPreview — обязана лениво")
-
-    wire = _func_src(prev, "voiceGraphWire")
-    assert "createMediaElementSource" in wire, "нет единственной двери подключения"
-    assert "createMediaElementSource" not in _func_src(prev, "voiceWiring"), (
-        "заявка на граф снова подключает элемент сразу")
-
-    res = _audio_stand(tmp_path, "camera_direct.js", r"""
-const cam={id:'cam'};
-voiceWiring(cam);
-assert.strictEqual(cam.__wired,undefined,'элемент помечен подключённым без графа');
-const others=[{id:'a'},{id:'b'}];
-others.forEach(voiceWiring);
-assert.strictEqual(others.filter(o=>o.__wired).length,0);
-console.log('OK: camera stays out of the graph until the graph is needed');
-""")
-    _assert_node(res, "OK: camera stays out of the graph until the graph is needed")
-
-
-@node
-def test_play_wakes_the_graph_but_leaves_the_camera_direct(tmp_path):
-    """Пуск воспроизведения будит контекст, но очередь на подключение НЕ разбирает:
-    камера без обработки остаётся у своего элемента. `createMediaElementSource`
-    необратим, и подключение «заодно с пробуждением» — это ровно тот дефект, когда
-    после первого «Play» звук камеры снова идёт только через граф."""
-    res = _audio_stand(tmp_path, "wake_keeps_queue.js", _FAKE_AUDIO + r"""
-let CURSTYLE={voice_db:0};
-const cam={id:'cam1'};           // <video> камеры: спикер БЕЗ обработки
-voiceWiring(cam);
+def test_play_wakes_the_context(tmp_path):
+    """Пуск воспроизведения будит контекст из обработчика нажатия: браузер отпускает
+    автозапуск только на живом жесте, и без пробуждения очередь звука молчит."""
+    res = _audio_stand(tmp_path, "wake_on_play.js", _FAKE_AUDIO + r"""
 audioWake();                     // нажатие «Play»: живой жест будит контекст
-assert.strictEqual(created.length,0,
-  'первый же «Play» утащил звук камеры в граф: '+JSON.stringify(created));
-assert.strictEqual(cam.__wired,undefined,'элемент подключён к графу без нужды');
-assert.deepStrictEqual(VOICEPEND,[cam],'audioWake разобрала очередь на подключение');
 assert.strictEqual(resumed,1,'контекст не разбужен живым жестом: '+resumed);
-// Громкость голоса 0 дБ — тоже не повод: стиль применили, камера осталась напрямую.
-applyDbGains();
-assert.strictEqual(cam.__wired,undefined,'voice_db=0 всё равно увёл камеру в граф');
-console.log('OK: play wakes the graph and keeps the camera direct');
-""", extra=("applyDbGains", "dbToGain"))
-    _assert_node(res, "OK: play wakes the graph and keeps the camera direct")
+console.log('OK: play wakes the context');
+""")
+    _assert_node(res, "OK: play wakes the context")
 
 
 @node
-def test_player_start_does_not_wire_the_camera(tmp_path):
-    """Нажатие «Play» (edPlay — та самая дверь из браузера) будит граф, но звук
-    камеры без обработки остаётся у элемента: после пуска очередь на подключение
-    цела, а `createMediaElementSource` не зовётся ни разу."""
+def test_player_start_wakes_the_context(tmp_path):
+    """Нажатие «Play» (edPlay — та самая дверь из браузера) будит контекст через audioWake:
+    без этого звук шага 1 молчал бы при приостановленном AudioContext."""
     prev, ed = _read(PREVIEW_JS), _read(EDITOR_JS)
     script = ("const assert=require('assert');\n" + _AUDIO_STAND
-              + "let AUDIO=null,VG=null,MG=null;\n"
-              + "let VOICEPEND=[];\n"
+              + "let AUDIO=null,MG=null;\n"
               + "let MEDIA_VOL=1;\n"
               + "function pvAudioLimit(){}function vtOf(){return {failed:false};}function vtPrep(){}\n"
               + "function edBlockAt(){return 0;}function spareIdle(){}\n"
@@ -488,107 +410,13 @@ def test_player_start_does_not_wire_the_camera(tmp_path):
               + "\n".join(_func_src(prev, n) for n in _AUDIO_FUNCS) + "\n"
               + _FAKE_AUDIO
               + f"const ED_PLAY={json.dumps(_func_src(ed, 'edPlay'))};\n"
-              + "voiceWiring(PV.vids[0]);\n"
               # eval, а не new Function: боевой edPlay нужен скоуп стенда (ED, PV.vids[0]),
               # и он же отдаёт ему настоящую audioWake из 60-preview.js.
               + "eval(ED_PLAY);edPlay();\n"
-              + "assert.strictEqual(created.length,0,"
-                "'пуск плеера утащил звук камеры в граф: '+JSON.stringify(created));\n"
-              + "assert.strictEqual(PV.vids[0].__wired,undefined,"
-                "'камера подключена к графу пуском плеера');\n"
-              + "assert.deepStrictEqual(VOICEPEND,[PV.vids[0]],"
-                "'пуск плеера разобрал очередь на подключение');\n"
               + "assert.strictEqual(resumed,1,'пуск плеера не разбудил контекст: '+resumed);\n"
-              + "console.log('OK: player start keeps the camera direct');\n")
-    _assert_node(_run_node(tmp_path, "player_start_direct.js", script),
-                 "OK: player start keeps the camera direct")
-
-
-@node
-def test_voice_gain_opens_the_graph(tmp_path):
-    """Громкость голоса стиля `voice_db != 0` делает ТОЛЬКО `VG.gain`: `volume`
-    элемента не умеет больше 1. Значит при такой громкости звук камеры обязан пойти
-    в граф — и заводит его туда `applyDbGains` той же дверью `voiceEnsure`."""
-    res = _audio_stand(tmp_path, "voice_gain_wires.js", _FAKE_AUDIO + r"""
-let CURSTYLE={voice_db:3};
-const cam={id:'cam1'};
-voiceWiring(cam);
-audioWake();                     // граф поднялся, applyDbGains увидел +3 дБ
-assert.strictEqual(cam.__wired,true,'громкость голоса стиля не завела камеру в граф');
-assert.deepStrictEqual(created,['cam1'],'подключён не тот элемент: '+JSON.stringify(created));
-assert.strictEqual(VOICEPEND.length,0,'элемент подключён, но остался в очереди');
-console.log('OK: voice gain puts the camera into the graph');
-""", extra=("applyDbGains", "dbToGain"))
-    _assert_node(res, "OK: voice gain puts the camera into the graph")
-
-
-@node
-def test_new_element_is_wired_at_once_while_voice_gain_is_not_zero(tmp_path):
-    """Элемент, созданный ПОСЛЕ старта превью, при громкости голоса стиля != 0
-    подключается к графу сразу.
-
-    Такой элемент (дублёр стыка, плеер раскладки камер) попадает в `voiceWiring`,
-    когда граф уже создан, и `applyDbGains` его больше не увидит: очередь разбирает
-    только `voiceEnsure`. Без правила в `voiceWiring` он оставался в `VOICEPEND`, и
-    «+3 дБ» стиля в превью не звучали.
-    """
-    res = _audio_stand(tmp_path, "voice_gain_late_element.js", _FAKE_AUDIO + r"""
-let CURSTYLE={voice_db:3};
-audioGraph();                    // граф создан (в бою его поднимает пуск плеера)
-applyDbGains();                  // стиль применён: +3 дБ, очередь разобрана
-assert(AUDIO!==null,'граф не создан: применять стиль было некуда');
-assert.strictEqual(created.length,0,'пустой граф что-то подключил: '+JSON.stringify(created));
-const cam={id:'cam1'};           // элемент, созданный ПОСЛЕ старта превью
-voiceWiring(cam);
-assert.strictEqual(cam.__wired,true,
-  'элемент, созданный после старта превью, остался вне графа при voice_db=3');
-assert.deepStrictEqual(created,['cam1'],
-  'подключён не тот элемент: '+JSON.stringify(created));
-assert.strictEqual(VOICEPEND.length,0,'подключённый элемент остался в очереди');
-console.log('OK: late element is wired at once with voice gain');
-""", extra=("applyDbGains", "dbToGain"))
-    _assert_node(res, "OK: late element is wired at once with voice gain")
-
-
-@node
-def test_zero_voice_gain_keeps_a_late_element_in_the_queue(tmp_path):
-    """При `voice_db=0` созданный позже элемент остаётся в очереди: правило «граф
-    нужен» его не трогает, и `createMediaElementSource` не зовётся. Дверь
-    необратима — подключать «раз граф всё равно есть» нельзя, иначе звук камеры без
-    обработки снова зависел бы от состояния AudioContext."""
-    res = _audio_stand(tmp_path, "voice_zero_late_element.js", _FAKE_AUDIO + r"""
-let CURSTYLE={voice_db:0};
-audioGraph();                    // граф создан, громкость голоса при этом 0 дБ
-applyDbGains();
-assert(AUDIO!==null,'граф не создан: применять стиль было некуда');
-const cam={id:'cam1'};           // элемент, созданный ПОСЛЕ старта превью
-voiceWiring(cam);
-assert.strictEqual(created.length,0,
-  'voice_db=0 всё равно увёл поздний элемент в граф: '+JSON.stringify(created));
-assert.strictEqual(cam.__wired,undefined,'элемент подключён к графу без нужды');
-assert.deepStrictEqual(VOICEPEND,[cam],'поздний элемент не встал в очередь');
-console.log('OK: zero voice gain keeps a late element in the queue');
-""", extra=("applyDbGains", "dbToGain"))
-    _assert_node(res, "OK: zero voice gain keeps a late element in the queue")
-
-
-@node
-def test_voice_ensure_wires_the_whole_queue(tmp_path):
-    """`voiceEnsure` — единственная дверь подключения очереди: подключает ВСЁ, что
-    ждало (камеру в том числе — она попадает в очередь заявкой `voiceWiring` заранее),
-    и будит контекст тем же заходом."""
-    res = _audio_stand(tmp_path, "voice_ensure.js", _FAKE_AUDIO + r"""
-let CURSTYLE={voice_db:0};
-const cam={id:'cam1'},track={id:'voice'};
-voiceWiring(cam);voiceWiring(track);
-voiceEnsure();
-assert.deepStrictEqual(created,['cam1','voice'],
-  'подключены не все, кто ждал: '+JSON.stringify(created));
-assert.strictEqual(VOICEPEND.length,0,'очередь не разобрана');
-assert.strictEqual(resumed,1,'контекст не разбужен вместе с подключением: '+resumed);
-console.log('OK: voice ensure wires the queue');
-""", extra=("applyDbGains", "dbToGain"))
-    _assert_node(res, "OK: voice ensure wires the queue")
+              + "console.log('OK: player start wakes the context');\n")
+    _assert_node(_run_node(tmp_path, "player_start_wakes.js", script),
+                 "OK: player start wakes the context")
 
 
 # --------------------------------------------------------------------------- #
@@ -644,9 +472,8 @@ global.document={createElement:t=>{const e=new El(t);MADE.push(e);return e;},
   addEventListener(){},removeEventListener(){}};
 function t(s){return String(s);}
 function $(id){return STAGE;}
-// Боевые camVisual/vtSetMute/vtIsEd/vtMuteHost читают PV и ED — они и есть «кадр».
+// Боевые camVisual/vtIsEd/vtMuteHost читают PV и ED — они и есть «кадр».
 let PV=null,ED=null;
-function vtSetMute(){}
 function vtLiveUpdate(){}
 const PROTOS=['mo','z','HasAudio'];
 function video(src,hasAudio){const v=new El('video');v.src=src;v.currentTime=0;
@@ -654,7 +481,7 @@ function video(src,hasAudio){const v=new El('video');v.src=src;v.currentTime=0;
   v.play=()=>Promise.resolve();v.pause=()=>{};v.muted=false;
   if(hasAudio!==undefined)v[PROTOS.join('')]=hasAudio;   // свойство есть ТОЛЬКО у Firefox
   return v;}
-function player(vids){return {vids,audioCi:0,voiceMute:false,liveMute:false,curCi:0};}
+function player(vids){return {vids,audioCi:0,liveMute:false,curCi:0};}
 const boxes=()=>STAGE.children.filter(c=>c.attrs&&c.attrs['data-pvprog']!==undefined);
 const rows=()=>{const b=boxes()[0];return b?b.children.map(c=>c.attrs['data-pvrow']):[];};
 const rowTxt=()=>{const b=boxes()[0];if(!b)return '';
@@ -761,19 +588,18 @@ console.log('OK: Firefox row goes away with the source');
 
 @node
 def test_firefox_row_is_shared_by_all_players(tmp_path):
-    """Строку зовут плееры, у которых звучит <video> (шаг 3 — вставки, раскладка камер),
-    и общий опрос прокси: одна функция на все — иначе у одного плеера причина называлась
-    бы, у другого нет. Шаг 1 её НЕ зовёт: его <video> немые, звук там — буфер редактора
+    """Строку зовут плееры, у которых звучит <video> (страница рендера вставок), и общий
+    опрос прокси: одна функция на все — иначе у одного плеера причина называлась бы, у
+    другого нет. Шаг 1 и раскладка камер её НЕ зовут: их <video> немые, звук там — буфер
     из WAV (`/api/preview_audio`), и молчание исходника в Firefox к нему не относится.
     Живёт строка в ОБЩЕМ контейнере прогресса, рядом со строкой голоса."""
     prev, ed, view, cams = (_read(PREVIEW_JS), _read(EDITOR_JS),
                             _read(VIEW_JS), _read(CAMJS))
-    for src, marker in ((view, "ipvStep"), (view, "ipvOpen"),
-                        (cams, "cpvStep"), (prev, "pvProxyRefresh")):
+    for src, marker in ((view, "ipvStep"), (view, "ipvOpen"), (prev, "pvProxyRefresh")):
         assert "pvAudioLimit(" in _func_src(src, marker), f"{marker} не зовёт строку про Firefox"
-    for marker in ("edTick", "edPlay"):
-        assert "pvAudioLimit(" not in _func_src(ed, marker), (
-            f"{marker} зовёт строку про звук Firefox, а <video> шага 1 немые")
+    for src, marker in ((ed, "edTick"), (ed, "edPlay"), (cams, "cpvStep")):
+        assert "pvAudioLimit(" not in _func_src(src, marker), (
+            f"{marker} зовёт строку про звук Firefox, а <video> этого плеера немые")
     res = _fx_stand(tmp_path, "fx_audio_row_players.js", _FX_TIMER + """
 PV=player([video('cam1.mp4',false)]);
 ED=PV;
@@ -823,5 +649,5 @@ def test_no_task_codes_or_missing_guard_files():
         if re.search(r"voiceWiring|audioWake|previewproxy|voicefx_devices|doctor", _read(p)):
             hits.add(p.name)
     for want in ("test_doctor.py", "test_ui_static.py", "test_voice_live.py",
-                 "test_voice_spare.py", "test_hp_concurrency.py"):
+                 "test_hp_concurrency.py"):
         assert want in hits, f"{want} перестал смотреть за своими дверями"

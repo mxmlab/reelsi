@@ -21,6 +21,7 @@ import os
 import re
 import sys
 import time
+import urllib.request
 from typing import Any
 
 # небуферизованный вывод — иначе при piped stdout результаты не видны в логе
@@ -33,7 +34,23 @@ if _REELSI not in sys.path:
     sys.path.insert(0, _REELSI)
 
 from core import aicut  # ensure_loaded
-from core import insertlib  # _http_json, _thumb_b64, LMSTUDIO_URL, describe_file, _DESCRIBE_PROMPT
+from core import insertlib  # _thumb_b64 — кадр замера; остальное замер держит у себя (см. ниже)
+
+# Прежний продуктовый промпт описания — ЗАМОРОЖЕННОЙ копией: замер фиксирует тот текст, на котором
+# считался. Продуктовые описания через LM Studio с тех пор удалены из `core/insertlib.py`.
+PRODUCT_DESCRIBE_PROMPT = ("Name the MAIN OBJECT in this image as precisely as you can, in 4-10 English words. "
+                           "Be specific: \"glucometer\", not \"device\"; \"blister pack of tablets\", not \"packaging\". "
+                           "Always name what you see, even if it is abstract, a 3D render or an illustration. "
+                           "Never answer that objects cannot be identified. Output ONLY the object phrase.")
+LMSTUDIO_URL = os.environ.get("LMSTUDIO_URL", "http://localhost:1234/v1").rstrip("/")
+
+
+def _http_json(url: str, payload: Any = None, timeout: float = 60) -> Any:
+    """JSON-запрос к LM Studio напрямую (замер не зависит от клиента базы вставок)."""
+    data = json.dumps(payload).encode() if payload is not None else None
+    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8", "replace"))
 
 # Корень рабочих папок (родителя репозитория) задаёт REELSI_BENCH_ROOT; по умолчанию —
 # рядом с репозиторием. Абсолютных личных путей в файле нет: сторож
@@ -62,7 +79,7 @@ NEW_PROMPT = (
 
 # Прогоны: (id, модель, промпт)
 RUNS: list[tuple[str, str, str]] = [
-    ("P0", "google/gemma-4-e2b",                                insertlib._DESCRIBE_PROMPT),
+    ("P0", "google/gemma-4-e2b",                                PRODUCT_DESCRIBE_PROMPT),
     ("P1", "google/gemma-4-e2b",                                NEW_PROMPT),
     ("P2", "qwen2.5-omni-7b",                                   NEW_PROMPT),
     ("P3", "gemma4-e4b-sft-claude-opus-reasoning-unsloth",       NEW_PROMPT),
@@ -119,7 +136,7 @@ def _describe_with_prompt(path: str, model: str, prompt: str) -> str | None:
     if not b64:
         return None
     try:
-        d = insertlib._http_json(insertlib.LMSTUDIO_URL + "/chat/completions", {
+        d = _http_json(LMSTUDIO_URL + "/chat/completions", {
             "model": model,
             "max_tokens": 900,
             "temperature": 0.2,

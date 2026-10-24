@@ -141,16 +141,21 @@ def _masked_stock(cfg: dict[str, Any]) -> dict[str, str]:
     Список провайдеров — из самого стока (`core.stock.PROVIDERS`): новый сток
     появляется в ⚙ одной правкой, а не двумя. Поле ключа есть только у провайдера с
     `keyed=True` (как в core/aicut/config_actions.py): у Openverse ключа нет и поля
-    в ответе не должно быть — иначе интерфейс нарисует ключ, которого стоку не нужно."""
+    в ответе не должно быть — иначе интерфейс нарисует ключ, которого стоку не нужно.
+
+    `off` — список выключенных галкой провайдеров (у Openverse выключатель не ключ, а
+    именно этот список): интерфейс по нему ставит галку «Искать на Openverse»."""
     from core import stock
     section = cfg.get("stock")
     section = section if isinstance(section, dict) else {}
-    out: dict[str, str] = {}
+    out: dict[str, Any] = {}
     for prov in stock.PROVIDERS:
         if not stock.PROVIDER_META[prov]["keyed"]:
             continue
         raw = section.get(prov + "_key")
         out[prov + "_key"] = _mask_ai_key(raw if isinstance(raw, str) else "")
+    off = section.get("off")
+    out["off"] = [p for p in off if isinstance(p, str)] if isinstance(off, list) else []
     return out
 
 

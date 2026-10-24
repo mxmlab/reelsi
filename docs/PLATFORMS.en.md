@@ -153,8 +153,12 @@ When `onnxruntime-gpu` is installed, `core/insertlib.py` opens the session on CU
 BiRefNet at 1024×1024: 10.2 s on CPU, 3.6 s on CUDA with the default options, 0.27 s with the
 cuDNN options (measured on an RTX 4070 Ti SUPER). The CUDA and cuDNN DLLs come from `torch/lib`
 (torch cu126 ships them); that folder is attached before the session is created. A session on
-the GPU holds 1–2 GB of VRAM, so after a minute of idleness (`REMBG_GPU_IDLE_SEC`) it is unloaded;
-the CPU session stays as before. `doctor.py` shows a "background removal on GPU" row and the
+the GPU session's arena is capped (10 GiB for birefnet-general, 1 GiB for u2net): without the cap
+onnxruntime grows the arena by doubling, Windows hands the shortfall to shared memory without an
+error, and the work slides into RAM. The GPU is taken only when free VRAM covers the cap plus 1 GiB;
+otherwise the session opens on the CPU and the reason goes to the log. After a minute of idleness
+(`IDLE_S` in `core/rembg_run.py`) the session is unloaded, from the GPU and from the CPU alike;
+the next cleanup asks for the GPU again. `doctor.py` shows a "background removal on GPU" row and the
 hint pointing to the install button when CUDA is missing.
 
 ## 6. Camera sync, VAD, XML assembly

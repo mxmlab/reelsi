@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "reelsi"
-version = "0.4.2b0"
+version = "0.4.3b0"
 description = "AI video editor on top of Premiere and After Effects: multicam cut, word-by-word subtitles, AE assembly"
 readme = "README.md"
 license = "AGPL-3.0-or-later"
@@ -96,6 +96,8 @@ files = [
     "core/encoders.py",
     "core/drp.py",
     "core/insertlib.py",
+    "core/rembg_run.py",
+    "core/embedder.py",
     "core/ort_gpu.py",
     "core/stock.py",
     "core/clipstore.py",
@@ -265,6 +267,8 @@ module = [
     "core.encoders",
     "core.drp",
     "core.insertlib",
+    "core.rembg_run",
+    "core.embedder",
     "core.ort_gpu",
     "core.stock",
     "core.clipstore",

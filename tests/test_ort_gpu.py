@@ -20,7 +20,7 @@ import pytest
 from flask import Flask
 
 import api
-from core import aicut, insertlib, ort_gpu
+from core import aicut, insertlib, model_service, ort_gpu, rembg_run
 from core.umsg import ReelsiError, umsg
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -137,6 +137,11 @@ class _Finder:
         return importlib.machinery.ModuleSpec(fullname, _StubLoader())
 
 
+def _no_service_remove(img, model):
+    """Заглушка сервиса моделей: его нет — `insertlib.remove_bg` снимает фон сам."""
+    raise model_service.ServiceUnavailable("тест: сервиса моделей нет")
+
+
 @pytest.fixture
 def traced(monkeypatch):
     """Журнал импортов: список имён в порядке обращения к ним (модули не остаются в sys.modules)."""
@@ -149,7 +154,11 @@ def traced(monkeypatch):
     monkeypatch.setattr(insertlib, "_RB_SESSION_NAME", None)
     monkeypatch.setattr(insertlib, "_RB_SESSION_GPU", False)
     monkeypatch.setattr(insertlib, "_RB_IDLE_TIMER", None)
-    monkeypatch.setattr(insertlib, "_CUDA_DLLS_DONE", True)
+    monkeypatch.setattr(rembg_run, "_CUDA_DLLS_DONE", True)
+    # Устройство — процессор: VRAM не меряем, onnxruntime тянем только там, где он нужен.
+    monkeypatch.setenv("REELSI_MODEL_SERVICE_DEVICE", "cpu")
+    # Сервиса моделей нет: настоящий сервис из этого теста не поднимаем.
+    monkeypatch.setattr(model_service, "remove_bg", _no_service_remove)
     monkeypatch.setattr(aicut, "rembg_model", lambda: "u2net")
     yield events
     for n in names:
@@ -345,8 +354,9 @@ def test_start_runs_in_background_and_logs_pip_output(ort, monkeypatch):
 # --------------------------------------------------------------------------- #
 def test_providers_activate_before_onnxruntime_import(traced, monkeypatch):
     monkeypatch.setattr(ort_gpu, "activate", lambda: traced.append("activate") or False)
-    assert insertlib._rembg_providers() == ["CPUExecutionProvider"]
-    assert traced == ["activate", "onnxruntime"]
+    with pytest.raises(ReelsiError):              # rembg-заглушка сессию не открывает: важен только порядок
+        rembg_run.open_session("u2net", True, None)
+    assert traced[:2] == ["activate", "onnxruntime"]
 
 
 def test_remove_bg_activate_before_rembg_import(traced, monkeypatch):

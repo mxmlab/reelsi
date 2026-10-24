@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # Copyright (c) 2026 Maxim Si
-"""База вставок: скан, автоподбор, импорт, описания.
+"""База вставок: скан, автоподбор, импорт, правка описаний.
 """
-import os, threading
+import os
 from typing import Any
 from flask import Response, jsonify, request
-from ._core import bp, emit, umsg_err, jstr, sysexit_text
+from ._core import bp, emit, umsg_err, jstr
 from core import paths
 from core.umsg import ReelsiError, umsg
 
@@ -47,12 +47,13 @@ def _adopt_inserts(inserts: list[Any], dest: str, emit: Any = None) -> dict[str,
     # уже читаемый файл; вынесена в отдельную функцию, потому что рендер зовёт
     # только её (переезд в базу в рендере НЕ делаем — см. _run_render_job).
     conv = _convert_inserts(inserts, emit=emit)
-    # mw/mh едут вместе с описанием: сборка — единственный момент, когда точно известна
-    # форма маски, на которой юзер остановился. В следующих роликах match_many вернёт её
-    # вместе с путём, и картинка приедет из базы уже с нужным кропом.
+    # Поля памяти картинки (маска, масштаб, точка покоя, «без фона») едут вместе с описанием:
+    # сборка — единственный момент, когда точно известно, как картинка стояла в ролике. Иначе
+    # первая сборка переносила бы файл в базу без настройки, и в следующих роликах её пришлось
+    # бы подгонять заново. Пишет их insertlib.adopt теми же правилами, что правка (_memo_apply).
     items = [{"path": jstr(x, "media"), "desc": jstr(x, "query"),
               "ru": jstr(x, "prompt"),
-              "mw": x.get("mw"), "mh": x.get("mh")}
+              **{k: x.get(k) for k in insertlib.MEMO_KEYS}}
              for x in inserts if isinstance(x, dict) and jstr(x, "media").strip()]
     if not items:
         return conv
@@ -92,7 +93,7 @@ def api_insertlib_info() -> Response:
 @bp.route("/api/insertlib_scan", methods=["POST"])
 def api_insertlib_scan() -> Response:
     """Построить/обновить индекс базы вставок по списку папок (XML прошлых проектов +
-    просто медиа). Эмбеддинги — LM Studio (если поднят), иначе токенный матч."""
+    просто медиа). Векторы — эмбеддер сервиса моделей (EmbeddingGemma 2), иначе токенный матч."""
     d = request.get_json() or {}
     raw_dirs: Any = d.get("dirs") if isinstance(d.get("dirs"), list) else []
     dirs = [x.strip() for x in raw_dirs if isinstance(x, str) and x.strip()]
@@ -176,9 +177,6 @@ def api_insertlib_match() -> Response:
         return jsonify(**umsg_err(e))
 
 
-ILL_JOB: dict[str, Any] = {"running": False, "done": 0, "total": 0, "log": [], "error": ""}
-ILL_LOCK = threading.Lock()
-
 
 @bp.route("/api/insertlib_import", methods=["POST"])
 def api_insertlib_import() -> Response:
@@ -212,70 +210,6 @@ def api_insertlib_import() -> Response:
         return jsonify(**r)
 
 
-@bp.route("/api/insertlib_describe", methods=["POST"])
-def api_insertlib_describe() -> Response:
-    """Vision-описания всех файлов базы (фоновый тред — vision по каждому файлу долгий)."""
-    try:
-        with ILL_LOCK:
-            if ILL_JOB["running"]:
-                raise ReelsiError(umsg("describe_busy", "Описание уже идёт"))
-            only_missing = bool((request.get_json() or {}).get("only_missing", True))
-            ILL_JOB.update(running=True, done=0, total=0, log=[], error="")
-
-        def _run() -> None:
-            try:
-                from core import insertlib
-
-                def prog(done: int, total: int) -> None:
-                    with ILL_LOCK:
-                        ILL_JOB["done"], ILL_JOB["total"] = done, total
-
-                def _emit(*a: Any) -> None:
-                    with ILL_LOCK:
-                        ILL_JOB["log"].append(" ".join(str(x) for x in a))
-
-                r = insertlib.auto_describe(emit=_emit,
-                                            only_missing=only_missing, progress=prog)
-                if r.get("error"):
-                    with ILL_LOCK:
-                        ILL_JOB["error"] = r["error"]
-            except (ReelsiError, SystemExit) as e:
-                # SystemExit из insertlib (umsg) — BaseException: без ветки описание
-                # заканчивалось молча, и в статусе не было ни ошибки, ни причины.
-                with ILL_LOCK:
-                    ILL_JOB["error"] = sysexit_text(e)
-            except ReelsiError: raise
-            # ошибка пишется в ILL_JOB['error'] и видна в статусе описания вставок
-            except Exception as e:
-                with ILL_LOCK:
-                    ILL_JOB["error"] = f"{type(e).__name__}: {e}"
-            finally:
-                with ILL_LOCK:
-                    ILL_JOB["running"] = False
-
-        try:
-            threading.Thread(target=_run, daemon=True).start()
-        except ReelsiError: raise
-        except Exception:
-            with ILL_LOCK:
-                ILL_JOB["running"] = False
-            raise
-        return jsonify(ok=True)
-    except (ReelsiError, SystemExit) as e:
-        return jsonify(**umsg_err(e))
-
-
-@bp.route("/api/insertlib_describe_status")
-def api_insertlib_describe_status() -> Response:
-    try:
-        since = int(request.args.get("since") or 0)
-    except (TypeError, ValueError):
-        since = 0                    # ?since=abc роняло роут в HTML-500
-    with ILL_LOCK:
-        return jsonify(running=ILL_JOB["running"], done=ILL_JOB["done"], total=ILL_JOB["total"],
-                       error=ILL_JOB["error"], log=ILL_JOB["log"][since:], log_total=len(ILL_JOB["log"]))
-
-
 @bp.route("/api/insertlib_desc", methods=["POST"])
 def api_insertlib_desc() -> Response:
     d = request.get_json() or {}
@@ -303,6 +237,31 @@ def api_insertlib_items() -> Response:
         except ReelsiError: raise
         except Exception as e:
             raise ReelsiError(umsg("insertlib_items_failed", f"{type(e).__name__}: {e}",
+                                  err=f"{type(e).__name__}: {e}"))
+    except (ReelsiError, SystemExit) as e:
+        return jsonify(**umsg_err(e))
+
+
+@bp.route("/api/insert_memo", methods=["GET", "POST"])
+def api_insert_memo() -> Response:
+    """Память картинки вставки за файлом базы: маска, масштаб, точка покоя, «без фона».
+
+    GET ?path= -> {ok, memo}: что запомнено; файла нет в базе — memo пустой.
+    POST {path, mw, mh, sc, x, y, nobg} -> {ok, saved}: saved=false, если файла нет в базе
+    (картинка ещё не переехала в базу — это не ошибка, память придёт при сборке).
+    Битые поля тела пропускаются молча (см. insertlib.remember_look).
+    """
+    try:
+        try:
+            from core import insertlib
+            if request.method == "GET":
+                return jsonify(ok=True, memo=insertlib.look_of(request.args.get("path") or ""))
+            d = request.get_json() or {}
+            path = jstr(d, "path").strip()
+            return jsonify(ok=True, saved=bool(path) and insertlib.remember_look(path, d))
+        except ReelsiError: raise
+        except Exception as e:
+            raise ReelsiError(umsg("insert_memo_failed", f"{type(e).__name__}: {e}",
                                   err=f"{type(e).__name__}: {e}"))
     except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))

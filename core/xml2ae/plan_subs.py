@@ -132,7 +132,9 @@ def plan_subs(inp: SubsInputs) -> SubsPlan:
         return min(e, ns) if (ns is not None and ns > s) else e
 
     _posy = int(height * float(style.sub_y))
-    _hl_step = round(height * 0.06224, 2)
+    # Шаг стопки — один на оба режима (по слову и строки). Ручка hl_step_pct — проценты
+    # от обычного шага: 100 даёт прежнее число, .jsx побайтово тот же.
+    _hl_step = round(height * 0.06224 * float(style.hl_step_pct) / 100.0, 2)
     _hl_rise = round(height * 0.06406, 2)
     # Длительность подъёма/проявления жёлтых, с: ОДНО число на всю сборку —
     # константа layout.HL_DUR. Шаблон получает его подстановкой (template.py), план несёт

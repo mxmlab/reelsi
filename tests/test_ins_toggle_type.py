@@ -44,7 +44,8 @@ node = pytest.mark.skipif(not shutil.which("node"),
                           reason="контракт фронта требует node в PATH")
 
 # боевые функции карточки, которых касается смена типа
-FUNCS = ("insWant", "insKind", "insSetMedia", "insApplyCrop", "insClipFormat",
+FUNCS = ("insWant", "insKind", "insSetMedia", "insApplyMemo", "insSpeakerNobg", "insMemoFetch",
+         "insClipFormat",
          "insToggleType", "insStockFor", "insLibFor", "insLibFill")
 
 

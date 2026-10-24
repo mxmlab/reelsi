@@ -92,6 +92,40 @@ def test_the_second_request_takes_the_cache(client, clip, monkeypatch):
     assert calls == [], "звук вынимается заново при готовом кэше"
 
 
+@ffmpeg
+def test_the_route_takes_the_chosen_camera(client, tmp_path, monkeypatch):
+    """Плеер раскладки слушает К2/К3: `cam` (с нуля) выбирает их файл. Без `cam` — первая
+    камера, как и раньше (по ней печётся обработанный голос). Раньше роут всегда брал камеру 1,
+    и звук второй камеры в плеер не попадал."""
+    (tmp_path / "cam").mkdir()
+    cams = []
+    for n, freq in ((1, 440), (2, 660)):
+        p = tmp_path / "cam" / f"cam{n}.wav"
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+                        f"sine=frequency={freq}:duration=1:sample_rate=44100", "-ac", "2", str(p)],
+                       check=True)
+        cams.append({"path": str(p)})
+    xml = tmp_path / "out" / "01_clip.xml"
+    xml.parent.mkdir()
+    xml.write_text("<xmeml/>", encoding="utf-8")
+    monkeypatch.setattr(xml2ae, "virtual_edl", lambda p: {"cams": cams})
+    second = client.post("/api/preview_audio", json={"xml": str(xml), "cam": 1}).get_json()
+    default = client.post("/api/preview_audio", json={"xml": str(xml)}).get_json()
+    assert second.get("ok") is True and default.get("ok") is True, (second, default)
+    assert second["src"] == cams[1]["path"], "cam:1 взяла не вторую камеру"
+    assert default["src"] == cams[0]["path"], "без cam взята не первая камера"
+    assert second["path"] != default["path"], "две камеры дали один и тот же WAV"
+
+
+def test_a_camera_out_of_range_is_a_clear_error(client, clip):
+    """Номер вне диапазона — понятная ошибка в ответе, а не IndexError и не 500."""
+    xml, _src = clip
+    resp = client.post("/api/preview_audio", json={"xml": str(xml), "cam": 5})
+    assert resp.status_code == 200, resp.status_code
+    d = resp.get_json()
+    assert d.get("error"), d
+
+
 def test_missing_xml_or_camera_is_a_clear_error(client, tmp_path, monkeypatch):
     d = client.post("/api/preview_audio", json={"xml": str(tmp_path / "nope.xml")}).get_json()
     assert d.get("error"), d

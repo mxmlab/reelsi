@@ -178,8 +178,10 @@ in `core/webrender_audio.py` — `afade` at the edges of a piece), and no clicks
 preview has no such fades: the cameras' `<video>` plays the pieces as they are.
 
 **What is known.** The reason is that the preview plays the camera SOURCE under the playhead, not
-the cut stream: a fade at a seam is a property of the build, not of the file itself. The processed voice
-(the `vt*` track) in the preview also plays the `.voice.wav` file without fades. By ear the defect is noticeable
+the cut stream: a fade at a seam is a property of the build, not of the file itself. Now the sound of
+every preview (camera 1 and the processed voice) plays from the `ea*` Web Audio queue (step 1 since
+2026-10-09, inserts since 10-17, camera layout since 10-23), which puts a 4 ms
+anti-click splice at every seam (`EA_FADE`), but not the build's 10 ms fade `[NOT CHECKED by ear]`. By ear the defect is noticeable
 at joins in the middle of a loud word; in most clips the seams fall in silence, so
 there were no complaints.
 
@@ -291,6 +293,38 @@ rule "a folder without `trash.json` is an entry" was removed in this release: a 
 
 **Not checked.** There is no automatic restore for such folders, and none was made. They can be put back
 by hand: move the folder back to the podcast's place.
+
+## First stock pick in a session takes 10–20 s
+
+**Symptom.** The first picture chosen from a stock in a session waits 10–20 s. The picks after it take under a second.
+
+**What is known.** The background of a picture is removed by the model service. The first picture waits for the service to start up and for BiRefNet to load; once the model is in memory, a pick takes under a second.
+
+**Not checked.** The start-up of the service and the BiRefNet load have not been timed separately — only the total time of the first pick.
+
+---
+
+## English plural of file counts
+
+**Symptom.** In the English interface a count of files can carry the singular: "21 file" instead of "21 files".
+
+**What is known.** The translation is looked up by the Russian form "{n} файл", which covers 21, 31 and so on. The English version of the same string is "{n} file" with no choice by number, so 21 comes out as "21 file". A shared pluralization helper for English is needed.
+
+**Not checked.** Other English labels with numbers were not reviewed: which other strings pluralize the same way is unknown.
+
+---
+
+## Pillow and filelock vulnerabilities with no fix yet
+
+**Symptom.** pip-audit in the `scan` job finds 43 advisories: 37 in pillow 12.3.0 and 6 in filelock 4.1.0. Without exceptions the step is red. Both packages are now excluded by name (`--ignore-vuln`), and the step is green.
+
+**What is known.** pillow 12.3.0 is fixed in 13.0.0, filelock 4.1.0 in 4.2.1. On PyPI as of 2026-10-24 those versions do not exist (the latest are pillow 12.3.0 and filelock 4.1.0), so there is nothing to upgrade to. filelock is pulled in transitively (it is not listed in requirements.txt); pillow is listed as `pillow>=10.0`, and the resolver picks 12.3.0.
+
+**Not checked.** Whether Reelsi calls the vulnerable code of each of the 43 advisories has not been checked: the exception covers the list as a whole. The audit was run separately (pip-audit -r requirements.txt -f json in a clean python:3.10); pip-audit was not run in this change.
+
+**What to do when the fixes ship.** Remove `--ignore-vuln` for these IDs from the pip-audit line of the `scan` job in `.github/workflows/ci.yml` and from the `PIP_AUDIT_IGNORES` tuple in `tests/test_ci_scan.py` (the two must match; `tools/slice_check.py` reads the ci.yml line itself). If needed, raise `pillow>=` in `requirements.txt`.
+
+---
 
 ## Priority
 

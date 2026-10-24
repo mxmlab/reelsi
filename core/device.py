@@ -17,7 +17,9 @@ ROCm (AMD) отдельной ветки не требует: сборка PyTor
 import os
 import platform
 import subprocess
-from typing import Any
+import threading
+import time
+from typing import Any, Callable
 from core.umsg import ReelsiError
 
 # MPS покрывает не все операции, и без этой переменной инференс падает на первой же
@@ -88,7 +90,7 @@ def auto_device_without_torch() -> str:
 
     - карта NVIDIA видна `nvidia-smi` — «cuda». Проверка идёт на ЛЮБОЙ платформе:
       имя `nvidia-smi` не содержит имён платформ, и на x86-линуксе с NVIDIA это
-      работает ровно так же (там эта же мера уже запасной ход у `free_vram_mib`);
+      работает ровно так же (там эта же мера и есть первый ход у `free_vram_mib`);
     - macOS на arm64 — «mps». Сборка torch под Intel-мак Metal не даёт, а
       `pick_device` до этой ветки не доходит именно из-за отсутствия ускорения;
     - всё прочее — «cpu».
@@ -185,13 +187,63 @@ def nvidia_free_mib() -> int | None:
     return _nvidia_smi_free_mib()
 
 
-def free_vram_mib() -> int | None:
-    """Свободная видеопамять в МиБ или None, если карты нет (или мера недоступна).
+# Сколько секунд помнить замер свободной VRAM. nvidia-smi — отдельный процесс (~100 мс на
+# вызов), а спрашивают его часто: эмоции жёлтых — на каждое окно, `wait_for_vram` опрашивает
+# карту раз в 0.5 с. Свежести в одну секунду хватает: слоты и сессии решают по объёму, а не по
+# миллисекундам, а два-три опроса подряд без нового процесса — это уже выигрыш.
+FREE_VRAM_TTL_S = 1.0
+# Часы замера: тесты подменяют их и двигают окно TTL без реального ожидания.
+_monotonic: Callable[[], float] = time.monotonic
+# Последний замер: (момент по часам, результат — число или None). None тоже кэшируем: «карты
+# нет» не нужно перепроверять на каждом окне.
+_FREE_VRAM_CACHE: tuple[float, int | None] | None = None
+# Замок на весь замер: параллельные потоки сервиса не должны звать nvidia-smi дважды в одном TTL.
+_FREE_VRAM_LOCK = threading.Lock()
 
-    None — это «мерить нечего»: выше по стеку он значит «потолка нет», а не «ноль
-    памяти». Иначе на машине без CUDA (CI, мак) любой параллелизм схлопнулся бы в 1.
-    Порядок тот же, что в `doctor.py`: torch, затем nvidia-smi.
+
+def _free_vram_cache_clear() -> None:
+    """Забыть замер: тесты — между тестами, а коду, которому нужна свежая мера, — сразу."""
+    global _FREE_VRAM_CACHE
+    with _FREE_VRAM_LOCK:
+        _FREE_VRAM_CACHE = None
+
+
+def free_vram_mib() -> int | None:
+    """Свободная видеопамять в МиБ или None (см. `_measure_free_vram_mib`), с кэшем на `FREE_VRAM_TTL_S`.
+
+    Замер стоит ~100 мс, а спрашивают его на каждом окне эмоций и на каждом опросе ожидания
+    карты. Поэтому один замер действует на весь процесс `FREE_VRAM_TTL_S` секунд, и звать
+    nvidia-smi на один и тот же срок дважды не нужно (замок — на случай параллельных потоков).
     """
+    global _FREE_VRAM_CACHE
+    with _FREE_VRAM_LOCK:
+        now = _monotonic()
+        cached = _FREE_VRAM_CACHE
+        if cached is not None and now - cached[0] < FREE_VRAM_TTL_S:
+            return cached[1]
+        value = _measure_free_vram_mib()
+        _FREE_VRAM_CACHE = (now, value)
+        return value
+
+
+def _measure_free_vram_mib() -> int | None:
+    """Свободная видеопамять в МиБ или None, если меру не получить, — без кэша.
+
+    ПОРЯДОК: сначала nvidia-smi, потом torch. Замер 2026-10-24 (RTX 4070 Ti SUPER): другой
+    процесс держит на карте 8.4 ГБ (заполненный тензор). nvidia-smi отдал 7465 МиБ свободных,
+    `torch.cuda.mem_get_info()` — 15111 МиБ. На Windows (WDDM) torch видит бюджет СВОЕГО
+    процесса и чужую занятость не замечает: сервис моделей открыл бы сессию фона на +9 ГБ при
+    реально свободных 7.4 ГБ, а Windows вытеснила бы память, и так же слепы были бы проверки
+    VRAM у распознавания и вздохов. nvidia-smi — правда для всех процессов карты, поэтому
+    спрашиваем его первым. torch — запасной путь там, где nvidia-smi нет (не NVIDIA, урезанная
+    сборка); его число для чужих процессов не годится, но лучше пустоты.
+
+    None — это «мерить нечего»: выше по стеку он значит «потолка нет», а не «ноль памяти».
+    Иначе на машине без CUDA (CI, мак) любой параллелизм схлопнулся бы в 1.
+    """
+    free = _nvidia_smi_free_mib()
+    if free is not None:
+        return free
     try:
         import torch
         if torch.cuda.is_available():
@@ -199,8 +251,8 @@ def free_vram_mib() -> int | None:
     except ReelsiError:
         raise
     except Exception:
-        pass  # torch недоступен/без GPU либо драйвер не отдал меру — пробуем nvidia-smi
-    return _nvidia_smi_free_mib()
+        pass  # torch недоступен/без GPU либо драйвер не отдал меру — меры нет
+    return None
 
 
 def vram_total_mib() -> int | None:

@@ -287,6 +287,8 @@ function openSpeaker(key){
   // меняет), снятая галка пишет named_inserts:false. Читает её бэкенд на шаге вставок.
   // Старое имя drug_inserts (профили до переименования) тоже учитываем.
   const dg=$('spk_ins_named');if(dg)dg.checked=p.named_inserts!==false&&p.drug_inserts!==false;
+  // «Фото-вставки без фона»: поля в профиле нет — выключено; стоит — ins_nobg:true
+  const ng=$('spk_ins_nobg');if(ng)ng.checked=p.ins_nobg===true;
   const ips=p.image_prompts||{};
   $('spk_extra_a').value=(ips.a&&ips.a.extra)||'';
   $('spk_pos_a').value=(ips.a&&ips.a.pos==='prefix')?'prefix':'suffix';
@@ -1373,6 +1375,8 @@ async function saveSpeaker(){
   // (как у lut и format: профиль без правок не обрастает записями про дефолт). Старое поле
   // drug_inserts уходит всегда: иначе оно перебило бы новую галку на чтении.
   if($('spk_ins_named')&&!$('spk_ins_named').checked)data.named_inserts=false;else delete data.named_inserts;
+  // «без фона» по умолчанию: галка стоит — ins_nobg:true, снята — поля нет (как named_inserts)
+  if($('spk_ins_nobg')&&$('spk_ins_nobg').checked)data.ins_nobg=true;else delete data.ins_nobg;
   delete data.drug_inserts;
   [['breath_p_cut','spk_bpcut'],['breath_p_mark','spk_bpmark']].forEach(pair=>{
     const s=val(pair[1]).trim(),v=parseFloat(s);

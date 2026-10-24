@@ -268,6 +268,8 @@ function t(s,vars){__keys.push(s);
 function uiLog(m){__logs.push(String(m));}
 function errText(e){return String(e);}
 function val(){return '';}
+// дверь привязки файла — своя (tests/test_insert_memo.py); здесь важен только путь картинки
+function insSetMedia(x,p){x.media=p;}
 const GEN_FETCH_MS=1000;
 globalThis.fetch=async (u,o)=>{__sent.push(JSON.parse(o.body));
   return {json:async()=>({path:'C:/gen/x.png'})};};

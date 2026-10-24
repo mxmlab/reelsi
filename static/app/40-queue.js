@@ -204,49 +204,53 @@ async function camMatchAll(){
   finally{if(btn)btn.disabled=false;}
 }
 // ================= гугл-диск =================
-// Ссылка → rclone copy → файлы в папке загрузки → выбор файла камеры 1 → тот же
-// /api/cammatch, что и «Подбор по звуку». Раскладку по камерам не изобретаем.
+// Ссылка → что лежит в ссылке → окно «Куда что качать» (всегда) → rclone по группам файлов →
+// итог в строке статуса. Раскладка по камерам — то, что человек выбрал в окне; подбора по звуку нет.
 let GDN=0,GDLOGN=0;             // интервал поллинга прогресса и сколько строк лога уже показано
+let GDLAST=null;                // раскладка последнего скачивания — для итога; после F5 её в памяти нет
+let GDMAP=null;                 // строки открытого окна «Куда что качать» — для подписей при смене папки
 async function gdDownload(){
-  const url=$('gdrive_url').value.trim();let dest=$('gdrive_dest').value.trim();
+  const url=$('gdrive_url').value.trim();
   if(!url){toast(t('Вставь ссылку гугл-диска'));return;}
-  if(!dest)dest=(val('base').trim().replace(/[\\\/]+$/,'')||'')+'\\gdrive_downloads';
-  const btn=$('gd_go');if(btn)btn.disabled=true;
+  if(!$('gdrive_dest').value.trim())$('gdrive_dest').value=(val('base').trim().replace(/[\\\/]+$/,'')||'')+'\\gdrive_downloads';
+  const btn=$('gd_go'),st=$('gdrive_status');
+  if(btn)btn.disabled=true;
   uiLog(t('гугл-диск: скачиваю ')+url);
-  // Сначала смотрим, что лежит в ссылке: папка с несколькими подпапками спрашивает, куда класть
-  // каждую. Кнопка занята только на время запроса — окно выбора ждёт человека, и кнопка свободна.
+  st.textContent=t('смотрю, что в ссылке…');
+  // Сначала смотрим, что лежит в ссылке: окно строится из этого списка. Кнопка занята только на время
+  // запроса — окно ждёт человека, и кнопка свободна.
   let info;
   try{info=await (await fetch('/api/gdrive_list',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({url})})).json();}
-  catch(e){toast(t('Сервер не ответил: ')+e);uiLog('gdrive: '+e);return;}
+  catch(e){toast(t('Сервер не ответил: ')+e);uiLog('gdrive: '+e);st.textContent='';return;}
   finally{if(btn)btn.disabled=false;}
-  if(info.error){toast('⚠ '+errText(info));uiLog(t('гугл-диск: ')+info.error);return;}
-  let map=null;
-  if(info.kind==='folder'&&(info.dirs||[]).length>=2){
-    map=await gdMapAsk(info,dest);
-    if(!map){uiLog(t('гугл-диск: скачивание отменено'));return;}
-  }
-  await gdStart(url,dest,map);
+  if(info.error){toast('⚠ '+errText(info));uiLog(t('гугл-диск: ')+info.error);st.textContent='';return;}
+  if(info.kind==='folder'&&!(info.dirs||[]).length&&!(info.groups||[]).length){st.textContent=t('в ссылке нет файлов');return;}
+  st.textContent='';
+  const lay=await gdMapAsk(info);
+  if(!lay){st.textContent=t('скачивание отменено');uiLog(t('гугл-диск: скачивание отменено'));return;}
+  await gdStart(url,lay);
 }
-// Старт скачивания. map — раскладка по папкам ссылки; null — всё одной командой, как раньше.
-async function gdStart(url,dest,map){
+// Старт скачивания. lay — раскладка из окна (gdMapAsk): для папки — map, для ссылки на файл — dest.
+async function gdStart(url,lay){
   const btn=$('gd_go');if(btn)btn.disabled=true;
   try{
-    const body={url,dest};if(map)body.map=map;
+    const body={url,dest:lay.dest};if(lay.map)body.map=lay.map;
     const d=await (await fetch('/api/gdrive_download',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify(body)})).json();
     if(d.error){toast('⚠ '+errText(d));uiLog(t('гугл-диск: ')+d.error);return;}
-    $('gdrive_dest').value=dest;
+    GDLAST={file:lay.file,rows:lay.rows};   // итог — по этой раскладке, что ушла на сервер
     GDLOGN=0;                   // лог на сервере начался заново — считаем показанные строки с нуля
     $('gdrive_status').textContent=t('запуск rclone…');   // до первого опроса статус не должен быть пустым
     gdPoll();
   }catch(e){toast(t('Сервер не ответил: ')+e);uiLog('gdrive: '+e);}
   finally{if(btn)btn.disabled=false;}
 }
-// Выбор по умолчанию для каждой папки ссылки: номер камеры (с нуля) или -1 — «В папку загрузки».
-// Сначала папки, в имени которых номер камеры: число k (1..N) или «cam k»/«камера k»/«kam k» без учёта
-// регистра. Остальные — по порядку на ещё не занятые камеры. camIdx — только камеры с заданной папкой;
-// не хватило камер — «В папку загрузки».
+// Выбор по умолчанию для каждой строки окна «Куда что качать»: номер камеры (с нуля) или -1 — «В папку
+// загрузки». names — подпапки, затем приставки групп файлов корня (в этом порядке; у приставки номера нет).
+// Сначала имена с номером камеры: число k (1..N) или «cam k»/«камера k»/«kam k» без учёта регистра.
+// Остальные — по порядку на ещё не занятые камеры. camIdx — только камеры с заданной папкой; не хватило
+// камер — «В папку загрузки». Ссылка на файл — names из одного пустого имени: первая камера с папкой.
 function gdMapDefaults(names,camIdx){
   const out=names.map(()=>-1),taken=new Set(),want=new Set(camIdx.map(k=>k+1));
   const numsOf=n=>{const m=/(?:cam|камера|kam)\s*(\d+)/i.exec(n);
@@ -258,52 +262,82 @@ function gdMapDefaults(names,camIdx){
     if(k!==undefined){out[i]=k;taken.add(k);}});
   return out;}
 function gdSize(b){return b>=1073741824?(b/1073741824).toFixed(2)+t(' ГБ'):((b||0)/1048576).toFixed(1)+t(' МБ');}
-// Окно «куда скачать каждую папку» — для ссылки на папку с подпапками. Промис отдаёт раскладку
-// [{dir, dest}] для /api/gdrive_download или null — отмена. Закрыть окно можно крестиком, Escape и
-// кликом по фону: все три пути снимают класс «on», по нему промис и отдаёт null. Иначе он висел бы
-// вечно, а кнопка «Скачать» осталась бы занятой. dir "" — файлы самой ссылки (корень). Пустой dest —
-// «не качать»: такой элемент сервер пропускает.
-function gdMapAsk(info,dest){
-  const dirs=info.dirs||[],n=nCams(),camIdx=[];
+// «4 файла · 2.1 ГБ» — число файлов с верным склонением и размер
+function gdCountLine(files,bytes){return t(plur(files,'{n} файл','{n} файла','{n} файлов'),{n:files})+' · '+gdSize(bytes);}
+// Куда пойдёт строка окна, если выбрано «В папку загрузки»: подпапка — в свою папку внутри папки
+// загрузки, группа и файл — сама папка загрузки
+function gdDlPath(r,dl){return r.kind==='dir'?dl.replace(/[\\\/]+$/,'')+'\\'+r.name:dl;}
+// Окно «Куда что качать» — ВСЕГДА: и для папки (с подпапками или без), и для ссылки на файл. Строка —
+// подпапка, группа файлов корня (приставка имени, см. core/rclone.root_groups) или сам файл. Промис отдаёт
+// раскладку для gdStart {file, dest, map, rows} или null — отмена. Закрыть окно можно крестиком, Escape и
+// кликом по фону: все три пути снимают класс «on», по нему промис и отдаёт null. Иначе он висел бы вечно,
+// а кнопка «Скачать» осталась бы занятой.
+//   map  — подпапки {dir, dest} и группы {files, prefix, dest}; у ссылки на файл — null;
+//   dest — папка назначения ссылки на файл (у папки — папка загрузки);
+//   rows — {where, files, bytes} для итога: where — 'cam:N' (папка камеры), 'dl' (папка загрузки), 'none'.
+// Пустой dest — «Не качать»: сервер такой элемент пропускает.
+function gdMapAsk(info){
+  const isFile=info.kind!=='folder';
+  const n=nCams(),camIdx=[];
   for(let k=0;k<n;k++){if((CAMDIRS[k]||'').trim())camIdx.push(k);}
-  const picks=gdMapDefaults(dirs.map(d=>d.name),camIdx);
-  const base=dest.replace(/[\\\/]+$/,'');
-  const rows=dirs.map((d,i)=>({dir:d.name,name:d.name,files:d.files,bytes:d.bytes,def:picks[i]<0?'dl':'cam:'+picks[i]}));
-  if((info.root_files||0)>0)rows.push({dir:'',name:t('Файлы в корне ссылки'),files:info.root_files,bytes:info.root_bytes||0,def:'dl'});
-  const dlTo=r=>r.dir?base+'\\'+r.dir:dest;
+  const rows=[];
+  if(isFile)rows.push({kind:'file',name:t('Файл по ссылке'),sub:'',files:1,bytes:0});
+  else{
+    (info.dirs||[]).forEach(d=>rows.push({kind:'dir',name:d.name,sub:gdCountLine(d.files,d.bytes),files:d.files,bytes:d.bytes}));
+    (info.groups||[]).forEach(g=>rows.push({kind:'group',prefix:g.prefix,names:g.files,
+      name:(g.prefix?g.prefix+'…':t('Прочие файлы'))+' — '+gdCountLine(g.files.length,g.bytes),
+      sub:g.files.slice(0,3).join(', '),files:g.files.length,bytes:g.bytes}));
+  }
+  // выбор по умолчанию — тем же gdMapDefaults: подпапки, затем группы; у файла имя пустое
+  const picks=gdMapDefaults(isFile?['']:rows.map(r=>r.kind==='group'?r.prefix:r.name),camIdx);
+  rows.forEach((r,i)=>{r.def=picks[i]<0?'dl':'cam:'+picks[i];});
+  const dl=$('gdrive_dest').value.trim();
   const optsOf=r=>{let h='';
     for(const k of camIdx)h+='<option value="cam:'+k+'">'+esc(t('Папка камеры {n}',{n:k+1})+' ('+CAMDIRS[k]+')')+'</option>';
-    h+='<option value="dl">'+esc(t('В папку загрузки')+' ('+dlTo(r)+')')+'</option>';
-    return h+'<option value="none">'+esc(t('Не качать'))+'</option>';};
+    h+='<option value="dl">'+esc(t('В папку загрузки')+' ('+gdDlPath(r,dl)+')')+'</option>';
+    return r.kind==='file'?h:h+'<option value="none">'+esc(t('Не качать'))+'</option>';};
   const host=$('gdMapRows');host.innerHTML='';
   rows.forEach((r,i)=>{
     const row=document.createElement('div');row.className='row';
     // Имя и размер — каждый в одну строку, выпадашка занимает свою долю (55%) и не сжимает левую
     // колонку: при 640 px с длинным путём папки камеры размер переносился в столбик. min-width:0 —
     // чтобы flex-колонки могли сжиматься ниже ширины содержимого.
-    row.innerHTML='<div class="grow" style="flex:1 1 0;min-width:0"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(r.name)+'">'+esc(r.name)+'</div><div class="muted" style="font-size:12px;white-space:nowrap">'+
-      esc(t('{n} файлов',{n:r.files})+' · '+gdSize(r.bytes))+'</div></div>'+
+    row.innerHTML='<div class="grow" style="flex:1 1 0;min-width:0"><div style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis" title="'+esc(r.name)+'">'+esc(r.name)+'</div><div class="muted" style="font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+
+      esc(r.sub)+'</div></div>'+
       '<div style="flex:0 0 55%;min-width:0"><select id="gdMapSel'+i+'" aria-label="'+esc(r.name)+'" style="width:100%">'+optsOf(r)+'</select></div>';
     host.appendChild(row);
     $('gdMapSel'+i).value=r.def;
   });
-  const collect=()=>rows.map((r,i)=>{const v=$('gdMapSel'+i).value;
-    return {dir:r.dir,dest:v==='none'?'':v==='dl'?dlTo(r):CAMDIRS[+v.slice(4)]};});
+  // раскладка из строк окна: для отправки и для итога
+  const layout=()=>{const d=$('gdrive_dest').value.trim();
+    const items=rows.map((r,i)=>{const v=$('gdMapSel'+i).value;
+      return {r,where:v,to:v==='none'?'':v==='dl'?gdDlPath(r,d):CAMDIRS[+v.slice(4)]};});
+    return {file:isFile,dest:isFile?items[0].to:d,
+      map:isFile?null:items.map(x=>x.r.kind==='dir'?{dir:x.r.name,dest:x.to}:{files:x.r.names,prefix:x.r.prefix,dest:x.to}),
+      rows:items.map(x=>({where:x.where,files:x.r.files,bytes:x.r.bytes}))};};
   const ok=$('gdMapOk'),cancel=$('gdMapCancel'),box=$('mbGdMap');
-  // «Скачать» без единой папки не нужна: нечего качать — кнопка неактивна
-  const refresh=()=>{ok.disabled=!collect().some(x=>x.dest);};
+  // «Скачать» без единой строки не нужна: всё «Не качать» — кнопка неактивна
+  const refresh=()=>{ok.disabled=!rows.some((r,i)=>$('gdMapSel'+i).value!=='none');};
   host.onchange=refresh;refresh();
-  $('gdMapTitle').textContent=t('В ссылке {n} {folders} — куда скачать каждую?',
-    {n:dirs.length,folders:t(plur(dirs.length,'папка','папки','папок'))});
+  GDMAP=rows;
   return new Promise(res=>{
     let fin=false;
-    const done=v=>{if(fin)return;fin=true;mo.disconnect();res(v);};
+    const done=v=>{if(fin)return;fin=true;mo.disconnect();GDMAP=null;res(v);};
     const mo=new MutationObserver(()=>{if(!box.classList.contains('on'))done(null);});
-    ok.onclick=()=>{done(collect());closeModal('mbGdMap');};
+    ok.onclick=()=>{done(layout());closeModal('mbGdMap');};
     cancel.onclick=()=>closeModal('mbGdMap');
     openModal('mbGdMap');
     mo.observe(box,{attributes:true,attributeFilter:['class']});
   });}
+// Подписи «В папку загрузки (путь)» — по папке загрузки, что сейчас в поле окна
+function gdMapRelabel(){
+  if(!GDMAP)return;
+  const dl=$('gdrive_dest').value.trim();
+  GDMAP.forEach((r,i)=>{const sel=$('gdMapSel'+i);const o=sel&&sel.querySelector('option[value="dl"]');
+    if(o)o.textContent=t('В папку загрузки')+' ('+gdDlPath(r,dl)+')';});
+}
+// «Выбрать…» у папки загрузки в окне: выбранная папка сразу переписывает подписи строк
+async function gdPickDest(){await pickdir('gdrive_dest');gdMapRelabel();}
 // Что показать в строке статуса. Пока rclone не напечатал статистику (запуск,
 // поиск файла на диске) — его же текст и время: молчащая строка читается как
 // «зависло», а скачивание гигабайтов идёт минутами.
@@ -335,8 +369,7 @@ async function gdTick(){
   const bad=!!(s.done&&s.failed), stopped=!!(s.done&&s.cancelled);
   if(stopped){st.textContent=t('скачивание остановлено');}   // «Стоп» нажал человек — это не ошибка
   else if(bad){st.textContent='✗ '+t(s.cur||'скачивание не удалось');toast('⚠ '+t('Скачивание не удалось — смотри лог'));}
-  else st.textContent=s.done?t('скачивание завершено'):'';
-  gdFiles(bad||stopped);      // при отмене и ошибке список файлов статус не перебивает
+  else st.textContent=s.done?(gdSummary()||t('скачивание завершено')):'';   // итог — если раскладка в памяти
   // Скачанное легло в папку камеры: списки камер перечитываем сразу, без F5. Один раз — за это
   // отвечает polling (его знает только тик, снявший интервал).
   if(polling&&s.done&&!s.failed&&!s.cancelled){try{await camsRefreshKeep();}catch(e){uiLog('camsRefresh: '+e);}}
@@ -350,52 +383,20 @@ async function gdResume(){
   GDLOGN=s.log_total||0;        // накопленный лог заново не вываливаем
   gdPoll();
 }
-async function gdFiles(quiet){
-  const dest=$('gdrive_dest').value.trim();if(!dest)return;
-  let fd;try{fd=await (await fetch('/api/files?dir='+encodeURIComponent(dest))).json();}catch(e){return;}
-  const sel=$('gdrive_cam1');if(!sel)return;
-  sel.innerHTML='';
-  (fd.files||[]).forEach(f=>{const o=document.createElement('option');o.textContent=f;sel.appendChild(o);});
-  if(!quiet&&fd.files&&fd.files.length)$('gdrive_status').textContent=t('скачано файлов: {n}',{n:fd.files.length});
+// Итог после успешного скачивания: куда ушло и сколько — «Камера 1 — 4 файла · 2.1 ГБ; папка загрузки —
+// 1 файл». Берётся из раскладки, что отправили (GDLAST в памяти страницы). После F5 её нет — итога нет,
+// и строка остаётся «скачивание завершено». Ссылка на файл — «файл скачан: Камера 1».
+function gdSummary(){
+  const L=GDLAST;if(!L)return '';
+  const name=w=>w==='dl'?t('папка загрузки'):t('Камера {n}',{n:(+w.slice(4))+1});
+  if(L.file){const x=L.rows[0];return x&&x.where!=='none'?t('файл скачан: {where}',{where:name(x.where)}):'';}
+  const sum={};
+  L.rows.forEach(x=>{if(x.where==='none')return;
+    const a=sum[x.where]||(sum[x.where]={files:0,bytes:0});a.files+=x.files;a.bytes+=x.bytes;});
+  return Object.keys(sum).sort((a,b)=>a==='dl'?1:b==='dl'?-1:(+a.slice(4))-(+b.slice(4)))
+    .map(w=>name(w)+' — '+gdCountLine(sum[w].files,sum[w].bytes)).join('; ');
 }
 document.addEventListener('DOMContentLoaded',gdResume);
-async function gdSpread(){
-  const n=nCams();if(n<2){toast(t('Раскладка нужна минимум двум камерам'));return;}
-  const dest=$('gdrive_dest').value.trim();
-  const s=$('gdrive_cam1');
-  if(!dest){toast(t('Не задана папка загрузки'));return;}
-  if(!s||!s.value){toast(t('Сначала выбери скачанный файл камеры 1'));return;}
-  const btn=$('gd_spread');if(btn)btn.disabled=true;
-  try{
-    // Весь материал в одной папке — она и есть папки всех камер этой пары:
-    // иначе cam1 не найдётся по пути папки камеры 1. Подбор по звуку — тот же
-    // /api/cammatch, что и на «Подбор по звуку».
-    const d=await (await fetch('/api/cammatch',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({cam1dir:dest,cam1:s.value,dirs:Array(n-1).fill(dest)})})).json();
-    if(d.error){toast('⚠ '+errText(d));uiLog(t('раскладка: ')+d.error);return;}
-    const files=(await (await fetch('/api/files?dir='+encodeURIComponent(dest))).json()).files||[];
-    for(let k=0;k<n;k++){CAMDIRS[k]=dest;CAMFILES[k]=files;}
-    buildCamRows();   // пересобрать селекты под папку загрузки, иначе в них старые списки
-    const sel0=$('sel'+0);if(sel0)sel0.value=s.value;
-    // одна папка вместо отдельных камер: один и тот же «лучший» файл не занимает
-    // две камеры разом — нашедшиеся уникальные подставляем, остальные доукомплектуй
-    const used=new Set([s.value]);let found=1;
-    (d.matches||[]).forEach((m,k)=>{
-      if(!m.name||used.has(m.name))return;
-      used.add(m.name);found++;
-      const sel=$('sel'+(k+1));if(sel)sel.value=m.name;
-      uiLog(t('раскладка: Камера {n}: {name} (увер. {c})',{n:k+2,name:m.name,c:m.score}));
-    });
-    if(found===n)addPair();
-    else uiLog(t('раскладка: нашлось {n} из {m} камер — доукомплектуй остальные и нажми «В очередь»',{n:found,m:n}));
-    saveState();
-    // Сборка превью-прокси к моменту просмотра: 4:2:2 10-бит жуется
-    // софтом, и лучше начать заранее. Единственный клип — чей он, очевидно;
-    // их несколько — прокси поднимутся сами при открытии предпросмотра.
-    if(CLIPS.length===1)pvProxyLoad(CLIPS[0].xml,true);
-  }catch(e){toast(t('Сервер не ответил: ')+e);uiLog('раскладка: '+e);}
-  finally{if(btn)btn.disabled=false;}
-}
 async function clearQueue(){
   if(QUEUE.length>2&&!await askConfirm(t('Очистить очередь? В ней {n} {pairs}.',{n:QUEUE.length,pairs:t(plur(QUEUE.length,'пара','пары','пар'))})))return;
   QUEUE=[];renderQueue();saveState();}

@@ -144,15 +144,21 @@ def check_compute() -> None:
                           "Ставить ОТДЕЛЬНО под свою видеокарту, см. README", info=info))
         return
     import torch
-    from core.device import pick_device, ct2_device
+    from core.device import pick_device, ct2_device, free_vram_mib, vram_total_mib
 
     dev = pick_device()
     if dev == "cuda":
         try:
             name = torch.cuda.get_device_name(0)
-            free, total = torch.cuda.mem_get_info()
-            row(OK, t("устройство"), f"cuda — {name}, " + t("свободно "
-                                  "{free:.1f} из {total:.1f} ГБ", free=free / 2**30, total=total / 2**30))
+            # Свободная память — правда для всех процессов карты (nvidia-smi), а не бюджет торча:
+            # на Windows torch видит только свой процесс (см. core/device.py:free_vram_mib).
+            free_mib = free_vram_mib()
+            total_mib = vram_total_mib()
+            if free_mib is None or total_mib is None:
+                row(OK, t("устройство"), f"cuda — {name}")
+            else:
+                row(OK, t("устройство"), f"cuda — {name}, " + t("свободно "
+                                      "{free:.1f} из {total:.1f} ГБ", free=free_mib / 1024, total=total_mib / 1024))
         except ReelsiError: raise
         # сведения о видеопамяти необязательны: cuda уже подтверждено, без цифр строка остаётся OK
         except Exception:
@@ -239,6 +245,7 @@ OPTIONAL = [
     ("gigaam",         "русский CTC-движок GigaAM (пословная нарезка)"),
     ("librosa",        "поиск повторов (SSM)"),
     ("rembg",          "снятие фона у сгенерированных картинок"),
+    ("sentence_transformers", "поиск вставок по смыслу (EmbeddingGemma 2); без него — по именам файлов"),
     ("PIL",            "работа с картинками-вставками"),
     ("fontTools",      "список установленных шрифтов в UI"),
     ("anthropic",      "профиль провайдера Claude"),

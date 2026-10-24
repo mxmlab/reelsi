@@ -121,6 +121,25 @@ def _s(x: Any, key: str, default: Any = "") -> Any:
     return default if v is None else v
 
 
+# Кэш «без фона»: план сцены подменяет путь фото на <исходник>.nobg.png (core/insertlib.nobg_path).
+NOBG_SUFFIX = ".nobg.png"
+
+
+def _card_media(jsx: dict[str, Any]) -> tuple[str, bool]:
+    """Путь файла карточки и флаг «без фона» из вставки `.jsx`.
+
+    В сборке фото с флагом «без фона» уезжает с путём кэша `<исходник>.nobg.png`. Карточка
+    хранит исходник и флаг — возвращаем так же. Вставка «на подложке» кэш несёт штатно, её
+    не трогаем. Если исходника на диске нет, остаётся кэш как есть (он уже без фона)."""
+    media = str(jsx.get("media") or "")
+    if jsx.get("plate") or not media.lower().endswith(NOBG_SUFFIX):
+        return media, False
+    src = media[:-len(NOBG_SUFFIX)]
+    if os.path.isfile(src):
+        return src, True
+    return media, False
+
+
 def _merge_one(side: dict[str, Any] | None, jsx: dict[str, Any]) -> dict[str, Any]:
     base = side or {}
     start = _num(jsx.get("start"), 0.0)
@@ -128,11 +147,13 @@ def _merge_one(side: dict[str, Any] | None, jsx: dict[str, Any]) -> dict[str, An
     dur = round(end - start, 3)
     if dur <= 0:
         dur = _num(base.get("duration_sec"), 2.5) or 2.5
+    media, nobg = _card_media(jsx)
     return {
         "type": jsx.get("t") or base.get("type") or "photo",
         "start_sec": round(start, 3),
         "duration_sec": dur,
-        "media": str(jsx.get("media") or ""),
+        "media": media,
+        "nobg": nobg,
         "x": _num(jsx.get("x"), 0.0),
         "y": _num(jsx.get("y"), 0.0),
         "sc": _num(jsx.get("sc"), 100.0) or 100.0,
@@ -153,6 +174,7 @@ def _bare_one(side: dict[str, Any]) -> dict[str, Any]:
         "start_sec": _num(side.get("start_sec"), 0.0),
         "duration_sec": _num(side.get("duration_sec"), 2.5) or 2.5,
         "media": "",
+        "nobg": False,
         "x": 0.0,
         "y": 0.0,
         "sc": 100.0,

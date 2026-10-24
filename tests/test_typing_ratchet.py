@@ -90,6 +90,7 @@ LOWER_BOUND = (
     "core/encoders.py",
     "core/drp.py",
     "core/insertlib.py",
+    "core/rembg_run.py",
     "core/stock.py",
     "core/clipstore.py",
     "core/omni_cut.py",

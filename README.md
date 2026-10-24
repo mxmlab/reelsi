@@ -60,7 +60,7 @@ Reelsi is a local editing assistant for talking-head video. AI cuts footage by c
 
 - **Interface language**: Russian and English, switched in the header.
 - **Command line**: cutting, highlights and the After Effects script are also available from the console, without the web interface.
-- **Footage from Google Drive**: downloads source files from a shared link (`rclone`) and lays them out into camera folders; a link to several subfolders asks where each one goes.
+- **Footage from Google Drive**: paste a shared link (`rclone`) and a "Where to put what" window opens for it — subfolders, root files grouped by name prefix (C…, DSC_…) and single files, with the cameras preselected; each camera downloads straight into its folder, and a summary per destination follows at the end.
 
 ## How processing works
 
@@ -87,6 +87,7 @@ Tested only on Windows 11 with an NVIDIA GPU and Adobe After Effects / Premiere 
 - Adobe After Effects is optional: it is needed for the headless AE render and for editing the built `.jsx` by hand, while the built-in engine renders without it. Adobe Premiere Pro is optional as well — it is only needed to open the exported XML, Reelsi itself does not call it.
 - Optional tools: `rclone` (Google Drive downloads), `yt-dlp` (music and podcasts from YouTube). YouTube downloads also need `node` in PATH: yt-dlp runs with it as the JavaScript runtime.
 - Optional Python packages from `requirements-optional.txt` come one by one: every one enables exactly one feature and everything else keeps working (`pedalboard` — live monitoring through VST3 plug-ins and the output device list; `gigaam` — word-level cuts; `silero-vad`, `rembg`, `anthropic`, `yt-dlp`). `python doctor.py` names what is missing and what turns off without it.
+- `sentence-transformers` (insert library search, from `requirements-optional.txt`): the model `google/embeddinggemma-2` (about 1.5 GB) downloads on the first search.
 - The AI denoiser arrives on demand: the RoFormer engine is a separate environment with its own models, downloaded from the Voice panel, and without it the previous deep-filter binary is used.
 - Subtitle templates use SF Pro; rebuild them for another font via `python tools/harvest_good.py "path/to/reference.xml"`.
 

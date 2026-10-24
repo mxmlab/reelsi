@@ -30,18 +30,10 @@
   <!-- Гугл-диск — ПЕРВЫМ на шаге: материал приезжает оттуда, и до него не с чем работать.
        Раньше блок стоял третьим, под очередью камер, — то есть после того, что он кормит. -->
   <div class="card" id="gdrive_card">
-    <h2><span class="k">◆</span>Материал с гугл-диска <span class="i" data-t="Вставил ссылку на файл или папку гугл-диска — материал скачался на этот компьютер (через rclone, крупные файлы он умеет). Потом выбери скачанный файл камеры 1 и нажми «Разложить по камерам» — остальные подберутся по звуку. rclone настраивается один раз командой rclone config в консоли: вход в аккаунт делает браузер. Состояние формы сохраняется. Ссылка на папку с несколькими подпапками (например, по папке на камеру) — спросит, куда скачать каждую.">!</span></h2>
+    <h2><span class="k">◆</span>Материал с гугл-диска <span class="i" data-t="Вставь ссылку на файл или папку гугл-диска и нажми «Скачать». Сначала смотрю, что лежит в ссылке, и открывается окно «Куда что качать»: куда класть каждую подпапку и группу файлов. Потом материал скачивается на этот компьютер через rclone (крупные файлы он умеет); ход — в строке под кнопкой. rclone настраивается один раз командой rclone config в консоли: вход в аккаунт делает браузер. Состояние формы сохраняется.">!</span></h2>
     <div class="row">
       <div class="grow"><label for="gdrive_url">Ссылка</label><input id="gdrive_url" style="width:100%" placeholder="https://drive.google.com/file/d/…" oninput="saveState()"></div>
       <button class="sm" id="gd_go" onclick="gdDownload()">Скачать</button>
-    </div>
-    <div class="row">
-      <div class="grow"><label for="gdrive_dest">Папка загрузки</label><input id="gdrive_dest" style="width:100%" oninput="saveState()"></div>
-      <button class="sm" onclick="pickdir('gdrive_dest')">Выбрать…</button>
-    </div>
-    <div class="row">
-      <div><label for="gdrive_cam1">Скачанный файл камеры 1</label><select id="gdrive_cam1"></select></div>
-      <button class="sm" id="gd_spread" onclick="gdSpread()">Разложить по камерам</button>
     </div>
     <div id="gdrive_status" class="muted mono" style="margin-top:8px;font-size:12px"></div>
   </div>
@@ -564,7 +556,7 @@
 <!-- ============ MODAL: insert library ============ -->
 <div class="backdrop" id="mbInsLib" onclick="closeIfBack(event,'mbInsLib')">
   <div class="modal wide" role="dialog" aria-modal="true" aria-label="База вставок">
-    <div class="mhead"><span class="t">База вставок</span> <span class="i" data-t="Скан: из XML прошлых проектов берётся реально использованное, плюс медиа в папках (без исходников камер/служебного). После генерации ИИ-вставок база сама подставляет файл под запрос (семантика: эмбеддер LM Studio). «Импорт» переносит новые скачанные файлы в свою папку базы. «Описать через ИИ» — vision-модель смотрит каждый файл и пишет описание для поиска.">!</span>
+    <div class="mhead"><span class="t">База вставок</span> <span class="i" data-t="Скан: из XML прошлых проектов берётся реально использованное, плюс медиа в папках (без исходников камер/служебного). После генерации ИИ-вставок база сама подставляет файл под запрос: по смыслу — эмбеддер EmbeddingGemma 2 в сервисе моделей, у файла без описания — по его картинке. «Импорт» переносит новые скачанные файлы в свою папку базы.">!</span>
       <span class="grow"></span><button class="icon" data-close aria-label="Закрыть" data-t="Закрыть" onclick="closeModal('mbInsLib')"><span data-ic="x"></span></button></div>
     <div class="mbody">
       <div class="sect">Скан и папки</div>
@@ -575,7 +567,6 @@
         <button class="sm" onclick="pickdirInto('illdirs')">+ папка…</button>
         <label class="chk" style="display:flex;gap:7px;align-items:center;margin:0"><input type="checkbox" id="illauto" checked onchange="illSaveCfg()"> автоподбор после ИИ</label>
         <label class="chk" id="illgenRow" style="display:none;gap:7px;align-items:center;margin:0" data-t="После разметки вставок (в том числе «Разметить всё») фото-вставки, которым база ничего не нашла, генерятся сразу — без отдельного клика. ЭТО ПЛАТНО: ~$0.04 за картинку, на ролик обычно 3–6 штук. Сгенерённое падает в базу, так что со временем генерить приходится всё реже. Видно только когда в ⚙ выбран профиль «Картинки»."><input type="checkbox" id="illgen" onchange="illSaveCfg()"> и сразу генерить недостающие</label>
-        <button class="sm" id="illdesc" onclick="illDescribe()" data-t="Vision-модель LM Studio посмотрит каждый файл без описания и запишет, что на нём — поиск станет сильно точнее"><span data-ic="img"></span> Описать через ИИ</button>
         <span id="illres" class="ok"></span>
       </div>
       <div id="illinfo" class="muted" style="margin-top:10px;font-size:12px"></div>
@@ -689,6 +680,8 @@
             </span></div>
           <div class="setrow"><label for="spk_ins_named">Вставки по названиям <span class="i" data-t="Слово из личного словаря named_inserts.json (корень репозитория; пример — data/named_inserts.example.json) прозвучало в речи — на нём встаёт фото-вставка с картинкой из базы вставок. Словаря нет — ничего не ставится. Картинки в базе нет — вставки не будет, а в логе появится «картинки нет». Галочка снята — не ставить вовсе.">!</span></label>
             <input type="checkbox" id="spk_ins_named" checked style="flex:0 0 auto"></div>
+          <div class="setrow"><label for="spk_ins_nobg">Фото-вставки без фона <span class="i" data-t="Каждая картинка, которая встаёт во вставку этого спикера, сразу получает снятый фон. Если у самой картинки в базе запомнено своё — главнее оно.">!</span></label>
+            <input type="checkbox" id="spk_ins_nobg" style="flex:0 0 auto"></div>
           <div class="setrow"><label for="spk_pos_a">Приписка к промпту 1 <span class="i" data-t="Что дописывать к предмету при генерации картинки кнопкой 1 (Nano Banana): «3d icon», «photorealistic» и т.п. Клеится пробелом. Пусто — генерим предмет как есть.">!</span></label>
             <span style="display:flex;gap:8px;flex:1;min-width:0">
               <input id="spk_extra_a" placeholder="пусто — без приписки" style="flex:1;min-width:0">
@@ -860,10 +853,14 @@
 
 <div class="backdrop" id="mbGdMap" onclick="closeIfBack(event,'mbGdMap')">
   <div class="modal" style="max-width:720px" role="dialog" aria-modal="true" aria-labelledby="gdMapTitle">
-    <div class="mhead"><span class="t" id="gdMapTitle"></span>
+    <div class="mhead"><span class="t" id="gdMapTitle">Куда что качать</span> <span class="i" data-t="Для каждой строки выбери, куда её качать: в папку камеры, в папку загрузки или «Не качать». Подпапка качается целиком; группа — файлы корня ссылки с одной приставкой имени (обычно это одна камера). Окно открывается всегда, в том числе для одной папки или одного файла.">!</span>
       <span class="grow"></span>
       <button class="icon" data-close aria-label="Закрыть" data-t="Закрыть" onclick="closeModal('mbGdMap')"><span data-ic="x"></span></button></div>
     <div class="mbody" style="display:flex;flex-direction:column;gap:12px">
+      <div class="row">
+        <div class="grow"><label for="gdrive_dest">Папка загрузки</label><input id="gdrive_dest" style="width:100%" oninput="saveState();gdMapRelabel()"></div>
+        <button class="sm" onclick="gdPickDest()">Выбрать…</button>
+      </div>
       <div id="gdMapRows" style="display:flex;flex-direction:column;gap:10px"></div>
       <div class="row" style="gap:8px">
         <button class="primary" style="flex:1" id="gdMapOk">Скачать</button>
@@ -900,9 +897,9 @@
         <div class="sect" style="margin-top:0">Инструменты <span class="i" data-t="Отдельные действия, не относящиеся к настройке моделей и профилей.">!</span></div>
         <div class="setrow"><label>Видео <span class="i" data-t="Открывает отдельный инструмент генерации видео из текста.">!</span></label>
           <button class="sm" id="navvideo" type="button" onclick="closeModal('mbAISettings');openVideo()" aria-label="Генерация видео" data-t="Генерация видео из текста (Seedance 2 на OpenRouter): длина, размер, референсы фото/видео с подписью. Отдельный инструмент, не связан с нарезкой."><span data-ic="film" data-cls="gold"></span>Открыть</button></div>
-        <div class="setrow"><label>База вставок <span class="i" data-t="Пересканирует папки базы вставок, подхватывает новые картинки и видео и описывает новые файлы через ИИ.">!</span></label>
+        <div class="setrow"><label>База вставок <span class="i" data-t="Пересканирует папки базы вставок, подхватывает новые картинки и видео и считает для них векторы поиска.">!</span></label>
           <button class="sm" id="illhdr" type="button" onclick="illRefresh()" aria-label="Обновить базу вставок"><span data-ic="book" data-cls="gold"></span>Обновить <span id="illhdrtxt"></span></button>
-          <button class="sm" id="illopen" type="button" onclick="closeModal('mbAISettings');openInsLib()" aria-label="Открыть базу вставок" data-t="Что в окне базы вставок: папки для скана, импорт новых файлов в папку базы, описания через ИИ и список файлов — описания правятся прямо в списке."><span data-ic="book"></span>Открыть базу вставок…</button></div>
+          <button class="sm" id="illopen" type="button" onclick="closeModal('mbAISettings');openInsLib()" aria-label="Открыть базу вставок" data-t="Что в окне базы вставок: папки для скана, импорт новых файлов в папку базы и список файлов — описания правятся прямо в списке."><span data-ic="book"></span>Открыть базу вставок…</button></div>
         <div class="setrow"><label>Временные файлы <span class="i" data-t="Удаляет временные файлы в папке результата; прокси спросит отдельно, рото не трогается.">!</span></label>
           <button class="sm" id="navclean" type="button" onclick="cleanTmp()" aria-label="Очистить временные файлы"><span data-ic="broom"></span>Очистить</button></div>
         <div class="sethdr">Экспорт</div>
@@ -1025,8 +1022,8 @@
           <input type="password" id="stk_pixabay" aria-label="Ключ Pixabay" onchange="saveStockKeys()"></div>
         <div class="setrow"><label for="stk_coverr">Ключ Coverr <span class="i" data-t="Coverr: видео, ключ из личного кабинета coverr.co. Провайдер включается переменной окружения REELSI_STOCK_COVERR=1 — схема их поиска ещё проверяется.">!</span></label>
           <input type="password" id="stk_coverr" aria-label="Ключ Coverr" onchange="saveStockKeys()"></div>
-        <div class="setrow"><label>Openverse <span class="i" data-t="Openverse (api.openverse.org) — фото под свободными лицензиями, ключ не нужен. Берутся только лицензии, разрешающие коммерческое использование и изменение; лицензия и автор ложатся в файл лицензии рядом с файлом.">!</span></label>
-          <span class="muted" style="font-size:12px">ключ не нужен</span></div>
+        <div class="setrow"><label>Openverse <span class="i" data-t="Openverse ищет картинки по открытым лицензиям без ключа, но отвечает медленно (10–20 с). Снимите галку — подбор со стоков будет искать только на остальных.">!</span></label>
+          <label class="chk" style="gap:7px;align-items:center;margin:0"><input type="checkbox" id="stk_openverse_on" aria-label="Искать на Openverse" onchange="saveStockKeys()"> Искать на Openverse</label></div>
         <div class="setrow"><label></label>
           <button class="sm" onclick="saveStockKeys()">Сохранить ключи</button>
           <span class="muted" id="stk_res" style="font-size:12px"></span></div>

@@ -375,7 +375,7 @@ async function insToggleType(i){const c=CLIPS[curIns];if(!c||!c.inserts)return;c
   if(stockWas)await insStockFor(i);          // открытые панели переискиваем и оставляем открытыми
   if(libWas)await insLibFor(i);
   const auto=illCfg().auto!==false;          // автоподбор для пустой вставки — как при правке запроса
-  if(auto&&(x.query||'').trim()&&!x.media)await insLibFill([x],spkKey);
+  if(auto&&(x.query||'').trim()&&!x.media)await insLibFill([x],spkKey,c);
   renderInsHost();syncClipLists();saveState();
   }finally{delete x._typeBusy;}}
 // удаление карточки ЦЕЛИКОМ: ИИ-предложение (есть query) запоминаем в ins_rejected —
@@ -511,11 +511,11 @@ function renderInsHost(){const host=$('insHost');if(!host)return;host.innerHTML=
     card.innerHTML='<div class="top">'
       +'<span class="badge '+(vid?'video':'photo')+'" style="cursor:pointer" tabindex="0" role="button" aria-label="'+t('Переключить фото/видео')+'" data-t="'+t('Клик — переключить фото/видео')+'" onclick="insToggleType('+i+')">'+ico(vid?'film':'img','gold')+(vid?t('ВИДЕО'):t('ФОТО'))+'</span>'
       +'<span class="mono muted" style="min-width:70px">'+fmtIns(x.start_sec)+' ('+(Math.round((x.duration_sec||2)*10)/10)+t('с')+')</span>'
-      +scrubXY('CLIPS[curIns].inserts['+i+']',x.x,x.y,'ipvRefresh()','saveState()')
-      +scrubScale('CLIPS[curIns].inserts['+i+']',x.sc,'ipvRefresh()','saveState()')                // крупность (и от неё — анимация)
+      +scrubXY('CLIPS[curIns].inserts['+i+']',x.x,x.y,'ipvRefresh()','saveState();insMemoSave(CLIPS[curIns].inserts['+i+'])')
+      +scrubScale('CLIPS[curIns].inserts['+i+']',x.sc,'ipvRefresh()','saveState();insMemoSave(CLIPS[curIns].inserts['+i+'])')                // крупность (и от неё — анимация)
       +(vid?scrubSin('CLIPS[curIns].inserts['+i+']',x.sin,'ipvRefresh()','saveState()')            // у видео — откуда играть файл
            :((CURSTYLE&&(CURSTYLE.insert_fx||'card')==='card')                                                // у фото — форма маски, но только при «card» (дефолт как в сборке)
-             ?scrubMask('CLIPS[curIns].inserts['+i+']',x.mw,x.mh,'ipvRefresh()','saveState()'):''))      +'<label class="chk" style="display:flex;gap:6px;align-items:center;margin:0"><input type="checkbox" '+(x.mosaic?'checked':'')+' onchange="CLIPS[curIns].inserts['+i+'].mosaic=this.checked;this.blur();saveState();ipvRefresh()"> mosaic</label>'
+             ?scrubMask('CLIPS[curIns].inserts['+i+']',x.mw,x.mh,'ipvRefresh()','saveState();insMemoSave(CLIPS[curIns].inserts['+i+'])'):''))      +'<label class="chk" style="display:flex;gap:6px;align-items:center;margin:0"><input type="checkbox" '+(x.mosaic?'checked':'')+' onchange="CLIPS[curIns].inserts['+i+'].mosaic=this.checked;this.blur();saveState();ipvRefresh()"> mosaic</label>'
       // галка «на подложке» — рядом с mosaic, тот же путь сохранения: вставка
       // едет на картинке-подложке из стиля, фон с фото снимается, промпт — свой (pa/pb)
       +'<label class="chk" style="display:flex;gap:6px;align-items:center;margin:0" data-t="'+t('вставка встаёт на картинку-подложку из стиля («Подложка (файл)»), фон с фото снимается, а промпт генерации берётся из «Подложка: приписка к промпту 1/2» профиля спикера')+'"><input type="checkbox" '+(x.plate?'checked':'')+' onchange="CLIPS[curIns].inserts['+i+'].plate=this.checked;this.blur();saveState();ipvRefresh()"> '+t('на подложке')+'</label>'
@@ -528,7 +528,7 @@ function renderInsHost(){const host=$('insHost');if(!host)return;host.innerHTML=
       +'<button class="sm" onclick="insLibFor('+i+')" aria-label="'+t('Варианты из базы вставок')+'" data-t="'+t('Варианты из базы вставок')+'">'+ico('book')+'</button>'
       +'<button class="sm" onclick="insStockFor('+i+')" aria-label="'+t('Сток')+'" data-t="'+t('Кадры со стоков Pexels/Pixabay по запросу карточки')+'">'+t('Сток')+'</button>'
       +((vid?vidGenOn():imgGenOn())?insGenBtns(i,x):'')
-      +(!vid&&fname?'<button class="sm" onclick="insRembg('+i+')" data-t="'+t('Убрать фон у этого файла (как Remove Background в фотошопе) — рядом ляжет прозрачный -nobg.png')+'"'+(x.genBusy?' disabled':'')+'>'+t('Фон долой')+'</button>':'')
+      +(!vid&&fname?'<button class="sm'+(x.nobg?' key':'')+'" aria-pressed="'+(x.nobg?'true':'false')+'" onclick="insRembg('+i+')" data-t="'+t('Снять фон у этой картинки (запоминается к картинке)')+'">'+t('Фон долой')+'</button>':'')
       +'<button class="sm" onclick="insCopy('+i+')" data-t="'+t('Скопировать поисковый запрос')+'">'+t('Копировать')+'</button>'
       // имя файла — отдельный элемент: одна строка с «…», полное имя в title; галочка и
       // крестик «убрать» сидят в той же обёртке, чтобы не переноситься отдельно от имени
@@ -566,8 +566,77 @@ function insKind(p){p=(p||'').trim();if(!p)return '';
 // переключении фото↔видео варианты оставались от прежнего типа. Приоритет у типа мягкий,
 // так что «смотрю глазами» не пострадало — просто нужный тип идёт первым.
 function insWant(x){return (x&&x.type==='video')?'video':'photo';}
-function insSetMedia(x,p){x.media=p||'';const k=insKind(p);if(k)x.type=k;
-  if(p)x.noAuto=false;}          // файл снова есть — запрет на автоподбор больше не нужен
+// ДВЕРЬ привязки файла к вставке: сюда ходит КАЖДОЕ место, где путь картинки попадает в
+// x.media (выбор файлом, 📚, автоподбор, сток, генерация, шаг 3). Память картинки живёт за
+// файлом в базе (insertlib.remember_look): маска, масштаб, точка покоя и «без фона» едут
+// вместе с ним. Здесь — только применение; что запоминать, решает insMemoSave.
+//   c    — клип ВСТАВКИ: от его спикера берётся «без фона» по умолчанию (ins_nobg);
+//   memo — поля памяти, если место их уже принесло (ответ базы); иначе спросим сами.
+function insSetMedia(x,p,c,memo){x.media=p||'';
+  // Файл выбран — ряды выбора («База» 📚 и «Стоки») больше не нужны. Через эту дверь идут все
+  // способы выбора (файлом, база, сток, автоподбор, генерация), поэтому закрываем её тут, а не
+  // в каждом способе: иначе закрывался бы только ряд того способа, которым выбрали.
+  x.libShown=false;x.stockShown=false;
+  const k=insKind(p);if(k)x.type=k;
+  if(p)x.noAuto=false;           // файл снова есть — запрет на автоподбор больше не нужен
+  if(k!=='photo')return;         // видео: память картинки не трогаем, путь как раньше
+  if(memo)insApplyMemo(x,memo);
+  // «без фона» выставляется заново для КАЖДОЙ новой картинки: из памяти картинки, если там
+  // есть, иначе — из настройки спикера клипа. От прежней картинки на карточке не наследуется
+  // (иначе галка «без фона» у старого файла перешла бы на новый). План сцены читает только
+  // флаг самой вставки, про спикера он не знает.
+  if(!memo||typeof memo.nobg!=='boolean')x.nobg=insSpeakerNobg(c);
+  if(!memo)insMemoFetch(x,p);}
+// «Без фона» по умолчанию — из профиля спикера КЛИПА вставки (ins_nobg). Клипа, спикера или
+// галки нет — выключено. Спикера берём только через clipSpeaker — сторож: test_two_speakers.
+function insSpeakerNobg(c){
+  const sp=c?clipSpeaker(c):'';
+  const prof=(sp&&typeof SPEAKERS!=='undefined'&&SPEAKERS[sp])||null;
+  return !!(prof&&prof.ins_nobg);}
+// Поля памяти — на вставку, какие пришли. Поля, которых в ответе нет, не трогаем: в базе
+// не запомнено (см. remember_look), а значит и менять нечего.
+function insApplyMemo(x,m){
+  if(!m)return;
+  if(m.mw!=null)x.mw=m.mw;if(m.mh!=null)x.mh=m.mh;if(m.sc!=null)x.sc=m.sc;
+  if(m.x!=null)x.x=m.x;if(m.y!=null)x.y=m.y;
+  if(typeof m.nobg==='boolean')x.nobg=m.nobg;}
+// Память картинки из базы — когда место привязки её не принесло (выбор файлом, сток, шаг 3).
+// Ответ применяем, только если на карточке по-прежнему эта картинка: за время запроса могли
+// выбрать другой файл.
+async function insMemoFetch(x,p){
+  let d;try{d=await (await fetch('/api/insert_memo?path='+encodeURIComponent(p))).json();}
+  catch(e){uiLog(t('память картинки: ')+e);return;}
+  if(!d||!d.ok||!d.memo||x.media!==p)return;
+  insApplyMemo(x,d.memo);
+  renderInsHost();syncClipLists();saveState();ipvRefresh();}
+// ЕДИНАЯ приёмка ответа ИИ-вставок — для обеих разметок (конвейер «Разметить всё» и по
+// клипу). Вставки по названиям приходят уже с картинкой и её памятью (`memo` — из базы,
+// insertlib.find_named): картинку ставим ДВЕРЬЮ insSetMedia, иначе её последние настройки и
+// «без фона» спикера на такой вставке не появятся. memo всегда объект, даже пустой: запроса
+// памяти по сети нет, а «без фона» без памяти берётся от спикера клипа. Поле memo в самой
+// вставке не остаётся — память держит база, а не сохранённое состояние клипа.
+function insFromAI(c,d){
+  c.inserts=(d.inserts||[]).map(x=>({...x,media:(x&&(x.auto==='named'||x.auto==='drug'))?(x.media||''):''}));
+  c.insTarget=Math.max(d.insTarget||0,c.inserts.length);
+  c.inserts.forEach(x=>{
+    if((x.auto==='named'||x.auto==='drug')&&x.media)insSetMedia(x,x.media,c,x.memo||{});
+    delete x.memo;});
+}
+// Память картинки пишем в базу с задержкой 600 мс после последней правки: скраббер шлёт
+// сохранение на каждое отпускание, а число в поле — на каждый ввод. Одна запись на серию правок.
+// Копия полей берётся СРАЗУ при правке — поэтому смена картинки на карточке уже ничего не
+// теряет: отложенная запись уйдёт со значениями той картинки, которую правили.
+const INSMEMO_DELAY=600;const INSMEMO_Q={};   // путь -> {body, t}
+function insMemoSave(x){
+  if(!x||!x.media||insKind(x.media)!=='photo')return;
+  const p=x.media,q=INSMEMO_Q[p];if(q)clearTimeout(q.t);
+  INSMEMO_Q[p]={body:{path:p,mw:x.mw,mh:x.mh,sc:x.sc,x:x.x,y:x.y,nobg:x.nobg},
+    t:setTimeout(()=>insMemoFlush(p),INSMEMO_DELAY)};}
+function insMemoFlush(p){const q=INSMEMO_Q[p];if(!q)return;
+  clearTimeout(q.t);delete INSMEMO_Q[p];
+  fetch('/api/insert_memo',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(q.body)}).then(r=>r.json())
+    .catch(e=>uiLog(t('память картинки: ')+e));}
 // Ссылка VJOB -> вставка не может быть индексом: карточки сортируются, редактор
 // переключает клипы, а F5 восстанавливает их заново. Opaque-token хранится в самой
 // вставке и уходит серверу только заголовком, чтобы status вернул его вместе с key.
@@ -585,7 +654,7 @@ function insVideoJobMatches(x,key){return !!(x&&x.video_job&&(x.video_job==='pen
 function insVideoBindJob(target,key){const found=insVideoFindTarget(target);if(!found)return;
   found.x.video_job=key||'pending';found.x.genBusy=true;saveState();renderInsHost();}
 function insVideoApplyResult(target,res,slot){const found=insVideoFindTarget(target);if(!found)return;
-  const x=found.x;insSetMedia(x,res.path);x.genAuto=true;x.libAuto=false;x.libOpts=null;x.stockOpts=null;x.noAuto=false;
+  const x=found.x;insSetMedia(x,res.path,found.c);x.genAuto=true;x.libAuto=false;x.libOpts=null;x.stockOpts=null;x.noAuto=false;
   uiLog(t('✨ сгенерено (промпт {p})',{p:(slot==='b'?'2':'1')})+': '+res.path.replace(/^.*[\\\/]/,''));}
 function insVideoSettle(target,d){const found=insVideoFindTarget(target);if(!found)return;
   const x=found.x;x.genBusy=false;
@@ -639,13 +708,7 @@ async function insGenVideo(i,slot){if(curIns<0)return;const c=CLIPS[curIns],x=c&
       saveState();syncClipLists();renderInsHost();}
     hideProg();toast('⚠ '+(e.message||e));}
 }
-// Форма маски, с которой файл в прошлый раз ушёл в проект (её отдаёт база вместе с путём).
-// Без этого каждая картинка из базы приезжала с кропом 100/100, и одну и ту же вставку
-// приходилось подгонять скрабберами заново в каждом ролике. Только фото: у видео маски нет.
-function insApplyCrop(x,o){if(!o||insKind(o.path)!=='photo')return;
-  if(o.mw)x.mw=o.mw;
-  if(o.mh)x.mh=o.mh;}
-async function insPick(i){try{const d=await (await fetch('/api/pickmedia')).json();if(d.path){const x=CLIPS[curIns].inserts[i];insSetMedia(x,d.path);x.libAuto=false;x.libOpts=null;x.stockOpts=null;renderInsHost();syncClipLists();saveState();}}
+async function insPick(i){try{const d=await (await fetch('/api/pickmedia')).json();if(d.path){const x=CLIPS[curIns].inserts[i];insSetMedia(x,d.path,CLIPS[curIns]);x.libAuto=false;x.libOpts=null;x.stockOpts=null;renderInsHost();syncClipLists();saveState();}}
   catch(e){toast(t('Не открылся выбор файла — сервер не ответил'));uiLog(t('pickmedia: ')+e);}}
 
 // ---- база вставок: скан прошлых проектов + автоподбор файла под ИИ-запрос ----
@@ -662,7 +725,7 @@ async function openInsLib(){openModal('mbInsLib');const c=illCfg();
   if(c.dirs!=null)$('illdirs').value=c.dirs;if(c.auto!=null)$('illauto').checked=!!c.auto;
   if($('illgen')){$('illgen').checked=!!c.gen;$('illgenRow').style.display=imgGenOn()?'flex':'none';}
   if(c.src)$('illsrc').value=c.src;if(c.dest)$('illdest').value=c.dest;if(c.since)$('illsince').value=c.since;
-  illInfo();illList();illPollDescribe(true);}
+  illInfo();illList();}
 async function illInfo(){try{const d=await (await fetch('/api/insertlib_info')).json();
   $('illinfo').textContent=d.built?(t('В базе {n} файлов · эмбеддер: {e} · папки: {p}',{n:d.count,e:(d.emb_model||t('нет (матч по именам)')),p:(d.dirs||[]).join(' · ')})):t('База ещё не построена — укажи папки и нажми «Сканировать».');
   if(d.built&&!val('illdirs').trim())$('illdirs').value=(d.dirs||[]).join('\n');}
@@ -683,7 +746,7 @@ async function illScan(){const dirs=val('illdirs').split('\n').map(s=>s.trim()).
 // автоподбор: для вставок с query и без файла спросить базу, opts[0].auto -> проставить media
 // подбор из базы для СПИСКА вставок (один batch-запрос): всем заполняем libOpts,
 // а файл ставим только тем, у кого его нет — выбранное руками не затираем.
-async function insLibFill(arr,speaker){
+async function insLibFill(arr,speaker,c){
   arr=(arr||[]).filter(x=>(x.query||'').trim());
   if(!arr.length)return 0;
   let d;try{d=await (await fetch('/api/insertlib_match',{method:'POST',headers:{'Content-Type':'application/json'},
@@ -694,11 +757,11 @@ async function insLibFill(arr,speaker){
   // но САМИ файл не ставим: раз убрал, значит не надо, и вернуть его должен он сам.
   arr.forEach((x,j)=>{const opts=d.results[j]||[];x.libOpts=opts;
     if(!x.media&&!x.noAuto&&opts.length&&opts[0].auto){
-      insSetMedia(x,opts[0].path);insApplyCrop(x,opts[0]);x.libAuto=true;n++;}});
+      insSetMedia(x,opts[0].path,c,opts[0]);x.libAuto=true;n++;}});
   return n;}
 async function insLibAuto(c){
   const spkKey=clipSpeaker(c)||undefined;
-  const n=await insLibFill((c.inserts||[]).filter(x=>!x.media),spkKey);
+  const n=await insLibFill((c.inserts||[]).filter(x=>!x.media),spkKey,c);
   if(n)uiLog(t('база вставок: автоподобрано {n} файлов',{n:n}));
   return n;}
 // правка описания прямо в карточке: это же описание идёт и в подбор из базы, и в
@@ -711,7 +774,7 @@ async function insQuery(i,v){if(curIns<0)return;const x=CLIPS[curIns].inserts[i]
   const auto=illCfg().auto!==false;
   const spkKey=clipSpeaker(CLIPS[curIns])||undefined;
   if(auto&&x.libAuto){x.media='';x.libAuto=false;}   // старый автофайл был под старое описание
-  if(q&&!x.media&&auto)await insLibFill([x],spkKey); // ...и сразу ищем под новое
+  if(q&&!x.media&&auto)await insLibFill([x],spkKey,CLIPS[curIns]); // ...и сразу ищем под новое
   renderInsHost();syncClipLists();saveState();
   uiLog(t('описание вставки: «{q}»',{q:q})+(x.media?t(' → {f}',{f:x.media.replace(/^.*[\\\/]/,'')}):''));}
 // «этот файл не под этот запрос»: автоподбор его больше не предложит (руками через 📚 —
@@ -750,7 +813,7 @@ async function insLibFor(i){const x=CLIPS[curIns].inserts[i];if(!x)return;
   if(!x.libOpts.length){toast(t('База пуста или нет совпадений — открой ⚙ → Инструменты → База вставок и просканируй папки'));return;}
   x.libShown=true;renderInsHost();}
 function insLibPick(i,j){const x=CLIPS[curIns].inserts[i];const o=(x.libOpts||[])[j];if(!o)return;
-  insSetMedia(x,o.path);insApplyCrop(x,o);x.libAuto=false;x.libShown=false;
+  insSetMedia(x,o.path,CLIPS[curIns],o);x.libAuto=false;
   renderInsHost();syncClipLists();saveState();}
 // кнопка «Сток» на карточке: кадры со стоков (Pexels первым, Unsplash вторым, Pixabay третьим) по тому же
 // запросу, что идёт в базу. Показываем только превью: файл скачивается по клику, ложится
@@ -789,7 +852,7 @@ async function insStockPick(i,j){const x=CLIPS[curIns].inserts[i];const o=(x.sto
   try{const d=await (await fetch('/api/stock_pick',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify({candidate:o,dest:(val('illdest')||'').trim()})})).json();
     if(d.error)toast('⚠ '+errText(d));
-    else{insSetMedia(x,d.path);x.stockShown=false;renderInsHost();syncClipLists();saveState();
+    else{insSetMedia(x,d.path,CLIPS[curIns]);renderInsHost();syncClipLists();saveState();
       uiLog(t('сток: ')+d.path.replace(/^.*[\\\/]/,''));}
   }catch(e){toast('⚠ '+e);}
   finally{x.genBusy=false;}
@@ -809,61 +872,19 @@ async function illImport(){const src=val('illsrc').trim(),dest=val('illdest').tr
     const dirs=val('illdirs');if(!dirs.includes(dest))$('illdirs').value=(dirs.trim()?dirs.trim()+'\n':'')+dest;
     illSaveCfg();await illScan();illList();
   }catch(e){$('illres').className='err';$('illres').textContent='⚠ '+e;}}
-// vision-описания (фоновый джоб + поллинг)
-let ILLPOLL=0;
-async function illDescribe(){
-  try{const d=await (await fetch('/api/insertlib_describe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({only_missing:true})})).json();
-    if(d.error){$('illres').className='err';$('illres').textContent='⚠ '+errText(d);return;}
-    $('illres').className='muted';$('illres').textContent=t('описываю…');$('illdesc').disabled=true;
-    illPollDescribe();
-  }catch(e){$('illres').className='err';$('illres').textContent='⚠ '+e;}}
-// Хвост лога, а не весь: описание полутора тысяч файлов — это столько же строк, и
-// опрос раз в 1.5с тянул их целиком каждый раз. Сервер умеет ?since — пользуемся,
-// как основной лог. Показываем всё равно последние 25.
-let ILLLOG=[],ILLSINCE=0;
-async function illStatus(){
-  const d=await (await fetch('/api/insertlib_describe_status?since='+ILLSINCE)).json();
-  if(!d.log_total||d.log_total<ILLSINCE)ILLLOG=[],ILLSINCE=0;   // джоб перезапустили — лог начался заново
-  if((d.log||[]).length){ILLLOG=ILLLOG.concat(d.log).slice(-25);ILLSINCE=d.log_total;}
-  return d;}
-function illLogText(){return ILLLOG.map(fmtLog).join('\n');}
-async function illPollDescribe(passive){clearTimeout(ILLPOLL);
-  let d;try{d=await illStatus();}catch(e){return;}
-  if(!$('mbInsLib').classList.contains('on'))return;   // модалку закрыли — не дёргаем DOM
-  if(d.running){
-    $('illdesc').disabled=true;
-    $('illres').className='muted';$('illres').textContent=t('описано {a} / {b}',{a:d.done,b:(d.total||'…')});
-    $('illlog').textContent=illLogText();const l=$('illlog');l.scrollTop=l.scrollHeight;
-    ILLPOLL=setTimeout(illPollDescribe,1500);return;}
-  $('illdesc').disabled=false;
-  if(!passive){ // джоб только что закончился
-    $('illres').className=d.error?'err':'ok';
-    $('illres').textContent=d.error?('⚠ '+errText(d)):t('описано {n}',{n:d.done});
-    $('illlog').textContent=illLogText();
-    illInfo();illList();}}
-// «📚 Обновить базу» в шапке: пересканировать папки индекса + описать новые файлы через ИИ.
-// Прогресс — в самой кнопке; работает с любого шага, ничего открывать не надо.
-let ILLHDRPOLL=0;
+// «📚 Обновить базу» в шапке: пересканировать папки индекса. Векторы новых файлов считает сам
+// скан (сервис моделей) — отдельного прохода «описать через ИИ» больше нет.
 async function illRefresh(){
-  const st=await illStatus().catch(()=>({}));
-  if(st.running){toast(t('База уже обновляется — {a} / {b}',{a:st.done,b:(st.total||'…')}));illHdrPoll();return;}
   let dirs=[];try{const inf=await (await fetch('/api/insertlib_info')).json();dirs=inf.dirs||[];}catch(e){}
   if(!dirs.length)dirs=(illCfg().dirs||'').split('\n').map(s=>s.trim()).filter(Boolean);
   if(!dirs.length){toast(t('База не настроена — открой ⚙ → Инструменты → База вставок и укажи папки'));return;}
   $('illhdrtxt').textContent=t(' скан…');uiLog(t('база вставок: пересканирую {n} папок…',{n:dirs.length}));
   try{const d=await (await fetch('/api/insertlib_scan',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dirs})})).json();
-    if(d.error){toast('⚠ '+errText(d));$('illhdrtxt').textContent='';return;}
-    uiLog(t('база вставок: в индексе {n} файлов, запускаю описание новых…',{n:d.count}));
-    const r=await (await fetch('/api/insertlib_describe',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({only_missing:true})})).json();
-    if(r.error){toast('⚠ '+errText(r));$('illhdrtxt').textContent='';return;}
-    illHdrPoll();
+    $('illhdrtxt').textContent='';
+    if(d.error){toast('⚠ '+errText(d));return;}
+    toast(t('База обновлена: {n} файлов',{n:d.count}));
+    uiLog(t('база вставок: ')+d.count+t(' файлов')+(d.emb?t(' + эмбеддинги'):''));
   }catch(e){toast('⚠ '+e);$('illhdrtxt').textContent='';}}
-async function illHdrPoll(){clearTimeout(ILLHDRPOLL);
-  let d;try{d=await illStatus();}catch(e){$('illhdrtxt').textContent='';return;}
-  if(d.running){$('illhdrtxt').textContent=' '+d.done+'/'+(d.total||'…');ILLHDRPOLL=setTimeout(illHdrPoll,2500);return;}
-  $('illhdrtxt').textContent='';
-  if(d.total||d.error){toast(d.error?(t('База: ⚠ ')+errText(d)):t('База обновлена: описано {n}',{n:d.done}));
-    uiLog(t('база вставок: ')+(d.error?(t('ошибка ')+d.error):(t('описано ')+d.done)));}}
 // список файлов с редактируемыми описаниями
 let ILLDEB=0;
 function illListDeb(){clearTimeout(ILLDEB);ILLDEB=setTimeout(illList,300);}

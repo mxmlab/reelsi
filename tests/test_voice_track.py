@@ -109,7 +109,6 @@ STATE = r"""
 // подставляются ИЗ ФАЙЛА (см. `_run_node`): свои копии разъезжались бы с боевыми
 // молча — перемотка становится скоростью, и стенд проверял бы не то.
 let MEDIA_VOL=1;
-function voiceWiring(){}
 function $(id){return (globalThis.__byId&&globalThis.__byId[id])||null;}
 function t(s,vars){return String(s).replace(/\{(\w+)\}/g,(m,k)=>
   (vars&&vars[k]!=null)?String(vars[k]):m);}
@@ -142,7 +141,7 @@ def _consts() -> str:
     """
     preview = PREVIEW_JS.read_text(encoding="utf-8")
     out = []
-    for name in ("VT_SOFT", "VT_DRIFT", "VT_RATE", "VT_QUIET", "VT_POLL"):
+    for name in ("VT_QUIET", "VT_POLL"):
         m = re.search(r"^const %s=.*$" % name, preview, re.M)
         assert m is not None, f"в 60-preview.js нет const {name}"
         out.append(m.group(0))
@@ -168,12 +167,11 @@ def _run_node(body: str) -> Any:
 
 @node
 def test_step_three_plays_the_same_track() -> None:
-    """Превью шага 3 подключает дорожку той же дверью и берёт настройки из профиля.
+    """Превью шага 3 просит голос той же дверью и с настройками из профиля спикера.
 
     Панели «Голос» у шага 3 нет, поэтому настройки едут из профиля спикера клипа — те
-    самые, по которым соберётся проект. Трека при этом ДВА не заводится: играет тот же
-    `<стем>.voice.wav` через `/api/media`, а видео — хозяин: время `<video>` дорожка не
-    трогает вообще, только подводит к нему звук.
+    самые, по которым соберётся проект. Свой `<audio>` голоса при этом не заводится:
+    голос играет очередь Web Audio.
     """
     body = r"""
 IPV.cams=[{path:'C:/cam1.mp4'},{path:'C:/cam2.mp4'}];
@@ -192,25 +190,8 @@ globalThis.fetch=async(url,opt)=>{asked.push([String(url),opt?JSON.parse(opt.bod
   return {json:async()=>({ok:true})};};
 (async()=>{
   await vtPrep(IPV);
-  const el=IPV.vt.el;
-  el.readyState=4;
-  // Кадр плеера: видео стоит на 103-й секунде исходника — первый кусок, 3-я секунда
-  vtTick(IPV,3);
-  const first={tm:el.currentTime,mute:!!IPV.voiceMute,cam1:v.muted,cam2:v2.muted,
-    paused:el.paused,seeks:v.seekLog.length,pauses:v.pauseLog};
-  // Стык: второй кусок, время считается от ЕГО начала
-  IPV.aidx=1;v.currentTime=300;
-  vtTick(IPV,10.5);
-  const afterSplice=el.currentTime;
-  // Слушают камеру 2 — звучит она сама, дорожка камеры 1 молчит
-  IPV.audioCi=1;vtTick(IPV,10.5);
-  const cam2={mute:!!IPV.voiceMute,voicePaused:el.paused,cam2:v2.muted,cam1:v.muted};
-  IPV.audioCi=0;vtTick(IPV,10.5);
-  const back={mute:!!IPV.voiceMute,voicePaused:el.paused,cam2:v2.muted};
-  console.log(JSON.stringify({asked:asked,on:IPV.vt.on,path:IPV.vt.path,src:el.src,
-    first:first,afterSplice:afterSplice,cam2:cam2,back:back,
-    audios:MADE.filter(e=>e.tag==='audio').length,
-    vtime:v.currentTime,vpaused:v.paused}));
+  console.log(JSON.stringify({asked:asked,on:IPV.vt.on,path:IPV.vt.path,
+    audios:MADE.filter(e=>e.tag==='audio').length}));
 })();
 """
     res = _run_node(body)
@@ -225,20 +206,8 @@ globalThis.fetch=async(url,opt)=>{asked.push([String(url),opt?JSON.parse(opt.bod
         "настройки шага 3 взяты не из профиля спикера: %s" % bake[0][1]["fx"]
     # Дорожка подключена: тот же файл голоса, что уезжает в AE, и через /api/media
     assert res["on"] is True and res["path"] == "C:/out/01_clip.voice.wav", res
-    assert res["src"] == "/api/media?path=C%3A%2Fout%2F01_clip.voice.wav", res["src"]
-    assert res["audios"] == 1, "дорожка завела лишний элемент звука"
-    # Звук подводится к позиции ВИДЕО, а не наоборот
-    assert res["first"]["tm"] == 103, res["first"]
-    assert res["afterSplice"] == 300.5, "время звука на стыке считается не от куска"
-    # ...и видео дорожка не трогает вовсе: ни seek, ни паузы
-    assert res["first"]["seeks"] == 0 and res["first"]["pauses"] == 0, res["first"]
-    assert res["vpaused"] is False and res["vtime"] == 300, res
-    # Звук камеры заглушён, пока играет обработанный голос
-    assert res["first"]["mute"] is True and res["first"]["cam1"] is True, res["first"]
-    # Камера 2 звучит сама: её никто не глушит, а дорожка камеры 1 молчит
-    assert res["cam2"]["mute"] is False and res["cam2"]["voicePaused"] is True, res["cam2"]
-    assert res["cam2"]["cam2"] is False and res["cam2"]["cam1"] is True, res["cam2"]
-    assert res["back"]["mute"] is True and res["back"]["voicePaused"] is False, res["back"]
+    assert res["audios"] == 0, \
+        "превью шага 3 завело свой <audio> голоса — голос играет очередь Web Audio"
 
 
 def test_track_code_lives_in_one_place() -> None:

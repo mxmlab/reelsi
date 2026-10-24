@@ -51,7 +51,7 @@ def client():
 def _reset_jobs(tmp_path, monkeypatch):
     """Изоляция общих состояний и ЛИЧНЫХ файлов (термины, папка камер, индекс).
 
-    RJOB/GDJOB/ILL_JOB — общие на процесс: их хвосты иначе приезжают в соседние
+    RJOB/GDJOB — общие на процесс: их хвосты иначе приезжают в соседние
     файлы. `terms.json` и папка камер — данные пользователя, и сторож-тест ниже
     обходит ВСЕ POST-роуты: без подмены он записал бы пустой словарь терминов и
     создал «камера1» в рабочей папке пользователя.
@@ -64,7 +64,7 @@ def _reset_jobs(tmp_path, monkeypatch):
     """
     from core import terms as _terms
     from core import voicefx_sep as _voicefx_sep
-    from api import files as _files, inserts as _inserts
+    from api import files as _files
     monkeypatch.setattr(_terms, "TERMS_PATH", str(tmp_path / "terms.json"))
     monkeypatch.setattr(_files, "DEFAULT_BASE", str(tmp_path / "медиа"))
     yield
@@ -74,8 +74,6 @@ def _reset_jobs(tmp_path, monkeypatch):
     with render.RLOCK:
         render.RJOB.update(running=False, done=False, log=[], pct=None, cur="", ae="",
                            out_dir="", result=[], failed=[], cancel=False, items=[])
-    with _inserts.ILL_LOCK:
-        _inserts.ILL_JOB.update(running=False, done=0, total=0, log=[], error="")
     with _voicefx_sep.LOCK:
         _voicefx_sep.JOB.update(running=False, done=False, i=0, n=0, step="",
                                cur="", pct=0, error="", log=[])

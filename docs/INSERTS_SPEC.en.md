@@ -5,7 +5,7 @@ Russian version: [docs/INSERTS_SPEC.md](INSERTS_SPEC.md).
 Recovered from a dump of the AE comp **C1221** (`1.json`). Defaults = the averages over 1221.
 Implemented in `core/xml2ae/build.py` (`to_ae_full(..., inserts=[...])`) + the inserts panel in the UI.
 
-Each insert: `{type, style, media, start, end, scale, sc, x, y, mw, mh}` — the start/end timing in seconds.
+Each insert: `{type, style, media, start, end, scale, sc, x, y, mw, mh, nobg}` — the start/end timing in seconds.
 `x`/`y` — the shift of the **rest point** in px (0 = as before): the entrance/exit are computed
 from it, and the starting point of the fly-out from behind the back (cam1) does not move. For video it shifts the frame as a whole —
 a landscape video, when filled by height, spills out by width, and the centre is almost never what
@@ -59,10 +59,45 @@ edit `sc` next to it. The preview in webui shows the same box (`insPreviewBox`),
 so you can aim right on the frame. Video has no mask — the fields are shown only for photos.
 It works with `insert_fx="card"`: the old kind (`white`) has no mask at all.
 
-**The mask shape is remembered per file** (2026-08-04). At build time `insertlib.adopt` puts
-`mw`/`mh` into the library index record, `match_many` gives them back, the frontend applies them
-(`insApplyCrop`) both on auto-selection and on manual selection through 📚. The same picture
-from the library no longer arrives with a 100/100 crop. Details — in `docs/ARCHITECTURE.md`.
+**The mask shape is remembered per file** — like the scale, the rest point and "no background": this is
+the picture's memory, see the section "Picture memory" below. The same picture from the library does not
+arrive with a 100/100 crop, and what was fitted in one video arrives in the next one.
+
+## Picture memory — mask, scale, rest point, "no background"
+
+The picture memory is how the user fitted a picture as **a picture**, not as a video: the mask
+(`mw`/`mh`), the scale (`sc`), the rest point (`x`/`y`) and the "no background" flag (`nobg`). It is kept
+per file in the record of the insert library index (`items[]` in `insertlib.json`), so what was fitted once
+arrives in the next video. Writing is `insertlib.remember_look`, reading is `insertlib.look_of`; the library
+gives the memory together with the path (`match_many`, `find_named`), and the frontend asks for it separately
+through `GET /api/insert_memo?path=`.
+
+When the memory is written:
+
+- an edit with the scrubber of the mask, scale and rest point, the "Remove background" toggle and the drag of
+  the rest point in the preview — `POST /api/insert_memo` with a delay of 600 ms after the last edit, one
+  record per series of edits;
+- the build — all memory fields of the insert, as it stood in the video, go to the library when the file is
+  moved (`insertlib.adopt`), and for a file already in the library they are written over the previous memory.
+  So the first build does not lose the setting: a file that moved into the library arrives in the next video
+  already fitted.
+
+A file that is not in the library has nowhere to write its memory: the answer is `saved: false`, not an error.
+
+The value rules are the same for an edit and for a build (`_memo_apply`): mask 100/100, scale 100 and shift
+0 — the field is removed, as the default; `nobg: false` is kept (it means "keep the background"); broken values
+and values out of range (mask 20–1000 %, scale 10–400 %, shift up to 10000 px) are skipped silently.
+
+The priority: **the picture's memory beats the speaker**. The "no background" flag is set again for every new
+picture: from the memory if it is there, otherwise from the setting of the clip's speaker (the checkbox
+"Photo inserts without background" in the speaker dialog, the key `ins_nobg` in the profile). The flag is not
+inherited from the previous picture on the card. The mask, scale and position without memory stay as they were
+on the card.
+
+The "Remove background" button on a card is a toggle of the `nobg` flag of the picture. The background is removed
+by the scene plan: the path is replaced with the cache `<source>.nobg.png` — the same one as in the build and in
+the preview. The button does not create a separate file in the library. A pressed button is highlighted (class
+`key`, `aria-pressed="true"`).
 
 ## The AI's field order: the Russian caption first, then the English query
 The fields of the structured response are generated **in schema order**. While `query` came first in
@@ -239,7 +274,8 @@ the highlight of the playing card and the transfer of manual AE adjustments (`st
 2. the file path — ONLY a fallback key for LEGACY inserts without a `cid`: the first card
    with this path that is NOT YET TAKEN by another insert is taken (not "the first one at all"), and the found link
    is remembered in the insert itself (`x.cid`) — after that the search is exact again;
-3. `insCardKey` (stripping the `.nobg.png` suffix from a "on a plate" insert) remains in force for
+3. `insCardKey` (stripping the `.nobg.png` suffix from a "on a plate" and a "no background" insert: the plan
+   carries the `nobg` mark) remains in force for
    the fallback path.
 
 The transfer of `tw` in `ensureJobs` (`static/app/90-ae.js`) works by `cid` in the same way: manual
@@ -364,6 +400,10 @@ Measured on 12 pictures of the library: BiRefNet is better on 3 (it leaves no pi
 and there is less translucent haze in 9 of 12. The cut-out in the cache is marked with its model (`REMBG_TAG`
 in `core/insertlib.py`): after a change of model the picture is recomputed, and an old cache without the mark
 counts as made by u2net.
+
+The "Remove background" button on a card does not touch the file: it toggles the `nobg` flag of the picture (see
+"Picture memory"), and the cut-out cache is made by the scene plan. The `/api/rembg` route is no longer called from
+the interface.
 
 ## Tuning
 All the numbers are in the JSX STYLE block: `INS_ENTER/INS_EXIT/INS_BLUR/INS_POP`,

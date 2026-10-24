@@ -108,7 +108,7 @@ def _free_port():
 
 
 # Функции боевого файла, которые нужны стенду (тела настоящие, не копии). Из
-# 60-preview.js — только выбор куска EDL (pvSegAt), он же зовётся из ipvSeekTo.
+# 60-preview.js — выбор куска EDL (pvSegAt) и исходное время камеры (eaLeadAt): их зовёт ipvLeadTime.
 FUNCS85 = (
     "ipvNow", "ipvNowFrame", "ipvSeekTo", "ipvLeadTime", "ipvVideoTo",
     "ipvPlanWH", "ipvSubRawWidth", "ipvSubFullW",
@@ -155,7 +155,7 @@ DECLS85 = ("VFRAME_MS", "IPV_RT", "SUBW_CACHE", "SUBW_MEASURE", "SUBW_TOUCHED",
            # ipvOpen на каждом открытии клипа (и ищет ipvRoto).
            "IPV_ROTO", "IPV_ROTOSEQ", "IPV_ROTOACC", "IPV_ROTODRAWN")
 FUNCS_OTHER = {
-    JS60: ("pvSegAt",),
+    JS60: ("pvSegAt", "eaLeadAt"),
     JS00: ("esc", "fmtT", "isPhotoPath"),
     JS95: ("rgb2hex",),
 }
@@ -446,7 +446,7 @@ function requestAnimationFrame(cb){return setTimeout(function(){cb(0);},0);}
 // 85-inserts-view.js): имя musicSync занято в 95-styles.js (сброс закреплённого трека
 // клипа), и стенд, оставшийся на старом имени, ронял отрисовку кадра ReferenceError'ом.
 function musicElSync(){}function spareIdle(){}function camIdle(){}
-function aewHighlight(){}function vgDuck(){}function introMarkPlaying(){}
+function aewHighlight(){}function introMarkPlaying(){}
 function uiLog(){}function toast(){}function lutApply(ci,v){return v;}function lutKS(){return [1,1];}
 // Переводчик: строки интерфейса стенду не нужны, ключ равен тексту (как в русском UI).
 function t(s,vars){if(!vars)return s;var out=s;for(var k in vars)out=out.split('{'+k+'}').join(String(vars[k]));return out;}

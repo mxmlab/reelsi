@@ -72,6 +72,12 @@ r"""Два клипа — два спикера: каждая фича берё�
 18. смена стиля в профиле спикера переводит клипов, шедших за его стилем, — `speakerStyleFollow`
    и вызов из `saveSpeaker`; `test_style_change_in_profile_moves_only_clips_that_followed_it`,
    `test_saving_speaker_style_moves_its_clips_and_refreshes_open_clip`.
+19. «без фона» по умолчанию для фото-вставки (`ins_nobg`): значение берётся в момент, когда
+   картинка встаёт во вставку, — от спикера КЛИПА вставки — `insSetMedia`, `insSpeakerNobg`;
+   `test_ins_nobg_follows_the_speaker_of_the_clip`.
+20. вставка по названию из ответа ИИ: «без фона» без памяти картинки — от спикера КЛИПА,
+   в который она пришла, — приёмник `insFromAI` (зовёт `insSetMedia`);
+   `test_named_insert_memo_follows_the_speaker_of_the_clip`.
 
 ДЫРУ В ПОКРЫТИИ ВИДНО ТОЛЬКО МУТАЦИЕЙ. Место, не попавшее ни в одну проверку
 ниже, остаётся «зелёным», пока кто-нибудь не подменит в нём `clipSpeaker(...)`
@@ -1224,3 +1230,73 @@ def test_saving_speaker_style_moves_its_clips_and_refreshes_open_clip(tmp_path):
     assert res["captured"] == [0], res["captured"]
     assert res["selected"] == [0], res["selected"]
     assert res["again"] == {"keys": ["stB", "stV", "stA"], "captured": [], "selected": []}, res["again"]
+
+
+# ============================ 19. «БЕЗ ФОНА» У ВСТАВКИ ============================
+NOBG_STUBS = r"""
+function isPhotoPath(p){return /\.(png|jpe?g|webp|gif|bmp|avif|tiff?)$/i.test(String(p||''));}
+function ipvRefresh(){}
+const tick=()=>new Promise(r=>setTimeout(r,0));
+async function fetch(url){return {json:async()=>({ok:true,memo:{}})};}
+"""
+
+
+@node
+def test_ins_nobg_follows_the_speaker_of_the_clip(tmp_path):
+    """19. «Без фона» по умолчанию у фото-вставки — от спикера КЛИПА этой вставки.
+
+    Спикер А включил «фото-вставки без фона» (ins_nobg), Б — нет. Картинка, которая встаёт
+    во вставку клипа А, получает nobg:true; во вставку клипа Б — nobg:false. Спикер В
+    (общий выбор шага 1) нигде не появляется. Дверь — insSetMedia: значение задаётся в
+    момент привязки, а план сцены дальше читает только флаг самой вставки.
+    """
+    script = (HARNESS + _door()
+              + _funcs(INSERTS_JS, ("insKind", "insSetMedia", "insSpeakerNobg",
+                                    "insApplyMemo", "insMemoFetch"))
+              + NOBG_STUBS
+              + _tail(r"""(async()=>{
+  const out={};
+  SPEAKERS[SPK_A].ins_nobg=true;
+  const pic='D:\lib\coffee-machine.png';
+  CLIPS[0].inserts=[{media:'',type:'photo'}];
+  CLIPS[1].inserts=[{media:'',type:'photo'}];
+  insSetMedia(CLIPS[0].inserts[0],pic,CLIPS[0]);
+  insSetMedia(CLIPS[1].inserts[0],pic,CLIPS[1]);
+  await tick();
+  out.clip_a=CLIPS[0].inserts[0].nobg;
+  out.clip_b=CLIPS[1].inserts[0].nobg;
+  console.log(JSON.stringify(out));
+"""))
+    res = _run_node(tmp_path, "twospk_nobg.js", script)
+    assert res["clip_a"] is True and res["clip_b"] is False, res
+    assert "СпикерВ" not in json.dumps(res, ensure_ascii=False), res
+
+
+# ============ 20. ВСТАВКА ПО НАЗВАНИЮ: «БЕЗ ФОНА» ОТ СПИКЕРА КЛИПА ============
+@node
+def test_named_insert_memo_follows_the_speaker_of_the_clip(tmp_path):
+    """20. Вставка по названию из ответа ИИ: «без фона» без памяти картинки — от спикера КЛИПА.
+
+    Один и тот же ответ `/api/ai_inserts` (память картинки пустая, memo {}) приходит в клип
+    спикера А (ins_nobg включён) и в клип спикера Б (нет). Приёмник — insFromAI, он зовёт
+    боевую дверь insSetMedia: клип А получает nobg:true, клип Б — false. Спикер В (общий
+    выбор шага 1) нигде не появляется.
+    """
+    script = (HARNESS + _door()
+              + _funcs(INSERTS_JS, ("insKind", "insSetMedia", "insSpeakerNobg",
+                                    "insApplyMemo", "insMemoFetch", "insFromAI"))
+              + NOBG_STUBS
+              + _tail(r"""(async()=>{
+  const out={};
+  SPEAKERS[SPK_A].ins_nobg=true;
+  const pic='D:/lib/coffee-machine.png';
+  const reply=()=>({inserts:[{auto:'named',type:'photo',start_sec:34.2,media:pic,memo:{}}]});
+  insFromAI(CLIPS[0],reply());
+  insFromAI(CLIPS[1],reply());
+  out.clip_a=CLIPS[0].inserts[0].nobg;
+  out.clip_b=CLIPS[1].inserts[0].nobg;
+  console.log(JSON.stringify(out));
+"""))
+    res = _run_node(tmp_path, "twospk_named_nobg.js", script)
+    assert res["clip_a"] is True and res["clip_b"] is False, res
+    assert "СпикерВ" not in json.dumps(res, ensure_ascii=False), res

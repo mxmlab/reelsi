@@ -18,7 +18,7 @@ from core.applog import get_logger
 from core.jobproc import STALLED_RC, run_watched
 from core.rclone import (checks_fields, clean_line, is_noise, parse_gdrive_link,
                          progress_line, rclone_cmd, rclone_list_cmd, rclone_remote,
-                         stats_fields, top_folders)
+                         root_groups, stats_fields, top_folders)
 from core.umsg import ReelsiError, umsg
 
 log = get_logger("reelsi.gdrive")
@@ -216,9 +216,11 @@ def _download_job(steps: list[tuple[list[str], tuple[str, dict[str, Any]] | None
 def _map_steps(remote: str, url: str, raw_map: Any) -> list[tuple[list[str], tuple[str, dict[str, Any]] | None]]:
     """Раскладка из запроса → команды rclone, по порядку.
 
-    Элемент {dir, dest}: dir — имя подпапки ссылки, "" — файлы самой ссылки. Пустой dest —
-    «не качать»: элемент пропускается. Папку назначения создаём здесь же, как dest обычного
-    скачивания. Битая форма отвечает внятной ошибкой gdrive_map_bad, а не 500.
+    Элемент {dir, dest}: dir — имя подпапки ссылки, "" — файлы самой ссылки.
+    Элемент {files, prefix, dest}: группа файлов корня (см. `core/rclone.root_groups`);
+    prefix — приставка группы, только для подписи в логе (пустой — «прочие файлы корня»).
+    Пустой dest — «не качать»: элемент пропускается. Папку назначения создаём здесь же,
+    как dest обычного скачивания. Битая форма отвечает внятной ошибкой gdrive_map_bad, а не 500.
     """
     if not isinstance(raw_map, list):
         raise ReelsiError(umsg("gdrive_map_bad", "Раскладка по папкам задана неверно: {err}",
@@ -228,16 +230,32 @@ def _map_steps(remote: str, url: str, raw_map: Any) -> list[tuple[list[str], tup
         for el in raw_map:
             if not isinstance(el, dict):
                 raise ValueError("элемент раскладки — не объект")
-            name, to = el.get("dir"), el.get("dest")
-            if not isinstance(name, str) or not isinstance(to, str):
-                raise ValueError("dir и dest — строки")
+            to = el.get("dest")
+            if not isinstance(to, str):
+                raise ValueError("dest — строка")
             to = to.strip().strip('"')
-            if not to:
-                continue
-            cmd = rclone_cmd(remote, url, to, sub=name or None, root_only=not name)
+            if "files" in el:
+                files, prefix = el.get("files"), el.get("prefix") or ""
+                if (not isinstance(files, list) or not files
+                        or not all(isinstance(f, str) for f in files)):
+                    raise ValueError("files — непустой список имён файлов")
+                if not isinstance(prefix, str):
+                    raise ValueError("prefix — строка")
+                if not to:
+                    continue
+                cmd = rclone_cmd(remote, url, to, root_only=True, files=files)
+                label = (("файлы «{prefix}…» → {dest}", {"prefix": prefix, "dest": to}) if prefix
+                         else ("прочие файлы корня → {dest}", {"dest": to}))
+            else:
+                name = el.get("dir")
+                if not isinstance(name, str):
+                    raise ValueError("dir — строка")
+                if not to:
+                    continue
+                cmd = rclone_cmd(remote, url, to, sub=name or None, root_only=not name)
+                label = (("папка «{dir}» → {dest}", {"dir": name, "dest": to}) if name
+                         else ("файлы корня ссылки → {dest}", {"dest": to}))
             os.makedirs(to, exist_ok=True)
-            label = (("папка «{dir}» → {dest}", {"dir": name, "dest": to}) if name
-                     else ("файлы корня ссылки → {dest}", {"dest": to}))
             steps.append((cmd, label))
     except ValueError as e:
         raise ReelsiError(umsg("gdrive_map_bad", "Раскладка по папкам задана неверно: {err}",
@@ -306,7 +324,8 @@ def api_gdrive_list() -> Response:
     """Что лежит в ссылке на папку: подпапки и файлы корня — до скачивания. body: {url}.
 
     Нужно, чтобы спросить, куда класть каждую подпапку: папка с несколькими камерами
-    внутри раньше качалась одной кучей, и списки камер её подпапок не видели. Для ссылки
+    внутри раньше качалась одной кучей, и списки камер её подпапок не видели. Файлы корня
+    отдаются группами (groups) — по приставке имени, как у каждой камеры своя. Для ссылки
     на файл rclone не запускаем — списывать нечего, отвечаем kind='file'.
     """
     d = request.get_json(silent=True) or {}
@@ -344,7 +363,9 @@ def api_gdrive_list() -> Response:
         except ValueError:
             raise ReelsiError(umsg("gdrive_list_failed", "Не получилось прочитать папку гугл-диска: "
                                    "{err}", err="rclone вернул не JSON"))
-        return jsonify(ok=True, kind="folder", **top_folders(items))
+        res = top_folders(items)
+        # groups — файлы корня по приставке имени: окно раскладки предлагает группу целиком
+        return jsonify(ok=True, kind="folder", groups=root_groups(res["root"]), **res)
     except (ReelsiError, SystemExit) as e:
         return jsonify(**umsg_err(e))
 

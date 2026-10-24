@@ -25,7 +25,7 @@ import webui
 def test_app_version_defined_and_exported():
     """app_meta.APP_VERSION объявлен и экспортирован в __all__."""
     assert hasattr(app_meta, "APP_VERSION")
-    assert app_meta.APP_VERSION == "0.4.2-beta"
+    assert app_meta.APP_VERSION == "0.4.3-beta"
     assert "APP_VERSION" in app_meta.__all__
 
 

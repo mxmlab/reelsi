@@ -378,7 +378,7 @@ def test_adopt_inserts_rewrites_media(tmp_path, monkeypatch):
 def _mini_index(tmp_path, monkeypatch, items):
     """Мини-индекс без эмбеддера: score считается токенами по desc.
     emb_tag ставим актуальный: иначе _ensure_emb_tag() в match_many идёт в ЖИВОЙ
-    LM Studio на localhost:1234, и на машине с поднятым LM Studio тест внезапно
+    сервис моделей, и на машине с поднятым эмбеддером тест внезапно
     считает настоящие косинусы вместо токенов."""
     from core import insertlib
     monkeypatch.setattr(insertlib, "INDEX_PATH", str(tmp_path / "idx.json"))
@@ -421,41 +421,74 @@ def test_reject_excludes_only_that_query(tmp_path, monkeypatch):
     assert lib.match("liver organ", k=3)
 
 
-def test_query_embedding_drops_style_words_and_prefixes(monkeypatch):
-    """Что реально уезжает в эмбеддер: из ЗАПРОСА вырезан стиль («3d icon» — это
-    инструкция генератору, а не предмет поиска), из описания — нет; для nomic обе
-    стороны получают свой префикс, иначе асимметричный поиск плывёт."""
-    from core import insertlib
-    seen = []
-    monkeypatch.setattr(insertlib, "_embed", lambda texts, model: seen.append(texts) or [[1.0]] * len(texts))
-    insertlib._emb_queries(["broken eyeglasses 3d icon"], "text-embedding-nomic-embed-text-v2-moe")
-    insertlib._emb_docs(["3D render of broken eyeglasses"], "text-embedding-nomic-embed-text-v2-moe")
-    insertlib._emb_queries(["broken eyeglasses 3d icon"], "some-other-embedder")
-    assert seen[0] == ["search_query: broken eyeglasses"]
-    assert seen[1] == ["search_document: 3D render of broken eyeglasses"]
-    assert seen[2] == ["broken eyeglasses"]                    # префикс — только nomic
+def test_query_and_document_go_to_service_as_their_kinds(monkeypatch):
+    """Что реально уезжает в сервис моделей: из ЗАПРОСА вырезан стиль («3d icon» — это
+    инструкция генератору, а не предмет поиска), из описания — нет. Запрос и описание идут
+    с РАЗНЫМ видом («query» и «document»): промпт модели ставит сама модель, префиксов
+    в тексте не нужно (их раньше требовал nomic).
+
+    Мутация: убрать вид или перепутать его — тест краснеет.
+    """
+    from core import insertlib, model_service
+    seen: list[tuple[list[str], str]] = []
+
+    def record(texts, kind):
+        seen.append((list(texts), kind))
+        return [[1.0]] * len(texts)
+
+    monkeypatch.setattr(model_service, "embed_texts", record)
+    insertlib._emb_queries(["broken eyeglasses 3d icon"])
+    insertlib._emb_docs(["3D render of broken eyeglasses"])
+    assert seen[0] == (["broken eyeglasses"], "query")
+    assert seen[1] == (["3D render of broken eyeglasses"], "document")
     assert insertlib._q_text("3d icon render") == "3d icon render"   # пусто -> запрос как был
 
 
 def test_stale_emb_tag_triggers_reembed(tmp_path, monkeypatch):
-    """Индекс, собранный по старой схеме, пересчитывается сам (описания уже в индексе,
-    рескан диска не нужен) — иначе запрос по новой схеме сравнивался бы со старыми
-    векторами и подбор молча превратился бы в мусор."""
+    """Индекс по старой схеме пересчитывается сам одним батчем (описания уже в индексе,
+    рескан диска не нужен), и старые векторы не остаются ни у кого — иначе запрос по новой
+    схеме сравнивался бы с ними и подбор молча превратился бы в мусор.
+
+    """
     p = tmp_path / "a.png"
     lib = _mini_index(tmp_path, monkeypatch, [
         {"path": str(p), "name": "a.png", "type": "photo", "used": 0,
          "desc": "liver 3d", "emb": [1.0, 0.0]},
     ])
     d = json.load(open(lib.INDEX_PATH, encoding="utf-8"))
-    d["emb_model"], d["emb_tag"] = "nomic-x", "q1"             # старая схема
+    d["emb_model"], d["emb_tag"] = "nomic-x", "q5"             # старая схема (до g2)
     json.dump(d, open(lib.INDEX_PATH, "w", encoding="utf-8"))
     lib._CACHE["data"] = None
-    monkeypatch.setattr(lib, "_embed", lambda texts, model: [[0.0, 1.0]] * len(texts))
+    monkeypatch.setattr(lib, "_emb_docs", lambda texts: [[0.0, 1.0]] * len(texts))
     assert lib._ensure_emb_tag() is True
     d = json.load(open(lib.INDEX_PATH, encoding="utf-8"))
-    assert d["emb_tag"] == lib.EMB_TAG and d["items"][0]["emb"] == [0.0, 1.0]
+    assert d["emb_tag"] == lib.EMB_TAG and d["emb_model"] == lib._emb_model()
+    assert d["items"][0]["emb"] == [0.0, 1.0] and d["items"][0]["emb_src"] == "text"
     lib._CACHE["data"] = None
     assert lib._ensure_emb_tag() is False                      # второй раз — уже нечего
+
+
+def test_stale_tag_without_service_keeps_tag_and_searches_by_tokens(tmp_path, monkeypatch):
+    """Сервиса нет: пересчёт не проходит, тег старой схемы остаётся, а запрос уходит ТОКЕНАМИ.
+
+    Вектор запроса по новой модели против векторов старой дал бы мусор — поэтому при
+    несовпавшем теге `match_many` векторов запроса не считает вовсе.
+    """
+    p = tmp_path / "a.png"
+    lib = _mini_index(tmp_path, monkeypatch, [
+        {"path": str(p), "name": "a.png", "type": "photo", "used": 0,
+         "desc": "liver organ", "emb": [1.0, 0.0]},
+    ])
+    d = json.load(open(lib.INDEX_PATH, encoding="utf-8"))
+    d["emb_model"], d["emb_tag"] = "nomic-x", "q5"
+    json.dump(d, open(lib.INDEX_PATH, "w", encoding="utf-8"))
+    lib._CACHE["data"] = None
+    called = []
+    monkeypatch.setattr(lib, "_emb_queries", lambda queries: called.append(queries) or None)
+    assert lib.match("liver organ", k=1)[0]["path"] == str(p)     # токенами находит
+    assert called == []                                           # вектор запроса не считали
+    d = json.load(open(lib.INDEX_PATH, encoding="utf-8"))
+    assert d["emb_tag"] == "q5"                                   # тег не трогали
 
 
 def test_match_type_hint_is_soft(tmp_path, monkeypatch):

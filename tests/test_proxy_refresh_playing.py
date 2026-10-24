@@ -135,16 +135,7 @@ function sparePrime(){}
 function camIdle(){}
 function camApply(){}
 function pvAudioLimit(){}
-function voiceWiring(){}
-function vtOf(P){return (P.vt=P.vt||{on:false,el:null,vsp:null});}
-function vtSpareStop(){}
-function vtSpareIdle(){}
-function vtSpareArm(){}
-function vtSpareRoll(){}
-function vtSpareSwap(){}
-function vtSpareTake(){}
-function vtSpareAt(){}
-function voicePrime(){}
+function vtOf(P){return (P.vt=P.vt||{on:false});}
 function ipvTransRefresh(){}
 function vtPause(){}
 function vtStop(){}

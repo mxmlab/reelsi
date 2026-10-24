@@ -79,11 +79,13 @@ def test_chrome_every_preview_player_plays_the_camera_proxy_not_the_source(tmp_p
 
 # ============== 3. ЗВУКОВАЯ КАМЕРА ТОЖЕ БУФЕРИЗУЕТСЯ ==============
 def test_chrome_audio_camera_keeps_its_double_buffer_when_it_changes(tmp_path):
-    """Раскладка камер: звуковая камера — та, с которой идёт звук; при смене звуковой камеры её
-    дублёр остаётся (камера непрерывная дорожка, склейки проходят подменой).
+    """Раскладка камер: при смене звуковой камеры её дублёр остаётся (камера непрерывная
+    дорожка, склейки проходят подменой), а сама она НЕ звучит: звук выбранной камеры играет
+    очередь Web Audio из её буфера (eaOpenCam), все <video> раскладки немые. Раньше звучал
+    <video> К2, и его на каждой склейке подтягивали перемоткой.
 
     Замена test_camera_layout_buffers_the_audio_camera_too (поведение на открытии CPV; проводка
-    cpvSyncAudioCam и оффсета в тексте — в старом тесте).
+    оффсета в тексте — в старом тесте).
     """
     fx = VS.build(tmp_path)
     steps = _open(fx, "cpvOpen", modal="mbPreview") + [
@@ -92,11 +94,11 @@ def test_chrome_audio_camera_keeps_its_double_buffer_when_it_changes(tmp_path):
         {"op": "eval", "name": "st", "js": (
             "(()=>{const b1=CPV.bufs.find(b=>b.slot===1);"
             "return {audioCi:CPV.audioCi,slots:CPV.bufs.map(b=>b.slot).sort(),"
-            "distinct:!!b1&&!CPV.vids.includes(b1.el),audioLive:CPV.vids[1]&&!CPV.vids[1].muted};})()")}]
+            "distinct:!!b1&&!CPV.vids.includes(b1.el),allMuted:CPV.vids.every(v=>v.muted)};})()")}]
     res = run_steps(tmp_path, steps)["st"]
     assert res["audioCi"] == 1, res
     assert res["slots"] == [0, 1] and res["distinct"] is True, res
-    assert res["audioLive"] is True, res
+    assert res["allMuted"] is True, res
 
 
 # ============== 4. НА СТЫКЕ ЭЛЕМЕНТ ПОДМЕНЯЕТСЯ, А НЕ ПЕРЕМАТЫВАЕТСЯ ==============

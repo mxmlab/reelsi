@@ -113,6 +113,21 @@ with open(_TEST_MSVC_CED, "w", encoding="utf-8") as _f:
         "AutoModelForAudioClassification = _NoWeights\n"
     )
 os.environ["REELSI_MODEL_SERVICE_SUBST_CED"] = _TEST_MSVC_CED
+# Эмбеддер базы вставок (EmbeddingGemma 2) — третья подмена, по пакету `sentence_transformers`:
+# без неё первый поиск по базе в тестах поднял бы сервис, а тот — НАСТОЯЩИЕ веса (1.5 ГБ из сети).
+# Загрузка здесь — явный отказ, и база вставок уходит на токенный путь, как без эмбеддера.
+_TEST_MSVC_EMB = os.path.join(_TEST_MSVC_DIR, "fake_sentence_transformers.py")
+with open(_TEST_MSVC_EMB, "w", encoding="utf-8") as _f:
+    _f.write(
+        "# -*- coding: utf-8 -*-\n"
+        '"""Заглушка sentence_transformers для эмбеддера сервиса (см. tests/conftest.py)."""\n'
+        "\n"
+        "\n"
+        "class SentenceTransformer:\n"
+        "    def __init__(self, *args, **kwargs):\n"
+        '        raise RuntimeError("весов EmbeddingGemma в тестах нет")\n'
+    )
+os.environ["REELSI_MODEL_SERVICE_SUBST_EMB"] = _TEST_MSVC_EMB
 os.environ["REELSI_MODEL_SERVICE_DEVICE"] = "cpu"
 # Простой тестового сервиса — секунды, а не боевые пять минут. Сервис поднимается
 # НАСТОЯЩИМ процессом (`core.model_service --serve`, путь нарезки), и тест, у
@@ -142,8 +157,8 @@ _CURRENT_TEST: str = ""
 
 import copy
 
-from api import _core, gdrive, inserts, previewproxy, render, videogen
-from core import app_meta, applog, insertlib, paths
+from api import _core, gdrive, previewproxy, render, videogen
+from core import app_meta, applog, insertlib, model_service, paths
 from core import jobstate  # noqa: F401  (для sys.modules в фикстуре путей)
 from core.aicut import config as _aicut_cfg
 from core.aicut import llm
@@ -159,7 +174,6 @@ _INITIAL_RJOB = copy.deepcopy(render.RJOB)
 _INITIAL_GDJOB = copy.deepcopy(gdrive.GDJOB)
 _INITIAL_VJOB = copy.deepcopy(videogen.VJOB)
 _INITIAL_PXJOB = copy.deepcopy(previewproxy.PXJOB)
-_INITIAL_ILL_JOB = copy.deepcopy(inserts.ILL_JOB)
 _INITIAL_INSERTLIB_CACHE = copy.deepcopy(insertlib._CACHE)
 
 try:
@@ -463,12 +477,6 @@ def reset_all_job_state():
     except Exception:
         pass
     try:
-        with inserts.ILL_LOCK:
-            inserts.ILL_JOB.clear()
-            inserts.ILL_JOB.update(copy.deepcopy(_INITIAL_ILL_JOB))
-    except Exception:
-        pass
-    try:
         app_meta._UI_LANG_CACHED = None
     except Exception:
         pass
@@ -537,6 +545,34 @@ def isolate_vst3_dirs(monkeypatch, tmp_path):
         return out
 
     monkeypatch.setattr(voicefx, "vst3_dirs", safe_dirs)
+
+
+@pytest.fixture(autouse=True)
+def reset_free_vram_cache():
+    """Замер свободной VRAM кэшируется на секунду (`core.device.free_vram_mib`).
+
+    Без сброса замер одного теста (подменённый nvidia-smi) достался бы следующему, который
+    зовёт тот же путь в пределах секунды. Сбрасываем ДО теста и ПОСЛЕ него.
+    """
+    from core import device
+    device._free_vram_cache_clear()
+    yield
+    device._free_vram_cache_clear()
+
+
+@pytest.fixture(autouse=True)
+def no_embedder_by_default(monkeypatch):
+    """В тестах сервиса моделей нет, пока тест сам его не поставил — как на машине без эмбеддера.
+
+    Клиент сервиса (`embed_texts` / `embed_images`) отвечает «сервиса нет»: база вставок уходит
+    на токенный путь, а настоящий сервис (процесс и загрузка EmbeddingGemma) не поднимается.
+    Настоящие обёртки `insertlib._emb_*` при этом работают — проверяется их путь, а не заглушка.
+    Тест, которому нужны вектора, подменяет `model_service.embed_texts` / `embed_images` сам.
+    """
+    def _no_service(*args, **kwargs):
+        raise model_service.ServiceUnavailable("сервис моделей в тестах не поднимается")
+    monkeypatch.setattr(model_service, "embed_texts", _no_service)
+    monkeypatch.setattr(model_service, "embed_images", _no_service)
 
 
 @pytest.fixture(autouse=True)

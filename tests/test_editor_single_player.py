@@ -67,18 +67,14 @@ EDITOR_FUNCS = ("edOpen", "edResize", "edTotal", "edBlockAt", "edCutTime", "edSr
 PREVIEW_FUNCS = ("openPreview", "pvVideoTo", "pvWordAt", "pvSegAt", "bufMake", "bufIdle",
                  "bufSilent", "bufArm", "bufRoll", "bufTake",
                  "bufSwap", "spareLead", "spareIdle", "spareStop", "spareSwap", "spareRollAt",
-                 # Гашение камерного разбега (spareStop) зовёт и гашение дублёра голоса.
                  # `vtOf` здесь НЕ вырезаем: у стенда своя дверь дорожки (ниже).
-                 "vtSpareOf", "vtSpareLive", "vtSpareIdle", "vtSpareStop", "vtSpareAt", "vtSpareArm",
-                 "vtSpareRoll", "vtSpareTake", "vtSpareSwap", "vtSpareCtl",
-                 "voicePrime",
                  "camVisual", "camIdle", "camApply", "camTrack", "camDeltas", "camBufs",
-                 "vtPlaying", "vtSrcAt", "vtNow", "vtAudioCam", "vtGate", "vtTick",
-                 "vtSeek", "vtRate", "vtUse", "vtDetach",
+                 "vtPlaying", "vtSrcAt", "vtNow", "vtAudioCam", "vtTick",
+                 "vtUse", "vtDetach",
                  "vtIsPv", "vtIsEd", "vtEa", "vtMuteHost",
                  # Звук редактора: буфер, очередь, часы, гейн — боевые тела.
                  "eaOpen", "eaDecode", "eaVoice", "eaBuf", "eaSig", "eaPlan", "eaNow", "eaStop",
-                 "eaStart", "eaClock", "eaSync", "eaGain", "eaOwner", "eaIsIpv", "eaPlanIpv", "eaCensor", "eaCensorGain", "eaPos", "dbToGain",
+                 "eaStart", "eaClock", "eaSync", "eaGain", "eaOwner", "eaIsMon", "eaPlanMon", "eaCensor", "eaCensorGain", "eaPos", "dbToGain",
                  "setMediaVol", "applyMediaVol", "syncVolUI",
                  "pvSrc", "MEDIA_VOL")
 # Объявления из файлов (не копии): константы звука и видео-подгонки и состояние EA.
@@ -124,9 +120,8 @@ def _bodies() -> str:
     preview = PREVIEW_JS.read_text(encoding="utf-8")
     editor = EDITOR_JS.read_text(encoding="utf-8")
     out = [_decl(preview, n) for n in PREVIEW_DECLS] + [_decl(editor, n) for n in EDITOR_DECLS]
-    # Пороги синхрона дорожки — ИЗ ФАЙЛА: свои копии в стенде разъезжались бы с
-    # боевыми молча (перемотка становится скоростью — на этом и попались).
-    for name in ("VT_SOFT", "VT_DRIFT", "VT_RATE", "VT_QUIET", "VT_POLL"):
+    # Константы — ИЗ ФАЙЛА: свои копии в стенде разъезжались бы с боевыми молча.
+    for name in ("VT_QUIET", "VT_POLL"):
         m = re.search(r"^const %s=.*$" % name, preview, re.M)
         assert m is not None, f"в 60-preview.js нет const {name}"
         out.append(m.group(0))
@@ -240,8 +235,7 @@ function clipLabel(c){return (c&&(c.label||c.name))||'';}
 // Дорожка обработанного голоса и живой хост плагинов: их двери подменяем счётчиками —
 // проверяем, ЧЕМ плеер их зовёт, а не то, как они внутри играют звук.
 let VTTICK=[],LIVE=[];
-function vtOf(P){if(!P.vt)P.vt={on:true,el:new El('audio'),path:'C:/v.wav',
-  vsp:null,vspAt:null};return P.vt;}
+function vtOf(P){if(!P.vt)P.vt={on:true,path:'C:/v.wav'};return P.vt;}
 function vtTick(P,tm){VTTICK.push([P,+tm]);realVtTick(P,tm);}   // кто позван — проверяет тест
 function vtPause(P){CALLS.push(['pause',P]);}
 function vtNote(){}
@@ -249,7 +243,6 @@ function vtLiveOn(){return false;}                    // окно плагина
 function vtLiveUpdate(){return false;}
 function vtLivePlay(P){LIVE.push(['play',P,+P.cs]);}
 function vtLivePause(P){LIVE.push(['pause',P,0]);}
-function voiceWiring(){}
 function voiceFxStatus(){}
 function mediaFree(){}
 function camFramePlan(){return null;}
@@ -320,7 +313,6 @@ function requestAnimationFrame(){return 1;}
 function cancelAnimationFrame(){}
 const EDRULER=18;   // высота линейки, css px (как в 70-editor.js)
 const PV_PREROLL=0.35,PV_SWAP_LO=-0.12,PV_SWAP_HI=0.5;   // окна дублёра (как в 60-preview.js)
-const VT_SWAP_LO=-0.06,VT_SWAP_HI=0.25;   // допуск подмены дорожки голоса (как в 60-preview.js)
 """ + _bodies() + r"""
 
 // ---- один прогон «открыли клип и играем» ----------------------------------------
@@ -542,7 +534,7 @@ VOLUME_BODY = """
   const g30=EA.gain.gain.value;
   CURSTYLE.voice_db=6;applyMediaVol();           // громкость голоса стиля — тем же гейном
   const g30db=EA.gain.gain.value;
-  report('vol',{g0:g0,g30:g30,g30db:g30db,edVt:vtOf(ED).el.volume});
+  report('vol',{g0:g0,g30:g30,g30db:g30db});
 })();
 """
 
@@ -551,17 +543,15 @@ VOLUME_BODY = """
 def test_the_volume_slider_moves_the_editor_sound() -> None:
     """Жалоба: «ползунок громкости в редакторе работает не всегда».
 
-    Причина: applyMediaVol проходил по [PV, IPV, CPV], а дорожка обработанного голоса шага 1
-    жила на ED — её громкость ставилась один раз при создании. Без обработки звучал <video>
-    из PV, и ползунок работал; с обработкой — нет. Теперь звук редактора — свой гейн, и
-    ползунок, и громкость голоса стиля ставят его одной формулой.
+    Причина: applyMediaVol проходил по [PV, IPV, CPV], а звук редактора шага 1 ползунку не
+    подчинялся. Теперь звук редактора — свой гейн очереди, и ползунок, и громкость голоса
+    стиля ставят его одной формулой.
     """
     out = _run_node(VOLUME_BODY)
     assert abs(out["g0"] - 1) < 1e-9, out
     assert abs(out["g30"] - 0.3) < 1e-9, f"ползунок 30 % не дошёл до звука редактора: {out}"
     assert abs(out["g30db"] - 0.3 * 10 ** (6 / 20)) < 1e-9, (
         f"громкость голоса стиля не дошла до звука редактора: {out}")
-    assert abs(out["edVt"] - 0.3) < 1e-9, f"плеер шага 1 выпал из applyMediaVol: {out}"
 
 
 @node
@@ -591,8 +581,6 @@ SILENT_BODY = """
   const seen=[];
   const all=()=>PV.vids.concat((PV.bufs||[]).map(b=>b.el));
   for(let k=0;k<5;k++){ticks(12);seen.push(all().every(v=>v.muted));}
-  vtGate(ED,false);seen.push(all().every(v=>v.muted));   // гейт голоса «звук камере»
-  vtGate(ED,true);seen.push(all().every(v=>v.muted));
   camVisual(PV,0,true);seen.push(all().every(v=>v.muted));
   edPause();edPlay();seen.push(all().every(v=>v.muted));
   report('silent',{seen:seen});
@@ -604,30 +592,12 @@ SILENT_BODY = """
 def test_step1_videos_stay_muted_whatever_opens_the_gate() -> None:
     """Ровно один источник голоса: у шага 1 это буфер, а все <video> немые.
 
-    Писателей `muted` у <video> много (ракурс camVisual, гейт голоса vtGate, живой хост,
+    Писателей `muted` у <video> много (ракурс camVisual, живой хост,
     пуск редактора, подмена дублёром) — каждый обязан учесть немой кадр (`PV.silent`).
     Иначе звук камеры зазвучал бы поверх звука редактора: два голоса со сдвигом.
     """
     out = _run_node(SILENT_BODY)
     assert all(out["seen"]), f"какая-то дверь вернула звук <video> шага 1: {out}"
-
-
-@node
-def test_the_gate_mutation_turns_the_silent_test_red() -> None:
-    """Мутация: гейт голоса без учёта немого кадра — тест немоты обязан покраснеть."""
-    preview = PREVIEW_JS.read_text(encoding="utf-8")
-    body = _func_src(preview, "vtGate")
-    mutant = body.replace("v.muted=live||!!M.silent;", "v.muted=live;")
-    assert mutant != body, "в vtGate не нашлась проверка немого кадра — мутация пуста"
-    script = STAND.replace(body, mutant) + "\n" + SILENT_BODY
-    import tempfile
-    with tempfile.TemporaryDirectory(prefix="single_player_mut_") as d:
-        path = Path(d) / "stand.js"
-        path.write_text(script, encoding="utf-8")
-        proc = subprocess.run(["node", str(path)], capture_output=True, text=True,
-                              encoding="utf-8-sig", errors="replace", timeout=60, cwd=str(ROOT))
-    out = json.loads([x for x in proc.stdout.splitlines() if x.strip()][-1])
-    assert not all(out["seen"]), f"мутация не поймана — тест немоты слепой: {out}"
 
 
 # --------------------------------------------------------------------------- #

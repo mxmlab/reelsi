@@ -160,16 +160,33 @@ jobs:
           curl -sL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar xz gitleaks
           ./gitleaks git --redact -v -c .gitleaks.toml .
 
-      # Исключений (--ignore-vuln) нет: transformers 5.10.1 не имеет ни одного advisory
-      # из шести, которые держали 4.x (2025-217, 2026-2288/2289/2290/3929/4174), и
-      # requirements.txt теперь ставит 5.x. Сам pip-audit резолвит torch без пина, поэтому
-      # он проверяет НЕ пару 2.11.0 из шапки requirements.txt (у неё одно advisory,
-      # PYSEC-2025-194 / CVE-2025-3000, фикс в torch 2.13) — это решение записано в CHANGELOG. Список шага
-      # обязан совпадать с tools/slice_check.py — сторож tests/test_ci_scan.py.
+      # Исключения pip-audit (--ignore-vuln): 43 advisory в двух пакетах, исправлений на PyPI пока нет.
+      #   pillow 12.3.0 — 37 advisory, исправлено в 13.0.0 (в requirements.txt строка pillow>=10.0,
+      #   версию выбирает резолв);
+      #   filelock 4.1.0 — 6 advisory, исправлено в 4.2.1 (транзитивный, в requirements.txt не указан).
+      # Оба пакета тянутся в дерево зависимостей, в частности, через torch, transformers, rembg
+      # и torchvision. На 2026-10-24 на PyPI нет ни pillow 13.0.0 (последняя 12.3.0), ни filelock 4.2.1
+      # (последняя 4.1.0), обновиться не на что. Исключения СНЯТЬ, когда выйдут эти версии: убрать
+      # --ignore-vuln здесь и в tests/test_ci_scan.py, при нужде поднять pillow>= в requirements.txt.
+      # ID — в порядке строки запуска:
+      #   pillow: CVE-2026-112895 CVE-2026-112400 CVE-2026-112397 CVE-2026-112896 CVE-2026-112897
+      #     CVE-2026-112395 CVE-2026-112404 CVE-2026-112899 CVE-2026-112402 CVE-2026-112900
+      #     CVE-2026-112893 CVE-2026-112392 CVE-2026-112891 CVE-2026-112405 CVE-2026-112390
+      #     CVE-2026-112401 CVE-2026-112901 CVE-2026-112391 CVE-2026-112894 CVE-2026-112406
+      #     CVE-2026-112399 CVE-2026-112892 CVE-2026-112393 CVE-2026-112396 CVE-2026-96638
+      #     CVE-2026-96641 CVE-2026-96640 CVE-2026-96642 CVE-2026-96639 CVE-2026-96643
+      #     CVE-2026-96637 CVE-2026-96644 CVE-2026-96778 CVE-2026-96636 GHSA-78g4-xqwv-q3g8
+      #     CVE-2026-114501 CVE-2026-112398
+      #   filelock: CVE-2026-112906 CVE-2026-112940 CVE-2026-112914 CVE-2026-112913 CVE-2026-112937
+      #     CVE-2026-112907
+      # Сам pip-audit резолвит torch без пина, поэтому он проверяет НЕ пару 2.11.0 из шапки
+      # requirements.txt (у неё одно advisory, PYSEC-2025-194 / CVE-2025-3000, фикс в torch 2.13) —
+      # это решение записано в CHANGELOG. Список шага обязан совпадать с tools/slice_check.py —
+      # сторож tests/test_ci_scan.py.
       - name: Audit dependencies (pip-audit)
         run: |
           pip install pip-audit
-          pip-audit -r requirements.txt
+          pip-audit -r requirements.txt --ignore-vuln CVE-2026-112895 --ignore-vuln CVE-2026-112400 --ignore-vuln CVE-2026-112397 --ignore-vuln CVE-2026-112896 --ignore-vuln CVE-2026-112897 --ignore-vuln CVE-2026-112395 --ignore-vuln CVE-2026-112404 --ignore-vuln CVE-2026-112899 --ignore-vuln CVE-2026-112402 --ignore-vuln CVE-2026-112900 --ignore-vuln CVE-2026-112893 --ignore-vuln CVE-2026-112392 --ignore-vuln CVE-2026-112891 --ignore-vuln CVE-2026-112405 --ignore-vuln CVE-2026-112390 --ignore-vuln CVE-2026-112401 --ignore-vuln CVE-2026-112901 --ignore-vuln CVE-2026-112391 --ignore-vuln CVE-2026-112894 --ignore-vuln CVE-2026-112406 --ignore-vuln CVE-2026-112399 --ignore-vuln CVE-2026-112892 --ignore-vuln CVE-2026-112393 --ignore-vuln CVE-2026-112396 --ignore-vuln CVE-2026-96638 --ignore-vuln CVE-2026-96641 --ignore-vuln CVE-2026-96640 --ignore-vuln CVE-2026-96642 --ignore-vuln CVE-2026-96639 --ignore-vuln CVE-2026-96643 --ignore-vuln CVE-2026-96637 --ignore-vuln CVE-2026-96644 --ignore-vuln CVE-2026-96778 --ignore-vuln CVE-2026-96636 --ignore-vuln GHSA-78g4-xqwv-q3g8 --ignore-vuln CVE-2026-114501 --ignore-vuln CVE-2026-112398 --ignore-vuln CVE-2026-112906 --ignore-vuln CVE-2026-112940 --ignore-vuln CVE-2026-112914 --ignore-vuln CVE-2026-112913 --ignore-vuln CVE-2026-112937 --ignore-vuln CVE-2026-112907
 
   smoke:
     if: github.repository == 'mxmlab/reelsi'

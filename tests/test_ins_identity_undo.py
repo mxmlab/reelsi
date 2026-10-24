@@ -58,7 +58,8 @@ def _read(path):
 
 def _func(src, name):
     """Тело функции name из исходника (тот же приём, что в tests/test_wv_ins_timing.py)."""
-    m = re.search(r"function\s+%s\s*\(" % re.escape(name), src)
+    # `async` входит в тело: insMemoFetch — асинхронная, без него тело не парсится (await)
+    m = re.search(r"(?:async\s+)?function\s+%s\s*\(" % re.escape(name), src)
     assert m, f"в исходнике не нашлась функция {name}"
     i = src.index("{", m.end() - 1)
     depth = 0
@@ -130,6 +131,8 @@ function ipvRefresh(){}
 function ipvMarks(){}
 function captureAE(){}
 function ipvPlanSoon(){}
+function insMemoSave(){}   // память картинки — своя дверь (tests/test_insert_memo.py); драг её только зовёт
+var SPEAKERS={};function clipSpeaker(c){return (c&&c.job&&c.job.speaker)||'';}
 function ipvInsPlace(){}
 function ipvIntroHitAt(){return null;}
 function ipvIntroDragStart(){}
@@ -167,7 +170,8 @@ def _stand():
     # стек — общая механика из 00-core.js (histStack); история вставок строится на нём
     parts.append(_func(_read(JS00), "histStack"))
     parts += [_func(a80, n) for n in (
-        "insSetMedia", "insDel", "insHistFor", "insHistState", "insHistClip", "insHistTouch",
+        "insSetMedia", "insApplyMemo", "insSpeakerNobg", "insMemoFetch",
+        "insDel", "insHistFor", "insHistState", "insHistClip", "insHistTouch",
         "insHistReset", "insUndoUI", "insHistApply", "insUndo", "insRedo")]
     # stateObj + saveState — одним куском: saveState и есть дверь истории, без неё
     # «убрать insHistTouch из saveState» тест бы не заметил.

@@ -7,7 +7,7 @@
 2. `core/fileio.py` не имел `atomic_bytes_write`, а `core/drp.py:write` открывал
    `zipfile.ZipFile(path, "w")` прямо на целевом файле.
 3. Между тестами `conftest.py` не сбрасывал флаг `running` у глобальных словарей джобов
-   (`JOB`, `RJOB`, `GDJOB`, `VJOB`, `PXJOB`, `ILL_JOB`), из-за чего порядок запуска
+   (`JOB`, `RJOB`, `GDJOB`, `VJOB`, `PXJOB`), из-за чего порядок запуска
    `test_render.py` -> `test_r8_ic_api.py` падал.
 
 Запуск: py -3.10 -m pytest tests/test_r8_if_atomic_drp.py -q -p no:cacheprovider
@@ -240,7 +240,7 @@ def test_xmlbuild_пишет_через_atomic_text_write(tmp_path, monkeypatch)
 def test_reset_job_state_полный_сброс():
     """Прямой вызов reset_all_job_state из conftest: очищает флаги, списки, результаты и кэши."""
     from conftest import reset_all_job_state
-    from api import _core, gdrive, inserts, previewproxy, render, videogen
+    from api import _core, gdrive, previewproxy, render, videogen
     from core import app_meta, insertlib
 
     with _core.LOCK:
@@ -267,9 +267,6 @@ def test_reset_job_state_полный_сброс():
     with previewproxy.PXLOCK:
         previewproxy.PXJOB["running"] = True
         previewproxy.PXJOB["cur"] = "dirty"
-    with inserts.ILL_LOCK:
-        inserts.ILL_JOB["running"] = True
-        inserts.ILL_JOB["error"] = "dirty_error"
 
     app_meta._UI_LANG_CACHED = "dirty_lang"
     insertlib._CACHE["data"] = {"leaked": True}
@@ -301,8 +298,6 @@ def test_reset_job_state_полный_сброс():
     assert previewproxy.PXJOB["running"] is False
     assert previewproxy.PXJOB["cur"] == ""
 
-    assert inserts.ILL_JOB["running"] is False
-    assert inserts.ILL_JOB["error"] == ""
 
     assert app_meta._UI_LANG_CACHED is None
     assert insertlib._CACHE["data"] is None

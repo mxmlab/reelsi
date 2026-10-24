@@ -129,12 +129,12 @@ from multiprocessing import connection
 from multiprocessing.context import AuthenticationError
 from typing import Any, Callable, Iterator, Protocol, Sequence
 
-from core import device
+from core import device, embedder
 from core import fileio, paths
 from core.app_meta import child_env, console_emit, env, wrap_emit
 from core.applog import get_logger
 from core.jobstate import JOB_LOCK_PATH
-from core.umsg import ReelsiError, cli_error
+from core.umsg import ReelsiError, cli_error, umsg
 
 log = get_logger(__name__)
 
@@ -233,6 +233,13 @@ ENV_DEVICE = "MODEL_SERVICE_DEVICE"
 # Имена — константами, а не литералами по месту чтения: сторож тестов ищет ровно их.
 ENV_SUBST = "MODEL_SERVICE_SUBST"
 ENV_SUBST_CED = "MODEL_SERVICE_SUBST_CED"
+# Подмена `rembg` (снятие фона) — тем же путём, что `gigaam` и `transformers`.
+ENV_SUBST_REMBG = "MODEL_SERVICE_SUBST_REMBG"
+# Подмена `sentence_transformers` (эмбеддер базы вставок) — тем же путём: пакета в тестах
+# может не быть вовсе, а веса EmbeddingGemma тесты читать не должны.
+ENV_SUBST_EMB = "MODEL_SERVICE_SUBST_EMB"
+# Простой сессии фона, сек., для тестов: проверка выгрузки не ждёт минуту.
+ENV_REMBG_IDLE = "MODEL_SERVICE_REMBG_IDLE"
 
 
 def _hint_env(name: str) -> str:
@@ -267,6 +274,9 @@ def _cli_out(line: str = "") -> None:
 # десятки окон на карте, и обрывать честный счёт по трёхсекундному сроку нельзя.
 PING_TIMEOUT_S = 3.0
 TRANSCRIBE_TIMEOUT_S = 900.0
+# Снятие фона: birefnet на процессоре — ~10 с на картинку, первая загрузка сессии — ~15 с;
+# запас на очередь слотов. Короче — и долгий счёт обрывался бы на полпути.
+REMBG_TIMEOUT_S = 300.0
 # Сколько ждём НОВЫЙ сервис, пока он поднимет слушателя (импорт torch и gigaam
 # внутри). Замер на этой машине: холодный старт 4.6–7.2 с, берём с запасом.
 # Ждать дольше бессмысленно: процесс на старте либо падает (нет torch, нет весов),
@@ -374,7 +384,7 @@ def model_device_cfg() -> str:
 # устройство: их правка — тоже «сервис другой версии». Свой файл — через
 # `core.paths`: папку модуля в ядре не считает от `__file__` никто, кроме него.
 _FINGERPRINT_MODULES = ("core.breath", "core.emphasis", "core.device", "core.gigaam_cache",
-                        "core.gigaam_cut.asr")
+                        "core.gigaam_cut.asr", "core.rembg_run", "core.embedder")
 
 
 def _fingerprint_files() -> list[str]:
@@ -465,9 +475,11 @@ def slot_count(free_mib: int | None = None, device: str | None = None) -> int:
     return max(MIN_SLOTS, min(MAX_SLOTS, int(free) // (ASR_VRAM_MIB + VRAM_RESERVE_MIB)))
 
 
-def vram_fits(free_mib: int | None = None) -> bool:
+def vram_fits(free_mib: int | None = None, need_mib: int = ASR_VRAM_MIB) -> bool:
     """Хватает ли свободной VRAM на слот с запасом.
 
+    `need_mib` — цена модели, которую собираются считать: распознавание и вздохи
+    стоят `ASR_VRAM_MIB`, эмбеддер — свой `embedder.VRAM_MIB` (он крупнее).
     Мера неизвестна (None) — считаем, что хватает: гадать по незнанию и ждать
     чужой RoFormer, которого нет, хуже, чем попробовать и получить честный OOM.
     Мера 0 — «карты нет» по договору `core.device` — тоже пропускаем: на CPU и
@@ -478,7 +490,7 @@ def vram_fits(free_mib: int | None = None) -> bool:
     free = device.free_vram_mib() if free_mib is None else free_mib
     if free in (None, 0):
         return True
-    return int(free) >= ASR_VRAM_MIB + VRAM_RESERVE_MIB
+    return int(free) >= need_mib + VRAM_RESERVE_MIB
 
 
 def wait_for_vram(emit: Callable[..., Any] = console_emit,
@@ -937,6 +949,18 @@ _models: dict[str, Any] = {}
 # каждом шаге, то есть ровно то, от чего сервис и заведён.
 _ced_models: dict[str, Any] = {}
 _emo_models: dict[str, Any] = {}
+# Эмбеддер базы вставок — ОДНА модель на машину (ключ — имя модели), отдельным кешем:
+# сложи его в `_models`, и переключение «распознавание -> эмбеддинг» выгружало бы веса головы.
+_emb_models: dict[str, Any] = {}
+# Сессии фона по имени модели: одна модель за раз (см. `_publish_model`), выгрузка — по
+# простою сессии (`_Service._rembg_idle_unload`) или `unload_models()`.
+_rembg_sessions: dict[str, Any] = {}
+# Прогоны фона — строго по одному на машину; замок держит и открытие сессии (новая арена
+# при идущем прогоне — то же переполнение). Замер на железе (BiRefNet, две просьбы разом):
+# один прогон берёт ~8.5–9 ГБ арены, потолок 10 ГиБ не держит двух, а слот сервиса (до 4
+# разом) пускал их параллельно — обе падали «Available memory … smaller than requested».
+# Слот считает занятость для ping и простоя, очерёдность прогонов он не задаёт — замок отдельный.
+_rembg_run_lock = threading.Lock()
 _models_lock = threading.Lock()
 # Замок САМОЙ загрузки весов, отдельно от кэша: два первых запроса разом успевали
 # оба пройти проверку кэша и оба читали веса с диска — две копии модели на карте
@@ -1007,6 +1031,8 @@ def unload_models() -> None:
         _models.clear()
         _ced_models.clear()
         _emo_models.clear()
+        _emb_models.clear()
+        _rembg_sessions.clear()
     _free_torch()
 
 
@@ -1056,6 +1082,77 @@ def _loaded_emo(stopped: threading.Event | None = None) -> Any:
         fresh = emphasis.load_emo_model_local()
         _publish_model(_emo_models, key, fresh, stopped)
     return fresh
+
+
+def _loaded_embedder(stopped: threading.Event | None = None) -> Any:
+    """Эмбеддер EmbeddingGemma в памяти сервиса: ключ — имя модели, веса читаются один раз.
+
+    Устройство — `_service_device()`, как у распознавания: настройка «Где считать модели»
+    решает и здесь. `stopped` — флаг остановки сервиса: дочитанные веса остановленного
+    сервиса в общий кэш не публикуются (`_publish_model`), как у остальных голов.
+    """
+    key = embedder.MODEL_ID
+    with _models_lock:
+        got = _emb_models.get(key)
+        if got is not None:
+            return got
+    with _models_load_lock:
+        with _models_lock:                    # за время ожидания могли загрузить её же
+            got = _emb_models.get(key)
+            if got is not None:
+                return got
+        fresh = embedder.load(_service_device())
+        _publish_model(_emb_models, key, fresh, stopped)
+    return fresh
+
+
+def _rembg_idle_s() -> float:
+    """Простой сессии фона, сек.: `rembg_run.IDLE_S`; перемычка `MODEL_SERVICE_REMBG_IDLE` сильнее.
+
+    Импорт внутри: `core.rembg_run` сам импортирует этот модуль (ради VRAM-резерва),
+    и импорт на уровне модуля замкнул бы кольцо.
+    """
+    from core import rembg_run
+    own = _env_float(ENV_REMBG_IDLE)
+    return rembg_run.IDLE_S if own is None else own
+
+
+def _loaded_rembg(name: str, stopped: threading.Event | None = None) -> tuple[tuple[Any, bool, str], bool]:
+    """Сессия фона модели `name` в памяти сервиса: открывается ОДИН раз, живёт до простоя или `unload()`.
+
+    Возвращает (запись, открыта_сейчас). Запись — (сессия, на_видеокарте, причина): решение
+    «карта или процессор» принимает `rembg_run.open_session`. Устройство — настройка «Где
+    считать модели» (`_service_device`). Свободную VRAM меряем, только если на карту идём:
+    без неё `nvidia-smi` на каждую просьбу был бы лишним процессом. Кэш держит одну модель:
+    `_publish_model` чистит его, а две арены разом карте не по силам.
+    """
+    from core import rembg_run
+    with _models_lock:
+        got = _rembg_sessions.get(name)
+        if got is not None:
+            return got, False
+    with _models_load_lock:
+        with _models_lock:                    # за время ожидания могли открыть её же
+            got = _rembg_sessions.get(name)
+            if got is not None:
+                return got, False
+        want_gpu = _service_device() != "cpu"
+        free = device_free_vram_mib() if want_gpu else None
+        fresh = rembg_run.open_session(name, want_gpu, free)
+        _publish_model(_rembg_sessions, name, fresh, stopped)
+    return fresh, True
+
+
+def _discard_rembg_sessions() -> None:
+    """Выбросить сессии фона после сбоя счёта: следующая просьба откроет чистую арену.
+
+    Зовётся ТОЛЬКО под `_rembg_run_lock`: иначе сбой одного прогона сбрасывал бы сессию,
+    которую другая просьба уже открыла и держит. После переполнения арена остаётся
+    раздробленной, поэтому сессию не чиним, а заменяем.
+    """
+    with _models_lock:
+        _rembg_sessions.clear()
+    _free_torch()
 
 
 def _free_torch() -> None:
@@ -1163,6 +1260,12 @@ def _install_subst_from_env() -> None:
     ced = _env_str(ENV_SUBST_CED)
     if ced:
         _install_subst_ced(_exec_module(ced))
+    rembg = _env_str(ENV_SUBST_REMBG)
+    if rembg:
+        _install_subst_rembg(_exec_module(rembg))
+    emb = _env_str(ENV_SUBST_EMB)
+    if emb:
+        _install_subst_emb(_exec_module(emb))
 
 
 def _install_subst_ced(fake: Any) -> None:
@@ -1175,6 +1278,31 @@ def _install_subst_ced(fake: Any) -> None:
     """
     import sys as _sys
     _sys.modules["transformers"] = fake
+
+
+def _install_subst_emb(fake: Any) -> None:
+    """Подменить `sentence_transformers` подменным модулем — тестовая перемычка для эмбеддера.
+
+    `embedder.load` импортирует пакет здесь же, в сервисе: подмена встаёт в `sys.modules`
+    раньше загрузки. Обычному запуску не нужна: без `MODEL_SERVICE_SUBST_EMB` сервис
+    берёт настоящий пакет и настоящие веса.
+    """
+    import sys as _sys
+    _sys.modules["sentence_transformers"] = fake
+
+
+def _install_subst_rembg(fake: Any) -> None:
+    """Подменить `rembg` (и `onnxruntime`, если подмена его несёт) — тестовая перемычка.
+
+    `rembg_run.open_session` импортирует `rembg` и `onnxruntime` здесь же, в сервисе:
+    подмена встаёт в `sys.modules` раньше, чем сессия откроется. Обычному запуску не
+    нужна: без `MODEL_SERVICE_SUBST_REMBG` сервис берёт настоящий `rembg`.
+    """
+    import sys as _sys
+    _sys.modules["rembg"] = fake
+    ort = getattr(fake, "onnxruntime", None)
+    if ort is not None:
+        _sys.modules["onnxruntime"] = ort
 
 
 def transcribe_loaded(head: str, wav_path: str,
@@ -1232,6 +1360,11 @@ class _Service:
         # `wait_until_stopped`). Поток снимает себя с учёта сам, в `finally`.
         self._workers: set[threading.Thread] = set()
         self._workers_lock = threading.Lock()
+        # Простой сессии фона — отдельно от простоя сервиса: момент последней просьбы о фоне
+        # (monotonic) и число просьб в работе. Сессию не выгружаем, пока хоть одна просьба
+        # стоит в очереди или вырезает: иначе сессия ушла бы из-под вырезки.
+        self._rembg_busy = 0
+        self._rembg_last = time.monotonic()
 
     # --- учёт рабочих потоков --------------------------------------------- #
     def _start_worker(self, target: Callable[..., Any], *args: Any) -> threading.Thread:
@@ -1274,6 +1407,12 @@ class _Service:
                 conn.send(self._breath(payload))
             elif cmd == "emo":
                 conn.send(self._emo(payload))
+            elif cmd == "rembg":
+                conn.send(self._rembg(payload))
+            elif cmd == "embed_text":
+                conn.send(self._embed_text(payload))
+            elif cmd == "embed_image":
+                conn.send(self._embed_image(payload))
             elif cmd == "load":
                 conn.send(self._preload(payload))
             elif cmd == "stats":
@@ -1380,6 +1519,103 @@ class _Service:
                 return {"ok": True, "probs": {str(k): float(v) for k, v in probs.items()}}
             except Exception as ex:  # ошибка уходит вызывающему в ответе {ok: False, error}, сервис не падает
                 return {"ok": False, "error": "%s: %s" % (type(ex).__name__, ex)}
+
+    def _rembg(self, payload: Any) -> dict[str, Any]:
+        """Снятие фона: сессия модели в сервисе, вырезка — под слотом.
+
+        `wait_for_vram` здесь НЕ зовём нарочно: устройство решено при открытии сессии
+        (видеокарта или процессор, см. `rembg_run.open_session`), а ждать чужой RoFormer
+        ради фона незачем. Счётчик просьб (`_rembg_busy`) растёт с самого входа, ДО слота:
+        пока просьба стоит в очереди, выгрузка по простою её сессию не тронет.
+        `note` — причина процессора только в ответе на просьбу, которая открыла сессию:
+        как в локальном пути, одна строка в журнале на открытие, а не на каждую картинку.
+        """
+        img = (payload or {}).get("img")
+        name = str((payload or {}).get("model") or "")
+        if not isinstance(img, bytes) or not name:
+            return {"ok": False, "error": "нужны img (байты) и model"}
+        _install_subst_from_env()
+        with self._lock:
+            self._rembg_busy += 1
+            self._rembg_last = time.monotonic()
+        try:
+            from core import rembg_run
+            with self._slot():
+                # Открытие и прогон — под замком прогонов: арена одна на карту (см. `_rembg_run_lock`).
+                with _rembg_run_lock:
+                    try:
+                        (session, on_gpu, why), opened = _loaded_rembg(name, self._stopped)
+                        png = rembg_run.predict(session, img)
+                    except Exception:
+                        _discard_rembg_sessions()   # сбой счёта: арена раздроблена — следующая просьба с чистой
+                        raise
+            return {"ok": True, "png": png, "gpu": bool(on_gpu),
+                    "note": why if opened else ""}
+        except Exception as ex:  # ошибка уходит вызывающему в ответе {ok: False, error}, сервис не падает
+            return {"ok": False, "error": "%s: %s" % (type(ex).__name__, ex)}
+        finally:
+            with self._lock:
+                self._rembg_busy -= 1
+                self._rembg_last = time.monotonic()
+
+    def _embed_text(self, payload: Any) -> dict[str, Any]:
+        """Векторы текстов эмбеддером — под слотом, с проверкой VRAM по ЦЕНЕ МОДЕЛИ.
+
+        Цена — `embedder.VRAM_MIB`, а не `ASR_VRAM_MIB`: эмбеддер крупнее распознавания,
+        и проверка по малой цене пустила бы его на карту, где под него нет места.
+        `kind` (query/document) проверяет `embedder.encode_texts`: неизвестный — ошибка ответа.
+        """
+        texts = (payload or {}).get("texts")
+        kind = str((payload or {}).get("kind") or "")
+        if not isinstance(texts, list) or not all(isinstance(t, str) for t in texts):
+            return {"ok": False, "error": "нужен список texts (строки) и kind"}
+        if not texts:
+            return {"ok": True, "vecs": []}
+        _install_subst_from_env()
+        with self._slot():
+            try:
+                wait_for_vram(emit=self.emit, fits=lambda: vram_fits(need_mib=embedder.VRAM_MIB))
+                model = _loaded_embedder(self._stopped)
+                return {"ok": True, "vecs": embedder.encode_texts(model, texts, kind)}
+            except Exception as ex:  # ошибка уходит вызывающему в ответе {ok: False, error}, сервис не падает
+                return {"ok": False, "error": "%s: %s" % (type(ex).__name__, ex)}
+
+    def _embed_image(self, payload: Any) -> dict[str, Any]:
+        """Векторы картинок эмбеддером (байты JPEG/PNG) — тот же слот и та же цена VRAM, что у текста."""
+        images = (payload or {}).get("images")
+        if not isinstance(images, list) or not all(isinstance(b, bytes) for b in images):
+            return {"ok": False, "error": "нужен список images (байты)"}
+        if not images:
+            return {"ok": True, "vecs": []}
+        _install_subst_from_env()
+        with self._slot():
+            try:
+                wait_for_vram(emit=self.emit, fits=lambda: vram_fits(need_mib=embedder.VRAM_MIB))
+                model = _loaded_embedder(self._stopped)
+                return {"ok": True, "vecs": embedder.encode_images(model, images)}
+            except Exception as ex:  # ошибка уходит вызывающему в ответе {ok: False, error}, сервис не падает
+                return {"ok": False, "error": "%s: %s" % (type(ex).__name__, ex)}
+
+    def _rembg_idle_unload(self) -> bool:
+        """Выгрузить сессию фона, если без просьб она простояла `rembg_run.IDLE_S`. True — выгрузили.
+
+        Срок короче простоя сервиса: сессия на видеокарте занимает около 10 ГБ, держать её
+        пять минут после последней очистки незачем. Проверка и очистка идут ПОД `self._lock`:
+        просьба, пришедшая сразу после проверки, увидит пустой кэш и откроет сессию заново.
+        Вырезать чужой, ещё живой сессией она не станет, и две сессии на карте разом не будет.
+        """
+        limit = _rembg_idle_s()
+        with self._lock:
+            if self._rembg_busy or time.monotonic() - self._rembg_last < limit:
+                return False
+            with _models_lock:
+                if not _rembg_sessions:
+                    return False
+                _rembg_sessions.clear()
+        _free_torch()
+        self.emit("сервис моделей: фон простоял {sec}с — сессия выгружена, видеопамять свободна",
+                  sec=int(limit))
+        return True
 
     def _preload(self, payload: Any) -> dict[str, Any]:
         """Прочитать веса, ничего не считая: прогрев сервиса до первого ролика.
@@ -1571,6 +1807,7 @@ class _Service:
     def _monitor_idle(self, poll_s: float = 0.2) -> None:
         """Завершить сервис после простоя (счёт не идёт и срок вышел)."""
         while not self._stopped.wait(poll_s):
+            self._rembg_idle_unload()
             if self._idle_expired():
                 self.emit("сервис моделей: простой {sec}с — завершаюсь, "
                           "видеопамять свободна", sec=int(self.idle_s))
@@ -2037,12 +2274,16 @@ def _spawn_and_wait(path: str, deadline: float) -> bool:
 
 
 def call(cmd: str, payload: Any = None, timeout: float = TRANSCRIBE_TIMEOUT_S,
-         ensure: bool = True, deadline: float | None = None) -> dict[str, Any]:
+         ensure: bool = True, deadline: float | None = None,
+         raise_on_error: bool = True) -> dict[str, Any]:
     """Выполнить команду сервиса. `ServiceUnavailable` — если его нет или он отказал.
 
     Перед запросом — `ping`: он дешёвый и отличает живой сервис от мёртвого файла
     адреса. Без него клиент уходил бы на запасной путь только по таймауту счёта
     (до 900 с) — то есть «Стоп» и упавший сервис подвешивали нарезку.
+
+    `raise_on_error=False`: сервис жив и ответил `ok: False` — ответ отдаётся вызывающему,
+    он решает, что это значит. Отказ счёта — ошибка, а не «сервиса нет»: запасной путь тут вреден.
     """
     path = _settings_path()
     data = read_settings(path)
@@ -2055,7 +2296,7 @@ def call(cmd: str, payload: Any = None, timeout: float = TRANSCRIBE_TIMEOUT_S,
         if not _settings_alive(data, timeout=PING_TIMEOUT_S):
             raise ServiceUnavailable("сервис моделей не отвечает после старта")
     resp = _request(cmd, data or {}, payload, timeout=timeout)
-    if not resp.get("ok"):
+    if not resp.get("ok") and raise_on_error:
         raise ServiceUnavailable(str(resp.get("error") or "сервис моделей отказал"))
     return resp
 
@@ -2119,6 +2360,54 @@ def emotion_probs(window: Any, sr: int) -> dict[str, float]:
     if not isinstance(probs, dict):
         raise ServiceUnavailable("сервис моделей не отдал вероятности эмоций")
     return {str(k): float(v) for k, v in probs.items()}
+
+
+def remove_bg(img: bytes, model: str) -> dict[str, Any]:
+    """Снять фон сервисом: `{"png", "gpu", "note"}`.
+
+    `ServiceUnavailable` — сервиса нет (не поднялся, не ответил на ping, оборвал соединение):
+    вызывающий считает фон сам. `ReelsiError` — сервис ЖИВ и ответил отказом (например, сбой
+    арены): запасной путь здесь не нужен, он открыл бы вторую копию модели рядом с занятой картой.
+
+    `png` — PNG с альфой, `gpu` — сессия на видеокарте, `note` — причина процессора, только
+    если сессия открылась на этой просьбе (локальный путь пишет её в журнал так же, один раз
+    на открытие). Сервис не поднят — `call` поднимет его, как и остальные команды.
+    """
+    resp = call("rembg", {"img": bytes(img), "model": str(model)}, timeout=REMBG_TIMEOUT_S,
+                raise_on_error=False)
+    if not resp.get("ok"):
+        err = str(resp.get("error") or "сервис моделей отказал")
+        raise ReelsiError(umsg("rembg_failed", "фон не снялся: {err}", err=err))
+    png = resp.get("png")
+    if not isinstance(png, bytes):
+        raise ServiceUnavailable("сервис моделей не отдал картинку фона")
+    return {"png": png, "gpu": bool(resp.get("gpu")), "note": str(resp.get("note") or "")}
+
+
+def embed_texts(texts: Sequence[str], kind: str) -> list[list[float]]:
+    """Векторы текстов эмбеддером сервиса; `kind` — "query" (запрос) или "document" (описание файла).
+
+    `ServiceUnavailable` — сервиса нет или он отказал (нет пакета, сбой счёта): вызывающий
+    (база вставок) уходит на токенный запасной путь и пишет причину в журнал. Сервис не
+    поднят — `call` поднимет его, как остальные команды.
+    """
+    resp = call("embed_text", {"texts": [str(t) for t in texts], "kind": str(kind)})
+    vecs = resp.get("vecs")
+    if not isinstance(vecs, list):
+        raise ServiceUnavailable("сервис моделей не отдал векторы текста")
+    return [[float(x) for x in row] for row in vecs]
+
+
+def embed_images(images: Sequence[bytes]) -> list[list[float]]:
+    """Векторы картинок (байты JPEG/PNG) эмбеддером сервиса — для файлов без текста.
+
+    Ошибки те же, что у `embed_texts`: `ServiceUnavailable` — сервиса нет или отказ.
+    """
+    resp = call("embed_image", {"images": [bytes(b) for b in images]})
+    vecs = resp.get("vecs")
+    if not isinstance(vecs, list):
+        raise ServiceUnavailable("сервис моделей не отдал векторы картинок")
+    return [[float(x) for x in row] for row in vecs]
 
 
 def preload_breath() -> bool:

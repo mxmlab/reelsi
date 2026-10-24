@@ -60,7 +60,7 @@ def _look_fixture(tmp_path, monkeypatch):
     idx_path.write_text(json.dumps(idx_data), encoding="utf-8")
     monkeypatch.setattr(insertlib, "INDEX_PATH", str(idx_path))
     insertlib._CACHE["data"] = None
-    monkeypatch.setattr(insertlib, "_emb_queries", lambda queries, model: [v])
+    monkeypatch.setattr(insertlib, "_emb_queries", lambda queries: [v])
     return p_own, p_general, p_foreign
 
 

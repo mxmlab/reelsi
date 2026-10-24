@@ -5,8 +5,12 @@
 Идея: юзер годами копит удачные вставки в старых проектах. Сканируем прошлые XML
 (parse_full -> inserts -> media-пути) и/или просто папки с медиа, строим индекс
 insertlib.json (рядом с модулем). После генерации ИИ-вставок (query на английском)
-подбираем из базы ближайший файл — семантически (embeddings LM Studio, у юзера
-nomic-embed-text-v2) либо, без эмбеддера, токенным матчем по имени файла/папке.
+подбираем из базы ближайший файл — семантически (эмбеддер EmbeddingGemma 2 в сервисе
+моделей) либо, без сервиса, токенным матчем по имени файла/папке.
+
+Векторы файла: описание (текст) либо, у файла без текста, — его картинка (та же модель
+понимает и текст, и картинку в одном пространстве). Запрос всегда текст. Один вектор на файл;
+признак — `emb_src` ("text" / "image").
 
 API:
     build_index(dirs, emit=print)      -> dict(count=..., emb=bool)  # скан + сохранение
@@ -14,26 +18,24 @@ API:
     match_many(queries, k=3)           -> [ [ ... ], ... ]           # 1 batch-запрос эмбеддера
     info()                             -> dict(count, dirs, emb_model, built)
     import_media(dirs, dest, since_ts) -> перенос медиа в СВОЮ папку базы (photos/videos)
-    auto_describe(emit)                -> vision-описания (LM Studio qwen-vl) для всех без описания
-    set_desc(path, desc)               -> ручная правка описания (+ пересчёт эмбеддинга)
+    set_desc(path, desc)               -> ручная правка описания (+ пересчёт вектора)
     stats(emit=print)                  -> инвентаризация текущего индекса (только чтение)
 
 CLI:  python insertlib.py scan <dir1> <dir2> ...
       python insertlib.py match "liver 3d icon"
       python insertlib.py import <since YYYY-MM-DD> <dest> <src1> [src2 ...]
-      python insertlib.py describe
       python insertlib.py stats
 """
-import gc, os, re, json, math, threading, time, urllib.request
+import base64, gc, os, re, json, math, threading, time
 from collections import Counter
-from typing import Any, Sequence, cast
+from typing import Any, Callable, Sequence, cast
 import numpy as np
 from core.fileio import atomic_bytes_write, atomic_json_dump, quarantine_unreadable
 from core.media import probe_duration
 
-from core import paths, ort_gpu
+from core import device, embedder, model_service, paths, rembg_run
 from core.clipstore import TRASH_DIR
-from core.app_meta import env, console_emit, http_req, wrap_emit
+from core.app_meta import env, console_emit, wrap_emit
 from core.umsg import ReelsiError, cli_error
 from core.applog import get_logger
 
@@ -44,10 +46,6 @@ log = get_logger(__name__)
 # хотя заявлен как «рабочее состояние не трогает». 2026-07-28: один клик «Обновить базу»
 # на тестовом порту переписал рабочий insertlib.json.
 INDEX_PATH = env("INSERTLIB") or paths.root("insertlib.json")
-
-LMSTUDIO_URL = os.environ.get("LMSTUDIO_URL", "http://localhost:1234/v1").rstrip("/")
-# точное имя ключа модели в LM Studio может отличаться — ищем по подстроке 'embed' в /models
-EMB_MODEL_ENV = os.environ.get("LMSTUDIO_EMB_MODEL", "")
 
 IMG_EXT = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".avif", ".tif", ".tiff"}
 VID_EXT = {".mp4", ".mov", ".webm", ".mkv", ".avi", ".m4v"}
@@ -183,15 +181,6 @@ def needs_text(it: dict[str, Any]) -> bool:
 needs_desc = needs_text
 
 
-def needs_vis(it: dict[str, Any]) -> bool:
-    """У записи нет пригодного vis (что ВИДНО на картинке). По нему
-    auto_describe(only_missing=True) отбирает работу: vision дописывает зрительное
-    описание даже тем файлам, у которых уже есть исходная фраза (desc). Отказ модели
-    в vis — тоже отсутствие описания: запись вернётся в работу обычного «Обновить базу»."""
-    v = it.get("vis")
-    return _field_unfit(v, it.get("path")) or _is_refusal(v)
-
-
 def _doc_text(desc: str | None, ru: str | None = "", vis: str | None = "") -> str:
     """Текст документа для эмбеддера: непустые из desc, ru, vis через пробел в порядке
     «что задумано — первым», лишние пробелы схлопнуты. vis участвует, только если это
@@ -205,22 +194,39 @@ def _doc_text(desc: str | None, ru: str | None = "", vis: str | None = "") -> st
 
 # ---------- как именно текст едет в эмбеддер ----------
 # Версия схемы эмбеддинга. Меняется -> индекс переэмбеддится (иначе запрос по новой
-# схеме сравнивался бы с документами по старой = мусор).
-EMB_TAG = "q5"
+# схеме сравнивался бы с документами по старой = мусор). g2 — EmbeddingGemma 2 в сервисе
+# моделей и вектор картинки у файлов без текста; q5 — nomic-embed до переезда в сервис моделей.
+EMB_TAG = "g2"
+
+
+def _vector_source(it: dict[str, Any]) -> tuple[str, str]:
+    """Чем описан файл для вектора: ("text", предметный текст) или ("image", "") — файл без текста.
+
+    Единственное место этого решения: все двери векторов (`_item_vectors`) спрашивают его.
+    «Без текста» — описания нет вовсе: исходной фразы нет (desc_src == "name": описание —
+    лишь имя файла) и зрительного описания (vis) тоже нет; либо предметный текст пуст."""
+    if it.get("desc_src") == "name" and not _doc_text("", "", it.get("vis")):
+        return ("image", "")
+    text = _subject_text(_doc_text(it.get("desc"), it.get("ru"), it.get("vis")))
+    return ("text", text) if text else ("image", "")
 
 # Вес лексического бонуса по редкости слов (0.35)
 LEX_W = 0.35
 
 # Пороги автоподбора вставок (единственный источник правды для UI и API).
-# AUTO_COS: 0.30 подобран замером на 194 реальных запросах под схему эмбеддинга q2+
-# (nomic-префиксы + чистка стиля из запроса): косинусы стали ниже и честнее, >=0.30 проходит 73%,
-# и почти весь мусор («chicken breast» -> бургер) остаётся ниже 0.28.
+# AUTO_COS: 0.83 — замер 2026-10-24, модель google/embeddinggemma-2, 641 пара «запрос → файл владельца»
+# (продуктовый match_many; верный = первый кандидат совпал с файлом владельца). Косинусы EmbeddingGemma 2
+# лежат высоко: медиана у верного кандидата 0.879, у неверного 0.842 — поэтому порог под шкалу nomic
+# (0.30) пропускал 100 % запросов и ставил картинку даже туда, где подходящей нет. Проходит / верных
+# среди прошедших: 0.80 — 85 % / 71 %; 0.82 — 79 % / 73 %; 0.83 — 75 % / 73 %; 0.84 — 70 % / 74 %;
+# 0.86 — 56 % / 76 %; 0.88 — 42 % / 77 %; 0.90 — 27 % / 77 %. Берём 0.83: доля срабатываний как у nomic
+# (73–75 %). Выше не берём: точность растёт на 1–4 п.п., а доля срабатываний падает почти вдвое.
 # AUTO_LEX: самостоятельный порог лексического совпадения (0.20). Появился, так как замер на 1317 реальных
 # запросах показал: у 39 запросов top-1 имел косинус ниже 0.30 при lex >= 0.20 (буквальные совпадения
 # имени файла вроде «revolver cylinder» -> revolver_cylinder.mp4, «broken piggy bank with coins» ->
 # broken_piggy_bank_with_coins.mp4, «retatrutide injection pen» -> 20-retatrutide-12mg_2.png, где
 # vision-описание сбило косинус, а имя файла говорит ровно то, что просили).
-AUTO_COS = 0.30       # порог косинуса при живом эмбеддере
+AUTO_COS = 0.83       # порог косинуса при живом эмбеддере (см. замер выше)
 AUTO_COS_TOK = 0.5    # он же для токенного фолбэка (эмбеддера нет)
 AUTO_LEX = 0.20       # самостоятельный порог лексического совпадения
 
@@ -321,67 +327,91 @@ def _q_text(q: str | None) -> str:
     return " ".join(_STYLE.sub(" ", q or "").split()) or (q or "")
 
 
-def _is_nomic(model: str | None) -> bool:
-    return "nomic" in (model or "").lower()
+# ---------- эмбеддер: сервис моделей (EmbeddingGemma 2) ----------
+def _emb_model() -> str:
+    """Имя модели, которое пишется в индекс (`emb_model`). Сама модель живёт в сервисе моделей:
+    имя известно всегда, а доступность проверяет вызов векторов (`_emb_call`)."""
+    return embedder.MODEL_ID
 
 
-def _emb_docs(texts: Sequence[str], model: str | None) -> list[list[float]] | None:
-    """Эмбеддинги ОПИСАНИЙ (сторона документа)."""
-    if _is_nomic(model):                       # nomic-embed обучен на этих префиксах:
-        texts = ["search_document: " + (t or "") for t in texts]   # без них асимметричный
-    return _embed(texts, model)                # поиск «короткий запрос -> описание» плывёт
+# Сколько файлов за один вызов сервиса. Картинки уходят байтами (JPEG до 512 px), тексты —
+# строками: больше — тяжёлый ответ по проводу, меньше — лишние вызовы и лишние журнальные строки.
+EMB_CHUNK = 64
 
 
-def _emb_queries(queries: Sequence[str], model: str | None) -> list[list[float]] | None:
-    """Эмбеддинги ЗАПРОСОВ: чистка стиля + свой префикс nomic."""
-    qs = [_q_text(q) for q in queries]
-    if _is_nomic(model):
-        qs = ["search_query: " + q for q in qs]
-    return _embed(qs, model)
+def _emb_call(fn: Callable[[], list[list[float]]], n: int) -> list[list[float]] | None:
+    """Векторы через сервис: None — сервиса нет или он отказал (поиск уйдёт на токенный путь).
 
-
-# ---------- LM Studio embeddings ----------
-def _http_json(url: str, payload: Any = None, timeout: float = 60) -> Any:
-    req = http_req(url, headers={"Content-Type": "application/json"},
-                   data=json.dumps(payload).encode() if payload is not None else None)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8", "replace"))
-
-
-def _emb_model() -> str | None:
-    """Ключ embedding-модели: env или первый /models с 'embed' в id. None = эмбеддера нет."""
-    if EMB_MODEL_ENV:
-        return EMB_MODEL_ENV
-    try:
-        d = _http_json(LMSTUDIO_URL + "/models", timeout=5)
-        for m in d.get("data", []):
-            if "embed" in (m.get("id") or "").lower():
-                return m["id"]
-    except ReelsiError: raise
-    except Exception:
-        pass  # LM Studio не ответил — модель эмбеддингов возьмём по умолчанию
-    return None
-
-
-def _embed(texts: Sequence[str], model: str | None) -> list[list[float]] | None:
-    """Эмбеддинги батчем. -> list[list[float]] | None (эмбеддер недоступен)."""
-    if not model or not texts:
+    Отказ — не падение: причина пишется в журнал, а вектора у файлов остаются пустыми, как при
+    недоступном эмбеддере. Ответ, не совпавший по длине с запросом, тоже отказ: вектор приписали бы
+    не тому файлу."""
+    if not n:
         return None
-    out: list[list[float]] = []
     try:
-        for i in range(0, len(texts), 64):
-            d = _http_json(LMSTUDIO_URL + "/embeddings",
-                           {"model": model, "input": texts[i:i + 64]}, timeout=120)
-            rows = sorted(d.get("data", []), key=lambda x: x.get("index", 0))
-            if len(rows) != len(texts[i:i + 64]):
-                return None
-            out.extend(r["embedding"] for r in rows)
-        return out
+        vecs = fn()
     except ReelsiError: raise
     except Exception as e:
-        # эмбеддер не ответил — вектора не получены, поиск пойдёт без них; пишем причину в журнал
         log.warning("эмбеддинги не получены (%s) — поиск по вставкам без векторов", e)
         return None
+    if len(vecs) != n:
+        log.warning("эмбеддер вернул %d векторов вместо %d — поиск по вставкам без векторов", len(vecs), n)
+        return None
+    return vecs
+
+
+def _emb_docs(texts: Sequence[str]) -> list[list[float]] | None:
+    """Векторы ОПИСАНИЙ файлов (сторона документа: модель ставит свой промпт `Document`)."""
+    tx = list(texts)
+    return _emb_call(lambda: model_service.embed_texts(tx, "document"), len(tx))
+
+
+def _emb_queries(queries: Sequence[str]) -> list[list[float]] | None:
+    """Векторы ЗАПРОСОВ: чистка стиля (`_q_text`) и вид «query» (промпт `SearchQuery`)."""
+    qs = [_q_text(q) for q in queries]
+    return _emb_call(lambda: model_service.embed_texts(qs, "query"), len(qs))
+
+
+def _emb_images(blobs: Sequence[bytes]) -> list[list[float]] | None:
+    """Векторы КАРТИНОК — для файлов без текста (кадр фото или середина видео)."""
+    bl = list(blobs)
+    return _emb_call(lambda: model_service.embed_images(bl), len(bl))
+
+
+def _item_bytes(it: dict[str, Any]) -> bytes | None:
+    """Кадр файла для вектора картинки: фото — сам файл (ужат до 512 px), видео — середина ролика."""
+    b64 = _thumb_b64(it.get("path") or "")
+    return base64.b64decode(b64) if b64 else None
+
+
+def _item_vectors(items: Sequence[dict[str, Any]]) -> list[tuple[str, list[float] | None]]:
+    """ВЕКТОРЫ файлов — единственная дверь, через которую файлу считается вектор.
+
+    Файл с текстом (`_vector_source` -> "text") уходит в `_emb_docs`, файл без текста — картинкой
+    (`_item_bytes` -> `_emb_images`). По каждой записи -> (src, vec): src — "text" или "image",
+    vec — None, если вектора нет (сервис не ответил, кадр не вытащен). Сетевые вызовы здесь —
+    звать ВНЕ `_LOCK`. Сервис упал на пачке текстов — дальше не идём: остальные тоже не получат."""
+    kinds = [_vector_source(it) for it in items]
+    out: list[tuple[str, list[float] | None]] = [(src, None) for src, _ in kinds]
+    text_idx = [i for i, (src, _) in enumerate(kinds) if src == "text"]
+    for lo in range(0, len(text_idx), EMB_CHUNK):
+        part = text_idx[lo:lo + EMB_CHUNK]
+        vecs = _emb_docs([kinds[i][1] for i in part])
+        if vecs is None:
+            break
+        for i, v in zip(part, vecs):
+            out[i] = ("text", v)
+    img_idx = [i for i, (src, _) in enumerate(kinds) if src == "image"]
+    for lo in range(0, len(img_idx), EMB_CHUNK):
+        part = img_idx[lo:lo + EMB_CHUNK]
+        got = [(i, b) for i, b in ((i, _item_bytes(items[i])) for i in part) if b is not None]
+        if not got:
+            continue                                  # кадра не вытащили ни у одного — вектора нет
+        vecs = _emb_images([b for _, b in got])
+        if vecs is None:
+            break
+        for (i, _), v in zip(got, vecs):
+            out[i] = ("image", v)
+    return out
 
 
 def _cos(a: Sequence[float], b: Sequence[float]) -> float:
@@ -464,7 +494,8 @@ def _merge_prev_records(records: Sequence[dict[str, Any]]) -> dict[str, Any]:
       несколько — та, у которой desc_src != 'name';
     - used: максимум;
     - rej: объединение списков без повторов;
-    - mw/mh, ru, vis, added: из той записи, где они непустые (при споре — из победившей по desc);
+    - mw/mh, sc, x, y, nobg, ru, vis, added: из той записи, где они есть (при споре — из
+      победившей по desc); память картинки (см. remember_look) не должна теряться при слиянии;
     - emb: от победившей по desc записи, но только если её desc+ru+vis совпадают с итоговыми;
       иначе None.
     """
@@ -499,7 +530,7 @@ def _merge_prev_records(records: Sequence[dict[str, Any]]) -> dict[str, Any]:
         return v
 
     extra = {}
-    for k in ("mw", "mh", "ru", "added", "vis"):
+    for k in ("mw", "mh", "sc", "x", "y", "nobg", "ru", "added", "vis"):
         v = _field_val(desc_winner, k)
         if v is not None:
             extra[k] = v
@@ -529,12 +560,14 @@ def _merge_prev_records(records: Sequence[dict[str, Any]]) -> dict[str, Any]:
         res["rej"] = rej
     else:
         res.pop("rej", None)
-    for k in ("mw", "mh", "ru", "added", "vis"):
+    for k in ("mw", "mh", "sc", "x", "y", "nobg", "ru", "added", "vis"):
         if k in extra:
             res[k] = extra[k]
         else:
             res.pop(k, None)
     res["emb"] = emb
+    if emb is None:                       # вектора нет — и признака его происхождения не должно остаться
+        res.pop("emb_src", None)
     return res
 
 
@@ -571,13 +604,19 @@ def build_index(dirs: Sequence[str], emit: Any = None, use_emb: bool = True) -> 
         same_text = prev.get("desc") == desc and (prev.get("ru") or "") == ru
         it = {"path": p, "name": os.path.basename(p), "type": meta["type"],
               "used": max(meta["used"], int(prev.get("used") or 0)),  # переживает перенос файла
-              "desc": desc, "desc_src": prev.get("desc_src") or "name",
-              "emb": None if stale else (prev.get("emb") if same_text else None)}
+              "desc": desc, "desc_src": prev.get("desc_src") or "name"}
         # рескан не должен терять брак, свежесть, запомненную форму маски (mw/mh),
-        # русскую подпись (ru), зрительное описание (vis) и стиль картинки (look)
-        for keep in ("rej", "added", "mw", "mh", "ru", "vis", "look"):
-            if prev.get(keep):
+        # масштаб, точку покоя и фон (sc/x/y/nobg — память картинки), русскую подпись (ru),
+        # зрительное описание (vis) и стиль картинки (look)
+        for keep in ("rej", "added", "mw", "mh", "sc", "x", "y", "nobg", "ru", "vis", "look"):
+            # nobg=False — тоже память («фон оставить»), поэтому не только проверка на истинность
+            if prev.get(keep) or prev.get(keep) is False:
                 it[keep] = prev[keep]
+        # Вектор переживает рескан, только если схема та же и файл описан тем же видом (текст или
+        # картинка): вектор текста не подходит к картинке и наоборот — тогда он пересчитывается.
+        # Записи без признака — текстовые: до векторов картинок все вектора были текстовыми.
+        if not stale and same_text and prev.get("emb") and (prev.get("emb_src") or "text") == _vector_source(it)[0]:
+            it["emb"], it["emb_src"] = prev["emb"], prev.get("emb_src") or "text"
         # файл найден на диске — если был gone, он снимается (в it поля gone нет)
         items.append(it)
     # 2. Прежние записи, которых скан не нашёл -> помечаем gone (не удаляем!)
@@ -588,6 +627,7 @@ def build_index(dirs: Sequence[str], emit: Any = None, use_emb: bool = True) -> 
                 it["gone"] = time.time()
             if stale:
                 it["emb"] = None
+                it.pop("emb_src", None)
             items.append(it)
     # Миграция EP/ES, одноразовая и идемпотентная: vision-описания прошлых прогонов жили
     # в desc с desc_src='ai'. Их место в vis, а desc честно пустой — исходной фразы у этих
@@ -602,20 +642,24 @@ def build_index(dirs: Sequence[str], emit: Any = None, use_emb: bool = True) -> 
             it["desc"] = ""
             it["desc_src"] = "name"
             it["emb"] = None
-    model = _emb_model() if use_emb else None
-    if model:
+            it.pop("emb_src", None)
+    # Векторы — через ту же дверь, что и во всех остальных местах (`_item_vectors`): у файла с
+    # текстом — вектор текста, у файла без текста — вектор картинки.
+    model = _emb_model() if use_emb else ""
+    if use_emb:
         need = [it for it in items if not it.get("emb") and not it.get("gone")]
         if need:
-            emit("эмбеддинги: {count} новых текстов через {model}…", count=len(need), model=model)
-            vecs = _emb_docs([_subject_text(_doc_text(it["desc"], it.get("ru"), it.get("vis"))) for it in need], model)
-            if vecs:
-                for it, v in zip(need, vecs):
-                    it["emb"] = v
+            emit("эмбеддинги: {count} новых файлов через {model}…", count=len(need), model=model)
+            got = _item_vectors(need)
+            if any(v is not None for _, v in got):
+                for it, (src, v) in zip(need, got):
+                    if v is not None:
+                        it["emb"], it["emb_src"] = v, src
             else:
                 emit("⚠ эмбеддер не ответил — работаю токенным матчем по именам")
-                model = None
+                model = ""
     else:
-        emit("эмбеддер не найден (LM Studio /models без 'embed') — токенный матч по именам")
+        emit("эмбеддинги выключены — токенный матч по именам")
 
     # Слияние под локом: не затираем параллельные правки (rej, add_generated, set_desc),
     # сделанные другими между началом скана и сохранением
@@ -666,7 +710,7 @@ def build_index(dirs: Sequence[str], emit: Any = None, use_emb: bool = True) -> 
 
         # Для записей, которые есть и в old, и в cur: обновляем изменённые поля,
         # used берем как максимум из трёх; если текст изменился — сбрасываем emb
-        fields_to_merge = ("rej", "desc", "desc_src", "ru", "vis", "look", "mw", "mh", "added")
+        fields_to_merge = ("rej", "desc", "desc_src", "ru", "vis", "look", "mw", "mh", "sc", "x", "y", "nobg", "added")
         for k in old_items:
             if k in cur_items and k in built_by_k:
                 it = built_by_k[k]
@@ -685,8 +729,12 @@ def build_index(dirs: Sequence[str], emit: Any = None, use_emb: bool = True) -> 
 
                 it["used"] = max(int(it.get("used") or 0), int(old_it.get("used") or 0), int(cur_it.get("used") or 0))
 
-                if (it.get("desc") or "") != comp_desc or (it.get("ru") or "") != comp_ru or (it.get("vis") or "") != comp_vis:
+                # вид вектора (текст или картинка) мог смениться и без смены текста: desc_src с «name» на «user»
+                if ((it.get("desc") or "") != comp_desc or (it.get("ru") or "") != comp_ru
+                        or (it.get("vis") or "") != comp_vis
+                        or it.get("emb_src") != _vector_source(it)[0]):
                     it["emb"] = None
+                    it.pop("emb_src", None)
 
         data = {"dirs": [os.path.abspath(x.strip().strip('"')) for x in dirs if x.strip()],
                 "emb_model": model or "", "emb_tag": EMB_TAG, "items": items}
@@ -829,8 +877,10 @@ def match_many(queries: Sequence[str], k: int = 5, type_hint: str | None = None,
     _ensure_emb_tag()
     d = cast(dict[str, Any], _load())
     items_all = d.get("items", [])
-    model = d.get("emb_model") or None
-    qvecs = _emb_queries(queries, model) if model else None
+    # Вектор запроса — только если векторы индекса в ТЕКУЩЕЙ схеме: вектор запроса из одной модели
+    # против векторов другой дал бы мусор (пересчёт `_ensure_emb_tag` не прошёл — ищем токенами).
+    has_vecs = any(it.get("emb") for it in items_all)
+    qvecs = _emb_queries(queries) if (has_vecs and d.get("emb_tag") == EMB_TAG) else None
     pos = {id(it): n for n, it in enumerate(items_all)}        # порядок в индексе = «когда добавлен»
     mat, mat_items = _matrix() if qvecs else (None, [])
     out: list[list[dict[str, Any]]] = []
@@ -890,7 +940,8 @@ def match_many(queries: Sequence[str], k: int = 5, type_hint: str | None = None,
                                 used=it.get("used", 0), score=round(cos_sim, 3),
                                 lex=round(lex, 3),
                                 auto=is_auto,
-                                mw=it.get("mw"), mh=it.get("mh"), look=it.get("look")))
+                                mw=it.get("mw"), mh=it.get("mh"), look=it.get("look"),
+                                sc=it.get("sc"), x=it.get("x"), y=it.get("y"), nobg=it.get("nobg")))
                 if len(res) == k:
                     break
         out.append(res)
@@ -902,44 +953,42 @@ def _norm_q(q: str | None) -> str:
 
 
 def _ensure_emb_tag(emit: Any = None) -> bool:
-    """Индекс собран по СТАРОЙ схеме эмбеддинга -> пересчитать описания одним батчем
-    (~40 с на 1000 файлов, один раз). Полный рескан диска для этого не нужен: тексты
-    описаний уже лежат в индексе. Молча выходим, если эмбеддера нет — тогда работает
-    токенный фолбэк, а тег не трогаем (пересчитаем, когда эмбеддер поднимут)."""
+    """Индекс собран по СТАРОЙ схеме эмбеддинга -> пересчитать векторы всей базы одним батчем:
+    тексты — текстом, файлы без текста — картинками (та же дверь `_item_vectors`, что и везде).
+    Полный рескан диска не нужен: тексты и пути уже в индексе. Сервиса нет — выходим молча и тег
+    не трогаем (пересчёт пойдёт, когда сервис поднимется), а токенный фолбэк работает и сейчас.
+    Старые вектора другой схемы не остаются ни у кого: записи, которым вектор не досталось, — без него."""
     emit = wrap_emit(emit)
     with _LOCK:
         d = _load()
         if not d or d.get("emb_tag") == EMB_TAG:
             return False
-        model = d.get("emb_model") or ""
-        pairs = [(it.get("path"), it.get("desc") or "", it.get("ru") or "", it.get("vis") or "",
-                  _subject_text(_doc_text(it.get("desc"), it.get("ru"), it.get("vis"))))
-                 for it in d.get("items", [])
-                 if _subject_text(_doc_text(it.get("desc"), it.get("ru"), it.get("vis")))]
-    # эмбеддинг — вне лока: сетевой вызов под _LOCK вешал бы всю базу
-    # на 120 с, пока LM Studio занят
-    if not model:
-        model = _emb_model()
-    if not model or not pairs:
+        snap = [dict(it) for it in d.get("items", []) if not it.get("gone")]
+    if not snap:
         return False
-    emit("база: схема эмбеддинга сменилась — пересчёт {count} описаний…", count=len(pairs))
-    vecs = _emb_docs([t for _, _, _, _, t in pairs], model)
-    if not vecs:
+    # векторы — вне лока: сетевой вызов под _LOCK повесил бы всю базу, пока сервис занят
+    emit("база: схема эмбеддинга сменилась — пересчёт {count} файлов…", count=len(snap))
+    got = _item_vectors(snap)
+    if not any(v is not None for _, v in got):
         return False
     with _LOCK:
         d = _load()
         if not d or d.get("emb_tag") == EMB_TAG:
             return False
+        for it in d.get("items", []):
+            it["emb"] = None
+            it.pop("emb_src", None)
         by_path = {paths.pkey(os.path.abspath(it.get("path") or "")): it
                    for it in d.get("items", [])}
-        # между тактами индекс мог измениться — ищем запись заново по пути, и только
-        # если описание/ru/vis не поменялись (иначе припишем чужой свежий вектор к новому тексту)
-        for (p, dsc, ru, vis, _txt), v in zip(pairs, vecs):
-            it = by_path.get(paths.pkey(os.path.abspath(p)))
-            if it is not None and (it.get("desc") or "") == dsc and (it.get("ru") or "") == ru \
-               and (it.get("vis") or "") == vis:
-                it["emb"] = v
-        d["emb_model"], d["emb_tag"] = model, EMB_TAG
+        # между тактами индекс мог измениться — запись ищем заново по пути и приписываем вектор,
+        # только если файл описан тем же (иначе вектор старого текста достался бы новому)
+        for snap_it, (src, v) in zip(snap, got):
+            if v is None:
+                continue
+            it = by_path.get(paths.pkey(os.path.abspath(snap_it.get("path") or "")))
+            if it is not None and _vector_source(it) == _vector_source(snap_it):
+                it["emb"], it["emb_src"] = v, src
+        d["emb_model"], d["emb_tag"] = _emb_model(), EMB_TAG
         _save(d)
     emit("база: эмбеддинги пересчитаны")
     return True
@@ -1082,7 +1131,8 @@ def find_named(terms: Sequence[str], kind: str = "photo", secondary: Sequence[st
         if best is None or key < best[0]:
             best = (key, {"path": path, "name": it.get("name") or os.path.basename(path),
                           "type": it.get("type") or _media_kind(path),
-                          "mw": it.get("mw"), "mh": it.get("mh")})
+                          "mw": it.get("mw"), "mh": it.get("mh"), "sc": it.get("sc"),
+                          "x": it.get("x"), "y": it.get("y"), "nobg": it.get("nobg")})
     return best[1] if best else None
 
 
@@ -1109,6 +1159,7 @@ def _save(data: dict[str, Any]) -> None:
 
 _RB_SESSION = None                                       # сессия rembg (модель грузится 1 раз на модель)
 _RB_SESSION_NAME = None                                  # имя модели, под которую создана сессия
+_RB_RUN_LOCK = threading.Lock()                          # прогоны фона по одному — как `model_service._rembg_run_lock`
 _RB_LOCK = threading.Lock()                              # создание сессии — под локом
 # Метка модели в PNG-вырезке (tEXt). По ней кэш <стем>.nobg.png различает модели: имя
 # файла оставляем прежним (его читают интерфейс и список базы), а смена модели в
@@ -1116,91 +1167,30 @@ _RB_LOCK = threading.Lock()                              # создание се
 # до выбора модели была только она, такие кэши не пересчитываем.
 REMBG_TAG = "reelsi_rembg_model"
 
-# Сессия на видеокарте держит ~1–2 ГБ VRAM, а на Windows переполнение VRAM вешает машину
-# (правило проекта: держать запас). Поэтому простой дольше этого срока выгружает сессию;
-# следующий вызов откроет её заново (1–2 с).
-REMBG_GPU_IDLE_SEC = 60
-_RB_SESSION_GPU = False                                  # сессия открыта на видеокарте, а не на CPU
-_RB_IDLE_TIMER: threading.Timer | None = None            # таймер выгрузки сессии с видеокарты
+# Простой сессии фона — и на видеокарте, и на процессоре: сессия на видеокарте занимает
+# ~10 ГБ VRAM (замер — в докстринге `core/rembg_run.py`), а на Windows переполнение VRAM
+# вешает машину (правило проекта: держать запас). Поэтому простой дольше `rembg_run.IDLE_S`
+# выгружает сессию; следующая очистка откроет её заново и снова спросит видеокарту.
+_RB_SESSION_GPU = False                                  # сессия открыта на видеокарте, а не на процессоре
+_RB_IDLE_TIMER: threading.Timer | None = None            # таймер выгрузки сессии по простою
 _RB_IDLE_GEN = 0                                         # поколение таймера: сработавший устаревший молчит
-_CUDA_DLLS_DONE = False                                  # DLL CUDA из torch подключены (раз за процесс)
-_CUDA_DLL_DIRS: list[Any] = []                           # хэндлы add_dll_directory: держим их живыми
-# Опции CUDA — из замера (RTX 4070 Ti SUPER, birefnet-general, вход 1024×1024): CPU 10.2 с,
-# CUDA с опциями по умолчанию 3.6 с, CUDA с cuDNN-опциями 0.27 с. Без них в 13 раз медленнее.
-_CUDA_OPTIONS = {"cudnn_conv_use_max_workspace": "1", "cudnn_conv_algo_search": "HEURISTIC"}
-
-
-def _rembg_providers() -> list:
-    """Провайдеры onnxruntime для сессии rembg. Если onnxruntime видит CUDA (стоит
-    onnxruntime-gpu) — CUDA с cuDNN-опциями первым и CPU вторым: CPU нужен, если сессия
-    на видеокарте не поднимется. Иначе — только CPU. Причина опций — у `_CUDA_OPTIONS`."""
-    ort_gpu.activate()                                   # до импорта: своя папка onnxruntime-gpu (core/ort_gpu.py)
-    try:
-        import onnxruntime
-    except ImportError:                                  # без onnxruntime rembg не работает вовсе; причина видна в doctor
-        return ["CPUExecutionProvider"]
-    if "CUDAExecutionProvider" in onnxruntime.get_available_providers():
-        return [("CUDAExecutionProvider", dict(_CUDA_OPTIONS)), "CPUExecutionProvider"]
-    return ["CPUExecutionProvider"]
-
-
-def _cuda_dll_dirs() -> None:
-    """DLL CUDA/cuDNN для onnxruntime-gpu берём из `torch/lib`: torch cu126 несёт их с собой.
-    Без них сессия на видеокарте не создаётся — Windows не находит библиотеки cuDNN.
-    Добавляем один раз за процесс. На не-Windows `os.add_dll_directory` нет — пропуск.
-    Ошибка не фатальна: сессия откатится на CPU (см. `_open_rb_session`)."""
-    global _CUDA_DLLS_DONE
-    if _CUDA_DLLS_DONE:
-        return
-    _CUDA_DLLS_DONE = True
-    add = getattr(os, "add_dll_directory", None)
-    if add is None:
-        return
-    try:
-        import torch
-        lib = os.path.join(os.path.dirname(torch.__file__), "lib")
-        if os.path.isdir(lib):
-            _CUDA_DLL_DIRS.append(add(lib))
-    except Exception as e:                               # torch не импортируется — сессия попробует без него и откатится
-        log.warning("DLL CUDA из torch не подключены (%s)", e)
-
-
-def _is_cuda(providers: list) -> bool:
-    first = providers[0]
-    return (first[0] if isinstance(first, tuple) else first) == "CUDAExecutionProvider"
-
-
-def _open_rb_session(new_session: Any, name: str, providers: list) -> tuple[Any, bool]:
-    """Открыть сессию rembg. Если на видеокарте не поднялась (нет DLL, не та версия cuDNN,
-    сбой драйвера), причину пишем в журнал и открываем на CPU: CPU-путь обязан работать
-    всегда. Возвращает (сессия, на_видеокарте)."""
-    if _is_cuda(providers):
-        _cuda_dll_dirs()
-        try:
-            return new_session(name, providers=providers), True
-        except ReelsiError:
-            raise
-        except Exception as e:
-            log.warning("фон на видеокарте не открылся (%s: %s) — откат на процессор",
-                        type(e).__name__, e)
-    return new_session(name, providers=["CPUExecutionProvider"]), False
 
 
 def _rb_arm_idle_timer() -> None:
-    """Перезапустить таймер выгрузки сессии с видеокарты. Вызывать под `_RB_LOCK`.
+    """Перезапустить таймер выгрузки сессии по простою. Вызывать под `_RB_LOCK`.
     Старый таймер отменяем; поколение отсекает его, если он уже сработал и ждёт лок."""
     global _RB_IDLE_TIMER, _RB_IDLE_GEN
     _RB_IDLE_GEN += 1
     if _RB_IDLE_TIMER is not None:
         _RB_IDLE_TIMER.cancel()
-    timer = threading.Timer(REMBG_GPU_IDLE_SEC, _rb_idle_unload, args=(_RB_IDLE_GEN,))
+    timer = threading.Timer(rembg_run.IDLE_S, _rb_idle_unload, args=(_RB_IDLE_GEN,))
     timer.daemon = True
     _RB_IDLE_TIMER = timer
     timer.start()
 
 
 def _rb_idle_unload(gen: int) -> None:
-    """Выгрузить сессию с видеокарты после простоя, чтобы отдать VRAM. Сработавший таймер
+    """Выгрузить сессию фона после простоя (с видеокарты — чтобы отдать VRAM). Сработавший таймер
     устаревшего поколения (вызов успел перезапустить таймер, пока он ждал лок) ничего не делает."""
     global _RB_SESSION, _RB_SESSION_NAME, _RB_SESSION_GPU, _RB_IDLE_TIMER
     with _RB_LOCK:
@@ -1213,6 +1203,35 @@ def _rb_idle_unload(gen: int) -> None:
         gc.collect()
 
 
+def _rb_local_png(img_bytes: bytes, name: str, emit: Any) -> bytes:
+    """Снять фон в ЭТОМ процессе — запасной путь, когда сервиса моделей нет.
+
+    Сессия держится здесь же (кэш `_RB_SESSION`), простой выгружает её по `rembg_run.IDLE_S`.
+    Открытие сессии — в `rembg_run.open_session`: одно правило и для этого пути, и для сервиса.
+
+    Открытие и прогон — под `_RB_RUN_LOCK`, по одному на процесс. Замер на железе: один прогон
+    BiRefNet берёт ~8.5–9 ГБ арены, два разом в потолок 10 ГиБ не помещаются (падают «Available
+    memory … smaller than requested»). Открытие второй модели при идущем прогоне — то же
+    переполнение, поэтому открываем под тем же замком. `_RB_LOCK` — только на подмену сессии.
+    """
+    global _RB_SESSION, _RB_SESSION_NAME, _RB_SESSION_GPU
+    with _RB_RUN_LOCK:
+        with _RB_LOCK:                                   # одна сессия на модель
+            if _RB_SESSION is None or _RB_SESSION_NAME != name:
+                _RB_SESSION = None                       # старую отпускаем до загрузки новой
+                # Устройство то же, что у сервиса моделей («Где считать модели»). Свободную VRAM
+                # меряем только когда на видеокарту и правда идём: nvidia-smi — отдельный процесс.
+                want_gpu = model_service._service_device() != "cpu"
+                free = device.nvidia_free_mib() if want_gpu else None
+                _RB_SESSION, _RB_SESSION_GPU, why = rembg_run.open_session(name, want_gpu, free)
+                _RB_SESSION_NAME = name
+                if why:
+                    emit("  фон снимается процессором: {why}", why=why)
+            session = _RB_SESSION
+            _rb_arm_idle_timer()                         # простой у любой сессии: и у процессорной тоже
+        return rembg_run.predict(session, img_bytes)
+
+
 def remove_bg(img_bytes: bytes, trim: bool = True, emit: Any = None) -> bytes:
     """«Remove Background» как в фотошопе: PNG с настоящей альфой вместо белого фона.
     Модель — из общих настроек (`rembg_model`: u2net или birefnet-general), onnx на видеокарте
@@ -1223,27 +1242,24 @@ def remove_bg(img_bytes: bytes, trim: bool = True, emit: Any = None) -> bytes:
     Если модель съела всё (пустая альфа) — возвращаем исходник, лучше фон чем дырка."""
     emit = wrap_emit(emit)
     import io
-    ort_gpu.activate()                                   # rembg сам тянет onnxruntime: путь — до его импорта
-    try:
-        from rembg import remove, new_session
-    except ImportError:
-        raise ReelsiError("для снятия фона нужен пакет rembg — «pip install rembg» "
-                         "(или сними галку «убирать фон» в ⚙)")
     from core import aicut                               # ленивый: aicut тянет настройки ИИ, ядру вставок не нужны
-    global _RB_SESSION, _RB_SESSION_NAME, _RB_SESSION_GPU
     name = aicut.rembg_model()
-    providers = _rembg_providers()
-    with _RB_LOCK:                                       # одна сессия на модель
-        if _RB_SESSION is None or _RB_SESSION_NAME != name:
-            _RB_SESSION = None                           # старую отпускаем до загрузки новой
-            _RB_SESSION, _RB_SESSION_GPU = _open_rb_session(new_session, name, providers)
-            _RB_SESSION_NAME = name
-        session, used = _RB_SESSION, _RB_SESSION_NAME
-        if _RB_SESSION_GPU:                              # простой на видеокарте — выгрузка через REMBG_GPU_IDLE_SEC
-            _rb_arm_idle_timer()
+    try:
+        # Сервис моделей первым: одна копия модели на машину, сверка VRAM, выгрузка по простою.
+        got: dict[str, Any] | None = model_service.remove_bg(img_bytes, name)
+    except model_service.ServiceUnavailable:
+        # Сервиса нет (не поднялся, не ответил) — считаем здесь. Отказ живого сервиса — `ReelsiError`,
+        # сюда он не попадает: вторая копия модели рядом с занятой картой хуже ошибки.
+        got = None
+    if got is None:
+        raw = _rb_local_png(img_bytes, name, emit)
+    else:
+        if got["note"]:                                  # сервис открыл сессию процессором — та же строка в журнал
+            emit("  фон снимается процессором: {why}", why=got["note"])
+        raw = got["png"]
     from PIL import Image
     from PIL.PngImagePlugin import PngInfo
-    im = Image.open(io.BytesIO(remove(img_bytes, session=session))).convert("RGBA")
+    im = Image.open(io.BytesIO(raw)).convert("RGBA")
     box = im.getchannel("A").point(lambda v: 255 if v > 8 else 0).getbbox()
     if box is None:                                      # альфа пустая — фон не сняли
         emit("  фон снять не вышло (пустая альфа) — оставляю как есть")
@@ -1252,7 +1268,7 @@ def remove_bg(img_bytes: bytes, trim: bool = True, emit: Any = None) -> bytes:
         im = im.crop(box)
     buf = io.BytesIO()
     meta = PngInfo()
-    meta.add_text(REMBG_TAG, used)
+    meta.add_text(REMBG_TAG, name)
     im.save(buf, "PNG", pnginfo=meta)
     emit("  фон убран, прозрачный PNG {width}x{height}", width=im.width, height=im.height)
     return buf.getvalue()
@@ -1523,30 +1539,27 @@ def add_file(path: str, desc: str, kind: str, src: str = "stock", emit: Any = co
     path = os.path.abspath(path)
     desc = desc or os.path.splitext(os.path.basename(path))[0]
     ru = (ru or "").strip()
-    doc_t = _subject_text(_doc_text(desc, ru))
-    vec = None
-    if embed:                                               # эмбеддинг — вне лока
-        with _LOCK:                                         # короткое чтение модели под локом
-            d0 = _load()
-            model = (d0.get("emb_model") or "") if d0 else ""
-        if model:
-            vs = _emb_docs([doc_t], model)                   # сетевой вызов может висеть до 120 с
-            if vs:
-                vec = vs[0]
+    new: dict[str, Any] = {"path": path, "name": os.path.basename(path), "type": kind,
+           "used": 0, "desc": desc, "desc_src": src, "emb": None,
+           "added": time.time()}   # свежесть: при равном score побеждает новый
+    if ru:
+        new["ru"] = ru
+    lk = _norm_look(look)
+    if lk:
+        new["look"] = lk
+    if embed:
+        with _LOCK:                                         # короткое чтение: есть ли база вообще
+            indexed = _load() is not None
+        if indexed:                                         # вектор — вне лока: сетевой вызов может висеть
+            vec_src, vec = _item_vectors([new])[0]          # та же дверь, что у скана: текст или картинка
+            if vec is not None:
+                new["emb"], new["emb_src"] = vec, vec_src
     with _LOCK:                                             # атомарно load+modify+save под локом
         data = _load()
         if data:
             items = data.setdefault("items", [])
             if not any(it["path"] == path for it in items):
-                it = {"path": path, "name": os.path.basename(path), "type": kind,
-                      "used": 0, "desc": desc, "desc_src": src, "emb": vec,
-                      "added": time.time()}   # свежесть: при равном score побеждает новый
-                if ru:
-                    it["ru"] = ru
-                lk = _norm_look(look)
-                if lk:
-                    it["look"] = lk
-                items.append(it)
+                items.append(new)
                 _save(data)
                 emit("база: +{name} ({src})", name=os.path.basename(path), src=src)
         else:
@@ -1585,8 +1598,8 @@ def add_generated(img_bytes: bytes, query: str, dest_dir: str, emit: Any = None,
 
 
 def embed_items(items: Sequence[Sequence[str]], emit: Any = None) -> int:
-    """Дозаполнить эмбеддинги сгенерённым картинкам ОДНИМ вызовом _embed (вместо
-    по одному на картинку). items: [(path, desc), ...] или [(path, desc, ru), ...].
+    """Дозаполнить векторы сгенерённым картинкам ОДНИМ пакетом сервиса (вместо по одному
+    на картинку). items: [(path, desc), ...] или [(path, desc, ru), ...].
     Возвращает число обновлённых."""
     emit = wrap_emit(emit)
     norm_items = [(os.path.abspath(elem[0]), elem[1], (elem[2] if len(elem) > 2 else ""))
@@ -1597,19 +1610,15 @@ def embed_items(items: Sequence[Sequence[str]], emit: Any = None) -> int:
         data = _load()
         if not data:
             return 0
-        model = data.get("emb_model") or ""
         by_p = {paths.pkey(os.path.abspath(it.get("path") or "")): it
                 for it in data.get("items", [])}
-        doc_texts = []
+        probes: list[dict[str, Any]] = []
         for p, d, r in norm_items:
             cur = by_p.get(paths.pkey(p)) or {}
-            cur_ru = r or (cur.get("ru") or "")
-            cur_vis = cur.get("vis") or ""
-            doc_texts.append(_subject_text(_doc_text(d or "", cur_ru, cur_vis)))
-    if not model:
-        return 0
-    vecs = _emb_docs(doc_texts, model)   # сетевой вызов — вне лока
-    if not vecs:
+            probes.append({"path": p, "desc": d or "", "desc_src": cur.get("desc_src") or "generated",
+                           "ru": r or (cur.get("ru") or ""), "vis": cur.get("vis") or ""})
+    vecs = _item_vectors(probes)         # сетевой вызов — вне лока; та же дверь, что у скана
+    if not any(v is not None for _, v in vecs):
         return 0
     with _LOCK:
         data = _load()
@@ -1618,10 +1627,10 @@ def embed_items(items: Sequence[Sequence[str]], emit: Any = None) -> int:
         # между тактами индекс мог измениться — ищем по пути заново
         idx = {os.path.abspath(it["path"]): it for it in data.get("items", [])}
         n = 0
-        for (p, _, _), v in zip(norm_items, vecs):
+        for (p, _, _), (src, v) in zip(norm_items, vecs):
             it = idx.get(p)
-            if it is not None:
-                it["emb"] = v
+            if it is not None and v is not None:
+                it["emb"], it["emb_src"] = v, src
                 n += 1
         if n:
             _save(data)
@@ -1665,17 +1674,110 @@ def _resolve_by_basename(name: str, base_idx: dict[str, list[str]], kind: str | 
     return None
 
 
-def _crop_of(it: dict[str, Any]) -> tuple[int, int] | None:
-    """Форма маски вставки (ширина/высота кропа в % от авторасчёта) -> (mw, mh) или None.
-    100/100 — это «как считает JSX сам», запоминать нечего."""
-    try:
-        mw = int(round(float(it.get("mw"))))  # type: ignore[arg-type]  # float accepts int/str
-        mh = int(round(float(it.get("mh"))))  # type: ignore[arg-type]  # float accepts int/str
-    except (TypeError, ValueError):
+# Границы формы маски вставки, % от авторасчёта. JS-скраббер маски (static/app/20-widgets.js,
+# scrubMask) держит те же числа; сторож — тест в tests/test_build_and_prompts.py. Шире кадра
+# маска и так упирается в край кадра, поэтому верхняя граница — предел ручки, а не размер кадра.
+MASK_PCT_MIN = 20
+MASK_PCT_MAX = 1000
+
+
+# Память картинки — настройка, которую юзер подбирает под КАРТИНКУ, а не под ролик: маска
+# (mw/mh), масштаб (sc), точка покоя (x/y), снятый фон (nobg). Лежит за файлом в записи
+# items[] индекса, поэтому подобранное один раз приезжает в следующий ролик. Значения по
+# умолчанию (100/100, 100, 0) не пишем — запоминать нечего, как и у mw/mh.
+MEMO_KEYS = ("mw", "mh", "sc", "x", "y", "nobg")
+SC_MIN, SC_MAX = 10, 400         # пределы скраббера масштаба (static/app/20-widgets.js, scrubScale)
+MEMO_XY_MAX = 10000              # |x|, |y| в px: дальше любого кадра — уже мусор
+
+
+def _memo_num(v: Any) -> float | None:
+    """Число из поля памяти или None. bool — не число: True не должен стать «1 %»."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
         return None
-    if not (20 <= mw <= 300 and 20 <= mh <= 300) or (mw == 100 and mh == 100):
-        return None
-    return mw, mh
+    f = float(v)
+    return f if math.isfinite(f) else None
+
+
+def _memo_apply(it: dict[str, Any], fields: dict[str, Any]) -> None:
+    """Записать поля памяти в запись `it` (на месте). Битое значение — поле пропускаем
+    без ошибки; значение по умолчанию — поле УБИРАЕМ из записи.
+    mw/mh берём парой: одна без другой кропа не задаёт. Единственное место, где проверяются
+    поля памяти, — и через него пишут и правка (remember_look), и сборка (adopt)."""
+    w, h = _memo_num(fields.get("mw")), _memo_num(fields.get("mh"))
+    if w is not None and h is not None:
+        mw, mh = int(round(w)), int(round(h))
+        if MASK_PCT_MIN <= mw <= MASK_PCT_MAX and MASK_PCT_MIN <= mh <= MASK_PCT_MAX:
+            if mw == 100 and mh == 100:
+                it.pop("mw", None)
+                it.pop("mh", None)
+            else:
+                it["mw"], it["mh"] = mw, mh
+    sc = _memo_num(fields.get("sc"))
+    if sc is not None and SC_MIN <= sc <= SC_MAX:
+        sc = round(sc, 2)
+        if sc == 100:
+            it.pop("sc", None)
+        else:
+            it["sc"] = sc
+    for k in ("x", "y"):
+        v = _memo_num(fields.get(k))
+        if v is not None and abs(v) <= MEMO_XY_MAX:
+            v = round(v, 2)
+            if v == 0:
+                it.pop(k, None)
+            else:
+                it[k] = v
+    nobg = fields.get("nobg")
+    if isinstance(nobg, bool):                 # и True, и False — оба память («фон оставить»)
+        it["nobg"] = nobg
+
+
+def _memo_of(it: dict[str, Any]) -> dict[str, Any]:
+    """Поля памяти картинки из элемента переноса (adopt): MEMO_KEYS, что пришли. nobg=False —
+    тоже значение (не None), поэтому проверка именно на None."""
+    return {k: it[k] for k in MEMO_KEYS if it.get(k) is not None}
+
+
+def remember_look(path: str, fields: dict[str, Any]) -> bool:
+    """Запомнить настройку картинки за файлом базы (поля MEMO_KEYS).
+
+    True — запись найдена (и сохранена, если что-то изменилось). False — файла нет в
+    индексе: картинка ещё не в базе. Это не ошибка: память придёт при сборке, когда файл
+    переедет в базу (adopt), а до того её просто некуда записать. Чужие ключи и битые
+    значения пропускаем молча.
+
+    Load-modify-save под _LOCK, как reject: _load() отдаёт ОДИН закэшированный dict, и
+    параллельная правка затёрла бы эту запись."""
+    if not path or not isinstance(fields, dict):
+        return False
+    key = paths.pkey(os.path.abspath(path))
+    with _LOCK:
+        data = _load()
+        if not data:
+            return False
+        for it in data.get("items", []):
+            if paths.pkey(os.path.abspath(it.get("path") or "")) == key:
+                before = {k: it[k] for k in MEMO_KEYS if k in it}
+                _memo_apply(it, fields)
+                if {k: it[k] for k in MEMO_KEYS if k in it} != before:
+                    _save(data)
+                return True
+    return False
+
+
+def look_of(path: str) -> dict[str, Any]:
+    """Запомненная настройка картинки: поля MEMO_KEYS, что стоят в записи. Нет записи — {}."""
+    if not path:
+        return {}
+    key = paths.pkey(os.path.abspath(path))
+    with _LOCK:
+        data = _load()
+        if not data:
+            return {}
+        for it in data.get("items", []):
+            if paths.pkey(os.path.abspath(it.get("path") or "")) == key:
+                return {k: it[k] for k in MEMO_KEYS if k in it}
+    return {}
 
 
 def _read_import_log(logp: str) -> dict[str, Any] | None:
@@ -1699,9 +1801,11 @@ def _read_import_log(logp: str) -> dict[str, Any] | None:
 
 def adopt(items: Sequence[dict[str, Any]], dest_dir: str, emit: Any = None) -> dict[str, str]:
     """Прибрать в базу файлы, которые РЕАЛЬНО ушли в проект (вызывается на сборке .jsx).
-    items = [{"path":..., "desc":..., "mw":..., "mh":...}], desc = запрос вставки: с ним
-    файл найдётся автоподбором в следующих роликах, без прогона «Описать через ИИ»;
-    mw/mh — форма маски, с которой файл ушёл в проект (её же вернёт match_many).
+    items = [{"path":..., "desc":..., "mw":..., "mh":..., "sc":..., "x":..., "y":..., "nobg":...}],
+    desc = запрос вставки: с ним файл найдётся автоподбором в следующих роликах, без прогона
+    «Описать через ИИ»; поля памяти (MEMO_KEYS) — то, как картинка стояла в ролике в момент
+    сборки. Пишутся в запись базы теми же правилами, что правка (_memo_apply), — и для
+    переехавшего файла, и для уже лежащего в базе.
     Файл переезжает в <dest>/photos|videos; уже лежащий в базе НЕ трогаем (ни в коем
     случае не создаём _2-дубли). Возвращает {старый_путь: новый_путь} для ВСЕХ файлов,
     чей путь изменился/нормализован (фронт по нему чинит media в своём состоянии).
@@ -1717,8 +1821,8 @@ def adopt(items: Sequence[dict[str, Any]], dest_dir: str, emit: Any = None) -> d
     mapping: dict[str, str]
     seen: dict[str, Any]
     transferred: dict[str, str]
-    crops: dict[str, tuple[int, int]]
-    mapping, seen, transferred, crops = {}, {}, {}, {}
+    memos: dict[str, dict[str, Any]]
+    mapping, seen, transferred, memos = {}, {}, {}, {}
     for it in items:
         p = (it.get("path") or "").strip().strip('"')
         if not p:
@@ -1727,7 +1831,7 @@ def adopt(items: Sequence[dict[str, Any]], dest_dir: str, emit: Any = None) -> d
         kind = _media_kind(p)
         desc = (it.get("desc") or "").strip()
         ru = (it.get("ru") or "").strip()
-        crop = _crop_of(it)
+        memo = _memo_of(it)
         p_nc = paths.pkey(p)
         # 1) уже в базе (без учёта регистра)? — НЕ двигаем, только нормализуем путь.
         # В mapping кладём ТОЛЬКО если путь реально изменился (регистр/слеши) —
@@ -1737,8 +1841,8 @@ def adopt(items: Sequence[dict[str, Any]], dest_dir: str, emit: Any = None) -> d
             if real != p:
                 mapping[p] = real                           # media -> реальный регистр
             seen[real] = {"desc": desc, "ru": ru}
-            if crop:
-                crops[real] = crop
+            if memo:
+                memos[real] = memo
             continue
         # 2) файл есть по точному пути? — переезжаем
         src: str | None
@@ -1777,8 +1881,8 @@ def adopt(items: Sequence[dict[str, Any]], dest_dir: str, emit: Any = None) -> d
         mapping[p] = real                                   # старый путь -> новый (реальный регистр)
         transferred[p] = real
         seen[real] = {"desc": desc, "ru": ru}
-        if crop:
-            crops[real] = crop
+        if memo:
+            memos[real] = memo
         emit("в базу: {name}", name=fn)
     if transferred:                                         # лог переносов (как у import_media)
         os.makedirs(dest, exist_ok=True)
@@ -1791,20 +1895,21 @@ def adopt(items: Sequence[dict[str, Any]], dest_dir: str, emit: Any = None) -> d
             old.update(transferred)
             atomic_json_dump(logp, old, indent=1)
     if seen:
-        _index_adopt(mapping, seen, emit, crops)
+        _index_adopt(mapping, seen, emit, memos)
     if transferred:
         emit("прибрано в базу: {count} файлов -> {dest}", count=len(transferred), dest=dest)
     return mapping
 
 
-def _index_adopt(mapping: dict[str, str], seen: dict[str, Any], emit: Any = None, crops: dict[str, tuple[int, int]] | None = None) -> None:
+def _index_adopt(mapping: dict[str, str], seen: dict[str, Any], emit: Any = None,
+                 memos: dict[str, dict[str, Any]] | None = None) -> None:
     """Индекс после adopt: переехавшим чиним path (used/desc сохраняются), новых
     дописываем с desc=запрос и ru=русская подпись. Полного рескана не делаем.
     Сравнения — БЕЗ учёта регистра (Windows case-insensitive ФС: desktop==Desktop).
 
-    crops {путь: (mw, mh)} — форма маски, с которой файл ушёл в проект. Пишем ПОВЕРХ
-    прошлой: последняя ручная подгонка и есть правильная (юзер её только что видел
-    в предпросмотре)."""
+    memos {путь: {поля памяти}} — как картинка стояла в ролике в момент сборки. Пишем ПОВЕРХ
+    прошлой памяти: последняя ручная подгонка и есть правильная (юзер её только что видел
+    в предпросмотре). Пишет тот же _memo_apply, что правка: 100/0 — поле убирается."""
     emit = wrap_emit(emit)
     # правки путей и новых записей — под локом (как reject/add_generated): _load() отдаёт
     # общий закэшированный dict, и параллельный /api/rembg или генерация затирали правку.
@@ -1829,8 +1934,7 @@ def _index_adopt(mapping: dict[str, str], seen: dict[str, Any], emit: Any = None
         #    путям, шаг 2 искал по новым -> промах -> на один файл дописывалась
         #    дубликат-запись с расщеплённым used (аудит, adopt)
         by_nc = {paths.pkey(it.get("path") or ""): it for it in items}
-        model = data.get("emb_model") or ""
-        fresh: list[tuple[str, str, str, str]] = []
+        fresh: list[dict[str, Any]] = []        # снимки записей для векторов (вне лока)
         for path, sval in seen.items():
             desc = (sval.get("desc") if isinstance(sval, dict) else sval) or ""
             ru = (sval.get("ru") if isinstance(sval, dict) else "") or ""
@@ -1844,9 +1948,7 @@ def _index_adopt(mapping: dict[str, str], seen: dict[str, Any], emit: Any = None
                     it["ru"] = ru
                 items.append(it)
                 by_nc[key] = it
-                doc_t = _subject_text(_doc_text(desc, ru))
-                if doc_t:
-                    fresh.append((path, desc, ru, doc_t))
+                fresh.append(dict(it))          # без текста тоже — у него вектор картинки
             else:
                 updated = False
                 if desc and not (it.get("desc") or "").strip():
@@ -1856,26 +1958,26 @@ def _index_adopt(mapping: dict[str, str], seen: dict[str, Any], emit: Any = None
                     it["ru"] = ru
                     updated = True
                 if updated:
-                    doc_t = _subject_text(_doc_text(it.get("desc") or "", it.get("ru") or "",
-                                                    it.get("vis") or ""))
-                    if doc_t:
-                        fresh.append((path, it.get("desc") or "", it.get("ru") or "", doc_t))
-            cr = (crops or {}).get(path)
-            if cr:
-                it["mw"], it["mh"] = cr                        # форма маски на будущее
+                    fresh.append(dict(it))
+            mm = (memos or {}).get(path)
+            if mm:
+                _memo_apply(it, mm)                            # память картинки — та же дверь, что у правки
         _save(data)
-    if model and fresh:                                    # эмбеддинги одним батчем, вне лока
-        vecs = _emb_docs([t for _, _, _, t in fresh], model)
-        if vecs:
+    if fresh:                                              # векторы одним пакетом, вне лока
+        got = _item_vectors(fresh)
+        found = [(f, src, v) for f, (src, v) in zip(fresh, got) if v is not None]
+        if found:
             with _LOCK:
                 data = _load()
                 if data:
                     by_p = {paths.pkey(it.get("path") or ""): it
                             for it in data.get("items", [])}
-                    for (path, dsc, ru, _txt), v in zip(fresh, vecs):
-                        it = by_p.get(paths.pkey(path))
-                        if it is not None and (it.get("desc") or "") == dsc and (it.get("ru") or "") == ru:
-                            it["emb"] = v
+                    for f, src, v in found:
+                        it = by_p.get(paths.pkey(f.get("path") or ""))
+                        # между тактами описание могли поменять — вектор чужого текста не приписываем
+                        if it is not None and (it.get("desc") or "") == (f.get("desc") or "") \
+                           and (it.get("ru") or "") == (f.get("ru") or ""):
+                            it["emb"], it["emb_src"] = v, src
                     _save(data)
 
 
@@ -1961,47 +2063,8 @@ def import_media(dirs: Sequence[str], dest: str, since_ts: float = 0.0, move: bo
     return dict(count=moved, dest=dest, log=os.path.join(dest, "_import_log.json"))
 
 
-# ---------- vision-описания (LM Studio, qwen-vl) ----------
-# Замер на 40 файлах с известным ответом показал: прежняя gemma-4-e2b узнаёт предмет
-# в 16 % случаев при ЛЮБОМ промпте (дело было в размере модели, не в формулировке),
-# а qwen3-vl-8b даёт 26 % и читает названия прямо с упаковки. Модель выбирать не надо:
-# _vision_model() уже отдаёт qwen3-vl-8b-instruct-abliterated (паттерн 'vl' идёт первым).
-# Запрет называть стиль и цвета нужен потому, что эти слова засоряли описания
-# ('photo' 486 раз на 1373 описания, цвета 964) и склеивали документы между собой
-# в семантическом поиске.
-# Строку про бренды убрали: она уводила модель в рассуждение о торговых марках, и на
-# боевой базе вышло 11 % отказов вида «None of the objects...». Такой ответ хуже пустого —
-# он попадает в эмбеддинг и тянет чужие запросы, поэтому запрет отказа обязателен.
-_DESCRIBE_PROMPT = ("Name the MAIN OBJECT in this image as precisely as you can, in 4-10 English words. "
-                    "Be specific: \"glucometer\", not \"device\"; \"blister pack of tablets\", not \"packaging\". "
-                    "Always name what you see, even if it is abstract, a 3D render or an illustration. "
-                    "Never answer that objects cannot be identified. Output ONLY the object phrase.")
-
-
-VISION_MODEL_ENV = os.environ.get("LMSTUDIO_VISION_MODEL", "")
-
-
-def _vision_model() -> str | None:
-    """Ключ vision-модели: env, иначе первая подходящая из /models (vl/vision/gemma/llava…).
-    Проверено: google/gemma-4-e2b видит изображения. Это reasoning-модель, поэтому в
-    describe_file шлём явный запрет размышлений — иначе content приходил пустым."""
-    if VISION_MODEL_ENV:
-        return VISION_MODEL_ENV
-    try:
-        d = _http_json(LMSTUDIO_URL + "/models", timeout=5)
-        ids = [m.get("id") or "" for m in d.get("data", [])]
-        for pat in ("vl", "vision", "llava", "pixtral", "minicpm", "google/gemma", "gemma"):
-            for i in ids:
-                if pat in i.lower() and "embed" not in i.lower():
-                    return i
-    except ReelsiError: raise
-    except Exception:
-        pass  # LM Studio не ответил — vision-модель не найдём (скажем выше)
-    return None
-
-
 def _thumb_b64(path: str) -> str | None:
-    """Кадр для vision: фото/гиф — сам файл, видео — кадр из середины; всё ужато до 512px
+    """Кадр файла: фото/гиф — сам файл, видео — кадр из середины; всё ужато до 512px
     (ffmpeg). -> base64 jpeg | None."""
     import subprocess, base64, tempfile
     tmp = tempfile.NamedTemporaryFile(suffix=".jpg", delete=False)
@@ -2021,8 +2084,8 @@ def _thumb_b64(path: str) -> str | None:
         return base64.b64encode(b).decode() if b else None
     except ReelsiError: raise
     except Exception as e:
-        # кадр не вытащен (ffmpeg нет или не запустился) — None; вызывающий покажет «vision не ответил»
-        log.warning("кадр для vision не вытащен (%s)", e)
+        # кадр не вытащен (ffmpeg нет или не запустился) — None; файл останется без вектора картинки
+        log.warning("кадр не вытащен (%s)", e)
         return None
     finally:
         try:
@@ -2031,183 +2094,50 @@ def _thumb_b64(path: str) -> str | None:
             pass  # временный файл уже убран
 
 
-def describe_file(path: str, model: str) -> str | None:
-    """Одно vision-описание файла через LM Studio chat. -> str | None."""
-    b64 = _thumb_b64(path)
-    if not b64:
-        return None
-    try:
-        d = _http_json(LMSTUDIO_URL + "/chat/completions", {
-            "model": model, "max_tokens": 900, "temperature": 0.2,
-            # «не прислали параметр» != «выключено»: без явного запрета reasoning-модель
-            # (gemma и пр.) тратила весь бюджет на размышления и возвращала пустой content
-            "reasoning": {"enabled": False},
-            "messages": [{"role": "user", "content": [
-                {"type": "text", "text": _DESCRIBE_PROMPT},
-                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + b64}}]}]},
-            timeout=300)
-        ch = ((d.get("choices") or [{}])[0])
-        msg = (ch.get("message") or {})
-        txt = msg.get("content") or ""
-        # reasoning_content — МЫСЛИ модели, а не описание. Раньше сюда падала последняя
-        # строка размышлений («Итак, судя по форме, это может быть…»), по ней считался
-        # эмбеддинг, и файл навсегда всплывал в автоподборе не по теме: auto_describe
-        # с only_missing=True его больше не трогает. Лучше вернуть None и переспросить.
-        if not txt.strip():
-            return None
-        txt = " ".join(txt.replace("\n", " ").split()).strip().strip('."\'' )
-        return txt[:220] or None
-    except ReelsiError: raise
-    except Exception as e:
-        # vision-модель не ответила — None; auto_describe покажет «⚠ vision не ответил», причину пишем в журнал
-        log.warning("vision-описание не получено (%s)", e)
-        return None
-
-
-def auto_describe(emit: Any = None, only_missing: bool = True, progress: Any = None) -> dict[str, Any]:
-    """Vision-описания для всех файлов индекса (отбирает по needs_vis(it) при only_missing).
-    Пишет ТОЛЬКО в vis: desc (исходная фраза/запрос) и desc_src не трогаются. Сбрасывает emb
-    (пересчёт батчем в конце). progress(done,total)."""
-    emit = wrap_emit(emit)
-    with _LOCK:
-        d = _load()
-        if not d or not d.get("items"):
-            emit("индекс пуст — сначала скан")
-            return dict(count=0)
-        todo = [(it["path"], it.get("name") or os.path.basename(it["path"]))
-                for it in d["items"]
-                if os.path.isfile(it.get("path") or "") and (not only_missing or needs_vis(it))]
-    model = _vision_model()
-    if not model:
-        emit("⚠ vision-модель не найдена в LM Studio (нужна qwen-vl или похожая)")
-        return dict(count=0, error="no vision model")
-    try:                                                        # выгрузить прочие LLM (VRAM 16ГБ)
-        from core import aicut
-        aicut.ensure_loaded(model)
-    except ReelsiError: raise
-    except Exception as ex:
-        log.warning("не удалось выгрузить сторонние LLM перед vision-"
-                    "описаниями: %s — возможна нехватка видеопамяти", ex)
-    emit("vision-описания: {count} файлов через {model}…", count=len(todo), model=model)
-
-    pending: dict[str, str] = {}
-
-    def _flush_pending() -> None:
-        if not pending:
-            return
-        with _LOCK:
-            cur = _load()
-            if not cur:
-                return
-            by_p = {paths.pkey(os.path.abspath(it.get("path") or "")): it
-                    for it in cur.get("items", [])}
-            applied = []
-            for k, txt in pending.items():
-                it = by_p.get(k)
-                if it is not None:
-                    it["vis"] = txt
-                    it["emb"] = None
-                    applied.append(k)
-            if applied:
-                _save(cur)
-            for k in applied:
-                pending.pop(k, None)
-
-    done = 0
-    for path, name in todo:
-        txt = describe_file(path, model)
-        if txt:
-            pending[paths.pkey(os.path.abspath(path))] = txt
-            emit("  {name}: {vis}", name=name[:48], vis=txt[:80])
-        else:
-            emit("  ⚠ {name}: vision не ответил", name=name[:60])
-        done += 1
-        if progress:
-            progress(done, len(todo))
-        if done % 10 == 0:
-            _flush_pending()                                    # чекпойнт
-    _flush_pending()
-
-    emb_model = _emb_model()
-    if emb_model:
-        with _LOCK:
-            cur = _load()
-            need: list[tuple[str, str, str, str, str]] = []
-            if cur:
-                for it in cur.get("items", []):
-                    if not it.get("emb"):
-                        p = it.get("path")
-                        if p:
-                            doc_t = _subject_text(_doc_text(it.get("desc"), it.get("ru"), it.get("vis")))
-                            if doc_t:
-                                need.append((p, it.get("desc") or "", it.get("ru") or "", it.get("vis") or "", doc_t))
-        if need:
-            emit("эмбеддинги: {count} описаний…", count=len(need))
-            vecs = _emb_docs([t for _, _, _, _, t in need], emb_model)
-            if vecs:
-                with _LOCK:
-                    cur = _load()
-                    if cur:
-                        by_p = {paths.pkey(os.path.abspath(it.get("path") or "")): it
-                                for it in cur.get("items", [])}
-                        for (p, dsc, ru, vis, _txt), v in zip(need, vecs):
-                            it = by_p.get(paths.pkey(os.path.abspath(p)))
-                            if it is not None and (it.get("desc") or "") == dsc and (it.get("ru") or "") == ru \
-                               and (it.get("vis") or "") == vis:
-                                it["emb"] = v
-                        cur["emb_model"], cur["emb_tag"] = emb_model, EMB_TAG
-                        _save(cur)
-    emit("готово: описано {count}", count=done)
-    return dict(count=done)
-
-
 def set_desc(path: str, desc: str | None) -> dict[str, Any]:
     """Ручная правка описания файла (+эмбеддинг). -> dict(ok=True)|dict(error=...)."""
     desc = " ".join((desc or "").split()).strip()
     path = os.path.abspath(path)
     # правка desc под локом (как reject/add_generated): _load() отдаёт общий закэшированный
-    # dict, и параллельная генерация/режет-запросы затирали правку. Эмбеддинг — вторым
-    # тактом, вне лока: и _emb_model(), и _emb_docs() — сетевые вызовы, под
-    # _LOCK они вешали бы всю базу, пока LM Studio занят.
+    # dict, и параллельная генерация/режет-запросы затирали правку. Вектор — вторым тактом,
+    # вне лока: сетевой вызов сервиса под _LOCK повесил бы всю базу, пока сервис занят.
     with _LOCK:
         d = _load()
         if not d:
             return dict(error="индекс не построен")
         target = new_desc = cur_ru = None
-        m: str | None = ""
+        probe: dict[str, Any] = {}
         for it in d.get("items", []):
             if paths.pkey(it["path"]) == paths.pkey(path):
                 it["desc"] = desc or _norm_text(it["path"])
                 it["desc_src"] = "user" if desc else "name"
                 it["emb"] = None
+                it.pop("emb_src", None)
                 new_desc = it["desc"]
                 cur_ru = it.get("ru") or ""
                 cur_vis = it.get("vis") or ""
-                m = d.get("emb_model") or ""
+                probe = {"path": it["path"], "desc": new_desc, "desc_src": it["desc_src"],
+                         "ru": cur_ru, "vis": cur_vis}
                 target = it["path"]
                 _save(d)
                 break
     if target is None:
         return dict(error="файла нет в индексе")
-    if not m:
-        m = _emb_model()
-    if m:
-        doc_t = _subject_text(_doc_text(new_desc, cur_ru, cur_vis))
-        v = _emb_docs([doc_t], m)
-        if v:
-            with _LOCK:
-                d = _load()
-                if d:
-                    for it in d.get("items", []):
-                        if paths.pkey(it["path"]) == paths.pkey(path):
-                            # описание/ru/vis могли смениться между тактами — не приписывать
-                            # вектор, посчитанный по старому тексту
-                            if (it.get("desc") or "") == new_desc and (it.get("ru") or "") == cur_ru \
-                               and (it.get("vis") or "") == cur_vis:
-                                it["emb"] = v[0]
-                                d["emb_model"] = m
-                            _save(d)
-                            break
+    src, v = _item_vectors([probe])[0]      # сетевой вызов — вне лока; та же дверь, что у скана
+    if v is not None:
+        with _LOCK:
+            d = _load()
+            if d:
+                for it in d.get("items", []):
+                    if paths.pkey(it["path"]) == paths.pkey(path):
+                        # описание/ru/vis могли смениться между тактами — не приписывать
+                        # вектор, посчитанный по старому тексту
+                        if (it.get("desc") or "") == new_desc and (it.get("ru") or "") == cur_ru \
+                           and (it.get("vis") or "") == cur_vis:
+                            it["emb"], it["emb_src"] = v, src
+                            d["emb_model"] = _emb_model()
+                        _save(d)
+                        break
     return dict(ok=True, desc=new_desc)
 
 
@@ -2289,8 +2219,6 @@ if __name__ == "__main__":
             import datetime as _dt
             since = _dt.datetime.strptime(sys.argv[2], "%Y-%m-%d").timestamp()
             import_media(sys.argv[4:], sys.argv[3], since_ts=since, emit=console_emit)
-        elif len(sys.argv) >= 2 and sys.argv[1] == "describe":
-            auto_describe(emit=console_emit, only_missing="--all" not in sys.argv)
         elif len(sys.argv) >= 2 and sys.argv[1] == "stats":
             stats()
         else:

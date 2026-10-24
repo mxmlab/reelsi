@@ -56,6 +56,12 @@
             проход после ответа модели, `core/aicut/commands.py`). Здесь только ВЫКЛючатель:
             поля нет — включено, `false` — не ставить. Названия и формы — в словаре, а не в профиле.
             Старое имя поля `drug_inserts` при сохранении переезжает сюда.
+    ins_nobg
+            «без фона» по умолчанию для фото-вставок спикера: bool. Поля нет — выключено.
+            Значение берётся В МОМЕНТ, когда картинка встаёт во вставку (фронт кладёт
+            `nobg` в саму вставку), дальше решает флаг вставки: план сцены и превью его
+            читают и про спикера ничего не знают. Память картинки в базе
+            (`insertlib.remember_look`) главнее этого значения. Видео не затрагивает.
     lut
             LUT (.cube) на видео камеры: {"<номер камеры с 1>": "путь"}. В превью
             накладывается на лету, в сборке прожигается в видео — AE плохо
@@ -387,6 +393,10 @@ def save(name: str | None, data: Any) -> tuple[str, str]:
             d["named_inserts"] = legacy
     if "named_inserts" in d and not isinstance(d["named_inserts"], bool):
         raise ValueError("поле named_inserts должно быть true/false")
+    # «без фона» по умолчанию для фото-вставок: строка или число здесь молча дали бы
+    # «включено» (любое непустое значение истинно) — поэтому только bool, как у named_inserts
+    if "ins_nobg" in d and not isinstance(d["ins_nobg"], bool):
+        raise ValueError("поле ins_nobg должно быть true/false")
     if "voice_fx" in d:
         _check_voice_fx(d["voice_fx"])
     if "lut" in d:

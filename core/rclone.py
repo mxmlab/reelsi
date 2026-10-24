@@ -133,12 +133,12 @@ def top_folders(items: list[dict[str, Any]]) -> dict[str, Any]:
 
     Группировка по первой части пути: «Камера 1/IMG.MOV» относит файл к папке
     «Камера 1», а вложенность глубже (…/sub/x.mov) уходит в ту же верхнюю папку.
-    Файлы без папки отделены в root_files/root_bytes: иначе файл из корня уехал бы
-    в чью-то камеру. Размер -1 (документы Google) считаем нулём.
+    Файлы без папки отделены в root_files/root_bytes и в root (по имени, в естественном
+    порядке): иначе файл из корня уехал бы в чью-то камеру. Размер -1 (документы
+    Google) считаем нулём.
     """
     dirs: dict[str, list[int]] = {}
-    root_files = 0
-    root_bytes = 0
+    root: list[dict[str, Any]] = []
     for it in items or []:
         if not isinstance(it, dict) or it.get("IsDir"):
             continue
@@ -148,15 +148,50 @@ def top_folders(items: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         size = max(0, int(it.get("Size") or 0))
         if len(parts) == 1:
-            root_files += 1
-            root_bytes += size
+            root.append({"name": parts[0], "bytes": size})
         else:
             acc = dirs.setdefault(parts[0], [0, 0])
             acc[0] += 1
             acc[1] += size
+    root.sort(key=lambda f: (_natural_key(f["name"]), f["name"]))
     ordered = sorted(dirs.items(), key=lambda kv: (_natural_key(kv[0]), kv[0]))
     return {"dirs": [{"name": k, "files": v[0], "bytes": v[1]} for k, v in ordered],
-            "root_files": root_files, "root_bytes": root_bytes}
+            "root_files": len(root), "root_bytes": sum(f["bytes"] for f in root),
+            "root": root}
+
+
+def _name_prefix(name: str) -> str:
+    """Приставка имени — текст основы (без расширения) до первой цифры:
+    «IMG_1234.mov» → «IMG_», «C1653.MP4» → «C», «clip2.mp4» и «clip.mp4» → «clip».
+
+    Расширение в приставку не входит: в «.mp4» есть цифра, и без отрезания расширения
+    «clip.mp4» дал бы приставку «clip.mp». Основа, не начинающаяся с буквы («2024-10-01 12.mp4»,
+    «001.mov»), приставки не имеет — prefix "". Основа без цифр целиком становится своей
+    приставкой: отрезать ей нечего, и это один файл в группе.
+    """
+    base = os.path.splitext(name)[0]
+    if not base[:1].isalpha():
+        return ""
+    m = re.search(r"\d", base)
+    return base[:m.start()] if m else base
+
+
+def root_groups(root: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Файлы корня (`top_folders` → root) → группы по приставке имени.
+
+    У каждой камеры свой набор имён (C…, DSC_…, GX…), поэтому группа ≈ камера: окно
+    раскладки предлагает группу целиком, а не файл за файлом. Сравнение приставок — без
+    учёта регистра (одна камера пишет «C1.MP4», другая — «c2.mp4»); показываем приставку
+    первого файла группы. Группы идут по первому файлу в естественном порядке.
+    Вернёт список {prefix, files: [имена], bytes}.
+    """
+    groups: dict[str, dict[str, Any]] = {}
+    for f in sorted(root or [], key=lambda f: (_natural_key(f["name"]), f["name"])):
+        pre = _name_prefix(f["name"])
+        g = groups.setdefault(pre.casefold(), {"prefix": pre, "files": [], "bytes": 0})
+        g["files"].append(f["name"])
+        g["bytes"] += int(f.get("bytes") or 0)
+    return list(groups.values())
 
 
 def _sub_name(sub: str) -> str:
@@ -168,8 +203,21 @@ def _sub_name(sub: str) -> str:
     return sub
 
 
+_GLOB_SPECIAL = re.compile(r"[\\*?\[\]{}]")
+
+
+def _glob_escape(name: str) -> str:
+    """Имя файла → текст шаблона rclone, который совпадает именно с этим именем.
+
+    У `--include` имя читается как шаблон: `[A] x.mp4` без экранирования — это класс
+    символов «A» плюс « x.mp4», и файла с таким именем он не найдёт (или найдёт чужой).
+    Поэтому спецсимволы шаблона (\\ * ? [ ] { }) получают обратную косую.
+    """
+    return _GLOB_SPECIAL.sub(lambda m: "\\" + m.group(0), name)
+
+
 def rclone_cmd(remote: str, url: str, dest: str, sub: str | None = None,
-               root_only: bool = False) -> list[str]:
+               root_only: bool = False, files: list[str] | None = None) -> list[str]:
     """Аргументы rclone для ссылки. Файл — backend copyid (документированный
     доступ по ID), папка — copy с --drive-root-folder-id (то же по-другому:
     папка становится корнем remote). Список, без shell: путь из ссылки не может
@@ -177,6 +225,9 @@ def rclone_cmd(remote: str, url: str, dest: str, sub: str | None = None,
 
     sub — имя подпапки ссылки: качаем только её (источник remote:sub).
     root_only — только файлы самой ссылки, без подпапок (--max-depth 1).
+    files — только эти файлы корня (группа по приставке имени). Без root_only и на
+    ссылке на файл — отказ; пустой список тоже отказ: без фильтра rclone скачал бы
+    все файлы корня, а не ни одного.
     Оба — только для ссылки на папку.
     """
     spec = parse_gdrive_link(url)
@@ -188,8 +239,18 @@ def rclone_cmd(remote: str, url: str, dest: str, sub: str | None = None,
     # токены, `--dry-run` сделал бы вид, что скачали. Отказываем до всякого rclone.
     if dest.startswith("-"):
         raise ValueError("путь назначения не может начинаться с «-»: " + dest[:80])
-    if spec["kind"] == "file" and (sub is not None or root_only):
+    if spec["kind"] == "file" and (sub is not None or root_only or files is not None):
         raise ValueError("подпапки и файлы корня есть только у ссылки на папку")
+    if files is not None:
+        if not root_only:
+            raise ValueError("список файлов задаётся только вместе с root_only")
+        if not files:
+            raise ValueError("пустой список файлов: без фильтра скачалось бы всё в корне")
+        for f in files:
+            # имя с «/» — путь, а не имя файла: якорь «/» у --include не даст его найти
+            if not f or "/" in f:
+                raise ValueError("имя файла корня не может быть пустым или содержать «/»: "
+                                 + str(f)[:80])
     # -v обязателен. rclone логирует статистику на уровне INFO (--stats-log-level,
     # по умолчанию INFO), а порог вывода по умолчанию — NOTICE, то есть с одним
     # --stats в лог не попадёт НИ ОДНОЙ строки прогресса и скачивание гигабайтов
@@ -213,6 +274,10 @@ def rclone_cmd(remote: str, url: str, dest: str, sub: str | None = None,
             args += ["--drive-resource-key", spec["resource_key"]]
         if root_only:
             args += ["--max-depth", "1"]          # только файлы корня, подпапки — мимо
+        for f in files or []:
+            # «/» в начале — якорь к корню источника: файл с тем же именем в подпапке
+            # в группу не попадёт. Экранирование — в _glob_escape (имя `[A] x.mp4`).
+            args += ["--include", "/" + _glob_escape(f)]
         src = (remote + ":" + _sub_name(sub)) if sub is not None else (remote + ":")
         args += ["--", src, dest]
     return args

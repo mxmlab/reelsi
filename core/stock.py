@@ -33,8 +33,9 @@
   более: список стоков не должен превращать «нет ключа» в отказ всего поиска.
   Openverse ключа не требует вовсе, поэтому сток работает даже на чистой установке.
 - **Отключить провайдера совсем** можно переменной `REELSI_STOCK_OFF` (список имён
-  через запятую): у Openverse ключа нет, и без выключателя его нельзя ни убрать из
-  выдачи, ни проверить отказ «нет ни одного стока».
+  через запятую) или списком `off` в разделе `stock` ai_config.json (галка в ⚙): у
+  Openverse ключа нет, и без выключателя его нельзя ни убрать из выдачи, ни проверить
+  отказ «нет ни одного стока».
 """
 import concurrent.futures
 import datetime
@@ -85,6 +86,11 @@ PROVIDER_META: dict[str, dict[str, Any]] = {
 CACHE_PATH = env("STOCK_CACHE") or paths.root("stock_cache.json")
 CACHE_TTL = 24 * 3600                    # столько разрешено кешировать Pexels и Pixabay
 SEARCH_TIMEOUT_S = 20
+# Сколько поиск ждёт стоки, прежде чем отдать выдачу без них. Замер архитектора (5 запросов
+# фото, настоящие ключи): Pexels 0.6–0.8 с, Unsplash 1.0–1.4 с, Pixabay 0.5 с, Openverse
+# 13–20 с. Без лимита подбор висел бы на одном Openverse. Опоздавший доработает в фоне и
+# положит ответ в кеш — при следующем открытии той же вставки его кадры придут сразу.
+SEARCH_WAIT_S = 3.0
 DOWNLOAD_TIMEOUT_S = 120
 
 # Целевой размер файла и потолок по большей стороне — от ФОРМАТА ролика
@@ -132,13 +138,22 @@ def keys() -> dict[str, str]:
 
 
 def providers_off() -> frozenset[str]:
-    """Провайдеры, выключенные переменной `REELSI_STOCK_OFF` (список через запятую).
+    """Провайдеры, выключенные переменной `REELSI_STOCK_OFF` (список через запятую)
+    или списком `stock.off` в ai_config.json (галка «Искать на Openverse» в ⚙ → Стоки).
 
-    Нужно там, где провайдер нельзя выключить иначе: у Openverse нет ключа, и без
-    этой двери он был бы неотключаемым — ни в отладке, ни в отказе «нет ни одного
-    стока», ни в поиске по одному конкретному стоку."""
+    Переменная нужна там, где провайдер нельзя выключить иначе: у Openverse нет ключа, и
+    без выключателя он был бы неотключаемым — ни в отладке, ни в отказе «нет ни одного
+    стока», ни в поиске по одному конкретному стоку. Конфиг — выключатель для пользователя:
+    у Openverse ключа нет, и «выключить пустым ключом», как у остальных, нельзя."""
+    from core.aicut.config import load_ai_config     # ленивый импорт, как в keys()
     raw = env("STOCK_OFF") or ""
-    return frozenset(p.strip().lower() for p in raw.split(",") if p.strip())
+    names = {p.strip().lower() for p in raw.split(",") if p.strip()}
+    section = load_ai_config().get("stock")
+    cfg_off = section.get("off") if isinstance(section, dict) else None
+    if isinstance(cfg_off, list):
+        names.update(p.strip().lower() for p in cfg_off
+                     if isinstance(p, str) and p.strip())
+    return frozenset(names)
 
 
 def provider_ready(provider: str) -> bool:
@@ -182,7 +197,9 @@ def search(query: str, kind: str, n: int = 12, fmt: Any = None) -> list[dict[str
     дыру: остальные добирают по кругу. Опрос параллельный (пул — только скорость):
     порядок выдачи от того, кто ответил первым, не зависит. Провайдер без ключа
     пропускается молча (ключ может быть только у одного), сетевой отказ провайдера —
-    предупреждение, а не отказ всего поиска. `kind` — "photo" | "video".
+    предупреждение, а не отказ всего поиска. Стоки, не ответившие за `SEARCH_WAIT_S`, в
+    выдачу не входят: поиск не ждёт медленный Openverse. Их ответ дойдёт в кеш в фоне, и
+    при следующем поиске того же запроса кадры придут сразу. `kind` — "photo" | "video".
 
     `fmt` — формат кадра ролика (ключ `frame.FORMATS`) или None: у него берутся
     ориентация поиска (в вертикальный ролик нужен вертикальный кадр) и целевой
@@ -204,13 +221,25 @@ def search(query: str, kind: str, n: int = 12, fmt: Any = None) -> list[dict[str
     asked = [p for p in ready if kind in PROVIDER_META[p]["kinds"]]
     if not asked:
         return []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=len(asked)) as pool:
-        futures = [pool.submit(_search_one, prov, prov_keys.get(prov) or "", q, kind,
-                               n, size, orient)
-                   for prov in asked]
-        # Порядок результатов — порядок `asked` (приоритет), а не порядок ответов сети.
-        # ReelsiError любого стока всплывает здесь, как и раньше.
-        results = [f.result() for f in futures]
+    # Пул на вызов, без `with`: `with` при выходе ждёт ВСЕ задачи, а один Openverse держит
+    # поиск на 13–20 с. `shutdown(wait=False)` отдаёт уже поставленные задачи фону: опоздавший
+    # доработает и положит ответ в кеш (`_provider_search` → `_cache_put`).
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=len(asked))
+    futures = [(prov, pool.submit(_search_one, prov, prov_keys.get(prov) or "", q, kind,
+                                  n, size, orient))
+               for prov in asked]
+    pool.shutdown(wait=False)
+    done, _ = concurrent.futures.wait([f for _, f in futures], timeout=SEARCH_WAIT_S)
+    # Порядок результатов — порядок `asked` (приоритет), а не порядок ответов сети.
+    results: list[list[dict[str, Any]]] = []
+    for prov, f in futures:
+        if f in done:
+            # ReelsiError завершённого стока всплывает здесь, как и раньше.
+            results.append(f.result())
+        else:
+            console_emit("  ⚠ {provider}: не успел за {sec} с — кадры появятся "
+                         "при следующем открытии вставки",
+                         provider=prov, sec=f"{SEARCH_WAIT_S:g}")
     return _merge_round_robin(results, n)
 
 

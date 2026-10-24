@@ -139,6 +139,7 @@ class StyleValues:
     hl_blur: bool
     hl_blur_amt: float
     hl_row_stack: bool                     # подряд жёлтые — стопкой
+    hl_step_pct: float                     # шаг стопки жёлтых, % от обычного: 100 = как было
     # плашка под субтитрами: ключи читаются всегда, ставятся по галке sub_bg
     sub_bg: Any
     sub_bg_fill: list
@@ -524,6 +525,8 @@ def read_style(st: Mapping[str, Any], w: Any = None, h: Any = None) -> StyleValu
         hl_blur=bool(_sv(st, "hl_blur")),
         hl_blur_amt=float(_sv(st, "hl_blur_amt")),
         hl_row_stack=bool(_sv(st, "hl_row_stack")),
+        # Шаг стопки читается ОДИН раз, здесь: plan_subs берёт число из структуры, своей копии нет.
+        hl_step_pct=float(_sv(st, "hl_step_pct")),
         sub_bg=st.get("sub_bg"),
         sub_bg_fill=list(_sv(st, "sub_bg_fill")),
         sub_bg_op=float(_sv(st, "sub_bg_op")),

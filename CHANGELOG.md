@@ -5,6 +5,39 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.3-beta — 2026-10-24
+
+### Highlights
+- **Insert library without LM Studio**: the library search now runs on EmbeddingGemma 2 inside the model service — one model per machine, no LM Studio needed. Files without a description are matched by the picture itself (a middle frame for video). On a real library the right file comes first in 39.3 % of hand-picked cases (37.0 % before) and is in the top five in 77.0 % (74.1 %). The first search after the update re-indexes the library once (about 40 s for 2,800 files).
+- **Background removal in the model service**: one copy of the model per machine, one picture at a time, and no more spill into system memory: two pictures at once take 0.83 s (they took 10–13 s, and the process grew to 15.8 GB of video memory plus 18.4 GB of system memory). When another program holds the video card, removal runs on the processor and says so.
+- **Picture settings follow the picture**: mask, scale, rest point and background are remembered for each picture in the library and applied when the same picture goes into an insert of another video — from auto-match, the library, a file, a stock, generation, step 3 or a named insert.
+- **Speaker option "Photo inserts without background"**: every picture that goes into an insert of this speaker gets its background removed at once; the picture's own remembered choice wins.
+- **Stock search opens in about 3 s**: a slow library no longer holds the whole search (Openverse took 13–20 s on every query); its results arrive from the cache next time. A "Search on Openverse" checkbox turns it off.
+- **Google Drive: link and Download**: the card keeps only the link, "Download" and the progress line; a "Where to put what" window opens for every link — subfolders, root files grouped by name prefix (C…, DSC_…) and single files — with cameras preselected, and a summary per destination at the end.
+- **AI steps read punctuated text**: the yellow words, inserts and intro steps get the transcript with punctuation and without censor asterisks, while hand edits in the subtitles stay as they are.
+
+### Fixed
+- **Glitch intro group ended early**: a group with a glitch line faded 0.4 s earlier than the same group without it, leaving an empty gap before the next intro (0.37 s on a real clip). It now holds until the next group starts; a distant group still gets its extra hold.
+- **Free video memory was misread on Windows**: the check asked torch, which on Windows sees only its own process (with 8.4 GB held by another program torch reported 15,111 MB free, nvidia-smi 7,465 MB). The model service now measures with nvidia-smi, so background removal, recognition, breaths and emotions all see other programs on the card.
+- **Background removal stayed on the processor**: after one fallback the session stayed on the processor until a restart; it is now unloaded after a minute idle, like the video card session.
+- **Choosing a picture left the other list open**: choosing from the library or a stock now closes both the library and the stock rows.
+- **Auto-match threshold**: retuned for the new model (0.30 → 0.83), so auto-match fires about as often as before (75 % of queries) instead of on every query.
+
+### Added
+- **Style: "Yellow stack spacing, %"**: the distance between stacked yellow words, 100 % = as before, one value for the by-word mode and for "consecutive yellow — stacked".
+- **Insert mask up to 1000 %** (it was 300 %).
+- **"Remove background" is a toggle**: it no longer writes a second -nobg.png copy into the library.
+- **Camera layout preview on the shared sound engine**: the sound drives the clock and cameras 2 and 3 play from their own buffer; on the test clip the picture stayed within a median 24–27 ms of the sound.
+
+### Changed
+- **"Describe with AI" removed** from the insert library; existing descriptions stay and are used for search.
+- **"Spread by cameras" removed** from the Google Drive card: each camera downloads straight into its folder, and pairs are matched by "Match by sound" in step 1.
+- **Optional dependency**: `sentence-transformers` (insert library search); the model `google/embeddinggemma-2` (about 1.5 GB) downloads on first use.
+- Internal: the unused voice track and voice graph of the preview were removed.
+
+### Security
+- **Dependency audit exceptions**: pip-audit reports 43 advisories in Pillow 12.3.0 (a direct dependency, 37, fixed in 13.0.0) and the transitive filelock 4.1.0 (6, fixed in 4.2.1), and neither fixed release is on PyPI yet (2026-10-24). They are listed as `--ignore-vuln` in CI with this note and will be removed once the fixes ship.
+
 ## 0.4.2-beta — 2026-10-17
 
 ### Highlights

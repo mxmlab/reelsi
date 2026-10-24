@@ -109,6 +109,19 @@ the service: it calls the same functions as the local path, so the numbers throu
 service and locally agree to the last bit. Silero VAD stays in the clip process: it is
 ONNX on the CPU and takes no card.
 
+**Background removal.** The rembg session lives here too: one model copy per machine, opened
+in `core/rembg_run.py`. The GPU arena is capped (10 GiB for `birefnet-general`, 1 GiB for
+`u2net`), and the GPU is taken only when free VRAM covers the arena with a margin; otherwise
+the session opens on the CPU and the reason goes to the log. Idleness unloads the session
+after `rembg_run.IDLE_S` (60 s), so it does not sit on the card either.
+
+**Insert-library embedder.** EmbeddingGemma 2 (`core/embedder.py`) lives here too: one model
+per machine, like recognition and background removal. Insert search by meaning uses its
+vectors: a file description goes in as text, a file without text as the vector of its picture,
+and a query stays text. A slot costs `embedder.VRAM_MIB` (3 GiB with a margin; the peak with a
+picture batch is 2.6 GiB), so the service waits for free VRAM by that price, not by the
+recognition price. Idleness of the service and `unload()` release the model.
+
 **Slots, not a file lock.** A clip takes no `.gpu` lock for recognition or breaths:
 instead of a lock the service counts **slots** — how many jobs run at once. On a card
 they are sized from free VRAM (`free // (512 MiB of weights + 1 GiB of headroom)`,
@@ -624,7 +637,7 @@ by topic, and nothing changed from the outside (`import api`, `from api import b
 | `api/videogen.py` | the "Video" tab (its own `VJOB` state, does not touch JOB) |
 | `api/previewproxy.py` | 720p 4:2:0 8-bit preview proxy for 4:2:2 10-bit sources (Sony/Canon) that the browser does not decode and 4K seeks hang: `/api/preview_proxy` + `/api/preview_proxy_status`, its own `PXJOB` state |
 | `api/podcast.py` | podcast → reels: checking YouTube tracks, download, transcription, AI choice of pieces, proxy, conversion to reels; its own job `PDJOB`, the heavy part under the shared lock |
-| `api/gdrive.py` | downloading material from Google Drive via `rclone`: `/api/gdrive_list` (the subfolders of a folder link, `rclone lsjson`), `/api/gdrive_download` (with `map` — the layout by camera folders: one command per folder, in turn) + `/api/gdrive_status`, its own job (does not take JOB), the progress is parsed from the rclone output; link parsing, the command, the subfolder list and progress parsing are pure functions of `core/rclone.py` |
+| `api/gdrive.py` | downloading material from Google Drive via `rclone`: `/api/gdrive_list` (the subfolders of a folder link and the groups of its root files by name prefix, `rclone lsjson`), `/api/gdrive_download` (with `map` — the layout: one command per subfolder `{dir, dest}` and per group of root files `{files, prefix, dest}`, in turn) + `/api/gdrive_status`, its own job (does not take JOB), the progress is parsed from the rclone output; link parsing, the command, the subfolder list and progress parsing are pure functions of `core/rclone.py` |
 | `api/render.py` | a thin HTTP module of ~162 lines: the routes `/api/render_run` and `/api/render_status`, the job instance (`RJOB`, `RLOCK`) and "Stop"; all orchestration was moved out into `core/render_job.py` |
 | `api/previewcalc.py` | the preview door "compute roto and tracking": `/api/preview_calc` (button, background computation via `core/xml2ae/precompute.py`), `/api/preview_calc_status` (progress by pieces and "what is already computed"), `/api/preview_calc_cancel`. Its own `PCJOB` state, a shared task lock (`_cross_lock_acquire`): the heavy GPU stage does not run at the same time as cutting, assembly and render. The body is the same as `/api/scene` and is normalized by the same door, otherwise the plan and the masks would diverge |
 | `api/voicefx.py` | speaker voice: denoiser, VST chain, live host (`/api/voicefx_live`, commands `play`/`seek`/`pause`/`track`/`chain`/`gain`/`dump_states`), plugin window (`/api/voicefx_host`, `_host_edit`, `_host_stop`), baking the final voice (`<stem>.voice.<key8>.wav` + the sidecar `.voice.json`; `/api/voicefx_bake`, `..._status`, `..._cancel`). The sound is computed by `core/voicefx.py`, the live host by `core/voicefx_editor.py` (its own process per clip, only while the plugin window is open) |
@@ -783,23 +796,42 @@ play (no cache — while RoFormer is computing, the person needs to hear the voi
 **The inserts preview (steps 2 and 3) uses the same "sound drives the clock" machine (2026-10-17).**
 The live preview (`IPV.ea`, everything except the AE-less render page) plays sound through a Web Audio
 queue, like the step 1 editor: the queue owner is `EA.P` (ED or IPV), the preview position is MONTAGE time
-(`IPV.tm`), the blocks are the `IPV.audio` EDL (`eaPlanIpv`: a camera 1 source span plus its montage start
+(`IPV.tm`), the blocks are the `IPV.audio` EDL (`eaPlanMon`: a camera 1 source span plus its montage start
 `t0`), and the clock returns both source and montage time. The buffer is the same (`eaOpen`: camera 1
 audio, `eaVoice`: the final voice; `vtUse`/`vtDetach`/`vtTick` branch on `vtEa(P)`); censoring uses the
-plan's `audio.censor` windows scheduled into the queue with their own gain (`eaCensorGain`) instead of
-ducking `VG` per frame. All preview `<video>` elements are muted (`IPV.silent`) and the picture follows the
-sound (`ipvFollow`/`ipvVideoJump`/`ipvArm` in `85-inserts-view.js`: ±10 % speed inside a block, the spare at
-a cut, a seek with `IPV.seekLead` lead on a miss). Reason: the owner heard word endings cut at cuts in the
+plan's `audio.censor` windows scheduled into the queue with their own gain (`eaCensorGain`; the guard is
+`tests/test_cpv_audio_clock.py::test_censor_windows_mute_inside_the_queue`). All preview `<video>` elements are muted (`IPV.silent`) and the picture follows the
+sound (`eaFollow`/`eaJump`/`eaArm` in `60-preview.js`, shared with the camera layout: ±10 % speed inside
+a block, the spare at a cut, a seek with `P.seekLead` lead on a miss). Reason: the owner heard word endings cut at cuts in the
 second and third players but not in the first — the old machine swapped `<video>` elements at a cut and
 paused the previous one together with sound already sent to the output. Measured on the owner's clips
 after the change: 5/5 and 7/7 cuts by the spare, 0 seeks, picture-to-sound offset median 25–35 ms (about a
-frame). The render page (`IPV_BODY`) plays no sound and keeps the old machine (`pvStep`), as does the
-camera layout (`CPV`): its sound may come from camera 2 while the buffer is camera 1.
+frame). The render page (`IPV_BODY`) plays no sound and keeps the old machine (`pvStep`).
 
-Sync of its own track (`vtTick`, `static/app/60-preview.js`) is now needed only by players on the old
-machine (camera layout): a discrepancy of 0.03–0.25 s is damped by SPEED (`playbackRate` ±6 %, like the
-cameras — `camTrack`), more than 0.25 s — by seeking, while on pause and scrub the position is set exactly
-and immediately. Seeking every 0.15 s was what sounded like "played in the wrong place".
+**The camera layout (`CPV`) uses the same machine (2026-10-23).** The queue owner is `EA.P = CPV`, the
+position is montage time (`CPV.tm`), all `<video>` elements are muted (`CPV.silent`), and the step runs on
+the shared frame planner (`pvFrameStart`; a hidden tab uses the timer). The difference is that you can
+listen to K2/K3 (`CPV.audioCi`): such a camera has its own buffer `EA.cams[k]` (`eaOpenCam` →
+`POST /api/preview_audio {xml, cam:k}`, zero-based; without `cam` — camera 1), and the queue plan
+(`eaPlanMon`) shifts the source time by its constant offset `P.delta[k]` (`camDeltas`). A camera that
+started later than camera 1 is silent before its zero (`eaStart` delays the span instead of passing a
+negative offset — `start()` would throw a RangeError). Until the K2/K3 buffer is decoded the queue is
+silent rather than playing camera 1; once it arrives, the signature check rebuilds the queue (`eaSig`
+knows the camera). The processed voice is computed from camera 1 and plays only on K1. For a muted player
+`camApply` drives ALL cameras, the one chosen for sound included (`P.silent` → no sound camera among the
+`<video>` elements). Before, K2's sound came from its `<video>`, and `cpvSyncAudioCam` pulled it back by
+seeking at every cut (0.25 s tolerance). Measured on a synthetic two-camera clip (clicks at 1000/500 Hz at
+the same moments, K2 offset 11.233 s, 45 blocks): K1 — 6/6 cuts by the spare, 0 seeks, picture-to-sound
+median 27 ms; K2 — median 24 ms; the K2 queue's clicks matched K1's in montage time with a median of
+0.07 ms (the "offset +1 s" mutation gives 80 ms).
+
+The voice no longer has its own `<audio>` track (removed 2026-10-24 together with its spare at cuts, the
+camera-sound gate and the `voiceMute` flag): every player with sound (ED, live IPV, CPV) plays the `ea*`
+queue, and the render page plays no sound. The `vt*` block now only orders the clip's voice and hands the
+ready track to the queue (`vtUse` → `eaVoice`), and `vtTick` sets the queue gain and gives the plug-in live
+host its position. The old track was pulled to the video with ±6 % speed and a seek above 0.25 s — seeking
+every 0.15 s was what sounded like "played in the wrong place". The guard against its return is
+`tests/test_ui_static.py::test_voice_audio_track_machine_is_gone`.
 
 **Step 1: the sound is the clock, the video is mute (2026-10-09).** In the step 1 editor the sound is played
 NOT by an element but by a Web Audio buffer (the `ea*` block in `60-preview.js`). The clip's whole sound
@@ -815,11 +847,11 @@ seek with a lead (`ED.seekLead`, tuned from measured seeks). Invariants:
 - **The queue is rebuilt by a signature check every frame** (`eaSync`: buffer, `ED.raw`, blocks), not by
   each edit through its own door — dragging an edge, ✂, delete, Ctrl+Z, restoring a gap, cutting a breath
   and the arrival of the processed voice all rebuild it. Seek and play go through `eaStart` from the spot.
-- **Every step 1 `<video>` is mute** (`PV.silent`): every writer of `muted` (`camVisual`, `vtGate`,
-  `vtSetMute`, `vtLive*`, `edPlay`, `edTake`) adds `||P.silent`. Exactly one source sounds; the step 1
+- **Every step 1 `<video>` is mute** (`PV.silent`): every writer of `muted` (`camVisual`,
+  `vtLive*`, `edPlay`, `edTake`) adds `||P.silent`. Exactly one source sounds; the step 1
   camera is never even queued for the graph.
-- **Volume is its own gain** (`eaGain`: `MEDIA_VOL` × the style's voice level), straight to the output
-  rather than through `VG`: `VG` is pulled to zero by the step 3 censoring. With a plug-in window open the
+- **Volume is its own gain** (`eaGain`: `MEDIA_VOL` × the style's voice level), straight to the output.
+  With a plug-in window open the
   gain is 0 and the live host sounds (`vtLiveUpdate` still sends it the position from `ED.cs`).
 - **Background**: the queue is set up ahead, so in a hidden tab the sound is cut correctly without a single
   frame; frames (the `pvFramePlan` watchdog) are needed only for the picture and the playhead.
@@ -836,27 +868,25 @@ layout `CPV`). A slider `<input data-vol>` in each panel, one value `MEDIA_VOL` 
 the non-muted one is audible) and synchronizes all sliders; new `<video>` elements take `MEDIA_VOL` when
 created. Step 1's sound is the editor buffer's gain (`eaGain`), set by `applyMediaVol` with the same formula.
 
-**Preview sound and the Web Audio graph (2026-10-07).** `createMediaElementSource` is an IRREVERSIBLE
-door: after it the element gives sound only into the graph, and a suspended `AudioContext` (the browser
-keeps it `suspended` until there was a live gesture) mutes that path entirely and silently — this was the
-defect "video plays, no sound". Therefore only what NEEDS the graph goes into it, and there are exactly
-two doors, each its own:
+**Preview sound and the Web Audio graph.** One `AudioContext` per page: it plays the preview sound queue
+(`ea*`) and the music (`MG`, `musicEnsure` — the only place that calls `createMediaElementSource`). The
+`<video>` sound is not connected to the graph at all: every player with sound is muted, and the voice, its
+level (`eaGain`) and the censoring (`eaCensorGain`) live in the queue. A suspended context (the browser keeps
+it `suspended` until there was a live gesture) silences the queue entirely and silently, so:
 
 - **`audioWake()`** — one door for waking the context, called from the click handler by all players
   (`edPlay`, `ipvPlay`, `cpvPlay`). Before, `AUDIO.resume()` was in EXACTLY one place — in MUSIC
   synchronization: the step-3 player sounded because `ipvPlay` called `musicSync` at the end, while no one
   woke the graph for the step-1 player.
-- **`voiceGraphNeeded()`** — the rule for whether the graph is needed because of volume: the voice volume
-  of the clip (`voiceDbOf()`) can only be done by `VG.gain`, the element's `volume` cannot exceed 1.
-- **`voiceWiring(v)`** — a request for connection (the element is created, the decision later),
-  **`voiceEnsure()`** — "the graph is needed": it connects the `VOICEPEND` queue and wakes the context.
-  It is called only by the doors where processing actually sounds (`vtGate` with the gate open,
-  `vtEl`/`vtSpareOf` when creating a voice track) and by `applyDbGains`. The only place where
-  `createMediaElementSource` is called is `voiceGraphWire`.
 
-A speaker WITHOUT processing does not touch the graph at all: the camera sound plays directly and does not
-depend on the state of `AudioContext`. Before, the camera sound was unconditionally routed into the graph,
-and even on element creation.
+History (2026-10-07 → 2026-10-24): while the sound came from `<video>`, the style's voice level and the
+censoring needed the elements connected to the graph (`voiceWiring`/`voiceEnsure`/`VOICEPEND` →
+`createMediaElementSource(v).connect(VG)`, `vgDuck` pulled `VG` to zero on censor windows), and the
+connection was lazy: `createMediaElementSource` is an irreversible door, and an element connected to a
+sleeping context stayed silent ("video plays, no sound"). After every player moved to the queue, only the
+AE-less render page still connected elements, and its sound is not used (the clip is mixed by
+`mix` in `core/webrender_audio.py`), so the voice half of the graph was removed on 2026-10-24. The guard is
+`tests/test_ui_static.py::test_element_voice_graph_is_gone`.
 
 **Firefox — a line by FACT, not by guess.** The material is written as `pcm_s16be` in MP4; Chromium reads
 this track (measured 2026-10-07: Chrome 152 on Windows and Linux), Firefox does not. The property
@@ -1160,7 +1190,7 @@ either branch.
 | `reelsi.py` | CLI of classic cutting (VAD branch; legacy, see Engine 2): flag parsing and the engine call from `core/cutjob.py` |
 | `core/cutjob.py` | `process_pair` and `CutOptions` — the single source of cutting defaults (VAD + Whisper) for the CLI and the API: field names as in the CLI flags and as in the API `opts` keys, the translation between them is here, not by numbers in place |
 | `core/cams.py` | camera folders and the videos in them: finding the directories `cameraN`/`камераN` (`find_cam_dirs`) and the list of videos in a folder (`list_videos`) — one source for the UI, the API and the CLI |
-| `core/rclone.py` | pure functions of `rclone`: parsing a Google Drive link (`parse_gdrive_link` — file or folder, `resourcekey`), the config and remote repositories, building the command, parsing progress and statistics lines |
+| `core/rclone.py` | pure functions of `rclone`: parsing a Google Drive link (`parse_gdrive_link` — file or folder, `resourcekey`), the config and remote repositories, building the command (including the root-file filter by group), parsing progress and statistics lines, root-file groups (`root_groups`) |
 | `core/omni_cut.py` | CLI/job of AI cutting: `gigaam` by default, legacy `--mode old`; `--speaker`, `--selfcheck-model`, `--no-draft`; entry for both engines |
 | `core/gigaam_cut/` | **Engine 1** (main): `pipeline` (the `run()` orchestrator), `asr` (GigaAM whole-file), `decide` (27b decides markup), `takes` (code post-pass), `tune` (thresholds) |
 | `core/aicut/` | **LLM markup**: `commands` (highlights/inserts/intro), `llm` (stream, cancel, profiles), `prompts` (prompts+schemas), `images` (image generation), `video` (catalog and video generation), `config` (profiles, keys, reasoning), `config_actions` (the `/api/ai_config` actions: one function per action — `set_glitch_glow`, `save_profile` and others; the parsing of the key mask `•••…` = "the key was not changed" is here too, `unmask_ai_key` from `config`; the route stays thin) |
@@ -1205,7 +1235,7 @@ either branch.
 | `tools/analyze_blobs.py` | diagnostics of the reference subtitle templates (writes `analyze_report.txt`) |
 | `core/cuda_env.py` | setting up CUDA/cuDNN paths |
 | `core/terms.py` | **the dictionary of difficult terms** (names that do not exist in ordinary speech: brands, abbreviations, Latin script). ASR does not know them and substitutes a similar word. `fix_words(words)` is called from `asr_backends.transcribe_words` — one point for all engines. Two stages: (1) VARIANTS — an exact match of the normalized-joined word chain (this is the only way Latin script and digits are caught: "эр тэ икс" → `RTX 5090` is not taken by similarity), (2) SIMILARITY — `SequenceMatcher` over the term itself, threshold `FUZZY_THR=0.82` and from `MIN_FUZZY_LEN=6` letters. Variants accumulate BY THEMSELVES: editing a word in the word panel to a known term (`/api/edit_word` with `was`) goes into `terms.learn`. The list of names is edited in ⚙ → "Words" (`/api/terms`), stored in `terms.json` (in .gitignore, own `REELSI_TERMS`); there is no starting list — a wrong term here is worse than emptiness. It is DISABLED in the self-check (`use_terms=False`): it compares words with the cut one to one, while the dictionary glues several words into one term |
-| `core/insertlib.py` | the library of used inserts: scanning the XML of past projects + folders, the index `insertlib.json`, semantic matching of a file to an AI query (LM Studio embeddings `nomic-embed-…`, fallback — name tokens). A record: `desc` (what was intended) + `ru` (Russian caption) + `vis` (what is visible in the picture); `_subject_text(_doc_text(...))` goes into the embedder, schema `q5`. UI: the "📚 Library" modal, auto-match after AI inserts (thresholds `AUTO_COS`=0.30 / `AUTO_LEX`=0.20), a 📚 button on the card (top-5 with previews). Also here: `remove_bg` (rembg) and `nobg_path(media)` — ONE cache of a photo without background for assembly and preview: `<папка>/<стем>.nobg.png`; if it exists and is newer than the source it is returned as is, otherwise `remove_bg` and an atomic write; not an image or a rembg error (including `SystemExit`) — the source path is returned and a message goes to `emit` |
+| `core/insertlib.py` | the library of used inserts: scanning the XML of past projects + folders, the index `insertlib.json`, semantic matching of a file to an AI query (EmbeddingGemma 2 vectors from the model service; a file without text gets the vector of its picture; fallback — name tokens). A record: `desc` (what was intended) + `ru` (Russian caption) + `vis` (what is visible in the picture); `_subject_text(_doc_text(...))` goes into the embedder, schema `g2`. UI: the "📚 Library" modal, auto-match after AI inserts (thresholds `AUTO_COS`=0.30 / `AUTO_LEX`=0.20), a 📚 button on the card (top-5 with previews). Also here: `remove_bg` (rembg) and `nobg_path(media)` — ONE cache of a photo without background for assembly and preview: `<папка>/<стем>.nobg.png`; if it exists and is newer than the source it is returned as is, otherwise `remove_bg` and an atomic write; not an image or a rembg error (including `SystemExit`) — the source path is returned and a message goes to `emit` |
 | `core/breath.py`, `tools/train_breath.py` | the sigh/"кхе" detector (Silero VAD + CED-tiny + acoustics → gradient boosting, `P_CUT`/`P_MARK`); `tools/train_breath.py` retrains it on your own manual fine-tuning |
 | `core/ssm.py` | self-similarity (MFCC) detection of inside-phrase repeats + binding cuts to silence/zero-crossing; the `align.is_enumeration` gate |
 | `core/falign.py`, `core/falign_cli.py` | forced alignment of words (wav2vec2, a separate process) |
@@ -1891,12 +1921,11 @@ Windows paths → double backslashes. Multiline text (disclaimer) — `_js_multi
   someone's segment list; that is why the editor uses the stand-in of the edit player without
   starting its own.
   **A player can have several stand-ins — `P.bufs`, one per CONTINUOUS track.**
-  All of them have slot 0 (the leading camera, which is also the time base). In `CPV`, when the
-  sound is from K2/K3, a second one is added for the sound camera: without it,
-  `cpvSyncAudioCam` jerked it on every splice (tolerance 0.25 s), that is, the sound landed
-  exactly where the picture used to land. This stand-in has its own file (recreated when
-  K1/K2/K3 changes, `cpvAudioBuf`) and its own constant offset `b.off` = `CPV.delta[k]`; after a
-  successful swap the discrepancy is zero and the synchronizer is silent by itself.
+  All of them have slot 0 (the leading camera, which is also the time base); every other camera
+  gets its own on open (`camBufs`) with a constant offset `b.off` = `P.delta[k]`. The layout's
+  sound camera no longer has a separate stand-in: since 2026-10-23 its sound plays from its own
+  buffer through the `ea*` queue, and its `<video>` is muted like the rest (see "The camera
+  layout uses the same machine").
 - **A secondary camera is a SECOND CONTINUOUS TRACK, not a sleeping frame (`camApply`,
   2026-08-08, third attempt).** This is that very complaint "in the preview with 2 cameras,
   when switching there is blinking, not an exact switch", and the first two attempts treated the
@@ -2743,10 +2772,12 @@ subject on a white background, while inserts in the library have an alpha. The k
 ai_config.json (default ON, the "remove background" checkbox next to the select in ⚙) — the background
 is removed right after generation, BEFORE writing to the library, plus cropping of fully transparent
 fields (the generator leaves wide empty frames). An empty alpha (the model ate everything) → we return
-the source. For an already existing file — `insertlib.strip_bg_file()` / `/api/rembg {path,query,dest}`
-(the "Background away" button on the card): a transparent `<name>-nobg.png` is placed right into
-`<база>/photos` and entered into the index with description=query, the source in "Downloads" is intact
-(we do not breed garbage in Downloads, the clean image is needed in the library). rembg is not
+the source. For an already existing file — `insertlib.strip_bg_file()` / `/api/rembg {path,query,dest}`:
+a transparent `<name>-nobg.png` is placed right into `<база>/photos` and entered into the index with
+description=query (this is how stock removes the background; the interface no longer calls `/api/rembg`).
+The "Background away" button on the card does not remove the background of the file: it toggles the `nobg`
+flag of the insert, see "Picture memory" in `docs/INSERTS_SPEC.en.md`; the cut-out cache for the build and the
+preview is made by the scene plan. rembg is not
 installed → generation does not fail, the image is saved with the background + a `warn` in the response.
 
 **Insert files move into the library by themselves** (`insertlib.adopt`, called from
@@ -2755,7 +2786,7 @@ the file moves (`shutil.move`) into `<база>/photos|videos`, and `media` in t
 substituted BEFORE `to_ae_full`, so the .jsx already refers to the new place. The moment is chosen so
 that what moved = what was definitely used: while you are trying out options, Downloads is not touched.
 The description in the index = the **insert query** (`desc_src="adopted"`) → in the next videos the file
-is found by auto-match without running "Describe with AI". We do not move what already lies in the
+is found by auto-match without any extra step: the scan computes its vector. We do not move what already lies in the
 library (but we do add it to the index), a name collision → `имя_2.ext`, a missing file is silently
 skipped, a move error does NOT fail the assembly. Moves are written to `<база>/_import_log.json` (as in
 `import_media`). There is one assembly path — the background `/api/build_run` (the mapping is put into
@@ -2767,16 +2798,15 @@ XML; the front end calls `pickfiles`). The front end fixes the paths in ITS thre
 `c.inserts`, `c.job.ins` and the live `INS` (`applyInsMoved`, path comparison without regard to case or
 slashes), otherwise the next assembly would look for the file at the old address.
 
-**The mask shape is remembered per file** (2026-08-04). Together with the description, `adopt` puts
-`mw`/`mh` into the index record — the width/height of the photo insert crop in % (that same "Mask W/H" in
-the card). `match_many` returns them next to the path, the front end applies them in `insApplyCrop` —
-both on auto-match and on a manual choice via 📚. The meaning: the same image from the library used to
-arrive with a 100/100 crop and was re-fitted with scrubbers in every video.
-Assembly is the only moment when the shape is definitely known (the user just saw it in the
-preview), so we write exactly there and **over** the previous one. We do not write 100/100 (that is
-"as the JSX computes itself"), values outside the scrubber range 20..300 are discarded
-(`insertlib._crop_of`). `build_index` preserves `mw`/`mh` on a full rescan — like
-`rej`/`added`. Video has no mask, `insApplyCrop` does not touch them.
+**The picture memory is kept per file** (2026-08-04, widened on 2026-10-24: the mask, the scale, the rest
+point, "no background"). It is written by an edit (`POST /api/insert_memo`, a delay of 600 ms) and by the build:
+`insertlib.adopt` through `_index_adopt` puts the memory fields of the insert into the index record over the
+previous ones — with the same function `_memo_apply` as the edit (mask 100/100 and scale 100 remove the field;
+`nobg: false` is kept). `match_many` and `find_named` read it (together with the path), and so does
+`GET /api/insert_memo`. The frontend — `insSetMedia` in `static/app/80-inserts.js` — sets `nobg` again for every
+new picture: from the memory, otherwise from the speaker of the clip. Details and the priority rules are in
+`docs/INSERTS_SPEC.en.md`, section "Picture memory". `build_index` preserves the memory fields on a full rescan —
+like `rej`/`added`. Video has no memory.
 
 **Why auto-match returned the old image** (found 2026-07-18, fixed):
 for a generated file `desc` == the query, so when the same query was regenerated the library ended up
@@ -2803,23 +2833,23 @@ Two independent biases, both about WHAT goes into the embedder:
    of the library could not beat 51 query-like records. The cure — the `_STYLE` stoplist
    (`3d|icon|render|stock|photo|footage|illustration|closeup|graphic|style|image`)
    is cut **only from the query**: we search for the subject. In descriptions the style remains.
-2. **nomic-embed without prefixes.** The model is trained on the asymmetric pair
-   `search_query:` / `search_document:`; without them "a short query → a long description" drifts.
-   Now `_emb_queries` / `_emb_docs` (the prefix only for models with `nomic` in the id).
+2. **The query and the description are different kinds of text.** Without different prompts
+   "a short query → a long description" drifts. Now `_emb_queries` sends the query as kind `query`,
+   `_emb_docs` sends the description as kind `document`; the model applies its own prompts (EmbeddingGemma 2).
 
-The embedding schema is versioned: `EMB_TAG` (currently `q5`) is written into the index, `_ensure_emb_tag()`
-at the beginning of `match_many` silently recomputes the descriptions in one batch on a mismatch (~40 s for
-1000 files, once, no full disk rescan is needed — the texts are already in the index). Without an
-embedder we do not touch the tag: the token fallback works, the recomputation happens when LM Studio
-is started.
+The embedding schema is versioned: `EMB_TAG` (currently `g2`) is written into the index, `_ensure_emb_tag()`
+at the beginning of `match_many` silently recomputes the vectors in one batch on a mismatch: the texts come
+from the index, files without text are recomputed from their pictures (no full disk rescan is needed). With
+no service the tag is not touched: the token fallback works, the query vector is not computed at all until
+a recomputation has happened (old and new vectors are never mixed).
 
 **An insert library record has three text fields** (2026-08-22). Before, a record had one
 description `desc`, and the "describe everything" run wiped metaphors like `money bills flushed down
 toilet`, and they cannot be restored from the picture. Now there are three fields:
 - `desc` — what was INTENDED: the original phrase of the scriptwriter. Written by `adopt` (`desc_src="adopted"`),
-  `add_generated` (`desc_src="generated"`) and a manual edit (`desc_src="user"`); vision
-  (`auto_describe`) NEVER touches `desc`.
-- `vis` — what is VISIBLE in the picture: written only by `auto_describe` (vision).
+  `add_generated` (`desc_src="generated"`) and a manual edit (`desc_src="user"`).
+- `vis` — what is VISIBLE in the picture: left over from earlier vision runs; new records do not get it
+  (describing through LM Studio was removed, see below).
 - `ru` — the Russian caption of the insert.
 
 A concatenation of all three goes into the embedder via `_doc_text(desc, ru, vis)`, cleaned of style
@@ -2833,9 +2863,8 @@ record's text for search — `needs_text(it)`: BOTH fields are unsuitable (`desc
 a repeated scan changes nothing.
 
 **Vision refusals** — `_is_refusal()`. An answer starting with "None of the objects...",
-"i cannot", "there is no" and the like is not considered a description: the record lands in `needs_vis`
-and is re-described by the usual "Update library", and the refusal does not go into the embedding — it is
-worse than empty, it pulls foreign queries to itself. In a production run there were 155 such answers out
+"i cannot", "there is no" and the like is not considered a description: it does not go into the embedding (`_doc_text` drops it) — it is
+worse than empty, it pulls foreign queries to itself, and the file goes to the picture vector. In a production run there were 155 such answers out
 of 1373.
 
 **Missing files** — the `gone` field (a timestamp). Only the scan sets and clears it; records are not
@@ -2854,10 +2883,12 @@ computed over the file name + `desc` + `ru` + `vis`. In the output `score` remai
 `lex` is returned as a separate field. The vector matrix is cached (numpy, `_matrix`) and reset
 together with the index.
 
-**The auto-match thresholds live in `insertlib`, not in the front end**: `AUTO_COS = 0.30` (for the token
+**The auto-match thresholds live in `insertlib`, not in the front end**: `AUTO_COS = 0.83` (for the token
 fallback `AUTO_COS_TOK = 0.5`), `AUTO_LEX = 0.20` — an independent threshold of lexical
-matching, the `auto` field in the output. `AUTO_COS` was selected by a measurement on 194 real queries
-(73% pass, the garbage `chicken breast 3d icon` → a burger remains under 0.28). The second threshold
+matching, the `auto` field in the output. `AUTO_COS` was selected by a measurement of 2026-10-24 on 641 pairs
+"query → the owner's file" with EmbeddingGemma 2: its cosines lie high (median of the right candidate 0.879,
+of the wrong one 0.842), and the 0.30 threshold tuned for nomic fired on every query. At 0.83 auto-match passes
+75 % of the queries at 73 % correct — the same rate nomic had. The second threshold
 appeared because out of 1317 queries 39 had a top-1 with a cosine below 0.30 at `lex >= 0.20`
 (a literal match of the file name like "revolver cylinder" → `revolver_cylinder.mp4`),
 and such queries were not substituted.
@@ -2868,14 +2899,23 @@ filter: own style `+0.05`, empty `0` (a shared stock image suits everyone), fore
 `−0.15`; a candidate with a foreign style must remain in the output. The speaker profile is resolved only
 in `api/inserts.py`, and an already normalized `look` arrives in `match_many`.
 
-**The vision prompt** was changed for `qwen3-vl-8b` and requires naming the subject without style and colors
-(the refusal ban is mandatory: on the production library there were 11 % refusals of the form "None of the
-objects..."). Measurement (the `tools/bench_vision.py` bench, 40 files with a known answer): `gemma-4-e2b` 16 %
-with any prompt, `qwen2.5-omni-7b` 18 %, `gemma4-e4b-sft` 0 % (does not answer),
-`qwen3-vl-8b` 26 % and it reads names from packages.
+A measurement of vision models (the `tools/bench_vision.py` bench, 40 files with a known answer, 2026-08-22):
+`gemma-4-e2b` 16 % with any prompt, `qwen2.5-omni-7b` 18 %, `gemma4-e4b-sft` 0 % (does not answer),
+`qwen3-vl-8b` 26 % and it reads names from packages. The bench keeps its own prompt and its own HTTP
+client: it is a historical record and does not follow product edits.
 
-Left for the future: run `describe_file` over generated/`adopted` images so that they
-get a `vis` — then the library becomes homogeneous, and `desc` remains the original phrase.
+**Describing through LM Studio has been removed** (2026-10-24). The "Describe with AI" button, the
+`insertlib_describe*` routes, `auto_describe`, `describe_file`, the vision prompt and `needs_vis` are gone:
+a file without text gets its vector from the embedder itself, from its picture (`emb_src="image"`). Measurement
+of 2026-10-24 on 135 manual choices of the owner: EmbeddingGemma 2 picture — Hit@1 37.8 %, nomic text through
+LM Studio — 37.0 %, EmbeddingGemma 2 text — 41.5 %; merging text and picture into one vector lost to the text.
+
+**One door for vectors.** Every place that computes a file's vector (scan, adding a generated picture and a
+stock frame, the batch backfill, `adopt`, a manual description edit, the schema recomputation) goes through
+`_item_vectors`. The decision "text or picture" is made by `_vector_source`: `desc_src == "name"` with an empty
+`vis` is a picture; an empty subject text is a picture too. Texts go in batches through `_emb_docs` (kind
+`document`), pictures through `_emb_images`: a frame via `_thumb_b64` (a photo — the file itself, a video — the
+middle of the clip). The network call is outside `_LOCK`.
 
 **The insert type is by file, not by the request** (found 2026-07-21, fixed). The `type` in
 `INSERTS` decides everything in AE: photo = a freeze frame with a push-in and a style by the active
@@ -3006,9 +3046,10 @@ checkbox) generation of the remainder; it is called from all four paths: "Match 
   from scratch, a virtual EDL for the preview, a folder scan.
 
 **INSERTS** (`api/inserts.py`):
-- `POST /api/insertlib_info` / `scan` / `reject` / `match` / `import` / `describe`
-  / `desc` / `items` — the insert library index, matching and description.
-- `GET /api/insertlib_describe_status` — the status of the background vision description of the library: `running`, `done`, `total`, `error` and incremental `log`/`log_total` by `since=N`.
+- `POST /api/insertlib_info` / `scan` / `reject` / `match` / `import`
+  / `desc` / `items` — the insert library index, matching and description editing.
+- `GET/POST /api/insert_memo` — the memory of an insert's picture kept per file of the library: `GET ?path=` →
+  `memo` (what is remembered); `POST {path, mw, mh, sc, x, y, nobg}` → `saved` (`false` if the file is not in the library).
 
 **STYLE / SPEAKERS** (`api/presets.py`):
 - `POST /api/styles` / `savestyle` / `delstyle` — clip style presets.
@@ -3036,8 +3077,14 @@ checkbox) generation of the remainder; it is called from all four paths: "Match 
   lock, its own `PCJOB`. The first request returns "what is already computed" (without a GPU).
 
 **GDRIVE** (`api/gdrive.py`):
+- `POST /api/gdrive_list` — for a folder link: the subfolders (`dirs`), the root files by
+  name (`root`) and their groups (`groups`: `{prefix, files, bytes}`). The group prefix is the
+  base name (without the extension) text before the first digit, case-insensitive; a base name not starting with a letter gets
+  an empty prefix. For a file link — `kind: "file"`, rclone is not started.
 - `POST /api/gdrive_download`, `GET /api/gdrive_status` — material by a Google Drive link
-  via `rclone`, its own job (it does not take the cutting JOB).
+  via `rclone`, its own job (it does not take the cutting JOB). The `map` element:
+  `{dir, dest}` — a subfolder (`dir: ""` — the root files whole) or `{files, prefix, dest}` —
+  a group of root files (an `--include` filter from the link root). An empty `dest` — do not download.
 
 **VIDEO** (`api/videogen.py`):
 - `POST /api/video_gen` — start generation; `POST /api/video_cancel` — cancel.

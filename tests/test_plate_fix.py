@@ -294,6 +294,7 @@ const CLIPS=[{inserts:[]}];
 const INS=[];
 function captureAE(){}
 function ipvPlanSoon(){}
+function insMemoSave(){}   // память картинки — своя дверь (tests/test_insert_memo.py); драг её только зовёт
 function ipvInsPlace(){}
 function ipvIntroHitAt(){return null;}
 function ipvIntroDragStart(){}
@@ -359,6 +360,7 @@ def test_preview_card_key_ignores_nobg_suffix():
     code = _js("normInsPath", "insCardKey") + """
     console.log(JSON.stringify({
       plate:insCardKey({media:'C:/x/p.png.nobg.png',plate:true}),
+      nobg:insCardKey({media:'C:/x/p.png.nobg.png',nobg:true}),
       plain:insCardKey({media:'C:/x/p.png.nobg.png'}),
       usual:insCardKey({media:'C:/x/p.png',plate:true})}));
     """
@@ -366,6 +368,9 @@ def test_preview_card_key_ignores_nobg_suffix():
 
     assert out["plate"] == "c:\\x\\p.png", \
         f"вставка на подложке не нашла бы свою карточку в списке: {out['plate']}"
+    # «без фона» без подложки: план несёт кэш с меткой nobg — карточка ищется по исходнику
+    assert out["nobg"] == "c:\\x\\p.png", \
+        f"вставка «без фона» не нашла бы свою карточку (подсветка гаснет): {out['nobg']}"
     assert out["usual"] == "c:\\x\\p.png", out["usual"]
     assert out["plain"] == "c:\\x\\p.png.nobg.png", \
         f"у вставки без галки путь подменился: {out['plain']}"

@@ -498,8 +498,10 @@ def test_image_gen_never_locks_the_button_forever(js):
     assert "signal:ac.signal" in core, "fetch генерации не отменяется по таймауту"
     assert "clearTimeout(timer)" in core, "таймер отмены не убирается после ответа"
 
-    rembg = js[js.index("async function insRembg"):js.index("const GEN_FETCH_MS")]
-    assert "signal:ac.signal" in rembg, "rembg не отменяется по таймауту"
+    # «Фон долой» — переключатель флага вставки: /api/rembg тут не зовём, файл в базе не плодим
+    rembg = js[js.index("function insRembg("):js.index("const GEN_FETCH_MS")]
+    assert "/api/rembg" not in rembg, "«Фон долой» снова снимает фон файлом, а не флагом вставки"
+    assert "x.nobg=!x.nobg" in rembg, "«Фон долой» не переключает флаг без фона у вставки"
 
     boot = js[js.index("// ================= boot"):]
     assert "pageshow" in boot and "x.genBusy=false" in boot, (
@@ -883,17 +885,18 @@ def test_preview_swaps_video_instead_of_seeking_at_the_cut(js):
     # шаг 1 — редактор: картинка догоняет звук, стык — через дублёра (edFollow -> edJump)
     follow = js[js.index("function edFollow()"):js.index("function edArm()")]
     assert "edJump(v,cs)" in follow, "редактор снова сеcит живой <video> прямо на стыке блока"
-    # раскладка камер идёт через общий шаг pvStep (было три копии, и гонка правилась трижды)
-    body = js[js.index("function cpvStep()"):js.index("function cpvStep()") + 300]
-    assert "pvStep(CPV)" in body, "CPV: стык не идёт через общий pvStep"
+    # раскладка камер — та же машина звука, что у вставок: часы — очередь ea* (eaSync), стык — eaArm
+    body = js[js.index("function cpvStep()"):js.index("function cpvStep()") + 600]
+    assert "eaSync()" in body and "eaFollow(CPV,tm);eaArm(CPV,tm);" in body, (
+        "CPV: часы не звук или стык не идёт через eaArm")
     # превью вставок (шаги 2–3) с 2026-10-17 — как редактор: звук ведёт часы, картинка догоняет,
-    # стык — через дублёра (ipvFollow -> ipvVideoJump -> bufTake), а pvStep остался запасным путём
+    # стык — через дублёра (eaFollow -> eaJump -> bufTake), а pvStep остался запасным путём
     # страницы рендера (живое превью звука не играет через <video> вовсе)
     ipv = js[js.index("function ipvStep()"):js.index("function ipvStep()") + 1600]
-    assert "ipvFollow(tm);ipvArm(tm);" in ipv, "IPV: картинка не догоняет звук / дублёр не взводится"
+    assert "eaFollow(IPV,tm);eaArm(IPV,tm);" in ipv, "IPV: картинка не догоняет звук / дублёр не взводится"
     assert "pvStep(IPV)" in ipv, "IPV: у страницы рендера пропал прежний шаг"
-    jump = js[js.index("function ipvVideoJump(at)"):js.index("function ipvVideoSeek(v,at)")]
-    assert "bufTake(IPV,lead,lead.at)" in jump, "IPV: стык снова через перемотку живого <video>"
+    jump = js[js.index("function eaJump(P,at)"):js.index("function eaVideoSeek(P,v,at)")]
+    assert "bufTake(P,lead,lead.at)" in jump, "IPV: стык снова через перемотку живого <video>"
     assert "function pvTick(" not in js, "вернулся второй плеер шага 1 (pvTick)"
     # дублёр обязан жить ВНЕ P.vids: иначе pvVisual покажет его как отдельную камеру
     take = js[js.index("function bufTake(P,b,at)"):js.index("function spareLead(P)")]
@@ -923,13 +926,15 @@ def test_every_preview_player_uses_the_double_buffer(js, player, step, seek, pau
     assert "spareSwap(P)" in pvs, "pvStep: стык не идёт через подмену дублёром"
     assert "sparePrime(P)" in pvs, "pvStep: разбег к следующему стыку не готовится"
     # у превью вставок общий шаг стоит после живой ветки «звук ведёт часы» (она взводит дублёров
-    # сама — ipvArm), поэтому окно поиска у него длиннее
-    n = 1600 if player == "IPV" else 300
-    assert f"pvStep({player})" in body(step, n), f"{player}: шаг не идёт через общий pvStep"
-    assert f"spareRollAt({player},st.tm)" in body(step, n), f"{player}: дублёр не пускается вживую до стыка"
+    # сама — eaArm), поэтому окно поиска у него длиннее
+    n = 1600 if player == "IPV" else 600
     if player == "IPV":
-        arm = js[js.index("function ipvArm(tm)"):js.index("function ipvStep()")]
-        assert "bufArm(IPV,b," in arm and "bufRoll(b,left)" in arm, "IPV: дублёр не взводится к стыку"
+        assert f"pvStep({player})" in body(step, n), f"{player}: шаг не идёт через общий pvStep"
+        assert f"spareRollAt({player},st.tm)" in body(step, n), f"{player}: дублёр не пускается вживую до стыка"
+        arm = js[js.index("function eaArm(P,tm)"):js.index("function eaArm(P,tm)") + 1600]
+        assert "bufArm(P,b," in arm and "bufRoll(b,left)" in arm, "IPV: дублёр не взводится к стыку"
+    else:
+        assert f"eaArm({player},tm)" in body(step, n), f"{player}: дублёр не взводится к стыку (eaArm)"
     assert f"spareIdle({player})" in body(seek), f"{player}: перемотка не сбрасывает дублёра"
     assert f"spareStop({player})" in body(pause), f"{player}: дублёр догорает на паузе"
     assert f"{player}.scrubbing=true" in body(scrub), (
@@ -1041,23 +1046,25 @@ def test_double_buffer_catches_up_to_the_seam_by_rate(js):
 
 
 def test_camera_layout_buffers_the_audio_camera_too(js):
-    """В раскладке камер звуковая камера тоже проходит склейку подменой, а не seek'ом.
+    """В раскладке камер выбранная камера звучит своим буфером и по своему оффсету.
 
-    Она вторая непрерывная дорожка: без дублёра её на каждой склейке дёргал
-    cpvSyncAudioCam (допуск 0.25 с), то есть звук вставал ровно там, где раньше вставала
-    картинка. Дублёр ей больше не заводят отдельно при смене К1/К2/К3 — camBufs делает
-    его КАЖДОЙ камере при открытии (все они непрерывные дорожки), поэтому проверяем
-    общий механизм: оффсет из P.delta[k] и что скорость звуковой камере не правят.
+    Раньше звук К2/К3 шёл из её <video>, и на каждой склейке его подтягивал
+    cpvSyncAudioCam перемоткой (допуск 0.25 с) — звук вставал там, где вставала картинка.
+    Теперь звук — очередь ea* из буфера выбранной камеры (eaOpenCam), сдвинутая на её
+    постоянный оффсет P.delta[k] (eaPlanMon), а все <video> немые; дублёр по-прежнему
+    есть у КАЖДОЙ камеры с открытия (camBufs), и стык картинки проходит подменой.
     """
     bufs = js[js.index("function camBufs(P,stage,before)"):js.index("function camTrack(P,v,want)")]
     assert "bufMake(P,stage,before,k,(P.delta||[])[k]||0)" in bufs, (
         "дублёр камеры создаётся без её оффсета — подменит не тот кадр")
 
-    aud = js[js.index("function cpvAudio(k)"):js.index("function cpvSyncAudioCam()")]
-    assert "CPV.vids[k].playbackRate=1" in aud, (
-        "камера, ставшая звуковой, осталась с правленой скоростью — звук поедет по тону")
-    sync = js[js.index("function cpvSyncAudioCam()"):js.index("// Картинка ракурса")]
-    assert "CPV.delta[k]" in sync, "звуковую камеру ведут не по её постоянному оффсету"
+    aud = js[js.index("function cpvAudio(k)"):js.index("// Картинка ракурса")]
+    assert "eaOpenCam(CPV.xml,k)" in aud, (
+        "звук выбранной камеры не уходит в свой буфер при смене К1/К2/К3")
+    assert "function cpvSyncAudioCam" not in js, (
+        "вернулась подтяжка звуковой камеры перемоткой (cpvSyncAudioCam)")
+    plan = js[js.index("function eaPlanMon(P,tm)"):js.index("function eaPlanMon(P,tm)") + 600]
+    assert "(P.delta||[])[k]" in plan, "звуковую камеру ведут не по её постоянному оффсету"
     # общая машина обязана вести ВСЕ дублёры, а не только ведущий
     prime = js[js.index("function sparePrime(P)"):js.index("function spareRollAt(P,tm)")]
     assert "(P.bufs||[]).forEach(b=>" in prime, (
@@ -1328,29 +1335,6 @@ def _run_node(script):
     return json.loads(p.stdout)
 
 
-def test_every_player_video_is_wired_to_the_volume_graph(js):
-    """Каждый <video> плеера подключён к графу громкости, ВКЛЮЧАЯ дублёров.
-
-    Ползунки «Музыка/Голос» звучат через AudioContext, а плеер двухбуферный: на
-    стыке дублёр (bufMake) меняется местами с живым элементом. Забыть о нём —
-    значит после первого же стыка пустить звук мимо регулятора; симптом
-    «громкость работает, а потом перестаёт», и ищется он долго.
-    """
-    for marker in ("function bufMake(", "async function ipvOpen("):
-        assert "voiceWiring(" in _fn_body(js, marker), (
-            "<video> создаётся без voiceWiring: " + marker)
-    # Шаг 1 — исключение: его <video> немые (PV.silent), звук играет буфер редактора
-    # (блок `ea*`) со своим гейном. `createMediaElementSource` необратим — немой камере
-    # граф не нужен, и дублёра немого кадра bufMake тоже не заявляет.
-    assert "voiceWiring(" not in _fn_body(js, "async function openPreview("), (
-        "камера шага 1 заявлена на граф, а звука у неё нет")
-    assert "if(!P.silent)voiceWiring(el)" in _fn_body(js, "function bufMake("), (
-        "дублёр немого кадра шага 1 заявлен на граф")
-    assert "v.__wired" in js and "if(!v||v.__wired)return" in js, (
-        "пропал признак «источник уже создан»: второй createMediaElementSource "
-        "на том же элементе роняет звук совсем")
-
-
 def test_preview_draws_the_scene_plan_and_never_recomputes_it(js):
     """Предпросмотр шага 3 РИСУЕТ план сцены, ничего не досчитывая.
 
@@ -1402,35 +1386,6 @@ def test_preview_draws_the_scene_plan_and_never_recomputes_it(js):
     subs = _fn_body(js, "function ipvSubs(")
     assert "IPV.plan" in subs and (".gend" in subs) and (".row" in subs), (
         "стопка субтитров не читает row/gend плана")
-
-
-def test_preview_ducks_voice_on_censor_windows_from_the_plan(js):
-    """Голос предпросмотра ныряет в ноль на окнах цензуры ИЗ ПЛАНА.
-
-    Окна audio.censor считает scene_plan (xml2ae/build.py) — в рендере на них голос
-    уходит voice_db→−100. Превью обязано повторить то же самое через voiceGain (VG),
-    иначе мат слышен там, где в готовом ролике тишина. Свой список слов и вторая
-    формула в JS не заводятся: vgDuck читает plan.audio.censor как есть и проверяет
-    «внутри окна или нет» по таймлайну.
-    """
-    duck = _fn_body(js, "function vgDuck(")
-    assert "plan.audio.censor" in duck, "окна цензуры берутся не из плана"
-    assert "VG.gain.value=0" in duck, "внутри окна voiceGain не уводится в ноль"
-    # Громкость голоса читается одной дверью (voiceDbOf: спикер клипа или стиль), а не из
-    # CURSTYLE.voice_db: иначе вне окна цензуры голос вернулся бы не к громкости спикера.
-    assert "dbToGain(voiceDbOf())" in duck, (
-        "вне окна voiceGain не возвращается к громкости голоса спикера — заглушка останется навсегда")
-
-    # Шаг 1 плана сцены не знает вовсе: /api/aicut_preview отдаёт EDL, а не план сцены.
-    # Пока панель слов предпросмотра нарезки существовала, вызов брал PVW.plan — он всегда
-    # был null, и вызвать vgDuck было не с чем. Теперь вызова нет ни у одного плеера шага 1
-    # (осталась одна дверь показа — pvVideoTo), глушение голоса живёт в плеере вставок.
-    door = _fn_body(js, "function pvVideoTo(")
-    assert "vgDuck(" not in door, "показ кадра шага 1 снова глушит голос по несуществующему плану"
-    ipv = _fn_body(js, "function ipvUI(")
-    assert "vgDuck(tm,IPV.plan)" in ipv, "плеер вставок не глушит голос по плану"
-    # без плана (запрос не прошёл) duck обязан вернуть обычную громкость, не сломать плеер
-    assert "if(!VG)return" in duck, "vgDuck падает без графа громкости"
 
 
 def test_editor_words_panel_shows_the_word_under_the_playhead(js):
@@ -1898,7 +1853,7 @@ def test_video_insert_generation_contract(html, js):
     resume = _fn_body(js, "function insVideoContextForJob(")
     adopt = _fn_body(js, "function insVideoApplyResult(")
     assert "video_target===token" in resume and "video_job===key" in resume
-    assert "curIns" not in resume and "insSetMedia(x,res.path)" in adopt and "x.genAuto=true" in adopt
+    assert "curIns" not in resume and "insSetMedia(x,res.path,found.c)" in adopt and "x.genAuto=true" in adopt
     assert "x.libAuto=false" in adopt and "x.libOpts=null" in adopt and "x.noAuto=false" in adopt
     boot_at = js.index("// видео-джоб живёт своим потоком")
     boot = js[boot_at:js.index("if(CLIPS.length)refreshStatuses()", boot_at)]
@@ -3507,3 +3462,39 @@ document.body.appendChild(pre);
         "шаг 2: имя клипа не обрезается многоточием: %s" % long_row["nm"])
     assert long_row["nm"]["sw"] > long_row["nm"]["cw"], (
         "шаг 2: длинное имя при 1200 px не обрезано — проверка многоточия пустая: %s" % long_row["nm"])
+
+
+def test_voice_audio_track_machine_is_gone(js):
+    """Дорожки голоса `<audio>` больше нет: голос всех плееров играет очередь Web Audio (`ea*`).
+
+    Подгонку `<audio>` скоростью и перемоткой под видео, дублёр дорожки голоса и гейт
+    `voiceMute` сняли 2026-10-23. Их возвращение снова дало бы два звука (очередь и
+    `<audio>`) и «плывущий» голос — ровно то, от чего ушли. Сторож смотрит в склеенном JS:
+    имён удалённой машины там нет, а `vtOf` и `vtUse` не заводят элемент голоса.
+    """
+    for gone in ("function vtSpareOf", "function vtEl", "function vtGate", "function vtSeek",
+                 "function vtRate", "function voicePrime", "VT_SWAP_LO", "VT_DRIFT"):
+        assert gone not in js, "вернулась дорожка голоса <audio>: %s" % gone
+    of = _fn_body(js, "function vtOf(P)")
+    assert "vsp:" not in of and "el:null" not in of, \
+        "в состоянии плеера снова есть элемент дорожки голоса: %s" % of
+    use = _fn_body(js, "function vtUse(")
+    assert "createElement" not in use and ".src=" not in use, \
+        "vtUse снова заводит <audio> голоса: %s" % use
+
+
+def test_element_voice_graph_is_gone(js):
+    """Элементы плееров в граф Web Audio не подключаются, кроме музыки.
+
+    Все плееры со звуком немые (`silent`): звук шага 1 и голос — очередь `ea*` (`eaGain`,
+    `eaCensorGain`). Подключение `<video>` через createMediaElementSource снова дало бы
+    второй путь звука мимо очереди: голос ушёл бы в обход громкости стиля и цензуры. Единственный
+    оставшийся вход в граф — музыка (`musicEnsure`).
+    """
+    for gone in ("function voiceWiring", "function voiceEnsure", "function vgDuck",
+                 "VOICEPEND", "VG.gain"):
+        assert gone not in js, "вернулась очередь подключения элементов в граф: %s" % gone
+    n = js.count("createMediaElementSource")
+    assert n == 1, "createMediaElementSource должен встречаться ровно один раз (музыка), а не %d" % n
+    assert "createMediaElementSource" in _fn_body(js, "function musicEnsure("), (
+        "единственный createMediaElementSource стоит не в musicEnsure")

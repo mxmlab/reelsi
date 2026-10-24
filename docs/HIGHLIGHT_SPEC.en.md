@@ -25,7 +25,7 @@ episodes matched by transcripts (`Reelsi_out/*.words.json`).
 
 ## The stack (consecutive highlighted words)
 "Consecutive" = neighbouring words in subtitle order, both highlighted.
-- Row r (0-based): Y = ROW1 + r · STEP, where ROW1 ≈ 0.5964·H, STEP ≈ 0.06224·H (~119.5 px).
+- Row r (0-based): Y = ROW1 + r · STEP, where ROW1 ≈ 0.5964·H, STEP ≈ 0.06224·H (~119.5 px) × hl_step_pct/100 (style key, default 100 — as before).
 - Each word slides out into its own row at its own start; **the common out** = the end of the last word of the group
   → the whole stack holds together and disappears at once.
 - An example from C1221: "ФИЗРАСТВОР"(row0)+"С САХАРОМ"(row1); "ОТЕК"+"ЛИЦА"; "не"+"досыпали".

@@ -124,7 +124,7 @@ def test_build_index_preserves_ru_and_emb(tmp_path, monkeypatch):
 
     called_emb_docs = []
 
-    def mock_emb_docs(texts, model):
+    def mock_emb_docs(texts):
         called_emb_docs.append(list(texts))
         return [[0.9, 0.9, 0.9] for _ in texts]
 
@@ -165,7 +165,7 @@ def test_set_desc_recomputes_vector_with_ru(tmp_path, monkeypatch):
 
     called_emb_docs = []
 
-    def mock_emb_docs(texts, model):
+    def mock_emb_docs(texts):
         called_emb_docs.append(list(texts))
         return [[0.9, 0.9, 0.9] for _ in texts]
 
@@ -185,49 +185,3 @@ def test_set_desc_recomputes_vector_with_ru(tmp_path, monkeypatch):
 
     assert len(called_emb_docs) == 1
     assert called_emb_docs[0] == ["shiny award cup золотой кубок"]
-
-
-def test_auto_describe_picks_empty_adopted_desc(tmp_path, monkeypatch):
-    """auto_describe(only_missing=True) берёт в работу запись с desc_src='adopted' и пустым
-    описанием, но пишет ТОЛЬКО в vis: desc и desc_src не трогает."""
-    idx_path = str(tmp_path / "test_idx.json")
-    monkeypatch.setattr(insertlib, "INDEX_PATH", idx_path)
-    insertlib._CACHE["data"] = None
-
-    img_file = tmp_path / "adopted_empty.png"
-    img_file.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\0" * 32)
-
-    items = [{
-        "path": str(img_file),
-        "name": "adopted_empty.png",
-        "type": "photo",
-        "used": 1,
-        "desc": "",                     # Пустое описание
-        "desc_src": "adopted",          # Ранее блокировало auto_describe!
-        "ru": "",
-        "emb": None,
-    }]
-    json.dump({"items": items, "dirs": [str(tmp_path)], "emb_model": "mock-emb",
-               "emb_tag": insertlib.EMB_TAG},
-              open(idx_path, "w", encoding="utf-8"))
-
-    try:
-        from core import aicut
-        monkeypatch.setattr(aicut, "ensure_loaded", lambda model: None)
-    except Exception:
-        pass
-
-    monkeypatch.setattr(insertlib, "_vision_model", lambda: "mock-vl")
-    monkeypatch.setattr(insertlib, "describe_file", lambda path, model: "a fresh 3D icon of a microscope")
-    monkeypatch.setattr(insertlib, "_emb_model", lambda: "mock-emb")
-    monkeypatch.setattr(insertlib, "_emb_docs", lambda texts, model: [[0.5, 0.5, 0.5] for _ in texts])
-
-    res = insertlib.auto_describe(only_missing=True)
-    assert res.get("count") == 1
-
-    loaded = insertlib._load()
-    entry = loaded["items"][0]
-    assert entry["vis"] == "a fresh 3D icon of a microscope"
-    assert (entry["desc"] or "").strip() == ""     # desc не трогаем
-    assert entry["desc_src"] == "adopted"          # desc_src не трогаем
-    assert entry["emb"] == [0.5, 0.5, 0.5]

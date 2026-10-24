@@ -271,29 +271,6 @@ function segUI(){}
     assert res["one"] == {"btn": False, "combined": False}, res
 
 
-# ============== 6. ГРОМКОСТЬ ГЛУШИТСЯ ТОЛЬКО ВНУТРИ ОКНА ЦЕНЗУРЫ ==============
-@node
-def test_behav_voice_is_muted_only_inside_censor_windows_of_the_plan(tmp_path):
-    """Голос предпросмотра уходит в ноль внутри окна цензуры плана и возвращается вне её.
-
-    Без плана голос идёт на обычной громкости стиля, плеер не ломается.
-    """
-    # Громкость голоса — боевая дверь: без открытого клипа её спикер — `$('speaker')`,
-    # в стенде его нет, значит громкость берётся из CURSTYLE (путь клипа без спикера).
-    res = _case(tmp_path, "b3_vg_duck.js", ("vgDuck", "voiceDbOf", "voiceDbSpeakerKey",
-                                            "voiceDbBySpeaker"), r"""
-CURSTYLE={voice_db:-6};
-const plan={audio:{censor:[[2,3]]}};
-vgDuck(2.5,plan);out.inside=VG.gain.value;
-vgDuck(4,plan);out.outside=Math.round(VG.gain.value*1000)/1000;
-vgDuck(4,null);out.noPlan=Math.round(VG.gain.value*1000)/1000;
-""", pre="let VG={gain:{value:1}};\nfunction dbToGain(db){return Math.pow(10,db/20);}\n"
-             "function $(){return null;}")
-    assert res["inside"] == 0, res
-    assert res["outside"] == 0.501, res
-    assert res["noPlan"] == 0.501, res
-
-
 # ============== 7. ДУБЛЁР ДОГОНЯЕТ СТЫК СКОРОСТЬЮ ==============
 @node
 def test_behav_double_buffer_catches_up_to_the_seam_by_rate(tmp_path):
@@ -1192,27 +1169,6 @@ function ipvRotoMaskZoom(s,cx,cy){ORDER.push('mask:'+s+':'+cx+':'+cy);}
 function ipvCamPaint(s){ORDER.push('paint:'+s);}
 """)
     assert res["log"] == ["mask:1.5:0.3:0.7", "paint:1.5", "mask:1:0.3:0.7", "paint:1"], res
-
-
-@node
-def test_behav_voice_wiring_queues_each_element_once(tmp_path):
-    """Элемент голоса ставится в очередь подключения один раз; уже подключённый не трогаем.
-
-    Замена части test_every_player_video_is_wired_to_the_volume_graph: поведение voiceWiring.
-    Наличие voiceWiring в bufMake и ipvOpen остаётся в старом тесте.
-    """
-    res = _case(tmp_path, "b3_voice_wiring.js", ("voiceWiring", "voiceGraphNeeded"), r"""
-CURSTYLE={voice_db:-6};
-const v=fakeEl();voiceWiring(v);voiceWiring(v);
-out.pending=VOICEPEND.length;
-const w=fakeEl();w.__wired=true;voiceWiring(w);
-out.wired=VOICEPEND.length;
-""", pre=r"""
-let AUDIO=null,VOICEPEND=[];
-function voiceGraphWire(){return false;}
-function fakeEl(){return {__inDom:false,isConnected:false};}
-""")
-    assert res["pending"] == 1 and res["wired"] == 1, res
 
 
 @node

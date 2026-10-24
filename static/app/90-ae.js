@@ -664,16 +664,16 @@ function renderIns(){const host=$('inslist');if(!host)return;host.innerHTML='';
         // «на подложке» — рядом с мозаикой: картинка-подложка из стиля, своя геометрия
         +'<label class="chk" style="display:flex;align-items:center;gap:6px;margin:0;height:34px"><input type="checkbox" '+(r.plate?'checked':'')+' onchange="INS['+i+'].plate=this.checked;this.blur();captureAE()"> '+t('на подложке')+'</label></div>';
       fields+='<div class="fld"><label>'+t('Маска %')+'</label><div style="height:34px;display:flex;align-items:center">'
-        +scrubMask('INS['+i+']',r.mw,r.mh,'ipvRefresh()','captureAE()')+'</div></div>';}
+        +scrubMask('INS['+i+']',r.mw,r.mh,'ipvRefresh()','captureAE();insMemoSave(INS['+i+'])')+'</div></div>';}
     else{fields+='<div class="fld"><label>'+t('Файл с')+'</label><div style="height:34px;display:flex;align-items:center">'
         +scrubSin('INS['+i+']',r.sin,'ipvRefresh()','captureAE()')+'</div></div>';}
     // Масштаб — множитель к авто, а не абсолютный scale: у фото xml2ae пересчитывает scale
     // по пропорциям картинки на каждой сборке, и абсолютное число тут просто затиралось.
     fields+='<div class="fld"><label>'+t('Масштаб %')+'</label><div style="height:34px;display:flex;align-items:center">'
-      +scrubScale('INS['+i+']',r.sc,'ipvRefresh()','captureAE()')+'</div></div>';
+      +scrubScale('INS['+i+']',r.sc,'ipvRefresh()','captureAE();insMemoSave(INS['+i+'])')+'</div></div>';
     fields+=tcField(i,'start',t('Старт'))+tcField(i,'dur',t('Длит.'));
     fields+='<div class="fld"><label>'+t('Положение')+'</label><div style="height:34px;display:flex;align-items:center">'
-      +scrubXY('INS['+i+']',r.x,r.y,'ipvRefresh()','captureAE()')+'</div></div>';   // тянешь — видно в кадре, отпустил — записалось
+      +scrubXY('INS['+i+']',r.x,r.y,'ipvRefresh()','captureAE();insMemoSave(INS['+i+'])')+'</div></div>';   // тянешь — видно в кадре, отпустил — записалось
     card.innerHTML='<div class="top"><span class="badge '+r.type+'">'+ico(photo?'img':'film','gold')+(photo?t('ФОТО'):t('ВИДЕО'))+'</span>'+seg2(r.type,'photo',t('фото'),'video',t('видео'),'insType('+i+',','insType'+i)
       +'<span class="grow"></span><span class="del" tabindex="0" role="button" aria-label="'+t('Удалить вставку')+'" data-t="'+t('Удалить вставку')+'" onclick="INS.splice('+i+',1);renderIns();captureAE()">'+ico('x')+'</span></div>'
       +'<div class="media"><span class="name '+(fname?'':'empty')+'" title="'+esc(r.media||r.query)+'">'+(fname?'<span data-noi18n>'+esc(fname)+'</span>':(r.query?'<span data-noi18n>'+esc(r.query)+'</span>':t('файл не выбран')))+'</span><button class="sm" onclick="pickIns('+i+')">'+t('Выбрать…')+'</button></div>'
@@ -681,11 +681,12 @@ function renderIns(){const host=$('inslist');if(!host)return;host.innerHTML='';
     host.appendChild(card);});
   const info=$('insinfo');if(info){const nv=INS.filter(r=>r.type==='video').length;info.textContent=INS.length?(INS.length+t(' ({p} фото + {v} видео)',{p:INS.length-nv,v:nv})):t('нет');}}
 async function pickIns(i){try{const d=await (await fetch('/api/pickmedia')).json();
-  if(d.path){const r=INS[i];insSetMedia(r,d.path);
+  if(d.path){const r=INS[i];insSetMedia(r,d.path,CLIPS[curAE]);
     // src2-карточка шага 2 без файла: выбранный файл пишем и в неё, иначе пересборка
-    // (ensureJobs) вернёт заглушку без файла и выбор молча потеряется
+    // (ensureJobs) вернёт заглушку без файла и выбор молча потеряется. Через ту же дверь —
+    // иначе память картинки (и «без фона») на карточке не появилась бы
     if(r.src2&&r.idx!=null&&curAE>=0&&CLIPS[curAE]){const cd=CLIPS[curAE].inserts[r.idx];
-      if(cd){cd.media=d.path;const k=insKind(d.path);if(k)cd.type=k;saveState();}}
+      if(cd){insSetMedia(cd,d.path,CLIPS[curAE]);saveState();}}
     renderIns();captureAE();}}
   catch(e){toast(t('Не открылся выбор файла — сервер не ответил'));uiLog('pickmedia: '+e);}}
 

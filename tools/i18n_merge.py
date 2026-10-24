@@ -261,6 +261,7 @@ ADDITIONS = {
     "ERR_forbidden_origin": "The request came from another site — rejected",
     "ERR_gen_subs_failed": "Failed to generate subtitles: {err}",
     "ERR_genimage_failed": "Failed to generate the image: {err}",
+    "ERR_insert_memo_failed": "Failed to save the insert's picture memory: {err}",
     "ERR_insertlib_desc_failed": "Failed to save the description: {err}",
     "ERR_insertlib_import_failed": "Failed to import media: {err}",
     "ERR_insertlib_info_failed": "Failed to read the insert library: {err}",

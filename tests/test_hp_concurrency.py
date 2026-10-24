@@ -39,7 +39,6 @@ def clean_state(tmp_path, monkeypatch):
     from api.render import RJOB, RLOCK
     from api.videogen import VJOB, VLOCK
     from api.gdrive import GDJOB, GDLOCK
-    from api.inserts import ILL_JOB
     from api.previewproxy import PXJOB, PXLOCK
     from core import jobstate
 
@@ -54,7 +53,6 @@ def clean_state(tmp_path, monkeypatch):
         VJOB.update(running=False, done=False, log=[])
     with GDLOCK:
         GDJOB.update(running=False, done=False, log=[])
-    ILL_JOB.update(running=False, done=0, total=0, log=[], error="")
     with PXLOCK:
         PXJOB.update(running=False, done=False, log=[], i=0, n=0, cur="")
 
@@ -70,7 +68,6 @@ def clean_state(tmp_path, monkeypatch):
         VJOB["running"] = False
     with GDLOCK:
         GDJOB["running"] = False
-    ILL_JOB["running"] = False
     with PXLOCK:
         PXJOB["running"] = False
 
@@ -107,24 +104,13 @@ def test_render_run_thread_fail_resets_running(client, tmp_path, clean_state, no
     assert jobstate._JOB_LOCK_FH is None, "межпроцессный лок остался занят"
 
 
-def test_inserts_describe_thread_fail_resets_running(client, clean_state, no_threads):
-    """api/inserts.py: при сбое старта потока ILL_JOB['running'] сбрасывается."""
-    from api.inserts import ILL_JOB
+def test_describe_routes_removed(client):
+    """Описания через LM Studio удалены вместе с задачей фона: роутов `insertlib_describe*` в API нет.
 
-    r = client.post("/api/insertlib_describe", json={"only_missing": True})
-    assert r.status_code == 500
-    assert ILL_JOB["running"] is False, "ILL_JOB['running'] остался True после сбоя старта"
-
-
-def test_inserts_describe_double_start_busy(client, clean_state):
-    """api/inserts.py: повторный запуск при работающем возвращает 'Описание уже идёт'."""
-    from api.inserts import ILL_JOB
-
-    ILL_JOB["running"] = True
-    r = client.post("/api/insertlib_describe", json={})
-    assert r.status_code == 200
-    d = r.get_json()
-    assert d.get("err") == "describe_busy"
+    Мутация: вернуть роут `/api/insertlib_describe` — ответ станет не 404, тест покраснеет.
+    """
+    assert client.post("/api/insertlib_describe", json={}).status_code == 404
+    assert client.get("/api/insertlib_describe_status").status_code == 404
 
 
 def test_videogen_thread_fail_resets_running(client, clean_state, no_threads, monkeypatch):

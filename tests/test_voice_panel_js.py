@@ -67,16 +67,16 @@ VOICE_FUNCS = (
     # свежий профиль с диска — база всех записей профиля (95-styles.js)
     "speakerFresh",
 )
-PREVIEW_FUNCS = ("vtOf", "vtCam1", "vtSrcAt", "vtNow", "vtAudioCam", "vtPlaying", "vtEl", "vtGate",
+PREVIEW_FUNCS = ("vtOf", "vtCam1", "vtSrcAt", "vtNow", "vtAudioCam", "vtPlaying",
                  "vtNote", "vtName", "vtProfileFx", "vtFx", "vtDetach", "vtStop", "vtPause",
-                 "vtLiveOn", "vtSetMute", "vtLiveUpdate", "vtLiveRate", "vtLiveExpect", "vtLiveCmd",
+                 "vtLiveOn", "vtLiveUpdate", "vtLiveRate", "vtLiveExpect", "vtLiveCmd",
                  "vtLiveSid", "vtLivePlay", "vtLivePause",
                  "vtIsPv", "vtIsEd", "vtEa", "vtMuteHost", "vtStage", "vtHostLive", "vtLivePrep",
                  "vtStatesWait", "vtStatesTake", "vtHostDown",
                  "vtPrep", "vtVoiceShow", "vtVoiceWatch", "vtVoicePoll",
                  "pvProgRow", "pvProgDrop", "vtVoiceLine", "vtVoiceStop", "vtVoiceTake",
-                 "vtVoiceUse", "vtUse", "vtTick", "vtSeek", "vtRate",
-                 "voiceGraphNeeded", "applyDbGains", "dbToGain")
+                 "vtVoiceUse", "vtUse", "vtTick",
+                 "applyDbGains", "dbToGain")
 
 
 def _func_src(src: str, name: str) -> str:
@@ -234,7 +234,6 @@ let VOICEFXLIVE=null;
 // Плеер: время монтажа и дорожка обработанного голоса (vt*, 60-preview.js)
 let MEDIA_VOL=1;
 let PV={audio:[],aidx:0,vids:[],playing:false,scrubbing:false,xml:'',voicePanel:'pvvoice'};
-function voiceWiring(){}
 // Сервер живого хоста: состояния плагинов он отдаёт на dump_states. Штатная ветка
 // «окно закрыли» зовёт и его, и гашение (60-preview.js:vtHostDown).
 function voiceFxHostPost(url,body){
@@ -253,7 +252,7 @@ def _sync_consts() -> str:
     """
     preview = PREVIEW_JS.read_text(encoding="utf-8")
     out = []
-    for name in ("VT_SOFT", "VT_DRIFT", "VT_RATE", "VT_QUIET", "VT_POLL"):
+    for name in ("VT_QUIET", "VT_POLL"):
         m = re.search(r"^const %s=.*$" % name, preview, re.M)
         assert m is not None, f"в 60-preview.js нет const {name}"
         out.append(m.group(0))
@@ -524,8 +523,8 @@ def test_timeline_time_maps_to_source_and_whole_clip_plays(tmp_path: Path) -> No
     """На стыке берётся НОВЫЙ кусок, а играется ОДИН файл голоса ВСЕГО клипа.
 
     Окна по 20 секунд больше нет: она считала шумодав заново на каждом краю окна, и
-    видео вставало. Готовый трек клипа играется через /api/media, а позиция берётся по
-    исходному времени камеры 1 (vtSrcAt) — файл посчитан по её звуку от нуля.
+    видео вставало. Готовый трек клипа подключается к плееру (путь запечённого файла), а
+    позиция берётся по исходному времени камеры 1 (vtSrcAt) — файл посчитан по её звуку от нуля.
     """
     body = """
 PV.audio=[{ts:0,te:10,src:100},{ts:10,te:20,src:300}];   // стык: 10с монтажа = 300с исходника
@@ -551,8 +550,7 @@ globalThis.fetch=async(url,opt)=>{
   const tr=vtOf(PV);
   console.log(JSON.stringify({onFirst:onFirst,onSecond:onSecond,asked:asked.length,
     xml:body.xml,src:body.src,fx:body.fx,mode:host.dataset.vfxmode,
-    on:tr.on,path:tr.path,
-    el:(tr.el?{src:tr.el.src,volume:tr.el.volume}:null)}));
+    on:tr.on,path:tr.path}));
 })();
 """
     res = _run_node(tmp_path, body)
@@ -565,9 +563,6 @@ globalThis.fetch=async(url,opt)=>{
     assert res["fx"]["denoise"] == {"on": True, "engine": "roformer",
                                     "atten_db": 40, "mix": 100}, "настройки панели не уехали"
     assert res["on"] is True and res["path"] == "C:/out/01_clip.voice.wav", res
-    assert res["el"] and res["el"]["src"] == "/api/media?path=C%3A%2Fout%2F01_clip.voice.wav", \
-        "готовый трек играется не через /api/media"
-    assert res["el"]["volume"] == 1, "громкость превью не применилась к треку"
 
 
 @node
@@ -605,14 +600,14 @@ function clearTimeout(){}
   const tr=vtOf(PV);
   console.log(JSON.stringify({bakes:bakes,polls:polls,
     want:tr.want.indexOf('"mix":70')>=0,on:tr.on,
-    el:(tr.el?tr.el.src:'')}));
+    path:tr.path}));
 })();
 """
     res = _run_node(tmp_path, body)
 
     assert res["bakes"] >= 2, "смена настроек во время счёта не пересчитала голос: %s" % res
     assert res["want"] is True, "пересчёт пошёл под прежние настройки: %s" % res
-    assert res["on"] is True and res["el"].startswith("/api/media?path="), res
+    assert res["on"] is True and res["path"] == "C:/out/01_clip.voice.wav", res
 
 
 @node
@@ -657,7 +652,7 @@ function clearTimeout(){}
   console.log(JSON.stringify({opened:PROGCALLS.filter(c=>c[0]==='open').length,
     polls:polls,mid:mid,after:(tr.vtbox?String(tr.vtbox.innerHTML):''),
     id:(tr.vtbox?tr.vtbox.id:''),inStage:midIn,
-    on:tr.on,el:(tr.el?tr.el.src:''),note:note}));
+    on:tr.on,path:tr.path,note:note}));
 })();
 """
     res = _run_node(tmp_path, body)
@@ -668,7 +663,7 @@ function clearTimeout(){}
     assert "голос обрабатывается" in res["mid"], \
         "хода голоса не видно строкой на кадре: %s" % res["mid"]
     assert "data-vtstop" in res["mid"], "у счёта нет кнопки «Стоп»: %s" % res["mid"]
-    assert res["on"] is True and res["el"].startswith("/api/media?path="), res
+    assert res["on"] is True and res["path"] == "C:/_voicefx/deadbeef.wav", res
     # После счёта трек подключён — надпись «готов», а строку хода снял законный конец
     # (живой прогон 27.09: висело «голос обрабатывается…», хотя голос уже играл).
     assert res["note"] == "обработанный голос клипа готов", res["note"]
@@ -826,70 +821,6 @@ def test_install_button_appears_only_without_environment(tmp_path: Path) -> None
     assert res["display"] == "none", "кнопка RoFormer висит на deep-filter"
 
 
-# --------------------------------------------------------------------------- #
-# 7. Стенд плеера: видео — хозяин, обработанный звук ему подчинён
-# --------------------------------------------------------------------------- #
-@node
-def test_video_time_is_monotonic_with_processed_voice(tmp_path: Path) -> None:
-    """С включённым обработанным голосом время ВИДЕО растёт монотонно.
-
-    Здесь и была жалоба владельца: «видео встаёт на паузу и прыгает, звук идёт
-    дальше» — окно звука перезапрашивалось на каждом краю, сервер считал шумодав
-    заново, и плеер захлёбывался. Стенд ведёт кадры плеера и проверяет две вещи:
-    время видео не убывает и не стоит, а сам `<video>` не получает от звуковой ветки
-    ни pause, ни seek — звук подводится к позиции видео, а не наоборот.
-    """
-    body = """
-PV.audio=[{ts:0,te:5,src:100},{ts:5,te:10,src:200}];   // стык на 5-й секунде
-PV.aidx=0;PV.playing=true;PV.scrubbing=false;
-const v=new El('video');v.readyState=4;v.currentTime=100;v.paused=false;
-PV.vids=[v];
-// Голос клипа уже готов и играет: <audio> живёт своей жизнью
-const host=new El('div');
-voiceFxRender(host,{denoise:{on:true,engine:'roformer',mix:100},vst:[]},{mode:'panel'});
-document.body.appendChild(host);
-globalThis.__byId={pvvoice:host};
-vtOf(PV).on=true;vtOf(PV).path='C:/out/01_clip.voice.wav';
-const el=vtEl(PV);el.src='/api/media?path=C%3A%2Fout%2F01_clip.voice.wav';el.readyState=4;
-// 24 кадра по 1/24 с: видео идёт вперёд, звук тянется за ним
-const times=[];const seeks=[];
-function nowTm(){const a=PV.audio[PV.aidx];return a.ts+(PV.vids[0].currentTime-a.src);}
-for(let i=0;i<24;i++){
-  vtTick(PV,nowTm());
-  times.push(PV.vids[0].currentTime);
-  seeks.push(el.currentTime);
-  PV.vids[0].currentTime+=1/24;      // видео играет: так двигает его браузер
-}
-// ...и на стыке: кусок другой, источник прыгает, а видео продолжает играть
-PV.aidx=1;PV.vids[0].currentTime=200;
-const afterSplice=[];
-for(let i=0;i<12;i++){
-  vtTick(PV,nowTm());
-  afterSplice.push(PV.vids[0].currentTime);
-  PV.vids[0].currentTime+=1/24;
-}
-let mono=true;
-for(let i=1;i<times.length;i++)if(times[i]<=times[i-1])mono=false;
-for(let i=1;i<afterSplice.length;i++)if(afterSplice[i]<=afterSplice[i-1])mono=false;
-console.log(JSON.stringify({mono:mono,times:times.length,
-  videoPaused:PV.vids[0].paused,pauseLog:PV.vids[0].pauseLog,
-  voicePaused:el.paused,voicePlays:el.played>0,
-  voiceSeeks:seeks.filter((x,i)=>i&&x!==seeks[i-1]).length,
-  lastSeek:seeks[0],lastVideo:afterSplice[afterSplice.length-1],
-  muted:!!PV.voiceMute}));
-"""
-    res = _run_node(tmp_path, body)
-
-    assert res["mono"] is True, "время видео шло не монотонно"
-    assert res["videoPaused"] is False, "видео встало на паузу из-за обработанного звука"
-    assert res["pauseLog"] == 0, "звуковая ветка поставила видео на паузу"
-    assert res["voicePlays"] is True, "обработанный голос так и не заиграл"
-    assert res["voicePaused"] is False, "звук стоит, хотя видео идёт"
-    assert res["voiceSeeks"] >= 1, "звук не подводился к позиции видео: %s" % res
-    assert res["lastSeek"] == 100, "первая подводка звука не на позицию видео: %s" % res
-    assert res["muted"] is True, "звук камеры не заглушён — слышно два голоса"
-    assert res["lastVideo"] > 200, "видео не продвинулось после стыка"
-
 def test_note_says_ready_when_processed_voice_attached() -> None:
     """Готовый трек подключён (после счёта или мгновенно из кеша) — надпись панели «готов».
 
@@ -911,7 +842,7 @@ def test_voice_panel_volume_slider_and_denoise_first_row(tmp_path: Path) -> None
     body = """
 let liveGains = [];
 // `var` — нарочно: стенд собран из функций РАЗНЫХ файлов, и глобальная привязка
-// нужна настоящая (globalThis.VG не виден неквалифицированному `VG` внутри функции).
+// нужна настоящая (globalThis.MG не виден неквалифицированному `MG` внутри функции).
 var voiceFxHostPost = async function(url, body) {
     liveGains.push({cmd: body.cmd, db: body.db}); return {ok: true};
 };
@@ -919,7 +850,6 @@ var voiceFxHostOn = function() { return true; };
 VOICEFXLIVE = { sid: 's1', running: true, track_ready: true };   // let — из STATE стенда
 var CURSTYLE = { voice_db: 0, music_db: -20 };
 var STYLES = { base: { voice_db: 0, music_db: -20 } };
-var VG = { gain: { value: 1.0 } };
 var MG = { gain: { value: 0.1 } };
 MEDIA_VOL = 1;                  // ползунок прослушивания — на полную (let — из STATE)
 var captureAE = function() {};
@@ -962,7 +892,6 @@ console.log(JSON.stringify({
     sldValAfter: sldValAfter,
     txtValAfter: txtValAfter,
     liveGains: liveGains,
-    vgGain: VG.gain.value,
     hasSetHdr: !!sethdr,
     dnSummary: dnSummary ? dnSummary.textContent : '',
     initialOn: initialOn,
@@ -976,7 +905,6 @@ console.log(JSON.stringify({
     assert "dB" in res["txtValAfter"], "подпись громкости не содержит dB"
     assert [g for g in res["liveGains"] if g["cmd"] == "gain" and g["db"] == -6.0], \
         "правка громкости голоса не уехала хосту командой gain: %s" % (res["liveGains"],)
-    assert abs(res["vgGain"] - 10.0 ** (-6.0 / 20.0)) < 0.01, "applyDbGains не выставил VG.gain"
     assert res["initialOn"] is True, "шумодав изначально не был отмечен"
     assert res["readDnOn"] is False, "снятие галки шумодава не отключило denoise.on"
     assert "RoFormer" in res["dnSummary"], f"сводка шумодава не содержит имя движка: {res['dnSummary']}"
@@ -1000,7 +928,6 @@ var voiceFxHostOn = function() { return true; };
 VOICEFXLIVE = { sid: 's1', running: true, track_ready: true };   // let — из STATE стенда
 var CURSTYLE = { voice_db: -6, music_db: -20 };
 var STYLES = { base: { voice_db: 0, music_db: -20 } };
-var VG = { gain: { value: 1.0 } };
 var MG = { gain: { value: 0.1 } };
 var setMediaVol = function(pct) { MEDIA_VOL = Math.max(0, Math.min(1, (+pct || 0) / 100)); };
 var applyMediaVol = function() {};
@@ -1012,7 +939,7 @@ var captureAE = function() {};
 const last = () => POSTS[POSTS.length - 1][1];
 
 setStyleDb('voice', -6);        // ползунок «Громкость» панели «Голос»
-applyDbGains();                 // его правка доходит до хоста через VG/MG-граф
+applyDbGains();                 // его правка доходит до хоста через MG-граф и гейн очереди
 const voiceOn = last().db;
 const voiceCmd = last().cmd;
 setMediaVol(50);                // ползунок громкости прослушивания в строке плеера
@@ -1080,7 +1007,7 @@ VO2_GLOBALS = r"""
 let VFXSAVET=0;
 const VFX_SAVE_QUIET=700;
 let VOICEDB_SAVE_T=null;const VOICEDB_PENDING={};const VOICEDB_SAVE_MS=400;
-var VG=null,MG=null;
+var MG=null;
 var CURSTYLE={voice_db:0,music_db:-20};
 var ED={xml:'',vt:null};
 function captureAE(){}

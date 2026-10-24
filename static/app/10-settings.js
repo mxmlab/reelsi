@@ -1031,19 +1031,23 @@ async function setVideoEncoder(v){
 // Ключи стоков (⚙ → Генерация → Стоки). Наружу сервер отдаёт ТОЛЬКО маску «•••xxxx»,
 // её и показываем в поле: не тронешь — ключ не изменится (маска = «не менял»), очистишь
 // поле — провайдер выключится. Заполняется при открытии настроек, как профиль картинок.
-// Openverse — единственный без ключа (поля ввода у него в разметке нет), поэтому
-// список полей задан явно, а не собран из ключей ответа.
+// Openverse — единственный без ключа: поля ключа у него нет, зато есть галка
+// stk_openverse_on (выключатель списком off), поэтому список полей задан явно, а не собран
+// из ключей ответа.
 // Порядок полей = порядок опроса стоков (core/stock.PROVIDERS): Pexels, Unsplash, Pixabay, Coverr.
 const STK_FIELDS=['pexels','unsplash','pixabay','coverr'];
 function fillStockKeys(){if(!AICFG)return;
   const s=AICFG.stock||{};
-  STK_FIELDS.forEach(p=>{const el=$('stk_'+p);if(el)el.value=s[p+'_key']||'';});}
+  STK_FIELDS.forEach(p=>{const el=$('stk_'+p);if(el)el.value=s[p+'_key']||'';});
+  // Галка Openverse: включён, пока его нет в списке off (по умолчанию включён)
+  const ov=$('stk_openverse_on');if(ov)ov.checked=!(s.off||[]).includes('openverse');}
 async function saveStockKeys(){
   // Сервер недоступен — молча терять введённый ключ нельзя: тост и возврат полей
   // к сохранённому состоянию (задание по UI-состояниям).
   let d;
   const body={action:'set_stock_keys'};
   STK_FIELDS.forEach(p=>{body[p+'_key']=val('stk_'+p);});
+  const ov=$('stk_openverse_on');if(ov)body.openverse_on=ov.checked;
   try{d=await (await fetch('/api/ai_config',{method:'POST',headers:{'Content-Type':'application/json'},
     body:JSON.stringify(body)})).json();}
   catch(e){toast(t('Сервер не ответил: ')+e);fillStockKeys();return;}
@@ -1051,20 +1055,13 @@ async function saveStockKeys(){
   if(d.error){toast('⚠ '+errText(d));if(res)res.textContent='';fillStockKeys();return;}
   AICFG.stock=d.stock;fillStockKeys();
   if(res)res.textContent=t('ключи стоков сохранены');}
-// «Убрать фон» у уже выбранного файла (кнопка на карточке) — рядом ляжет <имя>-nobg.png
-async function insRembg(i){if(curIns<0)return;const x=CLIPS[curIns].inserts[i];if(!x||!x.media)return;
-  if(x.genBusy)return;
-  x.genBusy=true;renderInsHost();
-  const ac=new AbortController();
-  const timer=setTimeout(()=>ac.abort(),GEN_FETCH_MS);
-  try{const d=await (await fetch('/api/rembg',{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({path:x.media,query:x.query||'',prompt:(x.prompt||''),dest:(val('illdest')||'').trim()}),signal:ac.signal})).json();
-    if(d.error){toast('⚠ '+errText(d));uiLog(t('фон: ОШИБКА — ')+d.error);}
-    else if(!d.changed){toast(t('У файла уже есть прозрачность'));}
-    else{x.media=d.path;uiLog(t('фон убран: ')+d.path.replace(/^.*[\\\/]/,''));}}
-  catch(e){toast(t('⚠ сервер не ответил: ')+e);}
-  finally{clearTimeout(timer);}
-  x.genBusy=false;renderInsHost();syncClipLists();saveState();}
+// «Фон долой» у картинки вставки — переключатель «без фона», а не отдельное снятие: файл в базе
+// не плодим, флаг стоит на самой вставке. Фон снимает план сцены (кэш insertlib.nobg_path — тот
+// же, что в сборке). Флаг запоминается к картинке (insMemoSave), маршрут /api/rembg тут не зовём.
+function insRembg(i){if(curIns<0)return;const x=CLIPS[curIns].inserts[i];if(!x||!x.media)return;
+  if(insKind(x.media)!=='photo')return;
+  x.nobg=!x.nobg;insMemoSave(x);
+  saveState();ipvRefresh();renderInsHost();}
 // Время, за которое генерация картинки обязана уложиться. Серверный urlopen ждёт
 // ответа 300с и ретраит один раз; зависший между шагами запрос (rembg, запись в
 // базу) таймаута не имеет вообще. Без лимита кнопка «…» виснет навсегда: гвардия
@@ -1074,7 +1071,7 @@ const GEN_FETCH_MS=330000;   // 5.5 мин: одна попытка 300с + за
 // ядро генерации — по вставке любого клипа (не только открытого), без UI-зависимостей.
 // -> true если файл появился; ошибку кидаем наверх, чтобы пачка не молотила N раз
 // подряд в один и тот же отвал (нет ключа / 402 / 429).
-async function insGenCore(x,slot,speaker){
+async function insGenCore(x,slot,speaker,c){
   // Кнопка 1/2 — это слот приписки: у вставки с галкой «на подложке» свои слоты pa/pb
   // у обычной — прежние a/b. Выбор ОДИН на все двери: insGenOne и
   // insGenBatch зовут с 'a'/'b', подложка сама превращает их в 'pa'/'pb'.
@@ -1090,7 +1087,7 @@ async function insGenCore(x,slot,speaker){
       body:JSON.stringify(body),signal:ac.signal})).json();
   }finally{clearTimeout(timer);}
   if(d.error)throw errText(d);
-  x.media=d.path;x.genAuto=true;x.libAuto=false;x.libOpts=null;x.noAuto=false;
+  insSetMedia(x,d.path,c);x.genAuto=true;x.libAuto=false;x.libOpts=null;x.noAuto=false;
   // в логе видно, какой промпт ушёл: номер кнопки и «подложка» у вставок на подложке
   uiLog(t('✨ сгенерено (промпт {p})',{p:(second?'2':'1')+(x.plate?t(' · подложка'):'')})+': '+d.path.replace(/^.*[\\\/]/,'')
     +(d.nobg?t(' · фон убран'):'')+t(' (в базе)')+(d.warn?' ⚠ '+d.warn:''));
@@ -1107,7 +1104,7 @@ async function insGenOne(i,slot){if(curIns<0)return;const x=CLIPS[curIns].insert
   if(x.media&&(x.libAuto||x.genAuto))await insRejectMedia(x.media,x.query);
   const c=CLIPS[curIns];
   const spkKey=clipSpeaker(c)||undefined;
-  try{await insGenCore(x,slot,spkKey);}
+  try{await insGenCore(x,slot,spkKey,c);}
   catch(e){toast('⚠ '+e);uiLog(t('✨ генерация: ОШИБКА — ')+e);}
   x.genBusy=false;renderInsHost();syncClipLists();saveState();}
 // фото-вставки без файла (после автоподбора из базы) -> сгенерить. ask=false — молча,
@@ -1130,7 +1127,7 @@ async function insGenBatch(c,ask){
   for(const x of need){                            // последовательно — не ловить 429
     if(typeof UICANCEL!=='undefined'&&UICANCEL)break;
     const ti=performance.now();
-    try{await insGenCore(x,'a',spkKey);n++;}
+    try{await insGenCore(x,'a',spkKey,c);n++;}
     catch(e){toast(t('⚠ генерация: ')+e);uiLog(t('✨ генерация: ОШИБКА — ')+e+t(' — дальше не идём'));break;}
     uiLog('  ✨ ['+n+'/'+need.length+'] '+(performance.now()-ti).toFixed(0)+t(' мс'));}
   uiLog(t('✨ сгенерено картинок: {n} из {m}',{n:n,m:need.length})+t(' · всего ')+(performance.now()-t0).toFixed(0)+t(' мс'));

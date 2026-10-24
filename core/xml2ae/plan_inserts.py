@@ -314,9 +314,12 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
         # пропорциям, картинка по другим, и фото на подложке в превью сплющивалось
         # (1408×768 -> 176×451). Теперь и .jsx, и превью читают ОДИН план: второй копии
         # подмены в сборке не осталось.
+        # Флаг «без фона» — поле САМОЙ вставки (`nobg`): у кого его взять (память картинки
+        # или значение спикера), решает фронт при привязке файла. Одна подмена на два
+        # случая — «на подложке» и «без фона»; у видео не действует (_is_image).
         media_src = x.get("media") or ""
         media = media_src
-        if x.get("plate") and _plate_path and _is_image(media_src):
+        if _is_image(media_src) and ((x.get("plate") and _plate_path) or x.get("nobg")):
             from core.insertlib import nobg_path
             media = nobg_path(media_src, emit=emit)
         out: dict[str, Any] = {"t": x.get("type") or "photo", "style": x.get("style") or "cam2",
@@ -330,6 +333,10 @@ def plan_inserts(inp: InsertsInputs) -> InsertsPlan:
                "mw": _r(x.get("mw") or 100), "mh": _r(x.get("mh") or 100),
                "sin": _r(x.get("sin") or 0), "noexit": bool(noexit), "front": bool(_front(x)),
                "oncam2": bool(x.get("oncam2"))}
+        # путь уже кэш без фона (подложка или «без фона»): предпросмотр сопоставляет вставку плана
+        # с карточкой по исходнику — по этой метке снимает суффикс кэша (insCardKey)
+        if media != media_src:
+            out["nobg"] = True
         # геометрия из Python: видео — масштаб заполнения и запас панорамы
         # (fit/slack — те же числа, что AE считал из item.width/height), фото — окна
         # входа/выхода cam2-анимации. Размеры не прочитались -> полей нет: вставку

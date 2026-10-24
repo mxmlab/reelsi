@@ -22,7 +22,7 @@ onnxruntime-gpu`. Теперь это кнопка в настройках: ко
 
 Что ставим. Колесо берёт pip с `--no-deps`: зависимости onnxruntime (numpy, protobuf и
 прочее) уже стоят в системе, второй их копии не нужно. CUDA и cuDNN DLL приходят из
-`torch/lib` (это делает `core/insertlib.py:_cuda_dll_dirs`), сами колёса их не несут.
+`torch/lib` (это делает `core/rembg_run.py:_cuda_dll_dirs`), сами колёса их не несут.
 """
 from __future__ import annotations
 

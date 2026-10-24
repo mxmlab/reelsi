@@ -254,7 +254,10 @@ PALOCKS: dict[str, threading.Lock] = {}
 
 @bp.route("/api/preview_audio", methods=["POST"])
 def api_preview_audio() -> Response:
-    """Звук камеры 1 клипа одним WAV — для звука редактора шага 1. body: {xml}.
+    """Звук камеры клипа одним WAV — для звука редактора шага 1 и плеера раскладки камер.
+    body: {xml, cam}; `cam` — номер камеры с нуля (0 = камера 1), необязательный. Плеер
+    раскладки просит ту камеру, которую человек слушает (К2/К3, cam > 0); без `cam` — камера 1,
+    по ней печётся обработанный голос.
 
     Редактор играет звук буфером Web Audio (static/app/60-preview.js, блок `ea*`), а не
     элементом <video>: так стыки идут с точностью до сэмпла, без перемотки и подгонки
@@ -264,13 +267,18 @@ def api_preview_audio() -> Response:
     d = request.get_json() or {}
     xml_path = jstr(d, "xml").strip().strip('"')
     try:
+        cam = int(d.get("cam") or 0)
+    except (TypeError, ValueError, OverflowError):
+        cam = 0
+    try:
         if not os.path.isfile(xml_path):
             raise ReelsiError(umsg("file_not_found", f"Файл не найден: {xml_path}",
                                   path=xml_path))
         from core import draftrender
         from core import xml2ae
         cams = xml2ae.virtual_edl(xml_path).get("cams") or []
-        src = (cams[0].get("path") if cams else "") or ""
+        # Камеры нет в списке (номер вне диапазона) — пустой путь: дальше та же file_not_found.
+        src = (cams[cam].get("path") if 0 <= cam < len(cams) else "") or ""
         if not (src and os.path.isfile(src)):
             raise ReelsiError(umsg("file_not_found", f"Файл не найден: {src}", path=src))
         dst = draftrender.preview_audio_path(src, draftrender.tmp_dir(xml_path))

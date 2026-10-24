@@ -16,8 +16,8 @@
 // и rAF гасят друг друга, чтобы на кадр пришёлся ровно один шаг.
 let ED={xml:'',blocks:[],fps:60,cam:'',dur:0,peaks:[],pps:80,sel:-1,play:false,raw:false,raf:0,step:0,
   cs:0,drag:null,v0:0,v1:0,cuts:[],br:[],brBand:0,
-  // Поля плеера для дорожки голоса (60-preview.js:vt*): `cams` ставит openPreview —
-  // дорожка и живой хост берут файл камеры 1 через vtCam1(P); `voicePanel` — id панели
+  // Поля плеера для голоса клипа (60-preview.js:vt*): `cams` ставит openPreview —
+  // запекание голоса и живой хост берут файл камеры 1 через vtCam1(P); `voicePanel` — id панели
   // «Голос» этого плеера, по ней vtFx берёт ЖИВЫЕ ручки на экране, а vtNote пишет статус.
   cams:null,voicePanel:'pvvoice',
   // Упреждение перемотки видео на промахе дублёра, с: пока декодер доезжает, звук уходит
@@ -584,7 +584,7 @@ async function markupAllRun(subeng,list,phases,ask){
       insertsPromise=phase(phases.indexOf('inserts')+1,t('вставки (ИИ)'),c=>!(c.status.subs>0),c=>(c.inserts||[]).length>0,async c=>{
         localQSet(c.name,'inserts','');
         const d=await aiPost('/api/ai_inserts',{xml:c.xml,batch,rejected:c.ins_rejected||[],speaker:clipSpeaker(c)||undefined},t('вставки (ИИ)'));
-        if(d.error)throw errText(d);c.inserts=(d.inserts||[]).map(x=>({...x,media:(x&&(x.auto==='named'||x.auto==='drug'))?(x.media||''):''}));c.insTarget=Math.max(d.insTarget||0,c.inserts.length);if(typeof insLog==='function')insLog(d);uiLog(t('  вставок: ')+c.inserts.length);
+        if(d.error)throw errText(d);insFromAI(c,d);if(typeof insLog==='function')insLog(d);uiLog(t('  вставок: ')+c.inserts.length);
         if(!fail.has(c))localQSet(c.name,'files','');
         uiLog(t('  файлы:')+((typeof insAfterAI==='function'&&await insAfterAI(c))||' —'));},aiStepConc('inserts'),'inserts');
     }
@@ -659,7 +659,7 @@ async function markupClip(c,batch){const xml=c.xml;const subeng=val('subengine')
         try{
           const d=await aiPost('/api/ai_inserts',{xml,batch,rejected:c.ins_rejected||[],speaker:clipSpeaker(c)||undefined},t('вставки (ИИ)'));
           if(d.error)throw errText(d);
-          c.inserts=(d.inserts||[]).map(x=>({...x,media:(x&&(x.auto==='named'||x.auto==='drug'))?(x.media||''):''}));c.insTarget=Math.max(d.insTarget||0,c.inserts.length);insLog(d);uiLog(t('  вставок: ')+c.inserts.length);
+          insFromAI(c,d);insLog(d);uiLog(t('  вставок: ')+c.inserts.length);
           localQSet(c.name,'files','');
           uiLog(t('  файлы:')+(await insAfterAI(c)||' —'));
         }catch(e){

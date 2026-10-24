@@ -21,6 +21,12 @@ silero-vad>=5.1
 # Without it generation works, the background just stays.
 rembg>=2.0
 
+# Semantic search of the insert library: EmbeddingGemma 2 (google/embeddinggemma-2)
+# runs in the model service and turns descriptions and pictures into vectors.
+# Without it the library matches by file names and tokens only. Weights ~1.5 GB,
+# downloaded on first use.
+sentence-transformers>=6.1
+
 # Claude provider profile in AI settings. OpenRouter, LM Studio and any
 # OpenAI-compatible providers go through http directly and need no package.
 anthropic>=0.40

@@ -929,15 +929,15 @@ def test_page_returns_its_own_sound_when_the_host_audio_fails(tmp_path: Path) ->
 
     Хост молчит (устройство не приняло частоту), а страница глушила свой голос
     «потому что звучит хост» — человек слышал полную тишину. Теперь по `audio_error`
-    живой звук считается выключенным, и звучит своя дорожка обработанного голоса
-    (или камера) — а в панель «Голос» уезжает причина словами.
+    живой звук считается выключенным, и звучит своя очередь звука (eaGain снова не 0) —
+    а в панель «Голос» уезжает причина словами.
     """
     prev = (ROOT / "static" / "app" / "60-preview.js").read_text(encoding="utf-8")
     styles = STYLES_JS.read_text(encoding="utf-8")
     src = "\n".join(_func_src(prev, n) for n in (
         "vtOf", "vtAudioCam", "vtPlaying", "vtSrcAt", "vtLiveOn", "vtLiveUpdate", "vtLiveExpect",
-        "vtLiveRate", "vtLiveCmd", "vtLiveSid", "vtGate", "vtTick", "vtSeek", "vtRate",
-        "vtIsEd", "vtEa", "vtMuteHost"))
+        "vtLiveRate", "vtLiveCmd", "vtLiveSid", "vtTick",
+        "vtIsEd", "vtEa", "vtMuteHost", "eaGain", "eaOwner", "eaIsMon", "dbToGain"))
     src += "\n" + "\n".join(_func_src(styles, n) for n in (
         "voiceFxLiveOn", "voiceFxHostPoll", "voiceFxHostNotes", "voiceFxHostGone"))
     lets = re.search(r"let VFXHOST=\{[^\n]*\};", styles)
@@ -947,7 +947,6 @@ const CALLS=[];const LOGS=[];const TIMERS=[];const STATUS=[];
 let VOICEFXLIVE=null;
 let AUDIOERR='';
 const VT_LIVE_DRIFT=0.4;
-const VT_SOFT=0.03,VT_DRIFT=0.25,VT_RATE=0.06;
 """ + lets.group(0) + r"""
 globalThis.setTimeout=(fn,ms)=>{TIMERS.push(fn);return TIMERS.length;};
 globalThis.clearTimeout=()=>{};
@@ -961,10 +960,13 @@ function voiceFxHostSync(){return Promise.resolve(false);}
 function voiceFxRead(){return null;}
 function vtNow(){return 0;}
 const CAM={muted:false};
-const EL={paused:true,readyState:4,currentTime:0,
-  play(){this.paused=false;return Promise.resolve();},pause(){this.paused=true;}};
-const PLAY={vids:[CAM],audio:[{ts:0,te:100,src:0}],aidx:0,playing:true,scrubbing:false,
-  vt:{on:true,el:EL,path:'C:/voice.wav',live:null}};
+let ED={vt:{on:true,path:'C:/voice.wav',live:null},cs:0,play:true,scrubbing:false};
+let PV={vids:[CAM]};
+let IPV=null,CPV=null;
+let MEDIA_VOL=1;
+function voiceDbOf(){return 0;}
+let EA={P:null,gain:null};
+let AUDIO={destination:{},createGain(){return {gain:{value:-1},connect(){}};}};
 globalThis.fetch=async(url,opt)=>{
   const body=opt&&opt.body?JSON.parse(opt.body):null;
   CALLS.push([url,body]);
@@ -974,19 +976,20 @@ globalThis.fetch=async(url,opt)=>{
 (async()=>{
   const out={};
   VOICEFXLIVE={sid:'7',running:true,track_ready:true,window:false,skipped:[],audio_error:''};
-  vtTick(PLAY,0);
+  vtTick(ED,0);
   out.liveBefore=voiceFxLiveOn();
-  out.mutedBefore=CAM.muted;out.liveMuteBefore=!!PLAY.liveMute;
+  out.mutedBefore=CAM.muted;out.liveMuteBefore=!!PV.liveMute;
+  out.gainBefore=EA.gain&&EA.gain.gain.value;
   AUDIOERR='RuntimeError: sample rate 48000 != 44100';
-  voiceFxHostPoll(PLAY);
+  voiceFxHostPoll(ED);
   await TIMERS.shift()();               // опрос: сервер сказал, что звук хоста не идёт
   out.liveAfter=voiceFxLiveOn();
   out.err=VOICEFXLIVE&&VOICEFXLIVE.audio_error;
   out.status=STATUS.slice();
-  vtTick(PLAY,0);
-  out.liveMuteAfter=!!PLAY.liveMute;
+  vtTick(ED,0);
+  out.liveMuteAfter=!!PV.liveMute;
   out.mutedAfter=CAM.muted;
-  out.trackPlaying=!EL.paused;
+  out.gainAfter=EA.gain&&EA.gain.gain.value;
   console.log(JSON.stringify(out));
 })();
 """
@@ -999,10 +1002,12 @@ globalThis.fetch=async(url,opt)=>{
 
     assert res["liveBefore"] is True and res["mutedBefore"] is True, res
     assert res["liveMuteBefore"] is True, "до сбоя камера не была заглушена"
+    assert res["gainBefore"] == 0, "пока звучит хост, своя очередь должна молчать"
     assert res["liveAfter"] is False, "звук хоста сломан, а страница считает его живым"
     assert res["err"] == "RuntimeError: sample rate 48000 != 44100", res
     assert res["liveMuteAfter"] is False, "глушение своего голоса не снято"
-    assert res["mutedAfter"] is False or res["trackPlaying"] is True, res
+    assert res["mutedAfter"] is False, "камера осталась заглушена после сбоя хоста"
+    assert res["gainAfter"] == 1, "после сбоя хоста своя очередь не вернула звук"
     assert any("живой звук плагинов не работает" in s for s in res["status"]), res["status"]
 
 

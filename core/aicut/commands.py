@@ -83,6 +83,52 @@ def _words_for_ai(xml_path: str) -> list[tuple[int, str, float, float]]:
     return out
 
 
+def _word_key(word: str) -> str:
+    """Буквы слова для сверки «то же слово?»: без краевых знаков, верхний регистр, ё=е."""
+    return word.strip().upper().replace("Ё", "Е").strip(_PARTICLE_EDGE_PUNCT)
+
+
+def _same_letters(xml_word: str, side_word: str) -> bool:
+    """Слово субтитров и слово расшифровки — один и тот же текст (для показа модели).
+
+    Краевые знаки и регистр в счёт не идут («остановиться.» = «ОСТАНОВИТЬСЯ»), ё=е. «*» в слове
+    субтитров — любая одна буква («КУ*СЕ» = «курсе»). Длины букв обязаны совпасть: иначе сдвиг
+    букв съест чужое слово. Обобщение _same_but_stars: то же правило для «*», плюс краевые знаки и ё.
+    """
+    a, b = _word_key(xml_word), _word_key(side_word)
+    return bool(a) and len(a) == len(b) and all(ca == "*" or ca == cb for ca, cb in zip(a, b))
+
+
+def _shown_words(xml_path: str, words: Sequence[tuple[int, str, float, float]]) -> list[str]:
+    """Что модель видит вместо каждого слова ленты: слово расшифровки или слово субтитров.
+
+    Субтитры — ЗАГЛАВНЫЕ, без знаков, с цензурой («КУ*СЕ»). Расшифровка рядом (`<stem>.words.json`) —
+    исходные слова с пунктуацией и обычным регистром, без цензуры: по знакам модель видит конец
+    фразы, перечисление, вопрос. Кандидат — запись сайдкара в пределах ±0.08 с по старту (та же
+    привязка по времени, что у _words_for_ai) и только если буквы совпали; из совпавших берётся
+    ближайшая. Не совпало или сайдкара нет — слово субтитров как есть: правку текста владелец
+    сделал в XML, сайдкар её не знает, и подменять её нельзя.
+
+    Возвращает список той же длины и порядка, что `words`. Сами `words` не меняются: по ним считает
+    код (частица «не», перенос интро, привязка вставок к фразе), и он написан под XML.
+    """
+    side = _sidecar_words(xml_path)
+    if not side:
+        return [w for _k, w, _s, _e in words]
+    starts = [s for s, _w in side]
+    out: list[str] = []
+    for _k, w, s, _e in words:
+        best: tuple[float, str] | None = None
+        i = bisect.bisect_left(starts, s - 0.08)
+        while i < len(side) and side[i][0] <= s + 0.08:
+            c_s, c_w = side[i]
+            i += 1
+            if _same_letters(w, c_w) and (best is None or abs(c_s - s) < abs(best[0] - s)):
+                best = (c_s, c_w)
+        out.append(best[1] if best is not None else w)
+    return out
+
+
 def _ends_sentence(text: str) -> bool:
     """Слово кончает фразу, если после закрывающих кавычек и скобок стоит знак «.!?;»."""
     t = text.rstrip(_CLOSING_MARKS)
@@ -112,8 +158,12 @@ def _sentence_ends(xml_path: str, words: Sequence[tuple[int, str, float, float]]
     return out
 
 
-def _word_lines(words: Sequence[tuple[int, str, float, float]]) -> str:
-    return "\n".join(f"{k}\t{w}\t{s:.2f}-{e:.2f}" for k, w, s, e in words)
+def _word_lines(words: Sequence[tuple[int, str, float, float]], shown: Sequence[str] | None = None) -> str:
+    """Строки ленты для модели: индекс, слово, тайминг. shown — что показать вместо слова (_shown_words)."""
+    if shown is None:
+        shown = [w for _k, w, _s, _e in words]
+    return "\n".join(f"{k}\t{sw}\t{s:.2f}-{e:.2f}"
+                     for (k, _w, s, e), sw in zip(words, shown, strict=True))
 
 
 # Частицы-отрицания: взятое моделью слово без них переворачивает смысл
@@ -183,7 +233,7 @@ def cmd_yellow(xml_path: str, system: str | None = None, dry: bool = False, mode
     words = _words_from_xml(xml_path)
     # Количество акцентов определяет смысл текста, а не длина ролика.
     user = (f"В ролике {len(words)} слов. Слова ролика (индекс, слово, тайминг в секундах):\n"
-            + _word_lines(words))
+            + _word_lines(words, _shown_words(xml_path, words)))
     if dry:
         emit((system or YELLOW_SYSTEM) + "\n---\n" + user); return None
     # Ответ — список индексов; принимаем любое число валидных индексов.
@@ -701,9 +751,13 @@ def _named_inserts(ins: list[dict[str, Any]], words: Sequence[tuple[int, str, fl
                 notes.append((t, f"{name} — картинки нет"))
             continue
         path = str(hit["path"])
+        # Память картинки из базы (MEMO_KEYS) едет с вставкой: фронт приложит её той же
+        # дверью, что и выбор из базы, иначе на картинке по названию не встанут её последние
+        # настройки и «без фона». Поля, которых в базе нет, в memo не попадают; пустой — {}.
+        memo = {k: hit[k] for k in insertlib.MEMO_KEYS if hit.get(k) is not None}
         it: dict[str, Any] = {"type": "photo", "start_sec": round(t, 2),
                               "duration_sec": NAMED_PHOTO_DUR, "phrase": said,
-                              "query": name, "media": path, "auto": "named"}
+                              "query": name, "media": path, "auto": "named", "memo": memo}
         if rejected and _rejected_hit(rejected, it):
             continue                    # юзер удалил такую вставку — не возвращаем её заново
         note_by_id[id(it)] = (t, f"{name} {t:.1f} с (картинка {os.path.basename(path)})")
@@ -745,7 +799,7 @@ def cmd_inserts(xml_path: str, system: str | None = None, dry: bool = False, mod
     else:
         photo_quota, video_quota = ph_total, vid_total
     user = (f"Длина ролика ~{dur:.0f} секунд. Слова ролика (индекс, слово, тайминг в секундах):\n"
-            + _word_lines(words))
+            + _word_lines(words, _shown_words(xml_path, words)))
     # В доборе общий target не упоминается: модель получает только дефициты типов.
     if count:
         user += (f"\n\nНУЖНО РОВНО {photo_quota} новых фото (type=photo) и {video_quota} новых "
@@ -935,7 +989,11 @@ def cmd_inserts(xml_path: str, system: str | None = None, dry: bool = False, mod
     ins = _cap_with_named(ins, ph_total, vid_total)
     out = os.path.splitext(xml_path)[0] + ".inserts.json"
     if not count:                                   # полный набор -> обновляем сайдкар; добор -> нет
-        atomic_json_dump(out, {"inserts": ins}, indent=1)
+        # Снимок памяти картинки (memo) в сайдкар не пишем: он нужен только фронту в ответе.
+        # Сайдкар живёт дольше и при восстановлении клипа (/api/scanxml) вернул бы память
+        # картинки такой, какой она была в момент разметки, а не такой, как в базе сейчас.
+        side = [{k: v for k, v in x.items() if k != "memo"} for x in ins]
+        atomic_json_dump(out, {"inserts": side}, indent=1)
     nv = sum(1 for x in ins if x.get("type") == "video")
     emit("вставок: {total} ({photo} фото + {video} видео) -> {file}",
          total=len(ins), photo=len(ins) - nv, video=nv, file=os.path.basename(out))
@@ -1849,7 +1907,8 @@ def cmd_intro(xml_path: str, system: str | None = None, dry: bool = False, model
     user = (f"Длина ролика ~{dur:.0f} секунд, всего {len(words)} слов. "
             f"НУЖНО ПРИМЕРНО {want} акцентов (mid_groups) — по квоте свободных окон ниже. "
             f"Пустое окно без единого акцента — главная ошибка этой разметки.\n"
-            f"Слова ролика (индекс, слово, тайминг в секундах):\n" + _word_lines(words))
+            f"Слова ролика (индекс, слово, тайминг в секундах):\n"
+            + _word_lines(words, _shown_words(xml_path, words)))
     hint = _intro_free_hint(words, free)
     if hint:
         user += "\n\nКАРТА РОЛИКА (для выбора мест под акценты):\n" + hint

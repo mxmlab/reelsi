@@ -25,7 +25,10 @@ Openverse ключа не требует и иначе добавлял бы с�
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -611,6 +614,52 @@ def test_video_search_skips_photo_only_stocks(iso, monkeypatch):
     assert net.urls("api.unsplash.com") == [] and net.urls("api.openverse.org") == []
 
 
+def test_slow_stock_does_not_hold_search_and_fills_cache(iso, monkeypatch):
+    """Медленный сток (1.5 с, как Openverse с 13–20 с) не держит поиск: выдача приходит по
+    быстрому стоку, медленный в неё не входит (`SEARCH_WAIT_S` подменён на 0.3). Его ответ
+    доходит в кеш в фоне, и второй поиск того же запроса отдаёт кадры обоих без сети."""
+    _write_cfg()
+    monkeypatch.setattr(stock, "SEARCH_WAIT_S", 0.3)
+    net = FakeNet({"api.pexels.com/v1/search": _pexels_photos(2),
+                   "pixabay.com/api/": _pixabay_photos()})
+
+    def fast_and_slow(req, timeout=None):
+        if "api.pexels.com" in req.full_url:
+            time.sleep(0.05)
+        elif "pixabay.com" in req.full_url:
+            time.sleep(1.5)
+        return net(req, timeout)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fast_and_slow)
+    # Фоновый ответ медленного стока считаем доехавшим, когда он лёг в кеш.
+    cached = threading.Event()
+    real_put = stock._cache_put
+
+    def put(provider, *args, **kwargs):
+        real_put(provider, *args, **kwargs)
+        if provider == "pixabay":
+            cached.set()
+
+    monkeypatch.setattr(stock, "_cache_put", put)
+    notes: list[str] = []
+    monkeypatch.setattr(stock, "console_emit",
+                        lambda line="", **v: notes.append(line.format(**v) if v else line))
+
+    t0 = time.monotonic()
+    cands = stock.search("cat on the window", "photo", n=4)
+    assert time.monotonic() - t0 < 1.0, "поиск дождался медленного стока"
+    assert [c["provider"] for c in cands] == ["pexels", "pexels"]
+    assert any("pixabay" in s and "не успел за 0.3 с" in s for s in notes), notes
+
+    assert cached.wait(5), "ответ медленного стока не дошёл до кеша"
+    calls = len(net.calls)
+    t0 = time.monotonic()
+    cands = stock.search("cat on the window", "photo", n=4)
+    assert time.monotonic() - t0 < 0.5, "второй поиск ждал сеть, хотя ответ уже в кеше"
+    assert [c["provider"] for c in cands] == ["pexels", "pixabay", "pexels", "pixabay"]
+    assert len(net.calls) == calls, "второй поиск пошёл в сеть, а не в кеш"
+
+
 # --------------------------------------------------------------------------- #
 # 5. Стоков нет вовсе
 # --------------------------------------------------------------------------- #
@@ -1104,6 +1153,146 @@ def test_set_stock_keys_covers_new_providers(iso, monkeypatch, client):
     assert "openverse_key" not in saved                          # у Openverse ключа нет
 
 
+def _cfg_off(names: list[str]) -> None:
+    """Список `stock.off` в ai_config.json — ровно то, что пишет галка Openverse."""
+    with open(aicut_config.AI_CONFIG_PATH, encoding="utf-8") as f:
+        cfg = json.load(f)
+    cfg["stock"]["off"] = names
+    with open(aicut_config.AI_CONFIG_PATH, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, ensure_ascii=False, indent=1)
+
+
+def test_providers_off_adds_config_list_to_env(iso, monkeypatch):
+    """`providers_off()` — переменная REELSI_STOCK_OFF плюс stock.off из ai_config.json.
+    Выключенный списком в готовые к поиску не попадает."""
+    _write_cfg()
+    monkeypatch.setenv("REELSI_STOCK_OFF", "coverr")
+    assert stock.providers_off() == frozenset({"coverr"})
+    _cfg_off(["openverse"])
+    assert stock.providers_off() == frozenset({"coverr", "openverse"})
+    assert "openverse" not in stock.ready_providers()
+    _cfg_off([])
+    assert stock.providers_off() == frozenset({"coverr"})
+
+
+def test_openverse_off_in_config_is_never_searched(iso, monkeypatch):
+    """Галка снята (stock.off = [openverse]): поиск в Openverse не ходит вовсе, Pexels и
+    Pixabay отдают как прежде. Галка включена — Openverse снова в круге выдачи."""
+    _write_cfg()
+    monkeypatch.setenv("REELSI_STOCK_OFF", "")
+    net = FakeNet({"api.pexels.com/v1/search": _pexels_photos(2),
+                   "pixabay.com/api/": _pixabay_photos(),
+                   "api.openverse.org/v1/images/": _openverse_images()})
+    monkeypatch.setattr(urllib.request, "urlopen", net)
+
+    _cfg_off(["openverse"])
+    cands = stock.search("cat on the window", "photo", n=6)
+    assert {c["provider"] for c in cands} == {"pexels", "pixabay"}
+    assert net.urls("api.openverse.org") == []
+
+    _cfg_off([])
+    cands = stock.search("cat on the window", "photo", n=8)
+    assert "openverse" in {c["provider"] for c in cands}
+    assert net.urls("api.openverse.org") != []
+
+
+def test_set_stock_keys_openverse_switch(iso, monkeypatch, client):
+    """Галка Openverse: openverse_on=False кладёт его в stock.off, True убирает; поля в теле
+    нет — список не трогаем; пустой список в файл не пишется. Наружу уходит список off и ни
+    одного поля ключа Openverse."""
+    _write_cfg(pexels="zq1", pixabay=None)
+    monkeypatch.setenv("REELSI_STOCK_OFF", "")
+
+    d = _post(client, "/api/ai_config", {"action": "set_stock_keys",
+                                         "pexels_key": "•••zq1", "openverse_on": False})
+    assert d["stock"]["off"] == ["openverse"]
+    saved = json.load(open(aicut_config.AI_CONFIG_PATH, encoding="utf-8"))["stock"]
+    assert saved == {"pexels_key": "zq1", "off": ["openverse"]}
+    assert "openverse_key" not in d["stock"]
+
+    d = _post(client, "/api/ai_config", {"action": "set_stock_keys", "pexels_key": "•••zq1"})
+    assert d["stock"]["off"] == ["openverse"]                # поля нет в теле — не трогаем
+
+    d = _post(client, "/api/ai_config", {"action": "set_stock_keys",
+                                         "pexels_key": "•••zq1", "openverse_on": True})
+    assert d["stock"]["off"] == []
+    saved = json.load(open(aicut_config.AI_CONFIG_PATH, encoding="utf-8"))["stock"]
+    assert saved == {"pexels_key": "zq1"}                    # пустой список — ключа нет
+
+    r = client.get("/api/ai_config", headers=H)
+    assert r.status_code == 200 and r.get_json()["stock"]["off"] == []
+
+
+def _js_func(src, name):
+    """Тело функции по балансу скобок (приём test_insert_memo: боевой код, а не копия)."""
+    m = re.search(r"(?:async\s+)?function\s+%s\s*\(" % re.escape(name), src)
+    assert m, f"в исходнике не нашлась функция {name}"
+    i = src.index("{", m.end() - 1)
+    depth = 0
+    for j in range(i, len(src)):
+        if src[j] == "{":
+            depth += 1
+        elif src[j] == "}":
+            depth -= 1
+            if depth == 0:
+                return src[m.start():j + 1]
+    raise AssertionError(f"не сошлись скобки у {name}")
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="контракт фронта требует node в PATH")
+def test_openverse_checkbox_fills_and_saves_its_switch():
+    """Галка «Искать на Openverse» в ⚙ → Стоки: заполняется из stock.off (без списка —
+    включена), уходит в запросе как openverse_on, а при сбое сервера возвращается к
+    сохранённому состоянию, как и поля ключей. Боевые fillStockKeys/saveStockKeys — под node."""
+    src = open(os.path.join(ROOT, "static", "app", "10-settings.js"), encoding="utf-8").read()
+    stk = re.search(r"const STK_FIELDS=\[[^\]]*\];", src).group(0)
+    code = r"""
+const ELS={stk_pexels:{value:''},stk_unsplash:{value:''},stk_pixabay:{value:''},
+  stk_coverr:{value:''},stk_openverse_on:{checked:false},stk_res:{textContent:''}};
+const $=id=>ELS[id]||null;
+const val=id=>(ELS[id]?ELS[id].value:'');
+let AICFG={stock:{pexels_key:'•••zq1',off:['openverse']}};
+const BODIES=[];let FAIL=false;let RESP=null;
+function toast(){}
+function errText(d){return String(d&&d.error);}
+function t(s){return s;}
+function fetch(url,opts){BODIES.push(JSON.parse(opts.body));
+  if(FAIL)return Promise.reject(new Error('сеть'));
+  return Promise.resolve({json:()=>Promise.resolve(RESP)});}
+""" + stk + "\n" + _js_func(src, "fillStockKeys") + "\n" + _js_func(src, "saveStockKeys") + r"""
+(async()=>{
+  const out={};
+  fillStockKeys();
+  out.off_checked=ELS.stk_openverse_on.checked;
+  out.pexels=ELS.stk_pexels.value;
+  AICFG={stock:{}};
+  fillStockKeys();
+  out.default_checked=ELS.stk_openverse_on.checked;
+  ELS.stk_openverse_on.checked=false;
+  RESP={ok:true,stock:{pexels_key:'•••zq1',off:['openverse']}};
+  await saveStockKeys();
+  out.body=BODIES[BODIES.length-1];
+  out.after_save_checked=ELS.stk_openverse_on.checked;
+  ELS.stk_openverse_on.checked=true;
+  FAIL=true;
+  await saveStockKeys();
+  FAIL=false;
+  out.after_fail_checked=ELS.stk_openverse_on.checked;
+  console.log(JSON.stringify(out));
+})();
+"""
+    p = subprocess.run(["node", "-e", code], capture_output=True, text=True,
+                       encoding="utf-8-sig", errors="replace", timeout=60)
+    assert p.returncode == 0, (p.stderr or p.stdout).strip()[:900]
+    out = json.loads(p.stdout.strip().splitlines()[-1])
+    assert out["off_checked"] is False and out["pexels"] == "•••zq1"
+    assert out["default_checked"] is True                    # без списка off галка стоит
+    assert out["body"]["action"] == "set_stock_keys"
+    assert out["body"]["openverse_on"] is False              # галка уходит в запросе
+    assert out["after_save_checked"] is False                # берём ответ сервера
+    assert out["after_fail_checked"] is False                # сбой — назад к сохранённому
+
+
 # --------------------------------------------------------------------------- #
 # 16. Фронт
 # --------------------------------------------------------------------------- #
@@ -1130,7 +1319,9 @@ def test_frontend_has_stock_button_and_keys():
         assert f'type="password" id="{field}"' in html, field
     rows = [html.index(f'id="stk_{p}"') for p in keyed]
     assert rows == sorted(rows), "строки ключей в ⚙ не в порядке опроса стоков"
-    assert "stk_openverse" not in html
+    # У Openverse поля ключа нет: только галка-выключатель (список stock.off)
+    assert 'type="password" id="stk_openverse' not in html
+    assert 'type="checkbox" id="stk_openverse_on"' in html
     assert "Сохранить ключи" in html
 
     setup = open(os.path.join(ROOT, "static", "app", "10-settings.js"), encoding="utf-8").read()

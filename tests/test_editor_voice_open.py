@@ -60,19 +60,16 @@ PREVIEW_FUNCS = (
     "openEditClip", "openPreview", "pvVideoTo", "pvWordAt", "pvSegAt", "pvSrc",
     "bufMake", "bufIdle", "bufArm", "bufRoll", "bufTake", "bufSwap", "spareLead",
     "spareIdle", "spareStop", "spareSwap", "spareRollAt",
-    # Гашение камерного разбега (spareStop) зовёт и гашение дублёра голоса.
-    "vtSpareOf", "vtSpareLive", "vtSpareIdle", "vtSpareStop", "vtSpareAt", "vtSpareArm",
-    "vtSpareRoll", "vtSpareTake", "vtSpareSwap", "vtSpareCtl", "voicePrime",
     "camVisual", "camIdle", "camApply", "camTrack", "camDeltas", "camBufs",
     "vtOf", "vtCam1", "vtSrcAt", "vtNow", "vtAudioCam", "vtPlaying", "vtIsPv", "vtIsEd", "vtEa",
-    "vtMuteHost", "vtStage", "vtEl", "vtNote", "vtName", "vtProfileFx", "vtFx", "vtDetach",
-    "vtStop", "vtPause", "vtGate", "vtLiveOn", "vtSetMute", "vtLiveUpdate", "vtLiveRate", "vtLiveExpect",
+    "vtMuteHost", "vtStage", "vtNote", "vtName", "vtProfileFx", "vtFx", "vtDetach",
+    "vtStop", "vtPause", "vtLiveOn", "vtLiveUpdate", "vtLiveRate", "vtLiveExpect",
     "vtLiveCmd", "vtLiveSid", "vtLivePlay", "vtLivePause", "vtPrep", "vtVoiceShow",
     "vtVoiceWatch", "vtVoicePoll", "vtVoiceLine", "vtVoiceStop", "vtVoiceTake", "vtVoiceUse",
-    "vtUse", "vtTick", "vtSeek", "vtRate",
+    "vtUse", "vtTick",
     # Звук редактора шага 1: буфер Web Audio, очередь блоков, часы, гейн.
     "eaOpen", "eaDecode", "eaVoice", "eaBuf", "eaSig", "eaPlan", "eaNow", "eaStop",
-    "eaStart", "eaClock", "eaSync", "eaGain", "eaOwner", "eaIsIpv", "eaPlanIpv", "eaCensor", "eaCensorGain", "eaPos", "dbToGain",
+    "eaStart", "eaClock", "eaSync", "eaGain", "eaOwner", "eaIsMon", "eaPlanMon", "eaCensor", "eaCensorGain", "eaPos", "dbToGain",
     "vtHostLive", "vtLivePrep", "vtStatesWait", "vtHostDown", "pvProgRow", "pvProgDrop",
 )
 # Единственный плеер шага 1 — редактор (70-editor.js)
@@ -136,11 +133,9 @@ def _bodies() -> str:
     preview = PREVIEW_JS.read_text(encoding="utf-8")
     editor = EDITOR_JS.read_text(encoding="utf-8")
     out = [_func_src(styles, n) for n in VOICE_FUNCS]
-    # Пороги синхрона дорожки — ИЗ ФАЙЛА: свои копии в стенде разъезжались бы с
-    # боевыми молча (перемотка становится скоростью — на этом и попались). Допуск
-    # подмены дублёра голоса (VT_SWAP_*) и пороги звука редактора (EA_*, ED_V_*) — оттуда же.
-    for name in ("VT_SOFT", "VT_DRIFT", "VT_RATE", "VT_QUIET", "VT_POLL",
-                 "VT_SWAP_LO", "VT_SWAP_HI", "EA_LEAD", "EA_FADE"):
+    # Константы — ИЗ ФАЙЛА: свои копии в стенде разъезжались бы с боевыми молча.
+    # Пороги звука редактора (EA_*, ED_V_*) — оттуда же.
+    for name in ("VT_QUIET", "VT_POLL", "EA_LEAD", "EA_FADE"):
         m = re.search(r"^const %s=.*$" % name, preview, re.M)
         assert m is not None, f"в 60-preview.js нет const {name}"
         out.append(m.group(0))
@@ -238,9 +233,6 @@ function cancelAnimationFrame(){}
 STATE = r"""
 // Состояние модуля, которое в браузере живёт в общем скоупе страницы
 let MEDIA_VOL=1;
-// Выключатель мутационного теста (test_voice_spare.py): без него вырезанный `edJump`
-// спотыкался бы о необъявленное имя. В бою он всегда 0.
-let EDMUTVOICE=0;
 let CURSTYLE={voice_db:0,music_db:-20};
 let VOICEFXSPK='';
 let VOICEFXLIVE=null;
@@ -283,7 +275,6 @@ function selectAE(){}
 function openModal(){}
 let curEdit=-1;let curAE=0;let AEXML='';
 function mediaFree(){}
-function voiceWiring(){}
 function pvProxyLoad(){return Promise.resolve(null);}
 function pvProxyMerge(){return null;}
 function pvProxyWatch(){}
@@ -342,7 +333,6 @@ globalThis.fetch=async(url,opt)=>{
 function vtTick(P,tm){VTTICK.push([P,+tm]);return realVtTick(P,tm);}
 // Живой хост в стенде закрыт: окна нет
 function vtLiveOn(){return false;}
-function voiceWiringStub(){}
 function openFlow(){
   BY_ID.pvstage=new El('div');
   BY_ID.pvsub=new El('div');
@@ -471,7 +461,7 @@ def test_editor_frame_drives_the_track_and_mutes_the_camera() -> None:
   console.log(JSON.stringify({ticks:VTTICK.map(x=>[x[0]===ED,x[1]]),
     play:!!ED.play,video:PV.vids[0].played,
     mute:PV.vids.every(v=>v.muted),trackPath:vtOf(ED).path||'',trackOn:!!vtOf(ED).on,
-    trackEl:!!vtOf(ED).el,bufs:q.map(n=>n.buffer&&n.buffer.name),firstOff:q.length?q[0].started.off:null}));
+    trackEl:('el' in vtOf(ED)),bufs:q.map(n=>n.buffer&&n.buffer.name),firstOff:q.length?q[0].started.off:null}));
 })();
 """)
     assert out["ticks"], "кадр редактора не позвал дорожку голоса (живой хост и гейн)"

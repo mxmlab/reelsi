@@ -479,7 +479,8 @@ def set_stock_keys(cfg: dict[str, Any], d: dict[str, Any]) -> None:
     Как у ключей профилей: маска «•••…» значит «не менял» (в поле показана маска
     уже сохранённого ключа — записать её вместо ключа означало бы потерять ключ),
     а пустая строка — «ключа нет»: провайдер молча выключается, и поиск идёт по
-    остальным. Поля нет в теле — не трогаем вовсе."""
+    остальным. Поля нет в теле — не трогаем вовсе. Поле `openverse_on` (bool) — галка
+    Openverse: False кладёт его в `stock.off`, True убирает оттуда."""
     from core import stock            # ленивый импорт: ядро не тянем на импорте роута
     st = cfg.get("stock")
     if not isinstance(st, dict):
@@ -496,6 +497,19 @@ def set_stock_keys(cfg: dict[str, Any], d: dict[str, Any]) -> None:
             st[field] = val
         else:
             st.pop(field, None)          # пустая строка — ключа нет
+    # Openverse ключа не имеет, поэтому выключается списком `off` (галка в ⚙), а не пустым
+    # полем: пустое поле у него означало бы «ключа нет», а не «выключен». Поля в теле нет —
+    # список не трогаем.
+    if "openverse_on" in d:
+        old = st.get("off")
+        off = [p for p in (old if isinstance(old, list) else [])
+               if isinstance(p, str) and p != "openverse"]
+        if not bool(d.get("openverse_on")):
+            off.append("openverse")
+        if off:
+            st["off"] = off
+        else:
+            st.pop("off", None)          # пустой список — не пишем вовсе
 
 
 def delete_profile(cfg: dict[str, Any], d: dict[str, Any]) -> None:

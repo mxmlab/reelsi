@@ -91,14 +91,16 @@ def test_glitch_groups_intro_fade(xml_subs):
     assert g0["fade"] == 0.35
     assert abs(g0["te"] - (out_start_mid + 0.35)) < 1e-9
 
-    # Последняя глитч-группа: outStart = 8.3 + 0.3 + 1.0 + 0.3 = 9.9
+    # Последняя глитч-группа (дальше интро нет): база окна 8.3 + 0.3 + 1.0 + 0.75 = 10.35,
+    # начало спада обычной 10.35 − 0.35 = 10.0. Полка глитча = 10.0 + надбавка 0.3 = 10.3
+    # (глитч-конец 8.74 раньше), спад 0.35 → te = 10.65, то есть база + надбавка.
     intro_last = [
         dict(words=["ОБЫЧНОЕ"], color="white", times=[1.0]),
         dict(words=["ГЛИТЧ"], color="white", times=[8.3], anim="glitch"),
     ]
     plan_last = _scene_plan(xml_subs, intro_last, splits=[1])
     g1 = plan_last["intro"][1]
-    out_start_last = 8.3 + 0.3 + 1.0 + 0.3
+    out_start_last = (8.3 + 0.3 + 1.0 + 0.75 - 0.35) + 0.3
     assert g1["fade"] == 0.35
     assert abs(g1["te"] - (out_start_last + 0.35)) < 1e-9
 
@@ -121,8 +123,10 @@ def test_old_style_keys_ignored(xml_subs):
     ]
     plan_last = _scene_plan(xml_subs, intro_last, splits=[1], style=old_style)
     g1 = plan_last["intro"][1]
+    # та же последняя глитч-группа: полка 10.3 (начало спада обычной 10.0 + надбавка 0.3),
+    # спад 0.35 → te 10.65; старые ключи спада на это не влияют
     assert g1["fade"] == 0.35
-    assert abs(g1["te"] - (8.3 + 0.3 + 1.0 + 0.3 + 0.35)) < 1e-9
+    assert abs(g1["te"] - (8.3 + 0.3 + 1.0 + 0.75 - 0.35 + 0.3 + 0.35)) < 1e-9
 
 
 def test_jsx_contains_f_fade_and_keyframe(xml_subs, tmp_path):
